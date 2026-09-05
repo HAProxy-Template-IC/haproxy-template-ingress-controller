@@ -18,12 +18,7 @@
 
 package genvalidators
 
-import (
-	"encoding/binary"
-
-	"github.com/cespare/xxhash/v2"
-	"github.com/haproxytech/client-native/v6/models"
-)
+import "github.com/haproxytech/client-native/v6/models"
 
 // Version-specific validators for v30.
 // These functions validate client-native models directly without JSON conversion.
@@ -53,20 +48,6 @@ func ValidateAclV30(m *models.ACL) error {
 	return nil
 }
 
-// HashAclV30 computes a content hash for cache lookup.
-func HashAclV30(m *models.ACL) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.ACLName)
-	_, _ = h.WriteString(m.Criterion)
-	_, _ = h.WriteString(m.Value)
-	return h.Sum64()
-}
-
 // ValidateBackendSwitchingRuleV30 validates a backend_switching_rule model.
 func ValidateBackendSwitchingRuleV30(m *models.BackendSwitchingRule) error {
 	if m == nil {
@@ -91,20 +72,6 @@ func ValidateBackendSwitchingRuleV30(m *models.BackendSwitchingRule) error {
 	}
 
 	return nil
-}
-
-// HashBackendSwitchingRuleV30 computes a content hash for cache lookup.
-func HashBackendSwitchingRuleV30(m *models.BackendSwitchingRule) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.Cond)
-	_, _ = h.WriteString(m.CondTest)
-	_, _ = h.WriteString(m.Name)
-	return h.Sum64()
 }
 
 // ValidateBindV30 validates a bind model.
@@ -215,200 +182,6 @@ func ValidateBindV30(m *models.Bind) error {
 	return nil
 }
 
-// HashBindV30 computes a content hash for cache lookup.
-func HashBindV30(m *models.Bind) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_ = binary.Write(h, binary.LittleEndian, m.AcceptNetscalerCip)
-	if m.AcceptProxy {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Address)
-	if m.Allow0rtt {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Alpn)
-	_, _ = h.WriteString(m.Backlog)
-	_, _ = h.WriteString(m.CaIgnoreErr)
-	_, _ = h.WriteString(m.CaSignFile)
-	_, _ = h.WriteString(m.CaSignPass)
-	_, _ = h.WriteString(m.CaVerifyFile)
-	_, _ = h.WriteString(m.Ciphers)
-	_, _ = h.WriteString(m.Ciphersuites)
-	_, _ = h.WriteString(m.ClientSigalgs)
-	_, _ = h.WriteString(m.CrlFile)
-	_, _ = h.WriteString(m.CrtIgnoreErr)
-	_, _ = h.WriteString(m.CrtList)
-	_, _ = h.WriteString(m.Curves)
-	if m.DeferAccept {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Ecdhe)
-	if m.ExposeFdListeners {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.ForceSslv3 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.ForceTlsv10 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.ForceTlsv11 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.ForceTlsv12 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.ForceTlsv13 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.GenerateCertificates {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.Gid)
-	_, _ = h.WriteString(m.Group)
-	_, _ = h.WriteString(m.GUIDPrefix)
-	_, _ = h.WriteString(m.ID)
-	_, _ = h.WriteString(m.Interface)
-	_, _ = h.WriteString(m.Level)
-	_ = binary.Write(h, binary.LittleEndian, m.Maxconn)
-	_, _ = h.WriteString(m.Mode)
-	_, _ = h.WriteString(m.Mss)
-	_, _ = h.WriteString(m.Name)
-	_, _ = h.WriteString(m.Namespace)
-	_ = binary.Write(h, binary.LittleEndian, m.Nbconn)
-	_ = binary.Write(h, binary.LittleEndian, m.Nice)
-	if m.NoAlpn {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.NoCaNames {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.NoSslv3 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.NoTLSTickets {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.NoTlsv10 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.NoTlsv11 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.NoTlsv12 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.NoTlsv13 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Npn)
-	if m.Port != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Port)
-	}
-	if m.PortRangeEnd != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.PortRangeEnd)
-	}
-	if m.PreferClientCiphers {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Proto)
-	_, _ = h.WriteString(m.QuicCcAlgo)
-	if m.QuicForceRetry {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.QuicSocket)
-	_, _ = h.WriteString(m.SeverityOutput)
-	_, _ = h.WriteString(m.Sigalgs)
-	if m.Ssl {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.SslCafile)
-	_, _ = h.WriteString(m.SslCertificate)
-	_, _ = h.WriteString(m.SslMaxVer)
-	_, _ = h.WriteString(m.SslMinVer)
-	if m.StrictSni {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.TCPUserTimeout != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.TCPUserTimeout)
-	}
-	if m.Tfo {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Thread)
-	_, _ = h.WriteString(m.TLSTicketKeys)
-	if m.Transparent {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.UID)
-	_, _ = h.WriteString(m.User)
-	if m.V4v6 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.V6only {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Verify)
-	return h.Sum64()
-}
-
 // ValidateCaptureV30 validates a capture model.
 func ValidateCaptureV30(m *models.Capture) error {
 	if m == nil {
@@ -429,19 +202,6 @@ func ValidateCaptureV30(m *models.Capture) error {
 	}
 
 	return nil
-}
-
-// HashCaptureV30 computes a content hash for cache lookup.
-func HashCaptureV30(m *models.Capture) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_ = binary.Write(h, binary.LittleEndian, m.Length)
-	_, _ = h.WriteString(m.Type)
-	return h.Sum64()
 }
 
 // ValidateFilterV30 validates a filter model.
@@ -488,45 +248,6 @@ func ValidateFilterV30(m *models.Filter) error {
 	}
 
 	return nil
-}
-
-// HashFilterV30 computes a content hash for cache lookup.
-func HashFilterV30(m *models.Filter) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.AppName)
-	_, _ = h.WriteString(m.BandwidthLimitName)
-	_, _ = h.WriteString(m.CacheName)
-	_ = binary.Write(h, binary.LittleEndian, m.DefaultLimit)
-	_ = binary.Write(h, binary.LittleEndian, m.DefaultPeriod)
-	_, _ = h.WriteString(m.Key)
-	_ = binary.Write(h, binary.LittleEndian, m.Limit)
-	_ = binary.Write(h, binary.LittleEndian, m.MinSize)
-	_, _ = h.WriteString(m.SpoeConfig)
-	_, _ = h.WriteString(m.SpoeEngine)
-	_, _ = h.WriteString(m.Table)
-	if m.TraceHexdump {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.TraceName)
-	if m.TraceRndForwarding {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.TraceRndParsing {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Type)
-	return h.Sum64()
 }
 
 // ValidateHttpAfterResponseRuleV30 validates a http_after_response_rule model.
@@ -612,48 +333,6 @@ func ValidateHttpAfterResponseRuleV30(m *models.HTTPAfterResponseRule) error {
 	}
 
 	return nil
-}
-
-// HashHttpAfterResponseRuleV30 computes a content hash for cache lookup.
-func HashHttpAfterResponseRuleV30(m *models.HTTPAfterResponseRule) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.ACLFile)
-	_, _ = h.WriteString(m.ACLKeyfmt)
-	if m.CaptureID != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.CaptureID)
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.CaptureLen)
-	_, _ = h.WriteString(m.CaptureSample)
-	_, _ = h.WriteString(m.Cond)
-	_, _ = h.WriteString(m.CondTest)
-	_, _ = h.WriteString(m.HdrFormat)
-	_, _ = h.WriteString(m.HdrMatch)
-	_, _ = h.WriteString(m.HdrMethod)
-	_, _ = h.WriteString(m.HdrName)
-	_, _ = h.WriteString(m.LogLevel)
-	_, _ = h.WriteString(m.MapFile)
-	_, _ = h.WriteString(m.MapKeyfmt)
-	_, _ = h.WriteString(m.MapValuefmt)
-	_, _ = h.WriteString(m.ScExpr)
-	_ = binary.Write(h, binary.LittleEndian, m.ScID)
-	_ = binary.Write(h, binary.LittleEndian, m.ScIdx)
-	if m.ScInt != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.ScInt)
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.Status)
-	_, _ = h.WriteString(m.StatusReason)
-	_, _ = h.WriteString(m.StrictMode)
-	_, _ = h.WriteString(m.Type)
-	_, _ = h.WriteString(m.VarExpr)
-	_, _ = h.WriteString(m.VarFormat)
-	_, _ = h.WriteString(m.VarName)
-	_, _ = h.WriteString(m.VarScope)
-	return h.Sum64()
 }
 
 // ValidateHttpCheckV30 validates a http_check model.
@@ -749,78 +428,6 @@ func ValidateHttpCheckV30(m *models.HTTPCheck) error {
 	return nil
 }
 
-// HashHttpCheckV30 computes a content hash for cache lookup.
-func HashHttpCheckV30(m *models.HTTPCheck) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.Addr)
-	_, _ = h.WriteString(m.Alpn)
-	_, _ = h.WriteString(m.Body)
-	_, _ = h.WriteString(m.BodyLogFormat)
-	_, _ = h.WriteString(m.CheckComment)
-	if m.Default {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.ErrorStatus)
-	if m.ExclamationMark {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.Linger {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Match)
-	_, _ = h.WriteString(m.Method)
-	if m.MinRecv != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.MinRecv)
-	}
-	_, _ = h.WriteString(m.OkStatus)
-	_, _ = h.WriteString(m.OnError)
-	_, _ = h.WriteString(m.OnSuccess)
-	_, _ = h.WriteString(m.Pattern)
-	if m.Port != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Port)
-	}
-	_, _ = h.WriteString(m.PortString)
-	_, _ = h.WriteString(m.Proto)
-	if m.SendProxy {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Sni)
-	if m.Ssl {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.StatusCode)
-	_, _ = h.WriteString(m.ToutStatus)
-	_, _ = h.WriteString(m.Type)
-	_, _ = h.WriteString(m.URI)
-	_, _ = h.WriteString(m.URILogFormat)
-	_, _ = h.WriteString(m.VarExpr)
-	_, _ = h.WriteString(m.VarFormat)
-	_, _ = h.WriteString(m.VarName)
-	_, _ = h.WriteString(m.VarScope)
-	_, _ = h.WriteString(m.Version)
-	if m.ViaSocks4 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	return h.Sum64()
-}
-
 // ValidateHttpErrorRuleV30 validates a http_error_rule model.
 func ValidateHttpErrorRuleV30(m *models.HTTPErrorRule) error {
 	if m == nil {
@@ -850,24 +457,6 @@ func ValidateHttpErrorRuleV30(m *models.HTTPErrorRule) error {
 	}
 
 	return nil
-}
-
-// HashHttpErrorRuleV30 computes a content hash for cache lookup.
-func HashHttpErrorRuleV30(m *models.HTTPErrorRule) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.ReturnContent)
-	_, _ = h.WriteString(m.ReturnContentFormat)
-	if m.ReturnContentType != nil {
-		_, _ = h.WriteString(*m.ReturnContentType)
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.Status)
-	_, _ = h.WriteString(m.Type)
-	return h.Sum64()
 }
 
 // ValidateHttpRequestRuleV30 validates a http_request_rule model.
@@ -1072,112 +661,6 @@ func ValidateHttpRequestRuleV30(m *models.HTTPRequestRule) error {
 	return nil
 }
 
-// HashHttpRequestRuleV30 computes a content hash for cache lookup.
-func HashHttpRequestRuleV30(m *models.HTTPRequestRule) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.ACLFile)
-	_, _ = h.WriteString(m.ACLKeyfmt)
-	_, _ = h.WriteString(m.AuthRealm)
-	_, _ = h.WriteString(m.BandwidthLimitLimit)
-	_, _ = h.WriteString(m.BandwidthLimitName)
-	_, _ = h.WriteString(m.BandwidthLimitPeriod)
-	_, _ = h.WriteString(m.CacheName)
-	if m.CaptureID != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.CaptureID)
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.CaptureLen)
-	_, _ = h.WriteString(m.CaptureSample)
-	_, _ = h.WriteString(m.Cond)
-	_, _ = h.WriteString(m.CondTest)
-	if m.DenyStatus != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.DenyStatus)
-	}
-	_, _ = h.WriteString(m.Expr)
-	_, _ = h.WriteString(m.HdrFormat)
-	_, _ = h.WriteString(m.HdrMatch)
-	_, _ = h.WriteString(m.HdrMethod)
-	_, _ = h.WriteString(m.HdrName)
-	_, _ = h.WriteString(m.HintFormat)
-	_, _ = h.WriteString(m.HintName)
-	_, _ = h.WriteString(m.LogLevel)
-	_, _ = h.WriteString(m.LuaAction)
-	_, _ = h.WriteString(m.LuaParams)
-	_, _ = h.WriteString(m.MapFile)
-	_, _ = h.WriteString(m.MapKeyfmt)
-	_, _ = h.WriteString(m.MapValuefmt)
-	_, _ = h.WriteString(m.MarkValue)
-	_, _ = h.WriteString(m.MethodFmt)
-	_ = binary.Write(h, binary.LittleEndian, m.NiceValue)
-	_, _ = h.WriteString(m.Normalizer)
-	if m.NormalizerFull {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	if m.NormalizerStrict {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.PathFmt)
-	_, _ = h.WriteString(m.PathMatch)
-	_, _ = h.WriteString(m.Protocol)
-	_, _ = h.WriteString(m.QueryFmt)
-	if m.RedirCode != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.RedirCode)
-	}
-	_, _ = h.WriteString(m.RedirOption)
-	_, _ = h.WriteString(m.RedirType)
-	_, _ = h.WriteString(m.RedirValue)
-	_, _ = h.WriteString(m.Resolvers)
-	_, _ = h.WriteString(m.ReturnContent)
-	_, _ = h.WriteString(m.ReturnContentFormat)
-	if m.ReturnContentType != nil {
-		_, _ = h.WriteString(*m.ReturnContentType)
-	}
-	if m.ReturnStatusCode != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.ReturnStatusCode)
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.RstTTL)
-	_, _ = h.WriteString(m.ScExpr)
-	_ = binary.Write(h, binary.LittleEndian, m.ScID)
-	_ = binary.Write(h, binary.LittleEndian, m.ScIdx)
-	if m.ScInt != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.ScInt)
-	}
-	_, _ = h.WriteString(m.ServiceName)
-	_, _ = h.WriteString(m.SpoeEngine)
-	_, _ = h.WriteString(m.SpoeGroup)
-	_, _ = h.WriteString(m.StrictMode)
-	_, _ = h.WriteString(m.Timeout)
-	_, _ = h.WriteString(m.TimeoutType)
-	_, _ = h.WriteString(m.TosValue)
-	_, _ = h.WriteString(m.TrackScKey)
-	if m.TrackScStickCounter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.TrackScStickCounter)
-	}
-	_, _ = h.WriteString(m.TrackScTable)
-	_, _ = h.WriteString(m.Type)
-	_, _ = h.WriteString(m.URIFmt)
-	_, _ = h.WriteString(m.URIMatch)
-	_, _ = h.WriteString(m.VarExpr)
-	_, _ = h.WriteString(m.VarFormat)
-	_, _ = h.WriteString(m.VarName)
-	_, _ = h.WriteString(m.VarScope)
-	if m.WaitAtLeast != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.WaitAtLeast)
-	}
-	if m.WaitTime != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.WaitTime)
-	}
-	return h.Sum64()
-}
-
 // ValidateHttpResponseRuleV30 validates a http_response_rule model.
 func ValidateHttpResponseRuleV30(m *models.HTTPResponseRule) error {
 	if m == nil {
@@ -1342,90 +825,6 @@ func ValidateHttpResponseRuleV30(m *models.HTTPResponseRule) error {
 	return nil
 }
 
-// HashHttpResponseRuleV30 computes a content hash for cache lookup.
-func HashHttpResponseRuleV30(m *models.HTTPResponseRule) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.ACLFile)
-	_, _ = h.WriteString(m.ACLKeyfmt)
-	_, _ = h.WriteString(m.BandwidthLimitLimit)
-	_, _ = h.WriteString(m.BandwidthLimitName)
-	_, _ = h.WriteString(m.BandwidthLimitPeriod)
-	_, _ = h.WriteString(m.CacheName)
-	if m.CaptureID != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.CaptureID)
-	}
-	_, _ = h.WriteString(m.CaptureSample)
-	_, _ = h.WriteString(m.Cond)
-	_, _ = h.WriteString(m.CondTest)
-	if m.DenyStatus != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.DenyStatus)
-	}
-	_, _ = h.WriteString(m.Expr)
-	_, _ = h.WriteString(m.HdrFormat)
-	_, _ = h.WriteString(m.HdrMatch)
-	_, _ = h.WriteString(m.HdrMethod)
-	_, _ = h.WriteString(m.HdrName)
-	_, _ = h.WriteString(m.LogLevel)
-	_, _ = h.WriteString(m.LuaAction)
-	_, _ = h.WriteString(m.LuaParams)
-	_, _ = h.WriteString(m.MapFile)
-	_, _ = h.WriteString(m.MapKeyfmt)
-	_, _ = h.WriteString(m.MapValuefmt)
-	_, _ = h.WriteString(m.MarkValue)
-	_ = binary.Write(h, binary.LittleEndian, m.NiceValue)
-	if m.RedirCode != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.RedirCode)
-	}
-	_, _ = h.WriteString(m.RedirOption)
-	_, _ = h.WriteString(m.RedirType)
-	_, _ = h.WriteString(m.RedirValue)
-	_, _ = h.WriteString(m.ReturnContent)
-	_, _ = h.WriteString(m.ReturnContentFormat)
-	if m.ReturnContentType != nil {
-		_, _ = h.WriteString(*m.ReturnContentType)
-	}
-	if m.ReturnStatusCode != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.ReturnStatusCode)
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.RstTTL)
-	_, _ = h.WriteString(m.ScExpr)
-	_ = binary.Write(h, binary.LittleEndian, m.ScID)
-	_ = binary.Write(h, binary.LittleEndian, m.ScIdx)
-	if m.ScInt != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.ScInt)
-	}
-	_, _ = h.WriteString(m.SpoeEngine)
-	_, _ = h.WriteString(m.SpoeGroup)
-	_ = binary.Write(h, binary.LittleEndian, m.Status)
-	_, _ = h.WriteString(m.StatusReason)
-	_, _ = h.WriteString(m.StrictMode)
-	_, _ = h.WriteString(m.Timeout)
-	_, _ = h.WriteString(m.TimeoutType)
-	_, _ = h.WriteString(m.TosValue)
-	_, _ = h.WriteString(m.TrackScKey)
-	if m.TrackScStickCounter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.TrackScStickCounter)
-	}
-	_, _ = h.WriteString(m.TrackScTable)
-	_, _ = h.WriteString(m.Type)
-	_, _ = h.WriteString(m.VarExpr)
-	_, _ = h.WriteString(m.VarFormat)
-	_, _ = h.WriteString(m.VarName)
-	_, _ = h.WriteString(m.VarScope)
-	if m.WaitAtLeast != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.WaitAtLeast)
-	}
-	if m.WaitTime != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.WaitTime)
-	}
-	return h.Sum64()
-}
-
 // ValidateLogTargetV30 validates a log_target model.
 func ValidateLogTargetV30(m *models.LogTarget) error {
 	if m == nil {
@@ -1473,35 +872,6 @@ func ValidateLogTargetV30(m *models.LogTarget) error {
 	}
 
 	return nil
-}
-
-// HashLogTargetV30 computes a content hash for cache lookup.
-func HashLogTargetV30(m *models.LogTarget) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.Address)
-	_, _ = h.WriteString(m.Facility)
-	_, _ = h.WriteString(m.Format)
-	if m.Global {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.Length)
-	_, _ = h.WriteString(m.Level)
-	_, _ = h.WriteString(m.Minlevel)
-	if m.Nolog {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.SampleRange)
-	_ = binary.Write(h, binary.LittleEndian, m.SampleSize)
-	return h.Sum64()
 }
 
 // ValidateServerV30 validates a server model.
@@ -1956,160 +1326,6 @@ func ValidateServerV30(m *models.Server) error {
 	return nil
 }
 
-// HashServerV30 computes a content hash for cache lookup.
-func HashServerV30(m *models.Server) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.Address)
-	_, _ = h.WriteString(m.AgentAddr)
-	_, _ = h.WriteString(m.AgentCheck)
-	if m.AgentInter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.AgentInter)
-	}
-	if m.AgentPort != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.AgentPort)
-	}
-	_, _ = h.WriteString(m.AgentSend)
-	if m.Allow0rtt {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Alpn)
-	_, _ = h.WriteString(m.Backup)
-	_, _ = h.WriteString(m.Check)
-	_, _ = h.WriteString(m.CheckSendProxy)
-	_, _ = h.WriteString(m.CheckSni)
-	_, _ = h.WriteString(m.CheckSsl)
-	_, _ = h.WriteString(m.CheckAlpn)
-	_, _ = h.WriteString(m.CheckProto)
-	_, _ = h.WriteString(m.CheckViaSocks4)
-	_, _ = h.WriteString(m.Ciphers)
-	_, _ = h.WriteString(m.Ciphersuites)
-	_, _ = h.WriteString(m.ClientSigalgs)
-	_, _ = h.WriteString(m.Cookie)
-	_, _ = h.WriteString(m.CrlFile)
-	_, _ = h.WriteString(m.Curves)
-	if m.Downinter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Downinter)
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.ErrorLimit)
-	if m.Fall != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Fall)
-	}
-	if m.Fastinter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Fastinter)
-	}
-	_, _ = h.WriteString(m.ForceSslv3)
-	_, _ = h.WriteString(m.ForceTlsv10)
-	_, _ = h.WriteString(m.ForceTlsv11)
-	_, _ = h.WriteString(m.ForceTlsv12)
-	_, _ = h.WriteString(m.ForceTlsv13)
-	_, _ = h.WriteString(m.GUID)
-	_, _ = h.WriteString(m.HashKey)
-	_, _ = h.WriteString(m.HealthCheckAddress)
-	if m.HealthCheckPort != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.HealthCheckPort)
-	}
-	if m.ID != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.ID)
-	}
-	if m.InitAddr != nil {
-		_, _ = h.WriteString(*m.InitAddr)
-	}
-	if m.Inter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Inter)
-	}
-	if m.LogBufsize != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.LogBufsize)
-	}
-	_, _ = h.WriteString(m.LogProto)
-	_, _ = h.WriteString(m.Maintenance)
-	if m.MaxReuse != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.MaxReuse)
-	}
-	if m.Maxconn != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Maxconn)
-	}
-	if m.Maxqueue != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Maxqueue)
-	}
-	if m.Minconn != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Minconn)
-	}
-	_, _ = h.WriteString(m.Name)
-	_, _ = h.WriteString(m.Namespace)
-	_, _ = h.WriteString(m.NoSslv3)
-	_, _ = h.WriteString(m.NoTlsv10)
-	_, _ = h.WriteString(m.NoTlsv11)
-	_, _ = h.WriteString(m.NoTlsv12)
-	_, _ = h.WriteString(m.NoTlsv13)
-	_, _ = h.WriteString(m.NoVerifyhost)
-	_, _ = h.WriteString(m.Npn)
-	_, _ = h.WriteString(m.Observe)
-	_, _ = h.WriteString(m.OnError)
-	_, _ = h.WriteString(m.OnMarkedDown)
-	_, _ = h.WriteString(m.OnMarkedUp)
-	_, _ = h.WriteString(m.PoolConnName)
-	if m.PoolLowConn != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.PoolLowConn)
-	}
-	if m.PoolMaxConn != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.PoolMaxConn)
-	}
-	if m.PoolPurgeDelay != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.PoolPurgeDelay)
-	}
-	if m.Port != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Port)
-	}
-	_, _ = h.WriteString(m.Proto)
-	_, _ = h.WriteString(m.Redir)
-	_, _ = h.WriteString(m.ResolveNet)
-	_, _ = h.WriteString(m.ResolvePrefer)
-	_, _ = h.WriteString(m.ResolveOpts)
-	_, _ = h.WriteString(m.Resolvers)
-	if m.Rise != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Rise)
-	}
-	_, _ = h.WriteString(m.SendProxy)
-	_, _ = h.WriteString(m.SendProxyV2)
-	_, _ = h.WriteString(m.SendProxyV2Ssl)
-	_, _ = h.WriteString(m.SendProxyV2SslCn)
-	_ = binary.Write(h, binary.LittleEndian, m.Shard)
-	_, _ = h.WriteString(m.Sigalgs)
-	if m.Slowstart != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Slowstart)
-	}
-	_, _ = h.WriteString(m.Sni)
-	_, _ = h.WriteString(m.Socks4)
-	_, _ = h.WriteString(m.Source)
-	_, _ = h.WriteString(m.Ssl)
-	_, _ = h.WriteString(m.SslCafile)
-	_, _ = h.WriteString(m.SslCertificate)
-	_, _ = h.WriteString(m.SslMaxVer)
-	_, _ = h.WriteString(m.SslMinVer)
-	_, _ = h.WriteString(m.SslReuse)
-	_, _ = h.WriteString(m.Stick)
-	if m.TCPUt != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.TCPUt)
-	}
-	_, _ = h.WriteString(m.Tfo)
-	_, _ = h.WriteString(m.TLSTickets)
-	_, _ = h.WriteString(m.Track)
-	_, _ = h.WriteString(m.Verify)
-	_, _ = h.WriteString(m.Verifyhost)
-	if m.Weight != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Weight)
-	}
-	_, _ = h.WriteString(m.Ws)
-	return h.Sum64()
-}
-
 // ValidateServerSwitchingRuleV30 validates a server_switching_rule model.
 func ValidateServerSwitchingRuleV30(m *models.ServerSwitchingRule) error {
 	if m == nil {
@@ -2134,20 +1350,6 @@ func ValidateServerSwitchingRuleV30(m *models.ServerSwitchingRule) error {
 	}
 
 	return nil
-}
-
-// HashServerSwitchingRuleV30 computes a content hash for cache lookup.
-func HashServerSwitchingRuleV30(m *models.ServerSwitchingRule) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.Cond)
-	_, _ = h.WriteString(m.CondTest)
-	_, _ = h.WriteString(m.TargetServer)
-	return h.Sum64()
 }
 
 // ValidateServerTemplateV30 validates a server_template model.
@@ -2602,161 +1804,6 @@ func ValidateServerTemplateV30(m *models.ServerTemplate) error {
 	return nil
 }
 
-// HashServerTemplateV30 computes a content hash for cache lookup.
-func HashServerTemplateV30(m *models.ServerTemplate) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.AgentAddr)
-	_, _ = h.WriteString(m.AgentCheck)
-	if m.AgentInter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.AgentInter)
-	}
-	if m.AgentPort != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.AgentPort)
-	}
-	_, _ = h.WriteString(m.AgentSend)
-	if m.Allow0rtt {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Alpn)
-	_, _ = h.WriteString(m.Backup)
-	_, _ = h.WriteString(m.Check)
-	_, _ = h.WriteString(m.CheckSendProxy)
-	_, _ = h.WriteString(m.CheckSni)
-	_, _ = h.WriteString(m.CheckSsl)
-	_, _ = h.WriteString(m.CheckAlpn)
-	_, _ = h.WriteString(m.CheckProto)
-	_, _ = h.WriteString(m.CheckViaSocks4)
-	_, _ = h.WriteString(m.Ciphers)
-	_, _ = h.WriteString(m.Ciphersuites)
-	_, _ = h.WriteString(m.ClientSigalgs)
-	_, _ = h.WriteString(m.Cookie)
-	_, _ = h.WriteString(m.CrlFile)
-	_, _ = h.WriteString(m.Curves)
-	if m.Downinter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Downinter)
-	}
-	_ = binary.Write(h, binary.LittleEndian, m.ErrorLimit)
-	if m.Fall != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Fall)
-	}
-	if m.Fastinter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Fastinter)
-	}
-	_, _ = h.WriteString(m.ForceSslv3)
-	_, _ = h.WriteString(m.ForceTlsv10)
-	_, _ = h.WriteString(m.ForceTlsv11)
-	_, _ = h.WriteString(m.ForceTlsv12)
-	_, _ = h.WriteString(m.ForceTlsv13)
-	_, _ = h.WriteString(m.Fqdn)
-	_, _ = h.WriteString(m.GUID)
-	_, _ = h.WriteString(m.HashKey)
-	_, _ = h.WriteString(m.HealthCheckAddress)
-	if m.HealthCheckPort != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.HealthCheckPort)
-	}
-	if m.ID != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.ID)
-	}
-	if m.InitAddr != nil {
-		_, _ = h.WriteString(*m.InitAddr)
-	}
-	if m.Inter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Inter)
-	}
-	if m.LogBufsize != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.LogBufsize)
-	}
-	_, _ = h.WriteString(m.LogProto)
-	_, _ = h.WriteString(m.Maintenance)
-	if m.MaxReuse != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.MaxReuse)
-	}
-	if m.Maxconn != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Maxconn)
-	}
-	if m.Maxqueue != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Maxqueue)
-	}
-	if m.Minconn != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Minconn)
-	}
-	_, _ = h.WriteString(m.Namespace)
-	_, _ = h.WriteString(m.NoSslv3)
-	_, _ = h.WriteString(m.NoTlsv10)
-	_, _ = h.WriteString(m.NoTlsv11)
-	_, _ = h.WriteString(m.NoTlsv12)
-	_, _ = h.WriteString(m.NoTlsv13)
-	_, _ = h.WriteString(m.NoVerifyhost)
-	_, _ = h.WriteString(m.Npn)
-	_, _ = h.WriteString(m.NumOrRange)
-	_, _ = h.WriteString(m.Observe)
-	_, _ = h.WriteString(m.OnError)
-	_, _ = h.WriteString(m.OnMarkedDown)
-	_, _ = h.WriteString(m.OnMarkedUp)
-	_, _ = h.WriteString(m.PoolConnName)
-	if m.PoolLowConn != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.PoolLowConn)
-	}
-	if m.PoolMaxConn != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.PoolMaxConn)
-	}
-	if m.PoolPurgeDelay != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.PoolPurgeDelay)
-	}
-	if m.Port != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Port)
-	}
-	_, _ = h.WriteString(m.Prefix)
-	_, _ = h.WriteString(m.Proto)
-	_, _ = h.WriteString(m.Redir)
-	_, _ = h.WriteString(m.ResolveNet)
-	_, _ = h.WriteString(m.ResolvePrefer)
-	_, _ = h.WriteString(m.ResolveOpts)
-	_, _ = h.WriteString(m.Resolvers)
-	if m.Rise != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Rise)
-	}
-	_, _ = h.WriteString(m.SendProxy)
-	_, _ = h.WriteString(m.SendProxyV2)
-	_, _ = h.WriteString(m.SendProxyV2Ssl)
-	_, _ = h.WriteString(m.SendProxyV2SslCn)
-	_ = binary.Write(h, binary.LittleEndian, m.Shard)
-	_, _ = h.WriteString(m.Sigalgs)
-	if m.Slowstart != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Slowstart)
-	}
-	_, _ = h.WriteString(m.Sni)
-	_, _ = h.WriteString(m.Socks4)
-	_, _ = h.WriteString(m.Source)
-	_, _ = h.WriteString(m.Ssl)
-	_, _ = h.WriteString(m.SslCafile)
-	_, _ = h.WriteString(m.SslCertificate)
-	_, _ = h.WriteString(m.SslMaxVer)
-	_, _ = h.WriteString(m.SslMinVer)
-	_, _ = h.WriteString(m.SslReuse)
-	_, _ = h.WriteString(m.Stick)
-	if m.TCPUt != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.TCPUt)
-	}
-	_, _ = h.WriteString(m.Tfo)
-	_, _ = h.WriteString(m.TLSTickets)
-	_, _ = h.WriteString(m.Track)
-	_, _ = h.WriteString(m.Verify)
-	_, _ = h.WriteString(m.Verifyhost)
-	if m.Weight != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Weight)
-	}
-	_, _ = h.WriteString(m.Ws)
-	return h.Sum64()
-}
-
 // ValidateStickRuleV30 validates a stick_rule model.
 func ValidateStickRuleV30(m *models.StickRule) error {
 	if m == nil {
@@ -2798,22 +1845,6 @@ func ValidateStickRuleV30(m *models.StickRule) error {
 	}
 
 	return nil
-}
-
-// HashStickRuleV30 computes a content hash for cache lookup.
-func HashStickRuleV30(m *models.StickRule) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.Cond)
-	_, _ = h.WriteString(m.CondTest)
-	_, _ = h.WriteString(m.Pattern)
-	_, _ = h.WriteString(m.Table)
-	_, _ = h.WriteString(m.Type)
-	return h.Sum64()
 }
 
 // ValidateTcpCheckV30 validates a tcp_check model.
@@ -2898,74 +1929,6 @@ func ValidateTcpCheckV30(m *models.TCPCheck) error {
 	}
 
 	return nil
-}
-
-// HashTcpCheckV30 computes a content hash for cache lookup.
-func HashTcpCheckV30(m *models.TCPCheck) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.Action)
-	_, _ = h.WriteString(m.Addr)
-	_, _ = h.WriteString(m.Alpn)
-	_, _ = h.WriteString(m.CheckComment)
-	_, _ = h.WriteString(m.Data)
-	if m.Default {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.ErrorStatus)
-	if m.ExclamationMark {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Fmt)
-	_, _ = h.WriteString(m.HexFmt)
-	_, _ = h.WriteString(m.HexString)
-	if m.Linger {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Match)
-	_ = binary.Write(h, binary.LittleEndian, m.MinRecv)
-	_, _ = h.WriteString(m.OkStatus)
-	_, _ = h.WriteString(m.OnError)
-	_, _ = h.WriteString(m.OnSuccess)
-	_, _ = h.WriteString(m.Pattern)
-	if m.Port != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Port)
-	}
-	_, _ = h.WriteString(m.PortString)
-	_, _ = h.WriteString(m.Proto)
-	if m.SendProxy {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.Sni)
-	if m.Ssl {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	_, _ = h.WriteString(m.StatusCode)
-	_, _ = h.WriteString(m.ToutStatus)
-	_, _ = h.WriteString(m.VarExpr)
-	_, _ = h.WriteString(m.VarFmt)
-	_, _ = h.WriteString(m.VarName)
-	_, _ = h.WriteString(m.VarScope)
-	if m.ViaSocks4 {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
-	return h.Sum64()
 }
 
 // ValidateTcpRequestRuleV30 validates a tcp_request_rule model.
@@ -3054,59 +2017,6 @@ func ValidateTcpRequestRuleV30(m *models.TCPRequestRule) error {
 	return nil
 }
 
-// HashTcpRequestRuleV30 computes a content hash for cache lookup.
-func HashTcpRequestRuleV30(m *models.TCPRequestRule) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.Action)
-	_, _ = h.WriteString(m.BandwidthLimitLimit)
-	_, _ = h.WriteString(m.BandwidthLimitName)
-	_, _ = h.WriteString(m.BandwidthLimitPeriod)
-	_ = binary.Write(h, binary.LittleEndian, m.CaptureLen)
-	_, _ = h.WriteString(m.CaptureSample)
-	_, _ = h.WriteString(m.Cond)
-	_, _ = h.WriteString(m.CondTest)
-	_, _ = h.WriteString(m.Expr)
-	_, _ = h.WriteString(m.GptValue)
-	_, _ = h.WriteString(m.LogLevel)
-	_, _ = h.WriteString(m.LuaAction)
-	_, _ = h.WriteString(m.LuaParams)
-	_, _ = h.WriteString(m.MarkValue)
-	_ = binary.Write(h, binary.LittleEndian, m.NiceValue)
-	_, _ = h.WriteString(m.ResolveProtocol)
-	_, _ = h.WriteString(m.ResolveResolvers)
-	_, _ = h.WriteString(m.ResolveVar)
-	_ = binary.Write(h, binary.LittleEndian, m.RstTTL)
-	_, _ = h.WriteString(m.ScIdx)
-	_, _ = h.WriteString(m.ScIncID)
-	if m.ScInt != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.ScInt)
-	}
-	_, _ = h.WriteString(m.ServerName)
-	_, _ = h.WriteString(m.ServiceName)
-	_, _ = h.WriteString(m.SpoeEngineName)
-	_, _ = h.WriteString(m.SpoeGroupName)
-	_, _ = h.WriteString(m.SwitchModeProto)
-	if m.Timeout != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Timeout)
-	}
-	_, _ = h.WriteString(m.TosValue)
-	_, _ = h.WriteString(m.TrackKey)
-	if m.TrackStickCounter != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.TrackStickCounter)
-	}
-	_, _ = h.WriteString(m.TrackTable)
-	_, _ = h.WriteString(m.Type)
-	_, _ = h.WriteString(m.VarFormat)
-	_, _ = h.WriteString(m.VarName)
-	_, _ = h.WriteString(m.VarScope)
-	return h.Sum64()
-}
-
 // ValidateTcpResponseRuleV30 validates a tcp_response_rule model.
 func ValidateTcpResponseRuleV30(m *models.TCPResponseRule) error {
 	if m == nil {
@@ -3186,44 +2096,4 @@ func ValidateTcpResponseRuleV30(m *models.TCPResponseRule) error {
 	}
 
 	return nil
-}
-
-// HashTcpResponseRuleV30 computes a content hash for cache lookup.
-func HashTcpResponseRuleV30(m *models.TCPResponseRule) uint64 {
-	if m == nil {
-		return 0
-	}
-
-	h := xxhash.New()
-
-	_, _ = h.WriteString(m.Action)
-	_, _ = h.WriteString(m.BandwidthLimitLimit)
-	_, _ = h.WriteString(m.BandwidthLimitName)
-	_, _ = h.WriteString(m.BandwidthLimitPeriod)
-	_, _ = h.WriteString(m.Cond)
-	_, _ = h.WriteString(m.CondTest)
-	_, _ = h.WriteString(m.Expr)
-	_, _ = h.WriteString(m.LogLevel)
-	_, _ = h.WriteString(m.LuaAction)
-	_, _ = h.WriteString(m.LuaParams)
-	_, _ = h.WriteString(m.MarkValue)
-	_ = binary.Write(h, binary.LittleEndian, m.NiceValue)
-	_ = binary.Write(h, binary.LittleEndian, m.RstTTL)
-	_, _ = h.WriteString(m.ScExpr)
-	_ = binary.Write(h, binary.LittleEndian, m.ScID)
-	_ = binary.Write(h, binary.LittleEndian, m.ScIdx)
-	if m.ScInt != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.ScInt)
-	}
-	_, _ = h.WriteString(m.SpoeEngine)
-	_, _ = h.WriteString(m.SpoeGroup)
-	if m.Timeout != nil {
-		_ = binary.Write(h, binary.LittleEndian, *m.Timeout)
-	}
-	_, _ = h.WriteString(m.TosValue)
-	_, _ = h.WriteString(m.Type)
-	_, _ = h.WriteString(m.VarFormat)
-	_, _ = h.WriteString(m.VarName)
-	_, _ = h.WriteString(m.VarScope)
-	return h.Sum64()
 }

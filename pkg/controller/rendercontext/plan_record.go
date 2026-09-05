@@ -45,46 +45,6 @@ var (
 	backendShapes = []string{renderplan.ShapeDynamic, renderplan.ShapeStructural}
 )
 
-// backendFromRecord decodes and validates the record a template declared a
-// backend with.
-func backendFromRecord(record map[string]any) (renderplan.Backend, error) {
-	dec := newRecordDecoder("planRegistry.Backend", record, backendRecordKeys)
-	backend := renderplan.Backend{
-		Name:          dec.str("name"),
-		Profile:       dec.str("profile"),
-		Mode:          dec.str("mode"),
-		GUID:          dec.str("guid"),
-		Balance:       dec.str("balance"),
-		HashType:      dec.str("hashType"),
-		Shape:         dec.strOr("shape", renderplan.ShapeStructural),
-		ShapeReason:   dec.str("shapeReason"),
-		Servers:       dec.servers("servers"),
-		DefaultServer: dec.keywords("defaultServer"),
-	}
-	body := dec.strSlice("body")
-	comments := dec.strSlice("comments")
-	if err := dec.err; err != nil {
-		return renderplan.Backend{}, err
-	}
-	// A dynamic backend is created with `add backend <name> from <profile> mode
-	// <mode>`, where the mode is mandatory. Its section carries no `mode` line —
-	// it inherits http, HAProxy's default, from its named defaults — so the
-	// record has to name that effective mode or the op is composed with an empty
-	// one and the agent refuses it, reloading the whole set. A structural
-	// backend never sees `add backend`, so its undeclared mode is left as-is.
-	if backend.Shape == renderplan.ShapeDynamic && backend.Mode == "" {
-		backend.Mode = "http"
-	}
-	if err := validateBackend(&backend); err != nil {
-		return renderplan.Backend{}, err
-	}
-
-	backend.BodyDigest = renderplan.DigestString(strings.Join(body, "\n"))
-	backend.CommentsDigest = renderplan.DigestString(strings.Join(comments, "\n"))
-	backend.RecordDigest = recordDigest(&backend)
-	return backend, nil
-}
-
 func validateBackend(backend *renderplan.Backend) error {
 	if backend.Name == "" {
 		return fmt.Errorf("planRegistry.Backend: %q is required", "name")
@@ -184,7 +144,7 @@ func (d *recordDecoder) strSlice(key string) []string {
 	}
 	switch typed := value.(type) {
 	case []string:
-		return typed
+		return normalizeStrings(typed)
 	case []any:
 		lines := make([]string, 0, len(typed))
 		for _, element := range typed {

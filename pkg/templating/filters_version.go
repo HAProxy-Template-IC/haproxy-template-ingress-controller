@@ -15,7 +15,6 @@
 package templating
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -28,12 +27,12 @@ import (
 //
 //	{%- if semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.3") -%}
 func scriggoSemverGte(version, minVersion any) bool {
-	vMajor, vMinor, ok := parseSemver(fmt.Sprint(version))
+	vMajor, vMinor, ok := parseSemver(mustDeterministicScalarText("semver_gte", version))
 	if !ok {
 		return false
 	}
 
-	minMajor, minMinor, ok := parseSemver(fmt.Sprint(minVersion))
+	minMajor, minMinor, ok := parseSemver(mustDeterministicScalarText("semver_gte", minVersion))
 	if !ok {
 		return false
 	}

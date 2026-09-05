@@ -31,6 +31,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -427,8 +428,7 @@ func (c *Component) runWithBaselineCheck(ctx context.Context, overlayProvider *s
 		return validationOutcome{Phase: pipelineFailurePhase(authorityErr), Error: authorityErr}
 	}
 	if baselineErr == nil && baselineResult != nil && !baselineResult.Valid &&
-		pipelineResult != nil && baselinePipelineResult != nil &&
-		pipelineResult.ContentChecksum == baselinePipelineResult.ContentChecksum {
+		sameRenderedContent(pipelineResult, baselinePipelineResult) {
 		c.logger.Warn("Admitting resource because it does not change the already-invalid rendered configuration",
 			"validation_phase", proposedResult.Phase,
 			"validation_error", proposedResult.Error,
@@ -441,6 +441,47 @@ func (c *Component) runWithBaselineCheck(ctx context.Context, overlayProvider *s
 	}
 
 	return validationOutcome{Phase: proposedResult.Phase, Error: proposedResult.Error, Warnings: proposedResult.Warnings}
+}
+
+func sameRenderedContent(left, right *pipeline.PipelineResult) bool {
+	leftContent, err := authenticatedRenderedContent(left)
+	if err != nil {
+		return false
+	}
+	rightContent, err := authenticatedRenderedContent(right)
+	if err != nil || leftContent.config != rightContent.config {
+		return false
+	}
+	same, err := leftContent.artifacts.SameRoot(rightContent.artifacts)
+	if err != nil || same {
+		return err == nil && same
+	}
+	equal, err := leftContent.artifacts.ExactEqual(rightContent.artifacts)
+	return err == nil && equal
+}
+
+type renderedContent struct {
+	config    string
+	artifacts *renderartifact.Snapshot
+}
+
+func authenticatedRenderedContent(result *pipeline.PipelineResult) (*renderedContent, error) {
+	if result == nil || result.CycleSnapshot == nil {
+		return nil, errors.New("pipeline result has no authenticated render cycle")
+	}
+	output, err := result.CycleSnapshot.OutputSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading render cycle output: %w", err)
+	}
+	config, err := output.Config()
+	if err != nil {
+		return nil, fmt.Errorf("reading render config: %w", err)
+	}
+	artifacts, err := output.ArtifactSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading render artifacts: %w", err)
+	}
+	return &renderedContent{config: config, artifacts: artifacts}, nil
 }
 
 func validationAuthorityFailure(ctx context.Context, runErr error, runResult *validation.ValidationResult) error {

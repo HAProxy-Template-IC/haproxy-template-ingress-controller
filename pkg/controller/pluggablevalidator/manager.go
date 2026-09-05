@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
 )
 
 // DefaultMaxParallelDispatch caps the number of concurrent
@@ -69,24 +70,23 @@ type ManagerConfig struct {
 }
 
 // Manager is the controller-side entry point for the validator-
-// sidecar feature. It owns one Client per configured validator plus
-// a shared content-hash result cache. Concurrent calls are safe;
-// per-validator pools handle in-process parallelism.
+// sidecar feature. It owns one Client per configured validator.
+// Concurrent calls are safe; per-validator pools handle in-process
+// parallelism.
 //
 // Routing model: the pipeline hands the Manager every rendered file.
 // For each (file, validator) pair where
-// the validator's globs match the file's path, the Manager either
-// returns the cached Response or sends a single-file request frame
-// over the socket. All resulting diagnostics are concatenated and
-// returned as one slice. Errors fail every pipeline caller; admission also
-// surfaces warnings through `AdmissionResponse.Warnings`.
+// the validator's globs match the file's path, the Manager sends a
+// single-file request frame over the socket. All resulting diagnostics
+// are concatenated and returned as one slice. Errors fail every pipeline
+// caller; admission also surfaces warnings through
+// `AdmissionResponse.Warnings`.
 //
 // Construction validates every invariant needed for safe dispatch. A failure
 // aborts controller iteration construction.
 type Manager struct {
 	logger  *slog.Logger
 	clients map[string]*Client
-	cache   *ResultCache
 	configs []ManagerConfig // preserved for Healthy() iteration order
 	// stagedRoot is where the rendered files will live on the HAProxy pod. It
 	// describes the controller's own file namespace, so it is one value for
@@ -154,7 +154,6 @@ func NewManager(logger *slog.Logger, configs []ManagerConfig, opts ...ManagerOpt
 	m := &Manager{
 		logger:  logger.With(slog.String("component", "pluggablevalidator")),
 		clients: clients,
-		cache:   NewResultCache(DefaultCacheCapacity),
 		configs: append([]ManagerConfig(nil), configs...),
 	}
 	for _, opt := range opts {
@@ -373,7 +372,11 @@ func acquireDispatchSlot(ctx context.Context, sem chan<- struct{}) error {
 
 // ValidateRenderedOutput implements pipeline.RenderedOutputValidator.
 func (m *Manager) ValidateRenderedOutput(ctx context.Context, result *pipeline.PipelineResult) ([]string, error) {
-	outcome := m.ValidateAll(ctx, buildFiles(result))
+	files, err := buildFiles(result)
+	if err != nil {
+		return nil, fmt.Errorf("reading rendered files: %w", err)
+	}
+	outcome := m.ValidateAll(ctx, files)
 	warnings := formatDiagnostics(outcome.Warnings)
 	var diagnosticErr error
 	if len(outcome.Errors) > 0 {
@@ -389,27 +392,60 @@ func externalValidationContextError(ctx context.Context) error {
 	return nil
 }
 
-func buildFiles(result *pipeline.PipelineResult) []File {
-	files := []File{{Path: "/etc/haproxy/haproxy.cfg", Content: result.HAProxyConfig}}
-	if result.AuxiliaryFiles == nil {
-		return files
+func buildFiles(result *pipeline.PipelineResult) ([]File, error) {
+	config, artifactSnapshot, err := renderedFileAuthority(result)
+	if err != nil {
+		return nil, err
 	}
-	for _, file := range result.AuxiliaryFiles.GeneralFiles {
-		files = append(files, File{Path: file.Path, Content: file.Content})
+	files := []File{{Path: "/etc/haproxy/haproxy.cfg", Content: config}}
+	return appendSnapshotFiles(files, artifactSnapshot)
+}
+
+func renderedFileAuthority(result *pipeline.PipelineResult) (string, *renderartifact.Snapshot, error) {
+	if result == nil || result.CycleSnapshot == nil {
+		return "", nil, errors.New("rendered output has no authenticated render cycle")
 	}
-	for _, file := range result.AuxiliaryFiles.SSLCertificates {
-		files = append(files, File{Path: file.Path, Content: file.Content})
+	output, err := result.CycleSnapshot.OutputSnapshot()
+	if err != nil {
+		return "", nil, fmt.Errorf("reading render cycle output: %w", err)
 	}
-	for _, file := range result.AuxiliaryFiles.SSLCaFiles {
-		files = append(files, File{Path: file.Path, Content: file.Content})
+	config, err := output.Config()
+	if err != nil {
+		return "", nil, fmt.Errorf("reading rendered config: %w", err)
 	}
-	for _, file := range result.AuxiliaryFiles.MapFiles {
-		files = append(files, File{Path: file.Path, Content: file.Content})
+	artifacts, err := output.ArtifactSnapshot()
+	if err != nil {
+		return "", nil, fmt.Errorf("reading rendered artifacts: %w", err)
 	}
-	for _, file := range result.AuxiliaryFiles.CRTListFiles {
-		files = append(files, File{Path: file.Path, Content: file.Content})
+	return config, artifacts, nil
+}
+
+func appendSnapshotFiles(files []File, snapshot *renderartifact.Snapshot) ([]File, error) {
+	err := snapshot.Walk(func(artifact *renderartifact.Artifact) error {
+		file, err := validatorFile(artifact)
+		if err != nil {
+			return err
+		}
+		files = append(files, file)
+		return nil
+	})
+	return files, err
+}
+
+func validatorFile(artifact *renderartifact.Artifact) (File, error) {
+	descriptor, err := artifact.Descriptor()
+	if err != nil {
+		return File{}, err
 	}
-	return files
+	content, err := artifact.Content()
+	if err != nil {
+		return File{}, err
+	}
+	text, err := content.String()
+	if err != nil {
+		return File{}, err
+	}
+	return File{Path: descriptor.Path, Content: text}, nil
 }
 
 func formatDiagnostics(diags []Diagnostic) []string {
@@ -464,8 +500,8 @@ func sortDiagnostics(diags []Diagnostic) {
 	})
 }
 
-// validateOne dispatches a single file to a validator with cache
-// hit-skip. Used internally by ValidateAll.
+// validateOne dispatches a single file to a validator. Used internally by
+// ValidateAll.
 func (m *Manager) validateOne(
 	ctx context.Context,
 	client *Client,
@@ -473,18 +509,6 @@ func (m *Manager) validateOne(
 	file File,
 	dataFiles []File,
 ) *Response {
-	// The key covers the data files too. Keying on the config file alone
-	// would serve a cached verdict for an unchanged hub config after its
-	// ruleset changed underneath — precisely the case the data files exist
-	// to check, and the one where a stale "valid" is most expensive.
-	key := NewCacheKey(validatorName, file.Path, []byte(file.Content), dataFiles...)
-	if cached, hit := m.cache.Get(key); hit {
-		m.logger.Debug("Cache hit",
-			slog.String("validator", validatorName),
-			slog.String("path", file.Path))
-		return cached
-	}
-
 	req := &Request{
 		ProtocolVersion: ProtocolVersion,
 		Files:           append([]File{file}, dataFiles...),
@@ -499,18 +523,11 @@ func (m *Manager) validateOne(
 		))
 	}
 
-	// Cache real validator responses, including warning/error ones
-	// — those are deterministic functions of the input under the
-	// wire-protocol's purity contract. Do NOT cache transport or
-	// protocol-decode failures (synthetic ProtocolError responses),
-	// since they are not validator verdicts.
 	if resp.IsSynthetic() {
-		m.logger.Debug("Validator protocol failure (not cached)",
+		m.logger.Debug("Validator protocol failure",
 			slog.String("validator", validatorName),
 			slog.String("path", file.Path))
-		return resp
 	}
-	m.cache.Put(key, resp)
 	return resp
 }
 

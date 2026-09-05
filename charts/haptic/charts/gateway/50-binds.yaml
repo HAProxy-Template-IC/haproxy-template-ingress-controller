@@ -11,11 +11,7 @@ templateSnippets:
   # port 80 fall through to the chart-static bind, and non-default
   # HTTPS listeners on port 443 / port 80 don't double-render).
   #
-  # Inlines the F3 allowedListeners gate (default-deny when unset;
-  # from=Same admits ListenerSets in the parent's namespace;
-  # from=All admits everywhere; from=Selector matches namespace
-  # labels) plus the cross-namespace ReferenceGrant gate, so the
-  # binds match what status-patches-220-listenerset accepts.
+  # ListenerSet admission comes from gateway-host-listenersets.
   # ----------------------------------------------------------------------------
   util-gateway-extra-port-binds:
     requires: [gateways, referencegrants]
@@ -25,47 +21,44 @@ templateSnippets:
         {%- for _, p := range seenInitial %}
           {%- seen[p] = true %}
         {%- end %}
-        {%- for _, gw := range resources.gateways.List() %}
-          {%- var gwKey = gw.Metadata.Namespace + "/" + gw.Metadata.Name %}
-          {%- for _, listener := range gw.Spec.Listeners %}
-            {%- var lProto = listener.Protocol %}
-            {%- if lProto == "" %}{%- lProto = "HTTP" %}{%- end %}
-            {%- if lProto == protocol %}
-              {%- var port = toint(listener.Port) %}
-              {%- if port > 0 && !seen[port] %}
-                {%- seen[port] = true %}
-      bind *:{{ port }}{{ sslOptionsSuffix }}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-          {%- _ = render "util-listenerset-candidates" default "" -%}
-          {%%
-            // Admission is decided once, by util-listenerset-candidates, which
-            // reads the resource typed behind its own CRD gate. Unpacked here
-            // rather than through an imported helper: a func var in a
-            // declarations-only snippet is initialised before the runtime
-            // globals it closes over are bound, and calling it nil-derefs.
-            var lsCands = []any{}
-            var published = shared.Get("listenerSetCandidates")
-            if published != nil {
-              var part = published.(map[string]any)[gwKey]
-              if part != nil {
-                lsCands = part.(map[string]any)["candidates"].([]any)
-              }
+        {%%
+          var fixed = func(value int) string {
+            var encoded = tostring(value)
+            var zeroes = "0000000000"
+            if len(encoded) >= len(zeroes) { return encoded }
+            return zeroes[:len(zeroes)-len(encoded)] + encoded
+          }
+          var listeners = []any{}
+          for _, listener := range incremental_values("gateway-listener-state", "listeners") {
+            listeners = append(listeners, merge(listener, map[string]any{"rank":
+              dig_string(listener, "", "gatewayNamespace") + "/" +
+              dig_string(listener, "", "gatewayName") + "\x000\x00" +
+              fixed(toint(dig(listener, "listenerIndex") | fallback(0))),
+            }))
+          }
+          for _, listenerSet := range incremental_values("gateway-host-listenersets", "listenersets") {
+            if tostring(dig(listenerSet, "accepted") | fallback(false)) != "true" { continue }
+            for _, listener := range toSlice(dig(listenerSet, "candidates")) {
+              listeners = append(listeners, merge(listener, map[string]any{
+                "gatewayNamespace": dig_string(listenerSet, "", "gatewayNamespace"),
+                "gatewayName": dig_string(listenerSet, "", "gatewayName"),
+                "rank": dig_string(listenerSet, "", "gatewayNamespace") + "/" +
+                  dig_string(listenerSet, "", "gatewayName") + "\x001\x00" +
+                  dig_string(listenerSet, "", "rank") + "\x00" +
+                  fixed(toint(dig(listener, "index") | fallback(0))),
+              }))
             }
-          %%}
-          {%- for _, cAny := range lsCands %}
-            {%- var c = cAny.(map[string]any) %}
-            {%- if c["_accepted"].(bool) %}
-              {%- var lProto = tostring(c["protocol"]) %}
-              {%- if lProto == "" %}{%- lProto = "HTTP" %}{%- end %}
-              {%- if lProto == protocol %}
-                {%- var port = toint(c["port"]) %}
-                {%- if port > 0 && !seen[port] %}
-                  {%- seen[port] = true %}
+          }
+          listeners = listeners | sort_by([]string{"$.rank"})
+        %%}
+        {%- for _, listener := range listeners %}
+          {%- var listenerProtocol = dig_string(listener, "HTTP", "protocol") %}
+          {%- if listenerProtocol == "" %}{%- listenerProtocol = "HTTP" %}{%- end %}
+          {%- if listenerProtocol == protocol %}
+            {%- var port = toint(dig(listener, "port") | fallback(0)) %}
+            {%- if port > 0 && !seen[port] %}
+              {%- seen[port] = true %}
       bind *:{{ port }}{{ sslOptionsSuffix }}
-                {%- end %}
-              {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -150,21 +143,17 @@ templateSnippets:
   # arrives at the frontend, fails the allowlist check, and gets
   # rejected.
   frontends-600-gateway-tls-listener:
-    requires: [gateways, httproutes, referencegrants, tlsroutes]
+    requires: [gateways, namespaces, referencegrants, services, tlsroutes]
     template: |
+      {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
       {%- var byPortRaw = shared.Get("gatewayTLSListenersByPort") %}
       {%- if byPortRaw == nil %}
         {#- No TLS Gateway listeners declared — emit nothing. -#}
       {%- else %}
+        {{- render_glob "gateway-ssl-passthrough-*" -}}
         {%- var byPort = byPortRaw.(map[int]any) %}
         {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
-        {{ render "util-gateway-ssl-passthrough" }}
-        {%- var gwVal, _ = shared.ComputeIfAbsent("gateway_ssl_passthrough", func() any { return nil }) %}
-        {%- var allBackends = []any{} %}
-        {%- if gwVal != nil %}
-          {%- var gwPassthrough = gwVal.(map[string]any) %}
-          {%- allBackends = gwPassthrough["backends"].([]any) %}
-        {%- end %}
+        {%- var allBackends = incremental_values("gateway-ssl-passthrough", "backends") %}
         {#- Determine whether the chart-static HTTPS frontend or ssl-tcp
             will bind the chart-static httpsPort. The two flags
             (bindHTTPSDefault + len(passthroughBackends)>0) cover both
@@ -178,13 +167,7 @@ templateSnippets:
             nothing else competing for that port). -#}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var bindHTTPSDefault = tostring(dig(gf, "bindHTTPSDefault")) == "true" %}
-        {%- var hasPassthroughBackends = false %}
-        {%- var sslPB = dig(gf, "sslPassthroughBackends") %}
-        {%- if sslPB != nil %}
-          {%- if len(sslPB.([]any)) > 0 %}
-            {%- hasPassthroughBackends = true %}
-          {%- end %}
-        {%- end %}
+        {%- var hasPassthroughBackends = len(SSLPassthroughBackends()) > 0 %}
         {%- var chartStaticBindsHTTPSPort = bindHTTPSDefault || hasPassthroughBackends %}
         {#- Sort port keys numerically for deterministic output. Bare
             sort_strings would give "10" before "2"; sort_ints is the

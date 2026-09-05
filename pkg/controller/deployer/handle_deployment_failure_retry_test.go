@@ -31,12 +31,19 @@ import (
 // given content checksum: both HAProxy pods failed (Total=2, Succeeded=0), the
 // case that arms the fast retry.
 func fullFailure(checksum string) *events.DeploymentCompletedEvent {
-	return events.NewDeploymentCompletedEvent(&events.DeploymentResult{
-		Total:           2,
-		Succeeded:       0,
-		Failed:          2,
-		ContentChecksum: checksum,
-	})
+	result, err := events.NewDeploymentResultWithOccurrence(
+		mustTestOccurrence("validated-config", "test-plan:"+checksum, nil),
+	)
+	if err != nil {
+		panic(err)
+	}
+	result.Total = 2
+	result.Failed = 2
+	event, err := events.NewDeploymentCompletedEventWithCycle(result)
+	if err != nil {
+		panic(err)
+	}
+	return event
 }
 
 func activeFullFailure(s *DeploymentScheduler, checksum string) *events.DeploymentCompletedEvent {
@@ -67,10 +74,8 @@ func newFailureRetryScheduler(t *testing.T, minInterval time.Duration, checksum 
 
 	// Prime the last-validated cache directly (no ValidationCompleted dispatch),
 	// so the FIRST published DeploymentScheduledEvent is a fast retry.
+	primeValidated(s, "validated-config", checksum, "test-plan:"+checksum)
 	s.mu.Lock()
-	s.lastValidatedConfig = "validated-config"
-	s.lastValidatedContentChecksum = checksum
-	s.hasValidConfig = true
 	s.currentEndpoints = oneEndpoint()
 	s.mu.Unlock()
 
@@ -105,9 +110,8 @@ func TestDeployFailureRetry_ReschedulesAfterFullFailure(t *testing.T) {
 	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
 
 	// Prime the render cache + endpoints so the dispatch schedules a deploy.
+	primeRendered(s, "validated-config", checksum, "test-plan:"+checksum)
 	s.mu.Lock()
-	s.lastRenderedConfig = "validated-config"
-	s.lastContentChecksum = checksum
 	s.currentEndpoints = oneEndpoint()
 	s.mu.Unlock()
 
@@ -119,7 +123,8 @@ func TestDeployFailureRetry_ReschedulesAfterFullFailure(t *testing.T) {
 	s.dispatchRender(ctx, "corr-retry", true, "config_validation")
 	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	require.Equal(t, "config_validation", sd1.Reason)
-	require.Equal(t, checksum, sd1.ContentChecksum)
+	firstOccurrence, err := sd1.RenderOccurrence()
+	require.NoError(t, err)
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 100*time.Millisecond)
 
 	// The deploy comes back FULLY failed; the cluster stays quiescent (we publish
@@ -133,8 +138,9 @@ func TestDeployFailureRetry_ReschedulesAfterFullFailure(t *testing.T) {
 	sd2 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Equal(t, "deploy_failure_retry", sd2.Reason,
 		"a fully-failed deploy must self-reschedule via the fast-retry path")
-	assert.Equal(t, sd1.ContentChecksum, sd2.ContentChecksum,
-		"the fast retry re-dispatches the SAME last-validated render")
+	secondOccurrence, err := sd2.RenderOccurrence()
+	require.NoError(t, err)
+	assert.True(t, sameOccurrence(firstOccurrence, secondOccurrence))
 	assert.Less(t, time.Since(start), 500*time.Millisecond,
 		"the retry must fire on the fast backoff (tens of ms), not the 60s drift backstop")
 }
@@ -163,10 +169,10 @@ func TestDeployFailureRetry_StopsAfterMaxRetries(t *testing.T) {
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 200*time.Millisecond)
 }
 
-// TestDeployFailureRetry_NewChecksumResetsBudget pins that a NEW render (a
-// different ContentChecksum) earns a fresh fast-retry budget after an earlier
+// TestDeployFailureRetry_NewPlanResetsBudget pins that a NEW exact render earns
+// a fresh fast-retry budget after an earlier
 // render's budget was exhausted — self-heal resumes for the new content.
-func TestDeployFailureRetry_NewChecksumResetsBudget(t *testing.T) {
+func TestDeployFailureRetry_NewPlanResetsBudget(t *testing.T) {
 	const checksumA = "wedged-render-A"
 	const interval = 5 * time.Millisecond
 	s, scheduledCh, cancel := newFailureRetryScheduler(t, interval, checksumA)
@@ -181,7 +187,17 @@ func TestDeployFailureRetry_NewChecksumResetsBudget(t *testing.T) {
 	s.handleDeploymentCompleted(activeFullFailure(s, checksumA))
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 200*time.Millisecond)
 
-	// A NEW render (different checksum) resets the budget → reschedules resume.
+	// A NEW exact render resets the budget → reschedules resume. The checksum
+	// is only diagnostic and cannot decide retry identity.
+	freshOccurrence := primeValidated(s, "fresh-config-B", "fresh-render-B", "fresh-plan-B")
+	s.mu.Lock()
+	s.currentEndpoints = oneEndpoint()
+	s.mu.Unlock()
+	s.schedulerMutex.Lock()
+	s.state.activeOccurrence = freshOccurrence
+	s.state.activeDeploymentID = "fresh-deployment-B"
+	s.state.deployInFlight = true
+	s.schedulerMutex.Unlock()
 	s.handleDeploymentCompleted(activeFullFailure(s, "fresh-render-B"))
 	sd := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Equal(t, "deploy_failure_retry", sd.Reason,
@@ -281,12 +297,9 @@ func TestDeployFailureRetry_NewerWorkRejectsRunningCallback(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	s := newDeploymentScheduler(bus, logger, time.Millisecond, time.Second)
 	s.ctx = context.Background()
+	primeValidated(s, "retry-A", "checksum-A", "plan-A")
 
 	s.mu.Lock()
-	s.lastValidatedConfig = "retry-A"
-	s.lastValidatedContentChecksum = "checksum-A"
-	s.hasValidConfig = true
-	s.currentEndpoints = oneEndpoint()
 	locked := true
 	defer func() {
 		if locked {
@@ -301,7 +314,7 @@ func TestDeployFailureRetry_NewerWorkRejectsRunningCallback(t *testing.T) {
 		return s.retryTimer == nil
 	}, testutil.LongTimeout, time.Millisecond)
 
-	s.scheduleOrQueue(context.Background(), "newer-B", nil, oneEndpoint(), "config_validation", "correlation-B", nil, true, "checksum-B", nil, "")
+	scheduleExact(s, context.Background(), "newer-B", oneEndpoint(), "config_validation", "correlation-B")
 	s.mu.Unlock()
 	locked = false
 	waitForRetryCallbacks(t, s)
@@ -309,8 +322,9 @@ func TestDeployFailureRetry_NewerWorkRejectsRunningCallback(t *testing.T) {
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
 	require.NotNil(t, s.state.pending)
-	assert.Equal(t, "newer-B", s.state.pending.config)
-	assert.Equal(t, "checksum-B", s.state.pending.contentChecksum)
+	identity, err := inspectOccurrence(s.state.pending.occurrence)
+	require.NoError(t, err)
+	assert.Equal(t, "newer-B", identity.config)
 }
 
 func TestDeployFailureRetry_CancelAfterCallbackStartsDoesNotPublish(t *testing.T) {
@@ -322,12 +336,9 @@ func TestDeployFailureRetry_CancelAfterCallbackStartsDoesNotPublish(t *testing.T
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startLoopForTest(t, s, ctx)
+	primeValidated(s, "retry-A", "checksum-A", "plan-A")
 
 	s.mu.Lock()
-	s.lastValidatedConfig = "retry-A"
-	s.lastValidatedContentChecksum = "checksum-A"
-	s.hasValidConfig = true
-	s.currentEndpoints = oneEndpoint()
 	locked := true
 	defer func() {
 		if locked {

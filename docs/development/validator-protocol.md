@@ -25,7 +25,9 @@ A file matching multiple validators' globs is sent to each of them. A file match
 
 The controller dispatches `(validator, file)` pairs **in parallel** — independent validators on different sockets validating independent files have no shared state, so there's no benefit to running them serially. Concurrency is bounded both by a top-level cap (default 16 in-flight tasks) and per-validator connection-pool ceilings.
 
-The controller maintains a per-`(validator, file-path, content-hash)` LRU cache so unchanged files skip the round-trip entirely.
+The controller sends every matched pair on every validation. Protocol version 1
+has no runtime-generation exchange, so it cannot prove that a prior verdict came
+from the validator process and implementation currently serving the socket.
 
 ## Framing
 
@@ -86,7 +88,8 @@ This exists because a validator sidecar runs in the **controller** pod and canno
 
 A file matching both `files` and `dataFiles` is treated as data: validating a reference target standalone reports on the wrong thing, and parsing a SecLang ruleset as TOML would produce a parse error rather than a finding about the config that includes it.
 
-The result cache keys on the data files' content as well as the config file's, so a ruleset change re-validates a byte-identical config.
+Every request carries the current data-file content, so a ruleset change is
+validated even when the config file itself is byte-identical.
 
 ## Response
 
@@ -113,7 +116,7 @@ The result cache keys on the data files' content as well as the config file's, s
 | `warnings` | array | yes (possibly empty) | List of `Diagnostic` objects with implicit `severity = warning`. |
 | `errors` | array | yes (possibly empty) | List of `Diagnostic` objects with implicit `severity = error`. |
 
-The controller recomputes `result` from the diagnostic arrays. A missing or unknown value, or a value that disagrees with those arrays, is a decode failure. The controller discards the connection, fails the current render, and does not cache that response. Return the computed value shown in the table.
+The controller recomputes `result` from the diagnostic arrays. A missing or unknown value, or a value that disagrees with those arrays, is a decode failure. The controller discards the connection and fails the current render. Return the computed value shown in the table.
 
 A `Diagnostic` SHALL have:
 
@@ -157,13 +160,28 @@ The current protocol is version `1`. Future evolution rules:
 - **New protocol version**: adding new severity levels (e.g., `info`); changing the meaning of any existing field.
 - **Backward compatibility**: a v1-only validator that receives a v2 request returns the protocol-version error and closes cleanly. Clients that receive an unsupported `protocol_version` in a response close the connection and surface a transport-level error.
 
-## Caching (client-side)
+## Result reuse
 
-The HAPTIC controller maintains a process-local LRU cache keyed by `(validator-name, path, sha256(content))`. Cache hits skip the round-trip and return the cached response. The cache holds protocol-conforming round-trips (including responses with `result: "warning"` or `result: "error"`); it does NOT cache transport or protocol-decode failures so a transient outage or malformed response doesn't poison subsequent admissions.
+HAPTIC does not reuse validator verdicts under protocol version 1. A content
+digest can identify a request, but it cannot identify the validator runtime
+that produced the response. A sidecar can restart or its implementation can
+change while the controller process and its in-memory state remain alive.
+Serving a prior `valid`, `warning`, or `error` response after that change would
+skip the configured validation gate.
 
-The cache is process-local — a controller restart re-warms it. There is no cross-pod sharing.
+Socket metadata is not a runtime-generation proof. Inodes and process IDs can
+be reused, implementation version strings need not change, and checking a
+pooled connection leaves a race between the check and use of a cached verdict.
+The controller therefore sends the complete request every time.
 
-This caching layer is not visible on the wire; validators can ignore it. Validators MUST be pure functions of their input (the wire-protocol contract); violating purity poisons the cache and produces stale results.
+Future positive result reuse requires a new protocol version. It must expose an
+authenticated hermetic-environment root and a linearizable way to observe it at
+lookup. The root must cover the validator executable, configuration,
+dependencies, and runtime generation. A reusable result must bind that root,
+the validator name, and exact canonical request bytes to a defensively copied
+response. A digest may index entries but cannot be the sole positive identity.
+Transport failures, malformed responses, and incomplete observations must fail
+closed.
 
 ## Worked example
 
@@ -194,7 +212,7 @@ A new validator (whether a haproxy-cfg validator, a third-party WAF, or anything
 3. On each connection, loop on read-frame / process / write-response until the client closes, the connection goes idle past the validator's timeout, or a transport-level error poisons the byte stream.
 4. Handle one request frame per cycle: read 4 bytes of length prefix, then exactly `length` bytes of JSON; reply with one length-prefixed JSON response within the per-request timeout (recommended default 5 s).
 5. Process every file in `request.files[]` according to whatever internal logic the validator defines. The controller has already filtered files by glob match before sending.
-6. Implement validation as a **pure function** of the input: no goroutine fan-out, no network I/O, no file I/O outside what the request carries, no global state mutation. The HAPTIC-side cache assumes purity.
+6. Implement validation as a **pure function** of the input: no goroutine fan-out, no network I/O, no file I/O outside what the request carries, no global state mutation. This keeps one request's verdict independent of ambient state.
 7. Surface line numbers via the 1-based `line` field, columns via the 1-based `column` field, or `0` for "file-level". Self-explanatory `message` text — operators see this in `kubectl apply` denial reasons.
 
 Conforming implementations SHOULD pass the protocol-level conformance scenarios in [`openspec/specs/pluggable-validator-sidecar/spec.md`](../../openspec/specs/pluggable-validator-sidecar/spec.md).

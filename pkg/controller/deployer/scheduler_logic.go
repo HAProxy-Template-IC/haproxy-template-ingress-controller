@@ -19,36 +19,24 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-// scheduleOrQueue either queues a deployment if one is in progress, or schedules it immediately.
-//
-// This prevents concurrent deployments which can cause version conflicts.
-// Uses a "latest wins" pattern where pending deployments overwrite each other.
-//
-// `contentChecksum` MUST be captured by the caller at the same point `config`
-// is captured (i.e. from the same TemplateRenderedEvent snapshot) and threaded
-// through unchanged. Re-reading it from
-// `s.lastContentChecksum` at deploy-time creates a race window where a fresh
-// reconcile mutates the field, the wrong hash gets recorded as "deployed",
-// and the next reconcile producing that hash incorrectly skips.
-func (s *DeploymentScheduler) scheduleOrQueue(
+func (s *DeploymentScheduler) scheduleOrQueueOccurrence(
 	ctx context.Context,
-	config string,
-	auxFiles *dataplane.AuxiliaryFiles,
+	occurrence *rendercycle.Occurrence,
 	endpoints []dataplane.Endpoint,
 	reason string,
 	correlationID string,
-	statusPatches []templating.StatusPatch,
 	coalescible bool,
-	contentChecksum string,
-	plan *renderplan.Plan,
-	planID string,
 ) {
+	identity, err := inspectOccurrence(occurrence)
+	if err != nil {
+		s.logger.Error("Refusing to schedule a render without exact deployment identity", "error", err)
+		return
+	}
 	s.schedulerMutex.Lock()
 	if contextCancelled(ctx) {
 		s.schedulerMutex.Unlock()
@@ -59,17 +47,12 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 	s.schedulerMutex.Unlock()
 
 	s.installPending(ctx, &scheduledDeployment{
-		workRevision:    workRevision,
-		config:          config,
-		auxFiles:        auxFiles,
-		plan:            plan,
-		planID:          planID,
-		endpoints:       endpoints,
-		reason:          reason,
-		correlationID:   correlationID,
-		statusPatches:   statusPatches,
-		coalescible:     coalescible,
-		contentChecksum: contentChecksum,
+		workRevision:  workRevision,
+		occurrence:    identity.occurrence,
+		endpoints:     endpoints,
+		reason:        reason,
+		correlationID: correlationID,
+		coalescible:   coalescible,
 	})
 }
 
@@ -148,6 +131,9 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 	}
 
 	scheduledEvent := s.newScheduledEvent(dep)
+	if scheduledEvent == nil {
+		return !contextCancelled(ctx)
+	}
 	s.schedulerMutex.Lock()
 	if !s.pendingRevisionCurrentLocked(ctx, dep) {
 		s.schedulerMutex.Unlock()
@@ -158,6 +144,7 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 	s.state.deploymentStartTime = time.Now()
 	s.state.activeDeploymentID = scheduledEvent.EventID()
 	s.state.activeCorrelationID = dep.correlationID
+	s.state.activeOccurrence = dep.occurrence
 	s.lastPodSetHash = computePodSetHash(dep.endpoints)
 	s.schedulerMutex.Unlock()
 
@@ -181,6 +168,7 @@ func (s *DeploymentScheduler) clearDispatchedPending(deploymentID string) {
 	s.state.deploymentStartTime = time.Time{}
 	s.state.activeDeploymentID = ""
 	s.state.activeCorrelationID = ""
+	s.state.activeOccurrence = nil
 }
 
 // awaitCompletion blocks until the exact in-flight deploy reports termination
@@ -237,24 +225,26 @@ func (s *DeploymentScheduler) resolveRuntimeConfigName() (name, namespace string
 	return name, namespace
 }
 
-// newScheduledEvent builds the deploy event. `dep.contentChecksum` was captured
-// at schedule-time with the config, so it labels THIS deploy's content
-// correctly regardless of newer reconciles.
 func (s *DeploymentScheduler) newScheduledEvent(dep *scheduledDeployment) *events.DeploymentScheduledEvent {
 	runtimeConfigName, runtimeConfigNamespace := s.resolveRuntimeConfigName()
-	return events.NewDeploymentScheduledEvent(
-		dep.config, dep.auxFiles, dep.endpoints, runtimeConfigName, runtimeConfigNamespace,
-		dep.reason, dep.contentChecksum, dep.plan, dep.planID, dep.statusPatches, dep.coalescible,
+	event, err := events.NewDeploymentScheduledEventWithCycle(
+		dep.occurrence, dep.endpoints, runtimeConfigName, runtimeConfigNamespace,
+		dep.reason, dep.coalescible,
 		events.WithCorrelation(dep.correlationID, dep.correlationID),
 	)
+	if err != nil {
+		s.logger.Error("Refusing to publish an unauthenticated deployment", "error", err)
+		return nil
+	}
+	return event
 }
 
 func (s *DeploymentScheduler) publishScheduled(event *events.DeploymentScheduledEvent) {
 	s.logger.Debug("Scheduling deployment",
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
-		"config_bytes", len(event.Config),
-		"plan", event.PlanID,
+		"config_bytes", deploymentConfigBytes(event),
+		"plan", deploymentPlanID(event),
 		"deployment_id", event.EventID(),
 		"correlation_id", event.CorrelationID())
 

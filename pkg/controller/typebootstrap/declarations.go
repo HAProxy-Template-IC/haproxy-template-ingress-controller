@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // perResourceStoreTypeCache memoises BuildPerResourceStoreType by its sole
@@ -145,6 +146,8 @@ func BuildEngineDeclarations(result *Result, extraResourceNames ...string) map[s
 	}
 
 	resourcesType := reflect.StructOf(fields)
+	resources := reflect.Zero(reflect.PointerTo(resourcesType)).Interface()
+	templating.RegisterIncrementalResourceDeclaration(resources)
 	// Per-resource types are reachable from chart macros via the
 	// selector-chain-as-type Scriggo extension:
 	//
@@ -156,7 +159,7 @@ func BuildEngineDeclarations(result *Result, extraResourceNames ...string) map[s
 	// position. This keeps the type namespace localised under
 	// `resources` — no top-level type-name pollution.
 	return map[string]any{
-		"resources": reflect.Zero(reflect.PointerTo(resourcesType)).Interface(),
+		"resources": resources,
 	}
 }
 
@@ -179,6 +182,12 @@ func BuildPerResourceStoreType(elemType reflect.Type) reflect.Type {
 	t := buildPerResourceStoreType(elemType)
 	perResourceStoreTypeCache.Store(elemType, t)
 	return t
+}
+
+// BuildIncrementalPerResourceStoreType binds resource calls to Scriggo's
+// per-execution environment without changing their template-visible signature.
+func BuildIncrementalPerResourceStoreType(elemType reflect.Type) reflect.Type {
+	return templating.IncrementalResourceStoreType(BuildPerResourceStoreType(elemType))
 }
 
 func buildPerResourceStoreType(elemType reflect.Type) reflect.Type {

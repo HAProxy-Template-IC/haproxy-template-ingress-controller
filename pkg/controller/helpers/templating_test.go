@@ -165,6 +165,90 @@ func TestExtractTemplatesFromConfig_AllTypes(t *testing.T) {
 	assert.Equal(t, "certificate content", templates.AllTemplates["cert.pem"])
 }
 
+func TestExtractTemplatesFromConfig_IncrementalSnippet(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: `{{ render "route-lines" }}`},
+		TemplateSnippets: map[string]config.TemplateSnippet{
+			"route-lines": {
+				Template:    `{{ dig(item, "metadata", "name") }}`,
+				Requires:    []string{"routes"},
+				Incremental: &config.IncrementalTemplate{Source: "routes"},
+			},
+		},
+	}
+
+	extraction := ExtractTemplatesFromConfig(cfg)
+	componentName := IncrementalEntryPointName("route-lines")
+	assert.Equal(t, `{{ incremental_render("route-lines") }}`, extraction.AllTemplates["route-lines"])
+	assert.Equal(t, `{{ dig(item, "metadata", "name") }}`, extraction.AllTemplates[componentName])
+	assert.Contains(t, extraction.EntryPoints, componentName)
+	assert.Equal(t, []string{componentName}, extraction.IncrementalEntryPoints)
+	assert.Empty(t, extraction.IncrementalBindingEntryPoints)
+}
+
+func TestExtractTemplatesFromConfig_IncrementalBindingsTemplate(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: `{{ render "dynamic-lines" }}`},
+		TemplateSnippets: map[string]config.TemplateSnippet{
+			"dynamic-lines": {
+				Template: `{{ source }}`,
+				Incremental: &config.IncrementalTemplate{
+					BindingsTemplate: `{{ toJSON(extraContext) }}`,
+				},
+			},
+		},
+	}
+
+	extraction := ExtractTemplatesFromConfig(cfg)
+	componentName := IncrementalEntryPointName("dynamic-lines")
+	bindingsName := IncrementalBindingsEntryPointName("dynamic-lines")
+	assert.Equal(t, `{{ incremental_render("dynamic-lines") }}`, extraction.AllTemplates["dynamic-lines"])
+	assert.Equal(t, `{{ source }}`, extraction.AllTemplates[componentName])
+	assert.Equal(t, `{{ toJSON(extraContext) }}`, extraction.AllTemplates[bindingsName])
+	assert.Contains(t, extraction.EntryPoints, componentName)
+	assert.Contains(t, extraction.EntryPoints, bindingsName)
+	assert.Equal(t, []string{componentName}, extraction.IncrementalEntryPoints)
+	assert.Equal(t, []string{bindingsName}, extraction.IncrementalBindingEntryPoints)
+}
+
+func TestNewEngineFromConfigWithOptions_IncrementalWrapperUsesFullDeclarations(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: `{{ render "route-lines" }}`},
+		TemplateSnippets: map[string]config.TemplateSnippet{
+			"route-lines": {
+				Template:    `{{ dig(item, "metadata", "name") }}`,
+				Requires:    []string{"routes"},
+				Incremental: &config.IncrementalTemplate{Source: "routes"},
+			},
+		},
+	}
+
+	engine, err := NewEngineFromConfigWithOptions(cfg, nil, nil, nil, EngineOptions{})
+	require.NoError(t, err)
+	assert.True(t, engine.HasTemplate("haproxy.cfg"))
+	assert.True(t, engine.HasTemplate(IncrementalEntryPointName("route-lines")))
+}
+
+func TestNewEngineFromConfigWithOptions_CompilesIncrementalBindingsPlanner(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: `{{ render "dynamic-lines" }}`},
+		TemplateSnippets: map[string]config.TemplateSnippet{
+			"dynamic-lines": {
+				Template: `{{ tostring(item) }}`,
+				Incremental: &config.IncrementalTemplate{
+					BindingsTemplate: `{{ toJSON(extraContext) }}`,
+				},
+			},
+		},
+	}
+
+	engine, err := NewEngineFromConfigWithOptions(cfg, nil, nil, nil, EngineOptions{})
+	require.NoError(t, err)
+	assert.True(t, engine.HasTemplate(IncrementalBindingsEntryPointName("dynamic-lines")))
+	_, ok := any(engine).(templating.IncrementalBindingPlannerExecutor)
+	assert.True(t, ok)
+}
+
 func TestExtractTemplatesFromConfig_Empty(t *testing.T) {
 	cfg := &config.Config{}
 

@@ -246,11 +246,14 @@ func TestDiffMapPathMustBeASafeToken(t *testing.T) {
 	reasonsContain(t, got.Reasons, "the path is not a safe runtime token")
 }
 
-func TestDiffMapShortCircuitsOnTheFileDigest(t *testing.T) {
+func TestDiffMapShortCircuitsOnExactFileContent(t *testing.T) {
 	before := []renderplan.Entry{entry("a", "1")}
 	prev := basePlan(withMap(renderplan.Map{Path: routeMap, Entries: before}))
 	next := basePlan(
-		withFile(renderplan.File{Path: routeMap, Kind: renderplan.FileKindMap, Digest: entriesDigest(before)}),
+		withFile(&renderplan.File{
+			Path: routeMap, Kind: renderplan.FileKindMap, Digest: entriesDigest(before),
+			Content: entriesContent(before), ContentKnown: true,
+		}),
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a", "2")}}),
 	)
 
@@ -263,7 +266,7 @@ func TestDiffMapShortCircuitsOnTheFileDigest(t *testing.T) {
 func TestDiffMapDeclaredReloadOnChangeReloads(t *testing.T) {
 	prev := basePlan(withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a", "1")}}))
 	next := basePlan(
-		withFile(renderplan.File{Path: routeMap, Kind: renderplan.FileKindMap, Digest: "changed", ReloadOnChange: true}),
+		withFile(&renderplan.File{Path: routeMap, Kind: renderplan.FileKindMap, Digest: "changed", ReloadOnChange: true}),
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a", "2")}}),
 	)
 

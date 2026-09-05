@@ -56,6 +56,9 @@ spec:
           spec:
             description: HAProxyGeneralFileSpec contains the general file content.
             properties:
+              caFile:
+                description: CAFile marks this file as an SSL CA or trust bundle.
+                type: boolean
               checksum:
                 description: |-
                   Checksum is the SHA-256 hash of the file content.

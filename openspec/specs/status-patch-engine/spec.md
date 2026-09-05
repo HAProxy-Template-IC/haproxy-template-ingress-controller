@@ -8,22 +8,32 @@ Defines template-driven status patching: templates register per-resource status 
 
 ### Requirement: statusPatch Template Function
 
-The `statusPatch` function SHALL register a status patch during template rendering. It SHALL accept namespace (string), name (string), apiVersion (string), kind (string), and a variants map (map[string]interface{}). The variants map SHALL use outcome phase keys: `rendered`, `deployed`, `renderFailed`, `deployFailed`. Each key's value SHALL be a map[string]interface{} representing the desired `.status` content for that phase. At least one variant key SHALL be required; omitted phases result in no status update for that phase. Multiple calls for the same resource (identified by namespace+name+apiVersion+kind) SHALL merge their variant maps, with later calls overriding earlier ones for the same variant key.
+The `statusPatch` function SHALL register a status patch during template rendering. It SHALL accept a generic resource object and a variants map (map[string]interface{}). It SHALL extract apiVersion, kind, metadata.namespace, metadata.name, metadata.uid, and metadata.resourceVersion from the object without resource-specific Go. The variants map SHALL use outcome phase keys: `rendered`, `deployed`, `renderFailed`, `deployFailed`. Each key's value SHALL be a map[string]interface{} representing the desired `.status` content for that phase. At least one variant key SHALL be required; omitted phases result in no status update for that phase. Multiple calls for the same resource identity and exact UID/resourceVersion SHALL merge their variant maps, with later calls overriding earlier ones for the same variant key. Calls with the same identity and different lineage SHALL fail without merging. Missing UID and resourceVersion SHALL remain representable for offline and legacy objects but SHALL NOT prove that a status apply can be skipped.
 
 #### Scenario: Register a status patch with deployed variant
 
-- **WHEN** a template calls `statusPatch("default", "my-ingress", "networking.k8s.io/v1", "Ingress", map[string]interface{}{"deployed": map[string]interface{}{"loadBalancer": map[string]interface{}{"ingress": addresses}}})`
+- **WHEN** a template calls `statusPatch(ingress, map[string]interface{}{"deployed": map[string]interface{}{"loadBalancer": map[string]interface{}{"ingress": addresses}}})`
 - **THEN** the StatusPatchCollector SHALL contain one entry for `default/my-ingress` of kind `Ingress` with the `deployed` variant populated
 
 #### Scenario: Multiple calls for same resource merge variants
 
-- **WHEN** one snippet calls `statusPatch("default", "my-route", "gateway.networking.k8s.io/v1", "HTTPRoute", map[string]interface{}{"rendered": renderedStatus})` and another snippet calls `statusPatch("default", "my-route", "gateway.networking.k8s.io/v1", "HTTPRoute", map[string]interface{}{"deployed": deployedStatus})`
+- **WHEN** one snippet calls `statusPatch(route, map[string]interface{}{"rendered": renderedStatus})` and another snippet calls `statusPatch(route, map[string]interface{}{"deployed": deployedStatus})` for the same route revision
 - **THEN** the StatusPatchCollector SHALL contain one entry for `default/my-route` with both `rendered` and `deployed` variants populated
 
 #### Scenario: Later call overrides same variant key
 
-- **WHEN** snippet A calls `statusPatch("default", "my-gw", "gateway.networking.k8s.io/v1", "Gateway", map[string]interface{}{"deployed": statusA})` and snippet B calls `statusPatch("default", "my-gw", "gateway.networking.k8s.io/v1", "Gateway", map[string]interface{}{"deployed": statusB})`
+- **WHEN** snippet A calls `statusPatch(gateway, map[string]interface{}{"deployed": statusA})` and snippet B calls `statusPatch(gateway, map[string]interface{}{"deployed": statusB})` for the same gateway revision
 - **THEN** the StatusPatchCollector SHALL contain the `deployed` variant from snippet B for `default/my-gw`
+
+#### Scenario: Conflicting source lineage fails closed
+
+- **WHEN** two calls target the same namespace, name, apiVersion, and kind but carry different UID or resourceVersion values
+- **THEN** the StatusPatchCollector SHALL reject the merge and retain no variant from the conflicting call
+
+#### Scenario: Offline resource lineage remains representable
+
+- **WHEN** a resource fixture omits metadata.uid and metadata.resourceVersion
+- **THEN** the StatusPatchCollector SHALL retain empty lineage fields and no consumer SHALL use that patch to skip a status apply
 
 #### Scenario: Missing variant key results in no-op for that phase
 

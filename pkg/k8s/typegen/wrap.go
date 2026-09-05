@@ -41,6 +41,14 @@ import (
 // rather than fail the whole reconcile — a single malformed resource
 // shouldn't take down the renderer.
 func WrapInto(obj map[string]any, typ reflect.Type) (reflect.Value, error) {
+	ptr, err := wrapIntoPointer(obj, typ)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	return ptr.Elem(), nil
+}
+
+func wrapIntoPointer(obj map[string]any, typ reflect.Type) (reflect.Value, error) {
 	if typ == nil {
 		return reflect.Value{}, fmt.Errorf("typegen: WrapInto called with nil target type")
 	}
@@ -59,5 +67,5 @@ func WrapInto(obj map[string]any, typ reflect.Type) (reflect.Value, error) {
 	if err := json.Unmarshal(raw, ptr.Interface()); err != nil {
 		return reflect.Value{}, fmt.Errorf("typegen: unmarshal into generated type %s: %w", typ, err)
 	}
-	return ptr.Elem(), nil
+	return ptr, nil
 }

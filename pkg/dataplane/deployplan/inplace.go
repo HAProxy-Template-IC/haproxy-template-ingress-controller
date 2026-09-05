@@ -117,6 +117,7 @@ func applyInPlaceOp(after, next *renderplan.Plan, op *api.Op) {
 		for i := range after.Files {
 			if after.Files[i].Path == op.Path {
 				after.Files[i].Digest, after.Files[i].Size = updated.Digest, updated.Size
+				after.Files[i].Content, after.Files[i].ContentKnown = updated.Content, updated.ContentKnown
 			}
 		}
 	}
@@ -267,7 +268,7 @@ func (b *builder) inPlaceCertOps(worker *renderplan.Plan) []api.Op {
 	for i := range b.next.Files {
 		f := &b.next.Files[i]
 		old, existed := running[f.Path]
-		if f.Kind != renderplan.FileKindCert || !existed || old.Digest == f.Digest {
+		if f.Kind != renderplan.FileKindCert || !existed || sameFileContent(old, f) {
 			continue
 		}
 		if slices.Contains(b.inventory.Certs, f.Path) {

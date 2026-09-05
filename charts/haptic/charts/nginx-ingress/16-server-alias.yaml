@@ -7,6 +7,11 @@
 # same backends without duplicating any path entries.
 templateSnippets:
   map-host-720-nginx-ingress-server-alias:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/server-alias']"]
+      effects: [recordEvent]
     template: |
       {#
         Nginx Ingress Server Alias
@@ -29,8 +34,9 @@ templateSnippets:
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var aliasAnn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/server-alias"] -%}
         {%- if aliasAnn != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -48,15 +54,20 @@ templateSnippets:
           {%- if ruleHostKey != "" -%}
       {{ "\n" }}# nginx-ingress/server-alias ({{ ns }}/{{ name }}){{ "\n" }}
             {%- for _, rawAlias := range split(aliasAnn, ",") -%}
-              {%- var alias = trimSpace(rawAlias) -%}
-              {%- if alias != "" -%}
-                {%- var aliasInj = ConfigInjectionKind(alias, "mapkey") -%}
-                {%- if aliasInj != "" -%}
-                  {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/server-alias' value contains " + aliasInj + ", which would inject an entry into the host routing map; the alias is not applied. Remove whitespace and control characters from the value.") -}}
-                  {%- continue -%}
-                {%- end -%}
-                {%- var aliasKey = MapKeyForHost(alias) -%}
+                {%- var alias = trimSpace(rawAlias) -%}
+                {%- if alias != "" -%}
+                  {%- var aliasInj = ConfigInjectionKind(alias, "mapkey") -%}
+                  {%- if aliasInj != "" -%}
+                    {%- var message = "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/server-alias' value contains " + aliasInj + ", which would inject an entry into the host routing map; the alias is not applied. Remove whitespace and control characters from the value." -%}
+                    {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
+                      {{- fail(message) -}}
+                    {%- else -%}
+                      {{- recordEvent(ingress, "InvalidAnnotationValue", message) -}}
+                    {%- end -%}
+                  {%- else -%}
+                    {%- var aliasKey = MapKeyForHost(alias) -%}
       {{ aliasKey }} {{ ruleHostKey }}{{ "\n" }}
+                  {%- end -%}
               {%- end -%}
             {%- end -%}
           {%- end -%}

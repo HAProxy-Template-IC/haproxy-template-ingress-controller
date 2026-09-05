@@ -17,10 +17,7 @@ import (
 //
 // Returns a hex-encoded 8-byte (16 character) checksum for brevity.
 func ComputeContentChecksum(haproxyConfig string, auxFiles *AuxiliaryFiles) string {
-	h := sha256.New()
-
-	// Hash main config
-	h.Write([]byte(haproxyConfig))
+	h := newContentChecksum(haproxyConfig)
 
 	// Hash auxiliary files (slices are pre-sorted by AuxiliaryFiles.Sort)
 	if auxFiles != nil {
@@ -31,8 +28,18 @@ func ComputeContentChecksum(haproxyConfig string, auxFiles *AuxiliaryFiles) stri
 		hashFileItems(h, auxFiles.CRTListFiles)
 	}
 
+	return finishContentChecksum(h)
+}
+
+func newContentChecksum(haproxyConfig string) hash.Hash {
+	h := sha256.New()
+	_, _ = h.Write([]byte(haproxyConfig))
+	return h
+}
+
+func finishContentChecksum(h hash.Hash) string {
 	checksum := h.Sum(nil)
-	return hex.EncodeToString(checksum[:8]) // First 8 bytes for brevity
+	return hex.EncodeToString(checksum[:8])
 }
 
 // hashFileItems writes each item's identifier and content to h in slice order.

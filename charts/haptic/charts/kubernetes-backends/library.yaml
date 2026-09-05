@@ -1,0 +1,653 @@
+# Kubernetes Service backend capability library.
+#
+# Loads after base and before every bundled routing library. It owns the
+# Service/EndpointSlice watch aliases and the helpers that translate those
+# resources into generic base Backend records.
+
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.kubernetesBackends.enabled }}'
+
+watchedResources:
+  services:
+    apiVersion: v1
+    resources: services
+    indexBy: ["metadata.namespace", "metadata.name"]
+  endpoints:
+    apiVersion: discovery.k8s.io/v1
+    resources: endpointslices
+    indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
+    # No debounce: a pod-IP rotation must reach HAProxy inside the kubelet Ready-to-SIGTERM window.
+    debounceInterval: "0"
+
+templateSnippets:
+  # ----------------------------------------------------------------------------
+  # Service Port Resolution
+  # ----------------------------------------------------------------------------
+
+  util-service-port-resolution:
+    template: |
+      {#
+        ResolveServicePort - Resolve an Ingress/Gateway service-port reference to
+        a concrete {port: int, name: string} pair by consulting the target Service.
+
+        This is the single source of truth for translating the Kubernetes
+        ServiceBackendPort shape ({number?: int, name?: string}) into the values
+        BackendServers needs. All ingress / gateway / NGINX / haproxy-ingress /
+        haproxytech library backend-rendering call sites must call this macro
+        before invoking BackendServers — passing nil for portName to BackendServers
+        (the old pattern) silently produces broken `:80` configs whenever a
+        backend is referenced by port.name on a Service that does not also expose
+        port 80.
+
+        Parameters:
+          namespace    - Service namespace (string)
+          serviceName  - Service name (string)
+          portRef      - The `port` value from an Ingress / Gateway / HTTPRoute
+                         backend reference. Accepts either a dict shape
+                         {number?: int, name?: string} (Kubernetes Ingress) or
+                         a bare integer (Gateway API BackendObjectReference.port),
+                         or nil.
+
+        Returns:
+          string — space-separated "<portNumber> <portName>" where portName is
+          "" (empty string) when the Service port is unnamed. The macro must
+          return a content-format type (Scriggo language constraint), which is
+          why this is encoded as a string instead of a map. Unpack with
+          split(ResolveServicePort(...), " ") → [portNumber, portName]. See
+          the Example block below.
+
+        Failure modes (call fail() and abort the render):
+          - portRef is nil or has neither number nor name
+          - portRef.name is set but the Service EXISTS and has no port with
+            that name (a typo — fail loudly, see below)
+          - Resolved port is <= 0 while the Service exists (defensive: e.g.
+            Service port entry has port: 0)
+
+        Non-failure (missing Service — Kubernetes eventual consistency):
+          A reference to a Service that is not in the store never aborts the
+          render. An Ingress may legally be created before the Service it
+          references, and the admission webhook's dry-run render can run
+          before a just-created Service reaches the controller's watch cache
+          (issue #50 — hard-failing here flaked ingress-conformance at
+          admission and, worse, blocked the ENTIRE haproxy.cfg render in the
+          reconcile loop until the Service appeared). Behavior:
+          - portRef.number given: the numeric port is trusted without Service
+            validation; name backfill is best-effort (name="" if unknown).
+          - portRef.name given: resolves to "0 <name>". BackendServers skips
+            endpoints without a resolvable port, so the backend renders with
+            no server lines (an empty backend, 503 for this route) and converges
+            on a later reconcile once the Service and its EndpointSlices arrive.
+            When that leaves a backend empty, BackendServers
+            records the reference under shared "degradedBackendRef:*" keys;
+            the ingress library reads those back to emit Warning Events on
+            the owning Ingresses (issue #66) so a permanent Service-name
+            typo isn't a silent 503.
+
+        Why fail() not silent fallback:
+          The previous fallback-to-80 behavior silently produced unusable HAProxy
+          configs (server lines pointing at ports nothing was listening on) that
+          looked syntactically valid; a real-world ingress for a unifi controller
+          served 503 with <NOSRV>/SC-- for 73 days before the issue was noticed.
+          fail() aborts the render, surfaces in controller logs and Ingress/
+          Gateway `deployFailed` status, and leaves the last-known-good config
+          serving — so a single misconfigured ingress doesn't break the cluster.
+
+        Example:
+          {%- var resolved = split(ResolveServicePort(tostring(ns), tostring(svcName), svc | dig("port")), " ") -%}
+          {%- var port = toint(resolved[0]) -%}
+          {%- var portName = resolved[1] -%}
+          # Now: port is the Service port number; portName is "" if the Service port is unnamed.
+          # Pass both to BackendServers(svcName, 0, port, nil, portName, backendKey, ns).
+      #}
+      {% macro ResolveServicePort(namespace string, serviceName string, portRef any) string %}
+        {%%
+          // Accept either a {number?, name?} dict (Ingress's ServiceBackendPort shape)
+          // or a bare numeric port (Gateway API's BackendObjectReference.port is a
+          // *PortNumber — a bare int).
+          var portNumber = 0
+          var portName = ""
+          if portRef != nil {
+            // Try the dict shape first.
+            var n = toint(portRef | dig("number") | fallback(0))
+            var nm = tostring(portRef | dig("name") | fallback(""))
+            if n > 0 || nm != "" {
+              portNumber = n
+              portName = nm
+            } else {
+              // Fall back to the bare-int shape.
+              portNumber = toint(portRef)
+            }
+          }
+
+          var resolvedPort = 0
+          var resolvedName = ""
+          var serviceMissing = false
+
+          if portNumber > 0 {
+            // Number given: trust it. Try to backfill name from the Service for the
+            // `# Backend for:` comment and the first_seen deduplication key.
+            resolvedPort = portNumber
+            var svc = resources.services.GetSingle(namespace, serviceName)
+            if svc != nil {
+              for _, sp := range svc.Spec.Ports {
+                if toint(sp.Port) == portNumber {
+                  resolvedName = sp.Name
+                  break
+                }
+              }
+            }
+          } else if portName != "" {
+            // Name given, no number: look up the numeric port from the Service.
+            var svc = resources.services.GetSingle(namespace, serviceName)
+            if svc == nil {
+              // Service not in the store (yet). Kubernetes is eventually
+              // consistent: an Ingress may legally be created before the
+              // Service it references (kubectl apply of a directory has no
+              // ordering guarantee), and the admission webhook's dry-run
+              // render can run before a just-created Service reaches the
+              // controller's watch cache (issue #50 — this exact fail()
+              // flaked the ingress-conformance wildcard test with an
+              // admission denial, and in the reconcile loop it blocked the
+              // entire haproxy.cfg render until the Service appeared).
+              // Tolerate: resolve to port 0 with the requested name.
+              // BackendServers skips endpoints without a resolvable port, so
+              // the backend renders with no server lines (an empty backend, 503
+              // for this route) and converges once the Service arrives. A Service that
+              // EXISTS but lacks the named port still fails below — that is a
+              // real config error (typo), not a propagation race.
+              serviceMissing = true
+              resolvedName = portName
+            } else {
+              var found = false
+              for _, sp := range svc.Spec.Ports {
+                if sp.Name == portName {
+                  resolvedPort = toint(sp.Port)
+                  resolvedName = portName
+                  found = true
+                  break
+                }
+              }
+              if !found {
+                // Build a list of the Service's actual port names so the operator
+                // can spot typos at a glance in the controller logs.
+                var available = []any{}
+                for _, sp := range svc.Spec.Ports {
+                  available = append(available, sp.Name +
+                    "(" + tostring(toint(sp.Port)) + ")")
+                }
+                fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
+                  " has no port named '" + portName + "' (available: [" +
+                  join(toStringSlice(available), ", ") + "])")
+              }
+            }
+          } else {
+            var portRefStr = "nil"
+            if portRef != nil {
+              portRefStr = tostring(portRef)
+            }
+            fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
+              " referenced with neither port.number nor port.name (portRef=" +
+              portRefStr + ")")
+          }
+
+          if resolvedPort <= 0 && !serviceMissing {
+            fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
+              " port resolution yielded 0 (portRef=" + tostring(portRef) + ")")
+          }
+          show tostring(resolvedPort) + " " + resolvedName
+        %%}
+      {% end %}
+
+
+  # ----------------------------------------------------------------------------
+  # Backend Server Generation - Main Macro
+  # ----------------------------------------------------------------------------
+
+  util-backend-servers-result:
+    template: |
+      {#
+        BackendServersResult resolves a Service's EndpointSlices into canonical
+        server records without mutating shared state.
+
+        Parameters:
+          serviceName    - Service to resolve endpoints for
+          maxServerSlots - ignored (no slot pool); kept for signature stability
+          port           - Service port number (may differ from the pod port
+                           via targetPort)
+          serverOpts     - options map:
+                             .weight     - per-server `weight` (weighted TCPRoute)
+                             .namePrefix - prepended to each server name so pods
+                                           from different Services sharing one
+                                           backend (weighted TCPRoute) never
+                                           collide (`<service>-<pod>`)
+          portName       - port name for targetPort resolution (nil = auto-lookup)
+          backendName    - backend name, for the per-server guid (nil = none)
+          namespace      - Service namespace
+
+        Not-ready / terminating endpoints are emitted as `disabled` servers, not
+        dropped: a readiness flip is then a runtime `set server state`, not an
+        add/remove. Records are ordered by pod name then address so the render is
+        deterministic regardless of EndpointSlice ordering.
+      #}
+      {%- import "util-backend-servers-helpers" for ServerName -%}
+      {%- var BackendServersResult = func(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any, namespace string) map[string]any {
+          var namePrefix = ""
+          if v := serverOpts | dig("namePrefix"); v != nil {
+            namePrefix = tostring(v)
+          }
+          var weight any = nil
+          if v := serverOpts | dig("weight"); v != nil {
+            weight = toint(v)
+          }
+          var bkName = ""
+          if backendName != nil {
+            bkName = tostring(backendName)
+          }
+
+          // Resolve the port name for targetPort translation: use the given one,
+          // else look it up from the Service.
+          var pn = ""
+          if portName != nil && tostring(portName) != "" {
+            pn = tostring(portName)
+          }
+          var allSlices = resources.endpoints.Fetch(namespace, serviceName)
+          if pn == "" && len(allSlices) > 0 && namespace != "" {
+            var svc = resources.services.GetSingle(namespace, serviceName)
+            if svc != nil {
+              for _, sp := range svc.Spec.Ports {
+                if toint(sp.Port) == port {
+                  pn = sp.Name
+                  break
+                }
+              }
+            }
+          }
+
+          // Collect one entry per endpoint address, keyed for a deterministic
+          // order (pod|address). Dual-stack lists a pod under two addresses, so
+          // the address is part of the key. Not-ready/terminating endpoints are
+          // kept (marked notReady) so they become disabled servers.
+          var byKey = map[string]any{}
+          for _, slice := range allSlices {
+            var slicePorts = slice.Ports
+            var resolvedPort = 0
+            if pn != "" {
+              // A slice whose ports omit the named targetPort is not valid for
+              // this Service port; never fall back to the Service port for it.
+              for _, p := range slicePorts {
+                if p.Name == pn {
+                  resolvedPort = toint(p.Port)
+                  break
+                }
+              }
+            } else {
+              resolvedPort = port
+              if len(slicePorts) == 1 {
+                var endpointPort = toint(slicePorts[0].Port)
+                if endpointPort > 0 {
+                  resolvedPort = endpointPort
+                }
+              }
+            }
+            if resolvedPort <= 0 {
+              // Service not in the store yet and no named port on this slice — an
+              // addr:0 line is meaningless. Skip it; a later reconcile converges
+              // once the Service arrives.
+              continue
+            }
+            for _, ep := range slice.Endpoints {
+              // K8s EndpointSlice: nil Ready means ready; Terminating defaults to
+              // nil/false. A not-ready or terminating pod still gets a server
+              // line, marked disabled, so a readiness flip is a runtime state
+              // change instead of a del+add.
+              var notReady = (ep.Conditions.Ready != nil && !*ep.Conditions.Ready) ||
+                (ep.Conditions.Terminating != nil && *ep.Conditions.Terminating)
+              for _, addr := range ep.Addresses {
+                var podName = ep.TargetRef.Name
+                if podName == "" {
+                  podName = addr
+                }
+                byKey[podName + "|" + addr] = map[string]any{
+                  "pod": podName, "address": addr, "port": resolvedPort, "notReady": notReady,
+                }
+              }
+            }
+          }
+
+          var degradedByName = port <= 0 && pn != "" && len(byKey) == 0
+
+          var servers = []any{}
+          var seen = map[string]bool{}
+          // keys() returns the map keys sorted, so the server order is stable.
+          for _, k := range keys(byKey) {
+            var c = byKey[k].(map[string]any)
+            var base = ServerName(namePrefix + tostring(c["pod"]))
+            // Two servers can sanitise to the same name: a dual-stack pod listed
+            // under two addresses, or two distinct source names that clean alike
+            // (a custom-CRD list may hold `foo/bar` and `foo:bar`, both →
+            // `foo-bar`). Key `seen` on the FINAL sanitised name and suffix
+            // `-<n>` until unused, so neither case silently drops a server and a
+            // suffix can't collide with a real `<name>-<n>`. ServerName reserved
+            // the suffix room, so the result stays within 63 bytes.
+            var srvName = base
+            var n = 1
+            for seen[srvName] {
+              n = n + 1
+              srvName = base + "-" + tostring(n)
+            }
+            seen[srvName] = true
+            var record = map[string]any{
+              "name": srvName, "address": c["address"], "port": c["port"],
+              "comment": "Pod: " + tostring(c["pod"]),
+            }
+            // Only a not-ready endpoint prints a state keyword (`disabled`); a
+            // ready server needs none (`enabled` is the default), which keeps the
+            // line shorter and a readiness flip a single `set server state`.
+            if c["notReady"] == true {
+              record["disabled"] = true
+            }
+            if bkName != "" {
+              record["guid"] = make_guid("srv", bkName, srvName)
+            }
+            if weight != nil {
+              record["weight"] = weight
+            }
+            servers = append(servers, record)
+          }
+          return map[string]any{
+            "servers": servers,
+            "degradedByName": degradedByName,
+            "portName": pn,
+          }
+      } -%}
+  util-backend-servers:
+    template: |-
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
+      {%- var BackendServers = func(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any, namespace string) []any {
+          var result = BackendServersResult(serviceName, maxServerSlots, port, serverOpts, portName, backendName, namespace)
+          if result["degradedByName"] == true {
+            var pn = tostring(result["portName"])
+            shared.ComputeIfAbsent("degradedBackendRef:"+namespace+"/"+serviceName+"/"+pn,
+              func() any { return true })
+          }
+          return result["servers"].([]any)
+      } -%}
+
+  kubernetes-default-backend-publication:
+    requires: [services, endpoints]
+    incremental:
+      bindingsTemplate: |-
+        {%- var backendAny = extraContext | dig("defaultBackendService") -%}
+        {%- var backend, backendOK = backendAny.(map[string]any) -%}
+        {%- if backendAny != nil && backendOK -%}
+          {{- toJSON(map[string]any{
+            "services": map[string]any{"backend": backend, "source": "services"},
+            "endpoints": map[string]any{"backend": backend, "source": "endpoints"},
+          }) -}}
+        {%- else -%}
+          {}
+        {%- end -%}
+      group: kubernetes-default-backend
+      effects: [publishValue]
+    template: |-
+      {%- import "util-service-port-resolution" for ResolveServicePort -%}
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
+      {%- var backend = props["backend"].(map[string]any) -%}
+      {%- var namespace = backend | dig_string("", "namespace") -%}
+      {%- var name = backend | dig_string("", "name") -%}
+      {%- var itemNamespace = dig_string(item, "", "metadata", "namespace") -%}
+      {%- var itemName = dig_string(item, "", "metadata", "name") -%}
+      {%- var source = tostring(props["source"]) -%}
+      {%- var matches = source == "services" && itemNamespace == namespace && itemName == name -%}
+      {%- if source == "endpoints" -%}
+        {%- matches = itemNamespace == namespace &&
+          dig_string(item, "", "metadata", "labels", "kubernetes.io/service-name") == name -%}
+      {%- end -%}
+      {%- if matches -%}
+        {%- var resolvedParts = split(ResolveServicePort(namespace, name, backend | dig("port")), " ") -%}
+        {%- var port = toint(resolvedParts[0]) -%}
+        {%- var portName = resolvedParts[1] -%}
+        {%- var serverResult = BackendServersResult(name, 0, port, nil, portName, "default_backend", namespace) -%}
+        {{- shared.Publish("backends", "default_backend", map[string]any{
+          "port": port,
+          "portName": portName,
+          "servers": serverResult["servers"],
+        }) -}}
+      {%- end -%}
+
+  default-backend-100-kubernetes:
+    requires: [services, endpoints]
+    template: |
+      {%- import "util-backend" for Backend -%}
+      {%- var defaultBackendSvc = extraContext | dig("defaultBackendService") | fallback(nil) -%}
+      {%- if defaultBackendSvc != nil %}
+      {{- render "kubernetes-default-backend-publication" -}}
+      {%%
+        var dbNamespace = defaultBackendSvc | dig_string("", "namespace")
+        var dbName = defaultBackendSvc | dig_string("", "name")
+        var dbPort = 0
+        var dbPortName = ""
+        var dbServers = []any{}
+        var publications = incremental_values("kubernetes-default-backend", "backends")
+        if len(publications) > 0 {
+          var publication = publications[0].(map[string]any)
+          dbPort = toint(publication["port"])
+          dbPortName = tostring(publication["portName"])
+          dbServers = publication["servers"].([]any)
+        } else {
+          var portRef = defaultBackendSvc | dig("port")
+          if portRef != nil {
+            dbPort = toint(portRef | dig("number") | fallback(0))
+            dbPortName = tostring(portRef | dig("name") | fallback(""))
+            if dbPort <= 0 && dbPortName == "" { dbPort = toint(portRef) }
+          }
+          if dbPort <= 0 && dbPortName == "" {
+            var portRefText = "nil"
+            if portRef != nil { portRefText = tostring(portRef) }
+            fail("ResolveServicePort: Service " + dbNamespace + "/" + dbName +
+              " referenced with neither port.number nor port.name (portRef=" + portRefText + ")")
+          }
+        }
+      %%}
+      {{- Backend(map[string]any{
+            "name": "default_backend",
+            "guid": "be:default_backend",
+            "defaultServer": []any{map[string]any{"name": "check"}},
+            "servers": dbServers,
+          }) }}
+      {%- end %}
+
+# Global Kubernetes backend fixtures and capability-specific validation.
+validationTests:
+  _global:
+    description: Global fixtures for all validation tests
+    # Shared echo backend, merged into every test's fixtures. A test whose
+    # Ingress/route points at Service `echo` (port 80, endpoint 10.0.0.1:8080)
+    # need NOT declare its own Service + EndpointSlice — this deduplicates the
+    # otherwise-per-test backend fixtures that dominate the rendered CR. Tests
+    # needing a differently-named/ported backend still declare their own.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: echo }
+          spec: { ports: [{ port: 80 }] }
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata: {namespace: default, name: echo-abc, labels: { kubernetes.io/service-name: echo }}
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+              targetRef: { kind: Pod, name: echo-pod-1 }
+          ports:
+            - port: 8080
+    assertions:
+      - type: haproxy_valid
+      - type: deterministic
+
+  test-backend-dynamic-body-only-from-guid-servers:
+    description: >-
+      A dynamic-shaped backend's section is only `from`/guid/servers — mode,
+      balance and default-server live in its profile, so it can be created and
+      populated at runtime without a reload.
+    extraContext:
+      defaultBackendService: {namespace: default, name: db-svc, port: 80}
+    fixtures:
+      services:
+        - {apiVersion: v1, kind: Service, metadata: {name: db-svc, namespace: default}, spec: {ports: [{name: http, port: 80, targetPort: 8080}]}}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata: {name: db-svc-abc, namespace: default, labels: {kubernetes.io/service-name: db-svc}}
+          addressType: IPv4
+          endpoints:
+            - {addresses: ["10.5.0.1"], targetRef: {kind: Pod, name: db-pod-1}}
+          ports: [{name: http, port: 8080, protocol: TCP}]
+    assertions:
+      - type: haproxy_valid
+      # The section carries only from/guid/servers: body lines emit between guid
+      # and the server lines, so guid immediately followed by the server proves
+      # the body is empty (a dynamic shape).
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^backend default_backend from haptic-be-\w+$\n\s+guid be:default_backend$\n\s+server db-pod-1 10\.5\.0\.1:8080 '
+      # default-server rode into the profile, not the backend section.
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$\n\s+default-server check$'}
+
+  test-default-backend-cross-namespace:
+    description: Default backend resolves endpoints from a different namespace
+    extraContext:
+      defaultBackendService: {namespace: ingress-default-backend, name: default-backend-service, port: 8080}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: default-backend-service, namespace: ingress-default-backend}
+          spec:
+            ports:
+              - {name: http, port: 8080, targetPort: 8080}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: default-backend-service-abc
+            namespace: ingress-default-backend
+            labels:
+              kubernetes.io/service-name: default-backend-service
+          addressType: IPv4
+          endpoints:
+            - addresses:
+                - "10.1.0.1"
+              targetRef: {kind: Pod, name: default-backend-pod-1}
+            - addresses:
+                - "10.1.0.2"
+              targetRef: {kind: Pod, name: default-backend-pod-2}
+          ports:
+            - {name: http, port: 8080, protocol: TCP}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "server default-backend-pod-1 10.1.0.1:8080"}
+      - {type: contains, target: haproxy.cfg, pattern: "server default-backend-pod-2 10.1.0.2:8080"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "http-request return status 404"}
+
+  test-default-backend-named-port:
+    description: Default backend resolves a Service port referenced by name (port.name) to the correct numeric pod port
+    extraContext: {defaultBackendService: {namespace: default, name: api-svc, port: {name: api}}}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: api-svc, namespace: default}
+          spec:
+            ports:
+              - {name: api, port: 9000, targetPort: api}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: api-svc-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: api-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.2.0.1"]
+              targetRef: {kind: Pod, name: api-pod-0}
+          ports:
+            - {name: api, port: 9000, protocol: TCP}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "server api-pod-0 10.2.0.1:9000 "}
+      - {type: not_contains, target: haproxy.cfg, pattern: "server api-pod-0 10.2.0.1:80 "}
+
+  test-default-backend-same-namespace:
+    description: Default backend works with explicit namespace
+    extraContext: {defaultBackendService: {namespace: default, name: fallback-svc, port: 80}}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: fallback-svc, namespace: default}
+          spec:
+            ports:
+              - {name: http, port: 80, targetPort: 8080}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: fallback-svc-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: fallback-svc
+          addressType: IPv4
+          endpoints:
+            - addresses:
+                - "10.2.0.1"
+              targetRef: {kind: Pod, name: fallback-pod-1}
+          ports:
+            - {name: http, port: 8080, protocol: TCP}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "server fallback-pod-1 10.2.0.1:8080"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "http-request return status 404"}
+
+  test-server-named-after-pod:
+    requires: [endpoints]
+    description: The server IS the pod (pod-named servers) and the log reads its name
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: pn }
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pods.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+server echo-pod-1 10\.0\.0\.1:8080 .*# Pod: echo-pod-1$'
+        description: >-
+          The server IS the pod: its name is the pod name (ADR-0011), so a
+          rolling update is an add/remove of named servers over the runtime API.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+server SRV_[0-9]'
+        description: No slot pool — no SRV_N placeholders.
+      - {type: contains, target: haproxy.cfg, pattern: '%\(server_pod\)s'}
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'bc_dst,map\('
+        description: server_pod reads the server name directly, no pod-names.map.
+      # namespace/service come from backend-service.map (keyed on the backend),
+      # not per-backend set-var lines, so the backend body stays empty (dynamic).
+      - {type: contains, target: haproxy.cfg, pattern: '%\(service\)\[var\(txn\.backend_name\),map\([^)]*backend-service\.map\),field\(2,/\)\]'}
+      - {type: contains, target: 'map:backend-service.map', pattern: '(?m)^default_pn_svc_echo_80 default/echo$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.service\)'}

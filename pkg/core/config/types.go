@@ -76,6 +76,10 @@ type Config struct {
 	// Snippets can be included in other templates using {{ render "name" }}.
 	TemplateSnippets map[string]TemplateSnippet `yaml:"template_snippets"`
 
+	// AbsentIncrementalGroups authenticates groups removed by effective-config
+	// resolution because all of their snippets require unavailable resources.
+	AbsentIncrementalGroups map[string]struct{} `yaml:"-" json:"-"`
+
 	// Maps maps map file names to their template definitions.
 	//
 	// These generate HAProxy map files for backend routing and other features.
@@ -96,11 +100,6 @@ type Config struct {
 	// more Kubernetes resources (multi-doc YAML separated by `---`)
 	// and applied via Server-Side Apply by the controller.
 	K8sResources map[string]K8sResource `yaml:"k8s_resources"`
-
-	// CRTLists maps crt-list file names to their template definitions.
-	//
-	// These generate crt-list files for SSL certificate lists with per-certificate options.
-	CRTLists map[string]CRTListFile `yaml:"crt_lists"`
 
 	// HAProxyConfig contains the main HAProxy configuration template.
 	HAProxyConfig HAProxyConfig `yaml:"haproxy_config"`
@@ -500,7 +499,48 @@ type TemplateSnippet struct {
 	// compile-safe seams such as `render "..." default ""`).
 	// Each entry must name a key of WatchedResources.
 	Requires []string `yaml:"requires,omitempty"`
+
+	// Incremental configures authenticated incremental evaluation for this snippet.
+	Incremental *IncrementalTemplate `yaml:"incremental,omitempty"`
 }
+
+// IncrementalTemplate configures authenticated incremental evaluation.
+type IncrementalTemplate struct {
+	Mode              IncrementalMode     `yaml:"mode,omitempty"`
+	Source            string              `yaml:"source,omitempty"`
+	BindingsTemplate  string              `yaml:"bindings_template,omitempty"`
+	WhenAnyPathExists []string            `yaml:"when_any_path_exists,omitempty"`
+	Root              string              `yaml:"root,omitempty"`
+	Group             string              `yaml:"group,omitempty"`
+	Consumes          []string            `yaml:"consumes,omitempty"`
+	OptionalConsumes  []string            `yaml:"optional_consumes,omitempty"`
+	Effects           []IncrementalEffect `yaml:"effects,omitempty"`
+}
+
+// IncrementalMode selects an incremental execution protocol.
+type IncrementalMode string
+
+const (
+	IncrementalModeScriggo            IncrementalMode = ""
+	IncrementalModeResourceProjection IncrementalMode = "resourceProjection"
+)
+
+// IncrementalEffect identifies a declared query-local side effect.
+type IncrementalEffect string
+
+const (
+	IncrementalEffectDeriveResource IncrementalEffect = "deriveResource"
+	IncrementalEffectRecordEvent    IncrementalEffect = "recordEvent"
+	IncrementalEffectBackendPlan    IncrementalEffect = "backendPlan"
+	IncrementalEffectPublishValue   IncrementalEffect = "publishValue"
+	IncrementalEffectStatusPatch    IncrementalEffect = "statusPatch"
+)
+
+// IncrementalTemplatePrefix is reserved for generated component entry points.
+const IncrementalTemplatePrefix = "__haptic_incremental__"
+
+// IncrementalBindingsTemplatePrefix is reserved for generated binding planner entry points.
+const IncrementalBindingsTemplatePrefix = "__haptic_incremental_bindings__"
 
 // MapFile is a HAProxy map file template.
 type MapFile struct {
@@ -542,25 +582,16 @@ type K8sResource struct {
 	// PostProcessing defines optional post-processors to apply after rendering.
 	// Post-processors are applied in order to transform the rendered output.
 	PostProcessing []PostProcessorConfig `yaml:"post_processing,omitempty"`
+
+	// CreateOnlyFields are dotted field paths applied when the object is
+	// created and omitted from every apply after that, leaving them to
+	// whoever runs the object.
+	CreateOnlyFields []string `yaml:"create_only_fields,omitempty"`
 }
 
 // SSLCertificate is an SSL certificate file template.
 type SSLCertificate struct {
 	// Template is the template content that generates the certificate file.
-	Template string `yaml:"template"`
-
-	// PostProcessing defines optional post-processors to apply after rendering.
-	// Post-processors are applied in order to transform the rendered output.
-	PostProcessing []PostProcessorConfig `yaml:"post_processing,omitempty"`
-}
-
-// CRTListFile is a crt-list file template.
-//
-// CRT-list files contain entries that map SSL certificates to specific SNI patterns
-// with per-certificate options. This enables advanced SSL certificate management with
-// features like SNI routing, OCSP stapling, and per-certificate TLS settings.
-type CRTListFile struct {
-	// Template is the template content that generates the crt-list file.
 	Template string `yaml:"template"`
 
 	// PostProcessing defines optional post-processors to apply after rendering.

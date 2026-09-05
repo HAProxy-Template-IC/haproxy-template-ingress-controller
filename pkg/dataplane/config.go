@@ -74,6 +74,9 @@ func (af *AuxiliaryFiles) CurrentFiles() map[string]string {
 		m[path.Base(f.Path)] = f.Content
 	}
 	for _, f := range af.GeneralFiles {
+		if f.IsCaFile {
+			continue
+		}
 		m[path.Base(f.Path)] = f.Content
 	}
 	for _, f := range af.CRTListFiles {

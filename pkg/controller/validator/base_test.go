@@ -476,6 +476,28 @@ func TestJSONPathValidator_IndexByErrors(t *testing.T) {
 	assert.Contains(t, response.Errors[0], "watched_resources.ingresses.index_by")
 }
 
+func TestJSONPathValidatorIncrementalActivationPaths(t *testing.T) {
+	cfg := &coreconfig.Config{TemplateSnippets: map[string]coreconfig.TemplateSnippet{
+		"valid": {
+			Incremental: &coreconfig.IncrementalTemplate{
+				WhenAnyPathExists: []string{
+					`metadata.annotations['example.test/enabled']`,
+					"spec.rules[*].filters",
+				},
+			},
+		},
+		"invalid": {
+			Incremental: &coreconfig.IncrementalTemplate{
+				WhenAnyPathExists: []string{"spec.rules[?(@.host)].host"},
+			},
+		},
+	}}
+
+	errors := validateJSONPaths(cfg)
+	require.Len(t, errors, 1)
+	assert.Contains(t, errors[0], "template_snippets.invalid.incremental.when_any_path_exists[0]")
+}
+
 func TestBaseValidator_IgnoresOtherEvents(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 

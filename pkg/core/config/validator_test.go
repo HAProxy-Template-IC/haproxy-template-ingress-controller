@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // validConfig returns a Config that passes ValidateStructure; each test mutates
@@ -479,6 +480,160 @@ func TestValidateRequires(t *testing.T) {
 		assert.Contains(t, err.Error(), `template_snippets.snippet-a: requires "nonexistent"`)
 	})
 
+	t.Run("incremental source must exist and be required", func(t *testing.T) {
+		cfg := base()
+		cfg.TemplateSnippets = map[string]TemplateSnippet{
+			"snippet-a": {
+				Name:        "snippet-a",
+				Template:    "x",
+				Incremental: &IncrementalTemplate{Source: "missing"},
+			},
+		}
+		err := ValidateStructure(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `incremental.source "missing" does not name a watched resource`)
+
+		cfg.TemplateSnippets["snippet-a"] = TemplateSnippet{
+			Name:        "snippet-a",
+			Template:    "x",
+			Incremental: &IncrementalTemplate{Source: "routes"},
+		}
+		err = ValidateStructure(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `incremental.source "routes" must also appear in requires`)
+
+		cfg.TemplateSnippets["snippet-a"] = TemplateSnippet{
+			Name:        "snippet-a",
+			Template:    "x",
+			Requires:    []string{"routes"},
+			Incremental: &IncrementalTemplate{Source: "routes"},
+		}
+		assert.NoError(t, ValidateStructure(cfg))
+	})
+
+	t.Run("incremental source mode is exclusive", func(t *testing.T) {
+		cfg := base()
+		cfg.TemplateSnippets = map[string]TemplateSnippet{
+			"snippet-a": {
+				Name:        "snippet-a",
+				Template:    "x",
+				Incremental: &IncrementalTemplate{},
+			},
+		}
+		err := ValidateStructure(cfg)
+		require.ErrorContains(t, err, "incremental requires exactly one of source or bindings_template")
+
+		cfg.TemplateSnippets["snippet-a"] = TemplateSnippet{
+			Name:     "snippet-a",
+			Template: "x",
+			Requires: []string{"routes"},
+			Incremental: &IncrementalTemplate{
+				Source:           "routes",
+				BindingsTemplate: `{% show "{}" %}`,
+			},
+		}
+		err = ValidateStructure(cfg)
+		require.ErrorContains(t, err, "incremental requires exactly one of source or bindings_template")
+	})
+
+	t.Run("incremental bindings template does not require a static source", func(t *testing.T) {
+		cfg := base()
+		cfg.TemplateSnippets = map[string]TemplateSnippet{
+			"snippet-a": {
+				Name:     "snippet-a",
+				Template: "x",
+				Incremental: &IncrementalTemplate{
+					BindingsTemplate: `{% show "{}" %}`,
+				},
+			},
+		}
+		assert.NoError(t, ValidateStructure(cfg))
+	})
+
+	t.Run("incremental effects are explicit and unique", func(t *testing.T) {
+		cfg := base()
+		cfg.TemplateSnippets = map[string]TemplateSnippet{
+			"snippet-a": {
+				Name:     "snippet-a",
+				Template: "x",
+				Incremental: &IncrementalTemplate{
+					BindingsTemplate: `{% show "{}" %}`,
+					Effects: []IncrementalEffect{
+						IncrementalEffectDeriveResource,
+						IncrementalEffectRecordEvent,
+						IncrementalEffectBackendPlan,
+						IncrementalEffectPublishValue,
+					},
+				},
+			},
+		}
+		assert.NoError(t, ValidateStructure(cfg))
+
+		incremental := cfg.TemplateSnippets["snippet-a"].Incremental
+		incremental.Effects = []IncrementalEffect{"unknown"}
+		err := ValidateStructure(cfg)
+		require.ErrorContains(t, err, `incremental.effects contains unsupported value "unknown"`)
+
+		incremental.Effects = []IncrementalEffect{
+			IncrementalEffectDeriveResource,
+			IncrementalEffectDeriveResource,
+		}
+		err = ValidateStructure(cfg)
+		require.ErrorContains(t, err, `incremental.effects contains duplicate value "deriveResource"`)
+	})
+
+	t.Run("private incremental prefixes are reserved", func(t *testing.T) {
+		for _, test := range []struct {
+			name   string
+			prefix string
+			set    func(*Config, string)
+		}{
+			{
+				name:   "snippet component",
+				prefix: IncrementalTemplatePrefix,
+				set: func(cfg *Config, name string) {
+					cfg.TemplateSnippets = map[string]TemplateSnippet{name: {Name: name, Template: "x"}}
+				},
+			},
+			{
+				name:   "map planner",
+				prefix: IncrementalBindingsTemplatePrefix,
+				set: func(cfg *Config, name string) {
+					cfg.Maps = map[string]MapFile{name: {Template: "x"}}
+				},
+			},
+			{
+				name:   "file component",
+				prefix: IncrementalTemplatePrefix,
+				set: func(cfg *Config, name string) {
+					cfg.Files = map[string]GeneralFile{name: {Template: "x"}}
+				},
+			},
+			{
+				name:   "certificate planner",
+				prefix: IncrementalBindingsTemplatePrefix,
+				set: func(cfg *Config, name string) {
+					cfg.SSLCertificates = map[string]SSLCertificate{name: {Template: "x"}}
+				},
+			},
+			{
+				name:   "resource component",
+				prefix: IncrementalTemplatePrefix,
+				set: func(cfg *Config, name string) {
+					cfg.K8sResources = map[string]K8sResource{name: {Template: "x"}}
+				},
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				cfg := base()
+				name := test.prefix + "collision"
+				test.set(cfg, name)
+				err := ValidateStructure(cfg)
+				require.ErrorContains(t, err, `names starting with "`+test.prefix+`" are reserved`)
+			})
+		}
+	})
+
 	t.Run("dangling test requires is rejected", func(t *testing.T) {
 		cfg := base()
 		cfg.ValidationTests = map[string]ValidationTest{
@@ -519,6 +674,517 @@ func TestValidateRequires(t *testing.T) {
 			assert.Contains(t, err.Error(), `must be of the form`)
 		}
 	})
+}
+
+func TestValidateTemplateStructure(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*Config)
+		want      string
+	}{
+		{
+			name: "valid source and requires need no runtime defaults",
+			configure: func(cfg *Config) {
+				cfg.TemplateSnippets = map[string]TemplateSnippet{
+					"component": {
+						Template:    "x",
+						Requires:    []string{"routes"},
+						Incremental: &IncrementalTemplate{Source: "routes"},
+					},
+				}
+			},
+		},
+		{
+			name: "source must name a watched resource",
+			configure: func(cfg *Config) {
+				cfg.TemplateSnippets = map[string]TemplateSnippet{
+					"component": {
+						Template:    "x",
+						Requires:    []string{"routes"},
+						Incremental: &IncrementalTemplate{Source: "missing"},
+					},
+				}
+			},
+			want: `incremental.source "missing" does not name a watched resource`,
+		},
+		{
+			name: "source must appear in requires",
+			configure: func(cfg *Config) {
+				cfg.TemplateSnippets = map[string]TemplateSnippet{
+					"component": {
+						Template:    "x",
+						Incremental: &IncrementalTemplate{Source: "routes"},
+					},
+				}
+			},
+			want: `incremental.source "routes" must also appear in requires`,
+		},
+		{
+			name: "unsupported effect",
+			configure: func(cfg *Config) {
+				cfg.TemplateSnippets = map[string]TemplateSnippet{
+					"component": {
+						Template: "x",
+						Incremental: &IncrementalTemplate{
+							BindingsTemplate: "{}",
+							Effects:          []IncrementalEffect{"unknown"},
+						},
+					},
+				}
+			},
+			want: `incremental.effects contains unsupported value "unknown"`,
+		},
+		{
+			name: "duplicate effect",
+			configure: func(cfg *Config) {
+				cfg.TemplateSnippets = map[string]TemplateSnippet{
+					"component": {
+						Template: "x",
+						Incremental: &IncrementalTemplate{
+							BindingsTemplate: "{}",
+							Effects: []IncrementalEffect{
+								IncrementalEffectDeriveResource,
+								IncrementalEffectDeriveResource,
+							},
+						},
+					},
+				}
+			},
+			want: `incremental.effects contains duplicate value "deriveResource"`,
+		},
+		{
+			name: "empty activation paths",
+			configure: func(cfg *Config) {
+				cfg.TemplateSnippets = map[string]TemplateSnippet{
+					"component": {
+						Template: "x",
+						Incremental: &IncrementalTemplate{
+							BindingsTemplate:  "{}",
+							WhenAnyPathExists: []string{},
+						},
+					},
+				}
+			},
+			want: "incremental.when_any_path_exists must not be empty",
+		},
+		{
+			name: "duplicate activation path",
+			configure: func(cfg *Config) {
+				cfg.TemplateSnippets = map[string]TemplateSnippet{
+					"component": {
+						Template: "x",
+						Incremental: &IncrementalTemplate{
+							BindingsTemplate: "{}",
+							WhenAnyPathExists: []string{
+								"metadata.name",
+								"metadata.name",
+							},
+						},
+					},
+				}
+			},
+			want: `incremental.when_any_path_exists contains duplicate path "metadata.name"`,
+		},
+		{
+			name: "activation cannot guard derivation owner",
+			configure: func(cfg *Config) {
+				cfg.TemplateSnippets = map[string]TemplateSnippet{
+					"component": {
+						Template: "x",
+						Incremental: &IncrementalTemplate{
+							BindingsTemplate:  "{}",
+							WhenAnyPathExists: []string{"metadata.name"},
+							Effects:           []IncrementalEffect{IncrementalEffectDeriveResource},
+						},
+					},
+				}
+			},
+			want: "incremental.when_any_path_exists cannot be combined with deriveResource",
+		},
+		{
+			name: "private entry point prefix",
+			configure: func(cfg *Config) {
+				name := IncrementalTemplatePrefix + "collision"
+				cfg.TemplateSnippets = map[string]TemplateSnippet{name: {Template: "x"}}
+			},
+			want: `names starting with "` + IncrementalTemplatePrefix + `" are reserved`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &Config{
+				WatchedResources: map[string]WatchedResource{"routes": {}},
+			}
+			test.configure(cfg)
+
+			err := ValidateTemplateStructure(cfg)
+			if test.want == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestValidateIncrementalResourceProjection(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*IncrementalTemplate)
+		wantErr string
+	}{
+		{name: "valid with publication group"},
+		{
+			name: "unknown mode",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.Mode = "unknown"
+			},
+			wantErr: `incremental.mode contains unsupported value "unknown"`,
+		},
+		{
+			name: "source",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.Source = "routes"
+			},
+			wantErr: "incremental.resourceProjection cannot set source",
+		},
+		{
+			name: "missing bindings template",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.BindingsTemplate = ""
+			},
+			wantErr: "incremental.resourceProjection requires bindings_template",
+		},
+		{
+			name: "missing effect",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.Effects = nil
+			},
+			wantErr: "incremental.resourceProjection requires exactly effects [publishValue]",
+		},
+		{
+			name: "different effect",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.Effects = []IncrementalEffect{IncrementalEffectRecordEvent}
+			},
+			wantErr: "incremental.resourceProjection requires exactly effects [publishValue]",
+		},
+		{
+			name: "additional effect",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.Effects = append(incremental.Effects, IncrementalEffectBackendPlan)
+			},
+			wantErr: "incremental.resourceProjection requires exactly effects [publishValue]",
+		},
+		{
+			name: "activation",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.WhenAnyPathExists = []string{"metadata.name"}
+			},
+			wantErr: "incremental.resourceProjection cannot set when_any_path_exists",
+		},
+		{
+			name: "root",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.Root = "projections"
+			},
+			wantErr: "incremental.resourceProjection cannot set root",
+		},
+		{
+			name: "consumes",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.Consumes = []string{}
+			},
+			wantErr: "incremental.resourceProjection cannot set consumes",
+		},
+		{
+			name: "optional consumes",
+			mutate: func(incremental *IncrementalTemplate) {
+				incremental.OptionalConsumes = []string{"optional"}
+			},
+			wantErr: "incremental.resourceProjection cannot set optional_consumes",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			incremental := &IncrementalTemplate{
+				Mode:             IncrementalModeResourceProjection,
+				BindingsTemplate: "{}",
+				Group:            "selected-resources",
+				Effects:          []IncrementalEffect{IncrementalEffectPublishValue},
+			}
+			if test.mutate != nil {
+				test.mutate(incremental)
+			}
+			cfg := &Config{
+				WatchedResources: map[string]WatchedResource{"routes": {}},
+				TemplateSnippets: map[string]TemplateSnippet{
+					"projection": {
+						Template:    `{{- "" -}}`,
+						Requires:    []string{"routes"},
+						Incremental: incremental,
+					},
+				},
+			}
+
+			err := ValidateTemplateStructure(cfg)
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestValidateIncrementalDependencies(t *testing.T) {
+	component := func(group string, effects []IncrementalEffect, consumes, optional []string) TemplateSnippet {
+		return TemplateSnippet{
+			Template: "x",
+			Incremental: &IncrementalTemplate{
+				BindingsTemplate: "{}",
+				Group:            group,
+				Consumes:         consumes,
+				OptionalConsumes: optional,
+				Effects:          effects,
+			},
+		}
+	}
+	tests := []struct {
+		name     string
+		snippets map[string]TemplateSnippet
+		absent   map[string]struct{}
+		wantErr  string
+	}{
+		{
+			name: "required and optional producers",
+			snippets: map[string]TemplateSnippet{
+				"policy":   component("policies", []IncrementalEffect{IncrementalEffectPublishValue}, nil, nil),
+				"optional": component("optional-policies", []IncrementalEffect{IncrementalEffectPublishValue}, nil, nil),
+				"route":    component("routes", nil, []string{"policies"}, []string{"optional-policies"}),
+			},
+		},
+		{
+			name: "required group missing",
+			snippets: map[string]TemplateSnippet{
+				"route": component("routes", nil, []string{"policies"}, nil),
+			},
+			wantErr: `incremental.consumes "policies" does not name an incremental group`,
+		},
+		{
+			name: "unauthenticated optional group missing",
+			snippets: map[string]TemplateSnippet{
+				"route": component("routes", nil, nil, []string{"policies"}),
+			},
+			wantErr: `incremental.optional_consumes "policies" does not name an incremental group`,
+		},
+		{
+			name: "authenticated optional group missing",
+			snippets: map[string]TemplateSnippet{
+				"route": component("routes", nil, nil, []string{"policies"}),
+			},
+			absent: map[string]struct{}{"policies": {}},
+		},
+		{
+			name: "target has no publisher",
+			snippets: map[string]TemplateSnippet{
+				"policy": component("policies", nil, nil, nil),
+				"route":  component("routes", nil, []string{"policies"}, nil),
+			},
+			wantErr: `incremental.consumes group "policies" has no publishValue component`,
+		},
+		{
+			name: "duplicate across fields",
+			snippets: map[string]TemplateSnippet{
+				"policy": component("policies", []IncrementalEffect{IncrementalEffectPublishValue}, nil, nil),
+				"route":  component("routes", nil, []string{"policies"}, []string{"policies"}),
+			},
+			wantErr: `incremental.optional_consumes contains group "policies" already declared in consumes`,
+		},
+		{
+			name: "self dependency",
+			snippets: map[string]TemplateSnippet{
+				"route": component("routes", []IncrementalEffect{IncrementalEffectPublishValue}, []string{"routes"}, nil),
+			},
+			wantErr: `incremental.consumes group "routes" depends on itself`,
+		},
+		{
+			name: "transitive cycle",
+			snippets: map[string]TemplateSnippet{
+				"a": component("a", []IncrementalEffect{IncrementalEffectPublishValue}, []string{"b"}, nil),
+				"b": component("b", []IncrementalEffect{IncrementalEffectPublishValue}, nil, []string{"c"}),
+				"c": component("c", []IncrementalEffect{IncrementalEffectPublishValue}, []string{"a"}, nil),
+			},
+			wantErr: `incremental group dependency cycle: a -> b -> c -> a`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &Config{
+				TemplateSnippets:        test.snippets,
+				AbsentIncrementalGroups: test.absent,
+			}
+			err := ValidateTemplateStructure(cfg)
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestValidateIncrementalRoots(t *testing.T) {
+	component := func(root, source, bindings string) TemplateSnippet {
+		requires := []string(nil)
+		if source != "" {
+			requires = []string{source}
+		}
+		return TemplateSnippet{
+			Template: "x",
+			Requires: requires,
+			Incremental: &IncrementalTemplate{
+				Root: root, Source: source, BindingsTemplate: bindings,
+			},
+		}
+	}
+	tests := []struct {
+		name     string
+		snippets map[string]TemplateSnippet
+		wantErr  string
+	}{
+		{
+			name: "same source",
+			snippets: map[string]TemplateSnippet{
+				"a": component("routes", "routes", ""),
+				"b": component("routes", "routes", ""),
+			},
+		},
+		{
+			name: "same bindings",
+			snippets: map[string]TemplateSnippet{
+				"a": component("routes", "", `{% show bindings %}`),
+				"b": component("routes", "", `{% show bindings %}`),
+			},
+		},
+		{
+			name: "different source",
+			snippets: map[string]TemplateSnippet{
+				"a": component("routes", "routes", ""),
+				"b": component("routes", "services", ""),
+			},
+		},
+		{
+			name: "different bindings",
+			snippets: map[string]TemplateSnippet{
+				"a": component("routes", "", "first"),
+				"b": component("routes", "", "second"),
+			},
+		},
+		{
+			name: "mixed identity modes",
+			snippets: map[string]TemplateSnippet{
+				"a": component("routes", "routes", ""),
+				"b": component("routes", "", "bindings"),
+			},
+		},
+		{
+			name: "surrounding whitespace",
+			snippets: map[string]TemplateSnippet{
+				"a": component(" routes", "routes", ""),
+			},
+			wantErr: "incremental.root must not contain surrounding whitespace",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &Config{
+				WatchedResources: map[string]WatchedResource{
+					"routes": {Resources: "routes"}, "services": {Resources: "services"},
+				},
+				TemplateSnippets: test.snippets,
+			}
+			err := ValidateTemplateStructure(cfg)
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestValidateIncrementalRootBarriers(t *testing.T) {
+	component := func(root, group string, consumes, optional []string, publish bool) TemplateSnippet {
+		effects := []IncrementalEffect(nil)
+		if publish {
+			effects = []IncrementalEffect{IncrementalEffectPublishValue}
+		}
+		return TemplateSnippet{
+			Template: "x",
+			Incremental: &IncrementalTemplate{
+				Root: root, BindingsTemplate: "{}", Group: group,
+				Consumes: consumes, OptionalConsumes: optional, Effects: effects,
+			},
+		}
+	}
+	tests := []struct {
+		name     string
+		snippets map[string]TemplateSnippet
+		wantErr  string
+	}{
+		{
+			name: "independent groups",
+			snippets: map[string]TemplateSnippet{
+				"a": component("routes", "a", nil, nil, false),
+				"b": component("routes", "b", nil, nil, false),
+			},
+		},
+		{
+			name: "dependency outside root",
+			snippets: map[string]TemplateSnippet{
+				"producer": component("", "producer", nil, nil, true),
+				"consumer": component("routes", "consumer", []string{"producer"}, nil, false),
+			},
+		},
+		{
+			name: "direct dependency",
+			snippets: map[string]TemplateSnippet{
+				"producer": component("routes", "producer", nil, nil, true),
+				"consumer": component("routes", "consumer", []string{"producer"}, nil, false),
+			},
+			wantErr: `incremental.root "routes" crosses a dependency barrier: consumer -> producer`,
+		},
+		{
+			name: "optional dependency",
+			snippets: map[string]TemplateSnippet{
+				"producer": component("routes", "producer", nil, nil, true),
+				"consumer": component("routes", "consumer", nil, []string{"producer"}, false),
+			},
+			wantErr: `incremental.root "routes" crosses a dependency barrier: consumer -> producer`,
+		},
+		{
+			name: "transitive dependency",
+			snippets: map[string]TemplateSnippet{
+				"a": component("routes", "a", []string{"b"}, nil, false),
+				"b": component("", "b", []string{"c"}, nil, true),
+				"c": component("routes", "c", nil, nil, true),
+			},
+			wantErr: `incremental.root "routes" crosses a dependency barrier: a -> b -> c`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateTemplateStructure(&Config{TemplateSnippets: test.snippets})
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
 }
 
 func TestWatchedResource_CandidateVersions(t *testing.T) {

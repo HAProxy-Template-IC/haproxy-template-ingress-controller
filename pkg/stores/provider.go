@@ -240,10 +240,86 @@ func (a *TypesStoreAdapter) Update(resource any, keys []string) error {
 	return a.Inner.Update(resource, keys)
 }
 
+func (a *TypesStoreAdapter) ListRevision() Revision {
+	if revisioned, ok := a.Inner.(Revisioned); ok {
+		return revisioned.ListRevision()
+	}
+	return ""
+}
+
+func (a *TypesStoreAdapter) GetRevision(keys ...string) Revision {
+	if revisioned, ok := a.Inner.(Revisioned); ok {
+		return revisioned.GetRevision(keys...)
+	}
+	return ""
+}
+
+func (a *TypesStoreAdapter) IdentityRevision(namespace, name string) Revision {
+	if revisioned, ok := a.Inner.(Revisioned); ok {
+		return revisioned.IdentityRevision(namespace, name)
+	}
+	return ""
+}
+
+func (a *TypesStoreAdapter) ListSnapshot() (items []any, sequence uint64, err error) {
+	if journal, ok := a.Inner.(RevisionJournal); ok {
+		return journal.ListSnapshot()
+	}
+	return nil, 0, ErrSnapshotUnsupported
+}
+
+func (a *TypesStoreAdapter) ChangesSince(sequence uint64) (uint64, []RevisionChange, bool) {
+	if journal, ok := a.Inner.(RevisionJournal); ok {
+		return journal.ChangesSince(sequence)
+	}
+	return 0, nil, false
+}
+
+func (a *TypesStoreAdapter) ExactRevisionJournalSource() RevisionSource {
+	return ExactRevisionJournalSource(Store(a.Inner))
+}
+
+func (a *TypesStoreAdapter) GetIdentity(namespace, name string) (item any, found bool, err error) {
+	if getter, ok := a.Inner.(IdentityGetter); ok {
+		return getter.GetIdentity(namespace, name)
+	}
+	return nil, false, ErrIdentityLookupUnsupported
+}
+
+func (a *TypesStoreAdapter) RevisionSource() RevisionSource {
+	if reader, ok := a.Inner.(SnapshotReader); ok {
+		return reader.RevisionSource()
+	}
+	return 0
+}
+
+func (a *TypesStoreAdapter) GetSnapshot(
+	keys ...string,
+) (items []any, revision Revision, sequence uint64, err error) {
+	if reader, ok := a.Inner.(SnapshotReader); ok {
+		return reader.GetSnapshot(keys...)
+	}
+	return nil, "", 0, ErrSnapshotUnsupported
+}
+
+func (a *TypesStoreAdapter) IdentitySnapshot(
+	namespace, name string,
+) (item any, found bool, revision Revision, sequence uint64, err error) {
+	if reader, ok := a.Inner.(SnapshotReader); ok {
+		return reader.IdentitySnapshot(namespace, name)
+	}
+	return nil, false, "", 0, ErrSnapshotUnsupported
+}
+
 // Verify TypesStoreAdapter implements Store.
 var (
-	_ Store        = (*TypesStoreAdapter)(nil)
-	_ ContextStore = (*TypesStoreAdapter)(nil)
+	_ Store                = (*TypesStoreAdapter)(nil)
+	_ ContextStore         = (*TypesStoreAdapter)(nil)
+	_ Revisioned           = (*TypesStoreAdapter)(nil)
+	_ RevisionJournal      = (*TypesStoreAdapter)(nil)
+	_ ExactRevisionJournal = (*TypesStoreAdapter)(nil)
+	_ IdentityGetter       = (*TypesStoreAdapter)(nil)
+	_ SnapshotReader       = (*TypesStoreAdapter)(nil)
 )
 
 // StoreProvider provides access to stores by name.
@@ -359,6 +435,19 @@ func (p *OverlayStoreProvider) GetHTTPOverlay() HTTPContentOverlay {
 		return nil
 	}
 	return p.context.HTTPOverlay
+}
+
+// GetBaseStore returns the store beneath this request's scratch overlay.
+func (p *OverlayStoreProvider) GetBaseStore(name string) Store {
+	return p.base.GetStore(name)
+}
+
+// GetK8sOverlay returns the immutable scratch overlay for one store.
+func (p *OverlayStoreProvider) GetK8sOverlay(name string) *StoreOverlay {
+	if p.context == nil {
+		return nil
+	}
+	return p.context.K8sOverlays[name]
 }
 
 // Validate checks that all K8s overlays reference valid stores in the base provider.

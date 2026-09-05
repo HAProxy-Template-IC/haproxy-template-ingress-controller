@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,58 +14,63 @@
 
 package deployer
 
-// maxValidatedPlans bounds the passed-plan set. Verdicts arrive for the newest
-// render plus the superseded ones pods still run, and the gate retains only a
-// handful of those, so a set this size covers every plan any pod can be on
-// while a converged fleet uses one entry.
+import (
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+)
+
 const maxValidatedPlans = 16
 
-// validatedPlanSet remembers which plans the render gate passed, in arrival
-// order, so a pod's manifest can name the plan THAT pod applied.
-//
-// The agent promotes its last-known-good set only when the manifest's
-// validated plan equals the plan it has applied, so a single "newest validated"
-// value would stall promotion on every pod that is not on that exact plan —
-// and a verdict for a superseded plan (which the gate checks for the revert's
-// sake) would push the value backwards. A set has neither problem: membership
-// only grows, and nothing a pod already earned is taken away.
+type planReference struct {
+	id    string
+	proof string
+}
+
+type validatedPlan struct {
+	id         string
+	occurrence *rendercycle.Occurrence
+}
+
+// validatedPlanSet retains the exact render occurrences the controller's
+// HAProxy check passed. Agent-issued plan proofs remain the external ACK used
+// to resolve which occurrence a pod actually carries.
 type validatedPlanSet struct {
-	// order is oldest-first; newest is the last entry, which is what a pod
-	// whose own plan has no verdict is told.
-	order  []string
-	member map[string]struct{}
+	order []validatedPlan
 }
 
 func newValidatedPlanSet() *validatedPlanSet {
-	return &validatedPlanSet{member: map[string]struct{}{}}
+	return &validatedPlanSet{}
 }
 
-// add records a plan the gate passed. Re-recording one keeps its position: the
-// order only tracks which plan is newest, and a re-verdict does not make a plan
-// newer than renders that followed it.
-func (s *validatedPlanSet) add(planID string) {
-	if planID == "" {
+func (s *validatedPlanSet) addOccurrence(occurrence *rendercycle.Occurrence) {
+	identity, err := inspectOccurrence(occurrence)
+	if err != nil || identity.planID == "" {
 		return
 	}
-	if _, known := s.member[planID]; known {
-		return
+	for i := range s.order {
+		if sameOccurrence(s.order[i].occurrence, occurrence) {
+			return
+		}
 	}
-	s.member[planID] = struct{}{}
-	s.order = append(s.order, planID)
-	for len(s.order) > maxValidatedPlans {
-		delete(s.member, s.order[0])
-		s.order = s.order[1:]
+	s.order = append(s.order, validatedPlan{id: identity.planID, occurrence: occurrence})
+	if len(s.order) > maxValidatedPlans {
+		s.order = s.order[len(s.order)-maxValidatedPlans:]
 	}
 }
 
-// resolve returns what a pod reporting appliedPlanID should be told: its own
-// plan when that passed, otherwise the newest passed plan.
-func (s *validatedPlanSet) resolve(appliedPlanID string) string {
-	if _, passed := s.member[appliedPlanID]; passed {
-		return appliedPlanID
+func (s *validatedPlanSet) resolve(
+	id, proof string,
+	plan *renderplan.Plan,
+	occurrence *rendercycle.Occurrence,
+) planReference {
+	if id == "" || proof == "" || !exactPlan(plan, plan) || plan.ID != id || occurrence == nil {
+		return planReference{}
 	}
-	if len(s.order) == 0 {
-		return ""
+	for i := range s.order {
+		candidate := &s.order[i]
+		if candidate.id == id && sameOccurrence(candidate.occurrence, occurrence) {
+			return planReference{id: id, proof: proof}
+		}
 	}
-	return s.order[len(s.order)-1]
+	return planReference{}
 }

@@ -3,6 +3,8 @@
 # trailing ssl-passthrough-named-port test lives here (file tail).
 _fx:
   extracontextCoraza: &extracontextCoraza
+    waf:
+      ingressPermissions: {allowCustomRules: true, allowEnforcementOverride: true}
     spoaHub:
       enabled: true
       haproxy:
@@ -24,6 +26,8 @@ _fx:
             SecRuleEngine On
           params: ""
   extracontextCoraza2: &extracontextCoraza2
+    waf:
+      ingressPermissions: {allowCustomRules: true, allowEnforcementOverride: true}
     spoaHub:
       enabled: true
       haproxy:

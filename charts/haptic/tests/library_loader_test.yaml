@@ -14,47 +14,51 @@ tests:
   - it: emits one object per enabled library plus the operator's, in merge order
     asserts:
       - hasDocuments:
-          count: 10
+          count: 11
       - equal:
           path: metadata.name
           value: haptic-config-base
         documentIndex: 0
       - equal:
           path: metadata.name
-          value: haptic-config-ssl
+          value: haptic-config-kubernetes-backends
         documentIndex: 1
       - equal:
           path: metadata.name
-          value: haptic-config-ingress
+          value: haptic-config-ssl
         documentIndex: 2
       - equal:
           path: metadata.name
-          value: haptic-config-gateway
+          value: haptic-config-ingress
         documentIndex: 3
       - equal:
           path: metadata.name
-          value: haptic-config-ingress-annotations-compat
+          value: haptic-config-gateway
         documentIndex: 4
       - equal:
           path: metadata.name
-          value: haptic-config-governance
+          value: haptic-config-ingress-annotations-compat
         documentIndex: 5
       - equal:
           path: metadata.name
-          value: haptic-config-haptic-annotations
+          value: haptic-config-governance
         documentIndex: 6
       - equal:
           path: metadata.name
-          value: haptic-config-spoa-hub
+          value: haptic-config-haptic-annotations
         documentIndex: 7
       - equal:
           path: metadata.name
-          value: haptic-config-vector
+          value: haptic-config-spoa-hub
         documentIndex: 8
       - equal:
           path: metadata.name
-          value: haptic-config
+          value: haptic-config-vector
         documentIndex: 9
+      - equal:
+          path: metadata.name
+          value: haptic-config
+        documentIndex: 10
 
   - it: references every library snippets object, in merge order
     # The ref list is the ONLY place merge order is declared, so nothing can
@@ -65,15 +69,15 @@ tests:
       - equal:
           path: spec.libraryRefs[0].name
           value: haptic-config-base
-        documentIndex: 9
+        documentIndex: 10
       - equal:
-          path: spec.libraryRefs[8].name
+          path: spec.libraryRefs[9].name
           value: haptic-config-vector
-        documentIndex: 9
+        documentIndex: 10
       - matchRegex:
           path: spec.libraryRefs[0].revision
           pattern: "^base-[0-9a-f]{16}$"
-        documentIndex: 9
+        documentIndex: 10
       - matchRegex:
           path: spec.revision
           pattern: "^base-[0-9a-f]{16}$"
@@ -95,7 +99,7 @@ tests:
         documentIndex: 0
       - notExists:
           path: spec.partial
-        documentIndex: 9
+        documentIndex: 10
 
   - it: drops a disabled library's object entirely
     set:
@@ -103,7 +107,103 @@ tests:
       controller.templateLibraries.ingressAnnotationsCompat.enabled: false
     asserts:
       - hasDocuments:
-          count: 9
+          count: 10
+
+  - it: emits the shared Kubernetes backend capability and watch union
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-kubernetes-backends
+    asserts:
+      - exists:
+          path: spec.templateSnippets["util-service-port-resolution"]
+      - exists:
+          path: spec.templateSnippets["util-backend-servers-result"]
+      - exists:
+          path: spec.templateSnippets["util-backend-servers"]
+      - exists:
+          path: spec.templateSnippets["default-backend-100-kubernetes"]
+
+  - it: unions Kubernetes backend watches into the operator config
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    asserts:
+      - equal:
+          path: spec.watchedResources.services.resources
+          value: services
+      - equal:
+          path: spec.watchedResources.endpoints.resources
+          value: endpointslices
+      - equal:
+          path: spec.watchedResources.endpoints.debounceInterval
+          value: "0"
+
+  - it: keeps Kubernetes backend semantics out of base
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-base
+    asserts:
+      - notExists:
+          path: spec.templateSnippets["util-service-port-resolution"]
+      - notExists:
+          path: spec.templateSnippets["util-backend-servers-result"]
+      - notExists:
+          path: spec.templateSnippets["util-backend-servers"]
+      - matchRegex:
+          path: spec.templateSnippets["util-default-backend"].template
+          pattern: 'render_glob "default-backend-\*"'
+      - matchRegex:
+          path: spec.templateSnippets["util-validate-config-value"].template
+          pattern: "on resource"
+      - notMatchRegex:
+          path: spec.templateSnippets["util-validate-config-value"].template
+          pattern: "on Ingress"
+      - notMatchRegex:
+          path: spec.templateSnippets["frontend-filters-999-debug"].template
+          pattern: "X-Gateway-"
+
+  - it: keeps Gateway diagnostics in the Gateway library
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-gateway
+    asserts:
+      - matchRegex:
+          path: spec.templateSnippets["frontend-filters-999-gateway-debug"].template
+          pattern: "X-Gateway-Matched-Route"
+      - matchRegex:
+          path: spec.templateSnippets["frontend-filters-999-gateway-debug"].template
+          pattern: "X-Gateway-Match-Reason"
+      - matchRegex:
+          path: spec.templateSnippets["frontend-filters-999-gateway-debug"].template
+          pattern: "X-Gateway-Filters-Applied"
+
+  - it: rejects disabling Kubernetes backends while a consumer remains enabled
+    set:
+      controller.templateLibraries.kubernetesBackends.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.templateLibraries.kubernetesBackends.enabled=false leaves enabled consumers without Service/EndpointSlice helpers: ingress, gateway, ingressAnnotationsCompat, hapticAnnotations. Enable kubernetesBackends or disable those libraries."
+
+  - it: allows Kubernetes backends to be disabled with all consumers
+    set:
+      controller.templateLibraries.kubernetesBackends.enabled: false
+      controller.templateLibraries.ingress.enabled: false
+      controller.templateLibraries.gateway.enabled: false
+      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
+      controller.templateLibraries.hapticAnnotations.enabled: false
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.nginxIngress.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 5
+      - equal:
+          path: metadata.name
+          value: haptic-config-base
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: haptic-config
+        documentIndex: 4
 
   - it: should strip _helm_load metadata and underscore scratch keys from every spec
     asserts:
@@ -117,7 +217,7 @@ tests:
       # reject an object carrying a field its CRD does not declare.
       - notExists:
           path: spec._test_tls_cert
-        documentIndex: 1
+        documentIndex: 2
 
   - it: should inject ingressClassName into ingresses.fieldSelector via _helm_load
     documentSelector:
@@ -188,7 +288,7 @@ tests:
       - equal:
           path: metadata.name
           value: edge-config
-        documentIndex: 9
+        documentIndex: 10
 
   - it: should carry template-owned status patch policy in structured extraContext
     documentSelector:
@@ -278,6 +378,36 @@ tests:
           path: spec.templateSnippets["backends-502-gateway-tcproute"].requires
           content: tcproutes
 
+  - it: configures Gateway backend-service producers as one incremental group
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-gateway
+    asserts:
+      - equal:
+          path: spec.templateSnippets["map-backend-service-200-gateway-http"].incremental
+          value:
+            source: httproutes
+            root: gateway-http-route-pre-analysis
+            group: map-backend-service-gateway
+      - equal:
+          path: spec.templateSnippets["map-backend-service-210-gateway-grpc"].incremental
+          value:
+            source: grpcroutes
+            group: map-backend-service-gateway
+
+  - it: configures governance with dynamic bindings and declared effects
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-governance
+    asserts:
+      - exists:
+          path: spec.templateSnippets["features-960-governance"].incremental.bindingsTemplate
+      - notExists:
+          path: spec.templateSnippets["features-960-governance"].incremental.source
+      - equal:
+          path: spec.templateSnippets["features-960-governance"].incremental.effects
+          value: [deriveResource, recordEvent]
+
   - it: should exclude the incompatible BackendTLSPolicy v1alpha2 from the candidate list
     documentSelector:
       path: metadata.name
@@ -295,7 +425,9 @@ tests:
       value: haptic-config-ingress-annotations-compat
     asserts:
       - exists:
-          path: spec.templateSnippets["util-build-annotation-ssl-passthrough"]
+          path: spec.templateSnippets["util-annotation-ssl-passthrough-component"]
+      - exists:
+          path: spec.templateSnippets["util-annotation-ssl-passthrough-values"]
       - exists:
           path: spec.templateSnippets["util-emit-annotation-access-control"]
 

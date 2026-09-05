@@ -61,6 +61,7 @@ func withCore(name, text string) planOpt {
 	return func(p *renderplan.Plan) {
 		p.Sections = append(p.Sections, renderplan.Section{
 			Kind: renderplan.SectionKindCore, Name: name, TextDigest: renderplan.DigestString(text), Length: len(text),
+			Text: text, TextKnown: true,
 		})
 	}
 }
@@ -72,7 +73,15 @@ func withProfile(name, body string) planOpt {
 }
 
 func withBackend(be *renderplan.Backend) planOpt {
-	return func(p *renderplan.Plan) { p.Backends[be.Name] = *be }
+	return func(p *renderplan.Plan) {
+		cloned := *be
+		if !cloned.ContentKnown {
+			cloned.Body = []string{cloned.BodyDigest}
+			cloned.Comments = []string{cloned.CommentsDigest}
+			cloned.ContentKnown = true
+		}
+		p.Backends[be.Name] = cloned
+	}
 }
 
 func withMap(m renderplan.Map) planOpt {
@@ -83,14 +92,21 @@ func withCRTList(list renderplan.CRTList) planOpt {
 	return func(p *renderplan.Plan) { p.CRTLists[list.Path] = list }
 }
 
-func withFile(f renderplan.File) planOpt {
-	return func(p *renderplan.Plan) { p.Files = append(p.Files, f) }
+func withFile(f *renderplan.File) planOpt {
+	file := *f
+	return func(p *renderplan.Plan) {
+		if !file.ContentKnown {
+			file.Content, file.ContentKnown = file.Digest, true
+		}
+		p.Files = append(p.Files, file)
+	}
 }
 
 func deriveSections(p *renderplan.Plan) {
 	for _, name := range slices.Sorted(maps.Keys(p.Profiles)) {
 		p.Sections = append(p.Sections, renderplan.Section{
 			Kind: renderplan.SectionKindProfile, Name: name, TextDigest: p.Profiles[name].BodyDigest,
+			Text: p.Profiles[name].BodyDigest, TextKnown: true,
 		})
 	}
 	for _, name := range slices.Sorted(maps.Keys(p.Backends)) {
@@ -104,6 +120,7 @@ func deriveSections(p *renderplan.Plan) {
 		p.Backends[name] = be
 		p.Sections = append(p.Sections, renderplan.Section{
 			Kind: renderplan.SectionKindBackend, Name: name, TextDigest: be.TextDigest,
+			Text: be.TextDigest, TextKnown: true,
 		})
 	}
 }
@@ -119,6 +136,7 @@ func deriveFiles(p *renderplan.Plan) {
 		if !declared[name] {
 			p.Files = append(p.Files, renderplan.File{
 				Path: name, Kind: renderplan.FileKindMap, Digest: entriesDigest(p.Maps[name].Entries),
+				Content: entriesContent(p.Maps[name].Entries), ContentKnown: true,
 			})
 		}
 	}
@@ -126,12 +144,14 @@ func deriveFiles(p *renderplan.Plan) {
 		if !declared[name] {
 			p.Files = append(p.Files, renderplan.File{
 				Path: name, Kind: renderplan.FileKindCRTList, Digest: jsonDigest(p.CRTLists[name].Entries),
+				Content: string(jsonBytes(p.CRTLists[name].Entries)), ContentKnown: true,
 			})
 		}
 	}
 	if !declared["haproxy.cfg"] {
 		p.Files = append(p.Files, renderplan.File{
 			Path: "haproxy.cfg", Kind: renderplan.FileKindConfig, Digest: sectionsDigest(p.Sections),
+			Content: sectionsContent(p.Sections), ContentKnown: true,
 		})
 	}
 }
@@ -145,11 +165,15 @@ func recordDigest(be *renderplan.Backend) string {
 // jsonDigest digests a value the way the generator digests a record: through
 // its canonical JSON, which sorts map keys and keeps field order.
 func jsonDigest(value any) string {
+	return renderplan.Digest(jsonBytes(value))
+}
+
+func jsonBytes(value any) []byte {
 	blob, err := json.Marshal(value)
 	if err != nil {
 		panic(err)
 	}
-	return renderplan.Digest(blob)
+	return blob
 }
 
 func sectionsDigest(sections []renderplan.Section) string {
@@ -161,11 +185,23 @@ func sectionsDigest(sections []renderplan.Section) string {
 }
 
 func entriesDigest(entries []renderplan.Entry) string {
+	return renderplan.DigestString(entriesContent(entries))
+}
+
+func entriesContent(entries []renderplan.Entry) string {
 	parts := make([]string, 0, len(entries))
 	for _, e := range entries {
 		parts = append(parts, e.Key+" "+e.Value)
 	}
-	return renderplan.DigestString(strings.Join(parts, "\n"))
+	return strings.Join(parts, "\n")
+}
+
+func sectionsContent(sections []renderplan.Section) string {
+	var content strings.Builder
+	for i := range sections {
+		content.WriteString(sections[i].Text)
+	}
+	return content.String()
 }
 
 // dynBackend is a backend the generator declared runtime-eligible.

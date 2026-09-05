@@ -46,6 +46,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/statusapplier"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/warmer"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -198,6 +199,11 @@ func createReconciliationComponents(
 		HTTPStoreComponent: httpStoreComponent,
 		TypedResourceTypes: wiring.TypedResourceTypes,
 	})
+	setup.AddCleanup(func() {
+		if err := renderService.RetireIncrementalCache(); err != nil {
+			logger.Error("Retiring incremental render cache failed", "error", err)
+		}
+	})
 
 	// Two pipeline instances, because the two callers answer to different
 	// clocks. The reconcile instance renders and hands the bytes to the fleet;
@@ -224,6 +230,23 @@ func createReconciliationComponents(
 		Pipeline:      reconcilePipeline,
 		StoreProvider: storeProvider,
 		CurrentFiles:  currentFiles,
+		Metrics:       setup.MetricsComponent.Metrics(),
+		Logger:        logger,
+	})
+
+	// Warmer: a follower's render, committed for the graph and then dropped.
+	// Its own pipeline leaves out the pluggable output validators, which would
+	// otherwise run on every replica for a render nothing deploys.
+	warmerComponent := warmer.New(&warmer.Config{
+		EventBus: setup.Bus,
+		Pipeline: pipeline.New(&pipeline.PipelineConfig{
+			Renderer:        renderService,
+			CommitValidator: proposalValidation,
+			Logger:          logger,
+		}),
+		StoreProvider: storeProvider,
+		CurrentFiles:  currentFiles.publishedSnapshot,
+		Metrics:       setup.MetricsComponent.Metrics(),
 		Logger:        logger,
 	})
 
@@ -324,6 +347,7 @@ func createReconciliationComponents(
 	registerLifecycleComponents(setup.Registry,
 		[]lifecycle.Component{
 			reconcilerComponent,
+			warmerComponent,
 			discoveryComponent,
 			httpStoreComponent,
 			proposalValidatorComponent,

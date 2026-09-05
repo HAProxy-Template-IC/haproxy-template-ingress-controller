@@ -954,3 +954,53 @@ func TestRunner_PopulateTargetMetadata(t *testing.T) {
 		})
 	}
 }
+
+// A directive glued to the end of a comment renders as valid config that does
+// nothing: `haproxy -c` accepts it and a `contains` assertion still matches the
+// fused line, so only a structural check catches it.
+func TestCheckFusedDirectives(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		passed bool
+	}{
+		{
+			name:   "directive on its own line",
+			config: "frontend fe\n  # gateway/900-path-match\n  http-request set-var(txn.a) str(x)\n",
+			passed: true,
+		},
+		{
+			name:   "directive fused into the marker comment",
+			config: "frontend fe\n  # gateway/900-path-matchhttp-request set-var(txn.a) str(x)\n",
+			passed: false,
+		},
+		{
+			name:   "prose naming a directive is not a fusion",
+			config: "frontend fe\n  # the http-request return action strips it\n",
+			passed: true,
+		},
+		{
+			name:   "fused use_backend",
+			config: "frontend fe\n  # haptic/route (default/api)use_backend be_api\n",
+			passed: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check := checkFusedDirectives(&config.ValidationTest{}, tt.config, &TestResult{})
+			require.NotNil(t, check)
+			assert.Equal(t, tt.passed, check.Passed, check.Error)
+		})
+	}
+}
+
+// A test that expects rendering to fail has no config to inspect.
+func TestCheckFusedDirectivesSkipsRenderErrors(t *testing.T) {
+	assert.Nil(t, checkFusedDirectives(&config.ValidationTest{}, "", &TestResult{RenderError: "boom"}))
+
+	renderErrorTest := &config.ValidationTest{
+		Assertions: []config.ValidationAssertion{{Type: "contains", Target: "rendering_error"}},
+	}
+	assert.Nil(t, checkFusedDirectives(renderErrorTest, "# x)http-request return 503\n", &TestResult{}))
+}

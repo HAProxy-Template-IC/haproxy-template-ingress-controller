@@ -166,8 +166,11 @@ check_prerequisites() {
         exit 1
     fi
 
-    # Check if controller binary is outdated
-    if find cmd/haptic pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null | grep -q .; then
+    # Check if controller binary is outdated. Capture rather than pipe to
+    # grep -q: under pipefail the early grep exit SIGPIPEs find mid-walk, and the
+    # warning is skipped precisely when sources HAVE changed.
+    stale_sources="$(find cmd/haptic pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null || true)"
+    if [ -n "$stale_sources" ]; then
         warn "Controller binary may be outdated (source files modified since build)"
         warn "Run 'make build' to rebuild the controller binary"
         echo >&2

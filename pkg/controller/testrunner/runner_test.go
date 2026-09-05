@@ -1105,8 +1105,8 @@ func declaredAssertions(t *testing.T, result *TestResult) []AssertionResult {
 	t.Helper()
 	var declared []AssertionResult
 	for _, a := range result.Assertions {
-		if a.Type == "deterministic" {
-			assert.True(t, a.Passed, "automatic determinism check must pass: %s", a.Error)
+		if a.Type == "deterministic" || a.Type == "no_fused_directive" {
+			assert.True(t, a.Passed, "automatic %s check must pass: %s", a.Type, a.Error)
 			continue
 		}
 		declared = append(declared, a)

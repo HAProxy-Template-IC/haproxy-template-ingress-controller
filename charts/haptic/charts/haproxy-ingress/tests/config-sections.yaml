@@ -2,6 +2,9 @@
 # Raw HAProxy directive injection into the http frontend / global / defaults
 # sections (complements the existing config-backend snippet).
 _fx:
+  rawConfigContext: &rawConfigContext
+    waf:
+      ingressPermissions: {allowRawHAProxyConfig: true}
   httpRoot: &httpRoot
     paths:
       - path: /
@@ -15,25 +18,52 @@ validationTests:
 
   test-haproxy-ingress-config-frontend:
     description: config-frontend injects raw directives into the http frontend
+    extraContext: *rawConfigContext
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
             namespace: default
-            name: cf-ingress
+            name: z-last
             annotations:
-              haproxy-ingress.github.io/config-frontend: |
-                http-request set-header X-Config-Frontend injected
+              haproxy-ingress.github.io/config-frontend: "http-request set-header X-Haproxy-Ingress-Order last"
           spec:
             ingressClassName: haproxy
             rules:
-              - host: cf.example.com
+              - host: z.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: middle-empty
+            annotations:
+              haproxy-ingress.github.io/config-frontend: " \t "
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: middle.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: a-first
+            annotations:
+              haproxy-ingress.github.io/config-frontend: "  http-request set-header X-Haproxy-Ingress-Order first  "
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: a.example.com
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "http-request set-header X-Config-Frontend injected"}
-      - {type: contains, target: haproxy.cfg, pattern: "haproxy-ingress/config-frontend"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  # haproxy-ingress/config-frontend$', expected: "3"}
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^  # haproxy-ingress/config-frontend\n  # Ingress: default/a-first\n  http-request set-header X-Haproxy-Ingress-Order first\n  # Ingress: default/z-last\n  http-request set-header X-Haproxy-Ingress-Order last$'
+        expected: "3"
 
   # ==========================================================================
   # config-global: raw directives into the global section
@@ -41,25 +71,52 @@ validationTests:
 
   test-haproxy-ingress-config-global:
     description: config-global injects raw directives into the global section
+    extraContext: *rawConfigContext
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
             namespace: default
-            name: cg-ingress
+            name: z-last
             annotations:
-              haproxy-ingress.github.io/config-global: |
-                tune.bufsize 32768
+              haproxy-ingress.github.io/config-global: "tune.maxrewrite 1024"
           spec:
             ingressClassName: haproxy
             rules:
-              - host: cg.example.com
+              - host: z.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: middle-empty
+            annotations:
+              haproxy-ingress.github.io/config-global: "   "
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: middle.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: a-first
+            annotations:
+              haproxy-ingress.github.io/config-global: "  tune.bufsize 32768  "
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: a.example.com
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "tune\\.bufsize 32768"}
-      - {type: contains, target: haproxy.cfg, pattern: "haproxy-ingress/config-global"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  # haproxy-ingress/config-global$', expected: "1"}
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^  # haproxy-ingress/config-global\n  # Ingress: default/a-first\n  tune\.bufsize 32768\n  # Ingress: default/z-last\n  tune\.maxrewrite 1024$'
+        expected: "1"
 
   # ==========================================================================
   # config-defaults: raw directives into the defaults section
@@ -67,22 +124,49 @@ validationTests:
 
   test-haproxy-ingress-config-defaults:
     description: config-defaults injects raw directives into the defaults section
+    extraContext: *rawConfigContext
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
             namespace: default
-            name: cd-ingress
+            name: z-last
             annotations:
-              haproxy-ingress.github.io/config-defaults: |
-                retries 5
+              haproxy-ingress.github.io/config-defaults: "timeout queue 1234"
           spec:
             ingressClassName: haproxy
             rules:
-              - host: cd.example.com
+              - host: z.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: middle-empty
+            annotations:
+              haproxy-ingress.github.io/config-defaults: "\n"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: middle.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: a-first
+            annotations:
+              haproxy-ingress.github.io/config-defaults: "  retries 5  "
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: a.example.com
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "(?m)^\\s+retries 5$"}
-      - {type: contains, target: haproxy.cfg, pattern: "haproxy-ingress/config-defaults"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  # haproxy-ingress/config-defaults$', expected: "1"}
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^  # haproxy-ingress/config-defaults\n  # Ingress: default/a-first\n  retries 5\n  # Ingress: default/z-last\n  timeout queue 1234$'
+        expected: "1"

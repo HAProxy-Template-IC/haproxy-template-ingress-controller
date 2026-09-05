@@ -22,6 +22,10 @@ package api
 // Version is the API major version an agent reports and a client compares.
 const Version = 1
 
+// ExactIdentityVersion is the additive v1 role-proof protocol. Absence means
+// legacy identity and forces a full reload without asynchronous promotion.
+const ExactIdentityVersion = 1
+
 // Paths of the two calls plus health.
 const (
 	PathState   = "/v1/state"
@@ -54,29 +58,36 @@ const (
 	ModeRevertLKG = "revert_lkg" // restore the last-known-good set and reload
 )
 
-// Manifest is the JSON part of an Apply: the complete desired file set at
-// digest granularity, the ops composed for this pod, and the fencing state.
+// Manifest is the JSON part of an Apply: the complete desired file set, the
+// ops composed for this pod, and the fencing state.
 type Manifest struct {
-	PlanID            string `json:"plan_id"`
+	IdentityVersion int    `json:"identity_version,omitempty"`
+	PlanID          string `json:"plan_id"`
+	// PlanProof names the refused agent role only in ModeRevertLKG.
+	PlanProof         string `json:"plan_proof,omitempty"`
 	PlanSchemaVersion int    `json:"plan_schema_version"`
 	Token             Token  `json:"token"`
 	// ExpectedPrevPlanID and ExpectedPrevToken are the baseline the ops were
 	// composed against; a mismatch is a 409, never a write.
-	ExpectedPrevPlanID string `json:"expected_prev_plan_id"`
-	ExpectedPrevToken  Token  `json:"expected_prev_token"`
+	ExpectedPrevPlanID    string `json:"expected_prev_plan_id"`
+	ExpectedPrevPlanProof string `json:"expected_prev_plan_proof,omitempty"`
+	ExpectedPrevToken     Token  `json:"expected_prev_token"`
 	// ExpectedWorkerOpsPlanID guards InPlaceOps; WorkerOpsPlanID is what the
 	// pod records once they ran: the id of the worker's plan with exactly those
 	// ops applied, which the controller can reproduce. It is not PlanID — the
 	// in-place subset never brings the worker all the way to the render.
-	ExpectedWorkerOpsPlanID string `json:"expected_worker_ops_plan_id,omitempty"`
-	WorkerOpsPlanID         string `json:"worker_ops_plan_id,omitempty"`
+	ExpectedWorkerOpsPlanID    string `json:"expected_worker_ops_plan_id,omitempty"`
+	ExpectedWorkerOpsPlanProof string `json:"expected_worker_ops_plan_proof,omitempty"`
+	WorkerOpsPlanID            string `json:"worker_ops_plan_id,omitempty"`
+	WorkerOpsPlanProof         string `json:"worker_ops_plan_proof,omitempty"`
 	// ValidatedPlanID is the newest plan the controller's haproxy -c passed;
 	// the agent promotes its rollback baseline when it equals the applied plan.
-	ValidatedPlanID string `json:"validated_plan_id,omitempty"`
-	Files           []File `json:"files"`
-	Ops             []Op   `json:"ops,omitempty"`
-	InPlaceOps      []Op   `json:"in_place_ops,omitempty"`
-	Mode            string `json:"mode"`
+	ValidatedPlanID    string `json:"validated_plan_id,omitempty"`
+	ValidatedPlanProof string `json:"validated_plan_proof,omitempty"`
+	Files              []File `json:"files"`
+	Ops                []Op   `json:"ops,omitempty"`
+	InPlaceOps         []Op   `json:"in_place_ops,omitempty"`
+	Mode               string `json:"mode"`
 }
 
 // Token is the fencing token: a leader epoch (CAS-incremented on the Lease
@@ -86,11 +97,12 @@ type Token struct {
 	RenderSeq   uint64 `json:"render_seq"`
 }
 
-// File is one desired file. Content travels as a multipart part only when
-// the agent does not hold this digest.
+// File is one desired file. Proof is an opaque controller-local equality
+// witness; an absent or unknown proof requires the multipart bytes.
 type File struct {
 	Path           string `json:"path"` // relative to the agent's base dir, no "..", no leading "/"
 	Digest         string `json:"digest"`
+	Proof          string `json:"proof,omitempty"`
 	Size           int64  `json:"size"`
 	Kind           string `json:"kind"`
 	ReloadOnChange bool   `json:"reload_on_change"`
@@ -158,23 +170,27 @@ type KeywordArg struct {
 
 // State is the response of GET /v1/state.
 type State struct {
-	APIVersion        int               `json:"api_version"`
-	AgentVersion      string            `json:"agent_version"`
-	PlanSchemaVersion int               `json:"plan_schema_version"`
-	AgentOps          []string          `json:"agent_ops"` // op kinds this agent executes
-	HAProxy           HAProxyInfo       `json:"haproxy"`
-	Generation        uint64            `json:"generation"`
-	AppliedPlanID     string            `json:"applied_plan_id"`
-	RunningPlanID     string            `json:"running_plan_id"`
-	WorkerOpsPlanID   string            `json:"worker_ops_plan_id"`
-	AppliedToken      Token             `json:"applied_token"`
-	LKGPlanID         string            `json:"lkg_plan_id"`
-	AppliedPlan       []byte            `json:"applied_plan,omitempty"` // opaque, what the controller sent
-	Files             map[string]FileAt `json:"files"`
-	Inventory         Inventory         `json:"runtime_inventory"`
-	ReloadPendingAt   string            `json:"reload_pending_at,omitempty"` // RFC 3339
-	PendingDeletes    PendingDeletes    `json:"pending_deletes"`
-	LastApply         *ApplyResult      `json:"last_apply,omitempty"`
+	APIVersion         int               `json:"api_version"`
+	AgentVersion       string            `json:"agent_version"`
+	PlanSchemaVersion  int               `json:"plan_schema_version"`
+	AgentOps           []string          `json:"agent_ops"` // op kinds this agent executes
+	HAProxy            HAProxyInfo       `json:"haproxy"`
+	Generation         uint64            `json:"generation"`
+	AppliedPlanID      string            `json:"applied_plan_id"`
+	AppliedPlanProof   string            `json:"applied_plan_proof,omitempty"`
+	RunningPlanID      string            `json:"running_plan_id"`
+	RunningPlanProof   string            `json:"running_plan_proof,omitempty"`
+	WorkerOpsPlanID    string            `json:"worker_ops_plan_id"`
+	WorkerOpsPlanProof string            `json:"worker_ops_plan_proof,omitempty"`
+	AppliedToken       Token             `json:"applied_token"`
+	LKGPlanID          string            `json:"lkg_plan_id"`
+	LKGPlanProof       string            `json:"lkg_plan_proof,omitempty"`
+	AppliedPlan        []byte            `json:"applied_plan,omitempty"` // opaque, what the controller sent
+	Files              map[string]FileAt `json:"files"`
+	Inventory          Inventory         `json:"runtime_inventory"`
+	ReloadPendingAt    string            `json:"reload_pending_at,omitempty"` // RFC 3339
+	PendingDeletes     PendingDeletes    `json:"pending_deletes"`
+	LastApply          *ApplyResult      `json:"last_apply,omitempty"`
 	// InvariantViolation is the name of the invariant that failed most recently,
 	// empty if none has. The agent never takes itself down over a violation, so
 	// this is the only place a silent one surfaces.
@@ -191,6 +207,7 @@ type HAProxyInfo struct {
 // FileAt is a file the agent holds.
 type FileAt struct {
 	Digest string `json:"digest"`
+	Proof  string `json:"proof,omitempty"`
 	Size   int64  `json:"size"`
 }
 
@@ -223,21 +240,25 @@ const (
 
 // ApplyResult is the response of POST /v1/apply: the ACK or NACK.
 type ApplyResult struct {
-	PlanID          string        `json:"plan_id"`
-	OK              bool          `json:"ok"`
-	Mode            string        `json:"mode"`
-	AppliedPlanID   string        `json:"applied_plan_id"`
-	RunningPlanID   string        `json:"running_plan_id"`
-	WorkerOpsPlanID string        `json:"worker_ops_plan_id"`
-	AppliedToken    Token         `json:"applied_token"`
-	LKGPlanID       string        `json:"lkg_plan_id"`
-	OpResults       []OpResult    `json:"op_results,omitempty"`
-	Reload          *ReloadInfo   `json:"reload,omitempty"`
-	Rollback        *RollbackInfo `json:"rollback,omitempty"`
-	Error           *ApplyError   `json:"error,omitempty"`
-	HAProxy         HAProxyInfo   `json:"haproxy"`
-	Inventory       *Inventory    `json:"runtime_inventory,omitempty"` // present when its generation advanced
-	At              string        `json:"at"`                          // RFC 3339
+	PlanID             string        `json:"plan_id"`
+	OK                 bool          `json:"ok"`
+	Mode               string        `json:"mode"`
+	AppliedPlanID      string        `json:"applied_plan_id"`
+	AppliedPlanProof   string        `json:"applied_plan_proof,omitempty"`
+	RunningPlanID      string        `json:"running_plan_id"`
+	RunningPlanProof   string        `json:"running_plan_proof,omitempty"`
+	WorkerOpsPlanID    string        `json:"worker_ops_plan_id"`
+	WorkerOpsPlanProof string        `json:"worker_ops_plan_proof,omitempty"`
+	AppliedToken       Token         `json:"applied_token"`
+	LKGPlanID          string        `json:"lkg_plan_id"`
+	LKGPlanProof       string        `json:"lkg_plan_proof,omitempty"`
+	OpResults          []OpResult    `json:"op_results,omitempty"`
+	Reload             *ReloadInfo   `json:"reload,omitempty"`
+	Rollback           *RollbackInfo `json:"rollback,omitempty"`
+	Error              *ApplyError   `json:"error,omitempty"`
+	HAProxy            HAProxyInfo   `json:"haproxy"`
+	Inventory          *Inventory    `json:"runtime_inventory,omitempty"` // present when its generation advanced
+	At                 string        `json:"at"`                          // RFC 3339
 }
 
 // OpResult is one executed op's verdict.
@@ -272,12 +293,16 @@ type ApplyError struct {
 // Conflict is the body of a 409 baseline mismatch: the agent's actual
 // baseline, so the caller can re-diff.
 type Conflict struct {
-	AppliedPlanID   string `json:"applied_plan_id"`
-	AppliedToken    Token  `json:"applied_token"`
-	RunningPlanID   string `json:"running_plan_id"`
-	WorkerOpsPlanID string `json:"worker_ops_plan_id"`
-	LKGPlanID       string `json:"lkg_plan_id"`
-	Reason          string `json:"reason"` // prev_mismatch|stale_epoch|unknown_baseline|worker_ops_mismatch
+	AppliedPlanID      string `json:"applied_plan_id"`
+	AppliedPlanProof   string `json:"applied_plan_proof,omitempty"`
+	AppliedToken       Token  `json:"applied_token"`
+	RunningPlanID      string `json:"running_plan_id"`
+	RunningPlanProof   string `json:"running_plan_proof,omitempty"`
+	WorkerOpsPlanID    string `json:"worker_ops_plan_id"`
+	WorkerOpsPlanProof string `json:"worker_ops_plan_proof,omitempty"`
+	LKGPlanID          string `json:"lkg_plan_id"`
+	LKGPlanProof       string `json:"lkg_plan_proof,omitempty"`
+	Reason             string `json:"reason"` // prev_mismatch|stale_epoch|unknown_baseline|worker_ops_mismatch
 }
 
 // Missing is the body of a 409 when file parts are missing: resend these.

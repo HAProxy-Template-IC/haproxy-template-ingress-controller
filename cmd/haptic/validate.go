@@ -37,6 +37,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
+	configvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
@@ -268,6 +269,12 @@ func setupValidation(ctx context.Context, files []string, schemas schemaSource, 
 	}
 	if err := coreconfig.ValidateMergedCompleteness(structural); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+	if err := coreconfig.ValidateTemplateStructure(structural); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+	if pathErrors := configvalidator.ValidateIncrementalActivationPaths(structural); len(pathErrors) > 0 {
+		return nil, fmt.Errorf("invalid config: %s", strings.Join(pathErrors, "; "))
 	}
 
 	// Mirror the controller's effective-config resolution: resolve apiVersions

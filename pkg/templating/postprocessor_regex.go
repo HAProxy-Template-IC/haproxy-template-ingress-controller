@@ -15,7 +15,6 @@
 package templating
 
 import (
-	"bufio"
 	"fmt"
 	"regexp"
 	"strings"
@@ -38,6 +37,14 @@ type RegexReplaceProcessor struct {
 	replace string
 }
 
+func (*RegexReplaceProcessor) postProcessCacheable() bool {
+	return true
+}
+
+func (*RegexReplaceProcessor) postProcessTotal() bool {
+	return true
+}
+
 // NewRegexReplaceProcessor creates a new regex replace processor.
 //
 // Parameters:
@@ -58,40 +65,31 @@ func NewRegexReplaceProcessor(pattern, replace string) (*RegexReplaceProcessor, 
 }
 
 // Process applies the regex replacement to each line of the input.
-//
-// The processor streams through input line-by-line using bufio.Scanner,
-// avoiding intermediate allocations from strings.Split/Join. This reduces
-// peak memory usage from ~2x input size to ~1x input size for large configs.
-//
-// This line-by-line approach enables:
-//   - Efficient processing of large files
-//   - Line-anchored patterns (^ and $)
-//   - Predictable behavior for indentation normalization
 func (p *RegexReplaceProcessor) Process(input string) (string, error) {
 	if input == "" {
 		return input, nil
 	}
 
 	var builder strings.Builder
-	builder.Grow(len(input)) // Pre-allocate to avoid reallocations
-
-	scanner := bufio.NewScanner(strings.NewReader(input))
-	first := true
-	for scanner.Scan() {
-		if !first {
-			builder.WriteByte('\n')
+	builder.Grow(len(input))
+	for start := 0; start < len(input); {
+		end := len(input)
+		hasNewline := false
+		if offset := strings.IndexByte(input[start:], '\n'); offset >= 0 {
+			end = start + offset
+			hasNewline = true
 		}
-		first = false
-		line := scanner.Text()
+		lineEnd := end
+		if lineEnd > start && input[lineEnd-1] == '\r' {
+			lineEnd--
+		}
+		line := input[start:lineEnd]
 		builder.WriteString(p.pattern.ReplaceAllString(line, p.replace))
-	}
-	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("scanning input: %w", err)
-	}
-
-	// Preserve trailing newline if input had one
-	if input[len(input)-1] == '\n' {
+		if !hasNewline {
+			break
+		}
 		builder.WriteByte('\n')
+		start = end + 1
 	}
 
 	return builder.String(), nil

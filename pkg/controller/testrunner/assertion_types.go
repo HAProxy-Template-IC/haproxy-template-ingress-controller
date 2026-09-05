@@ -66,8 +66,7 @@ func (r *Runner) assertHAProxyValid(
 		result.incomplete = true
 		return result
 	}
-	// ErrValidationCacheHit means the config was already validated successfully, treat as pass
-	failed := err != nil && !errors.Is(err, dataplane.ErrValidationCacheHit)
+	failed := err != nil
 	if failed {
 		result.Passed = false
 		simplifiedError := dataplane.SimplifyValidationError(err)

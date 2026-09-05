@@ -1,18 +1,22 @@
 # pkg/controller/validation
 
-Three-phase HAProxy configuration validator with per-instance result caching.
+HAProxy configuration validator with per-call sandboxing.
 
 ## Overview
 
-`ValidationService` runs the rendered HAProxy config through:
+`ValidationService` writes the rendered HAProxy config and auxiliary files into
+an isolated `os.MkdirTemp` tree, rewrites `default-path origin` to that tree,
+and invokes `haproxy -c`. A cancellable gate bounds concurrent binary checks.
 
-1. **Syntax** — `client-native` parser via `pkg/dataplane/parser`.
-2. **OpenAPI schema** — version-specific Dataplane API schema check via `pkg/generated`.
-3. **Semantic** — actual `haproxy -c` invocation. Each call writes auxiliary files into its own per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin` to point at it, so callers don't contend on shared paths. A cancellable gate serialises the binary invocation because concurrent runs interfere even with isolated temp directories.
+Every call executes HAProxy, including calls with byte-identical output. The
+binary, executor, DNS state, and other runtime inputs can change between calls,
+so a content checksum alone cannot carry a prior verdict forward. Future result
+reuse requires an authenticated hermetic-environment root bound to the exact
+config and auxiliary bytes.
 
-The result of a successful validation is cached per-instance keyed by a content checksum of the config + auxiliary files. Identical content (the common case during drift-prevention cycles) skips all three phases. By default the cache returns its `*parser.StructuredConfig`; `DiscardParsedConfig` keeps only the verdict for callers that don't consume the parsed form. Cancellation terminates a running or queued binary check and is never cached as success.
-
-The service is consumed by `pkg/controller/pipeline.Pipeline.Execute`, which is in turn driven by both the leader-side reconciler (`pkg/controller/reconciler.Coordinator`) and the webhook-side proposal validator (`pkg/controller/proposalvalidator`). Per-instance caching keeps the webhook from evicting the main pipeline's cache.
+The service is used by strict pipeline validation and the leader-side render
+gate. Snapshot entry points authenticate and materialize their immutable input
+before invoking the same check.
 
 ## Quick Start
 
@@ -24,39 +28,39 @@ import (
 
 svc := validation.NewValidationService(&validation.ValidationServiceConfig{
     Logger:            logger,
-    Version:           &dataplane.Version{Major: 3, Minor: 2}, // schema selector; nil = v3.0
-    SkipDNSValidation: false,                                  // true for runtime, false for webhook
-    SkipSemanticValidation: false,                             // true skips `haproxy -c`
-    BaseDir:           "/etc/haproxy",                         // production default-path origin
-    MapsDir:           "maps",                                 // relative names match RenderService
+    SkipDNSValidation: false,
+    BaseDir:           "/etc/haproxy",
+    MapsDir:           "maps",
     SSLCertsDir:       "ssl",
     GeneralDir:        "general",
-    DiscardParsedConfig: false,                                // true caches only the verdict
+    CheckGate:         dataplane.NewCheckGate(0),
 })
 
-// Pass the checksum the renderer already computed, so validation doesn't hash
-// the same config twice per reconciliation.
+// The checksum remains the render's downstream content identity. It never
+// authorizes validation reuse.
 checksum := dataplane.ComputeContentChecksum(haproxyConfig, auxFiles)
 result := svc.ValidateWithChecksum(ctx, haproxyConfig, auxFiles, checksum)
-// result.Valid, result.Phase, result.Error, result.ParsedConfig (for downstream Sync)
+// result.Valid, result.Phase, result.Error
 ```
 
-`SkipDNSValidation` is true in the shared controller pipeline so a temporarily unresolvable backend hostname doesn't cause cascading reconciliation failures. `SkipSemanticValidation` exists for offline callers with a stronger replacement gate; the controller pipeline leaves it false and runs `haproxy -c` for every changed render. Content-checksum caching makes identical drift-prevention renders return without repeating any phase.
+`SkipDNSValidation` adds HAProxy's `-dr` flag. Runtime checks use it so a
+temporarily unresolvable backend starts down instead of blocking convergence;
+strict proposal validation can leave it false.
 
-## Caching Semantics
+## Validation semantics
 
 | Call | Behaviour |
 |------|-----------|
-| First call, or content checksum changes | Run all three phases; cache success and, by default, `ParsedConfig` |
-| Repeat call with the same checksum | Return the cached result immediately, skip all phases |
-| Failure (any phase) | Return error, leave cache untouched (next call retries) |
-
-The cache lives on the `*ValidationService` instance. Constructing a new service (e.g. between iterations) clears it implicitly. With `DiscardParsedConfig: true`, successful results keep `ParsedConfig` nil without removing syntax or schema validation.
+| Any authenticated input, including an exact repeat | Materialize the files and run `haproxy -c` |
+| HAProxy refusal | Return a semantic validation error |
+| Cancellation before, during, or immediately after the check | Return the cancellation cause; never report success |
+| Invalid snapshot authentication | Fail during setup without running HAProxy |
 
 ## See Also
 
-- [`pkg/dataplane`](../../dataplane/) — `client-native` parser + the underlying three-phase validation primitives this service composes
-- [`pkg/controller/pipeline`](../pipeline/) — the only consumer; threads the content checksum from the renderer through to here
+- [`pkg/dataplane`](../../dataplane/) — the underlying `haproxy -c` execution path
+- [`pkg/controller/pipeline`](../pipeline/) — strict proposal and load-gate caller
+- [`pkg/controller/rendergate`](../rendergate/) — leader-side runtime caller
 - [`pkg/controller/proposalvalidator`](../proposalvalidator/) — webhook and HTTP-store caller
 - [`pkg/controller/reconciler`](../reconciler/) — leader caller
 

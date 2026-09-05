@@ -29,7 +29,21 @@ import (
 // FormatFS is required so Scriggo knows all our templates are Text format (HAProxy config).
 // ReadDirFS is required for fs.WalkDir used by buildDynamicMacros to discover all templates.
 type scriggoTemplateFS struct {
-	templates map[string]string
+	templates        map[string]string
+	hiddenTemplates  map[string]struct{}
+	exposedTemplate  string
+	exposedTemplates map[string]struct{}
+}
+
+func (f *scriggoTemplateFS) visible(name string) bool {
+	_, hidden := f.hiddenTemplates[name]
+	_, exposed := f.exposedTemplates[name]
+	return !hidden || name == f.exposedTemplate || exposed
+}
+
+func (f *scriggoTemplateFS) listed(name string) bool {
+	_, hidden := f.hiddenTemplates[name]
+	return !hidden
 }
 
 func (f *scriggoTemplateFS) Open(name string) (fs.File, error) {
@@ -38,7 +52,7 @@ func (f *scriggoTemplateFS) Open(name string) (fs.File, error) {
 		return &scriggoRootDir{fs: f}, nil
 	}
 	content, ok := f.templates[name]
-	if !ok {
+	if !ok || !f.visible(name) {
 		return nil, fs.ErrNotExist
 	}
 	return &scriggoTemplateFile{
@@ -58,6 +72,9 @@ func (f *scriggoTemplateFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	// Return all templates as directory entries
 	entries := make([]fs.DirEntry, 0, len(f.templates))
 	for templateName := range f.templates {
+		if !f.listed(templateName) {
+			continue
+		}
 		entries = append(entries, &scriggoDirEntry{
 			name: templateName,
 			size: int64(len(f.templates[templateName])),
@@ -76,7 +93,7 @@ func (f *scriggoTemplateFS) ReadDir(name string) ([]fs.DirEntry, error) {
 // Returns Text format for all templates since HAProxy config is plain text.
 // This tells Scriggo not to apply HTML escaping or other format-specific processing.
 func (f *scriggoTemplateFS) Format(name string) (scriggo.Format, error) {
-	if _, ok := f.templates[name]; !ok {
+	if _, ok := f.templates[name]; !ok || !f.visible(name) {
 		return 0, fs.ErrNotExist
 	}
 	return scriggo.FormatText, nil

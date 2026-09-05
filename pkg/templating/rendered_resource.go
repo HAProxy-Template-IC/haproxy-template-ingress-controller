@@ -17,6 +17,7 @@ package templating
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 )
 
@@ -58,6 +59,11 @@ type RenderedResource struct {
 	// `metadata.name` — the collector validates and injects those at
 	// Register time, so callers can omit them and pass only the deltas.
 	Object map[string]any
+
+	// CreateOnlyFields are dotted field paths the applier sends when it creates
+	// this object and omits from every apply after that, leaving them to
+	// whoever runs it.
+	CreateOnlyFields []string
 }
 
 // renderedResourceKey uniquely identifies a target resource for collector merging.
@@ -77,14 +83,18 @@ func renderedResourceKey(namespace, name, apiVersion, kind string) string {
 // last-write-wins on Object (the prior Object is replaced wholesale; the
 // applier checksums the final object and skips unchanged SSA patches).
 type RenderedResourceCollector struct {
-	mu        sync.Mutex
-	resources map[string]*RenderedResource // keyed by renderedResourceKey
+	mu          sync.Mutex
+	resources   map[string]*RenderedResource // keyed by renderedResourceKey
+	projections map[string]statusPatchProjectionValue
+	frozen      bool
+	snapshot    *RenderedResourceSnapshot
 }
 
 // NewRenderedResourceCollector creates an empty thread-safe collector.
 func NewRenderedResourceCollector() *RenderedResourceCollector {
 	return &RenderedResourceCollector{
-		resources: make(map[string]*RenderedResource),
+		resources:   make(map[string]*RenderedResource),
+		projections: make(map[string]statusPatchProjectionValue),
 	}
 }
 
@@ -101,6 +111,16 @@ func NewRenderedResourceCollector() *RenderedResourceCollector {
 // from triggering a redundant API call when nothing actually changed
 // across renders, so this last-write-wins doesn't risk hammering the API.
 func (c *RenderedResourceCollector) Register(apiVersion, kind, namespace, name string, object map[string]any) error {
+	return c.RegisterWithCreateOnlyFields(apiVersion, kind, namespace, name, object, nil)
+}
+
+// RegisterWithCreateOnlyFields is Register for a resource whose configuration
+// names fields the applier must send only when it creates the object.
+func (c *RenderedResourceCollector) RegisterWithCreateOnlyFields(
+	apiVersion, kind, namespace, name string,
+	object map[string]any,
+	createOnlyFields []string,
+) error {
 	if name == "" || apiVersion == "" || kind == "" {
 		return errors.New("k8sResources: name, apiVersion, and kind are required")
 	}
@@ -139,31 +159,56 @@ func (c *RenderedResourceCollector) Register(apiVersion, kind, namespace, name s
 	}
 	obj["metadata"] = metadata
 
-	key := renderedResourceKey(namespace, name, apiVersion, kind)
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.frozen {
+		return errors.New("k8sResources: collector is sealed")
+	}
+	projection, err := newStatusPatchProjectionValue(obj, make(map[statusPatchProjectionVisit]struct{}), 0)
+	if err != nil {
+		return fmt.Errorf("k8sResources: object is not immutable: %w", err)
+	}
+	detached, err := projection.materializeObject()
+	if err != nil {
+		return fmt.Errorf("k8sResources: detaching object: %w", err)
+	}
+	key := renderedResourceKey(namespace, name, apiVersion, kind)
 
 	c.resources[key] = &RenderedResource{
 		APIVersion: apiVersion,
 		Kind:       kind,
 		Namespace:  namespace,
 		Name:       name,
-		Object:     obj,
+		Object:     detached,
+
+		CreateOnlyFields: slices.Clone(createOnlyFields),
 	}
+	c.projections[key] = projection
 	return nil
 }
 
-// Resources returns a snapshot of all collected resources. Further Register
-// calls do not affect the returned slice. Order is not guaranteed (Go map
-// iteration); callers that need deterministic order should sort by key.
+// Resources returns a detached, deterministically ordered view. Further
+// Register calls do not affect it.
 func (c *RenderedResourceCollector) Resources() []RenderedResource {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	result := make([]RenderedResource, 0, len(c.resources))
-	for _, r := range c.resources {
-		result = append(result, *r)
+	keys := make([]string, 0, len(c.resources))
+	for key := range c.resources {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	result := make([]RenderedResource, 0, len(keys))
+	for _, key := range keys {
+		resource := c.resources[key]
+		detached := *resource
+		if projection, exists := c.projections[key]; exists {
+			object, err := projection.materializeObject()
+			if err == nil {
+				detached.Object = object
+			}
+		}
+		result = append(result, detached)
 	}
 	return result
 }
@@ -185,6 +230,14 @@ func (c *RenderedResourceCollector) Validate() error {
 		}
 		if r.Object == nil {
 			return fmt.Errorf("k8sResources %s: object is nil", key)
+		}
+		projection, exists := c.projections[key]
+		if !exists {
+			return fmt.Errorf("k8sResources %s: object has no immutable projection", key)
+		}
+		object, err := projection.materializeObject()
+		if err != nil || object == nil {
+			return fmt.Errorf("k8sResources %s: object has invalid immutable projection", key)
 		}
 	}
 	return nil

@@ -53,7 +53,7 @@ variables:
   # Container registry
   CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-haptic/haptic
   # Coverage packages (excludes generated code) - keep in sync with Makefile
-  COVERAGE_PACKAGES: "./cmd/...,./pkg/compression/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/stores/...,./pkg/templating/...,./pkg/webhook/..."
+  COVERAGE_PACKAGES: "./cmd/...,./pkg/compression/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/incremental/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/persistenttree/...,./pkg/rendercontent/...,./pkg/stores/...,./pkg/templating/...,./pkg/webhook/..."
   # CI image base path - tag is the build-input hash (see compute-ci-image-tag)
   CI_IMAGE_BASE: ${CI_REGISTRY_IMAGE}/ci
   # Publish the multi-arch controller, SPOA-hub, and chart snapshot only from an
@@ -489,15 +489,57 @@ test:
   before_script:
     - haproxy -v
   script:
-    # gotestsum passes coverage flags through to go test - single test run.
-    # Use -coverpkg to exclude generated code from coverage calculation.
-    # -count=1 disables Go's test result cache: cached results from prior
-    # runs on main carry coverage profile entries for files that have been
-    # deleted on the branch, which break `go tool cover -func` on the next
-    # step (cover needs to read each referenced source file by path).
+    # Race detection only. Coverage instrumentation costs a further ~3x on top
+    # of -race (measured: pkg/controller/rendercontext 8.7s -> 25.6s), and the
+    # two answer independent questions, so test-coverage-unit produces the
+    # profile in parallel instead of multiplying the two costs in one job.
+    # -count=1 disables Go's test result cache so a green run is a real run.
+    #
+    # The shell guard runs here because no CI job runs `make test`, so the
+    # only assertion that the conformance sub-shards still reassemble their
+    # shard exactly would otherwise never execute against a merge. It reads
+    # the upstream test names out of the module cache, so download that
+    # module first and require the check rather than let it skip: what it
+    # protects is which conformance tests gate a merge.
+    - go mod download sigs.k8s.io/gateway-api/conformance
+    - SHARD_CONFORMANCE_TESTS_REQUIRED=1 bash scripts/tests/test_shard_conformance_tests.sh
     - |
       go tool gotestsum --junitfile report.xml --format testname -- \
-        -race -count=1 -coverprofile=coverage.out -covermode=atomic \
+        -race -count=1 -timeout 45m ./...
+  artifacts:
+    reports:
+      junit: report.xml
+    expire_in: 1 week
+    when: always
+
+test-coverage-unit:
+  stage: test
+  extends: .go-cache
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-go, rules]
+  tags:
+    - saas-linux-large-amd64
+  interruptible: true
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+  before_script:
+    - haproxy -v
+  script:
+    # No -race: coverage and race detection are independent, and running them
+    # in one job multiplies their costs. Correctness under race is the `test`
+    # job's verdict; this job only has to produce the profile.
+    # -coverpkg excludes generated code from the coverage calculation.
+    # -count=1 disables Go's test result cache: cached results from prior runs
+    # on main carry coverage profile entries for files that have been deleted
+    # on the branch, which break `go tool cover -func` on the next step (cover
+    # needs to read each referenced source file by path).
+    - |
+      go tool gotestsum --format testname -- \
+        -count=1 -timeout 45m -coverprofile=coverage.out -covermode=atomic \
         -coverpkg=${COVERAGE_PACKAGES} \
         ./...
     # Show coverage summary
@@ -505,8 +547,6 @@ test:
   artifacts:
     paths:
       - coverage.out
-    reports:
-      junit: report.xml
     expire_in: 1 week
     when: always
 
@@ -1528,7 +1568,7 @@ coverage-combined:
   needs:
     - compute-ci-image-tag
     - job: build-ci
-    - job: test
+    - job: test-coverage-unit
       artifacts: true
       optional: true
     - job: "test-integration: [3.0]"
@@ -2122,25 +2162,25 @@ test-install-without-gateway-api:
 
 # Shared-cache (Varnish tier) e2e shard. Installs with
 # controller.cache.varnish.enabled=true and runs the cache tests
-# (TestHapticVarnishCache) which the other profiles skip. One HAProxy version —
-# the tier is version-agnostic. Loads the stock Varnish image into kind (see
+# (TestHapticVarnishCache) which the other profiles skip. One HAProxy version — the
+# tier is version-agnostic, so it runs the current LTS. Loads the stock Varnish image into kind (see
 # loadControllerImage) so the StatefulSet needn't reach Docker Hub.
 test-e2e-cache:
   extends: .test-e2e-base
   variables:
-    HAPROXY_VERSION: "3.2"
+    HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: "cache"
 
 # Shared-rate-limit e2e shard. Installs with
 # controller.rateLimit.shared.enabled=true and controller.rateLimit.store.enabled=true,
 # then TestHapticSharedRateLimit proves one Valkey-backed budget is enforced
 # across multiple HAProxy pods. One HAProxy version — the tier is
-# version-agnostic. Loads the stock Valkey image into kind (see
+# version-agnostic, so it runs the current LTS. Loads the stock Valkey image into kind (see
 # loadControllerImage) so the Deployment needn't reach Docker Hub.
 test-e2e-rate-limit:
   extends: .test-e2e-base
   variables:
-    HAPROXY_VERSION: "3.2"
+    HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: "rate-limit"
 
 # API-gateway request-validation e2e shard. Installs with
@@ -2152,7 +2192,7 @@ test-e2e-rate-limit:
 test-e2e-api-gateway:
   extends: .test-e2e-base
   variables:
-    HAPROXY_VERSION: "3.2"
+    HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: "api-gateway"
 
 # Upstream Gateway API conformance suite (sigs.k8s.io/gateway-api/conformance).
@@ -2483,7 +2523,20 @@ test-gateway-conformance:
 # 1/4 of the same CRC32 partition — enough to catch chart-render /
 # cluster-bring-up regressions plus a representative quarter of the upstream
 # suite at ~¼ the xlarge cost. Reuses the full job's setup/teardown verbatim
-# via !reference; only `script` differs (hardcoded shard `1 4`, no `parallel:`).
+# via !reference; only `script` differs.
+#
+# Split across two runners because this job alone decided the pipeline's
+# length: 23 of 27 minutes wall, and 22% of all xlarge minutes. It is
+# test-bound, not setup-bound (4 min bring-up, 19 min tests), so halving the
+# tests halves most of it.
+#
+# The two jobs sub-shard `1 4` rather than taking two shards of eight. That
+# distinction is load-bearing: the partition is `hash % total`, so shards 1
+# and 2 of 8 are a DIFFERENT set of tests from shard 1 of 4, and switching to
+# them would quietly change which tests gate a merge. Sub-shards of `1 4`
+# reassemble it exactly — 35 tests, split 18/17, no overlap.
+#
+# The cost is one extra cluster bring-up (~4 xlarge minutes per pipeline).
 test-gateway-conformance-smoke:
   stage: integration
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
@@ -2492,14 +2545,17 @@ test-gateway-conformance-smoke:
     - .snapshot-version
   timeout: 25 minutes
   interruptible: true
+  # CI_NODE_INDEX (1..2) / CI_NODE_TOTAL (=2) select the sub-shard below, and
+  # the inherited after_script already keys its diagnostics directory off them.
+  parallel: 2
   variables: !reference [test-gateway-conformance, variables]
   needs: !reference [test-gateway-conformance, needs]
   before_script: !reference [test-gateway-conformance, before_script]
   script:
     - HAPTIC_E2E_PROFILE=conformance TEST_RUN_PATTERN="^$" make test-e2e
     - |
-      SHARD_PATTERN="$(scripts/shard-conformance-tests.sh 1 4)"
-      echo "Conformance smoke shard 1/4: ${SHARD_PATTERN}"
+      SHARD_PATTERN="$(scripts/shard-conformance-tests.sh 1 4 "${CI_NODE_INDEX}" "${CI_NODE_TOTAL}")"
+      echo "Conformance smoke shard 1/4, part ${CI_NODE_INDEX}/${CI_NODE_TOTAL}: ${SHARD_PATTERN}"
       TEST_RUN_PATTERN="${SHARD_PATTERN}" make test-gateway-conformance
   after_script: !reference [test-gateway-conformance, after_script]
   artifacts: !reference [test-gateway-conformance, artifacts]
@@ -3279,9 +3335,11 @@ test-ingress-conformance:
     when: on_failure
     expire_in: 1 week
 
-# Deterministic 1-of-4 ingress-conformance smoke for MRs — same design as
-# test-gateway-conformance-smoke. Runs shard 1/4 of the same partition; the
-# full 4-shard suite runs on main + nightly (test-ingress-conformance).
+# Deterministic 1-of-4 ingress-conformance smoke for MRs — same shard-1-of-4
+# design as test-gateway-conformance-smoke, but on one runner: this one takes
+# about 9 minutes against that one's 23, so it is nowhere near the pipeline's
+# critical path and splitting it would buy nothing for an extra bring-up.
+# The full 4-shard suite runs on main + nightly (test-ingress-conformance).
 test-ingress-conformance-smoke:
   stage: integration
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
@@ -3396,35 +3454,19 @@ test-helm-defaults:
   script:
     - make test-helm-defaults HELM_DEFAULTS_IMAGE="${TEST_IMAGE}"
   after_script:
+    # No kubectl here. scripts/test-helm-defaults.sh deletes the kind cluster
+    # in its EXIT trap, so by this point there is no apiserver to query and
+    # every call returned "localhost:8080 refused" into an artifact that looked
+    # collected but held nothing. The script dumps the same diagnostics to
+    # debug-logs/diagnostics.log while the cluster is alive; just report them.
     - |
       if [ "$CI_JOB_STATUS" = "failed" ]; then
-        echo "Job failed - extracting debug logs..."
-        mkdir -p debug-logs
-
-        echo "=== Pod Status ===" > debug-logs/pods.log
-        kubectl get pods -A -o wide >> debug-logs/pods.log 2>&1 || true
-
-        echo "=== Events ===" > debug-logs/events.log
-        kubectl get events -A --sort-by='.lastTimestamp' >> debug-logs/events.log 2>&1 || true
-
-        echo "=== Controller Logs ===" > debug-logs/controller.log
-        kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/component=controller --tail=200 >> debug-logs/controller.log 2>&1 || true
-
-        echo "=== HAProxy Logs ===" > debug-logs/haproxy.log
-        kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/component=loadbalancer --tail=200 >> debug-logs/haproxy.log 2>&1 || true
-
-        echo "=== Certificates ===" > debug-logs/certificates.log
-        kubectl get certificates -A -o wide >> debug-logs/certificates.log 2>&1 || true
-        kubectl describe certificates -n ${NAMESPACE} >> debug-logs/certificates.log 2>&1 || true
-
-        echo "=== Issuers ===" > debug-logs/issuers.log
-        kubectl get issuers -A -o wide >> debug-logs/issuers.log 2>&1 || true
-
-        echo "=== TLS Secrets ===" > debug-logs/secrets.log
-        kubectl get secrets -A --field-selector type=kubernetes.io/tls >> debug-logs/secrets.log 2>&1 || true
-
-        echo "Debug logs extracted to debug-logs/"
-        ls -la debug-logs/
+        if [ -s debug-logs/diagnostics.log ]; then
+          echo "Cluster diagnostics captured pre-teardown: $(wc -l < debug-logs/diagnostics.log) lines"
+          ls -la debug-logs/
+        else
+          echo "No diagnostics captured — the job failed before the script's cleanup trap ran."
+        fi
       fi
   artifacts:
     paths:

@@ -33,33 +33,58 @@
 # `ShortName: "..."` fields. The module path is resolved from
 # `go env GOMODCACHE` + the version pinned in this repo's `go.mod`.
 #
+# Sub-sharding
+# ------------
+# The optional third and fourth arguments split one shard across several
+# jobs while covering exactly the tests that shard already covered. That
+# is not the same as asking for more shards: the partition is
+# `hash % total`, so shards 1 and 2 of 8 are the tests hashing to 0 and 1
+# mod 8, whereas shard 1 of 4 is 0 and 4 mod 8 — a different set. Only
+# sub-sharding keeps the covered set fixed while adding parallelism, so
+# splitting a job never silently changes which tests gate a merge.
+#
+# The split is round-robin over the shard's sorted test list, so the
+# halves stay within one test of each other however the hash landed.
+#
 # Usage
 # -----
-#   scripts/shard-conformance-tests.sh <shard-index> <shard-total>
+#   scripts/shard-conformance-tests.sh <shard-index> <shard-total> [sub-index] [sub-total]
 #
 #   shard-index   1-based shard ID (matches CI_NODE_INDEX)
 #   shard-total   total shard count (matches CI_NODE_TOTAL)
+#   sub-index     1-based sub-shard ID within the selected shard
+#   sub-total     number of sub-shards the selected shard is split into
 #
 # Outputs the test-name regex on stdout. Exits non-zero on
 # inconsistent inputs or if the upstream module can't be located.
 
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "usage: $0 <shard-index> <shard-total>" >&2
+if [[ $# -ne 2 && $# -ne 4 ]]; then
+  echo "usage: $0 <shard-index> <shard-total> [sub-index] [sub-total]" >&2
   exit 2
 fi
 
 SHARD_INDEX="$1"
 SHARD_TOTAL="$2"
+SUB_INDEX="${3:-1}"
+SUB_TOTAL="${4:-1}"
 
-if ! [[ "$SHARD_INDEX" =~ ^[1-9][0-9]*$ ]] || ! [[ "$SHARD_TOTAL" =~ ^[1-9][0-9]*$ ]]; then
-  echo "error: shard-index and shard-total must be positive integers (got $SHARD_INDEX, $SHARD_TOTAL)" >&2
-  exit 2
-fi
+for pair in "shard-index:$SHARD_INDEX" "shard-total:$SHARD_TOTAL" \
+            "sub-index:$SUB_INDEX" "sub-total:$SUB_TOTAL"; do
+  if ! [[ "${pair#*:}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: ${pair%%:*} must be a positive integer (got ${pair#*:})" >&2
+    exit 2
+  fi
+done
 
 if (( SHARD_INDEX > SHARD_TOTAL )); then
   echo "error: shard-index ($SHARD_INDEX) > shard-total ($SHARD_TOTAL)" >&2
+  exit 2
+fi
+
+if (( SUB_INDEX > SUB_TOTAL )); then
+  echo "error: sub-index ($SUB_INDEX) > sub-total ($SUB_TOTAL)" >&2
   exit 2
 fi
 
@@ -114,6 +139,20 @@ for name in "${TEST_NAMES[@]}"; do
     SHARD_TESTS+=("$name")
   fi
 done
+
+# Round-robin the shard's tests across its sub-shards. Position in the
+# sorted list, not the hash again: re-hashing would drop tests, while
+# every position lands in exactly one sub-shard, so the sub-shards
+# reassemble the shard exactly.
+if (( SUB_TOTAL > 1 )); then
+  SUB_TESTS=()
+  for position in "${!SHARD_TESTS[@]}"; do
+    if (( (position % SUB_TOTAL) + 1 == SUB_INDEX )); then
+      SUB_TESTS+=("${SHARD_TESTS[$position]}")
+    fi
+  done
+  SHARD_TESTS=(${SUB_TESTS[@]+"${SUB_TESTS[@]}"})
+fi
 
 if [[ ${#SHARD_TESTS[@]} -eq 0 ]]; then
   # An empty shard should still produce a regex that matches nothing —

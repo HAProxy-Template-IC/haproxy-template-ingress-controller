@@ -435,6 +435,10 @@ Pass local variables to rendered snippets with `inherit_context`:
 {{ render "backend-servers" inherit_context }}
 ```
 
+Use an [incremental snippet](./crd-reference.md#incremental-snippets) when each
+watched object can produce an independently cached fragment. The reference
+describes bindings, tracked inputs, shared groups, and effects.
+
 ### Post-processing
 
 The `haproxyConfig` section supports a `postProcessing` list that transforms the rendered output before deployment. Post-processors run sequentially on the rendered configuration.
@@ -680,7 +684,7 @@ A typed field resolves by **either** its Go-PascalCase name **or** its lowercase
 | `resources.<name>.List()` | `[]*resources.<name>.T` |
 | `resources.<name>.Fetch(keys...)` | `[]*resources.<name>.T` |
 | `resources.<name>.GetSingle(keys...)` | `*resources.<name>.T` (nil if not found) |
-| `resources.<name>.APIVersion()` | `string`, with or without a schema — the group/version this resource is actually watched at — the candidate the effective config resolved to. Pass it to `statusPatch()` instead of hardcoding a version literal |
+| `resources.<name>.APIVersion()` | `string`, with or without a schema — the group/version this resource is actually watched at — the candidate the effective config resolved to |
 
 Without a schema (for example, `haptic validate` without `--schema-dir`), the same calls fall back to `[]any` / `map[string]any` exactly as before. The chart's `dig()`-based snippets work in either mode.
 
@@ -1302,10 +1306,10 @@ This allows templates to report processing results back to resources (for exampl
 
 ### `statusPatch()`
 
-Registers a status patch for a Kubernetes resource with outcome-keyed variants. Each variant's value is the resource's `.status` content directly (for example, `conditions`, `loadBalancer`) — the controller writes it under `.status` via SSA, so don't wrap it in another `status` key:
+Registers a status patch for a Kubernetes resource with outcome-keyed variants. Pass the resource object itself; `statusPatch()` reads its `apiVersion`, `kind`, `metadata.namespace`, `metadata.name`, `metadata.uid`, and `metadata.resourceVersion` without assuming a resource type. Each variant's value is the resource's `.status` content directly (for example, `conditions`, `loadBalancer`) — the controller writes it under `.status` via SSA, so don't wrap it in another `status` key:
 
 ```go
-{% statusPatch(namespace, name, apiVersion, kind, map[string]any{
+{% statusPatch(resource, map[string]any{
     "deployed": map[string]any{
         "conditions": []any{
             condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(dig(resource, "status", "conditions"), "Accepted", "True")),
@@ -1320,7 +1324,7 @@ Registers a status patch for a Kubernetes resource with outcome-keyed variants. 
 }) %}
 ```
 
-Templates render all variants upfront; the controller selects the variant matching the pipeline outcome (`rendered`, `deployed`, `renderFailed`, or `deployFailed`). The [Template Reference](./template-reference.md#statuspatch) lists the parameters and when each variant applies.
+Templates render all variants upfront; the controller selects the variant matching the pipeline outcome (`rendered`, `deployed`, `renderFailed`, or `deployFailed`). The UID and resource version bind cached output to the exact resource revision that produced it. Offline and legacy objects without those fields still produce a patch, but their missing lineage can't establish that a later apply is redundant. The [Template Reference](./template-reference.md#statuspatch) lists the parameters and when each variant applies.
 
 ### `condition()`
 
@@ -1394,12 +1398,10 @@ spec:
         server s1 127.0.0.1:8080 check
       {%- for _, ingress := range resources.ingresses.List() %}
       {%%
-        var ns = ingress.metadata.namespace
-        var name = ingress.metadata.name
         var gen = fallback(ingress.metadata.generation, 0)
         // Ingress status has no typed conditions field, so reach for it with dig.
         var existing = dig(ingress, "status", "conditions")
-        statusPatch(ns, name, "networking.k8s.io/v1", "Ingress", map[string]any{
+        statusPatch(ingress, map[string]any{
           "deployed": map[string]any{
             "conditions": []any{
               condition("Ready", "True", "Deployed", "Ingress programmed into HAProxy", gen, transitionTime(existing, "Ready", "True")),

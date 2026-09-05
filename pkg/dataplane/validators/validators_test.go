@@ -17,6 +17,7 @@
 package validators
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/haproxytech/client-native/v6/models"
@@ -54,34 +55,44 @@ func TestValidatorSet_Version(t *testing.T) {
 	assert.Same(t, validatorSetV33, ForVersion(3, 3))
 }
 
-func TestValidatorSet_NilFunctions(t *testing.T) {
-	// A ValidatorSet with all nil function fields means "no validator for this
-	// version" — every validation must be treated as valid (no error, no panic).
-	// The nil-tolerance is exercised through CachedValidator, whose validateCached
-	// guards nil hasher/validator fields inline.
-	cv := &CachedValidator{cache: NewCache(), set: &ValidatorSet{}}
+func TestValidatorSetMissingFunctionsFailClosed(t *testing.T) {
+	validator := &ValidatorSet{}
 
-	assert.NoError(t, cv.ValidateServer(&models.Server{}))
-	assert.NoError(t, cv.ValidateServerTemplate(&models.ServerTemplate{}))
-	assert.NoError(t, cv.ValidateBind(&models.Bind{}))
-	assert.NoError(t, cv.ValidateHTTPRequestRule(&models.HTTPRequestRule{}))
-	assert.NoError(t, cv.ValidateHTTPResponseRule(&models.HTTPResponseRule{}))
-	assert.NoError(t, cv.ValidateTCPRequestRule(&models.TCPRequestRule{}))
-	assert.NoError(t, cv.ValidateTCPResponseRule(&models.TCPResponseRule{}))
-	assert.NoError(t, cv.ValidateHTTPAfterResponseRule(&models.HTTPAfterResponseRule{}))
-	assert.NoError(t, cv.ValidateHTTPErrorRule(&models.HTTPErrorRule{}))
-	assert.NoError(t, cv.ValidateServerSwitchingRule(&models.ServerSwitchingRule{}))
-	assert.NoError(t, cv.ValidateBackendSwitchingRule(&models.BackendSwitchingRule{}))
-	assert.NoError(t, cv.ValidateStickRule(&models.StickRule{}))
-	assert.NoError(t, cv.ValidateACL(&models.ACL{}))
-	assert.NoError(t, cv.ValidateFilter(&models.Filter{}))
-	assert.NoError(t, cv.ValidateLogTarget(&models.LogTarget{}))
-	assert.NoError(t, cv.ValidateHTTPCheck(&models.HTTPCheck{}))
-	assert.NoError(t, cv.ValidateTCPCheck(&models.TCPCheck{}))
-	assert.NoError(t, cv.ValidateCapture(&models.Capture{}))
+	assert.ErrorIs(t, validator.ValidateServer(&models.Server{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateServerTemplate(&models.ServerTemplate{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateBind(&models.Bind{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateHTTPRequestRule(&models.HTTPRequestRule{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateHTTPResponseRule(&models.HTTPResponseRule{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateTCPRequestRule(&models.TCPRequestRule{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateTCPResponseRule(&models.TCPResponseRule{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateHTTPAfterResponseRule(&models.HTTPAfterResponseRule{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateHTTPErrorRule(&models.HTTPErrorRule{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateServerSwitchingRule(&models.ServerSwitchingRule{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateBackendSwitchingRule(&models.BackendSwitchingRule{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateStickRule(&models.StickRule{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateACL(&models.ACL{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateFilter(&models.Filter{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateLogTarget(&models.LogTarget{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateHTTPCheck(&models.HTTPCheck{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateTCPCheck(&models.TCPCheck{}), errValidatorUnavailable)
+	assert.ErrorIs(t, validator.ValidateCapture(&models.Capture{}), errValidatorUnavailable)
+}
 
-	// Nil validator fields mean nothing is cached either.
-	assert.Equal(t, 0, cacheLen(cv.cache))
+func TestValidatorSetValidatesEveryOccurrence(t *testing.T) {
+	calls := 0
+	validator := &ValidatorSet{validateServer: func(*models.Server) error {
+		calls++
+		if calls == 2 {
+			return errors.New("second occurrence refused")
+		}
+		return nil
+	}}
+	model := &models.Server{Name: "same-model"}
+
+	assert.NoError(t, validator.ValidateServer(model))
+	assert.EqualError(t, validator.ValidateServer(model), "second occurrence refused")
+	assert.NoError(t, validator.ValidateServer(model))
+	assert.Equal(t, 3, calls)
 }
 
 func TestValidatorSet_ValidateWithGeneratedValidators(t *testing.T) {
@@ -98,8 +109,8 @@ func TestValidatorSet_ValidateWithGeneratedValidators(t *testing.T) {
 
 	for _, v := range versions {
 		t.Run(v.name, func(t *testing.T) {
-			cv := NewCachedValidator(v.major, v.minor)
-			require.NotNil(t, cv)
+			validator := ForVersion(v.major, v.minor)
+			require.NotNil(t, validator)
 
 			// Valid server should pass
 			server := &models.Server{
@@ -107,7 +118,7 @@ func TestValidatorSet_ValidateWithGeneratedValidators(t *testing.T) {
 				Address: "127.0.0.1",
 				Port:    func() *int64 { p := int64(8080); return &p }(),
 			}
-			assert.NoError(t, cv.ValidateServer(server))
+			assert.NoError(t, validator.ValidateServer(server))
 
 			// Valid ACL should pass
 			acl := &models.ACL{
@@ -115,7 +126,42 @@ func TestValidatorSet_ValidateWithGeneratedValidators(t *testing.T) {
 				Criterion: "path_beg",
 				Value:     "/api",
 			}
-			assert.NoError(t, cv.ValidateACL(acl))
+			assert.NoError(t, validator.ValidateACL(acl))
+		})
+	}
+}
+
+func TestValidatorSet_AllModelTypes(t *testing.T) {
+	validator := ForVersion(3, 2)
+	tests := []struct {
+		name     string
+		validate func() error
+	}{
+		{"Server", func() error { return validator.ValidateServer(&models.Server{Name: "s", Address: "1.2.3.4"}) }},
+		{"ServerTemplate", func() error { return validator.ValidateServerTemplate(&models.ServerTemplate{}) }},
+		{"Bind", func() error { return validator.ValidateBind(&models.Bind{}) }},
+		{"HTTPRequestRule", func() error { return validator.ValidateHTTPRequestRule(&models.HTTPRequestRule{}) }},
+		{"HTTPResponseRule", func() error { return validator.ValidateHTTPResponseRule(&models.HTTPResponseRule{}) }},
+		{"TCPRequestRule", func() error { return validator.ValidateTCPRequestRule(&models.TCPRequestRule{}) }},
+		{"TCPResponseRule", func() error { return validator.ValidateTCPResponseRule(&models.TCPResponseRule{}) }},
+		{"HTTPAfterResponseRule", func() error { return validator.ValidateHTTPAfterResponseRule(&models.HTTPAfterResponseRule{}) }},
+		{"HTTPErrorRule", func() error { return validator.ValidateHTTPErrorRule(&models.HTTPErrorRule{}) }},
+		{"ServerSwitchingRule", func() error { return validator.ValidateServerSwitchingRule(&models.ServerSwitchingRule{}) }},
+		{"BackendSwitchingRule", func() error { return validator.ValidateBackendSwitchingRule(&models.BackendSwitchingRule{}) }},
+		{"StickRule", func() error { return validator.ValidateStickRule(&models.StickRule{}) }},
+		{"ACL", func() error {
+			return validator.ValidateACL(&models.ACL{ACLName: "test", Criterion: "path", Value: "/test"})
+		}},
+		{"Filter", func() error { return validator.ValidateFilter(&models.Filter{}) }},
+		{"LogTarget", func() error { return validator.ValidateLogTarget(&models.LogTarget{}) }},
+		{"HTTPCheck", func() error { return validator.ValidateHTTPCheck(&models.HTTPCheck{}) }},
+		{"TCPCheck", func() error { return validator.ValidateTCPCheck(&models.TCPCheck{}) }},
+		{"Capture", func() error { return validator.ValidateCapture(&models.Capture{}) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotPanics(t, func() { _ = tt.validate() })
 		})
 	}
 }

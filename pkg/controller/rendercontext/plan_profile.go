@@ -15,6 +15,7 @@
 package rendercontext
 
 import (
+	"fmt"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
@@ -35,27 +36,29 @@ const (
 // bodies yield the same name and one section by construction, so the sharded
 // render produces a stable section set no matter which goroutine emits it first.
 func (r *PlanRegistry) Profile(record map[string]any) (string, error) {
-	dec := newRecordDecoder("planRegistry.Profile", record, profileRecordKeys)
-	body := profileBody(
-		dec.str("mode"),
-		dec.str("balance"),
-		dec.str("hashType"),
-		dec.keywords("defaultServer"),
-		dec.strSlice("profile"),
-	)
-	if dec.err != nil {
-		return "", dec.err
-	}
-
-	name := profileNamePrefix + renderplan.DigestString(strings.Join(body, "\n"))[:profileNameHexSize]
-	text := profileText(name, body)
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, err := r.registerSection(renderplan.SectionKindProfile, name, text); err != nil {
+	prepared, err := PreparePlanProfile(record)
+	if err != nil {
 		return "", err
 	}
-	return name, nil
+	return r.registerPreparedProfile(prepared)
+}
+
+// RegisterPreparedProfile replays a validated profile declaration.
+func (r *PlanRegistry) RegisterPreparedProfile(prepared PreparedPlanProfile) (string, error) {
+	if err := prepared.Validate(); err != nil {
+		return "", fmt.Errorf("planRegistry.Profile: %w", err)
+	}
+	return r.registerPreparedProfile(prepared)
+}
+
+func (r *PlanRegistry) registerPreparedProfile(prepared PreparedPlanProfile) (string, error) {
+	prepared = prepared.Clone()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, err := r.registerSection(renderplan.SectionKindProfile, prepared.Name, prepared.Text); err != nil {
+		return "", err
+	}
+	return prepared.Name, nil
 }
 
 // profileBody is the canonical, deterministic list of directive lines a profile

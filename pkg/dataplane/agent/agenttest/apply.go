@@ -34,9 +34,11 @@ import (
 const fixedTimestamp = "2026-01-01T00:00:00Z"
 
 type applyRequest struct {
-	manifest api.Manifest
-	parts    map[string][]byte
-	plan     []byte
+	manifest     api.Manifest
+	parts        map[string][]byte
+	plan         []byte
+	appliedProof string
+	workerProof  string
 }
 
 // outcome is one apply's answer: exactly one of result, conflict, missing.
@@ -135,6 +137,7 @@ func parseApply(r *http.Request) (*applyRequest, error) {
 // apply runs the contract's stages in order. Callers hold a.mu.
 func (a *Agent) apply(req *applyRequest) outcome {
 	m := &req.manifest
+	normalizeLegacyManifest(m)
 	if conflict := a.fence(m); conflict != nil {
 		return outcome{status: http.StatusConflict, conflict: conflict}
 	}
@@ -144,10 +147,34 @@ func (a *Agent) apply(req *applyRequest) outcome {
 	if path := a.mismatchedPart(req); path != "" {
 		return a.nack(m, "verify", fmt.Sprintf("part %q does not match its manifest digest", path))
 	}
+	if m.Mode != api.ModeRevertLKG {
+		a.proofGeneration++
+		req.appliedProof = fmt.Sprintf("a:%d", a.proofGeneration)
+		if len(m.InPlaceOps) > 0 {
+			a.proofGeneration++
+			req.workerProof = fmt.Sprintf("a:%d", a.proofGeneration)
+		}
+	}
 	a.promoteLKG(m)
 	out := a.runMode(req)
 	a.commitPlanBlob(req)
 	return out
+}
+
+func normalizeLegacyManifest(m *api.Manifest) {
+	if m.IdentityVersion == api.ExactIdentityVersion {
+		return
+	}
+	m.Mode = api.ModeReload
+	m.Ops = nil
+	m.InPlaceOps = nil
+	m.ExpectedPrevPlanProof = ""
+	m.ExpectedWorkerOpsPlanID = ""
+	m.ExpectedWorkerOpsPlanProof = ""
+	m.WorkerOpsPlanID = ""
+	m.WorkerOpsPlanProof = ""
+	m.ValidatedPlanID = ""
+	m.ValidatedPlanProof = ""
 }
 
 // runMode is the apply itself: a revert lands the last known good set, anything
@@ -164,11 +191,17 @@ func (a *Agent) runMode(req *applyRequest) outcome {
 // without carrying one leaves the pod with no baseline to hand back, which is
 // what the real agent's PlanBlobPlanID does.
 func (a *Agent) commitPlanBlob(req *applyRequest) {
-	if len(req.plan) == 0 || a.state.AppliedPlanID != req.manifest.PlanID {
+	if len(req.plan) == 0 || !samePlanRef(
+		a.state.AppliedPlanID,
+		a.state.AppliedPlanProof,
+		req.manifest.PlanID,
+		req.appliedProof,
+	) {
 		return
 	}
 	a.appliedPlan = req.plan
 	a.planBlobPlanID = req.manifest.PlanID
+	a.planBlobPlanProof = req.appliedProof
 }
 
 // fence is the write gate, and the only three reasons an apply is answered with
@@ -183,7 +216,9 @@ func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 	case m.Token.LeaderEpoch < a.state.AppliedToken.LeaderEpoch:
 		return a.conflict("stale_epoch")
 	case m.Mode == api.ModeRevertLKG:
-		// A revert carries no usable baseline: it targets the LKG by definition.
+		if !a.carriesRefusedPlan(m.PlanID, m.PlanProof) {
+			return a.conflict("revert_target_mismatch")
+		}
 	case m.ExpectedPrevPlanID != a.state.AppliedPlanID:
 		if a.state.AppliedPlanID == "" {
 			return a.conflict("unknown_baseline")
@@ -191,7 +226,18 @@ func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 		return a.conflict("prev_mismatch")
 	case m.ExpectedPrevToken != a.state.AppliedToken:
 		return a.conflict("prev_mismatch")
-	case a.inPlaceWillRun(m) && m.ExpectedWorkerOpsPlanID != a.state.WorkerOpsPlanID:
+	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode != api.ModeReload &&
+		!samePlanRef(m.ExpectedPrevPlanID, m.ExpectedPrevPlanProof, a.state.AppliedPlanID, a.state.AppliedPlanProof):
+		return a.conflict("prev_mismatch")
+	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode == api.ModeReload &&
+		a.state.AppliedPlanProof != "" && m.ExpectedPrevPlanProof != a.state.AppliedPlanProof:
+		return a.conflict("prev_mismatch")
+	case a.inPlaceWillRun(m) && !samePlanRef(
+		m.ExpectedWorkerOpsPlanID,
+		m.ExpectedWorkerOpsPlanProof,
+		a.state.WorkerOpsPlanID,
+		a.state.WorkerOpsPlanProof,
+	):
 		return a.conflict("worker_ops_mismatch")
 	}
 	return nil
@@ -199,13 +245,29 @@ func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 
 func (a *Agent) conflict(reason string) *api.Conflict {
 	return &api.Conflict{
-		AppliedPlanID:   a.state.AppliedPlanID,
-		AppliedToken:    a.state.AppliedToken,
-		RunningPlanID:   a.state.RunningPlanID,
-		WorkerOpsPlanID: a.state.WorkerOpsPlanID,
-		LKGPlanID:       a.state.LKGPlanID,
-		Reason:          reason,
+		AppliedPlanID:      a.state.AppliedPlanID,
+		AppliedPlanProof:   a.state.AppliedPlanProof,
+		AppliedToken:       a.state.AppliedToken,
+		RunningPlanID:      a.state.RunningPlanID,
+		RunningPlanProof:   a.state.RunningPlanProof,
+		WorkerOpsPlanID:    a.state.WorkerOpsPlanID,
+		WorkerOpsPlanProof: a.state.WorkerOpsPlanProof,
+		LKGPlanID:          a.state.LKGPlanID,
+		LKGPlanProof:       a.state.LKGPlanProof,
+		Reason:             reason,
 	}
+}
+
+func (a *Agent) carriesRefusedPlan(id, proof string) bool {
+	if samePlanRef(id, proof, a.state.RunningPlanID, a.state.RunningPlanProof) {
+		return false
+	}
+	return samePlanRef(id, proof, a.state.AppliedPlanID, a.state.AppliedPlanProof) ||
+		samePlanRef(id, proof, a.state.WorkerOpsPlanID, a.state.WorkerOpsPlanProof)
+}
+
+func samePlanRef(leftID, leftProof, rightID, rightProof string) bool {
+	return leftProof != "" && rightProof != "" && leftID == rightID && leftProof == rightProof
 }
 
 // missingParts names the files whose content the agent does not hold. It is a
@@ -221,7 +283,8 @@ func (a *Agent) missingParts(req *applyRequest) []string {
 		if _, sent := req.parts[f.Path]; sent {
 			continue
 		}
-		if at, held := a.state.Files[f.Path]; held && at.Digest == f.Digest {
+		if at, held := a.state.Files[f.Path]; held && f.Proof != "" && at.Proof == f.Proof &&
+			at.Digest == f.Digest && at.Size == f.Size {
 			continue
 		}
 		missing = append(missing, f.Path)
@@ -248,10 +311,11 @@ func (a *Agent) mismatchedPart(req *applyRequest) string {
 // promoteLKG runs before the transaction: a plan the controller has validated
 // and the agent has applied becomes the rollback baseline.
 func (a *Agent) promoteLKG(m *api.Manifest) {
-	if m.ValidatedPlanID == "" || m.ValidatedPlanID != a.state.AppliedPlanID {
+	if !samePlanRef(m.ValidatedPlanID, m.ValidatedPlanProof, a.state.AppliedPlanID, a.state.AppliedPlanProof) {
 		return
 	}
 	a.state.LKGPlanID = a.state.AppliedPlanID
+	a.state.LKGPlanProof = a.state.AppliedPlanProof
 	a.lkgFiles = maps.Clone(a.state.Files)
 }
 
@@ -263,10 +327,10 @@ func (a *Agent) transact(req *applyRequest) outcome {
 	changed := a.storeFiles(req)
 	switch {
 	case a.reloadPending:
-		return a.scheduled(m)
+		return a.scheduled(req)
 	case m.Mode == api.ModeReload, a.state.AppliedPlanID == "":
 		// An unknown baseline reloads regardless of the ops, as the real agent does.
-		return a.reload(m)
+		return a.reload(req)
 	}
 	if kind := a.firstRejected(m.Ops); kind != "" {
 		return a.rejectOps(m, kind)
@@ -278,9 +342,10 @@ func (a *Agent) transact(req *applyRequest) outcome {
 	case changed:
 		mode = api.ResultFileOnly
 	}
-	a.advance(m)
+	a.advance(m, req.appliedProof)
 	// Every op ran on the worker, so it holds the applied plan.
 	a.state.WorkerOpsPlanID = m.PlanID
+	a.state.WorkerOpsPlanProof = req.appliedProof
 	return a.ack(m, mode, m.Ops, nil)
 }
 
@@ -288,20 +353,27 @@ func (a *Agent) transact(req *applyRequest) outcome {
 // and only the in-place ops run. They advance the worker-ops baseline only when
 // they actually executed, and anything that leaves the worker unexplained
 // invalidates the pod instead of forcing a second reload.
-func (a *Agent) scheduled(m *api.Manifest) outcome {
+func (a *Agent) scheduled(req *applyRequest) outcome {
+	m := &req.manifest
 	reload := &api.ReloadInfo{ScheduledAt: a.state.ReloadPendingAt}
 	if len(m.InPlaceOps) == 0 {
-		a.advance(m)
+		a.advance(m, req.appliedProof)
 		return a.ack(m, api.ResultScheduled, nil, reload)
 	}
-	if m.ExpectedWorkerOpsPlanID != a.state.WorkerOpsPlanID {
+	if !samePlanRef(
+		m.ExpectedWorkerOpsPlanID,
+		m.ExpectedWorkerOpsPlanProof,
+		a.state.WorkerOpsPlanID,
+		a.state.WorkerOpsPlanProof,
+	) {
 		return a.invalidate(m, reload, "in-place ops were composed against a different worker baseline")
 	}
 	if kind := a.firstRejected(m.InPlaceOps); kind != "" {
 		return a.invalidate(m, reload, kind+": command rejected by HAProxy")
 	}
-	a.advance(m)
+	a.advance(m, req.appliedProof)
 	a.state.WorkerOpsPlanID = m.WorkerOpsPlanID
+	a.state.WorkerOpsPlanProof = req.workerProof
 	return a.ack(m, api.ResultScheduled, m.InPlaceOps, reload)
 }
 
@@ -317,18 +389,24 @@ func (a *Agent) inPlaceWillRun(m *api.Manifest) bool {
 func (a *Agent) invalidate(m *api.Manifest, reload *api.ReloadInfo, message string) outcome {
 	a.state.Generation++
 	a.state.AppliedPlanID = ""
+	a.state.AppliedPlanProof = ""
 	a.state.WorkerOpsPlanID = ""
+	a.state.WorkerOpsPlanProof = ""
 	out := a.ack(m, api.ResultScheduled, nil, reload)
 	out.result.Error = &api.ApplyError{Stage: "in_place", Message: message}
 	return out
 }
 
-func (a *Agent) reload(m *api.Manifest) outcome {
+func (a *Agent) reload(req *applyRequest) outcome {
+	m := &req.manifest
 	a.performReload()
-	a.advance(m)
+	a.advance(m, req.appliedProof)
 	a.state.RunningPlanID = m.PlanID
+	a.state.RunningPlanProof = req.appliedProof
 	a.state.WorkerOpsPlanID = m.PlanID
+	a.state.WorkerOpsPlanProof = req.appliedProof
 	a.state.LKGPlanID = m.PlanID
+	a.state.LKGPlanProof = req.appliedProof
 	a.lkgFiles = maps.Clone(a.state.Files)
 	return a.ack(m, api.ResultReload, nil, &api.ReloadInfo{
 		Performed: true,
@@ -346,8 +424,11 @@ func (a *Agent) revertLKG(m *api.Manifest) outcome {
 	a.state.Generation++
 	a.state.AppliedToken = m.Token
 	a.state.AppliedPlanID = a.state.LKGPlanID
+	a.state.AppliedPlanProof = a.state.LKGPlanProof
 	a.state.RunningPlanID = a.state.LKGPlanID
+	a.state.RunningPlanProof = a.state.LKGPlanProof
 	a.state.WorkerOpsPlanID = a.state.LKGPlanID
+	a.state.WorkerOpsPlanProof = a.state.LKGPlanProof
 	return a.ack(m, api.ResultReload, nil, &api.ReloadInfo{
 		Performed: true,
 		OK:        true,
@@ -360,6 +441,7 @@ func (a *Agent) revertLKG(m *api.Manifest) outcome {
 // state plus a reload.
 func (a *Agent) rejectOps(m *api.Manifest, kind string) outcome {
 	a.state.AppliedPlanID = ""
+	a.state.AppliedPlanProof = ""
 	return a.nack(m, "ops", fmt.Sprintf("%s: command rejected by HAProxy", kind))
 }
 
@@ -375,9 +457,10 @@ func (a *Agent) firstRejected(ops []api.Op) string {
 // advance commits the applied baseline. Generation is strictly +1 per
 // successful apply, which a test can assert. The worker-ops baseline is not
 // part of it: only a reload or an executed in-place batch moves that.
-func (a *Agent) advance(m *api.Manifest) {
+func (a *Agent) advance(m *api.Manifest, proof string) {
 	a.state.Generation++
 	a.state.AppliedPlanID = m.PlanID
+	a.state.AppliedPlanProof = proof
 	a.state.AppliedToken = m.Token
 }
 
@@ -387,7 +470,7 @@ func (a *Agent) advance(m *api.Manifest) {
 func (a *Agent) storeFiles(req *applyRequest) bool {
 	next := make(map[string]api.FileAt, len(req.manifest.Files))
 	for _, f := range req.manifest.Files {
-		next[f.Path] = api.FileAt{Digest: f.Digest, Size: f.Size}
+		next[f.Path] = api.FileAt{Digest: f.Digest, Proof: f.Proof, Size: f.Size}
 		// Kinds accumulate rather than replace, so a revert to the LKG set
 		// still classifies paths this manifest happens not to carry.
 		a.kinds[f.Path] = f.Kind
@@ -426,18 +509,22 @@ func (a *Agent) performReload() {
 
 func (a *Agent) ack(m *api.Manifest, mode string, executed []api.Op, reload *api.ReloadInfo) outcome {
 	result := &api.ApplyResult{
-		PlanID:          m.PlanID,
-		OK:              true,
-		Mode:            mode,
-		AppliedPlanID:   a.state.AppliedPlanID,
-		RunningPlanID:   a.state.RunningPlanID,
-		WorkerOpsPlanID: a.state.WorkerOpsPlanID,
-		AppliedToken:    a.state.AppliedToken,
-		LKGPlanID:       a.state.LKGPlanID,
-		OpResults:       opResults(executed),
-		Reload:          reload,
-		HAProxy:         a.state.HAProxy,
-		At:              fixedTimestamp,
+		PlanID:             m.PlanID,
+		OK:                 true,
+		Mode:               mode,
+		AppliedPlanID:      a.state.AppliedPlanID,
+		AppliedPlanProof:   a.state.AppliedPlanProof,
+		RunningPlanID:      a.state.RunningPlanID,
+		RunningPlanProof:   a.state.RunningPlanProof,
+		WorkerOpsPlanID:    a.state.WorkerOpsPlanID,
+		WorkerOpsPlanProof: a.state.WorkerOpsPlanProof,
+		AppliedToken:       a.state.AppliedToken,
+		LKGPlanID:          a.state.LKGPlanID,
+		LKGPlanProof:       a.state.LKGPlanProof,
+		OpResults:          opResults(executed),
+		Reload:             reload,
+		HAProxy:            a.state.HAProxy,
+		At:                 fixedTimestamp,
 	}
 	if reload != nil && reload.Performed {
 		inventory := a.state.Inventory
@@ -449,17 +536,21 @@ func (a *Agent) ack(m *api.Manifest, mode string, executed []api.Op, reload *api
 
 func (a *Agent) nack(m *api.Manifest, stage, message string) outcome {
 	result := &api.ApplyResult{
-		PlanID:          m.PlanID,
-		OK:              false,
-		Mode:            api.ResultRejected,
-		AppliedPlanID:   a.state.AppliedPlanID,
-		RunningPlanID:   a.state.RunningPlanID,
-		WorkerOpsPlanID: a.state.WorkerOpsPlanID,
-		AppliedToken:    a.state.AppliedToken,
-		LKGPlanID:       a.state.LKGPlanID,
-		Error:           &api.ApplyError{Stage: stage, Message: message},
-		HAProxy:         a.state.HAProxy,
-		At:              fixedTimestamp,
+		PlanID:             m.PlanID,
+		OK:                 false,
+		Mode:               api.ResultRejected,
+		AppliedPlanID:      a.state.AppliedPlanID,
+		AppliedPlanProof:   a.state.AppliedPlanProof,
+		RunningPlanID:      a.state.RunningPlanID,
+		RunningPlanProof:   a.state.RunningPlanProof,
+		WorkerOpsPlanID:    a.state.WorkerOpsPlanID,
+		WorkerOpsPlanProof: a.state.WorkerOpsPlanProof,
+		AppliedToken:       a.state.AppliedToken,
+		LKGPlanID:          a.state.LKGPlanID,
+		LKGPlanProof:       a.state.LKGPlanProof,
+		Error:              &api.ApplyError{Stage: stage, Message: message},
+		HAProxy:            a.state.HAProxy,
+		At:                 fixedTimestamp,
 	}
 	a.state.LastApply = result
 	return outcome{status: http.StatusOK, result: result}

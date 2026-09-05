@@ -8,7 +8,7 @@ All templates have access to the following top-level variables:
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `resources` | map of stores | Kubernetes resources indexed per `watchedResources` config — entries are wrappers exposing `.List()` / `.Fetch(keys...)` / `.GetSingle(keys...)` / `.APIVersion()` (the group/version this resource is actually watched at — pass it to `statusPatch()` instead of hardcoding a literal), plus the type-carrying `.T` |
+| `resources` | map of stores | Kubernetes resources indexed per `watchedResources` config — entries are wrappers exposing `.List()` / `.Fetch(keys...)` / `.GetSingle(keys...)` / `.APIVersion()` (the group/version this resource is actually watched at), plus the type-carrying `.T` |
 | `controller` | map of stores | Controller-managed stores; currently only `controller.haproxy_pods` for the discovered HAProxy pod set |
 | `pathResolver` | object | Resolves filenames to HAProxy paths — see [`pathResolver`](#pathresolver) |
 | `capabilities` | map (bool values) | HAProxy feature flags, `snake_case` keys (for example `capabilities.supports_crt_list`). Derived from the **lowest HAProxy version in the fleet**, as each pod's agent reports it, so a render is never ahead of the pod that would refuse it. Before the first pod is discovered they come from the controller image's own HAProxy binary, which the chart pins to the same `haproxyVersion`. Use for `{% if capabilities.supports_crt_list %}…{% end %}` branches — a mistyped key is silently falsy, not an error. |
@@ -35,9 +35,10 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `fallback(value, default)` | Return `default` if `value` is nil. Empty strings and zeroes pass through — only `dig()` on optional typed fields normalises zero values to nil first | `fallback(svc.port.number, 80)` |
 | `dig(obj, "k1", "k2", ...)` | Walk a nested map / typed struct without nil-checking each level (navigates JSON tags on typed structs) | `dig(ing, "metadata", "annotations")` |
 | `toSlice(v)` | Coerce `any` to `[]any` (safe to range over even if nil) | `for _, r := range toSlice(ing.spec.rules)` |
-| `to_str_map(v)` | Normalise any string-keyed map (`map[string]string` from typegen, `map[string]any` from the untyped store path) to `map[string]string` — use on labels / `matchLabels` / annotations | `for k, v := range route.Metadata.Labels \| to_str_map()` |
+| `to_str_map(v)` | Copy a string-keyed map to `map[string]string`; each value must be a deterministic scalar | `for k, v := range route.Metadata.Labels \| to_str_map()` |
 | `shard_slice(items, idx, n)` | Type-preserving split of a slice into `n` shards, returning shard `idx` — input element type is kept | `shard_slice(gateways, i, totalShards)` |
-| `tostring(v)`, `toint(v)`, `tofloat(v)` | Type conversions from `any` | `port = toint(annotation)` |
+| `tostring(v)` | Convert nil, a boolean, a finite number, a string, or a pointer to one of those scalars to text. Composite values and custom formatting methods fail the render; use field access or `toJSON()` instead | `name = tostring(dynamicName)` |
+| `toint(v)`, `tofloat(v)` | Numeric conversions from `any` | `port = toint(annotation)` |
 | `len(v)` | Length of slice / map / string (language builtin — not pipeable) | `len(ing.spec.rules)` |
 | `keys(m)` | Sorted keys of a map | `for _, k := range keys(annotations)` |
 | `merge(a, b)` | New map combining `a` and `b` (b wins on conflict) | `merge(defaults, overrides)` |
@@ -55,7 +56,7 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `map_extract(items, keyPath)` | Pluck one field (dotted key path) from each item into a flat slice | `{{ routes \| map_extract("routeId") }}` |
 | `indent(s, n)` | Indent lines by N spaces (first and blank lines excluded) | `{{ render "snippet" \| indent(4) }}` |
 | `debug(v, label)` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
-| `toJSON(v)` | Convert value to JSON string | `{{ myMap \| toJSON() }}` |
+| `toJSON(v)` | Convert a value to JSON; an unsupported value fails the render | `{{ myMap \| toJSON() }}` |
 | `basename(path)` | Filename portion of a path, like Unix `basename` | `{%- var p, _ = fileRegistry.Register("map", n, c) %}{{ basename(p) }}` |
 | `namespace(init)` | Mutable `map[string]any` for accumulating state across loop iterations | `{%- var acc = namespace(map[string]any{"n": 0}) %}` |
 | `isNil(v)` | Nil check that also catches a typed nil pointer boxed in an `any` | `{% if !isNil(currentConfig) %}` |
@@ -68,8 +69,8 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `strings_contains(s, sub)`, `strings_split(s, sep)`, `strings_splitn(s, sep, n)`, `strings_trim(s)`, `strings_lower(s)`, `strings_replace(s, old, new)` | `any`-tolerant string operations — they coerce their arguments, so they work on values read out of a `map[string]any` without a cast first. `strings_trim` trims whitespace; `strings_splitn` caps the result at `n` parts | `strings_splitn(annotation, ":", 2)` |
 | `title(s)` | Title-case a string | `title(mode)` |
 | `isdigit(s)` | True when the string is non-empty and all digits — check before `toint()` | `{% if isdigit(port) %}` |
-| `toStringSlice(items)` | Convert a `[]any` to `[]string` | `toStringSlice(hosts)` |
-| `sort_strings(items)` | Sort a `[]any` lexicographically, returning `[]string` | `sort_strings(keys(m))` |
+| `toStringSlice(items)` | Copy scalar elements from a slice to `[]string`; a composite element fails the render | `toStringSlice(hosts)` |
+| `sort_strings(items)` | Sort deterministic scalar elements lexicographically, returning `[]string` | `sort_strings(keys(m))` |
 | `sort_ints(items)` | Sort a `[]any` numerically, returning `[]int` — use for ports and IDs, where `sort_strings` would put `"10"` before `"2"`. Non-integer entries coerce through `toint()` and sort to the front | `sort_ints(ports)` |
 | `ceil(f)` | Round a float up | `ceil(tofloat(total) / 4)` |
 | `seq(n)` | `[]int{0, 1, …, n-1}`, for fixed-count loops | `{% for _, i := range seq(count) %}` |
@@ -107,9 +108,54 @@ Resource-agnostic read/write access to any watched resource by JSONPath — the 
 
 | Function | Purpose | Example |
 |----------|---------|---------|
-| `resource(name)` | The per-render items of a watched resource named *dynamically*, sharing the same objects as `resources.<name>.List()` — so a `jsonpathSet` write is visible downstream | `resource(extraContext.targetStore)` |
+| `resource(name)` | The per-render items of a watched resource named *dynamically* | `resource(extraContext.targetStore)` |
 | `jsonpathGet(item, path)` | Read a concrete JSONPath out of an item | `jsonpathGet(ing, "$.spec.ingressClassName")` |
+| `deriveResource(name, item, path, value)` | Publish a detached resource value to subsequent `List`, `Fetch`, `GetSingle`, and `resource` reads. Returns the transformed item | `ing = deriveResource("ingresses", ing, "$.metadata.annotations.x", "1")` |
 | `jsonpathSet(item, path, value)` | Write a concrete JSONPath into an item, in place. Returns whether the write landed | `jsonpathSet(ing, "$.metadata.annotations.x", "1")` |
+
+Without incremental snippets, a root can call `deriveResource` before later
+reads. When incremental snippets are configured, migrate every derivation
+producer to the one component that declares the `deriveResource` effect for its
+source. The derived view freezes before roots render, so a later root call fails.
+
+### Incremental values
+
+| Function | Purpose | Example |
+|----------|---------|---------|
+| `incremental_values(group, cell)` | Return the winning structured values published by a configured incremental group, in deterministic winner order | `{% for _, host := range incremental_values("tls", "hosts") %}` |
+
+An incremental component that declares the `publishValue` effect publishes a
+value with `shared.Publish(cell, key, value)`. `incremental_values` is available
+only to root templates. It can evaluate a group before the group's normal
+render call, but roots must still render one or more complete group sequences.
+Each sequence contains every component in snippet-name order and stays within
+one root template. Repeating a sequence mounts its cached text again without
+re-executing component bodies or effects.
+An auxiliary root may read a group mounted in `haproxy.cfg`, which renders
+first. Once a root starts its own producer sequence, that sequence must complete
+before the root reads the group. A group mounted only in auxiliary roots must
+complete its sequence in each consuming root because auxiliary roots render
+concurrently.
+Each call returns newly detached, immutable values. Unknown groups and groups
+without `publishValue` fail; an absent cell in a known publication group returns
+an empty slice.
+
+Inside a component that declares the producer group in `consumes`, use
+`shared.Select(group, cell, key)` for one exact winner or
+`shared.SelectValues(group, cell)` for all winners in canonical order. Use
+`shared.Count(group, cell)` for the number of unique winning publication keys
+in a cell. These calls require a complete authenticated producer-group call and
+register exact dependencies. Present and missing `Select` reads change only for
+that key; losing or unrelated publishers don't execute the consumer.
+`SelectValues` reruns the consumer only when the returned values or their order
+changes. `Count` is O(1) and reruns it only when the observed count changes;
+deleting the last owner changes it, while promoting another owner for the same
+key doesn't.
+
+Use `shared.PublishRanked(cell, key, rank, value)` when ownership has a chart
+precedence rule. The lexicographically smallest non-empty rank wins, followed
+by the normal deterministic owner order. Don't mix ranked and rank-free owners
+for the same cell and key.
 
 For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, `min`, `max`, `sprintf`, `now()`, etc.), see the [Scriggo built-ins reference](https://scriggo.com/templates/builtins).
 
@@ -127,7 +173,7 @@ For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, 
     "$.match.headers | length:desc",
     "$.match.path.value | length:desc",
 }) %}
-{% if sortErr != nil %}{{ fail("sorting routes: " + tostring(sortErr)) }}{% end %}
+{% if sortErr != nil %}{{ fail("sorting routes: " + sortErr.Error()) }}{% end %}
 ```
 
 ### Regex flavor
@@ -181,16 +227,13 @@ Templates register status patches with `statusPatch()`; the controller applies t
 
 ### `statusPatch()`
 
-Registers a status patch for a Kubernetes resource with outcome-keyed variants. Each variant's value is the resource's `.status` content directly (for example `conditions`, `loadBalancer`) — the controller writes it under `.status` via SSA, so don't wrap it in another `status` key.
+Registers a status patch for a Kubernetes resource with outcome-keyed variants. Pass the resource object itself; the function reads `apiVersion`, `kind`, `metadata.namespace`, `metadata.name`, `metadata.uid`, and `metadata.resourceVersion` generically. Each variant's value is the resource's `.status` content directly (for example `conditions`, `loadBalancer`) — the controller writes it under `.status` via SSA, so don't wrap it in another `status` key.
 
 **Parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `namespace` | `string` | Resource namespace |
-| `name` | `string` | Resource name |
-| `apiVersion` | `string` | Resource API version (for example, `networking.k8s.io/v1`) |
-| `kind` | `string` | Resource kind (for example, `Ingress`, `Gateway`) |
+| `resource` | resource object | The watched resource to patch — a typed resource or an unstructured resource map |
 | `variants` | `map[string]any` | Status payloads keyed by pipeline phase |
 
 **Variants:**
@@ -202,7 +245,7 @@ Registers a status patch for a Kubernetes resource with outcome-keyed variants. 
 | `renderFailed` | When a later rendering phase fails |
 | `deployFailed` | When HAProxy deployment fails |
 
-Templates render all variants upfront. The controller selects the appropriate variant based on the pipeline outcome.
+Templates render all variants upfront. The controller selects the appropriate variant based on the pipeline outcome. UID and resource version prevent cached status from one resource revision from standing in for another. Offline and legacy objects may omit them; the patch remains valid, but missing lineage can't prove a reapply is redundant.
 
 ### `condition()`
 

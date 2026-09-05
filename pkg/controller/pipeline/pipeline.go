@@ -23,10 +23,14 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -42,10 +46,9 @@ const (
 )
 
 // PipelineError is a structured error that identifies which pipeline phase failed.
-// Callers can use errors.AsType[*PipelineError] (or errors.As with a typed
-// pointer target on Go < 1.26) to extract phase information instead of string
-// parsing. The Coordinator does this in handlePipelineFailure to set the
-// reconciliation-failed event's phase field.
+// Callers can use errors.AsType[*PipelineError] to extract phase information
+// instead of string parsing. The Coordinator does this in handlePipelineFailure
+// to set the reconciliation-failed event's phase field.
 type PipelineError struct {
 	// Phase identifies which pipeline phase failed.
 	Phase PipelinePhase
@@ -73,11 +76,21 @@ func (e *PipelineError) Unwrap() error {
 
 // PipelineResult contains the output of a render-validate pipeline execution.
 type PipelineResult struct {
+	// CycleSnapshot binds the output and every effect from this render.
+	CycleSnapshot *rendercycle.Snapshot
+
+	// OutputSnapshot binds the exact config, plan, and auxiliary artifacts.
+	OutputSnapshot *renderoutput.Snapshot
+
 	// HAProxyConfig is the rendered HAProxy configuration.
 	HAProxyConfig string
 
 	// AuxiliaryFiles contains all rendered auxiliary files.
+	// Production results leave it nil and use AuxiliaryFileSnapshot.
 	AuxiliaryFiles *dataplane.AuxiliaryFiles
+
+	// AuxiliaryFileSnapshot is the authenticated immutable production representation.
+	AuxiliaryFileSnapshot *renderartifact.Snapshot
 
 	// Plan is the structure this render declared: its sections, backends, map
 	// entries and file set. Nil when the renderer produced none.
@@ -86,18 +99,29 @@ type PipelineResult struct {
 	// PlanID is the digest identifying Plan.
 	PlanID string
 
-	// StatusPatches contains status patches registered by templates during rendering.
-	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
+	// StatusPatches is the detached compatibility representation.
+	// Production renders leave it nil and use StatusPatchSnapshot.
 	StatusPatches []templating.StatusPatch
+
+	// StatusPatchSnapshot is the authenticated immutable production representation.
+	StatusPatchSnapshot *templating.StatusPatchSnapshot
 
 	// Events contains Kubernetes Events templates asked to emit via recordEvent()
 	// (e.g. a RouteConflict Warning on an Ingress). Forwarded to the EventEmitter.
+	// Production renders leave it nil and use EventSnapshot.
 	Events []templating.RenderedEvent
+
+	// EventSnapshot is the authenticated immutable production representation.
+	EventSnapshot *templating.RenderedEventSnapshot
 
 	// RenderedResources contains full Kubernetes resources the templates declared
 	// the controller should own and reconcile (e.g. an auxiliary Service or other
 	// object a template emits alongside the HAProxy config).
+	// Production renders leave it nil and use RenderedResourceSnapshot.
 	RenderedResources []templating.RenderedResource
+
+	// RenderedResourceSnapshot is the authenticated immutable production representation.
+	RenderedResourceSnapshot *templating.RenderedResourceSnapshot
 
 	// AuxFileCount is the total number of auxiliary files.
 	AuxFileCount int
@@ -109,6 +133,14 @@ type PipelineResult struct {
 
 	// RenderDurationMs is the rendering duration in milliseconds.
 	RenderDurationMs int64
+
+	// CacheState is "warm" when the render had a graph to build on, "cold" when it
+	// re-evaluated everything, and "replay" when it reused the previous output.
+	CacheState string
+
+	// CacheBuildMs is what the most recent completed cache build cost, 0 while none
+	// has completed.
+	CacheBuildMs int64
 
 	// ValidateDurationMs is the validation duration in milliseconds.
 	ValidateDurationMs int64
@@ -122,6 +154,72 @@ type PipelineResult struct {
 
 	// ValidationWarnings contains non-fatal diagnostics produced after render.
 	ValidationWarnings []string
+}
+
+// MaterializeAuxiliaryFiles returns a caller-isolated compatibility view.
+func (r *PipelineResult) MaterializeAuxiliaryFiles() (*dataplane.AuxiliaryFiles, error) {
+	cycle, err := r.authenticatedCycle()
+	if err != nil {
+		return nil, err
+	}
+	output, err := cycle.OutputSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading pipeline cycle output: %w", err)
+	}
+	snapshot, err := output.ArtifactSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading pipeline output artifacts: %w", err)
+	}
+	return dataplane.MaterializeAuxiliaryFileSnapshot(snapshot)
+}
+
+// MaterializeStatusPatches returns a caller-isolated compatibility view.
+func (r *PipelineResult) MaterializeStatusPatches() ([]templating.StatusPatch, error) {
+	cycle, err := r.authenticatedCycle()
+	if err != nil {
+		return nil, err
+	}
+	statusSnapshot, err := cycle.StatusPatchSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading pipeline cycle status patches: %w", err)
+	}
+	return statusSnapshot.Patches()
+}
+
+// MaterializeEvents returns a caller-isolated compatibility view.
+func (r *PipelineResult) MaterializeEvents() ([]templating.RenderedEvent, error) {
+	cycle, err := r.authenticatedCycle()
+	if err != nil {
+		return nil, err
+	}
+	eventSnapshot, err := cycle.RenderedEventSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading pipeline cycle events: %w", err)
+	}
+	return eventSnapshot.Events()
+}
+
+// MaterializeRenderedResources returns a caller-isolated compatibility view.
+func (r *PipelineResult) MaterializeRenderedResources() ([]templating.RenderedResource, error) {
+	cycle, err := r.authenticatedCycle()
+	if err != nil {
+		return nil, err
+	}
+	resourceSnapshot, err := cycle.RenderedResourceSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading pipeline cycle resources: %w", err)
+	}
+	return resourceSnapshot.Resources()
+}
+
+func (r *PipelineResult) authenticatedCycle() (*rendercycle.Snapshot, error) {
+	if r == nil || r.CycleSnapshot == nil {
+		return nil, errors.New("pipeline result has no authenticated render cycle")
+	}
+	if err := r.CycleSnapshot.ValidateAuthentication(); err != nil {
+		return nil, fmt.Errorf("authenticating pipeline render cycle: %w", err)
+	}
+	return r.CycleSnapshot, nil
 }
 
 // RenderedOutputValidator validates the complete rendered file set.
@@ -211,7 +309,7 @@ func New(cfg *PipelineConfig) *Pipeline {
 //   - PipelineResult containing rendered config and validation status
 //   - Error if rendering or validation fails
 func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*PipelineResult, error) {
-	result, validationResult, err := p.execute(ctx, provider, mode, extraOpts...)
+	result, validationResult, err := p.executeSettlingInputConflicts(ctx, provider, mode, extraOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +343,7 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider, m
 //   - Error if rendering fails or context authority expires; ordinary validation
 //     failures return a non-nil ValidationResult
 func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*PipelineResult, *validation.ValidationResult, error) {
-	result, validationResult, err := p.execute(ctx, provider, mode, extraOpts...)
+	result, validationResult, err := p.executeSettlingInputConflicts(ctx, provider, mode, extraOpts...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -253,6 +351,73 @@ func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreP
 		return nil, nil, err
 	}
 	return result, validationResult, nil
+}
+
+type authenticatedRenderOutput struct {
+	cycle     *rendercycle.Snapshot
+	snapshot  *renderoutput.Snapshot
+	config    string
+	artifacts *renderartifact.Snapshot
+	status    *templating.StatusPatchSnapshot
+	events    *templating.RenderedEventSnapshot
+	resources *templating.RenderedResourceSnapshot
+	planID    string
+	checksum  string
+	auxCount  int
+}
+
+func authenticateRenderOutput(result *renderer.RenderResult) (*authenticatedRenderOutput, error) {
+	if result == nil {
+		return nil, errors.New("renderer returned no result")
+	}
+	cycle := result.CycleSnapshot
+	if cycle == nil {
+		return nil, errors.New("renderer returned no authenticated render cycle")
+	}
+	output, err := cycle.OutputSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("authenticating render cycle: %w", err)
+	}
+	status, err := cycle.StatusPatchSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading render cycle status patches: %w", err)
+	}
+	renderedEvents, err := cycle.RenderedEventSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading render cycle events: %w", err)
+	}
+	resources, err := cycle.RenderedResourceSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading render cycle resources: %w", err)
+	}
+	if err := output.ValidateAuthentication(); err != nil {
+		return nil, fmt.Errorf("authenticating render output: %w", err)
+	}
+	config, err := output.Config()
+	if err != nil {
+		return nil, fmt.Errorf("reading rendered config: %w", err)
+	}
+	artifacts, err := output.ArtifactSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading rendered artifacts: %w", err)
+	}
+	planID, err := output.PlanID()
+	if err != nil {
+		return nil, fmt.Errorf("reading rendered plan ID: %w", err)
+	}
+	counts, err := output.Counts()
+	if err != nil {
+		return nil, fmt.Errorf("reading rendered output counts: %w", err)
+	}
+	checksum, err := output.ContentChecksum()
+	if err != nil {
+		return nil, fmt.Errorf("reading rendered output checksum: %w", err)
+	}
+	return &authenticatedRenderOutput{
+		cycle: cycle, snapshot: output, config: config, artifacts: artifacts,
+		status: status, events: renderedEvents, resources: resources,
+		planID: planID, checksum: checksum, auxCount: counts.Artifacts,
+	}, nil
 }
 
 // execute is the shared render-validate body behind Execute and
@@ -281,57 +446,47 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 			Cause: err,
 		}
 	}
-	// Compute content checksum once — propagated to all downstream consumers
-	contentChecksum := dataplane.ComputeContentChecksum(renderResult.HAProxyConfig, renderResult.AuxiliaryFiles)
+	authenticatedOutput, err := authenticateRenderOutput(renderResult)
+	if err != nil {
+		return nil, nil, &PipelineError{Phase: PhaseRender, Cause: err}
+	}
 
 	// Phase 2: Validate configuration (pass pre-computed checksum to avoid rehashing)
 	validationResult := &validation.ValidationResult{Valid: true}
 	if p.validator != nil {
-		validationResult = p.validator.ValidateWithChecksum(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles, contentChecksum)
+		validationResult = p.validator.ValidateOutputSnapshotWithChecksum(
+			ctx, authenticatedOutput.snapshot, authenticatedOutput.checksum,
+		)
 	}
 	if err := pipelineCancellationError(ctx, PhaseValidation, validationResult.Phase, validationResult.Error); err != nil {
 		return nil, nil, err
 	}
 
 	result := &PipelineResult{
-		HAProxyConfig:      renderResult.HAProxyConfig,
-		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
-		Plan:               renderResult.Plan,
-		PlanID:             renderResult.PlanID,
-		StatusPatches:      renderResult.StatusPatches,
-		Events:             renderResult.Events,
-		RenderedResources:  renderResult.RenderedResources,
-		AuxFileCount:       renderResult.AuxFileCount,
-		ContentChecksum:    contentChecksum,
-		RenderDurationMs:   renderResult.DurationMs,
-		ValidateDurationMs: validationResult.DurationMs,
-		TotalDurationMs:    time.Since(startTime).Milliseconds(),
-		ValidationPhase:    validationResult.Phase,
+		CycleSnapshot:            authenticatedOutput.cycle,
+		OutputSnapshot:           authenticatedOutput.snapshot,
+		HAProxyConfig:            authenticatedOutput.config,
+		AuxiliaryFileSnapshot:    authenticatedOutput.artifacts,
+		PlanID:                   authenticatedOutput.planID,
+		StatusPatchSnapshot:      authenticatedOutput.status,
+		EventSnapshot:            authenticatedOutput.events,
+		RenderedResourceSnapshot: authenticatedOutput.resources,
+		AuxFileCount:             authenticatedOutput.auxCount,
+		ContentChecksum:          authenticatedOutput.checksum,
+		RenderDurationMs:         renderResult.DurationMs,
+		CacheState:               renderResult.CacheState,
+		CacheBuildMs:             renderResult.CacheBuildMs,
+		ValidateDurationMs:       validationResult.DurationMs,
+		TotalDurationMs:          time.Since(startTime).Milliseconds(),
+		ValidationPhase:          validationResult.Phase,
 	}
 
-	if validationResult.Valid && p.outputValidator != nil {
-		if err := pipelineCancellationError(ctx, PhaseValidation, "external", nil); err != nil {
-			return nil, nil, err
-		}
-		validationStart := time.Now()
-		warnings, outputErr := p.outputValidator.ValidateRenderedOutput(ctx, result)
-		result.ValidationWarnings = warnings
-		result.ValidateDurationMs += time.Since(validationStart).Milliseconds()
-		result.TotalDurationMs = time.Since(startTime).Milliseconds()
-
-		combined := *validationResult
-		combined.Warnings = warnings
-		combined.DurationMs = result.ValidateDurationMs
-		if outputErr != nil {
-			combined.Valid = false
-			combined.Phase = "external"
-			combined.Error = outputErr
-		}
-		validationResult = &combined
-		result.ValidationPhase = validationResult.Phase
-		if err := pipelineCancellationError(ctx, PhaseValidation, "external", outputErr); err != nil {
-			return nil, nil, err
-		}
+	validationResult, err = p.validateExternalOutput(ctx, result, validationResult, startTime)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := restoreAuthenticatedCycleResult(result, authenticatedOutput); err != nil {
+		return nil, nil, &PipelineError{Phase: PhaseValidation, ValidationPhase: "external", Cause: err}
 	}
 
 	if err := pipelineCancellationError(ctx, PhaseValidation, result.ValidationPhase, validationResult.Error); err != nil {
@@ -346,6 +501,222 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 	return result, validationResult, nil
 }
 
+func (p *Pipeline) validateExternalOutput(
+	ctx context.Context,
+	result *PipelineResult,
+	validationResult *validation.ValidationResult,
+	startTime time.Time,
+) (*validation.ValidationResult, error) {
+	if !validationResult.Valid || p.outputValidator == nil {
+		return validationResult, nil
+	}
+	if err := pipelineCancellationError(ctx, PhaseValidation, "external", nil); err != nil {
+		return nil, err
+	}
+	validationStart := time.Now()
+	warnings, outputErr := p.outputValidator.ValidateRenderedOutput(ctx, result)
+	result.ValidationWarnings = warnings
+	result.ValidateDurationMs += time.Since(validationStart).Milliseconds()
+	result.TotalDurationMs = time.Since(startTime).Milliseconds()
+
+	combined := *validationResult
+	combined.Warnings = warnings
+	combined.DurationMs = result.ValidateDurationMs
+	if outputErr != nil {
+		combined.Valid = false
+		combined.Phase = "external"
+		combined.Error = outputErr
+	}
+	result.ValidationPhase = combined.Phase
+	if err := pipelineCancellationError(ctx, PhaseValidation, "external", outputErr); err != nil {
+		return nil, err
+	}
+	return &combined, nil
+}
+
+func restoreAuthenticatedCycleResult(
+	result *PipelineResult,
+	authenticated *authenticatedRenderOutput,
+) error {
+	if result == nil || authenticated == nil || authenticated.cycle == nil {
+		return errors.New("authenticated render cycle is unavailable")
+	}
+	if result.CycleSnapshot != authenticated.cycle {
+		return errors.New("rendered output validator replaced the authenticated render cycle")
+	}
+	if err := authenticated.cycle.ValidateAuthentication(); err != nil {
+		return fmt.Errorf("rendered output validator invalidated the render cycle: %w", err)
+	}
+	result.OutputSnapshot = authenticated.snapshot
+	result.HAProxyConfig = authenticated.config
+	result.AuxiliaryFiles = nil
+	result.AuxiliaryFileSnapshot = authenticated.artifacts
+	result.Plan = nil
+	result.PlanID = authenticated.planID
+	result.StatusPatches = nil
+	result.StatusPatchSnapshot = authenticated.status
+	result.Events = nil
+	result.EventSnapshot = authenticated.events
+	result.RenderedResources = nil
+	result.RenderedResourceSnapshot = authenticated.resources
+	result.AuxFileCount = authenticated.auxCount
+	result.ContentChecksum = authenticated.checksum
+	return nil
+}
+
+// renderInputConflictAttempts bounds the re-renders spent losing the commit race.
+//
+// A conflict is not a bad configuration: it means a watched input moved while
+// this render was reading it, so the render describes a cluster state that no
+// longer exists. The next attempt reads the newer revision, which settles the
+// ordinary case in one retry; the bound stops a continuously-changing cluster
+// from spinning here instead of making progress.
+const renderInputConflictAttempts = 3
+
+// inputsMovedUnderTheRender reports whether a render failed because what it was
+// reading changed while it read it, which the next attempt sees settled.
+//
+// A revision conflict is the transaction noticing at commit. A changed snapshot
+// is a store noticing mid-read: the informer generation moved before the API
+// read that would have confirmed it. Both say the same thing — this render was
+// composed against inputs that no longer hold — and both are answered by
+// rendering again, not by refusing.
+//
+// Refusing is what made this matter: an admission render that hit a snapshot
+// change DENIED the object under review, so one namespace's Secret rotating
+// could reject an unrelated Ingress in another. The user's object was never the
+// problem.
+func inputsMovedUnderTheRender(err error, mode rendercontext.RenderMode) bool {
+	if errors.Is(err, incremental.ErrRevisionConflict) {
+		return true
+	}
+	// A moved snapshot is only worth re-reading inline for admission, which has
+	// to answer THIS request and must not deny the operator's object for a race
+	// inside the controller. A reconcile is re-triggered by the very change that
+	// beat it, so retrying here buys nothing and costs up to
+	// renderInputConflictAttempts slow renders in front of the deploy — measured
+	// as a 2.4s gap in endpoint propagation on a contended node, long enough for
+	// a rolling restart to lose its last server.
+	return mode == rendercontext.RenderModeAdmission && errors.Is(err, stores.ErrSnapshotChanged)
+}
+
+// admissionInputConflictBackoff paces an admission re-render.
+//
+// Counting attempts is the wrong bound for the webhook: three of them fire
+// inside 25ms, which is shorter than the commit they keep losing to, so they
+// are one attempt spelled three times and the operator's update is denied for a
+// race inside the controller. Pausing lets that commit land before the next
+// read. (Measured on an e2e run: two denials, attempts 1-3 spanning 24ms and
+// 86ms.)
+const admissionInputConflictBackoff = 20 * time.Millisecond
+
+// admissionInputConflictBudget caps the pacing above so a cluster that never
+// stops changing still answers, rather than holding the request open.
+const admissionInputConflictBudget = 750 * time.Millisecond
+
+// admissionInputConflictReserve keeps enough of the webhook's own timeout for
+// the attempt that follows the last wait.
+const admissionInputConflictReserve = 500 * time.Millisecond
+
+// executeSettlingInputConflicts re-runs a render whose commit lost the race with
+// a concurrent input change.
+//
+// Without this the conflict reaches the caller as a failure, and the two callers
+// fail very differently: a reconcile logs an error and recovers on the next
+// trigger, while the admission webhook denies the operator's create or update —
+// for a race inside the controller rather than anything wrong with their object.
+// A conflicting attempt publishes nothing (the commit is the publishing step and
+// it is what failed), so re-rendering has no effect to undo.
+func (p *Pipeline) executeSettlingInputConflicts(
+	ctx context.Context,
+	provider stores.StoreProvider,
+	mode rendercontext.RenderMode,
+	extraOpts ...rendercontext.Option,
+) (*PipelineResult, *validation.ValidationResult, error) {
+	return settleInputConflicts(ctx, p.logger, mode, func() (*PipelineResult, *validation.ValidationResult, error) {
+		return p.execute(ctx, provider, mode, extraOpts...)
+	})
+}
+
+// settleInputConflicts holds the retry policy on its own so it can be exercised
+// without a cluster racing the render.
+func settleInputConflicts(
+	ctx context.Context,
+	logger *slog.Logger,
+	mode rendercontext.RenderMode,
+	render func() (*PipelineResult, *validation.ValidationResult, error),
+) (*PipelineResult, *validation.ValidationResult, error) {
+	var (
+		result           *PipelineResult
+		validationResult *validation.ValidationResult
+		err              error
+	)
+	retryUntil := admissionInputConflictDeadline(ctx)
+	for attempt := 1; ; attempt++ {
+		result, validationResult, err = render()
+		if err == nil || !inputsMovedUnderTheRender(err, mode) {
+			return result, validationResult, err
+		}
+		if context.Cause(ctx) != nil {
+			return nil, nil, err
+		}
+		if logger != nil {
+			logger.Debug("render inputs changed mid-render, re-rendering",
+				"attempt", attempt, "mode", mode)
+		}
+		if mode != rendercontext.RenderModeAdmission {
+			if attempt >= renderInputConflictAttempts {
+				return result, validationResult, err
+			}
+			// Pace this one too. A re-render is not cheap at scale, and the burst
+			// that produced the conflict is exactly when the cluster can least
+			// afford three of them back-to-back.
+			if !pauseBeforeInputConflictRetry(ctx, admissionInputConflictBackoff) {
+				return result, validationResult, err
+			}
+			continue
+		}
+		if !waitBeforeInputConflictRetry(ctx, retryUntil, attempt) {
+			return result, validationResult, err
+		}
+	}
+}
+
+// admissionInputConflictDeadline is when re-reading a moving graph stops being
+// worth the operator's wait, never later than the request's own deadline.
+func admissionInputConflictDeadline(ctx context.Context) time.Time {
+	deadline := time.Now().Add(admissionInputConflictBudget)
+	if requestDeadline, ok := ctx.Deadline(); ok {
+		if reserved := requestDeadline.Add(-admissionInputConflictReserve); reserved.Before(deadline) {
+			return reserved
+		}
+	}
+	return deadline
+}
+
+// waitBeforeInputConflictRetry reports whether another re-render is worth
+// starting, pausing first so the commit that won this race can finish.
+func waitBeforeInputConflictRetry(ctx context.Context, retryUntil time.Time, attempt int) bool {
+	backoff := admissionInputConflictBackoff << min(attempt-1, 3)
+	if time.Now().Add(backoff).After(retryUntil) {
+		return false
+	}
+	return pauseBeforeInputConflictRetry(ctx, backoff)
+}
+
+// pauseBeforeInputConflictRetry waits out one backoff, reporting whether the
+// wait completed rather than the render being cancelled under it.
+func pauseBeforeInputConflictRetry(ctx context.Context, backoff time.Duration) bool {
+	timer := time.NewTimer(backoff)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // commitInputs accepts the external content this render used, after the check
 // that acceptance requires.
 func (p *Pipeline) commitInputs(
@@ -355,12 +726,58 @@ func (p *Pipeline) commitInputs(
 		return err
 	}
 	if err := transaction.Commit(ctx); err != nil {
+		if commitConflictLeavesOutputUsable(err, transaction) {
+			if p.logger != nil {
+				p.logger.Debug("render inputs moved before the cache could be published; " +
+					"keeping this render and leaving the cache where it was")
+			}
+			return nil
+		}
 		return &PipelineError{
 			Phase: PhaseRender,
 			Cause: fmt.Errorf("committing validated render inputs: %w", err),
 		}
 	}
 	return nil
+}
+
+// commitConflictLeavesOutputUsable reports whether a failed commit cost only
+// the incremental cache, leaving this render's output fit to deploy.
+//
+// A revision conflict says the inputs moved while the render was reading them,
+// so the render describes a snapshot that has already passed. For a render that
+// accepted no external content that is the ordinary state of any controller:
+// the output is what the cluster looked like a moment ago, the watch event for
+// the change is already queued, and the next reconcile supersedes it. The only
+// casualty is the cache, which stays where it was and costs the next render its
+// incremental start.
+//
+// Failing instead starves the fleet. Under a burst — a conformance suite, or a
+// GitOps apply of many objects — conflicts arrive faster than renders finish,
+// and every reconcile fails: measured at 21 in a row and 176 seconds without a
+// single successful render, while the cluster waited for routes that had been
+// created minutes earlier.
+//
+// A render that IS accepting external content keeps failing. There the commit
+// is not bookkeeping: it decides the store's accepted version of something
+// fetched over the network, the render gate cannot undo that acceptance later,
+// and a conflict means the check that authorised it was against inputs that
+// have since moved.
+func commitConflictLeavesOutputUsable(err error, transaction renderer.RenderInputTransaction) bool {
+	if !errors.Is(err, incremental.ErrRevisionConflict) {
+		return false
+	}
+	if transaction.HasCandidates() {
+		return false
+	}
+	// Lease accounting counts too, though it accepts nothing. The commit tells
+	// the HTTP store how many renders hold each source; drop it and the store
+	// keeps counting references this render has already released, until a later
+	// render's removals exceed the count and it rejects them as inconsistent.
+	// Measured: 60 such rejections in one e2e run when this condition asked
+	// only about candidates.
+	carrier, ok := transaction.(interface{ CarriesHTTPState() bool })
+	return !ok || !carrier.CarriesHTTPState()
 }
 
 // checkBeforeCommit runs the full synchronous check on a render that is about
@@ -376,8 +793,11 @@ func (p *Pipeline) checkBeforeCommit(
 	if p.commitValidator == nil || !transaction.HasCandidates() {
 		return nil
 	}
-	verdict := p.commitValidator.ValidateWithChecksum(
-		ctx, result.HAProxyConfig, result.AuxiliaryFiles, result.ContentChecksum)
+	output, checksum, err := authenticatedPipelineResultOutput(result)
+	if err != nil {
+		return &PipelineError{Phase: PhaseValidation, ValidationPhase: "setup", Cause: err}
+	}
+	verdict := p.commitValidator.ValidateOutputSnapshotWithChecksum(ctx, output, checksum)
 	if err := pipelineCancellationError(ctx, PhaseValidation, verdict.Phase, verdict.Error); err != nil {
 		return err
 	}
@@ -389,6 +809,23 @@ func (p *Pipeline) checkBeforeCommit(
 		ValidationPhase: verdict.Phase,
 		Cause:           fmt.Errorf("refusing to accept new external content: %w", verdict.Error),
 	}
+}
+
+func authenticatedPipelineResultOutput(
+	result *PipelineResult,
+) (*renderoutput.Snapshot, string, error) {
+	if result == nil || result.CycleSnapshot == nil {
+		return nil, "", errors.New("pipeline result has no authenticated render cycle")
+	}
+	output, err := result.CycleSnapshot.OutputSnapshot()
+	if err != nil {
+		return nil, "", fmt.Errorf("reading pipeline cycle output: %w", err)
+	}
+	checksum, err := result.CycleSnapshot.ContentChecksum()
+	if err != nil {
+		return nil, "", fmt.Errorf("reading pipeline cycle checksum: %w", err)
+	}
+	return output, checksum, nil
 }
 
 func pipelineCancellationError(

@@ -1127,7 +1127,7 @@ kubectl() {
     esac
 }
 set +e
-poll_for_haproxycfg_converged "" "$5" "" "$((SECONDS + ${DEADLINE_OFFSET:-1}))" 0.01 "$6"
+poll_for_haproxycfg_converged "" "$5" "" "$((SECONDS + ${DEADLINE_OFFSET:-3}))" 0.01 "$6"
 rc=$?
 set -e
 printf '%d\n' "$rc" > "$7"
@@ -1161,6 +1161,12 @@ printf '%d\n' "$rc" > "$7"
             self.assertTrue(timeout["evidence_valid"])
             self.assertFalse(timeout["pass"])
             self.assertTrue(timeout["deadline_reached"])
+            # Needs a deadline of several whole seconds, not one: SECONDS counts
+            # in whole seconds, so `SECONDS + 1` evaluated late in a second
+            # leaves almost no real time and the poll can time out having
+            # attempted nothing. Zero attempts is the deliberate contract for an
+            # already-expired deadline, asserted below, so this scenario has to
+            # buy a window wide enough to be sure it is not that case.
             self.assertGreaterEqual(timeout["attempts"], 1)
             self.assertEqual(timeout["poll_interval_seconds"], 0.01)
             self.assertFalse(timeout["last_observation"]["pass"])

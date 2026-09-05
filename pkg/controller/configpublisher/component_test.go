@@ -29,6 +29,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	crdclientfake "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
@@ -196,18 +197,8 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	// Step 2: Publish TemplateRenderedEvent, which queues the publish
 	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n\ndefaults\n  mode http\n"
-	env.bus.Publish(events.NewTemplateRenderedEvent(
-		testHAProxyConfig,
-		nil,  // auxiliary files
-		nil,  // statusPatches
-		nil,  // renderedResources
-		0,    // aux file count
-		100,  // duration ms
-		"",   // trigger reason
-		"",   // contentChecksum
-		nil,  // plan
-		"",   // planID
-		true, // coalescible
+	env.bus.Publish(newConfigPublisherRenderedEvent(
+		t, testHAProxyConfig, nil, 100,
 		events.WithCorrelation(correlationID, ""),
 	))
 
@@ -273,10 +264,11 @@ func TestComponent_RetriesIncompletePublicationWithoutCompletingEarly(t *testing
 	}}}
 	correlationID := t.Name()
 	bus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
-	bus.Publish(events.NewTemplateRenderedEvent(
-		"global\n  daemon\n", auxFiles, nil, nil, 1, 1, "", "checksum-v1", nil, "", true,
+	rendered := newConfigPublisherRenderedEvent(
+		t, "global\n  daemon\n", auxFiles, 1,
 		events.WithCorrelation(correlationID, ""),
-	))
+	)
+	bus.Publish(rendered)
 	waitForTestSignal(t, ctx, failure.firstFailure, "map-file publication did not fail")
 	waitForTestSignal(t, ctx, retryGate.waiting, "publication retry was not scheduled")
 
@@ -302,7 +294,7 @@ func TestComponent_RetriesIncompletePublicationWithoutCompletingEarly(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, "example.com backend1\n", mapFile.Spec.Entries)
 	assert.Equal(t, mapFile.Name, runtimeConfig.Status.AuxiliaryFiles.MapFiles[0].Name)
-	assert.Equal(t, "checksum-v1", runtimeConfig.Spec.Checksum)
+	assert.Equal(t, rendered.ContentChecksum, runtimeConfig.Spec.Checksum)
 
 	cancel()
 	select {
@@ -338,9 +330,14 @@ func TestComponent_DeployedConfigPublishRequest(t *testing.T) {
 
 	// A render the deployer applied but whose validation-driven publish never ran.
 	deployedConfig := "global\n  daemon\n\nbackend marker-be\n  server s1 1.2.3.4:80\n"
-	env.bus.Publish(events.NewDeployedConfigPublishRequest(
-		"test-config-haproxycfg", "default", deployedConfig, nil, "deployed-checksum-abc",
-	))
+	rendered := newConfigPublisherRenderedEvent(t, deployedConfig, nil, 1)
+	occurrence, err := rendered.RenderOccurrence()
+	require.NoError(t, err)
+	publishRequest, err := events.NewDeployedConfigPublishRequestWithCycle(
+		"test-config-haproxycfg", "default", occurrence,
+	)
+	require.NoError(t, err)
+	env.bus.Publish(publishRequest)
 
 	var published *events.ConfigPublishedEvent
 	timeout := time.After(2 * time.Second)
@@ -613,18 +610,8 @@ func TestComponent_LostLeadership(t *testing.T) {
 	// cached template config was cleared with leadership.
 	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n"
-	env.bus.Publish(events.NewTemplateRenderedEvent(
-		testHAProxyConfig,
-		nil,
-		nil, // statusPatches
-		nil, // renderedResources
-		0,
-		100,
-		"",
-		"",   // contentChecksum
-		nil,  // plan
-		"",   // planID
-		true, // coalescible
+	env.bus.Publish(newConfigPublisherRenderedEvent(
+		t, testHAProxyConfig, nil, 100,
 		events.WithCorrelation(correlationID, ""),
 	))
 
@@ -676,18 +663,8 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	// Generate a correlation ID to link TemplateRenderedEvent and ValidationFailedEvent
 	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n  maxconn invalid\n"
-	env.bus.Publish(events.NewTemplateRenderedEvent(
-		testHAProxyConfig,
-		nil,
-		nil, // statusPatches
-		nil, // renderedResources
-		0,
-		100,
-		"",
-		"",   // contentChecksum
-		nil,  // plan
-		"",   // planID
-		true, // coalescible
+	env.bus.Publish(newConfigPublisherRenderedEvent(
+		t, testHAProxyConfig, nil, 100,
 		events.WithCorrelation(correlationID, ""),
 	))
 
@@ -916,4 +893,49 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	pod := runtimeConfig.Status.DeployedToPods[0]
 	assert.Equal(t, "haproxy-pod-error", pod.PodName)
 	assert.Equal(t, "connection refused to dataplane API", pod.LastError)
+}
+
+func newConfigPublisherRenderedEvent(
+	tb testing.TB,
+	config string,
+	auxFiles *dataplane.AuxiliaryFiles,
+	durationMs int64,
+	opts ...events.CorrelationOption,
+) *events.TemplateRenderedEvent {
+	tb.Helper()
+	fixture := testutil.NewRenderCycleFixture(tb)
+	artifacts := fixture.Artifacts(tb, auxFiles, nil)
+	plan := &renderplan.Plan{
+		SchemaVersion: renderplan.SchemaVersion,
+		Sections: []renderplan.Section{{
+			Kind: renderplan.SectionKindCore, Name: "core#0", Text: config,
+			TextKnown: true, TextDigest: renderplan.DigestString(config), Length: len(config),
+		}},
+		Maps: make(map[string]renderplan.Map),
+		Files: []renderplan.File{{
+			Path: renderplan.ConfigFilePath, Kind: renderplan.FileKindConfig,
+			ReloadOnChange: true, Content: config, ContentKnown: true,
+			Digest: renderplan.DigestString(config), Size: int64(len(config)),
+		}},
+	}
+	if auxFiles != nil {
+		for index := range auxFiles.MapFiles {
+			file := auxFiles.MapFiles[index]
+			plan.Maps[file.Path] = renderplan.Map{
+				Path: file.Path, Ordered: true, Entries: renderplan.ParseMapEntries(file.Content),
+			}
+			plan.Files = append(plan.Files, renderplan.File{
+				Path: file.Path, Kind: renderplan.FileKindMap,
+				Content: file.Content, ContentKnown: true,
+				Digest: renderplan.DigestString(file.Content), Size: int64(len(file.Content)),
+			})
+		}
+	}
+	plan.ComputeID()
+	cycle := fixture.SnapshotWithEffects(tb, config, plan, artifacts, nil, nil, nil, nil)
+	event, err := events.NewTemplateRenderedEventWithCycle(
+		cycle, durationMs, "", true, opts...,
+	)
+	require.NoError(tb, err)
+	return event
 }

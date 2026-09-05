@@ -22,11 +22,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
-// A watch event that echoes this controller's own status write must refresh
-// the store (the next render reads the status it just wrote) but must not
-// count as a change: before this filter every status write cost a full
-// render, three to four per route change under sequential churn.
-func TestWatcher_HandleUpdate_SelfWriteEcho_RefreshesStoreWithoutChange(t *testing.T) {
+func TestWatcher_HandleUpdate_SelfWriteEchoTriggersWhenStoredInputChanges(t *testing.T) {
 	registry := types.NewSelfWriteRegistry(0)
 	var modified atomic.Int32
 
@@ -45,12 +41,12 @@ func TestWatcher_HandleUpdate_SelfWriteEcho_RefreshesStoreWithoutChange(t *testi
 	_, err = w.WaitForSync(ctx)
 	require.NoError(t, err)
 
-	old := makeConfigMap("cm", "10", "a")
+	old := makeConfigMap("10", "a")
 	w.handleAdd(old)
 
 	// Our own write comes back with the resourceVersion the API server returned.
 	registry.Record(cfg.GVR.GroupResource(), "default", "cm", "11")
-	echo := makeConfigMap("cm", "11", "b")
+	echo := makeConfigMap("11", "b")
 	w.handleUpdate(old, echo)
 	time.Sleep(50 * time.Millisecond)
 
@@ -59,22 +55,66 @@ func TestWatcher_HandleUpdate_SelfWriteEcho_RefreshesStoreWithoutChange(t *testi
 	require.Len(t, got, 1)
 	obj := got[0].(map[string]any)
 	assert.Equal(t, "11", obj["metadata"].(map[string]any)["resourceVersion"], "store must hold the echoed object")
-	assert.Equal(t, int32(0), modified.Load(), "an echoed self-write is not a change")
+	assert.Equal(t, int32(1), modified.Load(), "an observable self-write must trigger reconciliation")
+
+	registry.Record(cfg.GVR.GroupResource(), "default", "cm", "11")
+	w.processUpdate(echo, echo.DeepCopy())
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(1), modified.Load(), "a semantic no-op must not trigger reconciliation")
 
 	// Somebody else's write to the same object is a change.
-	external := makeConfigMap("cm", "12", "c")
+	external := makeConfigMap("12", "c")
 	w.handleUpdate(echo, external)
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, int32(1), modified.Load())
+	assert.Equal(t, int32(2), modified.Load())
+
+	w.processUpdate(external, external.DeepCopy())
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(2), modified.Load(), "an external semantic no-op must not trigger reconciliation")
 }
 
-func makeConfigMap(name, version, value string) *unstructured.Unstructured {
+func TestWatcher_DuplicateAddAndDeleteDoNotTriggerChange(t *testing.T) {
+	var changes atomic.Int32
+
+	cfg := validWatcherConfig()
+	cfg.CallOnChangeDuringSync = true
+	cfg.DebounceInterval = 5 * time.Millisecond
+	cfg.OnChange = func(_ types.Store, stats types.ChangeStats) {
+		changes.Add(int32(stats.Total()))
+	}
+	w, err := New(cfg, newTestClient(t), slog.Default())
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	t.Cleanup(cancel)
+	go func() { _ = w.Start(ctx) }()
+	_, err = w.WaitForSync(ctx)
+	require.NoError(t, err)
+
+	resource := makeConfigMap("10", "a")
+	w.handleAdd(resource)
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, int32(1), changes.Load())
+
+	w.handleAdd(resource.DeepCopy())
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(1), changes.Load())
+
+	w.handleDelete(resource)
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, int32(2), changes.Load())
+
+	w.handleDelete(resource.DeepCopy())
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(2), changes.Load())
+}
+
+func makeConfigMap(version, value string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{
 		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ConfigMap",
 			"metadata": map[string]any{
-				"name":            name,
+				"name":            "cm",
 				"namespace":       "default",
 				"resourceVersion": version,
 			},

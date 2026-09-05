@@ -15,7 +15,10 @@
 package server
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,6 +33,28 @@ import (
 // nackCooldown is how long the agent refuses to redo work for a manifest
 // HAProxy itself rejected. Anything shorter turns a bad render into a loop.
 const nackCooldown = 60 * time.Second
+
+func (s *Server) reserveRoleProofs(withWorker bool) (applied, worker string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	needed := uint64(1)
+	if withWorker {
+		needed++
+	}
+	if s.state.ProofGeneration > math.MaxUint64-needed {
+		return "", "", errors.New("agent role proof sequence exhausted")
+	}
+	s.state.ProofGeneration++
+	applied = fmt.Sprintf("a:%d", s.state.ProofGeneration)
+	if withWorker {
+		s.state.ProofGeneration++
+		worker = fmt.Sprintf("a:%d", s.state.ProofGeneration)
+	}
+	if err := s.states.save(s.state); err != nil {
+		return "", "", err
+	}
+	return applied, worker, nil
+}
 
 // setPhase records how far the in-flight apply got, so a restart knows whether
 // the tree can be a mix of two plans.
@@ -60,7 +85,7 @@ func (s *Server) ownedPaths() []string {
 func (s *Server) baselineUnknown() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state.AppliedPlanID == ""
+	return s.state.AppliedPlanID == "" || s.state.AppliedPlanProof == ""
 }
 
 func (s *Server) reloadPending() bool {
@@ -69,10 +94,10 @@ func (s *Server) reloadPending() bool {
 	return !s.state.ReloadPendingAt.IsZero()
 }
 
-func (s *Server) pendingReload() (planID string, due time.Time) {
+func (s *Server) pendingReload() (planID, planProof string, due time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state.PendingReloadPlanID, s.state.ReloadPendingAt
+	return s.state.PendingReloadPlanID, s.state.PendingReloadPlanProof, s.state.ReloadPendingAt
 }
 
 // pacingWindow reports when the next reload may run and whether that is later
@@ -84,10 +109,11 @@ func (s *Server) pacingWindow() (due time.Time, open bool) {
 	return due, time.Now().Before(due)
 }
 
-func (s *Server) schedulePendingReload(due time.Time, planID string) {
+func (s *Server) schedulePendingReload(due time.Time, planID, planProof string) {
 	s.mu.Lock()
 	s.state.ReloadPendingAt = due
 	s.state.PendingReloadPlanID = planID
+	s.state.PendingReloadPlanProof = planProof
 	err := s.states.save(s.state)
 	s.mu.Unlock()
 	if err != nil {
@@ -101,10 +127,11 @@ func (s *Server) schedulePendingReload(due time.Time, planID string) {
 
 // coalesceIntoPendingReload points the scheduled reload at the newest plan.
 // The reload itself is never cancelled or moved.
-func (s *Server) coalesceIntoPendingReload(planID string) {
+func (s *Server) coalesceIntoPendingReload(planID, planProof string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.PendingReloadPlanID = planID
+	s.state.PendingReloadPlanProof = planProof
 }
 
 func (s *Server) clearPendingReload() {
@@ -112,38 +139,43 @@ func (s *Server) clearPendingReload() {
 	defer s.mu.Unlock()
 	s.state.ReloadPendingAt = time.Time{}
 	s.state.PendingReloadPlanID = ""
+	s.state.PendingReloadPlanProof = ""
 }
 
 // recordReload is what a completed reload means: the worker is running the
 // plan whose files were on disk when it re-executed, its own binary accepted
 // them, and the journal's job is done. An empty planID means the agent cannot
 // name that set — after a crash mid-apply — so nothing is promoted.
-func (s *Server) recordReload(planID string) {
+func (s *Server) recordReload(planID, planProof string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastReload = time.Now()
 	s.state.RunningPlanID = planID
+	s.state.RunningPlanProof = planProof
 	s.state.WorkerOpsPlanID = planID
-	if planID == "" {
+	s.state.WorkerOpsPlanProof = planProof
+	if planID == "" || planProof == "" {
 		return
 	}
 	s.state.LKGPlanID = planID
+	s.state.LKGPlanProof = planProof
 	if err := s.store.ClearJournal(&s.state.Journal); err != nil {
 		s.logger.Error("could not clear the backup journal", "error", err)
 	}
 }
 
-// lkgPlanID is the plan whose file set a rollback puts back.
-func (s *Server) lkgPlanID() string {
+// lkgPlan is the plan whose file set a rollback puts back.
+func (s *Server) lkgPlan() (planID, planProof string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state.LKGPlanID
+	return s.state.LKGPlanID, s.state.LKGPlanProof
 }
 
-func (s *Server) recordWorkerOps(planID string) {
+func (s *Server) recordWorkerOps(planID, planProof string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.WorkerOpsPlanID = planID
+	s.state.WorkerOpsPlanProof = planProof
 }
 
 // invalidateBaseline makes the next apply a full state plus a reload. It is
@@ -152,7 +184,9 @@ func (s *Server) invalidateBaseline() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.AppliedPlanID = ""
+	s.state.AppliedPlanProof = ""
 	s.state.WorkerOpsPlanID = ""
+	s.state.WorkerOpsPlanProof = ""
 	s.baselineInvalidations++
 }
 
@@ -164,10 +198,10 @@ func (s *Server) invalidationCount() uint64 {
 	return s.baselineInvalidations
 }
 
-func (s *Server) workerOpsBaselineMatches(expected string) bool {
+func (s *Server) workerOpsBaselineMatches(expectedID, expectedProof string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return expected != "" && expected == s.state.WorkerOpsPlanID
+	return samePlanRef(expectedID, expectedProof, s.state.WorkerOpsPlanID, s.state.WorkerOpsPlanProof)
 }
 
 // adoptWorker records the worker the agent is now talking to and refreshes the
@@ -254,7 +288,7 @@ func (s *Server) observeTree(m *api.Manifest, staged map[string]*files.Staged, d
 		s.tree = map[string]api.FileAt{}
 	}
 	for path := range staged {
-		s.tree[path] = api.FileAt{Digest: declared[path].Digest, Size: declared[path].Size}
+		s.tree[path] = api.FileAt{Digest: declared[path].Digest, Proof: declared[path].Proof, Size: declared[path].Size}
 	}
 	for _, path := range deleted {
 		delete(s.tree, path)
@@ -266,16 +300,17 @@ func (s *Server) observeTree(m *api.Manifest, staged map[string]*files.Staged, d
 func (s *Server) promoteLKG(m *api.Manifest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if m.ValidatedPlanID == "" || m.ValidatedPlanID != s.state.AppliedPlanID {
+	if !samePlanRef(m.ValidatedPlanID, m.ValidatedPlanProof, s.state.AppliedPlanID, s.state.AppliedPlanProof) {
 		return nil
 	}
-	if s.state.LKGPlanID == s.state.AppliedPlanID {
+	if samePlanRef(s.state.LKGPlanID, s.state.LKGPlanProof, s.state.AppliedPlanID, s.state.AppliedPlanProof) {
 		return nil
 	}
 	if err := s.store.ClearJournal(&s.state.Journal); err != nil {
 		return err
 	}
 	s.state.LKGPlanID = s.state.AppliedPlanID
+	s.state.LKGPlanProof = s.state.AppliedPlanProof
 	s.logger.Info("promoted the last known good plan", "lkg_plan_id", s.state.LKGPlanID)
 	return s.states.save(s.state)
 }
@@ -329,11 +364,12 @@ func lkgPaths(current []string, j *files.Journal) []string {
 
 // cachedNACK answers a manifest the agent already knows HAProxy rejects,
 // without redoing the work. Only deterministic rejections get here.
-func (s *Server) cachedNACK(digest string) *api.ApplyResult {
+func (s *Server) cachedNACK(digest string, work []byte) *api.ApplyResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record := s.state.NACK
-	if record == nil || record.ManifestDigest != digest {
+	if record == nil || len(work) == 0 || record.ManifestDigest != digest ||
+		!bytes.Equal(record.ManifestWork, work) {
 		return nil
 	}
 	if time.Now().After(record.Until) {
@@ -344,11 +380,15 @@ func (s *Server) cachedNACK(digest string) *api.ApplyResult {
 	return record.Result
 }
 
-func (s *Server) rememberNACK(digest, reason string, result *api.ApplyResult) {
+func (s *Server) rememberNACK(digest string, work []byte, reason string, result *api.ApplyResult) {
+	if len(work) == 0 {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.NACK = &nackRecord{
 		ManifestDigest: digest,
+		ManifestWork:   append([]byte(nil), work...),
 		Reason:         reason,
 		Until:          time.Now().Add(nackCooldown),
 		Result:         result,
@@ -372,12 +412,13 @@ func (s *Server) recoverFromCrash() error {
 		manifest: &api.Manifest{PlanID: planID, Mode: api.ModeReload},
 		result:   api.ApplyResult{PlanID: planID, OK: true, Mode: api.ResultReload},
 	}
-	err := run.performReload("")
+	err := run.performReload("", "")
 	s.mu.Lock()
 	s.state.Phase = phaseIdle
 	s.state.InFlightPlanID = ""
 	if err != nil {
 		s.state.RunningPlanID = ""
+		s.state.RunningPlanProof = ""
 	}
 	saveErr := s.states.save(s.state)
 	s.mu.Unlock()

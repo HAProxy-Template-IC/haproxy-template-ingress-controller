@@ -29,6 +29,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -43,6 +44,24 @@ const (
 	// High-volume to absorb pod churn bursts during scaling and rolling updates.
 	EventBufferSize = busevents.HighVolumeSubscriberBuffer
 )
+
+// discoveryWantsEvent drops the resource-index updates for kinds this component
+// does not watch, before they reach its buffer.
+//
+// The watcher publishes ResourceIndexUpdatedEvent for every watched kind, and
+// this component acts on exactly one: the auto-injected haproxy-pods self-watch.
+// Discarding the rest in the handler is too late — they occupied the buffer to
+// get there. Under e2e churn that buffer filled with events destined for the
+// first line of handleResourceIndexUpdated, one was dropped, and because this
+// subscriber is non-lossy the whole controller iteration restarted and the
+// fleet lost its routing until it came back.
+func discoveryWantsEvent(event busevents.Event) bool {
+	indexUpdate, ok := event.(*events.ResourceIndexUpdatedEvent)
+	if !ok {
+		return true
+	}
+	return indexUpdate.ResourceTypeName == names.HAProxyPodsResourceType
+}
 
 type endpointIdentity struct {
 	podNamespace string
@@ -179,6 +198,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
 			events.EventTypeBecameLeader,
 			events.EventTypeDriftPreventionTriggered,
 		},
+		EventFilter: discoveryWantsEvent,
 	})
 
 	return c

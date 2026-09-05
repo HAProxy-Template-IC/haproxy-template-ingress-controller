@@ -15,47 +15,15 @@
 // Package resourceapplier reconciles template-declared Kubernetes resources
 // via Server-Side Apply (SSA).
 //
-// Mirrors statusapplier's leader-only / checksum-cached / event-driven shape
-// exactly — it just operates on full resources rather than status sub-paths.
-// Templates declare desired resources under spec.k8sResources; the renderer
-// renders each and surfaces them on
-// ReconciliationCompletedEvent.RenderedResources; this component applies
-// them on the cluster after the render+validate pipeline succeeds.
-//
-// The applier is stateless on the success path. RenderedResources travel
-// with the ReconciliationCompletedEvent that triggers the apply — there is
-// no side-channel cache. Patches/resources on a completion event are
-// tautologically the ones for the configuration that completion describes,
-// so no LATEST-vs-completed race is possible (the same contract that
-// statusapplier's CLAUDE.md spells out for StatusPatches).
-//
-// Resource-agnostic by design: the controller never names a specific resource
-// kind — it just applies whatever the template emits. Templates decide what to
-// emit; the controller is the generic vehicle.
-//
-// API-traffic safety:
-//   - SHA-256 checksum cache per (namespace, name, gvr) skips the SSA round-
-//     trip when the payload matches the last-applied value.
-//   - Cache is cleared on BecameLeaderEvent (the previous leader's checksums
-//     aren't trustworthy for the new one), forcing a single re-apply burst on
-//     leadership transitions but no hammering on steady-state renders.
-//   - Default RestrictToOwnNamespace=true refuses cross-namespace and
-//     cluster-scoped applies; opt-in via config for templates that need to
-//     spawn cluster-scoped resources (corresponding ClusterRole RBAC must
-//     also be granted).
-//
-// Orphan pruning: resources that disappear from the rendered set between
-// reconciliations are detected via the in-memory checksum cache (key in
-// cache but not in new render) and deleted. Startup orphans (resources
-// the previous incarnation created and never cleaned up before crashing)
-// require an offline kubectl sweep using the managed-by label this
-// component injects.
+// It consumes resources from the authenticated render-cycle snapshot, applies
+// them with Server-Side Apply, and prunes previously owned resources by exact
+// UID and resourceVersion. Resource kinds remain template-defined.
 package resourceapplier
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -76,6 +44,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/statusapplier"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -137,8 +106,8 @@ type GVRResolver = statusapplier.GVRResolver
 // Component reconciles template-declared resources to the cluster.
 //
 // All-replica subscriber, leader-only applier — same shape as
-// statusapplier.Component. State (cachedResources, checksum cache) lives
-// only on the active leader; replicas in standby just observe events.
+// statusapplier.Component. State lives only on the active leader; replicas in
+// standby just observe events.
 type Component struct {
 	*component.Base
 
@@ -164,23 +133,33 @@ type Component struct {
 	// mu protects all mutable state below.
 	mu              sync.RWMutex
 	isLeader        bool
-	checksumCache   map[string]string // key: "ns/name/gvr" → sha256(payload)
 	lastAppliedKeys map[string]appliedKeyMeta
 
-	// gatePinned mirrors the render gate's latch, heldCycle is the cycle
-	// withheld while it is set, and acceptedCycle is the one whose resources
-	// are on the cluster — what a refusal puts back.
-	gatePinned    bool
-	heldCycle     *events.ReconciliationCompletedEvent
-	acceptedCycle *events.ReconciliationCompletedEvent
+	gatePinned        bool
+	heldCycle         *resourceCycle
+	appliedCycle      *resourceCycle
+	gateAcceptedCycle *resourceCycle
+	passingVerdict    *resourceGateIdentity
+	revertCycle       *resourceCycle
 }
 
-// appliedKeyMeta tracks the GVR + namespace + name needed to delete an
-// orphan that disappears from a later render.
 type appliedKeyMeta struct {
-	GVR       schema.GroupVersionResource
-	Namespace string
-	Name      string
+	GVR             schema.GroupVersionResource
+	Namespace       string
+	Name            string
+	UID             types.UID
+	ResourceVersion string
+}
+
+type resourceCycle struct {
+	occurrence    *rendercycle.Occurrence
+	resources     *templating.RenderedResourceSnapshot
+	correlationID string
+	sourceEventID string
+}
+
+type resourceGateIdentity struct {
+	occurrence *rendercycle.Occurrence
 }
 
 // Config bundles the dependencies a New caller must provide.
@@ -268,7 +247,6 @@ func New(cfg *Config) *Component {
 		restrictToOwnNamespace: cfg.RestrictToOwnNamespace,
 		managedByValue:         managedBy,
 		ownerRef:               cfg.OwnerRef,
-		checksumCache:          make(map[string]string),
 		lastAppliedKeys:        make(map[string]appliedKeyMeta),
 	}
 	// Typed subscription (EventTypes, not a catch-all) — the bus prefilters
@@ -335,51 +313,47 @@ func (c *Component) HandleEvent(event busevents.Event) {
 	}
 }
 
-// handleReconciliationCompleted applies the resources carried on the event
-// (they describe the configuration the just-completed reconciliation
-// produced) and prunes orphans from previous renders. Reads resources
-// directly from the event so the applier is stateless on the success path
-// — no LATEST-vs-completed race possible, mirroring statusapplier's
-// stateless contract for StatusPatches.
 func (c *Component) handleReconciliationCompleted(ctx context.Context, event *events.ReconciliationCompletedEvent) {
+	cycle, err := captureResourceCycle(event)
+	if err != nil {
+		c.Logger().Error("Rendered cycle has invalid provenance", "error", err)
+		return
+	}
 	c.mu.Lock()
-	isLeader := c.isLeader
+	if !c.isLeader {
+		c.mu.Unlock()
+		return
+	}
 	pinned := c.gatePinned
 	if pinned {
-		c.heldCycle = event
+		c.heldCycle = cycle
 	}
+	passing := c.passingVerdict
+	revert := c.revertCycle
+	applied := c.appliedCycle
 	c.mu.Unlock()
-	if !isLeader {
-		return
-	}
-	// These resources describe the configuration HAProxy is meant to be
-	// running. While the render gate holds renders, the fleet never received
-	// this one, so applying its Services and friends would advertise routing
-	// the data plane cannot serve. They wait for the verdict that releases it.
+
 	if pinned {
+		if sameResourceCycleGate(cycle, passing) {
+			c.releaseHeldCycle(ctx, cycle)
+			return
+		}
+		if revert != nil && !sameResourceCycle(applied, revert) {
+			c.revertAppliedCycle(ctx, revert)
+			return
+		}
 		c.Logger().Warn("Render gate is holding renders; not applying this cycle's resources yet",
-			"plan", event.PlanID, "correlation_id", event.CorrelationID())
+			"correlation_id", cycle.correlationID)
 		return
 	}
-	// applyAndPrune handles the empty-set case: any resources still in
-	// lastAppliedKeys but not in the new desired set are pruned.
-	if err := c.applyAndPrune(ctx, event.RenderedResources); err != nil {
+	if err := c.convergeCycle(ctx, cycle); err != nil {
 		c.Logger().Error("Rendered resources did not converge; status publication deferred",
 			"error", err,
-			"correlation_id", event.CorrelationID())
+			"correlation_id", cycle.correlationID)
 		return
 	}
-	c.rememberAppliedCycle(event)
-
-	// Forward the cycle's status patches now that its resources exist: the
-	// StatusApplier writes the "rendered" variant on this event, so
-	// conditions like Accepted=True can never precede the infrastructure
-	// they describe (e.g. per-Gateway Services carrying the gateway-name
-	// label, which conformance lists the moment Accepted turns True).
-	c.EventBus().Publish(events.NewResourcesAppliedEvent(
-		event.StatusPatches,
-		events.PropagateCorrelation(event),
-	))
+	c.rememberAppliedCycle(cycle, false)
+	c.publishResourcesApplied(cycle)
 }
 
 // handleRenderGateCompleted mirrors the render gate's latch.
@@ -390,56 +364,178 @@ func (c *Component) handleReconciliationCompleted(ctx context.Context, event *ev
 // that names a held cycle applies it. Verdicts for superseded plans judge a
 // render this applier has moved past and are ignored.
 func (c *Component) handleRenderGateCompleted(ctx context.Context, event *events.RenderGateCompletedEvent) {
-	if !event.Newest {
+	if event == nil || !event.Newest {
+		return
+	}
+	gate, err := captureResourceGateIdentity(event)
+	if err != nil {
+		c.Logger().Error("Render gate verdict has invalid provenance", "error", err)
 		return
 	}
 
 	c.mu.Lock()
 	isLeader := c.isLeader
-	c.gatePinned = !event.OK
-	var release *events.ReconciliationCompletedEvent
-	switch {
-	case !event.OK:
-		// Only HAProxy's own refusal is evidence about the config; a gate that
-		// could not run leaves the applied set alone and merely holds.
+	if !isLeader {
+		c.mu.Unlock()
+		return
+	}
+	if !event.OK {
+		c.gatePinned = true
+		c.passingVerdict = nil
 		if event.Refused {
-			release = c.acceptedCycle
+			c.revertCycle = c.gateAcceptedCycle
+			if sameResourceCycle(c.appliedCycle, c.revertCycle) {
+				c.revertCycle = nil
+			}
+		} else {
+			c.revertCycle = nil
 		}
-	case c.heldCycle != nil && c.heldCycle.PlanID == event.PlanID:
-		release = c.heldCycle
-		c.heldCycle = nil
+		revert := c.revertCycle
+		applied := c.appliedCycle
+		c.mu.Unlock()
+		if revert != nil && !sameResourceCycle(applied, revert) {
+			c.revertAppliedCycle(ctx, revert)
+		}
+		return
+	}
+
+	c.passingVerdict = gate
+	c.revertCycle = nil
+	held := c.heldCycle
+	applied := c.appliedCycle
+	if held == nil && sameResourceCycleGate(applied, gate) {
+		c.gatePinned = false
+		c.gateAcceptedCycle = applied
 	}
 	c.mu.Unlock()
 
-	if !isLeader || release == nil {
+	if held == nil || !sameResourceCycleGate(held, gate) {
 		return
 	}
-	if err := c.applyAndPrune(ctx, release.RenderedResources); err != nil {
-		c.Logger().Error("Rendered resources did not converge after the render gate's verdict",
-			"error", err, "plan", release.PlanID, "correlation_id", release.CorrelationID())
-		return
-	}
-	c.mu.Lock()
-	c.acceptedCycle = release
-	c.mu.Unlock()
+	c.releaseHeldCycle(ctx, held)
 }
 
-// rememberAppliedCycle records the cycle whose resources are on the cluster, so
-// a later refusal can put them back.
-func (c *Component) rememberAppliedCycle(event *events.ReconciliationCompletedEvent) {
+func (c *Component) convergeCycle(ctx context.Context, cycle *resourceCycle) error {
+	resources, err := cycle.resources.Resources()
+	if err != nil {
+		return fmt.Errorf("materialize rendered resources: %w", err)
+	}
+	return c.applyAndPrune(ctx, resources)
+}
+
+func (c *Component) releaseHeldCycle(ctx context.Context, cycle *resourceCycle) {
+	if err := c.convergeCycle(ctx, cycle); err != nil {
+		c.Logger().Error("Rendered resources did not converge after the render gate's verdict",
+			"error", err, "correlation_id", cycle.correlationID)
+		return
+	}
+
+	c.mu.Lock()
+	if !c.isLeader || !c.gatePinned || !sameResourceCycle(c.heldCycle, cycle) ||
+		!sameResourceCycleGate(cycle, c.passingVerdict) {
+		c.mu.Unlock()
+		return
+	}
+	c.gatePinned = false
+	c.heldCycle = nil
+	c.revertCycle = nil
+	c.appliedCycle = cycle
+	c.gateAcceptedCycle = cycle
+	c.mu.Unlock()
+	c.publishResourcesApplied(cycle)
+}
+
+func (c *Component) revertAppliedCycle(ctx context.Context, cycle *resourceCycle) {
+	if err := c.convergeCycle(ctx, cycle); err != nil {
+		c.Logger().Error("Rendered resources did not converge while restoring the accepted cycle",
+			"error", err, "correlation_id", cycle.correlationID)
+		return
+	}
+
+	c.mu.Lock()
+	if !c.isLeader || !sameResourceCycle(c.revertCycle, cycle) {
+		c.mu.Unlock()
+		return
+	}
+	c.appliedCycle = cycle
+	c.revertCycle = nil
+	c.mu.Unlock()
+	c.publishResourcesApplied(cycle)
+}
+
+func captureResourceCycle(event *events.ReconciliationCompletedEvent) (*resourceCycle, error) {
+	if event == nil {
+		return nil, errors.New("reconciliation cycle is nil")
+	}
+	occurrence, err := event.RenderOccurrence()
+	if err != nil {
+		return nil, fmt.Errorf("reconciliation completion occurrence: %w", err)
+	}
+	snapshot, err := occurrence.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reconciliation completion cycle: %w", err)
+	}
+	resources, err := snapshot.RenderedResourceSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	return &resourceCycle{
+		occurrence:    occurrence,
+		resources:     resources,
+		correlationID: event.CorrelationID(), sourceEventID: event.EventID(),
+	}, nil
+}
+
+func captureResourceGateIdentity(event *events.RenderGateCompletedEvent) (*resourceGateIdentity, error) {
+	if event == nil {
+		return nil, errors.New("render gate verdict is nil")
+	}
+	occurrence, err := event.RenderOccurrence()
+	if err != nil {
+		return nil, fmt.Errorf("render gate occurrence: %w", err)
+	}
+	return &resourceGateIdentity{occurrence: occurrence}, nil
+}
+
+func sameResourceCycleGate(cycle *resourceCycle, gate *resourceGateIdentity) bool {
+	if cycle == nil || gate == nil || cycle.occurrence == nil || gate.occurrence == nil {
+		return false
+	}
+	same, err := cycle.occurrence.Same(gate.occurrence)
+	return err == nil && same
+}
+
+func sameResourceCycle(left, right *resourceCycle) bool {
+	if left == nil || right == nil || left.occurrence == nil || right.occurrence == nil {
+		return false
+	}
+	same, err := left.occurrence.Same(right.occurrence)
+	return err == nil && same
+}
+
+func (c *Component) rememberAppliedCycle(cycle *resourceCycle, gateAccepted bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.acceptedCycle = event
+	c.appliedCycle = cycle
+	if gateAccepted || sameResourceCycleGate(cycle, c.passingVerdict) {
+		c.gateAcceptedCycle = cycle
+	}
 }
 
-// handleBecameLeader clears the checksum cache and rebuilds
-// lastAppliedKeys from cluster state via the managed-by label so
-// orphans surviving controller-down deletions get pruned on the next
-// reconciliation. The previous leader's *checksums* aren't valid for
-// us (API resource versions reflect their applies, not ours), but the
-// *set* of resources we own is determined by the cluster, not by any
-// in-memory state — recovering it from the cluster is the only way
-// to guarantee no leaks.
+func (c *Component) publishResourcesApplied(cycle *resourceCycle) {
+	correlation := events.WithCorrelation(cycle.correlationID, cycle.sourceEventID)
+	applied, err := events.NewResourcesAppliedEventWithCycle(
+		cycle.occurrence, correlation,
+	)
+	if err != nil {
+		c.Logger().Error("Applied resources could not retain render-cycle identity", "error", err)
+		return
+	}
+	c.EventBus().Publish(applied)
+}
+
+// handleBecameLeader rebuilds deletion lineage from live managed resources so
+// orphans surviving a controller restart can be pruned by the next cycle.
 //
 // No resource replay here: the Reconciler triggers an immediate
 // reconciliation on BecameLeaderEvent (see pkg/controller/reconciler/CLAUDE.md),
@@ -454,10 +550,10 @@ func (c *Component) rememberAppliedCycle(event *events.ReconciliationCompletedEv
 func (c *Component) handleBecameLeader(ctx context.Context) {
 	c.mu.Lock()
 	c.isLeader = true
-	c.checksumCache = make(map[string]string)
 	c.lastAppliedKeys = make(map[string]appliedKeyMeta)
+	c.resetCycleStateLocked()
 	c.mu.Unlock()
-	c.Logger().Info("Became leader, clearing resource checksum cache")
+	c.Logger().Info("Became leader, rebuilding managed resource state")
 
 	if c.discoveryClient != nil {
 		c.recoverManagedResources(ctx)
@@ -564,11 +660,16 @@ func (c *Component) recoverFromAPIResource(ctx context.Context, gv schema.GroupV
 			continue
 		}
 		key := fmt.Sprintf("%s/%s/%s", obj.GetNamespace(), obj.GetName(), gvr.String())
+		uid, resourceVersion := obj.GetUID(), obj.GetResourceVersion()
+		if uid == "" || resourceVersion == "" {
+			c.Logger().Warn("Skipping managed resource without deletion lineage",
+				"namespace", obj.GetNamespace(), "name", obj.GetName(), "gvr", gvr.String())
+			continue
+		}
 		c.mu.Lock()
 		c.lastAppliedKeys[key] = appliedKeyMeta{
-			GVR:       gvr,
-			Namespace: obj.GetNamespace(),
-			Name:      obj.GetName(),
+			GVR: gvr, Namespace: obj.GetNamespace(), Name: obj.GetName(),
+			UID: uid, ResourceVersion: resourceVersion,
 		}
 		c.mu.Unlock()
 		recovered++
@@ -619,10 +720,7 @@ func verbsContain(verbs metav1.Verbs, target string) bool {
 	return slices.Contains(verbs, target)
 }
 
-// handleLostLeadership clears the leader flag and pauses applies. The
-// next leader gets the events that arrive in the meantime (they're
-// buffered in our subscription channel and replayed when leadership is
-// restored).
+// handleLostLeadership discards every cycle baseline from the old leader term.
 func (c *Component) handleLostLeadership() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -630,11 +728,16 @@ func (c *Component) handleLostLeadership() {
 		c.Logger().Info("Lost leadership, pausing resource applies")
 	}
 	c.isLeader = false
-	// The render gate's latch is per leadership term, like every other mirror
-	// of it: a new leader starts optimistic.
+	c.resetCycleStateLocked()
+}
+
+func (c *Component) resetCycleStateLocked() {
 	c.gatePinned = false
 	c.heldCycle = nil
-	c.acceptedCycle = nil
+	c.appliedCycle = nil
+	c.gateAcceptedCycle = nil
+	c.passingVerdict = nil
+	c.revertCycle = nil
 }
 
 // applyAndPrune applies the new desired set and deletes any
@@ -642,8 +745,9 @@ func (c *Component) handleLostLeadership() {
 func (c *Component) applyAndPrune(ctx context.Context, resources []templating.RenderedResource) error {
 	startTime := time.Now()
 	desiredKeys := make(map[string]appliedKeyMeta, len(resources))
-	var dkMu sync.Mutex
-	var applied, skipped, refused, failed atomic.Int64
+	presentKeys := make(map[string]struct{}, len(resources))
+	var keysMu sync.Mutex
+	var applied, refused, failed atomic.Int64
 
 	// Apply resources CONCURRENTLY (bounded fan-out). A serial loop made each
 	// reconciliation's apply pass slow (one SSA round-trip per changed
@@ -652,21 +756,19 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 	// means the rendered output resources (HAProxyCfg, map files, …) silently
 	// stop tracking reality: an incomplete reconciliation. Mirrors
 	// statusapplier's bounded errgroup fan-out, which never overflows. The
-	// checksumCache/lastAppliedKeys are c.mu-guarded and desiredKeys is
-	// dkMu-guarded, so concurrent applyOne calls are safe.
+	// lastAppliedKeys is c.mu-guarded and the pass-local maps are
+	// keysMu-guarded, so concurrent applyOne calls are safe.
 	const maxApplyConcurrency = 16
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(maxApplyConcurrency)
 	for i := range resources {
 		r := &resources[i]
 		g.Go(func() error {
-			switch outcome := c.applyOne(gctx, r, desiredKeys, &dkMu); outcome {
+			switch outcome := c.applyOne(gctx, r, desiredKeys, presentKeys, &keysMu); outcome {
 			case applyOutcomeError:
 				failed.Add(1)
 			case applyOutcomeApplied:
 				applied.Add(1)
-			case applyOutcomeSkipped:
-				skipped.Add(1)
 			case applyOutcomeRefused:
 				refused.Add(1)
 			}
@@ -680,15 +782,15 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 		return fmt.Errorf("%d of %d rendered resources failed; retry occurs on the next reconciliation", failedN, len(resources))
 	}
 
-	deleted, deleteFailures := c.pruneOrphans(ctx, desiredKeys)
+	deleted, deleteFailures := c.pruneOrphans(ctx, desiredKeys, presentKeys)
 	if deleteFailures > 0 {
 		return fmt.Errorf("%d orphaned resources could not be deleted; retry occurs on the next reconciliation", deleteFailures)
 	}
 
-	appliedN, skippedN, refusedN := int(applied.Load()), int(skipped.Load()), int(refused.Load())
-	if appliedN+skippedN+deleted+refusedN > 0 {
+	appliedN, refusedN := int(applied.Load()), int(refused.Load())
+	if appliedN+deleted+refusedN > 0 {
 		c.Logger().Debug("Resource applier pass complete",
-			"applied", appliedN, "skipped", skippedN,
+			"applied", appliedN,
 			"deleted", deleted, "refused", refusedN,
 			"duration_ms", time.Since(startTime).Milliseconds())
 	}
@@ -701,16 +803,92 @@ type applyOutcome int
 
 const (
 	applyOutcomeError   applyOutcome = iota // resolve / marshal / apply failed; logged inside applyOne
-	applyOutcomeApplied                     // SSA succeeded (or checksum-match-skip in the same code path is applyOutcomeSkipped)
-	applyOutcomeSkipped                     // checksum matched the last apply; round-trip skipped
+	applyOutcomeApplied                     // SSA succeeded
 	applyOutcomeRefused                     // policy refused (cross-namespace under RestrictToOwnNamespace)
 )
 
+// withCreateOnlyFieldsFromLive returns the object to apply with the fields the
+// configuration says this template sets only at creation replaced by the values
+// the object already has.
+//
+// Omitting them instead does not work: server-side apply DELETES a field its
+// only owner stops sending, so `spec.replicas` disappeared and the API server
+// defaulted the workload to one replica. The co-owner that then appears is
+// kube-controller-manager writing that default, which is the damage, not a
+// safeguard.
+//
+// Following the live value keeps HAPTIC's ownership and its guarantee that the
+// object is whole, while making the template's value the size the object starts
+// at rather than the size it is held to. An operator's `kubectl scale` or an
+// autoscaler's decision is read back and re-applied as-is instead of being
+// overwritten on the next reconcile.
+//
+// The read costs one request per declaring resource per pass, which is why it
+// runs only for the ones that declare a path. If the object is deleted between
+// the read and the apply, the apply recreates it from the template's values.
+func (c *Component) withCreateOnlyFieldsFromLive(
+	ctx context.Context,
+	gvr schema.GroupVersionResource,
+	r *templating.RenderedResource,
+	object map[string]any,
+) (map[string]any, error) {
+	if len(r.CreateOnlyFields) == 0 {
+		return object, nil
+	}
+	live, err := c.dynamicClient.Resource(gvr).Namespace(r.Namespace).Get(ctx, r.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return object, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := object
+	for _, path := range r.CreateOnlyFields {
+		fields := strings.Split(path, ".")
+		if len(fields) == 0 || slices.Contains(fields, "") {
+			return nil, fmt.Errorf("createOnlyFields path %q is not a dotted field path", path)
+		}
+		value, found, err := unstructured.NestedFieldNoCopy(live.Object, fields...)
+		if err != nil || !found {
+			continue
+		}
+		out = setNestedFieldCopying(out, value, fields...)
+	}
+	return out, nil
+}
+
+// setNestedFieldCopying sets one dotted path, cloning every map it descends
+// into.
+//
+// prepareForApply copies only the top level, so the nested maps are the render
+// cache's own. Writing through them would edit the cached object for every
+// later render — the same aliasing that, when this deleted instead of set,
+// emptied the field out of the cache for good.
+func setNestedFieldCopying(object map[string]any, value any, fields ...string) map[string]any {
+	out := maps.Clone(object)
+	if out == nil {
+		out = map[string]any{}
+	}
+	if len(fields) == 1 {
+		out[fields[0]] = value
+		return out
+	}
+	child, _ := out[fields[0]].(map[string]any)
+	out[fields[0]] = setNestedFieldCopying(child, value, fields[1:]...)
+	return out
+}
+
 // applyOne resolves, marshals, and SSA-applies a single rendered resource,
-// updates the checksum cache + lastAppliedKeys on success, and returns the
+// updates lastAppliedKeys on success, and returns the
 // outcome. It also stages the desiredKeys entry so pruneOrphans can compute
 // the keep-set after every resource has been processed.
-func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource, desiredKeys map[string]appliedKeyMeta, dkMu *sync.Mutex) applyOutcome {
+func (c *Component) applyOne(
+	ctx context.Context,
+	r *templating.RenderedResource,
+	desiredKeys map[string]appliedKeyMeta,
+	presentKeys map[string]struct{},
+	keysMu *sync.Mutex,
+) applyOutcome {
 	gvr, err := c.gvrResolver.Resolve(r.APIVersion, r.Kind)
 	if err != nil {
 		c.Logger().Error("Failed to resolve GVR for rendered resource",
@@ -722,34 +900,23 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 	}
 	key := fmt.Sprintf("%s/%s/%s", r.Namespace, r.Name, gvr.String())
 	partial := isPartialOwnership(r)
-	// Track for orphan-delete only when haptic owns the resource end-to-
-	// end. Partial-ownership entries are jointly owned with another field
-	// manager (helm/argocd) and must never be deleted — SSA's per-field
-	// ownership handles the actual cleanup when a field disappears from
-	// haptic's rendered spec.
-	if !partial {
-		dkMu.Lock()
-		desiredKeys[key] = appliedKeyMeta{GVR: gvr, Namespace: r.Namespace, Name: r.Name}
-		dkMu.Unlock()
-	}
 
 	object := c.prepareForApply(r.Object, partial)
+	object, err = c.withCreateOnlyFieldsFromLive(ctx, gvr, r, object)
+	if err != nil {
+		c.Logger().Error("Failed to read a rendered resource before applying it",
+			"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(), "error", err)
+		return applyOutcomeError
+	}
 	payload, err := json.Marshal(object)
 	if err != nil {
 		c.Logger().Error("Failed to marshal rendered resource",
 			"namespace", r.Namespace, "name", r.Name, "kind", r.Kind, "error", err)
 		return applyOutcomeError
 	}
-	checksum := fmt.Sprintf("%x", sha256.Sum256(payload))
-
-	c.mu.RLock()
-	last := c.checksumCache[key]
-	c.mu.RUnlock()
-	if last == checksum {
-		return applyOutcomeSkipped
-	}
-
-	_, err = c.dynamicClient.Resource(gvr).Namespace(r.Namespace).Patch(
+	// No local digest can prove that an unwatched target wasn't mutated or
+	// recreated after the previous apply, so every cycle reaches the API server.
+	appliedObject, err := c.dynamicClient.Resource(gvr).Namespace(r.Namespace).Patch(
 		ctx,
 		r.Name,
 		types.ApplyPatchType,
@@ -766,33 +933,88 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 		return applyOutcomeError
 	}
 
-	c.mu.Lock()
-	c.checksumCache[key] = checksum
+	keysMu.Lock()
+	presentKeys[key] = struct{}{}
+	keysMu.Unlock()
 	if !partial {
-		// Inline the meta rather than reading desiredKeys[key]: under the
-		// concurrent fan-out the map is dkMu-guarded, and this is the same
-		// value written above, so we avoid a second lock ordering.
-		c.lastAppliedKeys[key] = appliedKeyMeta{GVR: gvr, Namespace: r.Namespace, Name: r.Name}
+		meta, lineageErr := appliedMetaFromResponse(gvr, r.Namespace, r.Name, appliedObject)
+		if lineageErr != nil {
+			c.Logger().Error("Applied resource response lacks safe deletion lineage",
+				"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(), "error", lineageErr)
+			return applyOutcomeError
+		}
+		keysMu.Lock()
+		desiredKeys[key] = meta
+		keysMu.Unlock()
+		c.mu.Lock()
+		c.lastAppliedKeys[key] = meta
+		c.mu.Unlock()
 	}
-	c.mu.Unlock()
 	return applyOutcomeApplied
+}
+
+func appliedMetaFromResponse(
+	gvr schema.GroupVersionResource,
+	namespace, name string,
+	object *unstructured.Unstructured,
+) (appliedKeyMeta, error) {
+	if object == nil {
+		return appliedKeyMeta{}, errors.New("SSA response is nil")
+	}
+	if object.GetName() != name || object.GetNamespace() != namespace {
+		return appliedKeyMeta{}, fmt.Errorf(
+			"SSA response names %s/%s instead of %s/%s",
+			object.GetNamespace(), object.GetName(), namespace, name,
+		)
+	}
+	uid, resourceVersion := object.GetUID(), object.GetResourceVersion()
+	if uid == "" || resourceVersion == "" {
+		return appliedKeyMeta{}, errors.New("SSA response UID or resourceVersion is empty")
+	}
+	return appliedKeyMeta{
+		GVR: gvr, Namespace: namespace, Name: name, UID: uid, ResourceVersion: resourceVersion,
+	}, nil
 }
 
 // pruneOrphans deletes resources that were applied last pass but aren't in
 // the new desired set.
-func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]appliedKeyMeta) (deleted, failed int) {
+func (c *Component) pruneOrphans(
+	ctx context.Context,
+	desiredKeys map[string]appliedKeyMeta,
+	presentKeys map[string]struct{},
+) (deleted, failed int) {
 	c.mu.Lock()
 	prior := c.lastAppliedKeys
 	stillApplied := maps.Clone(desiredKeys)
 	c.mu.Unlock()
 
 	for key, meta := range prior {
-		if _, kept := desiredKeys[key]; kept {
+		if _, kept := presentKeys[key]; kept {
 			continue
 		}
+		if meta.UID == "" || meta.ResourceVersion == "" {
+			c.Logger().Error("Refusing to prune resource without deletion lineage",
+				"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String())
+			stillApplied[key] = meta
+			failed++
+			continue
+		}
+		uid, resourceVersion := meta.UID, meta.ResourceVersion
 		err := c.dynamicClient.Resource(meta.GVR).Namespace(meta.Namespace).Delete(
-			ctx, meta.Name, metav1.DeleteOptions{},
+			ctx, meta.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{
+				UID: &uid, ResourceVersion: &resourceVersion,
+			}},
 		)
+		if apierrors.IsConflict(err) {
+			next, retain, retry := c.resolvePruneConflict(ctx, &meta)
+			if retain {
+				stillApplied[key] = next
+			}
+			if retry {
+				failed++
+			}
+			continue
+		}
 		if err != nil && !apierrors.IsNotFound(err) {
 			c.Logger().Error("Failed to delete orphan resource",
 				"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String(),
@@ -803,15 +1025,60 @@ func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]app
 			continue
 		}
 		deleted++
-		c.mu.Lock()
-		delete(c.checksumCache, key)
-		c.mu.Unlock()
 	}
 
 	c.mu.Lock()
 	c.lastAppliedKeys = stillApplied
 	c.mu.Unlock()
 	return deleted, failed
+}
+
+func (c *Component) resolvePruneConflict(
+	ctx context.Context,
+	meta *appliedKeyMeta,
+) (next appliedKeyMeta, retain, retry bool) {
+	object, err := c.dynamicClient.Resource(meta.GVR).Namespace(meta.Namespace).Get(
+		ctx, meta.Name, metav1.GetOptions{},
+	)
+	if apierrors.IsNotFound(err) {
+		return appliedKeyMeta{}, false, false
+	}
+	if err != nil {
+		c.Logger().Error("Failed to inspect conflicting orphan resource",
+			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String(), "error", err)
+		return *meta, true, true
+	}
+	if object == nil || object.GetName() != meta.Name || object.GetNamespace() != meta.Namespace {
+		c.Logger().Error("Conflicting orphan response has invalid identity",
+			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String())
+		return *meta, true, true
+	}
+	if object.GetUID() != meta.UID {
+		c.Logger().Warn("Orphan name now belongs to a different resource; leaving it untouched",
+			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String())
+		return appliedKeyMeta{}, false, false
+	}
+	if !c.ownsAppliedResource(object) {
+		c.Logger().Warn("Orphan resource ownership changed; leaving it untouched",
+			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String())
+		return appliedKeyMeta{}, false, false
+	}
+	resourceVersion := object.GetResourceVersion()
+	if resourceVersion == "" {
+		c.Logger().Error("Conflicting orphan response lacks resourceVersion",
+			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String())
+		return *meta, true, true
+	}
+	next = *meta
+	next.ResourceVersion = resourceVersion
+	return next, true, true
+}
+
+func (c *Component) ownsAppliedResource(object *unstructured.Unstructured) bool {
+	if object.GetLabels()[LabelManagedBy] != c.managedByValue {
+		return false
+	}
+	return c.ownerRef.UID == "" || hasOwnerRefUID(object, c.ownerRef.UID)
 }
 
 // refused returns true when the policy says to skip this resource

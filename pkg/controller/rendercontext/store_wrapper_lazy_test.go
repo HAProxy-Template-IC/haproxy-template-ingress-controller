@@ -24,6 +24,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // cachedTestStore records calls to its three relevant methods so the
@@ -50,7 +51,16 @@ func (s *cachedTestStore) Get(keys ...string) ([]any, error) {
 		return nil, nil
 	}
 	composite := indexer.EncodeKey(keys)
-	return s.byKey[composite], nil
+	if items, found := s.byKey[composite]; found {
+		return items, nil
+	}
+	var items []any
+	for _, key := range orderedKeys(s.byKey) {
+		if indexer.HasEncodedKeyPrefix(key, composite) {
+			items = append(items, s.byKey[key]...)
+		}
+	}
+	return items, nil
 }
 
 func cachedTestKey(keys ...string) string {
@@ -78,7 +88,6 @@ func (s *cachedTestStore) Clear() error                         { return nil }
 
 var (
 	_ stores.Store = (*cachedTestStore)(nil)
-	_ cachedLister = (*cachedTestStore)(nil)
 )
 
 func orderedKeys(m map[string][]any) []string {
@@ -113,7 +122,7 @@ func secret(name string) map[string]any {
 // never call Store.List() during normal operation. An exact lookup
 // still calls Store.Get once because one warm entry doesn't prove a
 // non-unique index bucket is complete.
-func TestStoreWrapper_LazyMode_PrimedFromCachedList(t *testing.T) {
+func TestStoreWrapperLazyModeDefersListForExactRead(t *testing.T) {
 	primedSecret := secret("warm")
 	store := &cachedTestStore{
 		cached: []any{primedSecret},
@@ -125,6 +134,7 @@ func TestStoreWrapper_LazyMode_PrimedFromCachedList(t *testing.T) {
 	}
 
 	w := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "secrets",
 		Logger:       testutil.NewTestLogger(),
@@ -138,8 +148,8 @@ func TestStoreWrapper_LazyMode_PrimedFromCachedList(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, primedSecret, got)
 
-	assert.Equal(t, int32(1), store.listCachedCalls.Load(), "primed snapshot once")
-	assert.Equal(t, int32(0), store.listCalls.Load(), "lazy mode must never call Store.List()")
+	assert.Zero(t, store.listCachedCalls.Load())
+	assert.Zero(t, store.listCalls.Load())
 	assert.Equal(t, int32(1), store.getCalls.Load(), "first exact lookup verifies the complete bucket")
 }
 
@@ -154,6 +164,7 @@ func TestStoreWrapper_LazyMode_WarmNonUniqueBucketIsCompleted(t *testing.T) {
 	}
 
 	w := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "custom-resources",
 		Logger:       testutil.NewTestLogger(),
@@ -166,6 +177,32 @@ func TestStoreWrapper_LazyMode_WarmNonUniqueBucketIsCompleted(t *testing.T) {
 	assertWrapperResourceNames(t, w.Fetch("shared", "group"), "warm", "cold")
 	assert.Equal(t, int32(1), store.getCalls.Load())
 	assertWrapperResourceNames(t, w.List(), "warm", "cold")
+	assert.Equal(t, int32(1), store.listCalls.Load())
+}
+
+func TestStoreWrapperLazyModePrefixReadResolvesCompleteScopeOnce(t *testing.T) {
+	first := snapshotIndexedResource("first", "shared", "one")
+	second := snapshotIndexedResource("second", "shared", "two")
+	store := &cachedTestStore{byKey: map[string][]any{
+		cachedTestKey("shared", "one"):  {first},
+		cachedTestKey("shared", "two"):  {second},
+		cachedTestKey("other", "three"): {snapshotIndexedResource("third", "other", "three")},
+	}}
+	wrapper := &StoreWrapper{
+		readContext:    templating.WithImmutableResourceInputs(t.Context()),
+		Store:          store,
+		ResourceType:   "custom-resources",
+		Logger:         testutil.NewTestLogger(),
+		IndexBy:        []string{"spec.first", "spec.second"},
+		LazySnapshot:   true,
+		resourceErrors: NewResourceErrorCollector(),
+	}
+
+	assertWrapperResourceNames(t, wrapper.Fetch("shared"), "first", "second")
+	assertWrapperResourceNames(t, wrapper.Fetch("shared"), "first", "second")
+	assert.Equal(t, int32(1), store.getCalls.Load())
+	assert.Zero(t, store.listCachedCalls.Load())
+	assert.Zero(t, store.listCalls.Load())
 }
 
 // TestStoreWrapper_LazyMode_FetchOnMissAndGrow verifies the
@@ -185,6 +222,7 @@ func TestStoreWrapper_LazyMode_FetchOnMissAndGrow(t *testing.T) {
 	}
 
 	w := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "secrets",
 		Logger:       testutil.NewTestLogger(),
@@ -206,18 +244,13 @@ func TestStoreWrapper_LazyMode_FetchOnMissAndGrow(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, int32(1), store.getCalls.Load(), "repeat read is snapshot-served")
 
-	// List() returns BOTH the primed warm item AND the cold item the
-	// render fetched after priming. That's the hybrid contract: the
-	// snapshot grows during the render and List() reflects what was
-	// actually touched.
+	// List resolves the complete store independently of cache warmth.
 	all := w.List()
 	assert.Len(t, all, 2)
 	assert.Contains(t, all, primedSecret)
 	assert.Contains(t, all, coldSecret)
 
-	// List() must NOT call Store.List() in lazy mode.
-	assert.Equal(t, int32(0), store.listCalls.Load(),
-		"lazy mode List() returns the grown snapshot — never falls back to full Store.List()")
+	assert.Equal(t, int32(1), store.listCalls.Load())
 }
 
 // TestStoreWrapper_LazyMode_AbsentKeyDoesNotPoisonSnapshot covers
@@ -236,6 +269,7 @@ func TestStoreWrapper_LazyMode_AbsentKeyDoesNotPoisonSnapshot(t *testing.T) {
 	}
 
 	w := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "secrets",
 		Logger:       testutil.NewTestLogger(),
@@ -249,6 +283,7 @@ func TestStoreWrapper_LazyMode_AbsentKeyDoesNotPoisonSnapshot(t *testing.T) {
 	all := w.List()
 	assert.Len(t, all, 1)
 	assert.Equal(t, primedSecret, all[0])
+	assert.Equal(t, int32(1), store.listCalls.Load())
 }
 
 // TestStoreWrapper_LazyMode_AbsentKeyNegativeCached pins the
@@ -270,6 +305,7 @@ func TestStoreWrapper_LazyMode_AbsentKeyNegativeCached(t *testing.T) {
 	}
 
 	w := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "secrets",
 		Logger:       testutil.NewTestLogger(),
@@ -309,6 +345,7 @@ func TestStoreWrapper_EagerMode_StillCallsStoreList(t *testing.T) {
 	}
 
 	w := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "secrets",
 		Logger:       testutil.NewTestLogger(),

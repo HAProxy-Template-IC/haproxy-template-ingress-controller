@@ -49,7 +49,7 @@ func (r *applyRun) reload(reason string) error {
 		// baseline the worker is not on).
 		return r.runInPlace()
 	}
-	if err := r.performReload(r.manifest.PlanID); err != nil {
+	if err := r.performReload(r.manifest.PlanID, r.appliedProof); err != nil {
 		return r.abort("reload", err)
 	}
 	r.result.Mode = api.ResultReload
@@ -60,7 +60,7 @@ func (r *applyRun) reload(reason string) error {
 // schedule defers the reload to the end of the pacing window. The controller
 // polls /v1/state to learn when it happened.
 func (r *applyRun) schedule(due time.Time) error {
-	r.server.schedulePendingReload(due, r.manifest.PlanID)
+	r.server.schedulePendingReload(due, r.manifest.PlanID, r.appliedProof)
 	r.result.Mode = api.ResultScheduled
 	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339Nano)}
 	r.server.setPhase(phaseScheduled, r.manifest.PlanID)
@@ -71,7 +71,7 @@ func (r *applyRun) schedule(due time.Time) error {
 // answers, because an op sent to the outgoing worker would be lost. planID
 // names the file set the new worker starts from, which is not always the plan
 // this apply carried: a rollback reloads the last known good one.
-func (r *applyRun) performReload(planID string) error {
+func (r *applyRun) performReload(planID, planProof string) error {
 	// A reload consumes the scheduled one: it re-executes from the tree as it
 	// is now, which after a rollback is no longer the scheduled plan's.
 	r.server.clearPendingReload()
@@ -99,7 +99,7 @@ func (r *applyRun) performReload(planID string) error {
 	if settleErr != nil {
 		return settleErr
 	}
-	r.server.recordReload(planID)
+	r.server.recordReload(planID, planProof)
 	return nil
 }
 
@@ -152,22 +152,23 @@ func (s *Server) firePendingReload() {
 	}
 	s.apply.Lock()
 	defer s.apply.Unlock()
-	planID, due := s.pendingReload()
-	if planID == "" || time.Now().Before(due) {
+	planID, planProof, due := s.pendingReload()
+	if planID == "" || planProof == "" || time.Now().Before(due) {
 		return
 	}
 	run := &applyRun{
 		server:   s,
-		manifest: &api.Manifest{PlanID: planID, Mode: api.ModeReload},
+		manifest: &api.Manifest{PlanID: planID, PlanProof: planProof, Mode: api.ModeReload},
 		result:   api.ApplyResult{PlanID: planID, OK: true, Mode: api.ResultReload, At: time.Now().UTC().Format(time.RFC3339)},
 	}
-	if err := run.performReload(planID); err != nil {
+	if err := run.performReload(planID, planProof); err != nil {
 		s.logger.Error("the scheduled reload failed", "plan_id", planID, "error", err)
 		_ = run.abort("scheduled_reload", err)
 	}
 	s.mu.Lock()
 	if !run.result.OK {
 		s.state.AppliedPlanID = ""
+		s.state.AppliedPlanProof = ""
 	}
 	s.applyResultLocked(&run.result)
 	s.state.LastApply = &run.result
@@ -207,7 +208,8 @@ func (s *Server) readBack(run *applyRun) {
 	defer s.apply.Unlock()
 	due, open := s.pacingWindow()
 	if open {
-		s.schedulePendingReload(due, s.snapshot().AppliedPlanID)
+		state := s.snapshot()
+		s.schedulePendingReload(due, state.AppliedPlanID, state.AppliedPlanProof)
 		return
 	}
 	s.selfReload()
@@ -241,13 +243,14 @@ func (s *Server) mapDiverged(path string) bool {
 
 // selfReload reloads outside an apply, after a read-back found a divergence.
 func (s *Server) selfReload() {
-	planID := s.snapshot().AppliedPlanID
+	state := s.snapshot()
+	planID, planProof := state.AppliedPlanID, state.AppliedPlanProof
 	run := &applyRun{
 		server:   s,
-		manifest: &api.Manifest{PlanID: planID, Mode: api.ModeReload},
+		manifest: &api.Manifest{PlanID: planID, PlanProof: planProof, Mode: api.ModeReload},
 		result:   api.ApplyResult{PlanID: planID, OK: true, Mode: api.ResultReload},
 	}
-	if err := run.performReload(planID); err != nil {
+	if err := run.performReload(planID, planProof); err != nil {
 		s.logger.Error("the divergence reload failed", "error", err)
 	}
 	// The reload cleared the journal on disk, so the state file has to say so

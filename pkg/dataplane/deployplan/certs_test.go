@@ -71,8 +71,8 @@ func TestDiffCertificates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prev := basePlan(withFile(renderplan.File{Path: tt.path, Kind: tt.kind, Digest: "before"}))
-			next := basePlan(withFile(renderplan.File{Path: tt.path, Kind: tt.kind, Digest: "after"}))
+			prev := basePlan(withFile(&renderplan.File{Path: tt.path, Kind: tt.kind, Digest: "before"}))
+			next := basePlan(withFile(&renderplan.File{Path: tt.path, Kind: tt.kind, Digest: "after"}))
 			base := on34(prev)
 			base.Inventory = tt.inventory
 
@@ -86,7 +86,7 @@ func TestDiffCertificates(t *testing.T) {
 
 func TestDiffUnchangedCertificateIsNotTouched(t *testing.T) {
 	plan := func() *renderplan.Plan {
-		return basePlan(withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "same"}))
+		return basePlan(withFile(&renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "same"}))
 	}
 	base := on34(plan())
 	base.Inventory = api.Inventory{Certs: []string{certPath}}
@@ -253,8 +253,8 @@ func TestDiffCRTListFileAppearingOrDisappearingReloads(t *testing.T) {
 }
 
 func TestDiffCRTListWithoutEntriesReloads(t *testing.T) {
-	prev := basePlan(withFile(renderplan.File{Path: listPath, Kind: renderplan.FileKindCRTList, Digest: "before"}))
-	next := basePlan(withFile(renderplan.File{Path: listPath, Kind: renderplan.FileKindCRTList, Digest: "after"}))
+	prev := basePlan(withFile(&renderplan.File{Path: listPath, Kind: renderplan.FileKindCRTList, Digest: "before"}))
+	next := basePlan(withFile(&renderplan.File{Path: listPath, Kind: renderplan.FileKindCRTList, Digest: "after"}))
 	base := on34(prev)
 	base.Inventory = api.Inventory{CRTLists: []string{listPath}}
 
@@ -271,12 +271,14 @@ func TestDiffCertificateCreatedInThisDiffCountsAsLoaded(t *testing.T) {
 	added := srv("SRV_2", "10.0.0.2", 8080)
 	added.Extra = []renderplan.KeywordArg{{Name: "crt", Args: []string{certPath}}}
 	cert := renderplan.File{Path: certPath, Kind: renderplan.FileKindCert}
+	certBefore := withDigest(&cert, "before")
+	certAfter := withDigest(&cert, "after")
 	prev := basePlan(
-		withFile(withDigest(cert, "before")),
+		withFile(&certBefore),
 		withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080))),
 	)
 	next := basePlan(
-		withFile(withDigest(cert, "after")),
+		withFile(&certAfter),
 		withBackend(dynBackend("be-a", srv("SRV_1", "10.0.0.1", 8080), added)),
 	)
 

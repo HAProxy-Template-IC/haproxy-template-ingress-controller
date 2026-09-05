@@ -226,6 +226,8 @@ func setFileDigest(t *testing.T, p *renderplan.Plan, path, digest string) {
 	for i := range p.Files {
 		if p.Files[i].Path == path {
 			p.Files[i].Digest = digest
+			p.Files[i].Content = digest
+			p.Files[i].ContentKnown = true
 			return
 		}
 	}

@@ -6,7 +6,7 @@ Applies template-driven status patches to Kubernetes resources via Server-Side A
 
 Templates can register status patches against arbitrary Kubernetes resources (typically the Ingress / HTTPRoute / Gateway whose configuration was just rendered) using the `pkg/templating.StatusPatch` API. Each registered patch carries variants keyed by pipeline outcome — `rendered` (rendering succeeded), `deployed` (deployment succeeded), `renderFailed`, `deployFailed`. This component subscribes to the lifecycle events, picks the right variant, and applies it via SSA with a phase-scoped field manager (`haptic-rendered`, `haptic-deployed`, `haptic-renderFailed`, `haptic-validateFailed`, or `haptic-deployFailed`) so each phase owns disjoint condition entries and composes cleanly with patches from other controllers.
 
-It runs on **every replica** (subscribes in the constructor like other all-replica components) but only the leader actually issues SSA patches. The component is stateless — patches travel on the events that trigger each apply, so a new leader simply relies on the `Reconciler` to fire a fresh reconciliation.
+It runs on **every replica** (subscribes in the constructor like other all-replica components) but only the leader actually issues SSA patches. The component is stateless. Successful lifecycle events carry one sealed render occurrence, and the applier reads the authenticated status snapshot from it. Public event fields are diagnostic shadows and never authorize an apply.
 
 ## Quick Start
 
@@ -32,9 +32,9 @@ go applier.Start(ctx)
 
 | Event | Action |
 |-------|--------|
-| `ResourcesAppliedEvent` | Apply the `rendered` variant directly from the event payload if leader (published by the ResourceApplier after the same render's resources exist — no caching, stateless) |
-| `DeploymentCompletedEvent` | Apply the `deployed` variant when every pod runs the render, `deployFailed` when a pod failed; a fleet that accepted it behind a paced reload gets neither until the Deployer observes it running (if leader) |
-| `DeploymentSkippedEvent` | Apply the `deployed` variant if leader (`config_unchanged`: the render equals the deployed one; `reload_observed`: a later deployment's ACKs report the fleet running it) |
+| `ResourcesAppliedEvent` | Read the authenticated occurrence and apply its `rendered` variant if leader |
+| `DeploymentCompletedEvent` | Read the authenticated occurrence and apply `deployed` when every pod runs it or `deployFailed` when a pod failed |
+| `DeploymentSkippedEvent` | Read the authenticated occurrence and apply `deployed` if leader |
 | `ReconciliationFailedEvent` | Apply `renderFailed` or `deployFailed` variant (depending on which phase failed) if leader |
 | `BecameLeaderEvent` | Flip the leader flag on; clear the SSA checksum cache so the new leader writes at least once for every active resource on the next reconciliation (triggered by the `Reconciler`) |
 | `LostLeadershipEvent` | Flip the leader flag off; in-flight handlers re-check via `leaderRLocked()` |

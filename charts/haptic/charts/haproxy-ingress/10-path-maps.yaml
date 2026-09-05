@@ -3,7 +3,12 @@
 # path-type annotation. Merges into the chart-wide path maps base.yaml owns.
 templateSnippets:
   map-path-regex-600-haproxy-ingress:
-    template: |
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/path-type']"]
+      effects: [recordEvent]
+    template: |-
       {#
         HAProxy Ingress Regex Path Map Entries
 
@@ -27,42 +32,50 @@ templateSnippets:
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- var isFirst = true %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
-      {%- if pathTypeAnnotation == "regex" -%}
-      {%- if isFirst %}
-      # haproxy-ingress/map-path-regex-haproxy-ingress
-      {%- isFirst = false %}
-      {%- end %}
-      {#- Count regex paths for this ingress -#}
-      {%- var regexPathCount = 0 %}
-      {%- for _, path := range ingress.Spec.Rules[*].Http.Paths %}
-        {%- if path.PathType == "ImplementationSpecific" %}
-          {%- regexPathCount++ %}
-        {%- end %}
-      {%- end %}
-      {%- if regexPathCount > 0 %}
-      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ({{ regexPathCount }} regex paths)
-        {%- for _, rule := range ingress.Spec.Rules %}
-          {%- for _, path := range rule.Http.Paths %}
-          {%- if path.PathType == "ImplementationSpecific" %}
-          {%- var pathInj = ConfigInjectionKind(path.Path, "mapkey") -%}
-          {%- if pathInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " has a regex path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.") -}}{%- continue -%}{%- end -%}
-      {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
-          {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
+      {%%
+        var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
+        var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"]
+        if pathTypeAnnotation == "regex" {
+          show shared.Unique("haproxy-ingress-map-path-regex", "header", "\n# haproxy-ingress/map-path-regex-haproxy-ingress\n")
+          var regexPathCount = 0
+          for _, path := range ingress.Spec.Rules[*].Http.Paths {
+            if path.PathType == "ImplementationSpecific" {
+              regexPathCount++
+            }
+          }
+          if regexPathCount > 0 {
+            var namespace = ingress.Metadata.Namespace
+            var name = ingress.Metadata.Name
+            var block = "# Ingress: " + namespace + "/" + name + " (" + tostring(regexPathCount) + " regex paths)"
+            for _, rule := range ingress.Spec.Rules {
+              for _, path := range rule.Http.Paths {
+                if path.PathType == "ImplementationSpecific" {
+                  var pathInj = ConfigInjectionKind(path.Path, "mapkey")
+                  if pathInj != "" {
+                    _ = WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + namespace + "/" + name + " has a regex path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.")
+                    continue
+                  }
+                  block += "\n" + MapKeyForHost(rule.Host) + path.Path + " BACKEND:" + BackendNameIngress(ingress, path)
+                }
+              }
+            }
+            show shared.Unique("haproxy-ingress-map-path-regex", "resource/" + namespace + "/" + name, block + "\n")
+          }
+        }
+      %%}
 
   # ============================================================================
   # Phase 3: Path Type Matching - Exact
   # ============================================================================
 
   map-path-exact-600-haproxy-ingress:
-    template: |
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/path-type']"]
+      effects: [recordEvent]
+    template: |-
       {#
         HAProxy Ingress Exact Path Map Entries
 
@@ -81,32 +94,44 @@ templateSnippets:
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- var isFirst = true %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
-      {%- if pathTypeAnnotation == "exact" -%}
-      {%- if isFirst %}
-      # haproxy-ingress/map-path-exact-haproxy-ingress
-      {%- isFirst = false %}
-      {%- end %}
-        {%- for _, rule := range ingress.Spec.Rules %}
-          {%- for _, path := range rule.Http.Paths %}
-          {%- if path.PathType == "ImplementationSpecific" %}
-          {%- var pathInj = ConfigInjectionKind(path.Path, "mapkey") -%}
-          {%- if pathInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " has an exact path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.") -}}{%- continue -%}{%- end -%}
-      {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
-          {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-      {%- end %}
+      {%%
+        var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
+        var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"]
+        if pathTypeAnnotation == "exact" {
+          show shared.Unique("haproxy-ingress-map-path-exact", "header", "\n# haproxy-ingress/map-path-exact-haproxy-ingress\n")
+          var namespace = ingress.Metadata.Namespace
+          var name = ingress.Metadata.Name
+          var block = ""
+          for _, rule := range ingress.Spec.Rules {
+            for _, path := range rule.Http.Paths {
+              if path.PathType == "ImplementationSpecific" {
+                var pathInj = ConfigInjectionKind(path.Path, "mapkey")
+                if pathInj != "" {
+                  _ = WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + namespace + "/" + name + " has an exact path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.")
+                  continue
+                }
+                block += MapKeyForHost(rule.Host) + path.Path + " BACKEND:" + BackendNameIngress(ingress, path) + "\n"
+              }
+            }
+          }
+          if block != "" {
+            show shared.Unique("haproxy-ingress-map-path-exact", "resource/" + namespace + "/" + name, block)
+          }
+        }
+      %%}
 
   # ============================================================================
   # Phase 3: Path Type Matching - Prefix
   # ============================================================================
 
   map-path-prefix-600-haproxy-ingress:
-    template: |
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/path-type']"]
+      effects: [recordEvent]
+    template: |-
       {#
         HAProxy Ingress Prefix Path Map Entries
 
@@ -125,35 +150,48 @@ templateSnippets:
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- var isFirst = true %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
-      {%- if pathTypeAnnotation == "prefix" -%}
-      {%- if isFirst %}
-      # haproxy-ingress/map-path-prefix-haproxy-ingress
-      {%- isFirst = false %}
-      {%- end %}
-        {%- for _, rule := range ingress.Spec.Rules %}
-          {%- for _, path := range rule.Http.Paths %}
-          {%- if path.PathType == "ImplementationSpecific" %}
-          {%- var pathInj = ConfigInjectionKind(path.Path, "mapkey") -%}
-          {%- if pathInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " has a prefix path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.") -}}{%- continue -%}{%- end -%}
-          {%- var pathValue = path.Path -%}
-          {#- Ensure path ends with / for prefix matching -#}
-          {%- if pathValue != "" && !hasSuffix(pathValue, "/") -%}{%- pathValue = pathValue + "/" -%}{%- end -%}
-      {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ pathValue }} BACKEND:{{ BackendNameIngress(ingress, path) }}
-          {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-      {%- end %}
+      {%%
+        var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
+        var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"]
+        if pathTypeAnnotation == "prefix" {
+          show shared.Unique("haproxy-ingress-map-path-prefix", "header", "\n# haproxy-ingress/map-path-prefix-haproxy-ingress\n")
+          var namespace = ingress.Metadata.Namespace
+          var name = ingress.Metadata.Name
+          var block = ""
+          for _, rule := range ingress.Spec.Rules {
+            for _, path := range rule.Http.Paths {
+              if path.PathType == "ImplementationSpecific" {
+                var pathInj = ConfigInjectionKind(path.Path, "mapkey")
+                if pathInj != "" {
+                  _ = WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + namespace + "/" + name + " has a prefix path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.")
+                  continue
+                }
+                var pathValue = path.Path
+                if pathValue != "" && !hasSuffix(pathValue, "/") {
+                  pathValue += "/"
+                }
+                block += MapKeyForHost(rule.Host) + pathValue + " BACKEND:" + BackendNameIngress(ingress, path) + "\n"
+              }
+            }
+          }
+          if block != "" {
+            show shared.Unique("haproxy-ingress-map-path-prefix", "resource/" + namespace + "/" + name, block)
+          }
+        }
+      %%}
 
   # ============================================================================
   # Phase 3: Path Type Matching - Begin (Legacy)
   # ============================================================================
 
   map-pfxexact-600-haproxy-ingress:
-    template: |
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/path-type']"]
+      effects: [recordEvent]
+    template: |-
       {#
         HAProxy Ingress Begin Path Map Entries
 
@@ -175,22 +213,29 @@ templateSnippets:
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- var isFirst = true %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
-      {%- if pathTypeAnnotation == "begin" -%}
-      {%- if isFirst %}
-      # haproxy-ingress/map-pfxexact-haproxy-ingress (begin)
-      {%- isFirst = false %}
-      {%- end %}
-        {%- for _, rule := range ingress.Spec.Rules %}
-          {%- for _, path := range rule.Http.Paths %}
-          {%- if path.PathType == "ImplementationSpecific" %}
-          {%- var pathInj = ConfigInjectionKind(path.Path, "mapkey") -%}
-          {%- if pathInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " has a begin path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.") -}}{%- continue -%}{%- end -%}
-      {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
-          {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-      {%- end %}
+      {%%
+        var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
+        var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"]
+        if pathTypeAnnotation == "begin" {
+          show shared.Unique("haproxy-ingress-map-pfxexact", "header", "\n# haproxy-ingress/map-pfxexact-haproxy-ingress (begin)\n")
+          var namespace = ingress.Metadata.Namespace
+          var name = ingress.Metadata.Name
+          var block = ""
+          for _, rule := range ingress.Spec.Rules {
+            for _, path := range rule.Http.Paths {
+              if path.PathType == "ImplementationSpecific" {
+                var pathInj = ConfigInjectionKind(path.Path, "mapkey")
+                if pathInj != "" {
+                  _ = WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + namespace + "/" + name + " has a begin path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.")
+                  continue
+                }
+                block += MapKeyForHost(rule.Host) + path.Path + " BACKEND:" + BackendNameIngress(ingress, path) + "\n"
+              }
+            }
+          }
+          if block != "" {
+            show shared.Unique("haproxy-ingress-map-pfxexact", "resource/" + namespace + "/" + name, block)
+          }
+        }
+      %%}

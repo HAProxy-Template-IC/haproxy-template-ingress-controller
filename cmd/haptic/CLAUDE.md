@@ -329,7 +329,7 @@ the limit). It is called explicitly rather than via the blank-import init so its
 read as "GOMEMLIMIT is unset" — the value comes from the cgroup at runtime. To
 see the effective limit, read the `gomemlimit` field on the startup
 "…starting" log line, or `debug.SetMemoryLimit(-1)` in a debugger. `GOGC` is
-left at Go's default (the Go 1.26 Green Tea GC makes manual GOGC tuning
+left at Go's default (the Green Tea GC makes manual GOGC tuning
 unnecessary); automemlimit's `GOMEMLIMIT` is the OOM safety net.
 
 `GOMEMLIMIT` is a **soft** limit: it makes the GC run harder as the heap

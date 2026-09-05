@@ -1,56 +1,27 @@
 templateSnippets:
-  util-sharded-route-status-patches:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
-    template: |
-      {#
-        Sharded Route Status Patches — per-Kind typed wrappers.
+  util-gateway-httproute-status-bindings:
+    template: |-
+      {{- toJSON(map[string]any{"httproutes": map[string]any{
+        "controllerName": extraContext | dig_string("", "controllerName"),
+      }}) -}}
 
-        Each wrapper inlines the sharding logic and calls its Kind-
-        specific Generate macro directly. Replaces the previous
-        polymorphic ShardedRouteStatusPatches indirection: callers used
-        to pass through `| toSlice()` + (apiVersion, kind) parameters,
-        but typegen now gives us first-class typed slices per Kind, so
-        the polymorphic helper isn't carrying any real weight.
-      #}
-      {%- import "util-generate-httproute-status-patches" for GenerateHTTPRouteStatusPatches -%}
-      {%- import "util-generate-grpcroute-status-patches" for GenerateGRPCRouteStatusPatches -%}
-      {%- import "util-macros" for CalculateShardCount -%}
+  util-gateway-grpcroute-status-bindings:
+    template: |-
+      {{- toJSON(map[string]any{"grpcroutes": map[string]any{
+        "controllerName": extraContext | dig_string("", "controllerName"),
+      }}) -}}
 
-      {%- macro ShardedHTTPRouteStatusPatches(routes []*resources.httproutes.T) -%}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateHTTPRouteStatusPatches(routes) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateHTTPRouteStatusPatches(shard_slice(routes, i, n)) }}
-          {%- end -%}
-        {%- end -%}
-      {%- end macro -%}
-
-      {%- macro ShardedGRPCRouteStatusPatches(routes []*resources.grpcroutes.T) -%}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateGRPCRouteStatusPatches(routes) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateGRPCRouteStatusPatches(shard_slice(routes, i, n)) }}
-          {%- end -%}
-        {%- end -%}
-      {%- end macro -%}
+  status-patches-199-gateway-route-listenersets:
+    requires: [gateways]
+    template: |-
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
 
   util-generate-httproute-status-patches:
     requires: [gateways, httproutes, referencegrants]
     template: |
       {#
         Generate HTTPRoute Status Patches
-
-        Typed sibling of the original polymorphic GenerateRouteStatusPatches.
-        The body is type-bound to `*resources.httproutes.T` throughout —
-        `apiVersion` and `kind` are baked in as local constants since they
-        are constant per Kind. Listener-owner walking (Gateway or
-        ListenerSet) stays polymorphic because the two have different
-        Go types from typegen even though their listener shape is
-        identical.
 
         Conditions emitted per parentRef:
           - Accepted: True/Accepted | False/{NoMatchingParent,
@@ -63,31 +34,21 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
-      {%- import "util-resource-helpers" for GatewayKey -%}
-      {% macro GenerateHTTPRouteStatusPatches(routes []*resources.httproutes.T) %}
-        {%- var controllerName = extraContext | dig_string("", "controllerName") %}
+      {% macro GenerateHTTPRouteStatusPatch(route any) %}
+        {%- var controllerName = dig_string(props, "", "controllerName") %}
         {#- Resolved at runtime: the version the controller actually
             watches, so status SSA always targets a served version
             (v1beta1 on pre-1.0 Gateway API installs). -#}
         {%- var apiVersion = resources.httproutes.APIVersion() %}
         {%- var kind = "HTTPRoute" %}
 
-        {%- var ourGateways = map[string]bool{} %}
-        {%- for _, gw := range resources.gateways.List() %}
           {%%
-            var gwKey = GatewayKey(gw.Metadata.Namespace, gw.Metadata.Name)
-            ourGateways[gwKey] = true
-          %%}
-        {%- end %}
-
-        {%- for _, route := range routes %}
-          {%%
-            var nsStr = route.Metadata.Namespace
-            var nameStr = route.Metadata.Name
-            var generation = route.Metadata.Generation
+            var nsStr = dig_string(route, "", "metadata", "namespace")
+            var nameStr = dig_string(route, "", "metadata", "name")
+            var generation = toint(dig(route, "metadata", "generation") | fallback(0))
             // Coerce to []any: downstream HostnamesIntersect expects []any
             // (polymorphic-route ergonomics). Same pattern as TLSRoute.
-            var routeHostnames = route.Spec.Hostnames | toSlice()
+            var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
             // ResolvedRefs computation — fail-fast on first invalid
             // backendRef. Spec precedence: InvalidKind > RefNotPermitted
@@ -96,12 +57,13 @@ templateSnippets:
             var allRefsResolved = true
             var refFailReason = ""
             var refFailMsg = ""
-            for _, backendRef := range route.Spec.Rules[*].BackendRefs {
-              var svcName = backendRef.Name
-              var svcNamespace = backendRef.Namespace
+            for _, rule := range toSlice(dig(route, "spec", "rules")) {
+              for _, backendRef := range toSlice(dig(rule, "backendRefs")) {
+              var svcName = dig_string(backendRef, "", "name")
+              var svcNamespace = dig_string(backendRef, "", "namespace")
               if svcNamespace == "" { svcNamespace = nsStr }
-              var group = backendRef.Group
-              var refKind = backendRef.Kind
+              var group = dig_string(backendRef, "", "group")
+              var refKind = dig_string(backendRef, "", "kind")
               if refKind == "" { refKind = "Service" }
 
               if !((group == "" || group == "core") && refKind == "Service") {
@@ -127,43 +89,44 @@ templateSnippets:
                 refFailMsg = "Backend not found: " + svcNamespace + "/" + svcName
                 break
               }
+              }
+              if !allRefsResolved { break }
             }
 
             // Build parents array
             var parents = []any{}
             var parentIdx = 0
-            for _, parentRef := range route.Spec.ParentRefs {
-              var gwGroup = parentRef.Group
+            for _, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
+              var gwGroup = dig_string(parentRef, "", "group")
               if gwGroup == "" { gwGroup = "gateway.networking.k8s.io" }
-              var gwKind = parentRef.Kind
+              var gwKind = dig_string(parentRef, "", "kind")
               if gwKind == "" { gwKind = "Gateway" }
-              var gwNamespace = parentRef.Namespace
+              var gwNamespace = dig_string(parentRef, "", "namespace")
               if gwNamespace == "" { gwNamespace = nsStr }
-              var gwName = parentRef.Name
+              var gwName = dig_string(parentRef, "", "name")
 
               // ListenerSet parentRef → resolve to its parent Gateway
               // for the listener-attach evaluation, but emit the
               // status entry with kind=ListenerSet so conformance
               // readers see the route as attached to the LS.
-              // Which Gateway a ListenerSet hangs off is resolved once, by
-              // util-listenerset-candidates; the index is empty when the CRD is
-              // not served, so the parentRef then stays unresolved as before.
-              var lsResolvedGwKey = ""
+              // The publication is absent when the ListenerSet API isn't served.
+              var listenerSetInfo any = nil
+              var resolvedGatewayNamespace = gwNamespace
+              var resolvedGatewayName = gwName
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
-                var byLSAny = shared.Get("listenerSetCandidatesByLS")
-                if byLSAny != nil {
-                  var lsEntry = byLSAny.(map[string]any)[gwNamespace + "/" + gwName]
-                  if lsEntry != nil {
-                    lsResolvedGwKey = tostring(lsEntry.(map[string]any)["gwKey"])
-                  }
+                var selectedListenerSet, foundListenerSet = shared.Select(
+                  "gateway-host-listenersets", "listenersets", gwNamespace + "/" + gwName)
+                if foundListenerSet &&
+                  tostring(dig(selectedListenerSet, "accepted") | fallback(false)) == "true" {
+                  listenerSetInfo = selectedListenerSet
+                  resolvedGatewayNamespace = dig_string(selectedListenerSet, "", "gatewayNamespace")
+                  resolvedGatewayName = dig_string(selectedListenerSet, "", "gatewayName")
                 }
               }
-              if gwGroup == "gateway.networking.k8s.io" && (gwKind == "Gateway" || (gwKind == "ListenerSet" && lsResolvedGwKey != "")) {
-                var gwKey = gwNamespace + "/" + gwName
-                if gwKind == "ListenerSet" {
-                  gwKey = lsResolvedGwKey
-                }
-                if ourGateways[gwKey] {
+              if gwGroup == "gateway.networking.k8s.io" &&
+                (gwKind == "Gateway" || (gwKind == "ListenerSet" && listenerSetInfo != nil)) {
+                var gw = resources.gateways.GetSingle(resolvedGatewayNamespace, resolvedGatewayName)
+                if gw != nil {
                   var parentRefStatus = map[string]any{
                     "group": "gateway.networking.k8s.io",
                     "kind":  gwKind,
@@ -176,13 +139,12 @@ templateSnippets:
                   }
                   var sectionNameStr = ""
                   if dig(parentRef, "sectionName") != nil {
-                    sectionNameStr = parentRef.SectionName
+                    sectionNameStr = dig_string(parentRef, "", "sectionName")
                     parentRefStatus["sectionName"] = sectionNameStr
                   }
-                  var parentPort = toint(parentRef.Port)
+                  var parentPort = toint(dig(parentRef, "port") | fallback(0))
 
                   // Evaluate Accepted-by-listener for this parentRef.
-                  var gw = resources.gateways.GetSingle(gwNamespace, gwName)
                   // listenerOwner stays polymorphic: a Gateway and a
                   // ListenerSet have structurally identical listeners
                   // but distinct Go types from typegen, so we can't
@@ -190,11 +152,9 @@ templateSnippets:
                   // walks both shapes via JSON-tag lookup.
                   var listenerOwner any = gw
                   if gwKind == "ListenerSet" {
-                    var lsOwnerRaw = shared.Get("listenersetsUntyped")
-                    listenerOwner = nil
-                    if lsOwnerRaw != nil {
-                      listenerOwner = dig(lsOwnerRaw.(map[string]any)["byKey"], gwNamespace + "/" + gwName)
-                    }
+                    listenerOwner = map[string]any{"spec": map[string]any{
+                      "listeners": dig(listenerSetInfo, "candidates") | toSlice(),
+                    }}
                   }
                   var acceptedStatus = "False"
                   var acceptedReason = "NotAllowedByListeners"
@@ -326,16 +286,27 @@ templateSnippets:
               // See deployed-only emission rationale in
               // util-generate-route-status-patches (preserved for
               // continuity).
-              statusPatch(nsStr, nameStr, apiVersion, kind,
-                map[string]interface{}{
+              statusPatch(route, map[string]interface{}{
                   "deployed": map[string]interface{}{
                     "parents": parents,
                   },
                 })
             }
           %%}
-        {%- end %}
       {% end %}
+
+  status-patches-201-gateway-httproute:
+    requires: [gateways, httproutes, referencegrants]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-httproute-status-bindings" -}}'
+      root: gateway-http-route-pre-analysis
+      group: gateway-httproute-status
+      optionalConsumes: [gateway-host-listenersets]
+      effects: [statusPatch]
+    template: |-
+      {%- import "util-generate-httproute-status-patches" for GenerateHTTPRouteStatusPatch -%}
+      {%- var route = item -%}
+      {%- if route != nil -%}{{- GenerateHTTPRouteStatusPatch(route) -}}{%- end -%}
 
   util-generate-grpcroute-status-patches:
     requires: [gateways, grpcroutes, referencegrants]
@@ -353,21 +324,11 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
-      {%- import "util-resource-helpers" for GatewayKey -%}
-      {% macro GenerateGRPCRouteStatusPatches(routes []*resources.grpcroutes.T) %}
-        {%- var controllerName = extraContext | dig_string("", "controllerName") %}
+      {% macro GenerateGRPCRouteStatusPatch(route *resources.grpcroutes.T) %}
+        {%- var controllerName = dig_string(props, "", "controllerName") %}
         {%- var apiVersion = resources.grpcroutes.APIVersion() %}
         {%- var kind = "GRPCRoute" %}
 
-        {%- var ourGateways = map[string]bool{} %}
-        {%- for _, gw := range resources.gateways.List() %}
-          {%%
-            var gwKey = GatewayKey(gw.Metadata.Namespace, gw.Metadata.Name)
-            ourGateways[gwKey] = true
-          %%}
-        {%- end %}
-
-        {%- for _, route := range routes %}
           {%%
             var nsStr = route.Metadata.Namespace
             var nameStr = route.Metadata.Name
@@ -421,25 +382,24 @@ templateSnippets:
               if gwNamespace == "" { gwNamespace = nsStr }
               var gwName = parentRef.Name
 
-              // Which Gateway a ListenerSet hangs off is resolved once, by
-              // util-listenerset-candidates; the index is empty when the CRD is
-              // not served, so the parentRef then stays unresolved as before.
-              var lsResolvedGwKey = ""
+              // The publication is absent when the ListenerSet API isn't served.
+              var listenerSetInfo any = nil
+              var resolvedGatewayNamespace = gwNamespace
+              var resolvedGatewayName = gwName
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
-                var byLSAny = shared.Get("listenerSetCandidatesByLS")
-                if byLSAny != nil {
-                  var lsEntry = byLSAny.(map[string]any)[gwNamespace + "/" + gwName]
-                  if lsEntry != nil {
-                    lsResolvedGwKey = tostring(lsEntry.(map[string]any)["gwKey"])
-                  }
+                var selectedListenerSet, foundListenerSet = shared.Select(
+                  "gateway-host-listenersets", "listenersets", gwNamespace + "/" + gwName)
+                if foundListenerSet &&
+                  tostring(dig(selectedListenerSet, "accepted") | fallback(false)) == "true" {
+                  listenerSetInfo = selectedListenerSet
+                  resolvedGatewayNamespace = dig_string(selectedListenerSet, "", "gatewayNamespace")
+                  resolvedGatewayName = dig_string(selectedListenerSet, "", "gatewayName")
                 }
               }
-              if gwGroup == "gateway.networking.k8s.io" && (gwKind == "Gateway" || (gwKind == "ListenerSet" && lsResolvedGwKey != "")) {
-                var gwKey = gwNamespace + "/" + gwName
-                if gwKind == "ListenerSet" {
-                  gwKey = lsResolvedGwKey
-                }
-                if ourGateways[gwKey] {
+              if gwGroup == "gateway.networking.k8s.io" &&
+                (gwKind == "Gateway" || (gwKind == "ListenerSet" && listenerSetInfo != nil)) {
+                var gw = resources.gateways.GetSingle(resolvedGatewayNamespace, resolvedGatewayName)
+                if gw != nil {
                   var parentRefStatus = map[string]any{
                     "group": "gateway.networking.k8s.io",
                     "kind":  gwKind,
@@ -455,14 +415,11 @@ templateSnippets:
                   }
                   var parentPort = toint(parentRef.Port)
 
-                  var gw = resources.gateways.GetSingle(gwNamespace, gwName)
                   var listenerOwner any = gw
                   if gwKind == "ListenerSet" {
-                    var lsOwnerRaw = shared.Get("listenersetsUntyped")
-                    listenerOwner = nil
-                    if lsOwnerRaw != nil {
-                      listenerOwner = dig(lsOwnerRaw.(map[string]any)["byKey"], gwNamespace + "/" + gwName)
-                    }
+                    listenerOwner = map[string]any{"spec": map[string]any{
+                      "listeners": dig(listenerSetInfo, "candidates") | toSlice(),
+                    }}
                   }
                   var acceptedStatus = "False"
                   var acceptedReason = "NotAllowedByListeners"
@@ -587,19 +544,30 @@ templateSnippets:
             }
 
             if len(parents) > 0 {
-              statusPatch(nsStr, nameStr, apiVersion, kind,
-                map[string]interface{}{
+              statusPatch(route, map[string]interface{}{
                   "deployed": map[string]interface{}{
                     "parents": parents,
                   },
                 })
             }
           %%}
-        {%- end %}
       {% end %}
 
+  status-patches-202-gateway-grpcroute:
+    requires: [gateways, grpcroutes, referencegrants]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-grpcroute-status-bindings" -}}'
+      group: gateway-grpcroute-status
+      optionalConsumes: [gateway-host-listenersets]
+      effects: [statusPatch]
+    template: |-
+      {%- import "util-generate-grpcroute-status-patches" for GenerateGRPCRouteStatusPatch -%}
+      {%- var route = resources.grpcroutes.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if route != nil -%}{{- GenerateGRPCRouteStatusPatch(route) -}}{%- end -%}
+
   util-generate-tlsroute-status-patches:
-    requires: [gateways, referencegrants, tlsroutes]
+    requires: [gateways, namespaces, referencegrants, services, tlsroutes]
     template: |
       {#
         Generate TLSRoute Status Patches
@@ -638,9 +606,9 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
-      {%- import "util-resource-helpers" for ResourceNamespace, GatewayKey, ListenerProtocolOr -%}
-      {% macro GenerateTLSRouteStatusPatches(routes []*resources.tlsroutes.T) %}
-        {%- var controllerName = extraContext | dig_string("", "controllerName") %}
+      {%- import "util-resource-helpers" for ListenerProtocolOr -%}
+      {% macro GenerateTLSRouteStatusPatch(route *resources.tlsroutes.T) %}
+        {%- var controllerName = dig_string(props, "", "controllerName") %}
         {#- TLSRoute is v1 in Gateway API v1.5+ — the v1alpha2 served-version
             was retired and the API server returns 404 on patch attempts to
             gateway.networking.k8s.io/v1alpha2. Use v1 to match the
@@ -648,15 +616,6 @@ templateSnippets:
         {%- var apiVersion = resources.tlsroutes.APIVersion() %}
         {%- var kind = "TLSRoute" %}
 
-        {%- var ourGateways = map[string]bool{} %}
-        {%- for _, gw := range resources.gateways.List() %}
-          {%%
-            var gwKey = GatewayKey(gw.Metadata.Namespace, gw.Metadata.Name)
-            ourGateways[gwKey] = true
-          %%}
-        {%- end %}
-
-        {%- for _, route := range routes %}
           {%%
             var nsStr = route.Metadata.Namespace
             var nameStr = route.Metadata.Name
@@ -719,8 +678,8 @@ templateSnippets:
               var gwName = parentRef.Name
 
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "Gateway" {
-                var gwKey = gwNamespace + "/" + gwName
-                if ourGateways[gwKey] {
+                var gw = resources.gateways.GetSingle(gwNamespace, gwName)
+                if gw != nil {
                   var parentRefStatus = map[string]any{
                     "group": "gateway.networking.k8s.io",
                     "kind":  "Gateway",
@@ -744,7 +703,6 @@ templateSnippets:
                   }
                   var parentPort = toint(parentRef.Port)
 
-                  var gw = resources.gateways.GetSingle(gwNamespace, gwName)
                   // Pre-compute mixed-mode map so we can flag listeners
                   // that ProtocolConflict applies to.
                   // One entry per (port, mode): a port with more than one is a
@@ -949,41 +907,17 @@ templateSnippets:
               // signalling "Accepted" until data plane is ready), but
               // still spec-compliant: Accepted=True is eventually emitted
               // and always correct when it appears.
-              statusPatch(nsStr, nameStr, apiVersion, kind,
-                map[string]interface{}{
+              statusPatch(route, map[string]interface{}{
                   "deployed": map[string]interface{}{
                     "parents": parents,
                   },
                 })
             }
           %%}
-        {%- end %}
-      {% end %}
-
-  util-sharded-tlsroute-status-patches:
-    requires: [gateways, referencegrants, tlsroutes]
-    template: |
-      {#
-        Sharded TLSRoute Status Patches
-
-        Wraps GenerateTLSRouteStatusPatches with automatic parallel
-        sharding (mirrors util-sharded-route-status-patches).
-      #}
-      {%- import "util-generate-tlsroute-status-patches" for GenerateTLSRouteStatusPatches -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedTLSRouteStatusPatches(routes []*resources.tlsroutes.T) %}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateTLSRouteStatusPatches(routes) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateTLSRouteStatusPatches(shard_slice(routes, i, n)) }}
-          {%- end -%}
-        {%- end -%}
       {% end %}
 
   util-generate-tcproute-status-patches:
-    requires: [gateways, referencegrants, tcproutes]
+    requires: [gateways, namespaces, referencegrants, services, tcproutes]
     template: |
       {#
         Generate TCPRoute Status Patches
@@ -1005,21 +939,12 @@ templateSnippets:
       #}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
-      {%- import "util-resource-helpers" for GatewayKey, ListenerProtocolOr -%}
-      {% macro GenerateTCPRouteStatusPatches(routes []*resources.tcproutes.T) %}
-        {%- var controllerName = extraContext | dig_string("", "controllerName") %}
+      {%- import "util-resource-helpers" for ListenerProtocolOr -%}
+      {% macro GenerateTCPRouteStatusPatch(route *resources.tcproutes.T) %}
+        {%- var controllerName = dig_string(props, "", "controllerName") %}
         {%- var apiVersion = resources.tcproutes.APIVersion() %}
         {%- var kind = "TCPRoute" %}
 
-        {%- var ourGateways = map[string]bool{} %}
-        {%- for _, gw := range resources.gateways.List() %}
-          {%%
-            var gwKey = GatewayKey(gw.Metadata.Namespace, gw.Metadata.Name)
-            ourGateways[gwKey] = true
-          %%}
-        {%- end %}
-
-        {%- for _, route := range routes %}
           {%%
             var nsStr = route.Metadata.Namespace
             var nameStr = route.Metadata.Name
@@ -1074,8 +999,8 @@ templateSnippets:
               var gwName = parentRef.Name
 
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "Gateway" {
-                var gwKey = gwNamespace + "/" + gwName
-                if ourGateways[gwKey] {
+                var gw = resources.gateways.GetSingle(gwNamespace, gwName)
+                if gw != nil {
                   var parentRefStatus = map[string]any{
                     "group": "gateway.networking.k8s.io",
                     "kind":  "Gateway",
@@ -1090,8 +1015,6 @@ templateSnippets:
                     parentRefStatus["sectionName"] = sectionNameStr
                   }
                   var parentPort = toint(parentRef.Port)
-                  var gw = resources.gateways.GetSingle(gwNamespace, gwName)
-
                   var acceptedStatus = "False"
                   var acceptedReason = "NotAllowedByListeners"
                   var acceptedMsg = "No listener accepts this route"
@@ -1200,29 +1123,11 @@ templateSnippets:
             }
 
             if len(parents) > 0 {
-              statusPatch(nsStr, nameStr, apiVersion, kind,
-                map[string]interface{}{
+              statusPatch(route, map[string]interface{}{
                   "deployed": map[string]interface{}{
                     "parents": parents,
                   },
                 })
             }
           %%}
-        {%- end %}
-      {% end %}
-
-  util-sharded-tcproute-status-patches:
-    requires: [gateways, referencegrants, tcproutes]
-    template: |
-      {%- import "util-generate-tcproute-status-patches" for GenerateTCPRouteStatusPatches -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedTCPRouteStatusPatches(routes []*resources.tcproutes.T) %}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateTCPRouteStatusPatches(routes) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateTCPRouteStatusPatches(shard_slice(routes, i, n)) }}
-          {%- end -%}
-        {%- end -%}
       {% end %}

@@ -9,6 +9,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/golangci/golangci-lint/v2 v2.13.2
 	github.com/haproxytech/client-native/v6 v6.4.1
+	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.19.2
 	github.com/prometheus/client_golang v1.24.1
@@ -16,7 +17,7 @@ require (
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
-	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260823221654-ffec5728d60a
+	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260830204542-c15e316ff408
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.41.0
@@ -178,7 +179,6 @@ require (
 	github.com/haproxytech/client-native/v5 v5.1.28 // indirect
 	github.com/haproxytech/go-logger v1.1.0 // indirect
 	github.com/haproxytech/go-method-gen v0.1.4 // indirect
-	github.com/hashicorp/go-immutable-radix/v2 v2.1.0 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect

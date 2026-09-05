@@ -32,8 +32,22 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 				SetID:           setID,
 				MapFiles:        nil,
 				SSLCertificates: nil,
+				SSLCaFiles:      nil,
 				GeneralFiles:    nil,
 				CRTListFiles:    nil,
+			},
+		},
+		{
+			name:      "CA secret names produce separate Secret refs",
+			namespace: "haptic",
+			result: &PublishResult{
+				SSLCaFileNames: []string{"client-ca"},
+			},
+			want: &haproxyv1alpha1.AuxiliaryFileReferences{
+				SetID: setID,
+				SSLCaFiles: []haproxyv1alpha1.ResourceReference{
+					{Kind: "Secret", Name: "client-ca", Namespace: "haptic"},
+				},
 			},
 		},
 		{
@@ -95,6 +109,7 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 			result: &PublishResult{
 				MapFileNames:     []string{"a.map", "b.map"},
 				SecretNames:      []string{"s1"},
+				SSLCaFileNames:   []string{"ca1"},
 				GeneralFileNames: []string{"errors.http"},
 				CRTListFileNames: []string{"crt-list"},
 			},
@@ -106,6 +121,9 @@ func TestBuildAuxiliaryFileReferences(t *testing.T) {
 				},
 				SSLCertificates: []haproxyv1alpha1.ResourceReference{
 					{Kind: "Secret", Name: "s1", Namespace: "edge"},
+				},
+				SSLCaFiles: []haproxyv1alpha1.ResourceReference{
+					{Kind: "Secret", Name: "ca1", Namespace: "edge"},
 				},
 				GeneralFiles: []haproxyv1alpha1.ResourceReference{
 					{Kind: "HAProxyGeneralFile", Name: "errors.http", Namespace: "edge"},
@@ -197,6 +215,16 @@ func TestAuxiliaryRefsEqual(t *testing.T) {
 			b: &haproxyv1alpha1.AuxiliaryFileReferences{
 				MapFiles:        []haproxyv1alpha1.ResourceReference{mapFile("hosts.map")},
 				SSLCertificates: []haproxyv1alpha1.ResourceReference{secret("tls")},
+			},
+			want: false,
+		},
+		{
+			name: "certificate and CA refs cannot alias",
+			a: &haproxyv1alpha1.AuxiliaryFileReferences{
+				SSLCertificates: []haproxyv1alpha1.ResourceReference{secret("trust")},
+			},
+			b: &haproxyv1alpha1.AuxiliaryFileReferences{
+				SSLCaFiles: []haproxyv1alpha1.ResourceReference{secret("trust")},
 			},
 			want: false,
 		},

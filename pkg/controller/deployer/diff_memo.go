@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 // diffKey is everything a decision depends on besides the render: two pods
@@ -30,9 +31,9 @@ import (
 // by content for the same reason — its generation is a per-pod counter, so
 // equal counters say nothing about equal content.
 type diffKey struct {
-	applied         string
-	running         string
-	workerOps       string
+	applied         *renderplan.Plan
+	running         *renderplan.Plan
+	workerOps       *renderplan.Plan
 	caps            string
 	inventory       string
 	pendingServers  int

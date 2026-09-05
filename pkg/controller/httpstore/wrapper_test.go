@@ -591,10 +591,10 @@ func TestHTTPStoreWrapper_GetCachedContent_Validation(t *testing.T) {
 	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, overlay, SourceModeReadOnly)
 
 	// URL not in cache
-	content, ok, err := wrapper.getCachedContent("http://example.com", "")
+	snapshot, ok, err := wrapper.getCachedSnapshot("http://example.com", purehttpstore.SourceDescriptor{})
 	require.NoError(t, err)
 	assert.False(t, ok)
-	assert.Empty(t, content)
+	assert.Empty(t, snapshot.Content)
 }
 
 func TestHTTPStoreWrapper_GetCachedContent_Production(t *testing.T) {
@@ -605,10 +605,10 @@ func TestHTTPStoreWrapper_GetCachedContent_Production(t *testing.T) {
 	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil, SourceModeAuthoritative)
 
 	// URL not in cache
-	content, ok, err := wrapper.getCachedContent("http://example.com", "")
+	snapshot, ok, err := wrapper.getCachedSnapshot("http://example.com", purehttpstore.SourceDescriptor{})
 	require.NoError(t, err)
 	assert.False(t, ok)
-	assert.Empty(t, content)
+	assert.Empty(t, snapshot.Content)
 }
 
 // "interval" is what the option does: the first fetch is synchronous, and this

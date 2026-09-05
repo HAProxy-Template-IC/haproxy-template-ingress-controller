@@ -50,17 +50,21 @@ func (s *Server) stateResponse(verify bool) (api.State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := api.State{
-		APIVersion:        api.Version,
-		AgentVersion:      s.cfg.AgentVersion,
-		PlanSchemaVersion: s.state.PlanSchemaVersion,
-		AgentOps:          cli.Kinds(),
-		HAProxy:           s.worker,
-		Generation:        s.state.Generation,
-		AppliedPlanID:     s.state.AppliedPlanID,
-		RunningPlanID:     s.state.RunningPlanID,
-		WorkerOpsPlanID:   s.state.WorkerOpsPlanID,
-		AppliedToken:      s.state.AppliedToken,
-		LKGPlanID:         s.state.LKGPlanID,
+		APIVersion:         api.Version,
+		AgentVersion:       s.cfg.AgentVersion,
+		PlanSchemaVersion:  s.state.PlanSchemaVersion,
+		AgentOps:           cli.Kinds(),
+		HAProxy:            s.worker,
+		Generation:         s.state.Generation,
+		AppliedPlanID:      s.state.AppliedPlanID,
+		AppliedPlanProof:   s.state.AppliedPlanProof,
+		RunningPlanID:      s.state.RunningPlanID,
+		RunningPlanProof:   s.state.RunningPlanProof,
+		WorkerOpsPlanID:    s.state.WorkerOpsPlanID,
+		WorkerOpsPlanProof: s.state.WorkerOpsPlanProof,
+		AppliedToken:       s.state.AppliedToken,
+		LKGPlanID:          s.state.LKGPlanID,
+		LKGPlanProof:       s.state.LKGPlanProof,
 		// Cloned: the apply path mutates the tree in place and the answer is
 		// marshalled after this lock is released.
 		Files:              maps.Clone(s.tree),
@@ -69,7 +73,8 @@ func (s *Server) stateResponse(verify bool) (api.State, error) {
 		LastApply:          s.state.LastApply,
 		InvariantViolation: s.metrics.LastViolation(),
 	}
-	if s.state.PlanBlobPlanID != "" && s.state.PlanBlobPlanID == s.state.AppliedPlanID {
+	if s.state.PlanBlobPlanID != "" && s.state.PlanBlobPlanID == s.state.AppliedPlanID &&
+		s.state.PlanBlobPlanProof != "" && s.state.PlanBlobPlanProof == s.state.AppliedPlanProof {
 		out.AppliedPlan = s.appliedPlan
 	}
 	if !s.state.ReloadPendingAt.IsZero() {

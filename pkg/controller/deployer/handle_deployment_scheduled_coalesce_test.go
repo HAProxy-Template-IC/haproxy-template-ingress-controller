@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
 // The deployer coalesces DeploymentScheduledEvents via component.Base's
@@ -76,20 +76,13 @@ func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 	bus.Start()
 
 	mkScheduled := func(id string) *events.DeploymentScheduledEvent {
-		return events.NewDeploymentScheduledEvent(
-			"global\n  daemon\n",
-			nil,                    // auxFiles
-			[]dataplane.Endpoint{}, // empty endpoints → fast deploy that only publishes DeploymentCompletedEvent
-			"runtime-config",
-			"haptic",
-			"test",
-			"",   // contentChecksum
-			nil,  // plan
-			"",   // planID
-			nil,  // statusPatches
-			true, // coalescible
+		event, err := events.NewDeploymentScheduledEventWithCycle(
+			mustTestOccurrence("global\n  daemon\n", "test-plan", nil),
+			nil, "runtime-config", "haptic", "test", true,
 			events.WithCorrelation(id, id),
 		)
+		require.NoError(t, err)
+		return event
 	}
 
 	// Queue 4 coalescible events in the component's subscription buffer
@@ -146,11 +139,12 @@ func TestStart_FlushesStaleEventsFromPreviousTerm(t *testing.T) {
 	bus.Start()
 
 	// A "previous term" event, buffered before Start.
-	stale := events.NewDeploymentScheduledEvent(
-		"global\n  daemon\n", nil, []dataplane.Endpoint{},
-		"runtime-config", "haptic", "test", "", nil, "", nil, true,
+	stale, err := events.NewDeploymentScheduledEventWithCycle(
+		mustTestOccurrence("global\n  daemon\n", "test-plan", nil),
+		nil, "runtime-config", "haptic", "test", true,
 		events.WithCorrelation("stale-prev-term", "stale-prev-term"),
 	)
+	require.NoError(t, err)
 	bus.Publish(stale)
 
 	// Let the bus route it into the deployer's subscription buffer before
@@ -166,11 +160,12 @@ func TestStart_FlushesStaleEventsFromPreviousTerm(t *testing.T) {
 	testutil.AssertNoEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.NoEventTimeout)
 
 	// A current-term event still deploys.
-	fresh := events.NewDeploymentScheduledEvent(
-		"global\n  daemon\n", nil, []dataplane.Endpoint{},
-		"runtime-config", "haptic", "test", "", nil, "", nil, true,
+	fresh, err := events.NewDeploymentScheduledEventWithCycle(
+		mustTestOccurrence("global\n  daemon\n", "test-plan", nil),
+		nil, "runtime-config", "haptic", "test", true,
 		events.WithCorrelation("fresh-current-term", "fresh-current-term"),
 	)
+	require.NoError(t, err)
 	bus.Publish(fresh)
 	completed := testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.EventTimeout)
 	assert.Equal(t, "fresh-current-term", completed.CorrelationID(),

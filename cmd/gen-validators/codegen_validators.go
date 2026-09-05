@@ -63,12 +63,7 @@ func generateVersionFile(outputDir, version string, schemas map[string]*Resolved
 	buf.WriteString(generatedHeader)
 	fmt.Fprintf(&buf, `package genvalidators
 
-import (
-	"encoding/binary"
-
-	"github.com/cespare/xxhash/v2"
-	"github.com/haproxytech/client-native/v6/models"
-)
+import "github.com/haproxytech/client-native/v6/models"
 
 // Version-specific validators for %s.
 // These functions validate client-native models directly without JSON conversion.
@@ -85,7 +80,6 @@ import (
 	for _, schemaName := range schemaNames {
 		schema := schemas[schemaName]
 		generateValidator(&buf, version, schemaName, schema)
-		generateHasher(&buf, version, schemaName, schema)
 	}
 
 	return writeFormattedFile(filepath.Join(outputDir, version+"_generated.go"), buf.Bytes())

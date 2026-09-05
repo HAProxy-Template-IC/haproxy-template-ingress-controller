@@ -61,8 +61,9 @@ func TestRefreshURL_SkipsWhileValidationIsInFlight(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Serve new content so the refresh stores a pending version.
+	// Make the accepted body differ so the refresh stores a pending version.
 	store.mu.Lock()
+	store.cache[url].AcceptedContent = "previous"
 	store.cache[url].AcceptedChecksum = "different-so-content-counts-as-changed"
 	store.mu.Unlock()
 
@@ -95,6 +96,7 @@ func TestRefreshURL_AbandonsValidationStuckPastDeadline(t *testing.T) {
 	ctx := context.Background()
 
 	store.mu.Lock()
+	store.cache[url].AcceptedContent = "previous"
 	store.cache[url].AcceptedChecksum = "different-so-content-counts-as-changed"
 	store.mu.Unlock()
 

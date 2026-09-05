@@ -36,8 +36,12 @@ func (b *builder) diffBackends() {
 			b.backendAdded(&next)
 			continue
 		}
-		b.sectionChange = b.sectionChange || prev.TextDigest != next.TextDigest
-		b.backendChanged(&prev, &next)
+		textEqual := sameSectionText(
+			b.prevSections[sectionKey{renderplan.SectionKindBackend, name}],
+			b.nextSections[sectionKey{renderplan.SectionKindBackend, name}],
+		)
+		b.sectionChange = b.sectionChange || !textEqual
+		b.backendChanged(&prev, &next, textEqual)
 	}
 	for _, name := range backendSections(b.prev) {
 		if _, kept := b.next.Backends[name]; kept {
@@ -132,15 +136,13 @@ func (b *builder) deleteBackend(be *renderplan.Backend) {
 }
 
 // backendChanged applies the section guard for one backend and then rule 4.
-func (b *builder) backendChanged(prev, next *renderplan.Backend) {
+func (b *builder) backendChanged(prev, next *renderplan.Backend, textEqual bool) {
 	switch {
-	case prev.BodyDigest != next.BodyDigest:
+	case !sameBackendBody(prev, next):
 		b.failf("backend %s: body changed", next.Name)
-	case unexplainedText(prev, next):
+	case unexplainedText(prev, next, textEqual):
 		b.failf("backend %s: unexplained text change", next.Name)
-	case next.RecordDigest != "" && prev.RecordDigest == next.RecordDigest:
-		// An equal record digest is an equal record: no attribute and no
-		// server moved, so nothing is left to compose for this backend.
+	case sameBackendRecord(prev, next):
 	default:
 		if attr := changedAttribute(prev, next); attr != "" {
 			b.failf("backend %s: %s changed, which HAProxy cannot alter at runtime", next.Name, attr)
@@ -152,10 +154,8 @@ func (b *builder) backendChanged(prev, next *renderplan.Backend) {
 
 // unexplainedText reports a section whose text moved without any record,
 // comment or body change accounting for it — the generator's derivation check.
-func unexplainedText(prev, next *renderplan.Backend) bool {
-	return prev.TextDigest != next.TextDigest &&
-		prev.RecordDigest == next.RecordDigest &&
-		prev.CommentsDigest == next.CommentsDigest
+func unexplainedText(prev, next *renderplan.Backend, textEqual bool) bool {
+	return !textEqual && sameBackendRecord(prev, next) && sameBackendComments(prev, next)
 }
 
 // changedAttribute names the first backend attribute that only a reload can

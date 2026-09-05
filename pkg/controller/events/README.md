@@ -45,6 +45,14 @@ bus.Publish(events.NewConfigParsedEvent(cfg, templateConfig, version, secretVers
 
 Always use the `New*` constructors — they copy any slices/maps to cut off the ownership chain. Don't construct events with a struct literal; you lose the defensive copy and the analyzer can't help.
 
+### Render occurrence authority
+
+Production render lifecycle events carry one sealed `*rendercycle.Occurrence` from rendering through resource apply, validation, scheduling, and deployment completion. `NewTemplateRenderedEventWithCycle` creates it. Read it with `RenderOccurrence()` and pass that exact pointer to downstream `WithCycle` constructors or `NewDeploymentResultWithOccurrence`.
+
+`CycleSnapshot`, `OutputSnapshot`, `RenderProof`, `PlanID`, and checksum fields are compatibility and diagnostic shadows. They aren't authentication inputs. Mutating or substituting them doesn't change `AuthenticatedRenderIdentity()`, and subscriber clones restore them from the private occurrence. Legacy constructors don't authenticate an occurrence; their occurrence accessors return an error.
+
+Don't reconstruct identity from a snapshot and proof. A proof is diagnostic, and equal output can occur in distinct A-B-A render executions.
+
 ## Consuming
 
 Either accept everything and switch on type, or subscribe to a filtered set:

@@ -175,7 +175,8 @@ func TestStatusPatchCollector_Register_DiscriminatesByAllFourFieldsInKey(t *test
 			require.NoError(t, c.Register(tt.ns2, tt.n2, tt.av2, tt.k2,
 				map[string]map[string]any{"deployed": {"second": true}}))
 
-			patches := c.Patches()
+			patches, err := c.Patches()
+			require.NoError(t, err)
 			assert.Len(t, patches, tt.wantPatchCount,
 				"two registrations with this combination MUST yield %d patches — "+
 					"a regression in statusPatchKey discrimination would silently "+

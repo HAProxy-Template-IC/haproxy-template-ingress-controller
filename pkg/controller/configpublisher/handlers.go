@@ -100,23 +100,23 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 // This method is non-blocking: it queues work for the publishWorker instead of
 // making K8S API calls directly, so the event loop keeps up with event volume.
 func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) {
+	entry, err := renderedConfigEntryFromEvent(event)
+	if err != nil {
+		c.logger.Error("Rendered configuration is invalid; publication was skipped",
+			"error", err)
+		return
+	}
+
 	correlationID := event.CorrelationID()
 	if correlationID == "" {
 		c.logger.Warn("TemplateRenderedEvent missing correlation ID, using event ID as fallback",
 			"event_id", event.EventID(),
-			"config_bytes", event.ConfigBytes)
+			"config_bytes", len(entry.config))
 		correlationID = event.EventID()
 	}
 
 	// Cache the rendered config indexed by correlation ID
 	c.mu.Lock()
-	entry := &renderedConfigEntry{
-		config:          event.HAProxyConfig,
-		auxFiles:        event.AuxiliaryFiles,
-		contentChecksum: event.ContentChecksum,
-		planID:          event.PlanID,
-		renderedAt:      event.Timestamp(),
-	}
 	c.renderedConfigs[correlationID] = entry
 	c.lastRender = entry
 	c.lastRenderCorrelationID = correlationID
@@ -127,7 +127,7 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 		c.heldRender = entry
 		c.heldCorrelationID = correlationID
 	} else {
-		c.publishedPlanID = event.PlanID
+		c.publishedPlanID = entry.planID
 	}
 	c.mu.Unlock()
 
@@ -142,15 +142,15 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 	// advertise a config no pod has — it waits for the verdict that releases it.
 	if pinned {
 		c.logger.Warn("Render gate is holding renders; not publishing this one yet",
-			"plan", event.PlanID, "correlation_id", correlationID)
+			"plan", entry.planID, "correlation_id", correlationID)
 		return
 	}
 
 	c.logger.Debug("Queuing configuration for async publishing",
 		"config_name", templateConfig.Name,
 		"config_namespace", templateConfig.Namespace,
-		"config_bytes", event.ConfigBytes,
-		"auxiliary_file_count", event.AuxiliaryFileCount,
+		"config_bytes", len(entry.config),
+		"auxiliary_file_count", renderedAuxiliaryFileCount(entry),
 		"correlation_id", correlationID,
 	)
 
@@ -159,6 +159,59 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 	// - If channel has pending work, replace it with newer work (coalescing)
 	// This ensures we always publish the latest config, not stale intermediate ones.
 	c.queuePublish(templateConfig, entry, correlationID)
+}
+
+func renderedConfigEntryFromEvent(event *events.TemplateRenderedEvent) (*renderedConfigEntry, error) {
+	if event == nil {
+		return nil, fmt.Errorf("template rendered event is nil")
+	}
+	occurrence, err := event.RenderOccurrence()
+	if err != nil {
+		return nil, fmt.Errorf("authenticating render occurrence: %w", err)
+	}
+	cycle, err := occurrence.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading render occurrence: %w", err)
+	}
+	outputSnapshot, err := cycle.OutputSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading render cycle output: %w", err)
+	}
+	renderedConfig, err := outputSnapshot.Config()
+	if err != nil {
+		return nil, fmt.Errorf("reading output config: %w", err)
+	}
+	artifacts, err := outputSnapshot.ArtifactSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading output artifacts: %w", err)
+	}
+	planID, err := outputSnapshot.PlanID()
+	if err != nil {
+		return nil, fmt.Errorf("reading output plan ID: %w", err)
+	}
+	checksum, err := cycle.ContentChecksum()
+	if err != nil {
+		return nil, fmt.Errorf("reading render cycle checksum: %w", err)
+	}
+	return &renderedConfigEntry{
+		config: renderedConfig, artifactSnapshot: artifacts, outputSnapshot: outputSnapshot,
+		contentChecksum: checksum, planID: planID, renderedAt: event.Timestamp(),
+	}, nil
+}
+
+func renderedAuxiliaryFileCount(entry *renderedConfigEntry) int {
+	if entry.artifactSnapshot != nil {
+		count, err := entry.artifactSnapshot.Len()
+		if err == nil {
+			return count
+		}
+	}
+	if entry.auxFiles == nil {
+		return 0
+	}
+	return len(entry.auxFiles.MapFiles) + len(entry.auxFiles.SSLCertificates) +
+		len(entry.auxFiles.SSLCaFiles) + len(entry.auxFiles.GeneralFiles) +
+		len(entry.auxFiles.CRTListFiles)
 }
 
 // handleRenderGateCompleted mirrors the gate's latch and records its verdict on
@@ -173,13 +226,18 @@ func (c *Component) handleRenderGateCompleted(event *events.RenderGateCompletedE
 	if !event.Newest {
 		return
 	}
+	planID, err := renderGatePlanID(event)
+	if err != nil {
+		c.logger.Error("Render gate verdict is invalid; publication state was unchanged", "error", err)
+		return
+	}
 
 	c.mu.Lock()
 	templateConfig := c.templateConfig
 	hasTemplateConfig := c.hasTemplateConfig
 	c.gatePinned = !event.OK
-	released := c.releaseHeldRenderLocked(event)
-	describesPublished := event.PlanID != "" && event.PlanID == c.publishedPlanID
+	released := c.releaseHeldRenderLocked(event.OK, planID)
+	describesPublished := planID != "" && planID == c.publishedPlanID
 	c.mu.Unlock()
 
 	if !hasTemplateConfig || templateConfig == nil {
@@ -190,19 +248,39 @@ func (c *Component) handleRenderGateCompleted(event *events.RenderGateCompletedE
 	}
 	if !describesPublished {
 		c.logger.Debug("Render gate verdict does not describe the published config",
-			"plan", event.PlanID)
+			"plan", planID)
 		return
 	}
 
 	c.enqueueVerdict(&configpublisher.GateVerdict{
 		Namespace: templateConfig.Namespace,
 		Name:      configpublisher.GenerateRuntimeConfigName(templateConfig.Name),
-		PlanID:    event.PlanID,
+		PlanID:    planID,
 		Accepted:  event.OK,
 		Refused:   event.Refused,
 		Pinned:    event.Pinned,
 		Message:   event.Message,
 	})
+}
+
+func renderGatePlanID(event *events.RenderGateCompletedEvent) (string, error) {
+	occurrence, err := event.RenderOccurrence()
+	if err != nil {
+		return "", fmt.Errorf("reading render occurrence: %w", err)
+	}
+	cycle, err := occurrence.Snapshot()
+	if err != nil {
+		return "", fmt.Errorf("reading render cycle: %w", err)
+	}
+	output, err := cycle.OutputSnapshot()
+	if err != nil {
+		return "", fmt.Errorf("reading render output: %w", err)
+	}
+	planID, err := output.PlanID()
+	if err != nil {
+		return "", fmt.Errorf("reading output plan ID: %w", err)
+	}
+	return planID, nil
 }
 
 // heldRelease is the render a passing verdict let through.
@@ -214,14 +292,14 @@ type heldRelease struct {
 // releaseHeldRenderLocked hands back the withheld render when this verdict is
 // the pass that names it, and marks it as the plan the object now publishes.
 // Caller holds mu.
-func (c *Component) releaseHeldRenderLocked(event *events.RenderGateCompletedEvent) *heldRelease {
-	if !event.OK || c.heldRender == nil || c.heldRender.planID != event.PlanID {
+func (c *Component) releaseHeldRenderLocked(ok bool, planID string) *heldRelease {
+	if !ok || c.heldRender == nil || c.heldRender.planID != planID {
 		return nil
 	}
 	released := &heldRelease{entry: c.heldRender, correlationID: c.heldCorrelationID}
 	c.heldRender = nil
 	c.heldCorrelationID = ""
-	c.publishedPlanID = event.PlanID
+	c.publishedPlanID = planID
 	return released
 }
 
@@ -257,7 +335,10 @@ func (c *Component) enqueueVerdict(verdict *configpublisher.GateVerdict) {
 // routes through a dedicated channel + pending slot so a validation publish
 // cannot coalesce it away.
 func (c *Component) handleDeployedConfigPublishRequest(event *events.DeployedConfigPublishRequest) {
-	if event.ContentChecksum == "" {
+	entry, err := renderedConfigEntryFromDeployedRequest(event)
+	if err != nil {
+		c.logger.Error("Deployed configuration is invalid; publication was skipped",
+			"error", err)
 		return
 	}
 
@@ -268,22 +349,59 @@ func (c *Component) handleDeployedConfigPublishRequest(event *events.DeployedCon
 
 	if !hasTemplateConfig || templateConfig == nil {
 		c.logger.Debug("Skipping deployed-config publish, no template config cached yet",
-			"checksum", event.ContentChecksum)
+			"checksum", entry.contentChecksum)
 		return
 	}
 
 	workItem := c.makePublishWorkItem(
-		"deployed:"+event.ContentChecksum,
+		"deployed:"+entry.contentChecksum,
 		templateConfig,
-		&renderedConfigEntry{
-			config:          event.Config,
-			auxFiles:        event.AuxiliaryFiles,
-			contentChecksum: event.ContentChecksum,
-		},
+		entry,
 		true,
 	)
 
 	c.enqueueDeployed(workItem)
+}
+
+func renderedConfigEntryFromDeployedRequest(event *events.DeployedConfigPublishRequest) (*renderedConfigEntry, error) {
+	if event == nil {
+		return nil, fmt.Errorf("deployed config publish request is nil")
+	}
+	occurrence, err := event.RenderOccurrence()
+	if err != nil {
+		return nil, fmt.Errorf("authenticating deployed render occurrence: %w", err)
+	}
+	cycle, err := occurrence.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading deployed render occurrence: %w", err)
+	}
+	output, err := cycle.OutputSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading deployed render output: %w", err)
+	}
+	renderedConfig, err := output.Config()
+	if err != nil {
+		return nil, fmt.Errorf("reading deployed output config: %w", err)
+	}
+	artifacts, err := output.ArtifactSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("reading deployed output artifacts: %w", err)
+	}
+	planID, err := output.PlanID()
+	if err != nil {
+		return nil, fmt.Errorf("reading deployed output plan ID: %w", err)
+	}
+	checksum, err := cycle.ContentChecksum()
+	if err != nil {
+		return nil, fmt.Errorf("reading deployed output checksum: %w", err)
+	}
+	return &renderedConfigEntry{
+		config:           renderedConfig,
+		artifactSnapshot: artifacts,
+		outputSnapshot:   output,
+		contentChecksum:  checksum,
+		planID:           planID,
+	}, nil
 }
 
 // handleValidationFailed queues the invalid configuration for async publishing.
@@ -594,6 +712,8 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	c.lastRender = nil
 	c.lastRenderCorrelationID = ""
 	c.lastPublishedChecksum = ""
+	c.lastPublishedOutputSnapshot = nil
+	c.lastPublishedEntry = nil
 	c.publicationTerm++
 	c.latestPublishGeneration = 0
 	c.latestInvalidGeneration = 0
@@ -619,15 +739,15 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 // enqueueDeployed appends a deployed render to the pending queue and wakes the
 // publish worker.
 //
-// Deduplicated by content checksum rather than coalesced: a checksum already
-// queued is replaced in place (keeping its position), but a DIFFERENT checksum
-// never displaces one. Dropping a deployed checksum leaves
-// status.deployedToPods advertising a config spec.content never carried.
+// Exact output roots are deduplicated rather than coalesced: an output already
+// queued is replaced in place (keeping its position), but a different output
+// never displaces one. Legacy entries retain checksum identity. Dropping an
+// entry can leave status.deployedToPods advertising unpublished content.
 func (c *Component) enqueueDeployed(work *publishWorkItem) {
 	c.deployedPendingMu.Lock()
 	replaced := false
 	for i, pending := range c.deployedPending {
-		if pending.entry.contentChecksum == work.entry.contentChecksum {
+		if sameDeployedOutput(pending.entry, work.entry) {
 			c.deployedPending[i] = work
 			replaced = true
 			break
@@ -643,7 +763,7 @@ func (c *Component) enqueueDeployed(work *publishWorkItem) {
 	c.logger.Debug("Queued deployed config for publishing",
 		"checksum", work.entry.contentChecksum,
 		"correlation_id", work.correlationID,
-		"replaced_same_checksum", replaced,
+		"replaced_same_output", replaced,
 		"pruned_superseded", pruned,
 		"queue_depth", depth)
 
@@ -739,12 +859,36 @@ func (c *Component) requeueDeployedFront(work *publishWorkItem) {
 	c.deployedPendingMu.Lock()
 	defer c.deployedPendingMu.Unlock()
 	for i, pending := range c.deployedPending {
-		if pending.entry.contentChecksum == work.entry.contentChecksum {
+		if sameDeployedOutput(pending.entry, work.entry) {
 			c.deployedPending[i] = work
 			return
 		}
 	}
 	c.deployedPending = append([]*publishWorkItem{work}, c.deployedPending...)
+}
+
+func sameDeployedOutput(left, right *renderedConfigEntry) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	if left.outputSnapshot != nil || right.outputSnapshot != nil {
+		if left.outputSnapshot == nil || right.outputSnapshot == nil {
+			return false
+		}
+		same, err := left.outputSnapshot.SameRoot(right.outputSnapshot)
+		return err == nil && same
+	}
+	if left.artifactSnapshot != nil || right.artifactSnapshot != nil {
+		if left.artifactSnapshot == nil || right.artifactSnapshot == nil {
+			return false
+		}
+		same, err := dataplane.SnapshotContentEqual(
+			left.config, left.artifactSnapshot,
+			right.config, right.artifactSnapshot,
+		)
+		return err == nil && same
+	}
+	return dataplane.ContentEqual(left.config, left.auxFiles, right.config, right.auxFiles)
 }
 
 // takeDeployed pops the oldest pending deployed render, or nil when empty.

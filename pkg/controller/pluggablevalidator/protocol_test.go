@@ -321,8 +321,7 @@ func encodeFrameForTest(t *testing.T, v any) []byte {
 
 // An oversized frame must say what to do about it. The data files are the only
 // part that scales with anything other than the config under validation, so
-// the message names them — and the failure is not cached, so every admission
-// repeats it until an operator acts.
+// the message names them so an operator can act.
 func TestEncodeRequest_OversizeNamesTheDataFiles(t *testing.T) {
 	big := strings.Repeat("x", MaxFrameSize)
 	req := &Request{

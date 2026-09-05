@@ -150,12 +150,13 @@ func TestComponent_SkipIfAlreadyPublished(t *testing.T) {
 		c := &Component{
 			logger:                logger,
 			lastPublishedChecksum: "any-previous-checksum",
+			lastPublishedEntry:    &renderedConfigEntry{config: "previous"},
 			renderedConfigs:       map[string]*renderedConfigEntry{"corr-1": {}},
 		}
 
 		work := &publishWorkItem{
 			correlationID: "corr-1",
-			entry:         &renderedConfigEntry{contentChecksum: ""},
+			entry:         &renderedConfigEntry{config: "next", contentChecksum: ""},
 		}
 
 		skipped := c.skipIfAlreadyPublished(work, "would-skip")
@@ -173,12 +174,13 @@ func TestComponent_SkipIfAlreadyPublished(t *testing.T) {
 		c := &Component{
 			logger:                logger,
 			lastPublishedChecksum: "old-checksum",
+			lastPublishedEntry:    &renderedConfigEntry{config: "old"},
 			renderedConfigs:       map[string]*renderedConfigEntry{"corr-1": {}},
 		}
 
 		work := &publishWorkItem{
 			correlationID: "corr-1",
-			entry:         &renderedConfigEntry{contentChecksum: "new-checksum"},
+			entry:         &renderedConfigEntry{config: "new", contentChecksum: "new-checksum"},
 		}
 
 		skipped := c.skipIfAlreadyPublished(work, "would-skip")
@@ -197,12 +199,13 @@ func TestComponent_SkipIfAlreadyPublished(t *testing.T) {
 		c := &Component{
 			logger:                logger,
 			lastPublishedChecksum: "stable-checksum",
+			lastPublishedEntry:    &renderedConfigEntry{config: "stable"},
 			renderedConfigs:       map[string]*renderedConfigEntry{"corr-1": {}},
 		}
 
 		work := &publishWorkItem{
 			correlationID: "corr-1",
-			entry:         &renderedConfigEntry{contentChecksum: "stable-checksum"},
+			entry:         &renderedConfigEntry{config: "stable", contentChecksum: "stable-checksum"},
 		}
 
 		skipped := c.skipIfAlreadyPublished(work, "deduped")

@@ -136,11 +136,19 @@ type HAProxyTemplateConfigSpec struct {
 	// +listMapKey=name
 	Validators []ValidatorConfig `json:"validators,omitempty"`
 
+	// MaxProperties bounds the CEL cost estimator: every rule nested under a
+	// snippet is priced per possible map entry, and unbounded put the schema
+	// 9x over the apiserver's total budget. The bundled chart's largest library uses 206.
+
 	// TemplateSnippets maps snippet names to reusable template fragments.
 	//
 	// Snippets can be included in other templates using {{ render "name" }}.
+	// +kubebuilder:validation:MaxProperties=4096
 	// +optional
 	TemplateSnippets map[string]TemplateSnippet `json:"templateSnippets,omitempty"`
+
+	// AbsentIncrementalGroups is populated only by offline effective resolution.
+	AbsentIncrementalGroups []string `json:"-"`
 
 	// Maps maps map file names to their template definitions.
 	//
@@ -563,7 +571,105 @@ type TemplateSnippet struct {
 	// time. Each entry must name a key of watchedResources.
 	// +optional
 	Requires []string `json:"requires,omitempty"`
+
+	// Incremental configures authenticated incremental evaluation for this snippet.
+	// +optional
+	Incremental *IncrementalTemplate `json:"incremental,omitempty"`
 }
+
+// IncrementalTemplate configures authenticated incremental evaluation.
+// +kubebuilder:validation:XValidation:rule="has(self.source) != has(self.bindingsTemplate)",message="exactly one of source or bindingsTemplate is required"
+// +kubebuilder:validation:XValidation:rule="!has(self.whenAnyPathExists) || !has(self.effects) || !self.effects.exists(effect, effect == 'deriveResource')",message="whenAnyPathExists cannot be combined with deriveResource"
+// +kubebuilder:validation:XValidation:rule="!has(self.mode) || self.mode != 'resourceProjection' || (has(self.bindingsTemplate) && !has(self.source))",message="resourceProjection requires bindingsTemplate and forbids source"
+// +kubebuilder:validation:XValidation:rule="!has(self.mode) || self.mode != 'resourceProjection' || (has(self.effects) && self.effects.size() == 1 && self.effects[0] == 'publishValue')",message="resourceProjection requires exactly the publishValue effect"
+// +kubebuilder:validation:XValidation:rule="!has(self.mode) || self.mode != 'resourceProjection' || (!has(self.whenAnyPathExists) && !has(self.root) && !has(self.consumes) && !has(self.optionalConsumes))",message="resourceProjection forbids whenAnyPathExists, root, consumes, and optionalConsumes"
+type IncrementalTemplate struct {
+	// Mode selects Scriggo execution when empty or exact resource publication
+	// when set to resourceProjection. Resource projections emit no rendered text.
+	// +kubebuilder:validation:Enum="";resourceProjection
+	// +kubebuilder:validation:MaxLength=32
+	// +optional
+	Mode IncrementalMode `json:"mode,omitempty"`
+
+	// Source names one watchedResources entry.
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	Source string `json:"source,omitempty"`
+
+	// BindingsTemplate emits a JSON object mapping watched-resource aliases to
+	// immutable component props.
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	BindingsTemplate string `json:"bindingsTemplate,omitempty"`
+
+	// WhenAnyPathExists makes the component empty unless at least one JSONPath
+	// exists on its post-derivation source item. [*] selects any array element.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:Pattern=`^\$?\.?([^.\[\]?*@()]+|\[([0-9]+|\*|'[^']+'|"[^"]+")\])(\.?([^.\[\]?*@()]+|\[([0-9]+|\*|'[^']+'|"[^"]+")\]))*$`
+	// +listType=set
+	// +optional
+	WhenAnyPathExists []string `json:"whenAnyPathExists,omitempty"`
+
+	// Root groups compatible components into one authenticated Scriggo runner.
+	// Each member keeps its own bindings, dependencies, effects, and result.
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	Root string `json:"root,omitempty"`
+
+	// Group evaluates all members before resolving shared contributions.
+	// +optional
+	Group string `json:"group,omitempty"`
+
+	// Consumes lists publication groups that must complete before this component
+	// can select their exact keyed values.
+	// +kubebuilder:validation:items:MinLength=1
+	// +listType=set
+	// +optional
+	Consumes []string `json:"consumes,omitempty"`
+
+	// OptionalConsumes lists publication groups that may be absent only when
+	// effective-config resolution stripped their optional-resource snippets.
+	// +kubebuilder:validation:items:MinLength=1
+	// +listType=set
+	// +optional
+	OptionalConsumes []string `json:"optionalConsumes,omitempty"`
+
+	// Uniqueness comes from listType=set, which the apiserver enforces; an
+	// equivalent CEL rule here is quadratic in the item count and priced per
+	// templateSnippets entry, which alone exceeded the schema cost budget.
+
+	// Effects declares the query-local side effects this component may emit.
+	// +kubebuilder:validation:MaxItems=5
+	// +listType=set
+	// +optional
+	Effects []IncrementalEffect `json:"effects,omitempty"`
+}
+
+// IncrementalMode selects an incremental execution protocol.
+type IncrementalMode string
+
+const (
+	IncrementalModeScriggo            IncrementalMode = ""
+	IncrementalModeResourceProjection IncrementalMode = "resourceProjection"
+)
+
+// MaxLength bounds the CEL cost estimator, which ignores Enum and otherwise
+// prices each comparison against the whole request; the rules over this field
+// then exceed the apiserver's per-rule budget 53x and the CRD is rejected.
+
+// IncrementalEffect identifies a declared query-local side effect.
+// +kubebuilder:validation:Enum=deriveResource;recordEvent;backendPlan;publishValue;statusPatch
+// +kubebuilder:validation:MaxLength=32
+type IncrementalEffect string
+
+const (
+	IncrementalEffectDeriveResource IncrementalEffect = "deriveResource"
+	IncrementalEffectRecordEvent    IncrementalEffect = "recordEvent"
+	IncrementalEffectBackendPlan    IncrementalEffect = "backendPlan"
+	IncrementalEffectPublishValue   IncrementalEffect = "publishValue"
+	IncrementalEffectStatusPatch    IncrementalEffect = "statusPatch"
+)
 
 // PostProcessorConfig defines a post-processor to apply to rendered template output.
 //
@@ -677,6 +783,22 @@ type K8sResource struct {
 	// Post-processors run in the order specified and can transform the rendered output.
 	// +optional
 	PostProcessing []PostProcessorConfig `json:"postProcessing,omitempty"`
+
+	// CreateOnlyFields are dotted field paths this template sets when the
+	// object is created and never again, so whoever runs the object owns them
+	// afterwards.
+	//
+	// `spec.replicas` on a workload is the case this exists for: HAProxy
+	// routes to whatever pods are there, so the count belongs to an operator
+	// draining it or to an autoscaler. Without this the field is re-applied
+	// every reconcile, and a deliberate `kubectl scale` is overwritten seconds
+	// after it is made. The template's value is the size the object starts at,
+	// not the size it keeps.
+	//
+	// Paths are dotted (`spec.replicas`) and must name a field the template
+	// itself sets. A path absent from the rendered object is ignored.
+	// +optional
+	CreateOnlyFields []string `json:"createOnlyFields,omitempty"`
 }
 
 // SSLCertificate defines an SSL certificate generated from a template.

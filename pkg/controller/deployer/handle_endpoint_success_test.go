@@ -37,12 +37,16 @@ import (
 func ackOutcome(mode string, converged bool, ops ...api.Op) *podOutcome {
 	return &podOutcome{
 		result: &api.ApplyResult{
-			PlanID:        "plan-1",
-			OK:            true,
-			Mode:          mode,
-			AppliedPlanID: "plan-1",
-			RunningPlanID: "plan-1",
-			Reload:        &api.ReloadInfo{Performed: mode == api.ResultReload, OK: true},
+			PlanID:             "plan-1",
+			OK:                 true,
+			Mode:               mode,
+			AppliedPlanID:      "plan-1",
+			AppliedPlanProof:   "a:1",
+			RunningPlanID:      "plan-1",
+			RunningPlanProof:   "a:1",
+			WorkerOpsPlanID:    "plan-1",
+			WorkerOpsPlanProof: "a:1",
+			Reload:             &api.ReloadInfo{Performed: mode == api.ResultReload, OK: true},
 		},
 		sent:      ops,
 		converged: converged,
@@ -59,13 +63,13 @@ func TestHandleEndpointSuccess_PublishesPodStatusWithPlanIdentity(t *testing.T) 
 	state := &deploymentState{operationBreakdown: map[string]int{}}
 	outcome := ackOutcome(api.ResultRuntime, true, api.Op{Kind: api.OpServerSetAddr})
 
-	c.handleEndpointSuccess(endpoint, outcome, 250,
-		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
+	event := scheduledEvent("rt-cfg-1", "haptic", "corr-1")
+	c.handleEndpointSuccess(endpoint, outcome, 250, event, state)
 
 	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](t, eventChan, testutil.LongTimeout)
 	require.NotNil(t, applied)
 	assert.Equal(t, "haproxy-0", applied.PodName)
-	assert.Equal(t, "checksum-abc", applied.Checksum)
+	assert.Equal(t, deploymentContentChecksum(event), applied.Checksum)
 	require.NotNil(t, applied.SyncMetadata)
 	assert.Equal(t, "plan-1", applied.SyncMetadata.AppliedPlanID)
 	assert.Equal(t, "plan-1", applied.SyncMetadata.RunningPlanID)
@@ -126,12 +130,11 @@ func TestHandleEndpointSuccess_RecordsReferencedPlans(t *testing.T) {
 	endpoint := &dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "haproxy-0"}
 	state := &deploymentState{operationBreakdown: map[string]int{}}
 	outcome := ackOutcome(api.ResultReload, true)
-	outcome.result.WorkerOpsPlanID = "plan-1"
-
 	c.handleEndpointSuccess(endpoint, outcome, 50,
 		scheduledEvent("rt-cfg-1", "haptic", "corr-1"), state)
 
-	assert.Equal(t, []string{"plan-1"}, c.fleetPlanRefs([]dataplane.Endpoint{*endpoint}))
+	assert.Equal(t, []planCacheKey{{authority: podKey(endpoint), proof: "a:1"}},
+		c.fleetPlanRefs([]dataplane.Endpoint{*endpoint}))
 	assert.Equal(t, int32(1), atomic.LoadInt32(&state.reloadsTriggered))
 }
 

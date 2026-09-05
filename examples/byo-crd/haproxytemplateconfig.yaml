@@ -17,6 +17,10 @@ kind: HAProxyTemplateConfig
 metadata:
   name: byo-crd-example
 spec:
+  podSelector:
+    matchLabels:
+      app: haproxy
+
   # 1. Watch the custom CRD. The controller is resource-agnostic — it learns the
   #    WebApp's shape from the apiserver (or --schema-dir offline); no Go knows
   #    "WebApp" exists.
@@ -72,7 +76,7 @@ spec:
         # Resolve the Service via cluster DNS — this demo keeps it simple and
         # skips EndpointSlice plumbing.
         server app {{ svc }}.{{ ns }}.svc:{{ port }} check resolvers cluster-dns init-addr none
-      {%- statusPatch(ns, name, "examples.haptic.dev/v1", "WebApp", map[string]any{
+      {%- statusPatch(wa, map[string]any{
           "deployed": map[string]any{
               "status": map[string]any{
                   "conditions": []any{

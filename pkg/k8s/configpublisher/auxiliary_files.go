@@ -259,20 +259,32 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 
 // createOrUpdateSSLSecret creates or updates a Secret for SSL certificates.
 func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, cert auxiliaryfiles.SSLCertificate, name string) (string, error) {
-	checksum := calculateChecksum(cert.Content) // Checksum of original content
+	return p.createOrUpdateSSLFileSecret(ctx, req, owner, name, cert.Path, cert.Content, "certificate", "ssl-certificate")
+}
 
-	// Compress if content exceeds threshold
-	result := p.compressIfNeeded(cert.Content, req.CompressionThreshold, "Secret/"+name)
+func (p *Publisher) createOrUpdateSSLCASecret(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, ca auxiliaryfiles.SSLCaFile, name string) (string, error) {
+	return p.createOrUpdateSSLFileSecret(ctx, req, owner, name, ca.Path, ca.Content, "ca", "ssl-ca")
+}
+
+func (p *Publisher) createOrUpdateSSLFileSecret(
+	ctx context.Context,
+	req *PublishRequest,
+	owner *haproxyv1alpha1.HAProxyCfg,
+	name, filePath, content, dataKey, fileType string,
+) (string, error) {
+	checksum := calculateChecksum(content)
+
+	result := p.compressIfNeeded(content, req.CompressionThreshold, "Secret/"+name)
 
 	labels := runtimeConfigLabels(owner)
-	labels["haproxy-haptic.org/type"] = "ssl-certificate"
+	labels["haproxy-haptic.org/type"] = fileType
 	ownerReferences := runtimeConfigOwnerRefs(owner)
 	annotations := runtimeConfigAnnotations(owner)
 	annotations["haproxy-haptic.org/compressed"] = strconv.FormatBool(result.compressed)
 	annotations[AuxiliaryChecksumAnnotationKey] = checksum
 	data := map[string][]byte{
-		"certificate": []byte(result.content),
-		"path":        []byte(cert.Path),
+		dataKey: []byte(result.content),
+		"path":  []byte(filePath),
 	}
 	client := p.k8sClient.CoreV1().Secrets(req.TemplateConfigNamespace)
 
@@ -326,6 +338,7 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 		Content:    result.content,
 		Checksum:   checksum,
 		Compressed: result.compressed,
+		CAFile:     generalFile.IsCaFile,
 	}
 	labels := runtimeConfigLabels(owner)
 	annotations := runtimeConfigAnnotations(owner)

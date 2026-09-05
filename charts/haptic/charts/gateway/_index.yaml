@@ -127,18 +127,6 @@ watchedResources:
     enableValidationWebhook: true
     statusPatch: true
 
-  services:
-    apiVersion: v1
-    resources: services
-    indexBy: ["metadata.namespace", "metadata.name"]
-
-  endpoints:
-    apiVersion: discovery.k8s.io/v1
-    resources: endpointslices
-    indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
-    # "0" = no debounce; see ingress.yaml endpoints entry.
-    debounceInterval: "0"
-
   namespaces:
     apiVersion: v1
     resources: namespaces
@@ -175,11 +163,8 @@ watchedResources:
     # ListenerSet (GEP-1713) lets users add listeners to a Gateway from
     # a separate resource — designed for shared-frontend dataplanes
     # (which is haptic's exact architecture). Indexed by namespace +
-    # name so route-resolution sites can `GetSingle(lsNs, lsName)` the
-    # exact ListenerSet a parentRef points at. Per-Gateway iteration
-    # uses `resources.listenersets.List()` and filters in template code
-    # (the typical Gateway has at most a handful of attached
-    # ListenerSets so the linear scan is cheap).
+    # name so incremental components and route parentRefs resolve one exact
+    # ListenerSet without scanning the watched store.
     indexBy: ["metadata.namespace", "metadata.name"]
     statusPatch: true
 

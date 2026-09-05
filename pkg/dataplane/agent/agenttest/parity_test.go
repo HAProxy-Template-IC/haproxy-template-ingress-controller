@@ -54,9 +54,13 @@ type observation struct {
 	Missing         []string
 	OpsRan          bool
 	AppliedPlanID   string
+	AppliedProof    string
 	RunningPlanID   string
+	RunningProof    string
 	WorkerOpsPlanID string
+	WorkerOpsProof  string
 	LKGPlanID       string
+	LKGProof        string
 	// StoredPlan is whether /v1/state hands a baseline back, which is what a
 	// leader with a cold plan cache diffs against.
 	StoredPlan bool
@@ -83,7 +87,7 @@ func (p *parityAgent) applyWithPlan(t *testing.T, step string, m *api.Manifest, 
 	if len(plan) > 0 {
 		blob = bytes.NewReader(plan)
 	}
-	result, err := p.client.Apply(t.Context(), m, parts, blob)
+	result, err := applyExact(t, p.client, m, parts, blob)
 	seen := observation{Step: step, Status: http.StatusOK}
 	var conflict *client.ConflictError
 	var missing *client.MissingError
@@ -92,9 +96,13 @@ func (p *parityAgent) applyWithPlan(t *testing.T, step string, m *api.Manifest, 
 		seen.Status = http.StatusConflict
 		seen.ConflictReason = conflict.Conflict.Reason
 		seen.AppliedPlanID = conflict.Conflict.AppliedPlanID
+		seen.AppliedProof = conflict.Conflict.AppliedPlanProof
 		seen.RunningPlanID = conflict.Conflict.RunningPlanID
+		seen.RunningProof = conflict.Conflict.RunningPlanProof
 		seen.WorkerOpsPlanID = conflict.Conflict.WorkerOpsPlanID
+		seen.WorkerOpsProof = conflict.Conflict.WorkerOpsPlanProof
 		seen.LKGPlanID = conflict.Conflict.LKGPlanID
+		seen.LKGProof = conflict.Conflict.LKGPlanProof
 	case errors.As(err, &missing):
 		seen.Status = http.StatusConflict
 		seen.Missing = missing.Missing
@@ -103,9 +111,13 @@ func (p *parityAgent) applyWithPlan(t *testing.T, step string, m *api.Manifest, 
 		seen.OK, seen.Mode = result.OK, result.Mode
 		seen.OpsRan = len(result.OpResults) > 0
 		seen.AppliedPlanID = result.AppliedPlanID
+		seen.AppliedProof = result.AppliedPlanProof
 		seen.RunningPlanID = result.RunningPlanID
+		seen.RunningProof = result.RunningPlanProof
 		seen.WorkerOpsPlanID = result.WorkerOpsPlanID
+		seen.WorkerOpsProof = result.WorkerOpsPlanProof
 		seen.LKGPlanID = result.LKGPlanID
+		seen.LKGProof = result.LKGPlanProof
 		if result.Error != nil {
 			seen.ErrorStage = result.Error.Stage
 		}
@@ -236,7 +248,8 @@ func revertScenario(t *testing.T, p *parityAgent) {
 	p.apply(t, "runtime ops", runtime, parts)
 
 	revert := &api.Manifest{
-		PlanID:            "plan-3",
+		IdentityVersion:   api.ExactIdentityVersion,
+		PlanID:            "plan-2",
 		PlanSchemaVersion: 1,
 		Token:             api.Token{LeaderEpoch: 1, RenderSeq: 3},
 		// A revert targets the LKG by definition, so its baseline is not fenced.

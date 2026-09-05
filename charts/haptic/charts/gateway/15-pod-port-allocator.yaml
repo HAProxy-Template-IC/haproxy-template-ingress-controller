@@ -75,9 +75,156 @@ templateSnippets:
   # of the common path: on deletion the mover VACATES its old slot
   # rather than being evicted from it in favour of a newcomer.
   #
-  # The map is initialised once per render via `shared.ComputeIfAbsent`
-  # so concurrent map renderers see a consistent view.
+  # The leader assembles the allocation from authenticated candidate publications.
   # ============================================================================
+
+  util-gateway-pod-port-allocation:
+    template: |-
+      {%- var GatewayPodPortAllocationsFromCandidates = func(gatewayCandidates []any, basePort int, rangeSize int) map[string]any {
+        if rangeSize < 1 {
+          rangeSize = 1000
+        }
+        var tuples = []any{}
+        for _, candidate := range gatewayCandidates {
+          var namespace = dig_string(candidate, "", "namespace")
+          var name = dig_string(candidate, "", "name")
+          var created = dig_string(candidate, "", "created")
+          for _, listener := range toSlice(dig(candidate, "listeners")) {
+            var protocol = dig_string(listener, "", "protocol")
+            if protocol != "HTTPS" && protocol != "HTTP" {
+              continue
+            }
+            var listenerName = dig_string(listener, "", "name")
+            var listenerPort = toint(dig(listener, "port") | fallback(0))
+            if listenerName == "" || listenerPort <= 0 {
+              continue
+            }
+            tuples = append(tuples, map[string]any{
+              "key": namespace + "/" + name + ":" + listenerName + ":" + tostring(listenerPort),
+              "gateway": namespace + "/" + name,
+              "port": listenerPort,
+              "created": created,
+            })
+          }
+        }
+
+        var orderedPortKeys = []any{}
+        var seenPortKeys = map[string]bool{}
+        for _, tupleAny := range tuples {
+          var tuple = tupleAny.(map[string]any)
+          var portKey = tostring(tuple["gateway"]) + ":" + tostring(toint(tuple["port"]))
+          if seenPortKeys[portKey] {
+            continue
+          }
+          seenPortKeys[portKey] = true
+          var created = tostring(tuple["created"])
+          if created == "" {
+            created = "9999-12-31T23:59:59Z"
+          }
+          orderedPortKeys = append(orderedPortKeys, created + "\t" + portKey)
+        }
+        var sortedPortKeys = sort_strings(orderedPortKeys)
+        if len(sortedPortKeys) > rangeSize {
+          fail("pod-port allocator: " + tostring(len(sortedPortKeys)) +
+            " (Gateway,port) keys exceed the " + tostring(rangeSize) +
+            "-slot pod-port range; raise perGatewayPodPortRange")
+        }
+
+        var portAllocations = map[string]any{}
+        var usedSlots = map[int]bool{}
+        for _, orderedKeyAny := range sortedPortKeys {
+          var parts = split(tostring(orderedKeyAny), "\t")
+          var portKey = tostring(parts[len(parts)-1])
+          var hashValue, hashErr = parseInt(sha256(portKey)[0:7], 16)
+          if hashErr != nil {
+            fail("pod-port allocator: hash parse failed for key " + portKey)
+          }
+          var slot = hashValue % rangeSize
+          for usedSlots[slot] {
+            slot = (slot + 1) % rangeSize
+          }
+          usedSlots[slot] = true
+          portAllocations[portKey] = basePort + slot
+        }
+
+        var result = map[string]any{}
+        for _, tupleAny := range tuples {
+          var tuple = tupleAny.(map[string]any)
+          var portKey = tostring(tuple["gateway"]) + ":" + tostring(toint(tuple["port"]))
+          result[tostring(tuple["key"])] = portAllocations[portKey]
+        }
+        return result
+      } -%}
+
+  util-gateway-pod-port-bindings:
+    template: |-
+      {{- toJSON(map[string]any{"gateways": map[string]any{
+        "basePort": toint(extraContext | dig("perGatewayPodPortBase") | fallback(18000)),
+        "rangeSize": toint(extraContext | dig("perGatewayPodPortRange") | fallback(1000)),
+      }}) -}}
+
+  gateway-pod-port-candidates-100-gateway:
+    requires: [gateways]
+    incremental:
+      source: gateways
+      group: gateway-pod-port-candidates
+      effects: [publishValue]
+    template: |
+      {%- var gateway = resources.gateways.GetSingle(
+        dig_string(item, "", "metadata", "namespace"),
+        dig_string(item, "", "metadata", "name")) -%}
+      {%- if gateway != nil -%}
+        {%- var listeners = []any{} -%}
+        {%- for _, listener := range gateway.Spec.Listeners -%}
+          {%- listeners = append(listeners, map[string]any{
+            "name": listener.Name, "port": listener.Port, "protocol": listener.Protocol,
+          }) -%}
+        {%- end -%}
+        {%- var gatewayKey = gateway.Metadata.Namespace + "/" + gateway.Metadata.Name -%}
+        {%- var created = tostring(gateway.Metadata.CreationTimestamp) -%}
+        {%- var rankTimestamp = created -%}
+        {%- if rankTimestamp == "" -%}{%- rankTimestamp = "9999-12-31T23:59:59Z" -%}{%- end -%}
+        {%- var candidate = map[string]any{
+            "namespace": gateway.Metadata.Namespace,
+            "name": gateway.Metadata.Name,
+            "created": created,
+            "listeners": listeners,
+          } -%}
+        {{- shared.Publish("gateways", gatewayKey, candidate) -}}
+        {{- shared.PublishRanked("leader", "leader", rankTimestamp + "\x00" + gatewayKey,
+          map[string]any{"namespace": gateway.Metadata.Namespace, "name": gateway.Metadata.Name}) -}}
+      {%- end -%}
+
+  gateway-pod-port-allocations-200-leader:
+    requires: [gateways]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-pod-port-bindings" -}}'
+      group: gateway-pod-port-allocations
+      consumes: [gateway-pod-port-candidates]
+      effects: [publishValue]
+    template: |-
+      {%- import "util-gateway-pod-port-allocation" for GatewayPodPortAllocationsFromCandidates -%}
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var leader, found = shared.Select("gateway-pod-port-candidates", "leader", "leader")
+        if found && dig_string(leader, "", "namespace") == namespace &&
+          dig_string(leader, "", "name") == name {
+          var allocations = GatewayPodPortAllocationsFromCandidates(
+            shared.SelectValues("gateway-pod-port-candidates", "gateways"),
+            toint(props["basePort"]), toint(props["rangeSize"]))
+          show shared.Publish("all", "all", allocations)
+          for key, port := range allocations {
+            show shared.Publish("ports", key, port)
+          }
+        }
+      %%}
+
+  features-003-gateway-pod-port-publications:
+    requires: [gateways]
+    template: |-
+      {{- render "gateway-pod-port-candidates-100-gateway" -}}
+      {{- render "gateway-pod-port-allocations-200-leader" -}}
 
   util-gateway-pod-port-allocator:
     requires: [gateways]
@@ -103,153 +250,12 @@ templateSnippets:
               (defensively — invalid Gateway state shouldn't crash the
               allocator, just leave them out).
       #}
+      {{- render "gateway-pod-port-candidates-100-gateway" -}}
+      {{- render "gateway-pod-port-allocations-200-leader" -}}
       {%- var _, _ = shared.ComputeIfAbsent("gatewayPodPortAllocations", func() any {
-        var basePort = toint(extraContext | dig("perGatewayPodPortBase") | fallback(18000))
-        var rangeSize = toint(extraContext | dig("perGatewayPodPortRange") | fallback(1000))
-        if rangeSize < 1 {
-          rangeSize = 1000
-        }
-        var allTuples = []any{}
-        for _, gw := range resources.gateways.List() {
-          var gwNs = gw.Metadata.Namespace
-          var gwName = gw.Metadata.Name
-          for _, listener := range gw.Spec.Listeners {
-            // HTTP and HTTPS listeners both get a per-Gateway bind on a
-            // unique pod port, so each Gateway's routing is isolated by
-            // destination (dst_port) rather than collapsing onto the
-            // shared chart-static :80 / :443 binds. TLS listeners are
-            // excluded — TLS-Passthrough flows through chart-static
-            // `frontend ssl-tcp` and TLS-Terminate (non-default port)
-            // renders its own `frontends-600` mode-tcp frontend.
-            if listener.Protocol != "HTTPS" && listener.Protocol != "HTTP" {
-              continue
-            }
-            var lName = listener.Name
-            var lPort = toint(listener.Port)
-            if lName == "" || lPort <= 0 {
-              continue
-            }
-            allTuples = append(allTuples, map[string]any{
-              "key":     gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort),
-              "gwNs":    gwNs,
-              "gwName":  gwName,
-              "lPort":   lPort,
-              "created": tostring(gw.Metadata.CreationTimestamp),
-            })
-          }
-        }
-
-        // Allocate ONE pod port per (Gateway, PORT) — every listener
-        // sharing a Gateway+port shares the single bind and is
-        // host-disambiguated downstream. Then expand to the
-        // per-(Gateway,listener) keys consumers look up.
-        //
-        // PURE HASH-AND-PROBE allocation (see the header comment for
-        // why this must NOT read committed Services back from the
-        // cluster cache): each key's home slot is derived from a
-        // sha256 of the key itself, so the same key lands on the same
-        // pod port in every render, on every replica, regardless of
-        // snapshot staleness. Only genuine slot collisions between
-        // keys present in THIS render probe forward, in AGE-THEN-KEY
-        // order (see below) so the assignment is deterministic.
-        //
-        // 7 hex chars (28 bits) keeps parseInt inside int32 range on
-        // any platform; 268M values over a ~1000-slot range is
-        // uniform enough.
-        // OLDEST-WINS probe order. Slots are handed out walking the
-        // keys in ascending (Gateway creationTimestamp, key) order, so
-        // a key's port depends ONLY on itself and on the keys of
-        // OLDER Gateways. Creating a Gateway can therefore never move
-        // an existing Gateway's pod port, no matter how the hashes
-        // collide: the newcomer is processed last and probes past the
-        // slots the incumbents already hold.
-        //
-        // That invariant is what makes a moved port safe(ish) to live
-        // with. Under the previous key-only order the winner of a
-        // contested slot was whichever key sorted first, so a
-        // newly-created Gateway could evict a long-lived one — and
-        // the evicted Gateway's OLD pod port was, in the same render,
-        // taken over by the newcomer's bind. Anything still addressing
-        // the old pod port directly (an established keep-alive
-        // connection pinned by conntrack, a `kubectl port-forward`
-        // that resolved targetPort before the shift) then reached a
-        // DIFFERENT Gateway's routes: its host key missed every map
-        // entry (404 via default_backend) or, worse, matched that
-        // Gateway's catch-all and crossed tenants. Oldest-wins removes
-        // the eviction case entirely; the remaining case (deleting the
-        // OLDER member of a collision pair lets the younger one move
-        // down to the freed slot) vacates a port instead of handing it
-        // to a neighbour, so stale clients get a clean connection
-        // refusal and reconnect.
-        //
-        // creationTimestamp is safe to read here and is NOT the
-        // forbidden read-back: it is an immutable field of the watched
-        // Gateway itself, arriving atomically with the object, not a
-        // lagging observation of the controller's own output. It
-        // cannot oscillate. Gateways whose timestamp is absent
-        // (fixtures, hand-built objects) sort LAST — treated as
-        // newest, so they can never evict a Gateway of known age — and
-        // then fall back to key order, which is exactly the previous
-        // behaviour. RFC3339 timestamps are fixed-width, so a plain
-        // lexicographic sort is chronological; second granularity
-        // means same-second creations tie and fall back to key order.
-        //
-        var portKeys = []any{}
-        var seenKeys = map[string]bool{}
-        for _, tAny := range allTuples {
-          var t = tAny.(map[string]any)
-          var pk = tostring(t["gwNs"]) + "/" + tostring(t["gwName"]) + ":" + tostring(toint(t["lPort"]))
-          if !seenKeys[pk] {
-            seenKeys[pk] = true
-            var created = tostring(t["created"])
-            if created == "" {
-              created = "9999-12-31T23:59:59Z"
-            }
-            // "\t" separates the sort prefix from the key: it can
-            // appear in neither an RFC3339 timestamp nor a
-            // namespace/name, so the split below is unambiguous.
-            portKeys = append(portKeys, created + "\t" + pk)
-          }
-        }
-
-        var sortedKeys = sort_strings(portKeys)
-        // More keys than slots means the probe loop below could never
-        // find a free slot and would spin forever, hanging the render
-        // goroutine — fail loudly with the knob to turn instead.
-        if len(sortedKeys) > rangeSize {
-          fail(sprintf("pod-port allocator: %d (Gateway,port) keys exceed the %d-slot pod-port range; raise perGatewayPodPortRange", len(sortedKeys), rangeSize))
-        }
-        var portPod = map[string]any{}
-        var usedSlots = map[int]bool{}
-        for _, sortKeyAny := range sortedKeys {
-          // Strip the creationTimestamp sort prefix — only the
-          // (Gateway, port) key is hashed, so the home slot stays a
-          // pure function of the key and is unaffected by age.
-          var sortKeyParts = split(tostring(sortKeyAny), "\t")
-          var pk = tostring(sortKeyParts[len(sortKeyParts)-1])
-          var hashVal, hashErr = parseInt(sha256(pk)[0:7], 16)
-          if hashErr != nil {
-            // Unreachable — sha256 output is always valid hex — but
-            // failing loudly beats allocating garbage.
-            fail("pod-port allocator: hash parse failed for key " + pk)
-          }
-          var slot = hashVal % rangeSize
-          for usedSlots[slot] {
-            slot = (slot + 1) % rangeSize
-          }
-          usedSlots[slot] = true
-          portPod[pk] = basePort + slot
-        }
-
-        // Expand to per-(Gateway,listener) keys, all pointing at their
-        // (Gateway,port) pod port.
-        var result = map[string]any{}
-        for _, tAny := range allTuples {
-          var t = tAny.(map[string]any)
-          var pk = tostring(t["gwNs"]) + "/" + tostring(t["gwName"]) + ":" + tostring(toint(t["lPort"]))
-          result[tostring(t["key"])] = portPod[pk]
-        }
-        return result
+        var values = incremental_values("gateway-pod-port-allocations", "all")
+        if len(values) == 0 { return map[string]any{} }
+        return values[0]
       }) %}
 
   # Debug emission gated on extraContext.dumpPodPortAllocations.
@@ -321,7 +327,8 @@ templateSnippets:
             per-Gateway bind (dst_port = the unique pod port) keeps
             listener_port = pod port, so the host.map / path-map keys —
             which this refactor scopes by the SAME per-Gateway pod port
-            (util-gateway-port-scope) — resolve to that Gateway only. A
+            (gateway-host-port-scopes-100-gateway) — resolve to that
+            Gateway only. A
             no-hostname listener on one Gateway can no longer catch
             another Gateway's hosts via the shared `:<listenerPort>`
             fallback (the GatewayHTTPListenerIsolation leak). Pinned /
@@ -429,36 +436,3 @@ templateSnippets:
       {%- if regErr != nil %}
         {{ fail("failed to register pod-gw-listener-port.map: " + tostring(regErr)) }}
       {%- end %}
-
-  # Representative pod port per (Gateway, port): the pod port of the FIRST
-  # allocated listener on that Gateway+port — the one phase-3's Service
-  # DNATs to and phase-4 binds. Host/path map keys are scoped by this so
-  # every listener sharing a Gateway+port lands on the same bind and is
-  # disambiguated by Host, and so a no-hostname listener's catch-all is
-  # scoped to its own Gateway (GatewayHTTPListenerIsolation).
-  util-gateway-port-scope:
-    requires: [gateways]
-    template: |
-      {{ render "util-gateway-pod-port-allocator" -}}
-      {%- var _, _ = shared.ComputeIfAbsent("gatewayPortScope", func() any {
-        var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any)
-        var scope = map[string]any{}
-        for _, gw := range resources.gateways.List() {
-          var gwNs = gw.Metadata.Namespace
-          var gwName = gw.Metadata.Name
-          var seenPort = map[int]bool{}
-          for _, listener := range gw.Spec.Listeners {
-            var lName = listener.Name
-            var lPort = toint(listener.Port)
-            if lName == "" || lPort <= 0 || seenPort[lPort] {
-              continue
-            }
-            seenPort[lPort] = true
-            var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
-            if val, ok := allocations[allocKey]; ok {
-              scope[gwNs + "/" + gwName + ":" + tostring(lPort)] = toint(val)
-            }
-          }
-        }
-        return scope
-      }) %}

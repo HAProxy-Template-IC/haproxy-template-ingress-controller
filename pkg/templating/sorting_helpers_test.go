@@ -177,8 +177,8 @@ func TestCompareValues(t *testing.T) {
 		{name: "equal strings", a: "abc", b: "abc", want: 0},
 		{name: "string less than", a: "abc", b: "abd", want: -1},
 		{name: "string greater than", a: "abd", b: "abc", want: 1},
-		{name: "string vs non-numeric: fmt.Sprint compare", a: "abc", b: true, want: -1},
-		{name: "bools fall through to string compare", a: true, b: false, want: 1},
+		{name: "string vs bool", a: "abc", b: true, want: -1},
+		{name: "booleans compare by deterministic text", a: true, b: false, want: 1},
 	}
 
 	for _, tt := range tests {
@@ -194,6 +194,10 @@ func TestCompareValues(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+
+	t.Run("rejects composite", func(t *testing.T) {
+		assert.Panics(t, func() { compareValues(struct{}{}, struct{}{}) })
+	})
 }
 
 func TestGetLength(t *testing.T) {
@@ -298,6 +302,7 @@ func TestConvertToMap(t *testing.T) {
 		{name: "map[string]any passes through", in: map[string]any{"a": 1}, want: map[string]any{"a": 1}, wantOK: true},
 		{name: "map[string]int via reflection", in: map[string]int{"a": 1, "b": 2}, want: map[string]any{"a": 1, "b": 2}, wantOK: true},
 		{name: "pointer to map via reflection", in: &map[string]any{"a": 1}, want: map[string]any{"a": 1}, wantOK: true},
+		{name: "non-string keys return false", in: map[int]string{1: "a"}, wantOK: false},
 		{name: "scalar returns false", in: 42, wantOK: false},
 		{name: "slice returns false", in: []int{1, 2}, wantOK: false},
 		{name: "struct returns false", in: struct{ X int }{X: 1}, wantOK: false},

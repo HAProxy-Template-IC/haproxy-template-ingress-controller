@@ -148,11 +148,25 @@ type Metrics struct {
 	// the last config HAProxy accepted, until the operator's input changes.
 	ConfigPinned prometheus.Gauge
 
+	// ControllerReinitializationsTotal counts iteration restarts after the
+	// first. An iteration restart stops the leader-only components and rebuilds
+	// them from a freshly resolved configuration, so nothing propagates
+	// endpoint changes to HAProxy until it completes — measured at 54-65s on
+	// the bundled chart, dominated by the load gate re-running validationTests.
+	// Growth means something keeps changing the effective configuration, most
+	// often a CRD appearing or disappearing.
+	ControllerReinitializationsTotal prometheus.Counter
+
 	// RenderProfiles is the number of distinct backend profiles the most recent
 	// reconcile render emitted (`defaults haptic-be-*`). Profile cardinality is
 	// what backends collapse onto, so it tracks the config's structural size
 	// independently of the raw backend count.
 	RenderProfiles prometheus.Gauge
+
+	// RenderTotal counts reconcile renders by the cache state they ran from.
+	// Every replica renders: the leader to deploy, a follower to keep its
+	// incremental graph warm for the next leadership change.
+	RenderTotal *prometheus.CounterVec
 
 	// Build info metric
 	BuildInfo *prometheus.GaugeVec
@@ -395,6 +409,12 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			[]string{"validator"},
 		),
 
+		ControllerReinitializationsTotal: pkgmetrics.NewCounter(
+			registry,
+			"haptic_controller_reinitializations_total",
+			"Total controller iteration restarts after the first. A restart stops the leader-only components and rebuilds them from a freshly resolved configuration; nothing reaches the HAProxy pods until it finishes. Growth means the effective configuration keeps changing, most often a CRD appearing or disappearing.",
+		),
+
 		ConfigPinned: pkgmetrics.NewGauge(
 			registry,
 			"haptic_config_pinned",
@@ -405,6 +425,13 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_render_profiles",
 			"Distinct backend profiles (defaults haptic-be-*) in the most recent reconcile render. Profile cardinality is what backends collapse onto, tracking the config's structural size (leader-only; 0 on followers).",
+		),
+
+		RenderTotal: pkgmetrics.NewCounterVec(
+			registry,
+			"haptic_render_total",
+			"Reconcile renders by cache_state: cold re-evaluated every template, warm reused the incremental graph, replay reused the previous output unchanged. Counts on every replica, since followers render to keep their graph warm for a leadership change; a replica that keeps counting cold pays full render cost on each change.",
+			[]string{"cache_state"},
 		),
 
 		// Build info metric
@@ -615,6 +642,11 @@ func (m *Metrics) SetRenderProfiles(count int) {
 	m.RenderProfiles.Set(float64(count))
 }
 
+// RecordRender records one reconcile render by the cache state it ran from.
+func (m *Metrics) RecordRender(cacheState string) {
+	m.RenderTotal.WithLabelValues(cacheState).Inc()
+}
+
 // SetConfigPinned sets whether the render gate is holding renders.
 func (m *Metrics) SetConfigPinned(pinned bool) {
 	if pinned {
@@ -682,7 +714,7 @@ func (m *Metrics) SetObservabilityDrops(count uint64) {
 // Parameters:
 //   - version: The controller version (e.g., "0.1.0-alpha.10")
 //   - haproxyVersion: The HAProxy major.minor version (e.g., "3.2")
-//   - goVersion: The Go runtime version (e.g., "go1.26.1")
+//   - goVersion: The Go runtime version (e.g., "go1.27.0")
 func (m *Metrics) SetBuildInfo(version, haproxyVersion, goVersion string) {
 	m.BuildInfo.WithLabelValues(version, haproxyVersion, goVersion).Set(1)
 }

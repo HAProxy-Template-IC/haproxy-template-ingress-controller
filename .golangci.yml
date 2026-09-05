@@ -2,7 +2,7 @@ version: "2"
 
 run:
   timeout: 10m
-  go: '1.26'
+  go: '1.27'
   allow-parallel-runners: true
 
 formatters:
@@ -228,6 +228,38 @@ linters:
           - goconst
           - gocyclo
           - funlen
+
+      # Copied-authority forgery tests copy lock-bearing structs on purpose:
+      # the copy is the attack the seal checks must reject.
+      - path: pkg/controller/renderer/(incremental_async_cache_reservation|incremental_publication_snapshot|output_publication)_test\.go$
+        linters:
+          - govet
+        text: 'copylocks:'
+
+      # The by-value parameter IS the ownership boundary: these entry points
+      # copy so a caller cannot mutate what the plan/context now owns. A
+      # pointer would alias caller memory into sealed state.
+      - path: pkg/dataplane/renderplan/(delta|snapshot)\.go$
+        linters:
+          - gocritic
+        text: 'hugeParam:'
+      - path: (pkg/templating/incremental_component_context|pkg/incremental/cold_batch)\.go$
+        linters:
+          - gocritic
+        text: 'hugeParam:'
+
+      # The always-nil error is mandated by the interface this benchmark
+      # forwarder implements; dropping it fails the type assertion.
+      - path: cmd/haptic/benchmark_incremental_test\.go$
+        linters:
+          - unparam
+
+      # nil-with-nil-error is the documented "no session / no previous output"
+      # contract these callers switch on; a sentinel would turn absence into
+      # an error path at every call site.
+      - path: (pkg/controller/rendercontext/render_document|pkg/controller/renderer/exact_cycle_previous_outputs|pkg/controller/deployer/plan_cache)\.go$
+        linters:
+          - nilnil
 
       # Disable dupl for section operation files - intentional structural similarity for type-specific wrappers
       - path: pkg/dataplane/comparator/sections/

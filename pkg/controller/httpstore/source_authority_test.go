@@ -619,6 +619,146 @@ func TestValidationOverlayRejectsPendingContentFromAnotherAuthority(t *testing.T
 	assert.True(t, entry.HasPending)
 }
 
+func TestAuthoritativeSourceReplacementAbortLeavesSharedStateUnchanged(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get("Authorization")))
+	}))
+	defer server.Close()
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component := New(bus, logger, 0)
+	defer component.stopAllRefreshers()
+	accepted := NewHTTPStoreWrapper(t.Context(), component, logger, nil, SourceModeAuthoritative)
+	_, err := accepted.Fetch(
+		server.URL,
+		map[string]any{"interval": "1h", "critical": true},
+		map[string]any{"type": "bearer", "token": "accepted"},
+	)
+	require.NoError(t, err)
+	require.NoError(t, accepted.InputTransaction().Commit(t.Context()))
+
+	stateBefore, exists := component.store.GetSourceState(server.URL)
+	require.True(t, exists)
+	entryBefore := component.store.GetEntry(server.URL)
+	timerBefore, timerGenerationBefore, timerSourceGenerationBefore := refresherState(component, server.URL)
+	watermarkBefore := component.store.Watermark()
+
+	replacement := NewHTTPStoreWrapper(t.Context(), component, logger, nil, SourceModeAuthoritative)
+	content, err := replacement.Fetch(
+		server.URL,
+		map[string]any{"interval": "2h", "critical": true},
+		map[string]any{"type": "bearer", "token": "replacement"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer replacement", content)
+	assert.Equal(t, stateBefore, mustSourceState(t, component, server.URL))
+	assert.Equal(t, entryBefore, component.store.GetEntry(server.URL))
+	assert.Equal(t, watermarkBefore, component.store.Watermark())
+	timerDuring, timerGenerationDuring, timerSourceGenerationDuring := refresherState(component, server.URL)
+	assert.Same(t, timerBefore, timerDuring)
+	assert.Equal(t, timerGenerationBefore, timerGenerationDuring)
+	assert.Equal(t, timerSourceGenerationBefore, timerSourceGenerationDuring)
+
+	replacement.InputTransaction().Abort()
+	assert.Equal(t, stateBefore, mustSourceState(t, component, server.URL))
+	assert.Equal(t, entryBefore, component.store.GetEntry(server.URL))
+	assert.Equal(t, watermarkBefore, component.store.Watermark())
+	timerAfter, timerGenerationAfter, timerSourceGenerationAfter := refresherState(component, server.URL)
+	assert.Same(t, timerBefore, timerAfter)
+	assert.Equal(t, timerGenerationBefore, timerGenerationAfter)
+	assert.Equal(t, timerSourceGenerationBefore, timerSourceGenerationAfter)
+}
+
+func TestConcurrentStagedSourceReplacementsCommitExactlyOneAuthority(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get("Authorization")))
+	}))
+	defer server.Close()
+
+	bus, logger := testutil.NewTestBusAndLogger()
+	component := New(bus, logger, 0)
+	defer component.stopAllRefreshers()
+	base := NewHTTPStoreWrapper(t.Context(), component, logger, nil, SourceModeAuthoritative)
+	_, err := base.Fetch(
+		server.URL,
+		map[string]any{"interval": "1h", "critical": true},
+		map[string]any{"type": "bearer", "token": "base"},
+	)
+	require.NoError(t, err)
+	require.NoError(t, base.InputTransaction().Commit(t.Context()))
+	baseTimer := currentRefresher(component, server.URL)
+	require.NotNil(t, baseTimer)
+
+	type contender struct {
+		token   string
+		delay   time.Duration
+		wrapper *HTTPStoreWrapper
+	}
+	contenders := []contender{
+		{token: "first", delay: 2 * time.Hour},
+		{token: "second", delay: 3 * time.Hour},
+	}
+	for index := range contenders {
+		contenders[index].wrapper = NewHTTPStoreWrapper(
+			t.Context(), component, logger, nil, SourceModeAuthoritative,
+		)
+		content, fetchErr := contenders[index].wrapper.Fetch(
+			server.URL,
+			map[string]any{"interval": contenders[index].delay.String(), "critical": true},
+			map[string]any{"type": "bearer", "token": contenders[index].token},
+		)
+		require.NoError(t, fetchErr)
+		assert.Equal(t, "Bearer "+contenders[index].token, content)
+	}
+	assert.Same(t, baseTimer, currentRefresher(component, server.URL))
+	assert.Equal(t, "base", component.store.GetEntry(server.URL).Auth.Token)
+
+	type commitResult struct {
+		index int
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan commitResult, len(contenders))
+	for index := range contenders {
+		go func(index int) {
+			<-start
+			results <- commitResult{
+				index: index,
+				err:   contenders[index].wrapper.InputTransaction().Commit(t.Context()),
+			}
+		}(index)
+	}
+	close(start)
+	commits := make([]commitResult, 0, len(contenders))
+	for range contenders {
+		commits = append(commits, <-results)
+	}
+	winner := -1
+	for _, result := range commits {
+		if result.err == nil {
+			require.Equal(t, -1, winner)
+			winner = result.index
+			continue
+		}
+		require.ErrorContains(t, result.err, "changed while the render was running")
+		contenders[result.index].wrapper.InputTransaction().Abort()
+	}
+	require.NotEqual(t, -1, winner)
+	entry := component.store.GetEntry(server.URL)
+	require.NotNil(t, entry)
+	assert.Equal(t, contenders[winner].token, entry.Auth.Token)
+	assert.Equal(t, "Bearer "+contenders[winner].token, entry.AcceptedContent)
+	assert.Equal(t, contenders[winner].delay, entry.Options.Delay)
+	assert.NotSame(t, baseTimer, currentRefresher(component, server.URL))
+}
+
+func mustSourceState(t *testing.T, component *Component, url string) purehttpstore.SourceState {
+	t.Helper()
+	state, exists := component.store.GetSourceState(url)
+	require.True(t, exists)
+	return state
+}
+
 func currentRefresher(component *Component, url string) *time.Timer {
 	component.mu.Lock()
 	defer component.mu.Unlock()

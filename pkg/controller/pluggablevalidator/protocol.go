@@ -39,9 +39,8 @@ const ProtocolVersion = 1
 // OWASP CRS the coraza plugin embeds (51 files, 713 KB on disk) JSON-encodes to
 // 794 KB — 76% of 1 MiB before an operator adds a single custom rule, and the
 // config file sharing the frame grows with the number of routes it describes.
-// The old ceiling would have been reached in ordinary use, and the failure is
-// the expensive kind: encoding fails, the synthetic error is deliberately not
-// cached, so every admission fails identically until someone reads the message.
+// The old ceiling would have been reached in ordinary use, and every admission
+// would fail identically until someone read the message.
 const MaxFrameSize = 8 << 20 // 8 MiB
 
 // Severity is the diagnostic severity in the wire format.
@@ -146,12 +145,8 @@ type Diagnostic struct {
 //
 // The unexported `synthetic` field marks responses produced locally by
 // ProtocolError after transport or protocol-decode failures. Conforming
-// validator responses (parsed via DecodeResponse) leave it false. The cache
-// uses this marker to decide whether to memoise the response — synthetic ones
-// are not validator verdicts and must NOT be cached, while conforming responses
-// (including those with `path: ""` diagnostics, e.g. plugin panics or
-// file-level errors) are deterministic functions of the input and SHOULD be
-// cached.
+// validator responses (parsed via DecodeResponse) leave it false. Callers use
+// the marker to distinguish a validator verdict from a transport failure.
 //
 // `synthetic` is unexported so JSON encoders skip it — the wire format
 // is unchanged.
@@ -165,7 +160,6 @@ type Response struct {
 }
 
 // IsSynthetic reports whether the response was produced by ProtocolError.
-// The cache layer uses this to avoid memoising transport and decode failures.
 func (r *Response) IsSynthetic() bool {
 	return r != nil && r.synthetic
 }
@@ -313,10 +307,9 @@ func NarrowToUint32(n int) (uint32, error) {
 // connection refused) as a Response so callers don't have to switch on a
 // separate error type.
 //
-// The returned Response is marked synthetic so the cache layer can skip
-// it. Real validator responses with a `path: ""` diagnostic (file-level
-// errors, plugin panics surfaced by the sidecar) are NOT synthetic and
-// will be cached normally.
+// The returned Response is marked synthetic. Real validator responses with a
+// `path: ""` diagnostic (file-level errors, plugin panics surfaced by the
+// sidecar) are not synthetic.
 func ProtocolError(message string) *Response {
 	return &Response{
 		ProtocolVersion: ProtocolVersion,

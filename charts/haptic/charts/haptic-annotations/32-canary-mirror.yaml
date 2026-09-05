@@ -19,51 +19,49 @@ templateSnippets:
   # ============================================================================
 
   features-800-haptic-canary-colocation:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/canary']"]
+      group: ingress-route-colocation
+      effects: [publishValue]
     template: |
-      {#
-        HAPTIC Canary Co-location Marker
-
-        Best-of-breed source: nginx.ingress.kubernetes.io/canary (the only vendor
-        with a canary vocabulary), re-exposed as haproxy-haptic.org/canary.
-
-        Annotation:
-          - haproxy-haptic.org/canary: "true"
-
-        A canary Ingress DELIBERATELY shares a host+path with a non-canary (main)
-        Ingress. The canary does NOT own the base route — its traffic is split off
-        by a use_backend rule (frontend-filters-810-haptic-canary) that fires
-        before the base map lookup; the main Ingress owns the base map entry.
-        Without this marker the canary would compete for the route and (being
-        alphabetically or chronologically first) could win the base map, so
-        non-canary traffic would land on the canary backend.
-
-        We register the canary Ingress's IDENTITY (namespace/name) in
-        gf["coLocatedIngresses"]. The path-map owner computation (ingress.yaml
-        util-path-map-entry-ingress-shard) skips these Ingresses entirely, so the
-        main owns the route alone and a genuine SECOND non-canary Ingress on the
-        same host+path still competes with the main under oldest-wins. This runs
-        at features-800 during the haproxy.cfg render, which completes before the
-        aux-file (map) render reads the set. A canary with no main still owns and
-        serves its own base route (it is only excluded when a main also claims it).
-      #}
-      {%%
-        var gf = shared.Get("globalFeatures").(map[string]any)
-        if gf["coLocatedIngresses"] == nil {
-          gf["coLocatedIngresses"] = map[string]any{}
-        }
-        var coLocated = gf["coLocatedIngresses"].(map[string]any)
-        for _, ingress := range resources.ingresses.List() {
-          if ingress.Metadata.Annotations["haproxy-haptic.org/canary"] == "true" {
-            coLocated[ingress.Metadata.Namespace + "/" + ingress.Metadata.Name] = true
-          }
-        }
-      %%}
+      {# Canary and main Ingresses deliberately share a route; the core selector consumes this identity. #}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/canary"] == "true" -%}
+        {{- shared.Publish("identities", ingress.Metadata.Namespace + "/" + ingress.Metadata.Name, true) -}}
+      {%- end -%}
 
   # ============================================================================
   # Canary use_backend split rules
   # ============================================================================
 
+  features-900-haptic-fragment-810-canary:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/canary']"
+        - "metadata.annotations['haproxy-haptic.org/canary-by-header']"
+        - "metadata.annotations['haproxy-haptic.org/canary-by-header-value']"
+        - "metadata.annotations['haproxy-haptic.org/canary-by-header-pattern']"
+        - "metadata.annotations['haproxy-haptic.org/canary-by-cookie']"
+        - "metadata.annotations['haproxy-haptic.org/canary-weight']"
+      consumes: [haptic-ingress-match-publications]
+      effects: [publishValue]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-810-canary" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-810-haptic-canary:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-810-canary", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-810-canary:
     template: |
       {#
         HAPTIC Canary Annotations
@@ -82,9 +80,8 @@ templateSnippets:
         Priority order: header > cookie > weight (matching ingress-nginx).
 
         The canary Ingress must share a host with a non-canary (main) Ingress.
-        The canary does NOT own the base route (features-800-haptic-canary-colocation
-        registers it in gf["coLocatedIngresses"] so the main owns the map entry);
-        this snippet only overlays use_backend split rules for the matching host.
+        The canary does NOT own the base route; this snippet only overlays
+        use_backend split rules for the matching host.
         The canary backend name is derived from the canary Ingress's first path via
         BackendNameIngress, so it matches the backend ingress.yaml emits.
 
@@ -98,10 +95,11 @@ templateSnippets:
           use_backend <canary-backend> if { req.cook(<cookie>) -m str always } <host-match>
           use_backend <canary-backend> if { rand(100) lt <weight> } <host-match>
       #}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- if ingress.Metadata.Annotations["haproxy-haptic.org/canary"] == "true" %}
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
@@ -119,7 +117,7 @@ templateSnippets:
             {%- end %}
             {%- if len(hosts) > 0 && canaryBackend != "" %}
               {%%
-                var cond = HostMatchCondition(hosts)
+                var cond = HapticHostMatchCondition(key)
                 var canaryHeader = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header"]
                 var canaryHeaderValue = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header-value"]
                 var canaryHeaderPattern = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header-pattern"]
@@ -165,17 +163,10 @@ templateSnippets:
   # fire (frontend-filters-950-spoa-hub-mirror-fire is gated on the plugin), so a
   # mirror-target annotation would silently do nothing — fail() with an
   # actionable message instead of dropping the mirror.
-  frontend-filters-092-haptic-mirror-buffer:
-    template: |
-      {%- var hasMirror = false %}
-      {%- var firstKey = "" %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/mirror-target"] != "" %}
-          {%- hasMirror = true %}
-          {%- if firstKey == "" %}{%- firstKey = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}{%- end %}
-        {%- end %}
-      {%- end %}
-      {%- if hasMirror %}
+  features-900-haptic-fragment-092-mirror-buffer:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
         {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() %}
         {%- var mirrorEnabled = false %}
         {%- for _, p := range plugins %}
@@ -183,32 +174,62 @@ templateSnippets:
             {%- mirrorEnabled = true %}
           {%- end %}
         {%- end %}
-        {%- if !mirrorEnabled %}
-          {{- fail("Ingress " + firstKey + " sets 'haproxy-haptic.org/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
-        {%- end %}
         {%- var mirrorWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") %}
-      {# Gated on Content-Length, not frontend-wide `option http-buffer-request`:
-          one mirrored Ingress turns this on for the whole shared frontend, and
-          unconditional buffering deadlocks any gRPC or streaming route there
-          until the wait expires and the client gets a 408 the backend never saw.
-          Nothing that streams can declare a Content-Length. Trade-off: a chunked
-          request body is no longer mirrored.
-
-          The map check honours a route's `request-buffering: off` opt-out, and is
-          why this sits in frontend-filters-* rather than the earlier
-          frontend-extra-* phase: txn.backend_name is only set by
-          frontend-routing-logic, which runs between the two. Without it a single
-          mirrored Ingress would silently re-buffer every opted-out route on the
-          same frontend. Map default `on` (not the fleet setting) because
-          mirroring needs the body even where fleet buffering is off. #}
-      # haptic/mirror-buffer ({{ firstKey }}): buffer the request body so it reaches the mirror plugin
         {%- var rbMap, _ = pathResolver.GetPath("request-buffering.map", "map") %}
-      http-request wait-for-body time {{ mirrorWait }} if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map({{ rbMap }},on) -m str off }
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "mirrorEnabled": mirrorEnabled,
+          "mirrorWait": mirrorWait,
+          "requestBufferingMap": rbMap,
+        }}) -}}
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/mirror-target']"]
+      effects: [publishValue]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-092-mirror-buffer" -%}
+      {%- if fragment != "" -%}{{- shared.Publish("fragments", "global", fragment) -}}{%- end -%}
+
+  frontend-filters-092-haptic-mirror-buffer:
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-092-mirror-buffer", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-092-mirror-buffer:
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/mirror-target"] != "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- if !props["mirrorEnabled"].(bool) -%}
+          {{- fail("Ingress " + key + " sets 'haproxy-haptic.org/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
+        {%- end -%}
+        {%- var block = "\n# haptic/mirror-buffer (" + key + "): buffer the request body so it reaches the mirror plugin\n" +
+          "http-request wait-for-body time " + tostring(props["mirrorWait"]) + " if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map(" + tostring(props["requestBufferingMap"]) + ",on) -m str off }" -%}
+        {{- block -}}
       {%- end %}
 
+  features-900-haptic-fragment-820-mirror:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "targetTimeoutMs": extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000),
+          "targetRetries": extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0),
+        }}) -}}
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/mirror-target']"]
+      consumes: [haptic-ingress-match-publications]
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-820-mirror" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-820-haptic-mirror:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-820-mirror", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-820-mirror:
     template: |
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
@@ -241,7 +262,8 @@ templateSnippets:
         Generated HAProxy Config (per mirror-target Ingress):
           http-request set-var(txn.gw_mirror_targets) str(<scheme>|<host:port>|<ms>|<n>;),concat(,txn.gw_mirror_targets,) if <host-match>
       -#}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- var mt = ingress.Metadata.Annotations["haproxy-haptic.org/mirror-target"] %}
         {%- if mt != "" %}
           {%- var ns = ingress.Metadata.Namespace %}
@@ -288,9 +310,9 @@ templateSnippets:
             {%- continue %}
           {%- end %}
           {%- var safeAuthority = ValidateConfigValue(authority, "haproxy-haptic.org/mirror-target", key, false) %}
-          {%- var cond = HostMatchCondition(hosts) %}
-          {%- var timeoutMs = toint(extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000)) %}
-          {%- var retriesCount = toint(extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0)) %}
+          {%- var cond = HapticHostMatchCondition(key) %}
+          {%- var timeoutMs = toint(props["targetTimeoutMs"]) %}
+          {%- var retriesCount = toint(props["targetRetries"]) %}
           {%- var entry = scheme + "|" + safeAuthority + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
       # haptic/mirror-target ({{ key }})
       http-request set-var(txn.gw_mirror_targets) str({{ entry }};),concat(,txn.gw_mirror_targets,) if {{ cond }}

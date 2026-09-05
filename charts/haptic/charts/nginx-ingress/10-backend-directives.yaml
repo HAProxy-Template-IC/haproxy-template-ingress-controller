@@ -1,5 +1,14 @@
 templateSnippets:
 
+  util-nginx-ingress-rewrite-target:
+    template: |
+      {% macro RewriteTargetCaptures(target string) string %}{%%
+        for group := 1; group <= 9; group++ {
+          target = strings_replace(target, "$" + tostring(group), "\\" + tostring(group))
+        }
+        show target
+      %%}{% end %}
+
   backend-directives-670-nginx-ingress-session-affinity:
     template: |
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
@@ -89,47 +98,45 @@ templateSnippets:
   # larger wins) become a `<backend>|server` entry in backend-timeouts.map as ms.
   # There is no tunnel equivalent in the nginx annotation set.
   map-backend-timeout-700-nginx-timeouts:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      group: map-backend-timeout-ingress
+      effects: [recordEvent]
     template: |
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%%
-        var lines = []string{}
-        for _, ingress := range resources.ingresses.List() {
-          var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name
-          var readT = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"]
-          var sendT = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-send-timeout"]
-          if readT == "" && sendT == "" {
-            continue
+        var ingress = item
+        var key = dig_string(ingress, "", "metadata", "namespace") + "/" + dig_string(ingress, "", "metadata", "name")
+        var readT = dig_string(ingress, "", "metadata", "annotations", "nginx.ingress.kubernetes.io/proxy-read-timeout")
+        var sendT = dig_string(ingress, "", "metadata", "annotations", "nginx.ingress.kubernetes.io/proxy-send-timeout")
+        var bad = ""
+        if readT != "" && !regex_search(readT, "^[0-9]+$") {
+          bad = "proxy-read-timeout"
+        }
+        if sendT != "" && !regex_search(sendT, "^[0-9]+$") {
+          bad = "proxy-send-timeout"
+        }
+        if bad != "" {
+          var message = "Annotation 'nginx.ingress.kubernetes.io/" + bad + "' on Ingress '" + key + "' is not a whole number of seconds; the timeout is not applied."
+          if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" {
+            fail(message)
+          } else {
+            recordEvent(ingress, "InvalidTimeout", message)
           }
-          var bad = ""
-          if readT != "" && !regex_search(readT, "^[0-9]+$") {
-            bad = "proxy-read-timeout"
-          }
-          if sendT != "" && !regex_search(sendT, "^[0-9]+$") {
-            bad = "proxy-send-timeout"
-          }
-          if bad != "" {
-            _ = WebhookRejectOrWarn(ingress, "InvalidTimeout", "Annotation 'nginx.ingress.kubernetes.io/" + bad + "' on Ingress '" + key + "' is not a whole number of seconds; the timeout is not applied.")
-            continue
-          }
+        } else {
           var secs = toint(readT)
           if toint(sendT) > secs {
             secs = toint(sendT)
           }
-          if secs <= 0 {
-            continue
-          }
-          for _, rule := range ingress.Spec.Rules {
-            for _, path := range rule.Http.Paths {
-              var be = BackendNameIngress(ingress, path)
-              if first_seen("map-backend-timeout", be, "server") {
-                lines = append(lines, be + "|server " + tostring(secs * 1000))
+          if secs > 0 {
+            for _, rule := range toSlice(dig(ingress, "spec", "rules")) {
+              for _, path := range toSlice(dig(rule, "http", "paths")) {
+                var be = BackendNameIngress(ingress, path)
+                show shared.Unique("map-backend-timeout", be + "|server", "\n" + be + "|server " + tostring(secs * 1000))
               }
             }
           }
-        }
-        if len(lines) > 0 {
-          show "\n" + join(lines, "\n")
         }
       %%}
 
@@ -221,11 +228,18 @@ templateSnippets:
       {%- end -%}
 
   map-body-size-720-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/proxy-body-size']"]
+      group: map-body-size
     template: |
       {# "0" means unlimited in nginx, hence no map entry. #}
       {# base.yaml's frontend-filters-250-request-body-size enforces the map (deny 413) keyed on the resolved backend, so a cap change is map-only and reload-free. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var bodySize = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-body-size"] -%}
         {%- if bodySize != "" -%}
           {%%
@@ -247,9 +261,7 @@ templateSnippets:
               {#- rule.Http is a value struct: .Paths is empty without an http block, so no nil guard. -#}
               {%- for _, path := range rule.Http.Paths -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}
-                {%- if first_seen("map-body-size", be) -%}
-      {{ "\n" }}{{ be }} {{ bytes }}
-                {%- end -%}
+                {{- shared.Unique("map-body-size", be, "\n" + be + " " + tostring(bytes)) -}}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -330,6 +342,7 @@ templateSnippets:
   backend-directives-750-nginx-ingress-rewrite-target:
     template: |
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-nginx-ingress-rewrite-target" for RewriteTargetCaptures -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -337,8 +350,7 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
         {%- var rewrite = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/rewrite-target"] %}
         {%- if rewrite != "" %}
-          {#- Translate $1..$9 capture groups to \1..\9 -#}
-          {%- rewrite = regexp("\\$([1-9])").ReplaceAll(rewrite, "\\$1") %}
+          {%- rewrite = RewriteTargetCaptures(rewrite) -%}
           {#- Only a \N backreference forces backend scope (the regex side can't be map-driven); literal rewrites go to path-rewrite.map via map-path-rewrite-750-nginx-ingress. -#}
           {%- if regex_search(rewrite, "\\\\[1-9]") %}
             {%- var injRw = ConfigInjectionKind(rewrite, "line") %}
@@ -351,22 +363,30 @@ templateSnippets:
       {%- end -%}
 
   map-path-rewrite-750-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/rewrite-target']"]
+      group: map-path-rewrite
     template: |
       {# Literal rewrites only (no \N); base.yaml's frontend-filters-400-path-rewrite applies them as set-path. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-nginx-ingress-rewrite-target" for RewriteTargetCaptures -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var rewrite = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/rewrite-target"] -%}
         {%- if rewrite != "" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
-          {%- rewrite = regexp("\\$([1-9])").ReplaceAll(rewrite, "\\$1") -%}
+          {%- rewrite = RewriteTargetCaptures(rewrite) -%}
           {%- if !regex_search(rewrite, "\\\\[1-9]") -%}
             {%- for _, rule := range ingress.Spec.Rules -%}
               {%- for _, path := range rule.Http.Paths -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}
-                {%- if first_seen("map-path-rewrite", be) -%}
-      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(rewrite, "nginx.ingress.kubernetes.io/rewrite-target", key, true)) }}
-                {%- end -%}
+                {{- shared.Unique("map-path-rewrite", be,
+                  "\n" + be + " " + queryEscape(ValidateConfigValue(rewrite,
+                    "nginx.ingress.kubernetes.io/rewrite-target", key, true))) -}}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -444,58 +464,79 @@ templateSnippets:
   # These maps are consumed by base.yaml's frontend-filters-26x-request-set-* rules,
   # so changing a header value is a map-only, reload-free update.
   map-reqhdr-host-760-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/upstream-vhost']"]
+      group: map-reqhdr-host
     template: |
       {# Shares the "map-reqhdr-host" first_seen namespace with the haproxytech set-host emitter. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/upstream-vhost"] -%}
         {%- if v != "" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
-              {%- if first_seen("map-reqhdr-host", be) -%}
-      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "nginx.ingress.kubernetes.io/upstream-vhost", key, true)) }}
-              {%- end -%}
+              {{- shared.Unique("map-reqhdr-host", be,
+                "\n" + be + " " + queryEscape(ValidateConfigValue(v,
+                  "nginx.ingress.kubernetes.io/upstream-vhost", key, true))) -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
       {%- end -%}
 
   map-reqhdr-xfwd-prefix-760-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/x-forwarded-prefix']"]
+      group: map-reqhdr-xfwd-prefix
     template: |
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/x-forwarded-prefix"] -%}
         {%- if v != "" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
-              {%- if first_seen("map-reqhdr-xfwd-prefix", be) -%}
-      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "nginx.ingress.kubernetes.io/x-forwarded-prefix", key, true)) }}
-              {%- end -%}
+              {{- shared.Unique("map-reqhdr-xfwd-prefix", be,
+                "\n" + be + " " + queryEscape(ValidateConfigValue(v,
+                  "nginx.ingress.kubernetes.io/x-forwarded-prefix", key, true))) -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
       {%- end -%}
 
   map-reqhdr-connection-760-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/connection-proxy-header']"]
+      group: map-reqhdr-connection
     template: |
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/connection-proxy-header"] -%}
         {%- if v != "" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
-              {%- if first_seen("map-reqhdr-connection", be) -%}
-      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "nginx.ingress.kubernetes.io/connection-proxy-header", key, true)) }}
-              {%- end -%}
+              {{- shared.Unique("map-reqhdr-connection", be,
+                "\n" + be + " " + queryEscape(ValidateConfigValue(v,
+                  "nginx.ingress.kubernetes.io/connection-proxy-header", key, true))) -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}

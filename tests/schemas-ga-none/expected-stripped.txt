@@ -19,6 +19,7 @@ test-backendtlspolicy-invalid-ca-cert-ref-rejects
 test-backendtlspolicy-no-san-hostname-drives-both
 test-backendtlspolicy-san-hostname-drives-verifyhost
 test-backendtlspolicy-status-transition-time-preserved
+test-gateway-backend-service-map-incremental-group
 test-gateway-backend-client-cert-shape
 test-gateway-bind-per-gateway-shape
 test-gateway-crtlist-per-listener-shapes
@@ -29,6 +30,7 @@ test-gateway-header-name-quote-rejected
 test-gateway-header-name-rejected
 test-gateway-header-name-shared-across-routes
 test-gateway-http-listener-isolation
+test-gateway-httproute-ssl-passthrough
 test-gateway-https-listener-dual-cert
 test-gateway-https-listener-mtls-unresolved-ca-no-bind
 test-gateway-https-listener-mtls-unresolved-ca-status-conditions
@@ -69,6 +71,7 @@ test-gateway-redirect-multi-prefix-fallback
 test-gateway-redirect-single-prefix-has-no-fallback
 test-gateway-redirect-status-code-rejected
 test-gateway-route-maps-always-present
+test-gateway-routing-diagnostic-response-headers
 test-gateway-servers-named-after-pods
 test-gateway-static-addresses-name-fits-rfc1123-label
 test-gateway-static-addresses-per-ip-services

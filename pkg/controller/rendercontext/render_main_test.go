@@ -71,6 +71,37 @@ func TestRenderMainAssemblesDeclaredBackends(t *testing.T) {
 	assert.Equal(t, "10.0.0.2", plan.CurrentConfig().ServerIndex["be_b"]["SRV_1"].Address)
 }
 
+func TestRenderMainDocumentReturnsAuthenticatedLegacyParity(t *testing.T) {
+	engine := newTestEngine(t, mainTemplateWithBackends, nil)
+	documentRegistry := rendercontext.NewPlanRegistry(nil)
+
+	documentResult, err := rendercontext.RenderMainDocument(
+		t.Context(),
+		engine,
+		map[string]any{"planRegistry": documentRegistry},
+		documentRegistry,
+		false,
+	)
+	require.NoError(t, err)
+	require.NoError(t, documentResult.Document.ValidateAuthentication())
+	documentConfig, err := documentResult.Document.String()
+	require.NoError(t, err)
+
+	legacyRegistry := rendercontext.NewPlanRegistry(nil)
+	legacy, err := rendercontext.RenderMain(
+		t.Context(),
+		engine,
+		map[string]any{"planRegistry": legacyRegistry},
+		legacyRegistry,
+		false,
+	)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Document.ValidateAuthentication())
+	assert.Equal(t, legacy.Config, documentConfig)
+	assert.Equal(t, legacy.Sections, documentResult.Sections)
+	assertConfigPartitioned(t, documentConfig, documentResult.Sections)
+}
+
 func TestRenderMainAppliesPostProcessorsPerSection(t *testing.T) {
 	// The bundled chart normalises indentation this way; a spliced section must
 	// come out indented like the rest of the file.
@@ -116,6 +147,70 @@ func TestRenderMainWithoutDeclarationsIsUnchanged(t *testing.T) {
 	plan, err := registry.Plan("", nil)
 	require.NoError(t, err)
 	assert.Len(t, plan.Sections, 1)
+}
+
+func TestRenderMainRawAndStringPathsAreByteIdentical(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		post   []templating.PostProcessorConfig
+	}{
+		{name: "empty"},
+		{name: "missing newline", source: "global\n  daemon"},
+		{name: "trailing newline", source: "global\n  daemon\n"},
+		{
+			name:   "post processing",
+			source: "global\n        daemon\n\n\n",
+			post: []templating.PostProcessorConfig{{
+				Type: templating.PostProcessorTypeRegexReplace,
+				Params: map[string]string{
+					"pattern": "^[ ]+",
+					"replace": "  ",
+				},
+			}},
+		},
+		{name: "plan tokens", source: mainTemplateWithBackends},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rawEngine := newTestEngine(t, test.source, test.post)
+			legacyEngine := stringOnlyEngine{Engine: newTestEngine(t, test.source, test.post)}
+			rawRegistry := rendercontext.NewPlanRegistry(nil)
+			legacyRegistry := rendercontext.NewPlanRegistry(nil)
+
+			raw, err := rendercontext.RenderMain(
+				t.Context(), rawEngine, map[string]any{"planRegistry": rawRegistry}, rawRegistry, false,
+			)
+			require.NoError(t, err)
+			legacy, err := rendercontext.RenderMain(
+				t.Context(), legacyEngine, map[string]any{"planRegistry": legacyRegistry}, legacyRegistry, false,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, legacy.Config, raw.Config)
+			assert.Equal(t, legacy.Sections, raw.Sections)
+		})
+	}
+}
+
+type stringOnlyEngine struct {
+	templating.Engine
+}
+
+func TestRenderMainKeepsInstrumentedPostProcessingAtomic(t *testing.T) {
+	engine, err := templating.New(map[string]string{names.MainTemplateName: "global"}, &templating.Options{
+		PostProcessors: map[string][]templating.PostProcessorConfig{names.MainTemplateName: {{
+			Type:   templating.PostProcessorTypeTemplate,
+			Params: map[string]string{"source": `{{ fail("post boom") }}`},
+		}}},
+	})
+	require.NoError(t, err)
+	engine.EnableTracing()
+
+	_, err = rendercontext.RenderMain(
+		t.Context(), engine, map[string]any{}, rendercontext.NewPlanRegistry(nil), false,
+	)
+	require.ErrorContains(t, err, "post boom")
+	assert.Empty(t, engine.GetTraceOutput())
 }
 
 func assertConfigPartitioned(t *testing.T, config string, sections []renderplan.Section) {

@@ -287,8 +287,11 @@ var faults = []fault{
 	},
 	{
 		name: "the controller reverts to the last known good set",
-		arm: func(_ *simulation, m *api.Manifest, _ []file) {
+		arm: func(s *simulation, m *api.Manifest, _ []file) {
 			m.Mode = api.ModeRevertLKG
+			if s.applied != "" {
+				m.PlanID = s.applied
+			}
 		},
 		disarm: func(*simulation) {},
 	},

@@ -1,132 +1,70 @@
 templateSnippets:
-  # ============================================================================
-  # Per-Gateway LoadBalancer Service emission
-  #
-  # Each Gateway with HTTP or HTTPS listeners and NO spec.addresses set gets
-  # its own LoadBalancer Service in the controller namespace. MetalLB (or
-  # whatever cluster IPAM is in use) allocates a unique LB IP for each Service,
-  # which the chart's status patcher writes back into Gateway.Status.Addresses.
-  # The Service's port → targetPort mapping uses phase 1's pod-port allocator,
-  # so each (Gateway, listener) bind ends up on a unique container port — that
-  # lets phase 4 emit one HAProxy bind per Gateway with isolated routing.
-  # HTTPS binds carry isolated SSL config (cert, verify mode, ca-ignore-err)
-  # on the same logical 443; HTTP binds isolate host/path routing so a
-  # no-hostname listener on one Gateway can't catch another Gateway's hosts
-  # (the GatewayHTTPListenerIsolation contract). TLS listeners are excluded —
-  # they flow through chart-static ssl-tcp / frontends-600.
-  #
-  # Re-uses the existing `k8sResources.gateway-static-addresses` template by
-  # writing entries into the same `shared.gatewayStaticAddressServices` map
-  # the static-addresses path populates. The template doesn't distinguish
-  # between "user-pinned via spec.addresses" and "chart-allocated per-Gateway"
-  # entries — it just renders Services from whatever's in the map.
-  #
-  # Skips:
-  #   * Gateways with `spec.addresses` set — those go through the existing
-  #     static-addresses path (one Service per IP, with a per-IP MetalLB
-  #     annotation). Re-emitting would collide on the Service name.
-  #   * Gateways with no HTTPS listener — there's nothing for the chart's
-  #     mode-http frontend to bind on, so a per-Gateway Service has no
-  #     consumer. (HTTP-only Gateways still flow through the chart-static
-  #     bind on 80.)
-  #
-  # NOT skipped: mTLS-blocked listeners. The Service stays up so connections
-  # land at the chart's HAProxy pod; phase 4 declines to emit a bind for
-  # the blocked listener, so the connection RSTs at the Pod boundary —
-  # exactly what the GatewayFrontendInvalidDefaultClientCertificateValidation
-  # contract requires.
-  # ============================================================================
+  util-gateway-per-gateway-service-bindings:
+    template: |-
+      {{- toJSON(map[string]any{"gateways": map[string]any{
+        "controllerNamespace": tostring(extraContext | dig("controllerNamespace") | fallback("")),
+        "haproxyPodSelector": extraContext | dig("haproxyPodSelector"),
+      }}) -}}
 
-  features-090-gateway-per-gateway-services:
+  gateway-service-resources-200-per-gateway:
     requires: [gateways]
-    template: |
-      {%- import "util-bounded-k8s-name" for BoundedK8sName %}
-      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerName, ListenerProtocol %}
-      {{ render "util-gateway-pod-port-allocator" -}}
-      {%- var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback("")) %}
-      {%- var podSelector = extraContext | dig("haproxyPodSelector") %}
-      {%- if ctrlNs != "" && podSelector != nil %}
-        {%- var allocations map[string]any = coalesce(shared.Get("gatewayPodPortAllocations"), map[string]any{}).(map[string]any) %}
-        {%- var gwSvcsRaw, _ = shared.ComputeIfAbsent("gatewayStaticAddressServices", func() any { return map[string]any{} }) %}
-        {%- var gwSvcs = gwSvcsRaw.(map[string]any) %}
-        {%- for _, gw := range resources.gateways.List() %}
-          {%- var gwNs = gw.Metadata.Namespace %}
-          {%- var gwName = gw.Metadata.Name %}
-          {#- Skip when spec.addresses is set — the existing static-
-              addresses path emits one Service per IP. Mixing with a
-              per-Gateway Service would collide on the Service name. -#}
-          {%- if len(gw.Spec.Addresses) == 0 && gwNs != "" && gwName != "" %}
-            {%%
-              // Walk the Gateway's listeners. The Service must expose
-              // EVERY listener port (HTTPS + HTTP + TLS) — the
-              // Gateway's status.addresses points at this one IP and
-              // clients connect to <ip>:<listener.port> regardless of
-              // protocol, so kube-proxy needs a port mapping for each.
-              //
-              // HTTPS listeners get a per-listener targetPort drawn
-              // from phase 1's allocator (so phase 4's per-Gateway
-              // bind on its unique pod port handles them). Other
-              // protocols target their own port number directly,
-              // routing to the chart-static HAProxy bind for that
-              // port (HTTP → bind *:80, TLS-Passthrough → ssl-tcp,
-              // TLS-Terminate non-default → frontends-600). Skip
-              // duplicates by listenerPort (multiple listeners on
-              // the same port disambiguate downstream via crt-list /
-              // SNI / Host, not via duplicate Service ports).
-              var ports = []any{}
-              var seenPort = map[int]bool{}
-              var hasIsolated = false
-              for _, listener := range gw.Spec.Listeners {
-                var lName = listener.Name
-                var lPort = toint(listener.Port)
-                var lProto = listener.Protocol
-                if lName == "" || lPort <= 0 || seenPort[lPort] {
-                  continue
-                }
-                seenPort[lPort] = true
-                var targetPort = lPort
-                // HTTP and HTTPS listeners both bind on a per-Gateway pod
-                // port (phase 1's allocator), so the Service must DNAT
-                // <lb-ip>:<listenerPort> → <pod-ip>:<podPort> for each.
-                // This is what isolates each Gateway's routing by
-                // destination instead of collapsing onto the shared
-                // chart-static :80 / :443 binds — a no-hostname listener
-                // on one Gateway can no longer catch another Gateway's
-                // hosts (GatewayHTTPListenerIsolation).
-                if lProto == "HTTPS" || lProto == "HTTP" {
-                  hasIsolated = true
-                  var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
-                  if val, ok := allocations[allocKey]; ok {
-                    targetPort = toint(val)
-                  }
-                }
-                ports = append(ports, map[string]any{
-                  "name":       "p" + tostring(lPort),
-                  "port":       lPort,
-                  "targetPort": targetPort,
-                  "protocol":   "TCP",
-                })
-              }
-              if hasIsolated && len(ports) > 0 {
-                var svcName = BoundedK8sName("gw", gwNs, gwName, "")
-                // Carry the gateway-name + gateway-namespace labels so the
-                // status read-back path (and the conformance test's
-                // discovery) finds the per-Gateway Service the same way
-                // it finds the static-addresses Services.
-                var ownedLabels = map[string]any{
-                  "gateway.networking.k8s.io/gateway-name":      gwName,
-                  "gateway.networking.k8s.io/gateway-namespace": gwNs,
-                }
-                gwSvcs[ctrlNs+"/"+svcName] = map[string]any{
-                  "namespace":   ctrlNs,
-                  "name":        svcName,
-                  "labels":      ownedLabels,
-                  "annotations": map[string]any{},
-                  "selector":    podSelector,
-                  "ports":       ports,
-                }
-              }
-            %%}
-          {%- end %}
-        {%- end %}
-      {%- end %}
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-per-gateway-service-bindings" -}}'
+      group: gateway-service-resources
+      consumes: [gateway-host-port-scopes]
+      effects: [publishValue]
+    template: |-
+      {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        var controllerNamespace = dig_string(props, "", "controllerNamespace")
+        var podSelector = dig(props, "haproxyPodSelector")
+        if gateway != nil && controllerNamespace != "" && podSelector != nil &&
+          len(gateway.Spec.Addresses) == 0 && namespace != "" && name != "" {
+          var ports = []any{}
+          var seenPort = map[int]bool{}
+          var hasIsolated = false
+          for _, listener := range gateway.Spec.Listeners {
+            var listenerName = listener.Name
+            var listenerPort = toint(listener.Port)
+            var listenerProtocol = listener.Protocol
+            if listenerName == "" || listenerPort <= 0 || seenPort[listenerPort] {
+              continue
+            }
+            seenPort[listenerPort] = true
+            var targetPort = listenerPort
+            if listenerProtocol == "HTTPS" || listenerProtocol == "HTTP" {
+              hasIsolated = true
+              var selectedPort, found = shared.Select("gateway-host-port-scopes", "ports",
+                namespace + "/" + name + ":" + tostring(listenerPort))
+              if found { targetPort = toint(selectedPort) }
+            }
+            ports = append(ports, map[string]any{
+              "name": "p" + tostring(listenerPort), "port": listenerPort,
+              "targetPort": targetPort, "protocol": "TCP",
+            })
+          }
+          if hasIsolated && len(ports) > 0 {
+            var serviceName = BoundedK8sName("gw", namespace, name, "")
+            var resource = map[string]any{
+              "apiVersion": "v1", "kind": "Service",
+              "metadata": map[string]any{
+                "name": serviceName, "namespace": controllerNamespace,
+                "labels": map[string]any{
+                  "gateway.networking.k8s.io/gateway-name": name,
+                  "gateway.networking.k8s.io/gateway-namespace": namespace,
+                },
+                "annotations": map[string]any{},
+              },
+              "spec": map[string]any{
+                "type": "LoadBalancer", "selector": podSelector, "ports": ports,
+              },
+            }
+            var rendered = marshalYAML(resource)
+            var resourceKey = controllerNamespace + "/" + serviceName
+            show shared.PublishRanked("static-addresses", resourceKey, resourceKey, rendered)
+          }
+        }
+      %%}

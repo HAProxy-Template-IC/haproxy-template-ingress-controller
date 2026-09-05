@@ -16,7 +16,7 @@
 // resources they concern. Templates call recordEvent(resource, reason, message)
 // during rendering (the resource's namespace/name/apiVersion/kind are read off
 // it); those events ride on ReconciliationCompletedEvent and this leader-only
-// component forwards each to the API server via an EventRecorder.
+// component forwards each newly added event to the API server via an EventRecorder.
 //
 // It is resource-agnostic (RULE #1): every event carries its own
 // apiVersion/kind/namespace/name, so the emitter builds a bare
@@ -32,9 +32,11 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	clientsetscheme "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/scheme"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -71,8 +73,9 @@ type Component struct {
 	broadcaster record.EventBroadcaster
 	recorder    record.EventRecorder
 
-	mu       sync.RWMutex
-	isLeader bool
+	mu         sync.Mutex
+	isLeader   bool
+	lastEvents *templating.RenderedEventSnapshot
 }
 
 // Config wires the component's dependencies.
@@ -148,32 +151,79 @@ func (c *Component) HandleEvent(event busevents.Event) {
 func (c *Component) setLeader(v bool) {
 	c.mu.Lock()
 	c.isLeader = v
+	if !v {
+		c.lastEvents = nil
+	}
 	c.mu.Unlock()
 }
 
 func (c *Component) leader() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.isLeader
 }
 
-// handleReconciliationCompleted emits each recorded Event against its involved
-// object. No-op for followers or when the render recorded no events.
+// handleReconciliationCompleted emits authenticated event-set additions.
 func (c *Component) handleReconciliationCompleted(e *events.ReconciliationCompletedEvent) {
-	if !c.leader() || len(e.Events) == 0 || c.recorder == nil {
+	if e == nil {
 		return
 	}
-	for _, ev := range e.Events {
-		// A bare ObjectReference is a resource-agnostic involved object:
-		// reference.GetReference returns it as-is, so no scheme/type knowledge
-		// is needed for arbitrary watched CRDs (RULE #1).
+	occurrence, err := e.RenderOccurrence()
+	if err != nil {
+		c.Logger().Error("Rendered event occurrence has invalid provenance", "error", err,
+			"correlation_id", e.CorrelationID())
+		return
+	}
+	cycle, err := occurrence.Snapshot()
+	if err != nil {
+		c.Logger().Error("Rendered event occurrence has invalid provenance", "error", err,
+			"correlation_id", e.CorrelationID())
+		return
+	}
+	c.emitCycle(cycle, e.CorrelationID())
+}
+
+func (c *Component) emitCycle(cycle *rendercycle.Snapshot, correlationID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.isLeader || c.recorder == nil {
+		return
+	}
+	snapshot, err := cycle.RenderedEventSnapshot()
+	if err != nil {
+		c.Logger().Error("Rendered event cycle has invalid provenance", "error", err,
+			"correlation_id", correlationID)
+		return
+	}
+	if c.lastEvents != nil {
+		same, sameErr := snapshot.SameRoot(c.lastEvents)
+		if sameErr != nil {
+			c.Logger().Error("Rendered events have invalid provenance", "error", sameErr,
+				"correlation_id", correlationID)
+			return
+		}
+		if same {
+			return
+		}
+	}
+	delta, err := snapshot.AddedSince(c.lastEvents)
+	if err != nil {
+		c.Logger().Error("Rendered event delta has invalid provenance", "error", err,
+			"correlation_id", correlationID)
+		return
+	}
+	c.emit(delta)
+	c.lastEvents = snapshot
+}
+
+func (c *Component) emit(renderedEvents []templating.RenderedEvent) {
+	for _, ev := range renderedEvents {
 		ref := &corev1.ObjectReference{
 			APIVersion: ev.APIVersion,
 			Kind:       ev.Kind,
 			Namespace:  ev.Namespace,
 			Name:       ev.Name,
 		}
-		// ev.Type is already the corev1 EventType string ("Warning"/"Normal").
 		c.recorder.Event(ref, ev.Type, ev.Reason, ev.Message)
 	}
 }

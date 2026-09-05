@@ -8,9 +8,11 @@ HAProxy configuration syntax validation using the HAProxy binary, and an embedde
 
 ### Requirement: HAProxy Syntax Validation
 
-The system SHALL validate rendered HAProxy configuration by invoking the HAProxy binary with the `-c` flag. Validation SHALL write the configuration and all auxiliary files (maps, general files, SSL certificates, CRT lists) to a temporary directory before invoking the binary. A validation cache SHALL treat `ErrValidationCacheHit` as a pass (configuration already validated successfully). On failure, validation errors SHALL be simplified using `dataplane.SimplifyValidationError()` to produce user-readable messages.
+The system SHALL validate rendered HAProxy configuration by invoking the HAProxy binary with the `-c` flag. Validation SHALL write the configuration and all auxiliary files (maps, general files, SSL certificates, CRT lists) to a temporary directory before invoking the binary. Every validation request SHALL invoke HAProxy and use that invocation's verdict, including when the config and auxiliary bytes are identical to an earlier successful request. On failure, validation errors SHALL be simplified using `dataplane.SimplifyValidationError()` to produce user-readable messages.
 
-Semantic validation and local-version detection SHALL derive process execution and queue waiting from the caller context. A cancelled validation SHALL stop without executing after a serialized wait, SHALL terminate a running HAProxy process, and SHALL NOT populate or return a successful validation cache entry.
+Semantic validation and local-version detection SHALL derive process execution and queue waiting from the caller context. A cancelled validation SHALL stop without executing after a serialized wait, SHALL terminate a running HAProxy process, and SHALL NOT return success.
+
+Future positive-verdict reuse SHALL require an authenticated hermetic-environment root covering the HAProxy executable, arguments, configuration, dependencies, and runtime inputs, bound to the exact config and auxiliary bytes. A content checksum alone SHALL NOT authorize reuse.
 
 #### Scenario: Valid configuration passes syntax check
 
@@ -22,10 +24,12 @@ THEN the `haproxy_valid` assertion SHALL pass and no error message SHALL be prod
 WHEN a rendered HAProxy configuration contains a syntax error (e.g., `maxconn` set to a non-integer)
 THEN the `haproxy_valid` assertion SHALL fail and the error message SHALL contain the simplified error (e.g., `maxconn: integer expected`) rather than raw HAProxy output with timestamps and process IDs.
 
-#### Scenario: Validation cache hit treated as pass
+#### Scenario: Repeated bytes observe the current runtime verdict
 
-WHEN the configuration has already been validated successfully and `ValidateConfiguration` returns `ErrValidationCacheHit`
-THEN the `haproxy_valid` assertion SHALL pass.
+GIVEN a configuration has validated successfully
+AND the HAProxy executor or runtime changes to reject the same bytes
+WHEN validation runs again with the identical configuration and auxiliary files
+THEN the `haproxy_valid` assertion SHALL fail with the new invocation's verdict.
 
 ### Requirement: Test Fixtures
 

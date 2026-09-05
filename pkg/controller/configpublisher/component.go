@@ -27,6 +27,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
 
@@ -54,11 +56,13 @@ const (
 // renderedConfigEntry holds one render's bytes on their way to the publish
 // worker, keyed by the correlation ID of the reconcile that produced them.
 type renderedConfigEntry struct {
-	config          string
-	auxFiles        *dataplane.AuxiliaryFiles
-	contentChecksum string
-	planID          string
-	renderedAt      time.Time
+	config           string
+	auxFiles         *dataplane.AuxiliaryFiles
+	artifactSnapshot *renderartifact.Snapshot
+	outputSnapshot   *renderoutput.Snapshot
+	contentChecksum  string
+	planID           string
+	renderedAt       time.Time
 }
 
 // publishWorkItem represents a config publish task for the async worker.
@@ -219,19 +223,21 @@ type Component struct {
 	deployedChecksumByPod map[podAuthorityKey]string
 	deployedTrigger       chan struct{} // Wakes publishWorker; cap 1, same as statusWorkTrigger
 
-	// lastPublishedChecksum tracks the checksum of the last successfully published config.
-	// Used to skip redundant CRD updates when config content is unchanged.
+	// lastPublishedChecksum tracks legacy publications. Authenticated outputs
+	// use exact root identity instead of treating a digest as positive proof.
 	// Protected by mu.
-	lastPublishedChecksum   string
-	publicationTerm         uint64
-	nextPublishGeneration   uint64
-	latestPublishGeneration uint64
-	nextInvalidGeneration   uint64
-	latestInvalidGeneration uint64
-	publishSuperseded       chan struct{}
-	invalidSuperseded       chan struct{}
-	publicationRetryWait    func(context.Context, time.Duration, <-chan struct{}) bool
-	publicationCallMu       sync.Mutex
+	lastPublishedChecksum       string
+	lastPublishedOutputSnapshot *renderoutput.Snapshot
+	lastPublishedEntry          *renderedConfigEntry
+	publicationTerm             uint64
+	nextPublishGeneration       uint64
+	latestPublishGeneration     uint64
+	nextInvalidGeneration       uint64
+	latestInvalidGeneration     uint64
+	publishSuperseded           chan struct{}
+	invalidSuperseded           chan struct{}
+	publicationRetryWait        func(context.Context, time.Duration, <-chan struct{}) bool
+	publicationCallMu           sync.Mutex
 
 	// publishInterval configures the leading-edge refractory period for both
 	// publish and status throttles. Decouples CRD writes from reconciliation
@@ -411,6 +417,8 @@ func (c *Component) preparePublicationTerm() {
 	c.heldCorrelationID = ""
 	c.publishedPlanID = ""
 	c.lastPublishedChecksum = ""
+	c.lastPublishedOutputSnapshot = nil
+	c.lastPublishedEntry = nil
 	c.latestPublishGeneration = 0
 	c.latestInvalidGeneration = 0
 	c.publishSuperseded = supersedePublication(c.publishSuperseded)

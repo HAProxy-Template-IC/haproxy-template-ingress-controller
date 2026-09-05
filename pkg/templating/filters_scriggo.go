@@ -16,6 +16,7 @@ package templating
 
 import (
 	"crypto/rand"
+	"reflect"
 
 	"gitlab.com/haproxy-haptic/scriggo/builtin"
 	"gitlab.com/haproxy-haptic/scriggo/native"
@@ -98,7 +99,7 @@ func buildScriggoGlobals(customFilters map[string]FilterFunc, customFunctions ma
 // These are declared with nil pointers so Scriggo knows the TYPE at compile time,
 // but the VALUE is provided at runtime via template.Run(vars).
 func registerScriggoRuntimeVars(decl native.Declarations) {
-	decl["pathResolver"] = (*PathResolver)(nil)
+	decl[declPathResolver] = (*PathResolver)(nil)
 	// `resources` is deliberately NOT declared here. Every engine
 	// consumer in this codebase goes through
 	// helpers.BuildAdditionalDeclarations + typebootstrap, which
@@ -111,18 +112,20 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 	// (unit tests) must supply their own `resources` declaration
 	// via additionalDeclarations OR avoid templates that touch
 	// `resources` at all.
-	decl["controller"] = (*map[string]ResourceStore)(nil)
+	decl[declController] = (*map[string]ResourceStore)(nil)
 	decl["templateSnippets"] = (*[]string)(nil)
-	decl["fileRegistry"] = (*FileRegistrar)(nil)
-	decl["planRegistry"] = (*PlanRegistrar)(nil)
+	decl[declFileRegistry] = (*FileRegistrar)(nil)
+	decl[declPlanRegistry] = (*PlanRegistrar)(nil)
 	decl["dataplane"] = (*map[string]any)(nil)
 	decl["capabilities"] = (*map[string]any)(nil)
-	decl["shared"] = (*SharedContext)(nil)
+	decl[declShared] = (*SharedContext)(nil)
 	decl["extraContext"] = (*map[string]any)(nil)
-	decl["http"] = (*HTTPFetcher)(nil)                      // HTTP store for fetching remote content
+	decl[declHTTP] = (*HTTPFetcher)(nil)                    // HTTP store for fetching remote content
 	decl["runtimeEnvironment"] = (*RuntimeEnvironment)(nil) // Runtime environment info (GOMAXPROCS, etc.)
-	decl["renderMode"] = (*string)(nil)                     // "reconcile" (warn) | "admission" (fail); see rendercontext.RenderMode
+	decl[declRenderMode] = (*string)(nil)                   // "reconcile" (warn) | "admission" (fail); see rendercontext.RenderMode
 	decl["admissionSubject"] = (*map[string]any)(nil)       // Store aliases and identity of the resource under admission review; empty map otherwise
+	decl[ResourceDeriverContextName] = (*ResourceDeriver)(nil)
+	decl[declItem] = (*map[string]any)(nil)
 	// Note: Domain-specific types like currentConfig are registered via additionalDeclarations
 	// parameter in buildScriggoGlobals() to maintain clean architecture boundaries
 }
@@ -250,11 +253,21 @@ func registerStatusAndEventFunctions(decl native.Declarations) {
 	decl[FuncStatusPatch] = scriggoStatusPatch
 	decl[FuncCondition] = scriggoCondition
 	decl[FuncTransitionTime] = scriggoTransitionTime
+	decl[FuncCycleTimeBucket] = scriggoCycleTimeBucket
+	decl[FuncCycleRandomBytes] = scriggoCycleRandomBytes
 	decl[FilterToJSON] = scriggoToJSON
 	decl[FuncRecordEvent] = scriggoRecordEvent
 	decl[FuncResource] = scriggoResource
 	decl[FuncJSONPathGet] = scriggoJSONPathGet
 	decl[FuncJSONPathSet] = scriggoJSONPathSet
+	decl[FuncDeriveResource] = scriggoDeriveResource
+	decl[FuncIncrementalRender] = scriggoIncrementalRender
+	decl[FuncIncrementalValues] = scriggoIncrementalValues
+	decl[FuncIncrementalRankedFragments] = scriggoIncrementalRankedFragments
+	decl[FuncIncrementalRankedFragmentsJoin] = scriggoIncrementalRankedFragmentsJoin
+	decl[FuncIncrementalRankedTextFragment] = scriggoIncrementalRankedTextFragment
+	decl[FuncIncrementalRankedTextFragmentJoin] = scriggoIncrementalRankedTextFragmentJoin
+	decl[FuncIncrementalRankedFragmentBytes] = scriggoIncrementalRankedFragmentBytes
 	decl[FuncUntarGz] = scriggoUntarGz
 }
 
@@ -267,39 +280,39 @@ func registerScriggoBuiltins(decl native.Declarations) {
 // registerScriggoBuiltinCore registers core Scriggo builtins (crypto, encoding, math, etc.).
 func registerScriggoBuiltinCore(decl native.Declarations) {
 	// crypto
-	decl["hmacSHA1"] = builtin.HmacSHA1
-	decl["hmacSHA256"] = builtin.HmacSHA256
-	decl["sha1"] = builtin.Sha1
-	decl["sha256"] = builtin.Sha256
+	decl[builtinHmacSHA1] = builtin.HmacSHA1
+	decl[builtinHmacSHA256] = builtin.HmacSHA256
+	decl[builtinSHA1] = builtin.Sha1
+	decl[builtinSHA256] = builtin.Sha256
 	decl["randBytes"] = scriggoRandBytes
 
 	// encoding
-	decl["base64"] = builtin.Base64
-	decl["hex"] = builtin.Hex
-	decl["marshalJSON"] = builtin.MarshalJSON
-	decl["marshalJSONIndent"] = builtin.MarshalJSONIndent
-	decl["marshalYAML"] = builtin.MarshalYAML
-	decl["md5"] = builtin.Md5
-	decl["unmarshalJSON"] = builtin.UnmarshalJSON
-	decl["unmarshalYAML"] = builtin.UnmarshalYAML
+	decl[builtinBase64] = builtin.Base64
+	decl[builtinHex] = builtin.Hex
+	decl[builtinMarshalJSON] = builtin.MarshalJSON
+	decl[builtinMarshalJSONIndent] = builtin.MarshalJSONIndent
+	decl[builtinMarshalYAML] = builtin.MarshalYAML
+	decl[builtinMD5] = builtin.Md5
+	decl["unmarshalJSON"] = scriggoUnmarshalJSON
+	decl["unmarshalYAML"] = scriggoUnmarshalYAML
 
 	// html
-	decl["htmlEscape"] = builtin.HtmlEscape
+	decl[builtinHTMLEscape] = builtin.HtmlEscape
 
 	// math
-	decl["abs"] = builtin.Abs
-	decl["max"] = builtin.Max
-	decl["min"] = builtin.Min
-	decl["pow"] = builtin.Pow
+	decl[builtinAbs] = builtin.Abs
+	decl[builtinMax] = builtin.Max
+	decl[builtinMin] = builtin.Min
+	decl[builtinPow] = builtin.Pow
 
 	// net
-	decl["queryEscape"] = builtin.QueryEscape
+	decl[builtinQueryEscape] = builtin.QueryEscape
 
 	// regexp
-	decl["regexp"] = builtin.RegExp
+	decl[declRegexp] = builtin.RegExp
 
 	// sort
-	decl["reverse"] = builtin.Reverse
+	decl["reverse"] = scriggoReverse
 
 	// slice operations (batch processing for performance)
 	// group_by and unique_by are deliberately absent here: the pipeline
@@ -307,68 +320,119 @@ func registerScriggoBuiltinCore(decl native.Declarations) {
 	// either an attribute path or a key closure, and that preserve the
 	// input's element type instead of widening to []any. Registering the
 	// builtins here would shadow them — this block runs last.
-	decl["count_by"] = builtin.CountBy
-	decl["index_by"] = builtin.IndexBy
-	decl["map_extract"] = builtin.MapExtract
+	decl[builtinCountBy] = builtin.CountBy
+	decl[builtinIndexBy] = builtin.IndexBy
+	decl[builtinMapExtract] = builtin.MapExtract
 
 	// strconv
-	decl["formatFloat"] = builtin.FormatFloat
-	decl["formatInt"] = builtin.FormatInt
-	decl["parseFloat"] = builtin.ParseFloat
-	decl["parseInt"] = builtin.ParseInt
+	decl[builtinFormatFloat] = builtin.FormatFloat
+	decl[builtinFormatInt] = builtin.FormatInt
+	decl[builtinParseFloat] = builtin.ParseFloat
+	decl[builtinParseInt] = builtin.ParseInt
 
 	// time
-	decl["date"] = builtin.Date
+	decl[builtinDate] = builtin.Date
 	decl["now"] = builtin.Now
-	decl["parseDuration"] = builtin.ParseDuration
-	decl["parseTime"] = builtin.ParseTime
-	decl["unixTime"] = builtin.UnixTime
+	decl[builtinParseDuration] = builtin.ParseDuration
+	decl[builtinParseTime] = builtin.ParseTime
+	decl[builtinUnixTime] = builtin.UnixTime
 }
 
 // registerScriggoBuiltinStrings registers string-related Scriggo builtins.
 func registerScriggoBuiltinStrings(decl native.Declarations) {
-	decl["trimSpace"] = scriggoTrimSpace
+	decl[builtinTrimSpace] = scriggoTrimSpace
 	decl["strings_contains"] = scriggoStringsContains
-	decl["abbreviate"] = builtin.Abbreviate
-	decl["capitalize"] = builtin.Capitalize
-	decl["capitalizeAll"] = builtin.CapitalizeAll
-	decl["hasPrefix"] = builtin.HasPrefix
-	decl["hasSuffix"] = builtin.HasSuffix
-	decl["index"] = builtin.Index
-	decl["indexAny"] = builtin.IndexAny
+	decl[builtinAbbreviate] = builtin.Abbreviate
+	decl[builtinCapitalize] = builtin.Capitalize
+	decl[builtinCapitalizeAll] = builtin.CapitalizeAll
+	decl[builtinHasPrefix] = builtin.HasPrefix
+	decl[builtinHasSuffix] = builtin.HasSuffix
+	decl[builtinIndex] = builtin.Index
+	decl[builtinIndexAny] = builtin.IndexAny
 	decl["join"] = scriggoJoin // Override builtin to support []any from append()
-	decl["lastIndex"] = builtin.LastIndex
+	decl[builtinLastIndex] = builtin.LastIndex
 	decl["replace"] = scriggoStringsReplace // Override builtin to support 3-arg syntax (replaces all)
-	decl["replaceAll"] = builtin.ReplaceAll
-	decl["runeCount"] = builtin.RuneCount
-	decl["split"] = builtin.Split
-	decl["splitAfter"] = builtin.SplitAfter
-	decl["splitAfterN"] = builtin.SplitAfterN
-	decl["splitN"] = builtin.SplitN
+	decl[builtinReplaceAll] = builtin.ReplaceAll
+	decl[builtinRuneCount] = builtin.RuneCount
+	decl[builtinSplit] = builtin.Split
+	decl[builtinSplitAfter] = builtin.SplitAfter
+	decl[builtinSplitAfterN] = builtin.SplitAfterN
+	decl[builtinSplitN] = builtin.SplitN
 	decl["sprint"] = builtin.Sprint
 	decl["sprintf"] = builtin.Sprintf
-	decl["toKebab"] = builtin.ToKebab
-	decl["toLower"] = builtin.ToLower
-	decl["toUpper"] = builtin.ToUpper
+	decl[builtinToKebab] = builtin.ToKebab
+	decl[builtinToLower] = builtin.ToLower
+	decl[builtinToUpper] = builtin.ToUpper
 	decl["trim"] = builtin.Trim
-	decl["trimLeft"] = builtin.TrimLeft
-	decl["trimPrefix"] = builtin.TrimPrefix
-	decl["trimRight"] = builtin.TrimRight
-	decl["trimSuffix"] = builtin.TrimSuffix
+	decl[builtinTrimLeft] = builtin.TrimLeft
+	decl[builtinTrimPrefix] = builtin.TrimPrefix
+	decl[builtinTrimRight] = builtin.TrimRight
+	decl[builtinTrimSuffix] = builtin.TrimSuffix
 }
 
 // wrapFilterForScriggo wraps a FilterFunc to be callable from Scriggo templates.
 // FilterFunc signature: func(in any, args ...any) (any, error)
 // Scriggo needs a concrete function signature, so we wrap it.
-func wrapFilterForScriggo(filter FilterFunc) func(in any, args ...any) (any, error) {
-	return func(in any, args ...any) (any, error) {
+func wrapFilterForScriggo(filter FilterFunc) func(native.Env, any, ...any) (any, error) {
+	return func(env native.Env, in any, args ...any) (any, error) {
+		values := make([]any, 1, len(args)+1)
+		values[0] = in
+		values = append(values, args...)
+		if err := immutableNativeInputError(env, values...); err != nil {
+			env.Stop(err)
+			return nil, err
+		}
 		return filter(in, args...)
 	}
 }
 
 // wrapFunctionForScriggo wraps a GlobalFunc to be callable from Scriggo templates.
-func wrapFunctionForScriggo(fn GlobalFunc) func(args ...any) (any, error) {
-	return func(args ...any) (any, error) {
+func wrapFunctionForScriggo(fn GlobalFunc) func(native.Env, ...any) (any, error) {
+	return func(env native.Env, args ...any) (any, error) {
+		if err := immutableNativeInputError(env, args...); err != nil {
+			env.Stop(err)
+			return nil, err
+		}
 		return fn(args...)
 	}
+}
+
+func scriggoReverse(env native.Env, slice any) {
+	rv := reflect.ValueOf(slice)
+	if rv.IsValid() && rv.Kind() == reflect.Slice && rv.Len() > 1 {
+		if err := immutableNativeMutationError(env, slice); err != nil {
+			env.Stop(err)
+			return
+		}
+	}
+	builtin.Reverse(slice)
+}
+
+func scriggoUnmarshalJSON(env native.Env, data string, target any) error {
+	return guardedNativeUnmarshal(env, data, target, builtin.UnmarshalJSON)
+}
+
+func scriggoUnmarshalYAML(env native.Env, data string, target any) error {
+	return guardedNativeUnmarshal(env, data, target, builtin.UnmarshalYAML)
+}
+
+func guardedNativeUnmarshal(
+	env native.Env,
+	data string,
+	target any,
+	unmarshal func(string, any) error,
+) error {
+	mutationErr := immutableNativeMutationError(env, target)
+	if mutationErr == nil {
+		return unmarshal(data, target)
+	}
+	rv := reflect.ValueOf(target)
+	if !rv.IsValid() || rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return unmarshal(data, target)
+	}
+	if err := unmarshal(data, reflect.New(rv.Type().Elem()).Interface()); err != nil {
+		return err
+	}
+	env.Stop(mutationErr)
+	return mutationErr
 }

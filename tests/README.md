@@ -79,7 +79,7 @@ Flaky-test policy: flakes are bugs, not noise. `tests/CLAUDE.md` has the investi
 
 ## Prerequisites
 
-- Go `1.26.x` (pinned via `.tool-versions` / `go.mod`; use `env -u GOROOT go ...` if your shell points at an older toolchain).
+- Go `1.27.x` (pinned via `.tool-versions` / `go.mod`; use `env -u GOROOT go ...` if your shell points at an older toolchain).
 - Docker (for Kind, and for the `test-acceptance` image build).
 - Kind is installed automatically by the Makefile targets the first time you run them.
 

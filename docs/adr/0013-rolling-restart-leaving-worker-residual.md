@@ -44,8 +44,11 @@ unreachable through the Dataplane API's runtime lane.
 
 Accept this as a bounded residual. Do not pursue either candidate fix. Keep
 `TestIngressRollingRestartZeroDowntime` (`tests/e2e/ingress_rolling_restart_test.go`,
-run across the full HAProxy 3.0–3.4 e2e matrix on every MR and post-merge, with no
-skip gate) as the standing sentinel.
+run across the full HAProxy 3.0–3.4 e2e matrix on every MR and post-merge) as the
+standing sentinel. A controller rebuild inside the probe window stops propagation
+for its whole duration (#189), which this residual does not cover; the test
+retries such a window rather than excusing it, and only skips if every attempt
+is disturbed.
 
 The residual requires **all** of: a structural reload in flight ∧ an EndpointSlice
 flip landing inside the ~150 ms render→swap window (largely inside the ~139 ms

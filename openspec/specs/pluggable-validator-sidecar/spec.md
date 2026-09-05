@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Lets operators plug external validation programs into HAPTIC's admission flow: `spec.validators` entries on the HAProxyTemplateConfig declare sidecar validators by Unix socket path and file globs, and the controller routes matching dry-run-rendered files to each validator over a length-prefixed JSON wire protocol with persistent, pooled connections. Validator verdicts map to admission outcomes — valid admits, warning admits with kubectl-visible warnings, error denies — while a content-keyed result cache and parallel dispatch keep the webhook path fast.
+Lets operators plug external validation programs into HAPTIC's admission flow: `spec.validators` entries on the HAProxyTemplateConfig declare sidecar validators by Unix socket path and file globs, and the controller routes matching dry-run-rendered files to each validator over a length-prefixed JSON wire protocol with persistent, pooled connections. Validator verdicts map to admission outcomes — valid admits, warning admits with kubectl-visible warnings, error denies — while parallel dispatch and connection reuse bound the webhook latency.
 
 ## Requirements
 
@@ -150,7 +150,7 @@ A response SHALL be a JSON object with the following fields:
 - `warnings` (array, always present, possibly empty): list of `Diagnostic` objects with `severity = Warning`.
 - `errors` (array, always present, possibly empty): list of `Diagnostic` objects with `severity = Error`.
 
-The controller SHALL reject a response whose `result` is missing, unknown, or inconsistent with the diagnostic arrays. The rejection SHALL be surfaced as a synthetic protocol error that fails the current validation and SHALL NOT be cached.
+The controller SHALL reject a response whose `result` is missing, unknown, or inconsistent with the diagnostic arrays. The rejection SHALL be surfaced as a synthetic protocol error that fails the current validation. A later pipeline invocation SHALL request a new verdict.
 
 The webhook caller maps the three results to admission outcomes:
 
@@ -166,34 +166,39 @@ THEN the webhook SHALL admit the resource AND populate `AdmissionResponse.Warnin
 #### Scenario: Inconsistent result fails closed
 
 WHEN a validator returns `result: "error"` with empty `warnings` and `errors` arrays
-THEN the controller SHALL reject the response as a protocol error AND fail the current validation AND request the same input from the validator again on the next validation instead of serving the rejection from cache.
+THEN the controller SHALL reject the response as a protocol error AND fail the current validation AND request the same input from the validator again on the next validation.
 
-### Requirement: Result Cache
+### Requirement: Protocol-v1 Verdicts Are Invocation-Local
 
-The controller SHALL maintain a process-local LRU cache of validator responses keyed by `(validator-name, path, sha256(content))`. Cache hits skip the socket round-trip and return the cached `Response` byte-for-byte. Default capacity SHALL be 256 entries. Eviction SHALL be by least-recently-used insertion order.
+The controller SHALL NOT cache or reuse an external validator response under protocol v1. Every pipeline invocation SHALL evaluate every configured v1 validator and SHALL send the complete canonical request whenever that validator's globs match, even when the request is byte-identical to one sent earlier. A persistent connection MAY carry multiple requests, but transport reuse SHALL NOT imply verdict reuse.
 
-The cache SHALL NOT memoise transport-level or protocol-decode (synthetic) failures; only protocol-conforming validator responses (including warning- and error-severity ones) SHALL be cached. The wire-protocol contract requires validator output to be a pure function of its input, so caching conforming responses is correct.
+Protocol v1 exposes no authenticated hermetic-environment root. The validator name, socket path, and request content identify the configured endpoint and input, but they can't prove which executable, configuration, dependencies, and runtime produced an earlier response.
 
-#### Scenario: Repeat call returns cached response
+A future protocol SHALL NOT authorize external-verdict reuse unless the controller:
 
-WHEN the controller calls `ValidateAll` for a (validator, path, content) tuple already in the cache
-THEN the cache SHALL return the cached `Response` without opening the socket.
+- obtains an authenticated hermetic-environment root through a `linearizable` lookup;
+- covers the executable, configuration, dependencies, and runtime generation;
+- binds the verdict to that root and an exact canonical request witness;
+- stores and returns defensive copies of the response; and
+- fails closed on cancelled, partial, missing, stale, or otherwise incomplete observations.
 
-#### Scenario: Different content produces a cache miss
+#### Scenario: Repeat call reaches the validator
 
-WHEN the controller calls `ValidateAll` for a tuple where `content` differs even by one byte from a previously-cached entry
-THEN the cache SHALL miss and the request SHALL go over the socket.
+WHEN the controller calls `ValidateAll` twice with the same validator configuration and canonical request
+THEN both calls SHALL send the request to the validator AND each call SHALL use the response from that invocation.
 
-#### Scenario: Different validator produces a cache miss
+#### Scenario: Runtime replacement cannot inherit a verdict
 
-WHEN the controller calls `ValidateAll` for the same `(path, content)` but a different `validator-name`
-THEN the cache SHALL miss. Validators with the same content key MUST NOT share cache entries.
+GIVEN a validator process returned `valid` for a request
+AND another process replaces it at the same socket path with the same configured name
+WHEN the next pipeline invocation produces the same request
+THEN the controller SHALL send the request to the replacement process AND SHALL NOT reuse the first process's verdict.
 
-#### Scenario: Synthetic ProtocolError responses NOT cached
+#### Scenario: Future environment observation is incomplete
 
-GIVEN a validator whose socket is unreachable
-WHEN ValidateAll calls it twice with identical content
-THEN both calls SHALL hit the network (or fail to dial); the synthetic error response SHALL NOT be cached.
+GIVEN a future protocol supports authenticated response reuse
+WHEN its live environment-root lookup is cancelled or returns a partial, missing, stale, or inconsistent observation
+THEN the controller SHALL NOT serve or record a reusable verdict AND validation SHALL fail unless a fresh authenticated validation completes.
 
 ### Requirement: Parallel Dispatch
 

@@ -150,8 +150,10 @@ func validateTemplates(ctx context.Context, cfg *coreconfig.Config, bootstrap Ty
 	extraction := helpers.ExtractTemplatesFromConfig(cfg)
 	declarations := helpers.BuildAdditionalDeclarations(cfg, bootstrapResult)
 	if _, err := templating.New(extraction.AllTemplates, &templating.Options{
-		EntryPoints:  extraction.EntryPoints,
-		Declarations: declarations,
+		EntryPoints:                   extraction.EntryPoints,
+		IncrementalEntryPoints:        extraction.IncrementalEntryPoints,
+		IncrementalBindingEntryPoints: extraction.IncrementalBindingEntryPoints,
+		Declarations:                  declarations,
 	}); err != nil {
 		return []string{templating.FormatCompilationError(err, "templates", "")}
 	}

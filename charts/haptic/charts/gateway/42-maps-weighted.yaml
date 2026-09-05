@@ -2,26 +2,25 @@ templateSnippets:
   util-generate-httproute-weighted-backend-map-gateway:
     requires: [httproutes, referencegrants]
     template: |
-      {# Generate weighted backend map entries for HTTPRoute.
-          Typed sibling — formerly GenerateWeightedBackendMap with a
-          polymorphic `routes []any` parameter. #}
+      {# Generate weighted backend map entries for HTTPRoute. #}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
-      {%- macro GenerateHTTPRouteWeightedBackendMap(routes []*resources.httproutes.T) -%}
-      {%- for _, route := range routes %}
-      {%- var routeNs = route.Metadata.Namespace %}
-      {%- var routeName = route.Metadata.Name %}
+      {%- macro GenerateHTTPRouteWeightedBackendMap(routes any) -%}
+      {%- for _, route := range toSlice(routes) %}
+      {%- var routeNs = dig_string(route, "", "metadata", "namespace") %}
+      {%- var routeName = dig_string(route, "", "metadata", "name") %}
       {%- var weightedEntries = []any{} %}
       {%- var ruleIdx = 0 %}
-      {%- for _, rule := range route.Spec.Rules %}
-        {%- if len(rule.BackendRefs) > 1 %}
+      {%- for _, rule := range toSlice(dig(route, "spec", "rules")) %}
+        {%- var backendRefs = toSlice(dig(rule, "backendRefs")) %}
+        {%- if len(backendRefs) > 1 %}
           {%- var routeKey = routeNs + "_" + routeName + "_" + ruleIdx %}
           {%- var cumulative = 0 %}
-          {%- for _, backendRef := range rule.BackendRefs %}
-            {%- var backendPort = toint(backendRef.Port) %}
+          {%- for _, backendRef := range backendRefs %}
+            {%- var backendPort = toint(dig(backendRef, "port") | fallback(0)) %}
             {%- if backendPort == 0 %}{%- backendPort = 80 %}{%- end %}
-            {%- var backend = map[string]any{"name": backendRef.Name, "port": backendPort} %}
-            {%- var weight = toint(backendRef.Weight) %}
+            {%- var backend = map[string]any{"name": dig_string(backendRef, "", "name"), "port": backendPort} %}
+            {%- var weight = toint(dig(backendRef, "weight") | fallback(0)) %}
             {%- if weight == 0 && dig(backendRef, "weight") == nil %}{%- weight = 1 %}{%- end %}
             {%- var refValid = BackendRefValid("HTTPRoute", routeNs, backendRef) == "true" %}
             {%- for i := cumulative; i < cumulative + weight; i++ %}
@@ -93,40 +92,7 @@ templateSnippets:
       {%- end %}
       {%- end macro -%}
 
-  util-sharded-weighted-backend-map-gateway:
-    requires: [grpcroutes, httproutes, referencegrants]
-    template: |
-      {# Per-Kind typed sharded weighted-backend-map wrappers.
-          Each calls its Kind-specific Generate macro with the typed
-          slice directly — no polymorphic indirection. #}
-      {%- import "util-generate-httproute-weighted-backend-map-gateway" for GenerateHTTPRouteWeightedBackendMap -%}
-      {%- import "util-generate-grpcroute-weighted-backend-map-gateway" for GenerateGRPCRouteWeightedBackendMap -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-
-      {%- macro ShardedHTTPRouteWeightedBackendMap(routes []*resources.httproutes.T) -%}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateHTTPRouteWeightedBackendMap(routes) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateHTTPRouteWeightedBackendMap(shard_slice(routes, i, n)) }}
-          {%- end -%}
-        {%- end -%}
-      {%- end macro -%}
-
-      {%- macro ShardedGRPCRouteWeightedBackendMap(routes []*resources.grpcroutes.T) -%}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateGRPCRouteWeightedBackendMap(routes) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateGRPCRouteWeightedBackendMap(shard_slice(routes, i, n)) }}
-          {%- end -%}
-        {%- end -%}
-      {%- end macro -%}
-
   map-weighted-backend-500-gateway:
-    requires: [grpcroutes, httproutes, referencegrants]
     template: |
       {# Generate weighted backend map entries for HTTPRoute and
           GRPCRoute. Both kinds support multi-backendRef rules with
@@ -140,10 +106,36 @@ templateSnippets:
           MULTIBACKEND lookup at runtime returned an empty
           backend_name and the request fell through to
           default_backend (404). #}
-      {%- import "util-sharded-weighted-backend-map-gateway" for ShardedHTTPRouteWeightedBackendMap, ShardedGRPCRouteWeightedBackendMap %}
       # gateway/map-weighted-backend-gateway
-      {{ ShardedHTTPRouteWeightedBackendMap(resources.httproutes.List()) }}
-      {{ ShardedGRPCRouteWeightedBackendMap(resources.grpcroutes.List()) }}
+
+  map-weighted-backend-510-gateway-http:
+    requires: [httproutes, referencegrants, services]
+    incremental:
+      source: httproutes
+      root: gateway-http-route-pre-analysis
+      group: map-weighted-backend-gateway
+    template: |-
+      {%- import "util-generate-httproute-weighted-backend-map-gateway" for GenerateHTTPRouteWeightedBackendMap -%}
+      {%- var route = item -%}
+      {%- if route != nil -%}
+      {{- GenerateHTTPRouteWeightedBackendMap([]any{route}) -}}
+      {%- end -%}
+
+  map-weighted-backend-515-gateway-separator:
+    template: '{{ "\n" }}'
+
+  map-weighted-backend-520-gateway-grpc:
+    requires: [grpcroutes, referencegrants, services]
+    incremental:
+      source: grpcroutes
+      group: map-weighted-backend-gateway
+    template: |-
+      {%- import "util-generate-grpcroute-weighted-backend-map-gateway" for GenerateGRPCRouteWeightedBackendMap -%}
+      {%- var route = resources.grpcroutes.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if route != nil -%}
+      {{- GenerateGRPCRouteWeightedBackendMap([]*resources.grpcroutes.T{route}) -}}
+      {%- end -%}
 
   # Frontend-extra: HTTPS misdirected-request detection (Gateway API
   # SupportGatewayHTTPSListenerDetectMisdirectedRequests).

@@ -127,7 +127,7 @@ templateSnippets:
               {%- if caContent != "" %}
                 {%- var caFilename = caNs + "-" + caName + "-backend-tls-ca.pem" %}
                 {#- "ca-file" (not "file"): a content-only CA rotation applies at runtime, no reload on v3.2+. -#}
-                {%- var caPath, caRegErr = fileRegistry.Register("ca-file", caFilename, caContent) -%}
+                {%- var caPath, caRegErr = RegisterBackendFile("ca-file", caFilename, caContent) -%}
                 {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
                 {%- caFilePart = " ca-file " + caPath %}
                 {%- caAdded = true %}
@@ -157,7 +157,7 @@ templateSnippets:
               {%- if tlsCrt != "" && tlsKey != "" %}
                 {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
                 {%- var crtFilename = crtNs + "-" + crtName + "-backend-tls-client.pem" %}
-                {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
+                {%- var _, crtRegErr = RegisterBackendFile("cert", crtFilename, combinedPem) -%}
                 {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
                 {#- BARE filename: `crt` resolves against crt-base, so the ssl/-prefixed
                     path would double to ssl/ssl/<name> and fail `haproxy -c`. The bare

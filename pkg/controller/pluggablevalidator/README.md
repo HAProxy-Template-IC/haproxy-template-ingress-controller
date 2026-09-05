@@ -6,7 +6,17 @@ Dispatches rendered files to external validator sidecars (for example the SPOA h
 
 `Manager` implements the pipeline's rendered-output validator stage. It fans every successful render's files out to the configured validators over Unix domain sockets and aggregates the replies into a `ValidationOutcome`. Errors fail the pipeline before publication or deployment. Admission requests also return warnings through `AdmissionResponse.Warnings`; reconciliation records warning counts in its validation event and logs.
 
-Results are cached by `CacheKey`, keyed per validator, file path, and content hash (plus the data files that travelled with the request), so repeated identical content skips the round-trip. A response whose `result` disagrees with its diagnostics is a protocol failure: it blocks the pipeline and isn't cached.
+Every matching file is checked on every pipeline invocation. Protocol version 1
+doesn't identify the validator process or implementation generation, so a
+content-keyed verdict could survive a sidecar restart and validate against the
+wrong implementation. A response whose `result` disagrees with its diagnostics
+is a protocol failure and blocks the pipeline.
+
+Future result reuse requires a new protocol version that exposes an
+authenticated hermetic-environment root at a linearizable validation point.
+That root must cover the validator runtime, executable, configuration, and
+dependencies. A socket inode, process ID, connection-liveness probe, or
+self-declared implementation version can't close the replacement race.
 
 `Configured()` reports whether any validators are registered. `ValidateAll` is a no-op when none are, so callers don't have to pre-check; `/healthz` uses `Configured()` to omit the check when the feature is not configured.
 

@@ -24,6 +24,9 @@ package renderplan
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"reflect"
+	"slices"
 
 	"github.com/cespare/xxhash/v2"
 )
@@ -56,6 +59,9 @@ const (
 	FileKindGeneral = "general"
 )
 
+// ConfigFilePath is the single main configuration path in every render plan.
+const ConfigFilePath = "haproxy.cfg"
+
 // Plan is the immutable structure of one render.
 type Plan struct {
 	SchemaVersion int                `json:"schemaVersion"`
@@ -75,6 +81,9 @@ type Section struct {
 	Name       string `json:"name"`
 	TextDigest string `json:"textDigest"`
 	Length     int    `json:"length"`
+
+	Text      string `json:"-"`
+	TextKnown bool   `json:"-"`
 }
 
 // Backend is the record a generator macro declared alongside the backend
@@ -95,6 +104,10 @@ type Backend struct {
 	CommentsDigest string `json:"commentsDigest"`
 	RecordDigest   string `json:"recordDigest"`
 	TextDigest     string `json:"textDigest"`
+
+	Body         []string `json:"-"`
+	Comments     []string `json:"-"`
+	ContentKnown bool     `json:"-"`
 }
 
 // Server is one server line, declared as data.
@@ -158,6 +171,111 @@ type File struct {
 	ReloadOnChange bool   `json:"reloadOnChange"`
 	Digest         string `json:"digest"`
 	Size           int64  `json:"size"`
+
+	Content      string `json:"-"`
+	ContentKnown bool   `json:"-"`
+}
+
+// Clone returns an independently owned copy of the plan.
+func (p *Plan) Clone() *Plan {
+	if p == nil {
+		return nil
+	}
+	cloned := *p
+	cloned.Sections = slices.Clone(p.Sections)
+	if p.Backends != nil {
+		cloned.Backends = make(map[string]Backend, len(p.Backends))
+		for name := range p.Backends {
+			backend := p.Backends[name]
+			backend.Servers = cloneServers(backend.Servers)
+			backend.DefaultServer = cloneKeywordArgs(backend.DefaultServer)
+			backend.Body = slices.Clone(backend.Body)
+			backend.Comments = slices.Clone(backend.Comments)
+			cloned.Backends[name] = backend
+		}
+	}
+	cloned.Profiles = maps.Clone(p.Profiles)
+	if p.Maps != nil {
+		cloned.Maps = make(map[string]Map, len(p.Maps))
+		for path, sourceMap := range p.Maps {
+			sourceMap.Entries = slices.Clone(sourceMap.Entries)
+			cloned.Maps[path] = sourceMap
+		}
+	}
+	if p.CRTLists != nil {
+		cloned.CRTLists = make(map[string]CRTList, len(p.CRTLists))
+		for path, crtList := range p.CRTLists {
+			crtList.Entries = cloneCRTListEntries(crtList.Entries)
+			cloned.CRTLists[path] = crtList
+		}
+	}
+	cloned.Files = slices.Clone(p.Files)
+	return &cloned
+}
+
+// ExactlyEqual compares the complete render identity without trusting a
+// digest. It returns false when either plan came from a blob and therefore no
+// longer carries the controller-local exact bytes.
+func ExactlyEqual(left, right *Plan) bool {
+	if !hasExactIdentity(left) || !hasExactIdentity(right) {
+		return false
+	}
+	leftCopy := *left
+	rightCopy := *right
+	leftCopy.ID = ""
+	rightCopy.ID = ""
+	return reflect.DeepEqual(leftCopy, rightCopy)
+}
+
+func hasExactIdentity(plan *Plan) bool {
+	if plan == nil {
+		return false
+	}
+	for i := range plan.Sections {
+		if !plan.Sections[i].TextKnown {
+			return false
+		}
+	}
+	for name := range plan.Backends {
+		if !plan.Backends[name].ContentKnown {
+			return false
+		}
+	}
+	for i := range plan.Files {
+		if !plan.Files[i].ContentKnown {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneServers(source []Server) []Server {
+	cloned := slices.Clone(source)
+	for index := range cloned {
+		if source[index].Weight != nil {
+			weight := *source[index].Weight
+			cloned[index].Weight = &weight
+		}
+		cloned[index].Extra = cloneKeywordArgs(source[index].Extra)
+	}
+	return cloned
+}
+
+func cloneKeywordArgs(source []KeywordArg) []KeywordArg {
+	cloned := slices.Clone(source)
+	for index := range cloned {
+		cloned[index].Args = slices.Clone(source[index].Args)
+	}
+	return cloned
+}
+
+func cloneCRTListEntries(source []CRTListEntry) []CRTListEntry {
+	cloned := slices.Clone(source)
+	for index := range cloned {
+		cloned[index].Options = cloneKeywordArgs(source[index].Options)
+		cloned[index].SNIFilters = slices.Clone(source[index].SNIFilters)
+	}
+	return cloned
 }
 
 // CurrentConfig is the client-native-free view of the running configuration

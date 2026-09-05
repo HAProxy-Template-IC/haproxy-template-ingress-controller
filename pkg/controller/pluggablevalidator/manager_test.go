@@ -26,6 +26,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	pv "gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator/testutil"
+	controllertestutil "gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 )
 
 func tomlFile() pv.File {
@@ -264,7 +265,7 @@ func TestManager_ValidateAll_FanOutToMultipleValidators(t *testing.T) {
 	}
 }
 
-func TestManager_ValidateAll_CacheHitSkipsRoundTrip(t *testing.T) {
+func TestManager_ValidateAll_RevalidatesRepeatedInput(t *testing.T) {
 	srv := testutil.NewFixtureServer(t)
 	if err := srv.SetResponse(&pv.Response{ProtocolVersion: pv.ProtocolVersion, Result: pv.ResultValid}); err != nil {
 		t.Fatalf("SetResponse: %v", err)
@@ -275,14 +276,159 @@ func TestManager_ValidateAll_CacheHitSkipsRoundTrip(t *testing.T) {
 	})
 
 	files := []pv.File{tomlFile()}
-	mgr.ValidateAll(context.Background(), files)
-	mgr.ValidateAll(context.Background(), files)
-	if got := len(srv.Requests()); got != 1 {
-		t.Fatalf("server saw %d requests, want 1 (cache hit must skip socket)", got)
+	if got := mgr.ValidateAll(context.Background(), files).Result(); got != pv.ResultValid {
+		t.Fatalf("first result=%q want %q", got, pv.ResultValid)
+	}
+	if err := srv.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultError,
+		Errors: []pv.Diagnostic{{
+			Path:    tomlFile().Path,
+			Message: "validator implementation changed",
+		}},
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+	if got := mgr.ValidateAll(context.Background(), files).Result(); got != pv.ResultError {
+		t.Fatalf("second result=%q want %q", got, pv.ResultError)
+	}
+	if got := len(srv.Requests()); got != 2 {
+		t.Fatalf("server saw %d requests, want 2", got)
 	}
 }
 
-func TestManager_ValidateAll_TransportErrorNotCached(t *testing.T) {
+func TestManager_ValidateAll_ABARevalidatesReturnedInput(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	setResult := func(result pv.Result, message string) {
+		t.Helper()
+		response := &pv.Response{ProtocolVersion: pv.ProtocolVersion, Result: result}
+		if result == pv.ResultError {
+			response.Errors = []pv.Diagnostic{{Path: tomlFile().Path, Message: message}}
+		}
+		if err := srv.SetResponse(response); err != nil {
+			t.Fatalf("SetResponse: %v", err)
+		}
+	}
+
+	mgr, err := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: srv.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	a := tomlFile()
+	b := tomlFile()
+	b.Content += "[plugins]\n"
+
+	setResult(pv.ResultValid, "")
+	if got := mgr.ValidateAll(context.Background(), []pv.File{a}).Result(); got != pv.ResultValid {
+		t.Fatalf("A1 result=%q want %q", got, pv.ResultValid)
+	}
+	setResult(pv.ResultError, "B rejected")
+	if got := mgr.ValidateAll(context.Background(), []pv.File{b}).Result(); got != pv.ResultError {
+		t.Fatalf("B result=%q want %q", got, pv.ResultError)
+	}
+	setResult(pv.ResultError, "A rejected by current runtime")
+	third := mgr.ValidateAll(context.Background(), []pv.File{a})
+	if got := third.Result(); got != pv.ResultError {
+		t.Fatalf("A2 result=%q want %q", got, pv.ResultError)
+	}
+	if len(third.Errors) != 1 || third.Errors[0].Message != "A rejected by current runtime" {
+		t.Fatalf("A2 errors=%v", third.Errors)
+	}
+	if got := len(srv.Requests()); got != 3 {
+		t.Fatalf("server saw %d requests, want 3", got)
+	}
+}
+
+func TestManager_ValidateAll_ReturnMutationCannotPoisonLaterVerdict(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	setWarning := func(message string) {
+		t.Helper()
+		if err := srv.SetResponse(&pv.Response{
+			ProtocolVersion: pv.ProtocolVersion,
+			Result:          pv.ResultWarning,
+			Warnings: []pv.Diagnostic{{
+				Path:    tomlFile().Path,
+				Message: message,
+			}},
+		}); err != nil {
+			t.Fatalf("SetResponse: %v", err)
+		}
+	}
+
+	mgr, err := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: srv.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	setWarning("first runtime verdict")
+	first := mgr.ValidateAll(context.Background(), []pv.File{tomlFile()})
+	if len(first.Warnings) != 1 {
+		t.Fatalf("first warnings=%v", first.Warnings)
+	}
+	first.Warnings[0].Message = "caller mutation"
+
+	setWarning("fresh runtime verdict")
+	second := mgr.ValidateAll(context.Background(), []pv.File{tomlFile()})
+	if len(second.Warnings) != 1 || second.Warnings[0].Message != "fresh runtime verdict" {
+		t.Fatalf("second warnings=%v", second.Warnings)
+	}
+	if got := len(srv.Requests()); got != 2 {
+		t.Fatalf("server saw %d requests, want 2", got)
+	}
+}
+
+func TestManager_ValidateAll_SidecarRestartCannotInheritVerdict(t *testing.T) {
+	firstRuntime := testutil.NewFixtureServer(t)
+	if err := firstRuntime.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultValid,
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+	mgr, err := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: firstRuntime.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	files := []pv.File{tomlFile()}
+	if got := mgr.ValidateAll(context.Background(), files).Result(); got != pv.ResultValid {
+		t.Fatalf("first runtime result=%q want %q", got, pv.ResultValid)
+	}
+
+	socketPath := firstRuntime.SocketPath
+	firstRuntime.Stop()
+	secondRuntime := testutil.NewFixtureServerAtPath(t, socketPath)
+	if err := secondRuntime.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultError,
+		Errors: []pv.Diagnostic{{
+			Path:    tomlFile().Path,
+			Message: "new runtime rejects input",
+		}},
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	second := mgr.ValidateAll(context.Background(), files)
+	if got := second.Result(); got != pv.ResultError {
+		t.Fatalf("second runtime result=%q want %q", got, pv.ResultError)
+	}
+	if len(second.Errors) != 1 || second.Errors[0].Message != "new runtime rejects input" {
+		t.Fatalf("second runtime errors=%v", second.Errors)
+	}
+	if got := len(firstRuntime.Requests()); got != 1 {
+		t.Fatalf("first runtime saw %d requests, want 1", got)
+	}
+	if got := len(secondRuntime.Requests()); got != 1 {
+		t.Fatalf("second runtime saw %d requests, want 1", got)
+	}
+}
+
+func TestManager_ValidateAll_TransportErrorFailsEveryCall(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.sock")
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
 		{Name: "broken", SocketPath: missing, Files: tomlGlob(), Timeout: 200 * time.Millisecond},
@@ -297,8 +443,7 @@ func TestManager_ValidateAll_TransportErrorNotCached(t *testing.T) {
 	if out2.Result() != pv.ResultError {
 		t.Fatalf("result=%q want %q", out2.Result(), pv.ResultError)
 	}
-	// Both calls must surface a fresh transport error, not a cached
-	// one — proven by getting two independent error lists.
+	// Both calls must surface a fresh transport error.
 	if len(out1.Errors) == 0 || len(out2.Errors) == 0 {
 		t.Fatal("expected at least one error per call")
 	}
@@ -325,7 +470,7 @@ func TestManager_ValidateRenderedOutput_RejectsInconsistentResultWithoutCaching(
 		t.Fatalf("NewManager: %v", err)
 	}
 	defer mgr.Close()
-	result := &pipeline.PipelineResult{HAProxyConfig: "global\n"}
+	result := exactExternalValidatorResult(t, "global\n")
 
 	_, validationErr := mgr.ValidateRenderedOutput(context.Background(), result)
 	if validationErr == nil {
@@ -347,20 +492,28 @@ func TestManager_ValidateRenderedOutput_RejectsInconsistentResultWithoutCaching(
 		t.Fatalf("conforming response after protocol failure: %v", err)
 	}
 	if got := len(srv.Requests()); got != 2 {
-		t.Fatalf("server saw %d requests, want 2; inconsistent response was cached", got)
+		t.Fatalf("server saw %d requests, want 2", got)
 	}
 
 	if _, err := mgr.ValidateRenderedOutput(context.Background(), result); err != nil {
-		t.Fatalf("cached conforming response: %v", err)
+		t.Fatalf("revalidated conforming response: %v", err)
 	}
-	if got := len(srv.Requests()); got != 2 {
-		t.Fatalf("server saw %d requests after cache hit, want 2", got)
+	if got := len(srv.Requests()); got != 3 {
+		t.Fatalf("server saw %d requests after repeated input, want 3", got)
 	}
 }
 
-// Regression: real validator responses with `path: ""` diagnostics
-// are NOT transport failures and MUST be cached.
-func TestManager_ValidateAll_RealValidatorPathlessErrorIsCached(t *testing.T) {
+func exactExternalValidatorResult(t *testing.T, config string) *pipeline.PipelineResult {
+	t.Helper()
+	cycle := controllertestutil.NewRenderCycleFixture(t).Snapshot(t, config, nil, nil)
+	output, err := cycle.OutputSnapshot()
+	if err != nil {
+		t.Fatalf("reading test output: %v", err)
+	}
+	return &pipeline.PipelineResult{CycleSnapshot: cycle, OutputSnapshot: output}
+}
+
+func TestManager_ValidateAll_RealValidatorPathlessErrorIsRevalidated(t *testing.T) {
 	srv := testutil.NewFixtureServer(t)
 	if err := srv.SetResponse(&pv.Response{
 		ProtocolVersion: pv.ProtocolVersion,
@@ -380,8 +533,8 @@ func TestManager_ValidateAll_RealValidatorPathlessErrorIsCached(t *testing.T) {
 	files := []pv.File{tomlFile()}
 	mgr.ValidateAll(context.Background(), files)
 	mgr.ValidateAll(context.Background(), files)
-	if got := len(srv.Requests()); got != 1 {
-		t.Fatalf("server saw %d requests, want 1 (real validator response with path:\"\" must be cached)", got)
+	if got := len(srv.Requests()); got != 2 {
+		t.Fatalf("server saw %d requests, want 2", got)
 	}
 }
 
@@ -645,11 +798,7 @@ func TestManager_ValidateAll_DataFilesWinOverConfigGlobs(t *testing.T) {
 	}
 }
 
-// The cache must key on the data files as well as the config. A hub config
-// whose bytes are unchanged still validates differently once the ruleset it
-// Includes changes — serving the previous verdict there would skip exactly the
-// check the data files exist for, and it would do so silently.
-func TestManager_ValidateAll_ChangedDataFileBypassesCache(t *testing.T) {
+func TestManager_ValidateAll_ChangedDataFileIsRevalidated(t *testing.T) {
 	srv := testutil.NewFixtureServer(t)
 	if err := srv.SetResponse(&pv.Response{
 		ProtocolVersion: pv.ProtocolVersion,
@@ -681,14 +830,14 @@ func TestManager_ValidateAll_ChangedDataFileBypassesCache(t *testing.T) {
 	// Same config file, same everything except the ruleset.
 	mgr.ValidateAll(context.Background(), withRules("SecAction id:2"))
 	if got := len(srv.Requests()); got != 2 {
-		t.Fatalf("changed ruleset served from cache: server saw %d requests, want 2", got)
+		t.Fatalf("server saw %d requests, want 2", got)
 	}
 
-	// And an identical repeat must still hit the cache, or the key is simply
-	// never matching and the test above proves nothing.
+	// Protocol v1 has no validator runtime generation, so even an identical
+	// repeat is checked again.
 	mgr.ValidateAll(context.Background(), withRules("SecAction id:2"))
-	if got := len(srv.Requests()); got != 2 {
-		t.Fatalf("identical input missed the cache: server saw %d requests, want 2", got)
+	if got := len(srv.Requests()); got != 3 {
+		t.Fatalf("server saw %d requests, want 3", got)
 	}
 }
 

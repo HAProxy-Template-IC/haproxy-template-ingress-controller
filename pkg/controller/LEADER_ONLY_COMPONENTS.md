@@ -60,7 +60,7 @@ Components that run on all replicas and replay state on leadership transitions v
 | **ConfigChangeHandler** | Validation orchestrator + reinit signaller | `BecameLeaderEvent` → `ConfigValidatedEvent` | `configchange/handler.go` (`configReplayer`) |
 | **Discovery** | Discovers HAProxy pod endpoints | `BecameLeaderEvent` → `HAProxyPodsDiscoveredEvent` | `discovery/component.go` (`discoveredReplayer`) |
 
-There is no renderer *component* (ADR-0001) — the renderer is the synchronous `renderer.RenderService` driven inside the leader-only `Coordinator`'s `Pipeline.Execute`. There is therefore no separate subscription that could be late, and no `StateReplayer` to wire. Instead, the Reconciler triggers a fresh reconciliation on `BecameLeaderEvent` (`pkg/controller/reconciler/reconciler.go`), so the new leader's pipeline produces a current `TemplateRenderedEvent` rather than replaying a stale one.
+There is no renderer *component* (ADR-0001) — the renderer is the synchronous `renderer.RenderService` driven inside the leader-only `Coordinator`'s `Pipeline.Execute`. There is therefore no separate subscription that could be late, and no `StateReplayer` to wire. Instead, the Reconciler triggers a fresh reconciliation on `BecameLeaderEvent` (`pkg/controller/reconciler/reconciler.go`), so the new leader's pipeline produces a current `TemplateRenderedEvent` rather than replaying a stale one. That render is warm: the all-replica `Warmer` (`pkg/controller/warmer`) drives the same service on a follower for every trigger, commits the render for its incremental graph, and publishes nothing. It stands down on `BecameLeaderEvent`, which the bus replays ahead of the trigger the Reconciler derives from it.
 
 ## Solution Architecture
 
@@ -216,7 +216,7 @@ kubectl -n haptic delete pod $LEADER_POD
 14:05:04.128 | INFO  | scheduling deployment | reason=became_leader endpoint_count=2
 ```
 
-The render and validation events come from a fresh pipeline run, not a replay — the renderer is synchronous (ADR-0001), so the new leader's Coordinator drives a current `Pipeline.Execute` rather than replaying a stale `TemplateRenderedEvent`.
+The render and validation events come from a fresh pipeline run, not a replay — the renderer is synchronous (ADR-0001), so the new leader's Coordinator drives a current `Pipeline.Execute` rather than replaying a stale `TemplateRenderedEvent`. Expect `cache_state=warm` on that first `Reconciliation completed` line: the Warmer kept the graph current while the replica followed.
 
 ## Common Pitfalls
 

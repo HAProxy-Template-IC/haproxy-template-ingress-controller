@@ -139,6 +139,44 @@ func TestResolveEffective(t *testing.T) {
 	})
 }
 
+func TestResolveEffectiveAuthenticatesOnlyFullyStrippedIncrementalGroups(t *testing.T) {
+	cfg := &Config{
+		WatchedResources: map[string]WatchedResource{
+			"routes":   {APIVersion: "example.io/v1", Resources: "routes"},
+			"policies": {APIVersion: "example.io/v1", Resources: "policies", Optional: true},
+		},
+		TemplateSnippets: map[string]TemplateSnippet{
+			"policy-a": {
+				Template: "x", Requires: []string{"policies"},
+				Incremental: &IncrementalTemplate{
+					BindingsTemplate: "{}", Group: "policies",
+					Effects: []IncrementalEffect{IncrementalEffectPublishValue},
+				},
+			},
+			"route": {
+				Template: "x", Requires: []string{"routes"},
+				Incremental: &IncrementalTemplate{
+					BindingsTemplate: "{}", Group: "routes", OptionalConsumes: []string{"policies"},
+				},
+			},
+		},
+	}
+	require.NoError(t, ValidateTemplateStructure(cfg))
+	effective, resolution, err := ResolveEffective(cfg, servedSet{"example.io/v1|routes": true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]struct{}{"policies": {}}, effective.AbsentIncrementalGroups)
+	assert.Equal(t, []string{"policies"}, resolution.AbsentIncrementalGroups)
+	assert.NoError(t, ValidateTemplateStructure(effective))
+
+	present, resolution, err := ResolveEffective(cfg, servedSet{
+		"example.io/v1|routes": true, "example.io/v1|policies": true,
+	}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, present.AbsentIncrementalGroups)
+	assert.Empty(t, resolution.AbsentIncrementalGroups)
+	assert.NoError(t, ValidateTemplateStructure(present))
+}
+
 // fieldSet is a SchemaFieldChecker backed by a fixed set of
 // "apiVersion|resources|fieldPath" keys; unknown keys are absent.
 // A non-nil err makes every probe fail (the transient case).

@@ -36,6 +36,7 @@ func TestStoreWrapper_RecordsReadFailure(t *testing.T) {
 	wantErr := errors.New("list unavailable")
 	errorCollector := NewResourceErrorCollector()
 	wrapper := &StoreWrapper{
+		readContext:    templating.WithImmutableResourceInputs(t.Context()),
 		Store:          &storetest.MockStore{ListErr: wantErr},
 		ResourceType:   "widgets",
 		Logger:         testutil.NewTestLogger(),
@@ -50,6 +51,7 @@ func TestStoreWrapper_RecordsReadFailure(t *testing.T) {
 func TestStoreWrapper_RecordsAmbiguousGetSingle(t *testing.T) {
 	errorCollector := NewResourceErrorCollector()
 	wrapper := &StoreWrapper{
+		readContext: templating.WithImmutableResourceInputs(t.Context()),
 		Store: &storetest.MockStore{Items: []any{
 			createResourceMap("first"),
 			createResourceMap("second"),
@@ -78,6 +80,7 @@ func TestStoreWrapper_RecordsInvalidKeyCount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			errorCollector := NewResourceErrorCollector()
 			wrapper := &StoreWrapper{
+				readContext:    templating.WithImmutableResourceInputs(t.Context()),
 				Store:          &storetest.MockStore{},
 				ResourceType:   "widgets",
 				Logger:         testutil.NewTestLogger(),

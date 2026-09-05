@@ -37,8 +37,7 @@ templateSnippets:
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex).
       #}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime -%}
-      {% macro GenerateGatewayClassStatusPatches(gatewayClasses []*resources.gatewayclasses.T) %}
-        {%- for _, gc := range gatewayClasses %}
+      {% macro GenerateGatewayClassStatusPatch(gc *resources.gatewayclasses.T) %}
           {%%
             var nameStr = gc.Metadata.Name
             var generation = gc.Metadata.Generation
@@ -71,20 +70,19 @@ templateSnippets:
               TopLevelTransitionTime(gc, "Accepted", acceptedStatus),
             )
 
-            // GatewayClass is cluster-scoped; pass empty namespace.
-            statusPatch("", nameStr,
-              resources.gatewayclasses.APIVersion(), "GatewayClass",
-              map[string]interface{}{
+            statusPatch(gc, map[string]interface{}{
                 "rendered": map[string]interface{}{
                   "conditions": []any{acceptedCondition},
                 },
               })
           %%}
-        {%- end %}
       {% end %}
 
   status-patches-100-gatewayclass:
     requires: [gatewayclasses]
+    incremental:
+      source: gatewayclasses
+      effects: [statusPatch]
     template: |
       {#
         GatewayClass Status Patch Registration
@@ -96,11 +94,10 @@ templateSnippets:
         Watcher is filtered to spec.controllerName == ours, so every
         GatewayClass in the store is one we MUST set status on.
       #}
-      {%- import "util-generate-gatewayclass-status-patches" for GenerateGatewayClassStatusPatches -%}
-      {%- var allGatewayClasses = resources.gatewayclasses.List() -%}
-      {%- if len(allGatewayClasses) > 0 -%}
-        {{- GenerateGatewayClassStatusPatches(allGatewayClasses) -}}
-      {%- end -%}
+      {%- import "util-generate-gatewayclass-status-patches" for GenerateGatewayClassStatusPatch -%}
+      {%- var gatewayClass = resources.gatewayclasses.GetSingle(
+        dig_string(item, "", "metadata", "name")) -%}
+      {%- if gatewayClass != nil -%}{{- GenerateGatewayClassStatusPatch(gatewayClass) -}}{%- end -%}
 
   # ============================================================================
   # BackendTLSPolicy Status Patches

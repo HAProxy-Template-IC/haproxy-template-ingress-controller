@@ -37,14 +37,11 @@ func sortedMapNames(plans map[string]renderplan.Map) []string {
 	return slices.Sorted(maps.Keys(plans))
 }
 
-// sectionIndex indexes the sections diffSections walks; backend sections are
-// guarded by their records instead, so they stay out of it.
+// sectionIndex indexes every section; each rule selects the kinds it owns.
 func sectionIndex(sections []renderplan.Section) map[sectionKey]*renderplan.Section {
 	index := make(map[sectionKey]*renderplan.Section, len(sections))
 	for i := range sections {
-		if sections[i].Kind != renderplan.SectionKindBackend {
-			index[sectionKey{sections[i].Kind, sections[i].Name}] = &sections[i]
-		}
+		index[sectionKey{sections[i].Kind, sections[i].Name}] = &sections[i]
 	}
 	return index
 }

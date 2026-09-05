@@ -57,7 +57,26 @@ type typedSubscription struct {
 //	    // Only receives the specified event types
 //	}
 func (b *EventBus) SubscribeTypes(name string, bufferSize int, eventTypes ...string) <-chan Event {
-	return b.subscribeTypesInternal(name, bufferSize, eventTypes, false)
+	return b.subscribeTypesInternal(name, bufferSize, eventTypes, false, nil)
+}
+
+// SubscribeTypesFiltered is SubscribeTypes with a second test, applied to
+// events that already matched a subscribed type.
+//
+// Some event types are one type carrying many subjects: the resource watcher
+// publishes ResourceIndexUpdatedEvent for every watched kind, so a subscriber
+// interested in one kind still receives all of them. Filtering inside the
+// handler is too late — the events occupied the buffer to get there, and for a
+// non-lossy subscriber a full buffer ends the controller iteration. `accept`
+// runs before the enqueue, so those events never take a slot.
+//
+// `accept` runs on the publishing path, under the bus lock, for every matching
+// event and every such subscriber. Keep it to field comparisons; anything that
+// blocks or allocates belongs in the handler.
+func (b *EventBus) SubscribeTypesFiltered(
+	name string, bufferSize int, accept func(Event) bool, eventTypes ...string,
+) <-chan Event {
+	return b.subscribeTypesInternal(name, bufferSize, eventTypes, false, accept)
 }
 
 // SubscribeTypesLeaderOnly creates a typed subscription for leader-only components.
@@ -89,7 +108,7 @@ func (b *EventBus) SubscribeTypes(name string, bufferSize int, eventTypes ...str
 //	    events.EventTypeLostLeadership)
 //	defer bus.UnsubscribeTyped(eventChan)
 func (b *EventBus) SubscribeTypesLeaderOnly(name string, bufferSize int, eventTypes ...string) <-chan Event {
-	return b.subscribeTypesInternal(name, bufferSize, eventTypes, true)
+	return b.subscribeTypesInternal(name, bufferSize, eventTypes, true, nil)
 }
 
 // subscribeTypesInternal creates a typed subscription with event type filtering.
@@ -99,7 +118,9 @@ func (b *EventBus) SubscribeTypesLeaderOnly(name string, bufferSize int, eventTy
 //   - bufferSize: Size of the output channel buffer
 //   - eventTypes: Event type strings to filter for
 //   - suppressLateWarning: If true, suppresses warning when subscribing after Start()
-func (b *EventBus) subscribeTypesInternal(name string, bufferSize int, eventTypes []string, suppressLateWarning bool) <-chan Event {
+func (b *EventBus) subscribeTypesInternal(
+	name string, bufferSize int, eventTypes []string, suppressLateWarning bool, accept func(Event) bool,
+) <-chan Event {
 	// Check if subscribing after Start() - may miss buffered events
 	b.startMu.Lock()
 	started := b.started
@@ -125,8 +146,10 @@ func (b *EventBus) subscribeTypesInternal(name string, bufferSize int, eventType
 
 	// Create filter function
 	filterFunc := func(e Event) bool {
-		_, ok := typeSet[e.EventType()]
-		return ok
+		if _, ok := typeSet[e.EventType()]; !ok {
+			return false
+		}
+		return accept == nil || accept(e)
 	}
 
 	// Create output channel

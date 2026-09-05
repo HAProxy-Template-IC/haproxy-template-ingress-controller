@@ -17,8 +17,11 @@ dependenciesRules:
         - "**.pkg.httpstore.**"
         - "**.pkg.introspection.**"
         - "**.pkg.k8s.**"
+        - "**.pkg.incremental.**"  # Generic incremental computation graph
         - "**.pkg.lifecycle.**"    # Component lifecycle management
         - "**.pkg.metrics.**"
+        - "**.pkg.persistenttree.**" # Domain-free persistent container
+        - "**.pkg.rendercontent.**"  # Rendered-output value types
         - "**.pkg.stores.**"       # Store provider abstractions
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"
@@ -98,8 +101,11 @@ dependenciesRules:
         - "**.pkg.dataplane.**"
         - "**.pkg.events.**"
         - "**.pkg.httpstore.**"
+        - "**.pkg.incremental.**"
         - "**.pkg.introspection.**"
         - "**.pkg.k8s.**"
+        - "**.pkg.persistenttree.**"
+        - "**.pkg.rendercontent.**"
         - "**.pkg.webhook.**"
 
   # Rule 8: cmd packages can depend on all internal packages (composition root)
@@ -274,5 +280,58 @@ dependenciesRules:
         - "**.pkg.k8s.**"
         - "**.pkg.lifecycle.**"
         - "**.pkg.metrics.**"
+        - "**.pkg.templating.**"
+        - "**.pkg.webhook.**"
+
+  # Rule 20: persistenttree is a domain-free container (pure leaf)
+  - package: "**.pkg.persistenttree.**"
+    shouldNotDependsOn:
+      internal:
+        - "**.pkg.controller.**"
+        - "**.pkg.core.**"
+        - "**.pkg.dataplane.**"
+        - "**.pkg.events.**"
+        - "**.pkg.httpstore.**"
+        - "**.pkg.introspection.**"
+        - "**.pkg.k8s.**"
+        - "**.pkg.lifecycle.**"
+        - "**.pkg.metrics.**"
+        - "**.pkg.stores.**"
+        - "**.pkg.templating.**"
+        - "**.pkg.webhook.**"
+
+  # Rule 21: rendercontent holds rendered-output value types (pure leaf)
+  - package: "**.pkg.rendercontent.**"
+    shouldNotDependsOn:
+      internal:
+        - "**.pkg.controller.**"
+        - "**.pkg.core.**"
+        - "**.pkg.dataplane.**"
+        - "**.pkg.events.**"
+        - "**.pkg.httpstore.**"
+        - "**.pkg.introspection.**"
+        - "**.pkg.k8s.**"
+        - "**.pkg.lifecycle.**"
+        - "**.pkg.metrics.**"
+        - "**.pkg.stores.**"
+        - "**.pkg.templating.**"
+        - "**.pkg.webhook.**"
+
+  # Rule 22: incremental is a generic computation graph; persistenttree is its
+  # only internal dependency
+  - package: "**.pkg.incremental.**"
+    shouldNotDependsOn:
+      internal:
+        - "**.pkg.controller.**"
+        - "**.pkg.core.**"
+        - "**.pkg.dataplane.**"
+        - "**.pkg.events.**"
+        - "**.pkg.httpstore.**"
+        - "**.pkg.introspection.**"
+        - "**.pkg.k8s.**"
+        - "**.pkg.lifecycle.**"
+        - "**.pkg.metrics.**"
+        - "**.pkg.rendercontent.**"
+        - "**.pkg.stores.**"
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"

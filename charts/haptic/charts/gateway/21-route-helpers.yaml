@@ -53,13 +53,6 @@ templateSnippets:
       {%- end -%}
       {%- end macro -%}
 
-  util-route-condition:
-    template: |
-      {# txn.gw_rule_id is set by frontend-matchers-advanced-500-gateway. #}
-      {%- macro RouteIdCondition(routeId string) string -%}
-      { var(txn.gw_rule_id) -m str "{{ routeId }}" }
-      {%- end macro -%}
-
   util-bounded-k8s-name:
     template: |
       {# 63 = the RFC 1123 label limit on K8s object names. Over-long inputs keep an 8-char hash of
@@ -282,85 +275,59 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
-  util-gw-mtls-blocked:
-    requires: [gateways]
+  util-gw-mtls-blocked-value:
+    requires: [gateways, configmaps, secrets]
     template: |
-      {# Routes on a listener whose TLS validation CA refs don't resolve must not be served: the
-          chart's shared HTTPS frontend would otherwise route them via a SIBLING Gateway's bind
-          (conformance GatewayFrontendInvalidDefaultClientCertificateValidation). Reads the live
-          stores instead of features-110-gateway-frontend-mtls's state, so map-file renders don't
-          depend on that snippet having run. Callers inline the same key literal
-          (20-route-analysis.yaml); keep it in sync with GetGwMtlsBlockedKey. #}
-      {%- macro GetGwMtlsBlockedKey(gw *resources.gateways.T) string -%}
-        gwMtlsBlocked:{{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}
-      {%- end macro -%}
-
-      {%- macro ComputeGwMtlsBlocked(gw *resources.gateways.T) -%}
+      {%- macro ComputeGwMtlsBlockedValue(gw *resources.gateways.T, blocked map[string]bool) -%}
       {%%
-        var _, _ = shared.ComputeIfAbsent("gwMtlsBlocked:"+gw.Metadata.Namespace+"/"+gw.Metadata.Name, func() any {
-          var blocked = map[string]bool{}
-          // dig(), not typed access: typed access yields the zero struct, so it cannot tell an
-          // absent spec.tls.frontend from a present-but-empty one.
-          if dig(gw, "spec", "tls", "frontend") == nil {
-            return blocked
+        if dig(gw, "spec", "tls", "frontend") == nil {
+          return
+        }
+        var gwNs = gw.Metadata.Namespace
+        var defaultValidation = dig(gw, "spec", "tls", "frontend", "default", "validation")
+        var perPortValidations = map[int]any{}
+        for _, pp := range dig(gw, "spec", "tls", "frontend", "perPort") | toSlice() {
+          var p = toint(dig(pp, "port") | fallback(0))
+          if p > 0 && dig(pp, "tls", "validation") != nil {
+            perPortValidations[p] = dig(pp, "tls", "validation")
           }
-          var gwNs = gw.Metadata.Namespace
-          // dig-only: spec.tls is newer than the oldest schema generation the gateways
-          // candidate list can resolve.
-          var defaultValidation = dig(gw, "spec", "tls", "frontend", "default", "validation")
-          var perPortValidations = map[int]any{}
-          for _, pp := range dig(gw, "spec", "tls", "frontend", "perPort") | toSlice() {
-            var p = toint(dig(pp, "port") | fallback(0))
-            if p > 0 && dig(pp, "tls", "validation") != nil {
-              perPortValidations[p] = dig(pp, "tls", "validation")
-            }
-          }
-          var resolveValidation = func(validation any) bool {
-            var refs = dig(validation, "caCertificateRefs") | toSlice()
-            if len(refs) == 0 {
-              return false
-            }
-            for _, ref := range refs {
-              var refKind = tostring(dig(ref, "kind") | fallback(""))
-              var refGroup = tostring(dig(ref, "group") | fallback(""))
-              var refName = tostring(dig(ref, "name") | fallback(""))
-              var refNs = tostring(dig(ref, "namespace") | fallback(gwNs))
-              if refName == "" {
-                continue
-              }
-              if refGroup != "" && refGroup != "core" {
-                continue
-              }
-              if refKind == "ConfigMap" {
-                if resources.configmaps.GetSingle(refNs, refName) != nil {
-                  return true
-                }
-              } else if refKind == "Secret" {
-                if resources.secrets.GetSingle(refNs, refName) != nil {
-                  return true
-                }
-              }
-            }
+        }
+        var resolveValidation = func(validation any) bool {
+          var refs = dig(validation, "caCertificateRefs") | toSlice()
+          if len(refs) == 0 {
             return false
           }
-          for _, l := range gw.Spec.Listeners {
-            var lProto = l.Protocol
-            if lProto != "HTTPS" && lProto != "TLS" {
+          for _, ref := range refs {
+            var refKind = tostring(dig(ref, "kind") | fallback(""))
+            var refGroup = tostring(dig(ref, "group") | fallback(""))
+            var refName = tostring(dig(ref, "name") | fallback(""))
+            var refNs = tostring(dig(ref, "namespace") | fallback(gwNs))
+            if refName == "" || (refGroup != "" && refGroup != "core") {
               continue
             }
-            var lName = l.Name
-            var validation any = perPortValidations[toint(l.Port)]
-            if validation == nil {
-              validation = defaultValidation
-            }
-            if validation == nil {
-              continue
-            }
-            if !resolveValidation(validation) {
-              blocked[lName] = true
+            if refKind == "ConfigMap" {
+              if resources.configmaps.GetSingle(refNs, refName) != nil {
+                return true
+              }
+            } else if refKind == "Secret" {
+              if resources.secrets.GetSingle(refNs, refName) != nil {
+                return true
+              }
             }
           }
-          return blocked
-        })
+          return false
+        }
+        for _, listener := range gw.Spec.Listeners {
+          if listener.Protocol != "HTTPS" && listener.Protocol != "TLS" {
+            continue
+          }
+          var validation any = perPortValidations[toint(listener.Port)]
+          if validation == nil {
+            validation = defaultValidation
+          }
+          if validation != nil && !resolveValidation(validation) {
+            blocked[listener.Name] = true
+          }
+        }
       %%}
       {%- end macro -%}

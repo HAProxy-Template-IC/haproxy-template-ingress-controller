@@ -48,21 +48,23 @@ func TestRenderGateRefusal_RevertsThePodCarryingTheRefusedPlan(t *testing.T) {
 
 	// plan-1 lands with a reload, is validated, and becomes the pod's LKG.
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
-	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
-	component.SetValidatedPlan(plan1.ID)
+	initial := deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	validated, err := initial.RenderOccurrence()
+	require.NoError(t, err)
+	component.SetValidatedOccurrence(validated)
 	deployTo(t, component, bus, plan1, config1, aux1, events.TriggerReasonDriftPrevention, endpoint)
 	require.Equal(t, plan1.ID, agent.State().LKGPlanID)
 
 	// plan-2 is a runtime-only change: the file set is on disk but no reload
 	// has read it.
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
-	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	refused := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
 	state := agent.State()
 	require.Equal(t, plan2.ID, state.AppliedPlanID)
 	require.Equal(t, plan1.ID, state.RunningPlanID, "a runtime apply never advances the running plan")
 
 	component.handleRenderGateCompleted(context.Background(),
-		events.NewRenderGateCompletedEvent(plan2.ID, false, true, true, "unknown keyword", false, 12))
+		renderGateForCompletion(t, refused, false, true, "unknown keyword"))
 
 	reverted := agent.State()
 	assert.Equal(t, plan1.ID, reverted.AppliedPlanID, "the pod must be back on the plan HAProxy accepted")
@@ -80,12 +82,12 @@ func TestRenderGateRefusal_LeavesAPodThatReloadedThePlanAlone(t *testing.T) {
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	plan, config, aux := renderFor("plan-1", "10.0.0.1", mapEntry)
-	deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
+	applied := deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
 	require.Equal(t, plan.ID, agent.State().RunningPlanID, "the first apply reloads")
 
 	before := len(agent.Applies())
 	component.handleRenderGateCompleted(context.Background(),
-		events.NewRenderGateCompletedEvent(plan.ID, false, true, true, "unknown keyword", false, 12))
+		renderGateForCompletion(t, applied, false, true, "unknown keyword"))
 
 	assert.Equal(t, plan.ID, agent.State().RunningPlanID)
 	assert.NotContains(t, applyModes(agent)[before:], api.ModeRevertLKG,
@@ -103,11 +105,11 @@ func TestRenderGateFailure_WithoutAHAProxyVerdictNeverReverts(t *testing.T) {
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
 	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
-	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	refused := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
 
 	before := len(agent.Applies())
 	component.handleRenderGateCompleted(context.Background(),
-		events.NewRenderGateCompletedEvent(plan2.ID, false, false, true, "read-only file system", false, 12))
+		renderGateForCompletion(t, refused, false, false, "read-only file system"))
 
 	assert.Len(t, agent.Applies(), before, "an unavailable gate must not touch the fleet")
 	assert.Equal(t, plan2.ID, agent.State().AppliedPlanID)
@@ -124,14 +126,16 @@ func TestRenderGateRefusal_RevertsOnlyTheAffectedPods(t *testing.T) {
 	cleanEndpoint := agentEndpoint(clean, "haproxy-1")
 
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
-	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", carryingEndpoint, cleanEndpoint)
-	component.SetValidatedPlan(plan1.ID)
+	initial := deployTo(t, component, bus, plan1, config1, aux1, "config_validation", carryingEndpoint, cleanEndpoint)
+	validated, err := initial.RenderOccurrence()
+	require.NoError(t, err)
+	component.SetValidatedOccurrence(validated)
 	deployTo(t, component, bus, plan1, config1, aux1, events.TriggerReasonDriftPrevention,
 		carryingEndpoint, cleanEndpoint)
 
 	// Only the first pod is given plan-2.
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
-	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", carryingEndpoint)
+	refused := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", carryingEndpoint)
 
 	// The fleet the revert searches is the last one deployed to; put both pods
 	// back in it so the untouched pod is visited and deliberately skipped.
@@ -139,7 +143,7 @@ func TestRenderGateRefusal_RevertsOnlyTheAffectedPods(t *testing.T) {
 
 	cleanBefore := len(clean.Applies())
 	component.handleRenderGateCompleted(context.Background(),
-		events.NewRenderGateCompletedEvent(plan2.ID, false, true, true, "unknown keyword", false, 12))
+		renderGateForCompletion(t, refused, false, true, "unknown keyword"))
 
 	assert.Equal(t, plan1.ID, carrying.State().AppliedPlanID, "the carrying pod reverts")
 	assert.Len(t, clean.Applies(), cleanBefore, "a pod that never got the plan is not touched")
@@ -154,12 +158,12 @@ func TestRenderGatePass_NamesTheValidatedPlan(t *testing.T) {
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	plan, config, aux := renderFor("plan-1", "10.0.0.1", mapEntry)
-	deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
+	applied := deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
 	require.Empty(t, agent.Applies()[0].Manifest.ValidatedPlanID,
 		"nothing is named validated before the gate answers")
 
 	component.handleRenderGateCompleted(context.Background(),
-		events.NewRenderGateCompletedEvent(plan.ID, true, false, true, "", false, 12))
+		renderGateForCompletion(t, applied, true, false, ""))
 	deployTo(t, component, bus, plan, config, aux, events.TriggerReasonDriftPrevention, endpoint)
 
 	applies := agent.Applies()

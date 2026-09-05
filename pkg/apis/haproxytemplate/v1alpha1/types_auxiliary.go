@@ -180,6 +180,10 @@ type HAProxyGeneralFileSpec struct {
 	// When true, consumers must decompress before use.
 	// +optional
 	Compressed bool `json:"compressed,omitempty"`
+
+	// CAFile marks this file as an SSL CA or trust bundle.
+	// +optional
+	CAFile bool `json:"caFile,omitempty"`
 }
 
 // HAProxyGeneralFileStatus tracks deployment state to HAProxy pods.

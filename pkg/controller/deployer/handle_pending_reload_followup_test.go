@@ -38,9 +38,8 @@ func TestPendingReload_FollowsUpWhenTheReloadFires(t *testing.T) {
 	bus.Start()
 
 	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), 20*time.Millisecond, 30*time.Second)
+	occurrence := primeRendered(s, "validated-config", checksum, "plan-paced")
 	s.mu.Lock()
-	s.lastRenderedConfig = "validated-config"
-	s.lastContentChecksum = checksum
 	s.currentEndpoints = oneEndpoint()
 	s.mu.Unlock()
 
@@ -50,7 +49,9 @@ func TestPendingReload_FollowsUpWhenTheReloadFires(t *testing.T) {
 
 	s.dispatchRender(ctx, "corr-paced", true, "config_validation")
 	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
-	require.Equal(t, checksum, sd1.ContentChecksum)
+	firstOccurrence, err := sd1.RenderOccurrence()
+	require.NoError(t, err)
+	require.True(t, sameOccurrence(occurrence, firstOccurrence))
 
 	// Every pod accepted the apply, one of them holds it behind a reload due
 	// shortly. Nothing failed.
@@ -61,14 +62,16 @@ func TestPendingReload_FollowsUpWhenTheReloadFires(t *testing.T) {
 		ContentChecksum: checksum, PodSetHash: "pods-1",
 	}))
 
-	s.mu.Lock()
-	cachedHash := s.lastDeployedConfigHash
-	s.mu.Unlock()
-	assert.NotEqual(t, checksum, cachedHash, "a render a pod still holds behind a reload is not deployed")
+	s.mu.RLock()
+	cachedOccurrence := s.lastDeployedOccurrence
+	s.mu.RUnlock()
+	assert.False(t, sameOccurrence(occurrence, cachedOccurrence))
 
 	sd2 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Equal(t, "pending_reload_follow_up", sd2.Reason)
-	assert.Equal(t, sd1.ContentChecksum, sd2.ContentChecksum, "the follow-up re-drives the same render")
+	followUpOccurrence, err := sd2.RenderOccurrence()
+	require.NoError(t, err)
+	assert.True(t, sameOccurrence(firstOccurrence, followUpOccurrence))
 	elapsed := time.Since(start)
 	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond, "the follow-up waits for the scheduled reload")
 	assert.Less(t, elapsed, 5*time.Second, "and does not wait for the drift backstop")
@@ -77,10 +80,10 @@ func TestPendingReload_FollowsUpWhenTheReloadFires(t *testing.T) {
 	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
 		Total: 2, Succeeded: 2, Failed: 0, ContentChecksum: checksum, PodSetHash: "pods-1",
 	}))
-	s.mu.Lock()
-	cachedHash = s.lastDeployedConfigHash
-	s.mu.Unlock()
-	assert.Equal(t, checksum, cachedHash)
+	s.mu.RLock()
+	cachedOccurrence = s.lastDeployedOccurrence
+	s.mu.RUnlock()
+	assert.True(t, sameOccurrence(occurrence, cachedOccurrence))
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 300*time.Millisecond)
 }
 
@@ -93,9 +96,8 @@ func TestPendingReload_DispatchesNewRendersAtOnce(t *testing.T) {
 	bus.Start()
 
 	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), 20*time.Millisecond, 30*time.Second)
+	occurrence1 := primeRendered(s, "render-1", "checksum-1", "plan-1")
 	s.mu.Lock()
-	s.lastRenderedConfig = "render-1"
-	s.lastContentChecksum = "checksum-1"
 	s.currentEndpoints = oneEndpoint()
 	s.mu.Unlock()
 
@@ -105,7 +107,9 @@ func TestPendingReload_DispatchesNewRendersAtOnce(t *testing.T) {
 
 	s.dispatchRender(ctx, "corr-render-1", true, "config_validation")
 	sd1 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
-	require.Equal(t, "checksum-1", sd1.ContentChecksum)
+	carried1, err := sd1.RenderOccurrence()
+	require.NoError(t, err)
+	require.True(t, sameOccurrence(occurrence1, carried1))
 
 	// The fleet holds render 1 behind a reload due in 1.5 s.
 	pendingSince := time.Now()
@@ -116,13 +120,12 @@ func TestPendingReload_DispatchesNewRendersAtOnce(t *testing.T) {
 	}))
 
 	// A render arriving inside the window goes out immediately.
-	s.mu.Lock()
-	s.lastRenderedConfig = "render-checksum-2"
-	s.lastContentChecksum = "checksum-2"
-	s.mu.Unlock()
+	occurrence2 := primeRendered(s, "render-checksum-2", "checksum-2", "plan-2")
 	s.dispatchRender(ctx, "corr-render-2", true, "config_validation")
 
 	sd2 := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Less(t, time.Since(pendingSince), 400*time.Millisecond, "a render is not held behind the pending reload")
-	assert.Equal(t, "checksum-2", sd2.ContentChecksum)
+	carried2, err := sd2.RenderOccurrence()
+	require.NoError(t, err)
+	assert.True(t, sameOccurrence(occurrence2, carried2))
 }

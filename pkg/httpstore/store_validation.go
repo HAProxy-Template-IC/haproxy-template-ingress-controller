@@ -53,6 +53,9 @@ func (s *HTTPStore) finalizePending(
 ) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.publicationErrorLocked() != nil {
+		return false
+	}
 
 	entry, exists := s.cache[url]
 	if !exists || !entry.HasPending || conditional &&
@@ -65,10 +68,19 @@ func (s *HTTPStore) finalizePending(
 			"url", url,
 			"old_checksum", checksumPrefix(entry.AcceptedChecksum),
 			"new_checksum", checksumPrefix(entry.PendingChecksum))
+		contentChanged := entry.AcceptedChecksum == "" || entry.AcceptedContent != entry.PendingContent
 		entry.AcceptedContent = entry.PendingContent
 		entry.AcceptedChecksum = entry.PendingChecksum
 		entry.AcceptedTime = time.Now()
 		entry.ValidationState = StateAccepted
+		if contentChanged {
+			entry.acceptedRevision = s.recordSemanticChangeLocked(
+				url,
+				entry.sourceDescriptor,
+				entry.sourceDescriptor,
+				false,
+			)
+		}
 	} else if quiet {
 		s.logger.Debug("Discarding pending content from retired HTTP refresh",
 			"url", url,
@@ -86,7 +98,11 @@ func (s *HTTPStore) finalizePending(
 	entry.PendingChecksum = ""
 	entry.PendingRevision = 0
 	entry.HasPending = false
+	entry.ValidationStartedAt = time.Time{}
 	entry.mutationRevision++
+	entry.replayRevision++
+	s.recordReplayChangeLocked(url)
+	s.recordActiveLeaseChangeLocked(url, entry.sourceDescriptor, entry.sourceDescriptor)
 
 	return true
 }
@@ -101,6 +117,9 @@ func checksumPrefix(checksum string) string {
 func (s *HTTPStore) GetPendingURLs() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.publicationErrorLocked() != nil {
+		return nil
+	}
 
 	var urls []string
 	for url, entry := range s.cache {
@@ -124,12 +143,18 @@ func (s *HTTPStore) EvictUnused() []string {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.publicationErrorLocked() != nil {
+		return nil
+	}
 
 	now := time.Now()
 	cutoff := now.Add(-s.maxAge)
 	var evictedURLs []string
 
 	for url, entry := range s.cache {
+		if len(s.activeLeaseURLs[url]) != 0 {
+			continue
+		}
 		// Never evict entries with pending validation
 		if entry.HasPending {
 			continue
@@ -142,6 +167,7 @@ func (s *HTTPStore) EvictUnused() []string {
 				"last_access", entry.LastAccessTime,
 				"age", now.Sub(entry.LastAccessTime))
 			delete(s.cache, url)
+			s.recordSemanticChangeLocked(url, entry.sourceDescriptor, SourceDescriptor{}, true)
 			evictedURLs = append(evictedURLs, url)
 		}
 	}

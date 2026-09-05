@@ -22,15 +22,15 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
-// The plan is what the deployer diffs against a pod's applied plan, so both
-// events on the render → deploy path must carry it unchanged.
+// Legacy constructors retain an independently owned plan copy.
 
 func TestTemplateRenderedEvent_CarriesThePlan(t *testing.T) {
 	plan := &renderplan.Plan{ID: "plan-abc"}
 
 	event := NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "checksum", plan, plan.ID, true)
 
-	assert.Same(t, plan, event.Plan)
+	assert.Equal(t, plan, event.Plan)
+	assert.NotSame(t, plan, event.Plan)
 	assert.Equal(t, "plan-abc", event.PlanID)
 }
 
@@ -40,7 +40,8 @@ func TestDeploymentScheduledEvent_CarriesThePlan(t *testing.T) {
 	event := NewDeploymentScheduledEvent("cfg", nil, nil, "n", "ns", "r", "checksum",
 		plan, plan.ID, nil, true)
 
-	assert.Same(t, plan, event.Plan)
+	assert.Equal(t, plan, event.Plan)
+	assert.NotSame(t, plan, event.Plan)
 	assert.Equal(t, "plan-abc", event.PlanID)
 }
 

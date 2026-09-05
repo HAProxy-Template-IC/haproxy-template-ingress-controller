@@ -157,6 +157,6 @@ func TestHTTPOverlay_SnapshotIsFrozen(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "new-http://a", content)
 	content, ok = overlay.GetContent("http://b")
-	require.True(t, ok)
-	assert.Equal(t, "old-b", content)
+	assert.False(t, ok)
+	assert.Empty(t, content)
 }

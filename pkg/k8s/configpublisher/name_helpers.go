@@ -125,6 +125,10 @@ func (p *Publisher) generateSecretName(certPath string) string {
 	return sanitizeResourceName("haproxy-cert-", path.Base(certPath), "_", "-")
 }
 
+func (p *Publisher) generateCASecretName(caPath string) string {
+	return sanitizeResourceName("haproxy-ca-", path.Base(caPath), "_", "-")
+}
+
 func (p *Publisher) generateGeneralFileName(fileName string) string {
 	return sanitizeResourceName("haproxy-file-", path.Base(fileName), "_", "-", ".", "-")
 }

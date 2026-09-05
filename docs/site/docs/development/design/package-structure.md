@@ -26,6 +26,7 @@ haptic/
 │   ├── generated/           # Code generation output (clientset, informers, listers;
 │   │                        #   plus the playground-only OpenAPI validators)
 │   ├── httpstore/           # Fetches and caches HTTP resources referenced from templates
+│   ├── incremental/         # Generic incremental computation graph (exact deps, revisions)
 │   ├── introspection/       # /debug/vars HTTP infrastructure (registry, JSONPath, pprof)
 │   ├── k8s/                 # Pure Kubernetes integration library
 │   │   ├── client/          # Dynamic client + namespace auto-detection
@@ -40,6 +41,8 @@ haptic/
 │   ├── lifecycle/           # Component lifecycle registry (dependencies, leader-only,
 │   │                        #   startup ordering, health tracking)
 │   ├── metrics/             # Instance-based Prometheus registry + /metrics server
+│   ├── persistenttree/      # Immutable ordered map (domain-free container)
+│   ├── rendercontent/       # Rendered-output value types (Output, TextFragment, Document)
 │   ├── stores/              # Store overlays/providers used for webhook dry-run validation
 │   ├── templating/          # Scriggo-based template engine (pure)
 │   ├── dataplane/           # The path from a render to a running HAProxy (pure)
@@ -135,7 +138,7 @@ The packages form a DAG, enforced at build time by `arch-go.yml`:
 
 **Single-resource vs. bulk watching.** `pkg/k8s/watcher` provides `Watcher` (collections, debounced) and `SingleWatcher` (one named resource, immediate callbacks) so the `HAProxyTemplateConfig` CRD and credentials Secret don't pay indexing overhead.
 
-**HAProxy validation.** `pkg/dataplane` exposes context-aware validation: HAProxy's own `haproxy -c` verdict, which is what decides whether a configuration loads. Nothing in production parses the configuration itself (see [ADR-0022](https://gitlab.com/haproxy-haptic/haptic/blob/main/docs/adr/0022-haptic-agent.md)); the syntax + schema parse survives only behind the `playground` build tag, for the browser playground that has no HAProxy binary. Results are cached by `(configHash, auxHash)` so the same rendered output isn't re-validated during drift-prevention. The caller supplies `*ValidationPaths` (Maps/SSL/General/CRTList directories); `validateSemantics` clears those directories, writes the auxiliary files there, and serialises the binary through a cancellable gate. The `pkg/controller/validation.ValidationService` wrapper additionally allocates a per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin <baseDir>` to point at it before delegating, so the production HAProxy directories are never touched.
+**HAProxy validation.** `pkg/dataplane` exposes context-aware validation: HAProxy's own `haproxy -c` verdict, which is what decides whether a configuration loads. Nothing in production parses the configuration itself (see [ADR-0022](https://gitlab.com/haproxy-haptic/haptic/blob/main/docs/adr/0022-haptic-agent.md)); the syntax + schema parse survives only behind the `playground` build tag, for the browser playground that has no HAProxy binary. Every validation occurrence invokes HAProxy, including byte-identical repeats, because the executable and runtime environment can change independently of the rendered content. The caller supplies `*ValidationPaths` (Maps/SSL/General/CRTList directories); `validateSemantics` clears those directories, writes the auxiliary files there, and serialises the binary through a cancellable gate. The `pkg/controller/validation.ValidationService` wrapper additionally allocates a per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin <baseDir>` to point at it before delegating, so the production HAProxy directories are never touched.
 
 **Component lifecycle.** `pkg/lifecycle` centralises registration, dependency ordering, leader-only flags, and health tracking; the controller registers every component there instead of starting goroutines directly.
 

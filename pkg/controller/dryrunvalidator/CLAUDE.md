@@ -168,7 +168,7 @@ Webhook Admission Request
     ├─ Success → Continue
     └─ Error → SimplifyRenderingError → Deny
     ↓
-5. Validate HAProxy config (three-phase: syntax + schema + semantic)
+5. Validate HAProxy config with `haproxy -c`
     ├─ Valid → Continue
     └─ Invalid → SimplifyValidationError → Deny
     ↓
@@ -368,20 +368,12 @@ wg.Wait()
 close(results)
 ```
 
-### Validation Caching
+### Verdict reuse
 
-The dataplane validator already caches successful three-phase results by
-(`configHash`, `auxHash`, `versionHash`) tuple (see
-`pkg/dataplane/validator.go`). A request-side cache here would need to key on
-the same tuple to avoid double-caching divergent state.
-
-```go
-// Speculative -- not implemented.
-configHash := hashConfig(haproxyConfig)
-if cached, ok := c.validationCache.Get(configHash); ok {
-    return cached.Valid, cached.Reason
-}
-```
+Every admission request executes built-in and matching protocol-v1 external
+validation. A content hash cannot prove that the validator executable or
+runtime environment is unchanged. Future reuse requires an authenticated
+hermetic-environment root bound to the exact rendered output.
 
 ## Resources
 

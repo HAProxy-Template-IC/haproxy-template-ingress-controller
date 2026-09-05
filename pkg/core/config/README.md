@@ -21,7 +21,7 @@ func ValidateCredentials(creds *Credentials) error
 func ParseSecretData(raw map[string]any) (map[string][]byte, error)
 ```
 
-The Go fields are `PodSelector`, `Controller`, `Logging`, `Dataplane`, `TemplatingSettings`, `WatchedResources`, `WatchedResourcesIgnoreFields`, `Validators`, `TemplateSnippets`, `Maps`, `Files`, `SSLCertificates`, `K8sResources`, `CRTLists`, `HAProxyConfig`, `ValidationTests`. Three serialisation forms exist for the same struct, and they don't all agree:
+The Go fields are `PodSelector`, `Controller`, `Logging`, `Dataplane`, `TemplatingSettings`, `WatchedResources`, `WatchedResourcesIgnoreFields`, `Validators`, `TemplateSnippets`, `Maps`, `Files`, `SSLCertificates`, `K8sResources`, `HAProxyConfig`, `ValidationTests`. Three serialisation forms exist for the same struct, and they don't all agree:
 
 - **Go field names** — PascalCase (`PodSelector`).
 - **YAML keys (`yaml:` struct tags)** — snake_case at the top level (`pod_selector`, `templating_settings`, `watched_resources`, `haproxy_config`); a few nested fields use camelCase (`httpResources`, `currentConfig`, `extraContext`, `minHAProxyVersion`). `types.go`'s `yaml:` tags are authoritative.

@@ -244,7 +244,7 @@ vector-config-check: build ## Assert the chart renders a vector.yaml that vector
 	@# and parses the result, which nothing outside the engine can produce.
 	@bash scripts/check-vector-config.sh
 
-cr-spec-conformance-check: ## Reject a rendered CR carrying a spec field its own CRD does not declare
+cr-spec-conformance-check: ## Reject a rendered CR the apiserver would refuse: an undeclared spec field, or a declared one breaking its CRD's constraints
 	@# kubeconform -skips the chart's own kinds (they are in no public schema
 	@# catalog), so nothing checked the rendered spec against the CRD that
 	@# governs it. `spec` is seeded from controller.config wholesale, so a new
@@ -252,6 +252,10 @@ cr-spec-conformance-check: ## Reject a rendered CR carrying a spec field its own
 	@# apply rejects the object, failing `helm upgrade` for every operator.
 	@python3 scripts/check-cr-spec-conformance.py charts/haptic \
 		--api-versions=gateway.networking.k8s.io/v1/GatewayClass
+	@# Again with every library on: the disabled ones render four more objects,
+	@# and a library the defaults never emit cannot be checked by the run above.
+	@python3 scripts/check-cr-spec-conformance.py charts/haptic \
+		--api-versions=gateway.networking.k8s.io/v1/GatewayClass $(WORST_CASE_LIBS)
 
 cr-size-check: ## Check each rendered HAProxyTemplateConfig against etcd's ~1.5 MiB per-object limit
 	@# The OTHER size ceiling, independent of the release Secret: etcd refuses a
@@ -276,7 +280,7 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 
 ## Testing
 
-test: ## Run tests
+test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
 	@echo "Running tests..."
 	python3 -m unittest \
 		scripts/tests/test_analyze_gateway_api_bench.py \
@@ -284,15 +288,14 @@ test: ## Run tests
 		scripts/tests/test_analyze_gateway_api_resources.py \
 		scripts/tests/test_analyze_gateway_api_supervisor_logs.py
 	bash scripts/tests/test_bench_gateway_api.sh
-	# -coverpkg=./... (rather than a bare -cover) instruments the whole module
-	# for coverage, matching how the CI `test` job invokes gotestsum. Beyond
-	# unifying local and CI runs, it sidesteps a Go toolchain bug: with the
-	# committed cmd/haptic/default.pgo, `go test -cover ./...` links the
-	# PGO-built and cover-built variants of a package imported only by the
-	# PGO main under conflicting fingerprints ("fingerprint mismatch" link
-	# error). Whole-module coverage instrumentation makes the variants
-	# consistent.
-	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -cover -coverpkg=./... ./...
+	bash scripts/tests/test_shard_conformance_tests.sh
+	@# No coverage flags here: instrumenting the module for coverage costs a
+	@# further 3.2x on top of -race (measured on the renderer chart-scale
+	@# suite, 25.5s -> 82.1s). `make test-coverage` and the CI coverage job
+	@# produce the profile; a correctness run does not need it.
+	@# -timeout: pkg/controller/renderer's chart-scale suites run well past go
+	@# test's 10m default under -race, which fails the package on time alone.
+	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -timeout 45m $${PKG:-./...}
 	@$(MAKE) test-playground
 
 # The `playground` tag builds the client-native syntax + schema check that the
@@ -585,6 +588,9 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run
 	@echo "  SKIP_CLUSTER_CREATE - CI mode: assume cluster already exists; skip kind create"
 	@echo "  SKIP_DOCKER_BUILD   - CI mode: assume haptic:test-haproxyX.Y already loaded"
 	@echo "  TEST_RUN_PATTERN    - Run specific tests matching pattern"
+	@echo "  HAPTIC_E2E_EXTRA_SET - Extra helm --set pairs, ';'-separated. Match CI's shape"
+	@echo "                        locally with controller.resources.limits.cpu=4: GOMAXPROCS"
+	@echo "                        sizes the validationTests gate, so a big box hides gaps"
 	@echo "  HAPTIC_E2E_AGENT_DEBUG - Set 1 to install the chart with haproxy.agent.logLevel=debug"
 	@echo "  PARALLEL            - Max concurrent tests. Defaults to Go's default (GOMAXPROCS,"
 	@echo "                        i.e. nproc), which auto-scales to the host. Verified stable"
@@ -651,7 +657,7 @@ test-coverage-combined: ## Run unit and integration tests with combined coverage
 	$(GO) tool cover -html=coverage/combined.out -o coverage/combined.html
 	@echo "Combined coverage report generated at coverage/combined.html"
 
-bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=BenchmarkVMPool COUNT=6)
+bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=BenchmarkVMPool COUNT=6; BENCHFLAGS='-cpuprofile=/tmp/cpu.prof' to profile)
 	@echo "Running benchmarks..."
 	$(GO) tool gotestsum --format testname -- \
 		-run='^$$' \
@@ -659,6 +665,7 @@ bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=Benchmar
 		-benchmem \
 		-count=$${COUNT:-1} \
 		-timeout=$${TIMEOUT:-5m} \
+		$${BENCHFLAGS} \
 		$${PKG:-./...}
 
 bench-gateway-api: ## Run pinned Gateway API benchmark programs against HAPTIC

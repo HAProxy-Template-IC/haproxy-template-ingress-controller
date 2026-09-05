@@ -1,9 +1,168 @@
 templateSnippets:
+  map-hostvalues-479-gateway-listenersets-empty:
+    requires: [gateways]
+    incremental:
+      bindingsTemplate: '{}'
+      group: gateway-host-listenersets
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  map-hostvalues-480-gateway-listenersets:
+    requires: [gateways, listenersets, namespaces]
+    incremental:
+      source: listenersets
+      group: gateway-host-listenersets
+      effects: [publishValue]
+    template: |-
+      {%%
+        var lsNamespace = dig_string(item, "", "metadata", "namespace")
+        var lsName = dig_string(item, "", "metadata", "name")
+        var listenerSet = resources.listenersets.GetSingle(lsNamespace, lsName)
+        if listenerSet != nil {
+          var gatewayNamespace = listenerSet.Spec.ParentRef.Namespace
+          if gatewayNamespace == "" { gatewayNamespace = lsNamespace }
+          var gateway = resources.gateways.GetSingle(gatewayNamespace, listenerSet.Spec.ParentRef.Name)
+          var permitted = false
+          if gateway != nil {
+            var allowed = dig(gateway, "spec", "allowedListeners")
+            var allowedFrom = "None"
+            var allowedSelector any = nil
+            if allowed != nil {
+              allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None"))
+              allowedSelector = dig(allowed, "namespaces", "selector", "matchLabels")
+            }
+            switch allowedFrom {
+            case "All":
+              permitted = true
+            case "Same":
+              permitted = lsNamespace == gatewayNamespace
+            case "Selector":
+              if allowedSelector != nil {
+                var namespace = resources.namespaces.GetSingle(lsNamespace)
+                if namespace != nil {
+                  permitted = true
+                  for key, expected := range to_str_map(allowedSelector) {
+                    var actual, found = namespace.Metadata.Labels[key]
+                    if !found || actual != expected {
+                      permitted = false
+                      break
+                    }
+                  }
+                }
+              }
+            }
+          }
+          var candidates = []any{}
+          for listenerIndex, listener := range listenerSet.Spec.Listeners {
+            var certificateRefs = []any{}
+            for _, certificateRef := range listener.Tls.CertificateRefs {
+              certificateRefs = append(certificateRefs, map[string]any{
+                "group": certificateRef.Group,
+                "kind": certificateRef.Kind,
+                "name": certificateRef.Name,
+                "namespace": certificateRef.Namespace,
+              })
+            }
+            var tlsOptions = map[string]any{}
+            for option, value := range listener.Tls.Options {
+              tlsOptions[option] = value
+            }
+            var allowedNamespaces = map[string]any{}
+            var allowedFrom = dig_string(listener, "", "allowedRoutes", "namespaces", "from")
+            if allowedFrom != "" {
+              allowedNamespaces["from"] = allowedFrom
+            }
+            var allowedLabels = map[string]any{}
+            for label, value := range to_str_map(
+              dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")) {
+              allowedLabels[label] = value
+            }
+            if dig(listener, "allowedRoutes", "namespaces", "selector") != nil {
+              allowedNamespaces["selector"] = map[string]any{"matchLabels": allowedLabels}
+            }
+            candidates = append(candidates, map[string]any{
+              "name": listener.Name,
+              "hostname": listener.Hostname,
+              "port": listener.Port,
+              "protocol": listener.Protocol,
+              "allowedRoutes": map[string]any{"namespaces": allowedNamespaces},
+              "tls": map[string]any{
+                "mode": listener.Tls.Mode,
+                "options": tlsOptions,
+                "certificateRefs": certificateRefs,
+              },
+              "ownerNamespace": lsNamespace,
+              "index": listenerIndex,
+            })
+          }
+          var listenerSetKey = lsNamespace + "/" + lsName
+          var creationTimestamp = listenerSet.Metadata.CreationTimestamp
+          var sortTimestamp = creationTimestamp
+          if sortTimestamp == "" { sortTimestamp = "9999-12-31T23:59:59Z" }
+          var entry = map[string]any{
+            "accepted": permitted,
+            "candidates": candidates,
+            "gatewayNamespace": gatewayNamespace,
+            "gatewayName": listenerSet.Spec.ParentRef.Name,
+            "listenerSetNamespace": lsNamespace,
+            "listenerSetName": lsName,
+            "creationTimestamp": creationTimestamp,
+            "sortTimestamp": sortTimestamp,
+            "rank": sortTimestamp + "\x00" + listenerSetKey,
+          }
+          show shared.Publish("listenersets", listenerSetKey, entry)
+          if gateway != nil {
+            show shared.Publish("gateway\x00" + gatewayNamespace + "\x00" +
+              listenerSet.Spec.ParentRef.Name, listenerSetKey, entry)
+          }
+        }
+      %%}
+
+  map-hostvalues-490-gateway-port-scopes:
+    requires: [gateways]
+    template: |-
+      {{- render "gateway-pod-port-candidates-100-gateway" -}}
+      {{- render "gateway-pod-port-allocations-200-leader" -}}
+      {{- render "gateway-host-port-scopes-100-gateway" -}}
+
+  gateway-host-port-scopes-100-gateway:
+    requires: [gateways]
+    incremental:
+      source: gateways
+      group: gateway-host-port-scopes
+      consumes: [gateway-pod-port-allocations]
+      effects: [publishValue]
+    template: |-
+      {%%
+        var gatewayNamespace = dig_string(item, "", "metadata", "namespace")
+        var gatewayName = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(gatewayNamespace, gatewayName)
+        if gateway != nil {
+          var seenPorts = map[int]bool{}
+          for _, listener := range gateway.Spec.Listeners {
+            var listenerPort = toint(listener.Port)
+            if listenerPort <= 0 || seenPorts[listenerPort] ||
+              (listener.Protocol != "HTTP" && listener.Protocol != "HTTPS") {
+              continue
+            }
+            seenPorts[listenerPort] = true
+            var allocationKey = gatewayNamespace + "/" + gatewayName + ":" +
+              listener.Name + ":" + tostring(listenerPort)
+            var podPort, found = shared.Select(
+              "gateway-pod-port-allocations", "ports", allocationKey)
+            if found {
+              show shared.Publish("ports", gatewayNamespace + "/" + gatewayName + ":" +
+                tostring(listenerPort), podPort)
+            }
+          }
+        }
+      %%}
+
   util-generate-httproute-host-map-gateway:
     requires: [gateways, httproutes, referencegrants]
     template: |
       {#
-        Generate host map entries for HTTPRoute (typed sibling).
+        Generate host map entries for HTTPRoute.
 
         Per Gateway API spec the effective hostname set for a route is
         the *intersection* of the route's `spec.hostnames` with each
@@ -24,38 +183,30 @@ templateSnippets:
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
-      {%- macro GenerateHTTPRouteHostMap(routes []*resources.httproutes.T) -%}
-      {{ render "util-gateway-port-scope" -}}
+      {%- macro GenerateHTTPRouteHostMap(routes []any) -%}
       {%- for _, route := range routes %}
       {%%
-        var routeHostnames = route.Spec.Hostnames
+        var routeHostnames = toSlice(dig(route, "spec", "hostnames"))
         var effectiveHosts = map[string]bool{}
         var resolvedGwCount = 0
-        var routeNs = route.Metadata.Namespace
-        for _, parentRef := range route.Spec.ParentRefs {
-          var prGroup = parentRef.Group
+        var routeNs = dig_string(route, "", "metadata", "namespace")
+        for _, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
+          var prGroup = dig_string(parentRef, "", "group")
           if prGroup == "" { prGroup = "gateway.networking.k8s.io" }
-          var prKind = parentRef.Kind
+          var prKind = dig_string(parentRef, "", "kind")
           if prKind == "" { prKind = "Gateway" }
           if prGroup != "gateway.networking.k8s.io" {
             continue
           }
           if prKind == "ListenerSet" {
-            var lsNs = parentRef.Namespace
+            var lsNs = dig_string(parentRef, "", "namespace")
             if lsNs == "" { lsNs = routeNs }
-            var lsName = parentRef.Name
-            var section = parentRef.SectionName
-            var prPort = toint(parentRef.Port)
-            // Resolved through util-listenerset-candidates, which decided
-            // attachment and admission once, reading the resource typed behind
-            // its own CRD gate. An absent entry means this ListenerSet attached
-            // to no Gateway.
-            var lsEntry any = nil
-            var byLSAny = shared.Get("listenerSetCandidatesByLS")
-            if byLSAny != nil {
-              lsEntry = byLSAny.(map[string]any)[lsNs + "/" + lsName]
-            }
+            var lsName = dig_string(parentRef, "", "name")
+            var section = dig_string(parentRef, "", "sectionName")
+            var prPort = toint(dig(parentRef, "port") | fallback(0))
+            // An absent publication means the ListenerSet isn't observed.
+            var lsEntry, _ = shared.Select(
+              "gateway-host-listenersets", "listenersets", lsNs + "/" + lsName)
             if lsEntry == nil {
               continue
             }
@@ -103,11 +254,11 @@ templateSnippets:
           if prKind != "Gateway" {
             continue
           }
-          var gwNs = parentRef.Namespace
+          var gwNs = dig_string(parentRef, "", "namespace")
           if gwNs == "" { gwNs = routeNs }
-          var gwName = parentRef.Name
-          var section = parentRef.SectionName
-          var prPort = toint(parentRef.Port)
+          var gwName = dig_string(parentRef, "", "name")
+          var section = dig_string(parentRef, "", "sectionName")
+          var prPort = toint(dig(parentRef, "port") | fallback(0))
           var gw = resources.gateways.GetSingle(gwNs, gwName)
           if gw == nil {
             continue
@@ -134,13 +285,13 @@ templateSnippets:
             // listener port for pinned / chart-static Gateways.
             var portSuffix = ""
             if listenerPort > 0 {
-              var portScope = shared.Get("gatewayPortScope").(map[string]any)
-              var scopePort = listenerPort
-              if val, ok := portScope[gwNs + "/" + gwName + ":" + tostring(listenerPort)]; ok {
-                scopePort = toint(val)
-              }
               var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443)
               if listenerHostname == "" || isNonDefault {
+                var scopePort = listenerPort
+                var selectedPort, found = shared.Select(
+                  "gateway-host-port-scopes", "ports",
+                  gwNs + "/" + gwName + ":" + tostring(listenerPort))
+                if found { scopePort = toint(selectedPort) }
                 portSuffix = ":" + tostring(scopePort)
               }
             }
@@ -199,7 +350,7 @@ templateSnippets:
         var hostnames = keys(effectiveHosts)
       %%}
       {%- if len(hostnames) > 0 %}
-      # HTTPRoute: {{ route.Metadata.Namespace }}/{{ route.Metadata.Name }} ({{ len(hostnames) }} hosts)
+      # HTTPRoute: {{ dig_string(route, "", "metadata", "namespace") }}/{{ dig_string(route, "", "metadata", "name") }} ({{ len(hostnames) }} hosts)
       {% for _, hostname := range hostnames %}
       {%- if hostname != "" %}
       {%- var hostKey = MapKeyForHost(hostname) %}
@@ -224,9 +375,7 @@ templateSnippets:
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- macro GenerateGRPCRouteHostMap(routes []*resources.grpcroutes.T) -%}
-      {{ render "util-gateway-port-scope" -}}
       {%- for _, route := range routes %}
       {%%
         var routeHostnames = route.Spec.Hostnames
@@ -247,15 +396,9 @@ templateSnippets:
             var lsName = parentRef.Name
             var section = parentRef.SectionName
             var prPort = toint(parentRef.Port)
-            // Resolved through util-listenerset-candidates, which decided
-            // attachment and admission once, reading the resource typed behind
-            // its own CRD gate. An absent entry means this ListenerSet attached
-            // to no Gateway.
-            var lsEntry any = nil
-            var byLSAny = shared.Get("listenerSetCandidatesByLS")
-            if byLSAny != nil {
-              lsEntry = byLSAny.(map[string]any)[lsNs + "/" + lsName]
-            }
+            // An absent publication means the ListenerSet isn't observed.
+            var lsEntry, _ = shared.Select(
+              "gateway-host-listenersets", "listenersets", lsNs + "/" + lsName)
             if lsEntry == nil {
               continue
             }
@@ -337,13 +480,13 @@ templateSnippets:
             // (grpc-status 12 Unimplemented) instead of the matched route.
             var portSuffix = ""
             if listenerPort > 0 {
-              var portScope = shared.Get("gatewayPortScope").(map[string]any)
-              var scopePort = listenerPort
-              if val, ok := portScope[gwNs + "/" + gwName + ":" + tostring(listenerPort)]; ok {
-                scopePort = toint(val)
-              }
               var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443)
               if listenerHostname == "" || isNonDefault {
+                var scopePort = listenerPort
+                var selectedPort, found = shared.Select(
+                  "gateway-host-port-scopes", "ports",
+                  gwNs + "/" + gwName + ":" + tostring(listenerPort))
+                if found { scopePort = toint(selectedPort) }
                 portSuffix = ":" + tostring(scopePort)
               }
             }
@@ -405,50 +548,85 @@ templateSnippets:
       {%- end %}
       {%- end macro -%}
 
-  util-sharded-host-map-gateway:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
-    template: |
-      {# Per-Kind typed sharded host-map wrappers. Each calls its
-          Kind-specific Generate macro directly with the typed slice. #}
-      {%- import "util-generate-httproute-host-map-gateway" for GenerateHTTPRouteHostMap -%}
-      {%- import "util-generate-grpcroute-host-map-gateway" for GenerateGRPCRouteHostMap -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-
-      {%- macro ShardedHTTPRouteHostMap(routes []*resources.httproutes.T) -%}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateHTTPRouteHostMap(routes) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateHTTPRouteHostMap(shard_slice(routes, i, n)) }}
-          {%- end -%}
-        {%- end -%}
-      {%- end macro -%}
-
-      {%- macro ShardedGRPCRouteHostMap(routes []*resources.grpcroutes.T) -%}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateGRPCRouteHostMap(routes) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateGRPCRouteHostMap(shard_slice(routes, i, n)) }}
-          {%- end -%}
-        {%- end -%}
-      {%- end macro -%}
-
   map-host-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {# Generate host map entries for Gateway API routes #}
-      {%- import "util-sharded-host-map-gateway" for ShardedHTTPRouteHostMap, ShardedGRPCRouteHostMap %}
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "map-hostvalues-490-gateway-port-scopes" -}}
+      {{ "\n" -}}
       # gateway/map-host-gateway
-      {{- ShardedHTTPRouteHostMap(resources.httproutes.List()) -}}
-      {{- ShardedGRPCRouteHostMap(resources.grpcroutes.List()) -}}
+      {{ "\n" -}}
+
+  map-host-510-gateway-http:
+    requires: [gateways, httproutes, referencegrants]
+    incremental:
+      source: httproutes
+      root: gateway-http-route-pre-analysis
+      group: gateway-host-map
+      consumes: [gateway-host-port-scopes]
+      optionalConsumes: [gateway-host-listenersets]
+    template: |-
+      {%- import "util-generate-httproute-host-map-gateway" for GenerateHTTPRouteHostMap -%}
+      {%- var route = item -%}
+      {%- if route != nil -%}
+      {{- GenerateHTTPRouteHostMap([]any{route}) -}}
+      {%- end -%}
+
+  map-host-515-gateway-separator:
+    template: '{{ "\n\n" }}'
+
+  map-host-520-gateway-grpc:
+    requires: [gateways, grpcroutes, referencegrants]
+    incremental:
+      source: grpcroutes
+      group: gateway-host-map
+      consumes: [gateway-host-port-scopes]
+      optionalConsumes: [gateway-host-listenersets]
+    template: |-
+      {%- import "util-generate-grpcroute-host-map-gateway" for GenerateGRPCRouteHostMap -%}
+      {%- var route = resources.grpcroutes.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if route != nil -%}
+      {{- GenerateGRPCRouteHostMap([]*resources.grpcroutes.T{route}) -}}
+      {%- end -%}
+
+  gateway-listener-hostname-suffixes-100-gateway:
+    requires: [gateways]
+    incremental:
+      source: gateways
+      group: gateway-listener-hostname-suffixes
+      effects: [publishValue]
+    template: |-
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil {
+          var fixed = func(value int) string {
+            var result = tostring(value)
+            for len(result) < 3 { result = "0" + result }
+            return result
+          }
+          for _, listener := range gateway.Spec.Listeners {
+            if !hasPrefix(listener.Hostname, "*.") { continue }
+            var suffix = listener.Hostname[2:]
+            var rank = fixed(999-len(suffix)) + "/" + suffix
+            var fragment = "^[^.]+(?:\\.[^.]+)*\\." + replace(suffix, ".", "\\.") + "$ ." + suffix + "\n"
+            show shared.PublishRanked("entries", suffix, rank, fragment)
+          }
+        }
+      %%}
+
+  util-gateway-listener-hostname-suffix-publications:
+    requires: [gateways]
+    template: |-
+      {{- render "gateway-listener-hostname-suffixes-100-gateway" -}}
 
   map-hostregex-500-gateway:
     requires: [gateways]
     template: |
-      {%- import "util-resource-helpers" for ListenerHostname -%}
       {#
         Wildcard listener hostnames as regex entries.
 
@@ -475,20 +653,6 @@ templateSnippets:
         listener — and per spec must not match `*.bar.com`).
       #}
       # gateway/map-hostregex-gateway
-      {%%
-        var suffixEntries = resources.gateways.List() |
-          flat_map(gw => gw.Spec.Listeners) |
-          filter(l => hasPrefix(l.Hostname, "*.")) |
-          unique_by(l => l.Hostname) |
-          map(l => map[string]any{"suffix": l.Hostname[2:]})
-        // Most-specific (longest) suffix wins HAProxy `map_reg` ties — that's
-        // first-match-wins on file order, so emit longer suffixes first. Per
-        // Gateway API spec: when a request Host matches multiple listeners'
-        // wildcard hostnames, the most-specific one owns the request (e.g.
-        // `bar.foo.example.com` belongs to `*.foo.example.com`, not `*.example.com`).
-      %%}
-      {%- var sortedSuffixEntries = suffixEntries | sort_by([]string{"$.suffix | length:desc"}) %}
-      {%- for _, entry := range sortedSuffixEntries %}
-      {%- var suffix = tostring(entry | dig("suffix")) %}
-      ^[^.]+(?:\.[^.]+)*\.{{ replace(suffix, ".", "\\.") }}$ .{{ suffix }}
-      {%- end %}
+      {#- Entries carry no leading newline: left-trimming here fuses the first into the marker. #}
+      {{ render "util-gateway-listener-hostname-suffix-publications" -}}
+      {{- incremental_ranked_text_fragment("gateway-listener-hostname-suffixes", "entries") -}}

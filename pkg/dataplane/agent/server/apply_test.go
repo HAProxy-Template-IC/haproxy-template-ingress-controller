@@ -70,6 +70,30 @@ func TestFirstApplyWritesTheTreeAndReloads(t *testing.T) {
 	assert.Zero(t, h.metric("haptic_agent_invariant_violations_total"))
 }
 
+func TestLegacyControllerManifestFailsClosedToReload(t *testing.T) {
+	h := newHarness(t)
+	first := firstApply(t, h)
+	files := baseFiles("global\n")
+	m := buildManifest("plan-2", files)
+	m.IdentityVersion = 0
+	m.ExpectedPrevPlanID = first.AppliedPlanID
+	m.ExpectedPrevToken = first.AppliedToken
+	m.ExpectedWorkerOpsPlanID = "foreign-worker"
+	m.WorkerOpsPlanID = "foreign-worker-after"
+	m.ValidatedPlanID = first.AppliedPlanID
+	m.Ops = []api.Op{{Kind: api.OpBackendAdd, Backend: "must-not-run", Profile: "prof", Mode: "http"}}
+	m.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "legacy", Value: "be-a"}}
+
+	status, raw := h.postRaw(&m, files)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	result := api.ApplyResult{}
+	require.NoError(t, json.Unmarshal(raw, &result))
+	require.True(t, result.OK, "%+v", result.Error)
+	assert.Equal(t, api.ResultReload, result.Mode)
+	assert.NotEmpty(t, result.AppliedPlanProof)
+	assert.False(t, h.model.HasBackend("must-not-run"))
+}
+
 func TestRuntimeApplyRunsOpsWithoutReloading(t *testing.T) {
 	h := newHarness(t)
 	first := firstApply(t, h)
@@ -319,7 +343,7 @@ func TestRevertLKGRestoresAndReloads(t *testing.T) {
 	require.Equal(t, "plan-1", second.LKGPlanID, "a file-only apply does not promote")
 	require.Equal(t, "global\n  maxconn 400\n", h.read(configPath))
 
-	revert := buildManifest("plan-3", nil)
+	revert := buildManifest(second.AppliedPlanID, nil)
 	revert.Mode = api.ModeRevertLKG
 	revert.Token = api.Token{LeaderEpoch: 1, RenderSeq: 3}
 	result := h.apply(&revert, nil)
@@ -361,7 +385,7 @@ func TestARevertConsumesTheScheduledReload(t *testing.T) {
 	require.Equal(t, api.ResultScheduled, scheduled.Mode)
 	require.NotEmpty(t, h.state(false).ReloadPendingAt)
 
-	revert := buildManifest("plan-3", nil)
+	revert := buildManifest(scheduled.AppliedPlanID, nil)
 	revert.Mode = api.ModeRevertLKG
 	result := h.apply(&revert, nil)
 
@@ -429,13 +453,24 @@ func TestStateReturnsThePlanOfTheAppliedPlanID(t *testing.T) {
 	require.True(t, h.apply(&next, files).OK)
 	assert.Empty(t, h.state(false).AppliedPlan, "a blob for another plan is not a baseline")
 
-	// It survives a restart, which is the case it exists for.
+	// A restart invalidates every in-process observation proof. The blob stays
+	// opaque until a full reload binds fresh bytes to a fresh agent proof.
 	third := buildManifest("plan-3", files)
 	third.ExpectedPrevPlanID = "plan-2"
 	third.ExpectedPrevToken = next.Token
 	require.True(t, h.applyWithPlan(&third, files, []byte("opaque-plan-3")).OK)
 	restarted := h.restart()
-	assert.Equal(t, []byte("opaque-plan-3"), restarted.state(false).AppliedPlan)
+	restartedState := restarted.state(false)
+	assert.Empty(t, restartedState.AppliedPlan)
+	assert.Empty(t, restartedState.AppliedPlanProof)
+
+	fourth := buildManifest("plan-4", files)
+	fourth.ExpectedPrevPlanID = "plan-3"
+	fourth.ExpectedPrevToken = third.Token
+	result := restarted.applyWithPlan(&fourth, files, []byte("opaque-plan-4"))
+	require.Equal(t, api.ResultReload, result.Mode)
+	require.NotEmpty(t, result.AppliedPlanProof)
+	assert.Equal(t, []byte("opaque-plan-4"), restarted.state(false).AppliedPlan)
 }
 
 // A store the agent created at runtime is loaded from then on, so the next
@@ -774,7 +809,10 @@ func TestARuntimeApplyMovesTheWorkerOpsBaseline(t *testing.T) {
 }
 
 func TestTheScheduledReloadFiresWhenTheWindowPasses(t *testing.T) {
-	h := newHarness(t, withReloadInterval(300*time.Millisecond))
+	// The window only has to still be open when the second apply lands; both
+	// tests then wait up to 10s for the reload to fire. 300ms lost that race
+	// under CI's parallel load and made these the suite's only flakes.
+	h := newHarness(t, withReloadInterval(2*time.Second))
 	files := baseFiles("global\n")
 	m := buildManifest("plan-1", files)
 	m.Mode = api.ModeReload
@@ -797,7 +835,10 @@ func TestTheScheduledReloadFiresWhenTheWindowPasses(t *testing.T) {
 // its applied plan as the next baseline, so a failed one must report the
 // invalidated baseline, not the one from before the reload.
 func TestAFailedScheduledReloadReportsTheInvalidatedBaseline(t *testing.T) {
-	h := newHarness(t, withReloadInterval(300*time.Millisecond))
+	// The window only has to still be open when the second apply lands; both
+	// tests then wait up to 10s for the reload to fire. 300ms lost that race
+	// under CI's parallel load and made these the suite's only flakes.
+	h := newHarness(t, withReloadInterval(2*time.Second))
 	files := baseFiles("global\n")
 	m := buildManifest("plan-1", files)
 	m.Mode = api.ModeReload

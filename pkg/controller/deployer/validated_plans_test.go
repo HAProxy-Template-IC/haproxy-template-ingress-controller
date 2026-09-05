@@ -5,12 +5,6 @@
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 
 package deployer
 
@@ -21,24 +15,36 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// A pod's manifest names the plan THAT pod applied when the gate passed it, so
-// a straggler's baseline promotion never waits on the newest render.
-func TestValidatedPlanSet_ResolvesPerPod(t *testing.T) {
+func TestValidatedPlanSetResolvesOnlyExactOccurrence(t *testing.T) {
 	set := newValidatedPlanSet()
-	assert.Empty(t, set.resolve("plan-1"), "nothing is validated before the gate answers")
+	plan1 := exactTestPlan("collision", "config-A")
+	plan2 := exactTestPlan("collision", "config-B")
+	occurrence1 := mustOccurrenceFor(plan1, "config-A", nil, nil)
+	occurrence2 := mustOccurrenceFor(plan2, "config-B", nil, nil)
+	set.addOccurrence(occurrence1)
 
-	set.add("plan-1")
-	set.add("plan-2")
-	assert.Equal(t, "plan-1", set.resolve("plan-1"), "a lagging pod is told its own passed plan")
-	assert.Equal(t, "plan-2", set.resolve("plan-3"), "a pod on an unjudged plan is told the newest passed one")
+	assert.Equal(t, planReference{id: plan1.ID, proof: "agent-proof-1"},
+		set.resolve(plan1.ID, "agent-proof-1", plan1, occurrence1))
+	assert.Empty(t, set.resolve(plan2.ID, "agent-proof-1", plan2, occurrence2))
+	assert.Equal(t, planReference{id: plan1.ID, proof: "agent-proof-2"},
+		set.resolve(plan1.ID, "agent-proof-2", plan1, occurrence1))
+}
 
-	set.add("plan-1")
-	assert.Equal(t, "plan-2", set.resolve("plan-3"), "re-recording a plan does not make it the newest")
-
-	var newest string
-	for i := range maxValidatedPlans {
-		newest = fmt.Sprintf("filler-%d", i)
-		set.add(newest)
+func TestValidatedPlanSetBoundsExactOccurrences(t *testing.T) {
+	set := newValidatedPlanSet()
+	var oldestOccurrence, newestOccurrence = mustTestOccurrence("config-0", "plan-0", nil), mustTestOccurrence("config-new", "plan-new", nil)
+	set.addOccurrence(oldestOccurrence)
+	for i := 1; i < maxValidatedPlans; i++ {
+		set.addOccurrence(mustTestOccurrence(fmt.Sprintf("config-%d", i), fmt.Sprintf("plan-%d", i), nil))
 	}
-	assert.Equal(t, newest, set.resolve("plan-1"), "the set is bounded, and ages out the oldest first")
+	set.addOccurrence(newestOccurrence)
+	oldest, err := materializeOccurrence(oldestOccurrence)
+	assert.NoError(t, err)
+	newest, err := materializeOccurrence(newestOccurrence)
+	assert.NoError(t, err)
+
+	assert.Len(t, set.order, maxValidatedPlans)
+	assert.Empty(t, set.resolve(oldest.planID, "proof-0", oldest.plan, oldestOccurrence))
+	assert.Equal(t, planReference{id: newest.planID, proof: "proof-new"},
+		set.resolve(newest.planID, "proof-new", newest.plan, newestOccurrence))
 }

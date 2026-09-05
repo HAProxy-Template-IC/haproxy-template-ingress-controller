@@ -16,6 +16,7 @@ package deployer
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,9 +24,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -50,11 +51,34 @@ func gateLatchScheduler(t *testing.T) (*DeploymentScheduler, <-chan busevents.Ev
 }
 
 func renderEvent(planID string) *events.TemplateRenderedEvent {
-	return events.NewTemplateRenderedEvent(
-		"config-"+planID, &dataplane.AuxiliaryFiles{}, nil, nil, 0, 1, "config_change",
-		"checksum-"+planID, &renderplan.Plan{ID: planID}, planID, true,
+	config := "config-" + planID
+	occurrence := mustTestOccurrence(config, planID, nil)
+	gateTestOccurrences.Store(planID, occurrence)
+	event, err := events.NewTemplateRenderedEventWithOccurrence(
+		occurrence, 1, "config_change", true,
 		events.WithCorrelation("corr-"+planID, "cause-"+planID),
 	)
+	if err != nil {
+		panic(err)
+	}
+	return event
+}
+
+var gateTestOccurrences sync.Map
+
+func gateEvent(planID string, ok, refused, newest bool, message string) *events.RenderGateCompletedEvent {
+	config := "config-" + planID
+	loaded, present := gateTestOccurrences.Load(planID)
+	if !present {
+		loaded = mustTestOccurrence(config, planID, nil)
+	}
+	event, err := events.NewRenderGateCompletedEventWithCycle(
+		loaded.(*rendercycle.Occurrence), ok, refused, newest, message, false, 5,
+	)
+	if err != nil {
+		panic(err)
+	}
+	return event
 }
 
 // While the gate holds renders, the scheduler must not dispatch: the fleet
@@ -65,7 +89,7 @@ func TestScheduler_HoldsRendersWhileTheGateIsPinned(t *testing.T) {
 	scheduler.handleEvent(ctx, renderEvent("plan-1"))
 	requireScheduled(t, scheduled, "plan-1")
 
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-1", false, true, true, "boom"))
 	scheduler.handleEvent(ctx, renderEvent("plan-2"))
 
 	requireNothingScheduled(t, scheduled)
@@ -82,24 +106,26 @@ func TestScheduler_GatePassReleasesOnlyTheRenderItNames(t *testing.T) {
 	// Free the deploy loop so a later dispatch is not waiting on this one.
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-1", false, true, true, "boom"))
 
 	// Two renders arrive while pinned; the verdict names the older one.
 	scheduler.handleEvent(ctx, renderEvent("plan-2"))
 	scheduler.handleEvent(ctx, renderEvent("plan-3"))
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-2", true, false, true, "", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-2", true, false, true, ""))
 	requireNothingScheduled(t, scheduled)
 
 	// The verdict for the newest render is what dispatches it.
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-3", true, false, true, "", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-3", true, false, true, ""))
 	requireScheduled(t, scheduled, "plan-3")
 }
 
 // Leadership loss resets the latch, so a new term starts optimistic.
 func TestScheduler_LostLeadershipClearsThePin(t *testing.T) {
-	scheduler, _, ctx := gateLatchScheduler(t)
+	scheduler, scheduled, ctx := gateLatchScheduler(t)
 
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", false, 5))
+	scheduler.handleEvent(ctx, renderEvent("plan-1"))
+	requireScheduled(t, scheduled, "plan-1")
+	scheduler.handleEvent(ctx, gateEvent("plan-1", false, true, true, "boom"))
 	scheduler.mu.RLock()
 	require.True(t, scheduler.gatePinned)
 	scheduler.mu.RUnlock()
@@ -125,7 +151,7 @@ func TestScheduler_PodDiscoveryWhilePinnedSendsTheAcceptedRender(t *testing.T) {
 
 	scheduler.handleEvent(ctx, renderEvent("plan-1"))
 	requireScheduled(t, scheduled, "plan-1")
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-1", true, false, true, ""))
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
 
@@ -134,7 +160,7 @@ func TestScheduler_PodDiscoveryWhilePinnedSendsTheAcceptedRender(t *testing.T) {
 	requireScheduled(t, scheduled, "plan-2")
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-2", false, true, true, "boom", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-2", false, true, true, "boom"))
 
 	// A pod joins. It must be given the render HAProxy accepted, not the one it
 	// refused.
@@ -153,7 +179,7 @@ func TestScheduler_RefusalOfASupersededPlanKeepsTheNewerRender(t *testing.T) {
 
 	scheduler.handleEvent(ctx, renderEvent("plan-1"))
 	requireScheduled(t, scheduled, "plan-1")
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-1", true, false, true, ""))
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
 
@@ -163,12 +189,12 @@ func TestScheduler_RefusalOfASupersededPlanKeepsTheNewerRender(t *testing.T) {
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
 
 	// A late verdict for plan-1, which plan-2 has superseded.
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-1", false, true, true, "boom"))
 
 	scheduler.mu.RLock()
-	deployable := scheduler.lastValidatedPlanID
+	deployable := scheduler.lastValidatedOccurrence
 	scheduler.mu.RUnlock()
-	assert.Equal(t, "plan-2", deployable,
+	assert.True(t, sameOccurrence(gateTestOccurrence("plan-2"), deployable),
 		"a verdict for a superseded plan must not roll the fleet back off the newer render")
 }
 
@@ -180,7 +206,7 @@ func TestScheduler_GateThatCouldNotRunKeepsTheDeployableRender(t *testing.T) {
 
 	scheduler.handleEvent(ctx, renderEvent("plan-1"))
 	requireScheduled(t, scheduled, "plan-1")
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-1", true, false, true, ""))
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
 
@@ -189,14 +215,14 @@ func TestScheduler_GateThatCouldNotRunKeepsTheDeployableRender(t *testing.T) {
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
 
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent(
-		"plan-2", false, false, true, "creating temp directory: read-only file system", false, 5))
+	scheduler.handleEvent(ctx, gateEvent(
+		"plan-2", false, false, true, "creating temp directory: read-only file system"))
 
 	scheduler.mu.RLock()
-	deployable := scheduler.lastValidatedPlanID
+	deployable := scheduler.lastValidatedOccurrence
 	pinned := scheduler.gatePinned
 	scheduler.mu.RUnlock()
-	assert.Equal(t, "plan-2", deployable,
+	assert.True(t, sameOccurrence(gateTestOccurrence("plan-2"), deployable),
 		"without HAProxy's verdict there is no evidence against the render the fleet runs")
 	assert.True(t, pinned, "nothing judged the render, so the gate still holds")
 
@@ -221,7 +247,7 @@ func TestScheduler_RefusalDropsTheDeploymentQueuedForThatPlan(t *testing.T) {
 	scheduler.handleEvent(ctx, renderEvent("plan-2"))
 	requireNothingScheduled(t, scheduled)
 
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-2", false, true, true, "boom", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-2", false, true, true, "boom"))
 
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
@@ -237,12 +263,12 @@ func TestScheduler_ReleasedRenderIsTheRollbackTarget(t *testing.T) {
 	requireScheduled(t, scheduled, "plan-1")
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-1", false, true, true, "boom"))
 
 	// plan-2 is held, then released by the pass that names it.
 	scheduler.handleEvent(ctx, renderEvent("plan-2"))
 	requireNothingScheduled(t, scheduled)
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-2", true, false, true, "", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-2", true, false, true, ""))
 	requireScheduled(t, scheduled, "plan-2")
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
@@ -252,12 +278,12 @@ func TestScheduler_ReleasedRenderIsTheRollbackTarget(t *testing.T) {
 	requireScheduled(t, scheduled, "plan-3")
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-3", false, true, true, "boom", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-3", false, true, true, "boom"))
 
 	scheduler.mu.RLock()
-	deployable := scheduler.lastValidatedPlanID
+	deployable := scheduler.lastValidatedOccurrence
 	scheduler.mu.RUnlock()
-	assert.Equal(t, "plan-2", deployable,
+	assert.True(t, sameOccurrence(gateTestOccurrence("plan-2"), deployable),
 		"the rollback lands on the released render, not on the one before the first refusal")
 }
 
@@ -271,14 +297,14 @@ func TestScheduler_SupersededVerdictDoesNotMoveTheLatch(t *testing.T) {
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
 		&events.DeploymentResult{Total: 1, Succeeded: 1}))
 
-	scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-0", false, true, false, "boom", false, 5))
+	scheduler.handleEvent(ctx, gateEvent("plan-0", false, true, false, "boom"))
 
 	scheduler.mu.RLock()
 	pinned := scheduler.gatePinned
-	deployable := scheduler.lastValidatedPlanID
+	deployable := scheduler.lastValidatedOccurrence
 	scheduler.mu.RUnlock()
 	assert.False(t, pinned, "a straggler's refusal must not close the gate on the current render")
-	assert.Equal(t, "plan-1", deployable)
+	assert.True(t, sameOccurrence(gateTestOccurrence("plan-1"), deployable))
 }
 
 func requireScheduled(t *testing.T, scheduled <-chan busevents.Event, planID string) {
@@ -287,10 +313,20 @@ func requireScheduled(t *testing.T, scheduled <-chan busevents.Event, planID str
 	case event := <-scheduled:
 		deployment, ok := event.(*events.DeploymentScheduledEvent)
 		require.True(t, ok)
-		require.Equal(t, planID, deployment.PlanID)
+		occurrence, err := deployment.RenderOccurrence()
+		require.NoError(t, err)
+		require.True(t, sameOccurrence(gateTestOccurrence(planID), occurrence))
 	case <-time.After(testutil.LongTimeout):
 		t.Fatalf("expected %s to be dispatched", planID)
 	}
+}
+
+func gateTestOccurrence(planID string) *rendercycle.Occurrence {
+	loaded, present := gateTestOccurrences.Load(planID)
+	if !present {
+		return nil
+	}
+	return loaded.(*rendercycle.Occurrence)
 }
 
 func requireNothingScheduled(t *testing.T, scheduled <-chan busevents.Event) {

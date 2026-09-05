@@ -4,7 +4,7 @@ Publishes the rendered HAProxy runtime configuration as observable Kubernetes CR
 
 ## Overview
 
-The reconciliation pipeline produces a `*dataplane.AuxiliaryFiles` and a string of HAProxy config; this package writes those into the cluster so operators can `kubectl describe` them, GitOps tooling can diff them, and audit logs can trace which controller produced which config. The CRDs are owned by their parent `HAProxyTemplateConfig` so they cascade-delete on uninstall.
+The reconciliation pipeline produces an authenticated `*renderoutput.Snapshot`; this package materializes it at the Kubernetes boundary and writes its config and artifacts into the cluster. Operators can `kubectl describe` them, GitOps tooling can diff them, and audit logs can trace which controller produced which config. The CRDs are owned by their parent `HAProxyTemplateConfig` so they cascade-delete on uninstall.
 
 This package does **not** push config to HAProxy pods — that's `pkg/dataplane.Client.Sync` driven from `pkg/controller/deployer`. The publisher lives between rendering and deployment as a parallel observability path.
 
@@ -26,13 +26,12 @@ result, err := p.PublishConfig(ctx, &configpublisher.PublishRequest{
     TemplateConfigName:      "haptic-config",
     TemplateConfigNamespace: "haptic",
     TemplateConfigUID:       crd.UID,
-    Config:                  rendered,             // the rendered haproxy.cfg text
-    Checksum:                sha256OfRendered,
-    AuxiliaryFiles:          auxFiles,
+    OutputSnapshot:          outputSnapshot,
     // optional: ConfigPath, NameSuffix, ValidationError, CompressionThreshold
     // (see types.go for the full field list)
 })
-// result.RuntimeConfigName, MapFileNames, SecretNames, GeneralFileNames, CRTListFileNames
+// result.RuntimeConfigName, MapFileNames, SecretNames, SSLCaFileNames,
+// GeneralFileNames, CRTListFileNames
 ```
 
 `NewWithListers` is the production path — passing the informer-backed listers means status updates check the cache before issuing a GET, cutting API-server load on busy clusters.
@@ -43,15 +42,16 @@ result, err := p.PublishConfig(ctx, &configpublisher.PublishRequest{
 |------|--------------|---------|
 | `HAProxyCfg` | `req.Config` | The rendered `haproxy.cfg` text |
 | `HAProxyMapFile` | one per `AuxiliaryFiles.MapFiles[i]` | Map file contents (path-prefix.map, etc.) |
-| `HAProxyGeneralFile` | one per `AuxiliaryFiles.GeneralFiles[i]` | Custom error pages, raw files |
+| `HAProxyGeneralFile` | one per general or GeneralCA artifact | Custom error pages, raw files, and generated CA bundles |
 | `HAProxyCRTListFile` | one per `AuxiliaryFiles.CRTListFiles[i]` | crt-list manifests for SSL frontends |
-| `Secret` (TLS type) | one per `AuxiliaryFiles.SSLCertificates[i]` | Cert + key bundle as a standard kubernetes.io/tls Secret |
+| `Secret` (Opaque) | one per `AuxiliaryFiles.SSLCertificates[i]` | Certificate bundle and target path |
+| `Secret` (Opaque) | one per `AuxiliaryFiles.SSLCaFiles[i]` | CA or trust bundle referenced separately from certificates |
 
 Every child carries `metadata.ownerReferences` pointing at the parent `HAProxyCfg`, so `kubectl delete haproxycfg <name>` cascades to maps / general files / crt-lists / Secrets.
 
 ## Failure Mode
 
-`PublishConfig` succeeds only after the `HAProxyCfg`, every desired child, the complete child-reference status, and removal of obsolete owned children have succeeded. A required write or cleanup failure returns an `IncompletePublicationError` identifying the failed stage and resource. Repeating the same request is safe: resources already in the desired state are skipped, and incomplete work resumes. The publisher canonicalizes identical file definitions and rejects conflicting Dataplane storage identities before its first API write. Children use immutable auxiliary-set names, and one status update commits the set ID with all child references. Readers verify the set annotation on every referenced child, including certificate Secret metadata, before advancing. They never need Secret data to resolve the set and can retain the preceding complete set while a newer publication is partial. Auxiliary-set annotations, committed parent references, and object-version preconditions fence cleanup, preventing a retired publication from deleting newer output. Invalid publications suffix their child names with `-invalid`, keeping the last valid artifact set intact. Long, colliding, or foreign-owned names receive stable identity hashes, so every resource name stays valid and one runtime config never takes over another's child.
+`PublishConfig` succeeds only after the `HAProxyCfg`, every desired child, the complete child-reference status, and removal of obsolete owned children have succeeded. A required write or cleanup failure returns an `IncompletePublicationError` identifying the failed stage and resource. Repeating the same request is safe: resources already in the desired state are skipped, and incomplete work resumes. The publisher canonicalizes identical file definitions and rejects conflicting Dataplane storage identities before its first API write. Children use immutable auxiliary-set names, and one status update commits the set ID with all child references. Readers verify the set annotation on every referenced child, including certificate and CA Secret metadata, before advancing. They never need Secret data to resolve the set and can retain the preceding complete set while a newer publication is partial. Auxiliary-set annotations, committed parent references, and object-version preconditions fence cleanup, preventing a retired publication from deleting newer output. Invalid publications suffix their child names with `-invalid`, keeping the last valid artifact set intact. Long, colliding, or foreign-owned names receive stable identity hashes, so every resource name stays valid and one runtime config never takes over another's child.
 
 ## See Also
 

@@ -50,13 +50,20 @@ func newClient(t *testing.T, agent *agenttest.Agent) *client.Client {
 // build turns path→content into a manifest plus the matching parts, deriving
 // each file's kind from its directory the way the render's file set does.
 func build(planID, mode string, token api.Token, files map[string]string) (manifest *api.Manifest, parts map[string]io.Reader) {
-	m := &api.Manifest{PlanID: planID, PlanSchemaVersion: 1, Token: token, Mode: mode}
+	m := &api.Manifest{
+		IdentityVersion:   api.ExactIdentityVersion,
+		PlanID:            planID,
+		PlanSchemaVersion: 1,
+		Token:             token,
+		Mode:              mode,
+	}
 	parts = map[string]io.Reader{}
 	for _, path := range slices.Sorted(maps.Keys(files)) {
 		content := files[path]
 		m.Files = append(m.Files, api.File{
 			Path:           path,
 			Digest:         renderplan.DigestString(content),
+			Proof:          renderplan.DigestString(content),
 			Size:           int64(len(content)),
 			Kind:           kindOf(path),
 			ReloadOnChange: strings.HasSuffix(path, ".cfg"),
@@ -64,6 +71,46 @@ func build(planID, mode string, token api.Token, files map[string]string) (manif
 		parts[path] = strings.NewReader(content)
 	}
 	return m, parts
+}
+
+func applyExact(
+	t *testing.T,
+	c *client.Client,
+	m *api.Manifest,
+	parts map[string]io.Reader,
+	plan io.Reader,
+) (*api.ApplyResult, error) {
+	t.Helper()
+	state, err := c.State(t.Context(), false)
+	require.NoError(t, err)
+	m.IdentityVersion = api.ExactIdentityVersion
+	if m.ExpectedPrevPlanID == state.AppliedPlanID {
+		m.ExpectedPrevPlanProof = state.AppliedPlanProof
+	}
+	if m.ExpectedWorkerOpsPlanID == state.WorkerOpsPlanID {
+		m.ExpectedWorkerOpsPlanProof = state.WorkerOpsPlanProof
+	}
+	if len(m.InPlaceOps) > 0 && m.ExpectedWorkerOpsPlanProof == "" {
+		m.ExpectedWorkerOpsPlanProof = "test:stale-worker"
+	}
+	if m.ValidatedPlanID == state.AppliedPlanID {
+		m.ValidatedPlanProof = state.AppliedPlanProof
+	}
+	if m.ValidatedPlanID != "" && m.ValidatedPlanProof == "" {
+		m.ValidatedPlanProof = "test:stale-validated"
+	}
+	if m.Mode == api.ModeRevertLKG {
+		switch m.PlanID {
+		case state.AppliedPlanID:
+			m.PlanProof = state.AppliedPlanProof
+		case state.WorkerOpsPlanID:
+			m.PlanProof = state.WorkerOpsPlanProof
+		}
+		if m.PlanProof == "" {
+			m.PlanProof = "test:stale-revert"
+		}
+	}
+	return c.Apply(t.Context(), m, parts, plan)
 }
 
 func kindOf(path string) string {
@@ -87,7 +134,7 @@ func seed(t *testing.T, c *client.Client) *api.ApplyResult {
 		"haproxy.cfg":   "global\n",
 		"maps/host.map": "example.com be-1\n",
 	})
-	result, err := c.Apply(context.Background(), m, parts, nil)
+	result, err := applyExact(t, c, m, parts, nil)
 	require.NoError(t, err)
 	require.True(t, result.OK)
 	return result
@@ -124,13 +171,13 @@ func TestMissingPartsThenResend(t *testing.T) {
 		"haproxy.cfg":   "global\n",
 		"maps/host.map": "example.com be-1\n",
 	})
-	_, err := c.Apply(context.Background(), m, nil, nil)
+	_, err := applyExact(t, c, m, nil, nil)
 	var missing *client.MissingError
 	require.ErrorAs(t, err, &missing)
 	assert.ElementsMatch(t, []string{"haproxy.cfg", "maps/host.map"}, missing.Missing)
 	assert.Zero(t, agent.State().Generation, "a missing-parts answer must not write")
 
-	result, err := c.Apply(context.Background(), m, parts, nil)
+	result, err := applyExact(t, c, m, parts, nil)
 	require.NoError(t, err)
 	assert.True(t, result.OK)
 
@@ -141,7 +188,7 @@ func TestMissingPartsThenResend(t *testing.T) {
 	})
 	next.ExpectedPrevPlanID = "plan-1"
 	next.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
-	result, err = c.Apply(context.Background(), next, nil, nil)
+	result, err = applyExact(t, c, next, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, api.ResultNoop, result.Mode)
 }
@@ -170,10 +217,11 @@ func TestFencing(t *testing.T) {
 			m.Token = api.Token{LeaderEpoch: 0, RenderSeq: 5}
 			m.ExpectedPrevToken = api.Token{LeaderEpoch: 0, RenderSeq: 4}
 		}, wantReason: "stale_epoch"},
-		{name: "a revert is fenced by the epoch alone", mutate: func(m *api.Manifest) {
+		{name: "a revert needs an exact refused role", mutate: func(m *api.Manifest) {
 			m.Mode = api.ModeRevertLKG
+			m.PlanID = "plan-1"
 			m.ExpectedPrevPlanID = "plan-from-another-life"
-		}, wantApplied: "plan-1"},
+		}, wantReason: "revert_target_mismatch"},
 	}
 
 	for _, tt := range tests {
@@ -193,7 +241,7 @@ func TestFencing(t *testing.T) {
 			m.WorkerOpsPlanID = "plan-1-after"
 			tt.mutate(m)
 
-			_, err := c.Apply(context.Background(), m, parts, nil)
+			_, err := applyExact(t, c, m, parts, nil)
 			if tt.wantReason == "" {
 				require.NoError(t, err)
 				assert.Equal(t, tt.wantApplied, agent.State().AppliedPlanID)
@@ -220,7 +268,7 @@ func TestUnknownBaselineIsItsOwnConflictReason(t *testing.T) {
 		"haproxy.cfg": "global\n",
 	})
 	m.ExpectedPrevPlanID = "plan-1"
-	_, err := c.Apply(context.Background(), m, parts, nil)
+	_, err := applyExact(t, c, m, parts, nil)
 	var conflict *client.ConflictError
 	require.ErrorAs(t, err, &conflict)
 	assert.Equal(t, "unknown_baseline", conflict.Conflict.Reason)
@@ -240,7 +288,7 @@ func TestRuntimeApplyRunsOpsWithoutAReload(t *testing.T) {
 	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 	m.Ops = []api.Op{{Kind: api.OpMapSet, Path: "maps/host.map", Key: "example.com", Value: "be-2"}}
 
-	result, err := c.Apply(context.Background(), m, parts, nil)
+	result, err := applyExact(t, c, m, parts, nil)
 	require.NoError(t, err)
 	assert.Equal(t, api.ResultRuntime, result.Mode)
 	assert.Equal(t, "plan-2", result.AppliedPlanID)
@@ -268,7 +316,7 @@ func TestFileOnlyApplyWhenNothingRuns(t *testing.T) {
 	m.ExpectedPrevPlanID = "plan-1"
 	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 
-	result, err := c.Apply(context.Background(), m, parts, nil)
+	result, err := applyExact(t, c, m, parts, nil)
 	require.NoError(t, err)
 	assert.Equal(t, api.ResultFileOnly, result.Mode)
 	assert.Len(t, agent.State().Files, 3)
@@ -292,7 +340,7 @@ func TestPendingReloadCoalescesAndRunsOnlyInPlaceOps(t *testing.T) {
 	m.Ops = []api.Op{{Kind: api.OpBackendAdd, Backend: "be-2", Profile: "haptic-base", Mode: "http"}}
 	m.InPlaceOps = []api.Op{{Kind: api.OpServerSetWeight, Backend: "be-1", Server: "srv1"}}
 
-	result, err := c.Apply(context.Background(), m, parts, nil)
+	result, err := applyExact(t, c, m, parts, nil)
 	require.NoError(t, err)
 	assert.Equal(t, api.ResultScheduled, result.Mode)
 	assert.Equal(t, "plan-1-after", result.WorkerOpsPlanID, "the worker is at the derived plan, not the render")
@@ -327,7 +375,7 @@ func TestInPlaceOpsOnAStaleWorkerBaselineAreAConflict(t *testing.T) {
 	m.WorkerOpsPlanID = "plan-from-another-life-after"
 	m.InPlaceOps = []api.Op{{Kind: api.OpMapSet, Path: "maps/host.map", Key: "a", Value: "b"}}
 
-	_, err := c.Apply(context.Background(), m, parts, nil)
+	_, err := applyExact(t, c, m, parts, nil)
 	var conflict *client.ConflictError
 	require.ErrorAs(t, err, &conflict)
 	assert.Equal(t, "worker_ops_mismatch", conflict.Conflict.Reason)
@@ -356,7 +404,7 @@ func TestScheduledApplyWithoutInPlaceOpsKeepsTheWorkerBaseline(t *testing.T) {
 	m.ExpectedPrevPlanID = "plan-1"
 	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 
-	result, err := c.Apply(context.Background(), m, parts, nil)
+	result, err := applyExact(t, c, m, parts, nil)
 	require.NoError(t, err)
 	assert.Equal(t, api.ResultScheduled, result.Mode)
 	assert.Equal(t, "plan-2", result.AppliedPlanID)
@@ -382,7 +430,7 @@ func TestMissingPartsAreResolvedByPath(t *testing.T) {
 	m.ExpectedPrevPlanID = "plan-1"
 	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 
-	_, err := c.Apply(context.Background(), m, nil, nil)
+	_, err := applyExact(t, c, m, nil, nil)
 	var missing *client.MissingError
 	require.ErrorAs(t, err, &missing)
 	assert.Equal(t, []string{"maps/other.map"}, missing.Missing)
@@ -403,7 +451,7 @@ func TestRejectedOpNACKsAndInvalidatesTheBaseline(t *testing.T) {
 	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 	m.Ops = []api.Op{{Kind: api.OpServerAdd, Backend: "be-1", Server: "srv2", Address: "10.0.0.2", Port: 8080}}
 
-	result, err := c.Apply(context.Background(), m, parts, nil)
+	result, err := applyExact(t, c, m, parts, nil)
 	require.NoError(t, err, "a NACK is an answer, not a transport error")
 	assert.False(t, result.OK)
 	assert.Equal(t, api.ResultRejected, result.Mode)
@@ -426,18 +474,19 @@ func TestRevertLKGRestoresTheLastKnownGoodSet(t *testing.T) {
 	m.ExpectedPrevPlanID = "plan-1"
 	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 	m.Ops = []api.Op{{Kind: api.OpMapSet, Path: "maps/host.map", Key: "example.com", Value: "be-2"}}
-	_, err := c.Apply(context.Background(), m, parts, nil)
+	_, err := applyExact(t, c, m, parts, nil)
 	require.NoError(t, err)
 
 	revert := &api.Manifest{
-		PlanID:             "plan-3",
+		IdentityVersion:    api.ExactIdentityVersion,
+		PlanID:             "plan-2",
 		PlanSchemaVersion:  1,
 		Token:              api.Token{LeaderEpoch: 1, RenderSeq: 3},
 		ExpectedPrevPlanID: "plan-2",
 		ExpectedPrevToken:  api.Token{LeaderEpoch: 1, RenderSeq: 2},
 		Mode:               api.ModeRevertLKG,
 	}
-	result, err := c.Apply(context.Background(), revert, nil, nil)
+	result, err := applyExact(t, c, revert, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, api.ResultReload, result.Mode)
 	assert.Equal(t, "plan-1", result.AppliedPlanID)
@@ -460,7 +509,7 @@ func TestLKGPromotionFollowsTheValidatedPlan(t *testing.T) {
 	m.ExpectedPrevPlanID = "plan-1"
 	m.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
 	m.Ops = []api.Op{{Kind: api.OpMapSet, Path: "maps/host.map", Key: "example.com", Value: "be-2"}}
-	_, err := c.Apply(context.Background(), m, parts, nil)
+	_, err := applyExact(t, c, m, parts, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "plan-1", agent.State().LKGPlanID)
 
@@ -474,7 +523,7 @@ func TestLKGPromotionFollowsTheValidatedPlan(t *testing.T) {
 		Mode:               api.ModeAuto,
 		Files:              m.Files,
 	}
-	_, err = c.Apply(context.Background(), noop, nil, nil)
+	_, err = applyExact(t, c, noop, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "plan-2", agent.State().LKGPlanID)
 }
@@ -489,7 +538,7 @@ func TestPartDigestMismatchIsRefused(t *testing.T) {
 	})
 	// Same length, different bytes: the client's own size check must not fire
 	// before the fake gets to verify the digest.
-	result, err := c.Apply(context.Background(), m,
+	result, err := applyExact(t, c, m,
 		map[string]io.Reader{"haproxy.cfg": strings.NewReader("globaX\n")}, nil)
 	require.NoError(t, err)
 	assert.False(t, result.OK)

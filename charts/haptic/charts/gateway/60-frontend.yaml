@@ -1,79 +1,83 @@
 templateSnippets:
+  gateway-listener-hostname-claims-100-gateway:
+    requires: [gateways]
+    incremental:
+      source: gateways
+      group: gateway-listener-hostname-claims
+      optionalConsumes: [gateway-host-listenersets]
+      effects: [publishValue]
+    template: |-
+      {%%
+        var gatewayNamespace = dig_string(item, "", "metadata", "namespace")
+        var gatewayName = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(gatewayNamespace, gatewayName)
+        if gateway != nil {
+          _ = shared.Publish("present", "any", true)
+          var winningProtocolByPort = map[int]string{}
+          var claimedHostnameByPort = map[string]bool{}
+          var claimListener = func(listener any) bool {
+            var port = toint(dig(listener, "port") | fallback(0))
+            if port <= 0 { return false }
+            var protocol = dig_string(listener, "HTTP", "protocol")
+            if protocol == "" { protocol = "HTTP" }
+            var winningProtocol, claimedPort = winningProtocolByPort[port]
+            if !claimedPort {
+              winningProtocolByPort[port] = protocol
+            } else if winningProtocol != protocol {
+              return false
+            }
+            var hostname = dig_string(listener, "", "hostname")
+            var hostnameKey = tostring(port) + "|" + hostname
+            if claimedHostnameByPort[hostnameKey] { return false }
+            claimedHostnameByPort[hostnameKey] = true
+            if protocol != "HTTPS" && protocol != "TLS" { return true }
+            if hostname == "" || hostname == "*" {
+              var gatewayKey = gatewayNamespace + "/" + gatewayName
+              _ = shared.PublishRanked("regex", "catchall:" + gatewayKey,
+                "1/" + gatewayKey, "^.*$ catchall:" + gatewayKey + "\n")
+            } else if hasPrefix(hostname, "*.") {
+              var suffix = hostname[2:]
+              var regexBase = tostring(replace(suffix, ".", "\\."))
+              _ = shared.PublishRanked("regex", hostname, "0/" + hostname,
+                "^[^.]+\\." + regexBase + "$ " + hostname + "\n")
+            } else {
+              _ = shared.PublishRanked("exact", hostname, hostname,
+                hostname + " " + hostname + "\n")
+            }
+            return true
+          }
+          for _, listener := range gateway.Spec.Listeners {
+            claimListener(listener)
+          }
+          var listenerSets = shared.SelectValues("gateway-host-listenersets",
+            "gateway\x00" + gatewayNamespace + "\x00" + gatewayName)
+          var sortedListenerSets = listenerSets | sort_by([]string{"$.rank"})
+          for _, listenerSet := range sortedListenerSets {
+            if tostring(dig(listenerSet, "accepted") | fallback(false)) != "true" { continue }
+            for _, listener := range toSlice(dig(listenerSet, "candidates")) {
+              claimListener(listener)
+            }
+          }
+        }
+      %%}
+
+  util-gateway-listener-hostname-claim-publications:
+    requires: [gateways]
+    template: |-
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "gateway-listener-hostname-claims-100-gateway" -}}
+
   frontend-extra-100-gateway-misdirected:
     requires: [gateways, referencegrants]
     template: |
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
-      {%- var exactEntries = []any{} %}
-      {%- var regexEntries = []any{} %}
-      {#- Per-Gateway "has a hostname-less HTTPS/TLS listener" markers, appended to the
-          regex map LAST so map_reg first-match-wins prefers specific patterns. -#}
-      {%%
-        // Returns true for a catch-all listener (empty / `*`). Kept shared: while the
-        // Gateway and ListenerSet loops had copies, their `$` anchors drifted apart.
-        var classifyHostname = func(lh string) bool {
-          if lh == "" || lh == "*" {
-            return true
-          }
-          if regex_search(lh, "^\\*\\.") {
-            var suffix = lh[2:]
-            var regexBase = tostring(replace(suffix, ".", "\\."))
-            regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "$ " + lh)
-            return false
-          }
-          exactEntries = append(exactEntries, lh + " " + lh)
-          return false
-        }
-      %%}
-      {%- var catchallEntries = []any{} %}
-      {%- for _, gw := range resources.gateways.List() %}
-        {%- var gwNs = gw.Metadata.Namespace %}
-        {%- var gwName = gw.Metadata.Name %}
-        {%- var gwHasCatchall = false %}
-        {%- for _, listener := range gw.Spec.Listeners %}
-          {%- var protocol = listener.Protocol %}
-          {%- if protocol == "" %}{%- protocol = "HTTP" %}{%- end %}
-          {%- if protocol == "HTTPS" || protocol == "TLS" %}
-            {%- var lh = listener.Hostname %}
-            {%- if classifyHostname(lh) %}
-              {%- gwHasCatchall = true %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-        {%- _ = render "util-listenerset-candidates" default "" -%}
-        {%%
-            // Admission is decided once, by util-listenerset-candidates, which
-            // reads the resource typed behind its own CRD gate.
-            var lsCands = []any{}
-            var published = shared.Get("listenerSetCandidates")
-            if published != nil {
-              var part = published.(map[string]any)[gwNs + "/" + gwName]
-              if part != nil {
-                lsCands = part.(map[string]any)["candidates"].([]any)
-              }
-            }
-        %%}
-        {%- for _, cAny := range lsCands %}
-          {%- var c = cAny.(map[string]any) %}
-          {%- if c["_accepted"].(bool) %}
-            {%- var protocol = tostring(c["protocol"]) %}
-            {%- if protocol == "" %}{%- protocol = "HTTP" %}{%- end %}
-            {%- if protocol == "HTTPS" || protocol == "TLS" %}
-              {%- if classifyHostname(tostring(c["hostname"])) %}
-                {%- gwHasCatchall = true %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-        {%- if gwHasCatchall %}
-          {%- catchallEntries = append(catchallEntries, "^.*$ catchall:" + gwNs + "/" + gwName) %}
-        {%- end %}
-      {%- end %}
-      {#- `catchall:` cannot collide with a user hostname: HTTP forbids `:` in a host. -#}
-      {%- for _, e := range catchallEntries %}
-        {%- regexEntries = append(regexEntries, e) %}
-      {%- end %}
-      {%- var exactPath, _ = fileRegistry.Register("map", "listener-hostname-claim.map", join(exactEntries, "\n") + "\n") %}
-      {%- var regexPath, _ = fileRegistry.Register("map", "listener-hostname-claim-regex.map", join(regexEntries, "\n") + "\n") %}
+      {{- render "util-gateway-listener-hostname-claim-publications" -}}
+      {%- var exactContent = incremental_ranked_fragments("gateway-listener-hostname-claims", "exact") -%}
+      {%- var regexContent = incremental_ranked_fragments("gateway-listener-hostname-claims", "regex") -%}
+      {%- if exactContent == "" %}{%- exactContent = "\n" %}{%- end -%}
+      {%- if regexContent == "" %}{%- regexContent = "\n" %}{%- end -%}
+      {%- var exactPath, _ = fileRegistry.Register("map", "listener-hostname-claim.map", exactContent) %}
+      {%- var regexPath, _ = fileRegistry.Register("map", "listener-hostname-claim-regex.map", regexContent) %}
       # gateway/frontend-extra-misdirected
       http-request set-var(txn.gw_host_canonical) req.fhdr(Host),lower,field(1,:)
       http-request set-var(txn.gw_sni_listener) ssl_fc_sni,lower,map({{ exactPath }},'') if { ssl_fc } { ssl_fc_has_sni 1 }
@@ -94,70 +98,10 @@ templateSnippets:
     template: |-
       {# txn.gw_rule_id (<ns>_<name>_<ruleIdx>) comes from frontend-matchers-advanced-500-gateway;
           gated on Gateways existing so an Ingress-only install has no permanently-empty log key. #}
-      {%- if len(resources.gateways.List()) > 0 %}
+      {{- render "util-gateway-listener-hostname-claim-publications" -}}
+      {%- if len(incremental_values("gateway-listener-hostname-claims", "present")) > 0 %}
       %(gw_route)[var(txn.gw_rule_id)]
       {%- end %}
-
-  util-gateway-match-groups:
-    requires: [gateways, grpcroutes, httproutes]
-    template: |
-      {#- Classifies each conflict group — the candidate set sharing one host+path, which is
-          exactly what field(3) of the path maps puts in req.gw_routeId.
-
-          "advanced" is keyed by HTTPRoute scope ("<ns>_<name>_"), NOT by conflict group,
-          because that is the scope the chain's fallback actually spans: a path-only rule's
-          condition is `{ var(req.gw_routeId) -m beg "<ns>_<name>_" }`, so it can rescue a
-          request whose more-specific path selected a DIFFERENT group of the same HTTPRoute
-          whose method/header/query matcher then failed. Group-level scoping misses that and
-          sends the request to the default backend (caught by TestHTTPRouteCombined).
-
-          So an HTTPRoute needs the ordered chain if ANY of its rules matches on more than
-          the path. When none does, no request data can change which rule wins, the winner
-          is known here at render time, and the two maps below resolve it in two lookups
-          instead of ~4 http-request lines per route on every request.
-
-          "winner" is the first member of each conflict group in precedence order
-          (sortedRoutes), i.e. the rule that would have won first-match-wins.
-
-          After rendering:
-            shared.Get("gatewayMatchGroups") -> {"advanced": map[string]bool,  // by scope
-                                                "winner":   map[string]string} // by group
-      -#}
-      {%- var _, _ = shared.ComputeIfAbsent("gatewayMatchGroups", func() any {
-          var advanced = map[string]bool{}
-          var winner = map[string]string{}
-          var gaVal = shared.Get("gatewayAnalysis")
-          if gaVal == nil {
-            return map[string]any{"advanced": advanced, "winner": winner}
-          }
-          var sorted = gaVal.(map[string]any)["sortedRoutes"] | toSlice()
-          for _, riAny := range sorted {
-            var ri = riAny.(map[string]any)
-            var cg = tostring(ri["conflictGroup"])
-            if _, seen := winner[cg]; !seen {
-              winner[cg] = tostring(ri["routeId"])
-            }
-            var ruleIdx = toint(ri["ruleIdx"])
-            var matchIdx = toint(ri["matchIdx"])
-            switch r := ri["route"].(type) {
-            case *resources.httproutes.T:
-              var scope = r.Metadata.Namespace + "_" + r.Metadata.Name + "_"
-              if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
-                var rule = r.Spec.Rules[ruleIdx]
-                if matchIdx >= 0 && matchIdx < len(rule.Matches) {
-                  var m = rule.Matches[matchIdx]
-                  if m.Method != "" || len(m.Headers) > 0 || len(m.QueryParams) > 0 {
-                    advanced[scope] = true
-                  }
-                }
-              }
-            case *resources.grpcroutes.T:
-              // Every GRPCRoute match narrows within the synthesized "/" PathPrefix.
-              advanced[r.Metadata.Namespace + "_" + r.Metadata.Name + "_"] = true
-            }
-          }
-          return map[string]any{"advanced": advanced, "winner": winner}
-      }) %}
 
   frontend-matchers-advanced-010-route-id-setup:
     template: |
@@ -166,532 +110,423 @@ templateSnippets:
       http-request set-var(req.gw_route_type) var(txn.path_match),field(2,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
       http-request set-var(req.gw_routeId) var(txn.path_match),field(3,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
 
+  util-gateway-route-frontend-bindings:
+    template: |-
+      {%- var GatewayRouteFrontendProps = func() map[string]any {
+        return map[string]any{
+          "debug": extraContext | dig("diagnostics", "routingHeaders", "enabled") | fallback(false),
+        }
+      } -%}
+
+  util-gateway-http-route-frontend-bindings:
+    template: |-
+      {%- import "util-gateway-route-frontend-bindings" for GatewayRouteFrontendProps -%}
+      {{- toJSON(map[string]any{"httproutes": GatewayRouteFrontendProps()}) -}}
+
+  util-gateway-grpc-route-frontend-bindings:
+    template: |-
+      {%- import "util-gateway-route-frontend-bindings" for GatewayRouteFrontendProps -%}
+      {{- toJSON(map[string]any{"grpcroutes": GatewayRouteFrontendProps()}) -}}
+
+  util-publish-gateway-route-frontend:
+    requires: [grpcroutes, httproutes, referencegrants, services]
+    template: |
+      {%- import "util-backend-ref-valid" for BackendRefValid -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-value-injection" for ConfigValueInjection -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
+      {%- macro PublishGatewayRouteFrontend(route any, routeKind string, routeProps map[string]any) -%}
+      {%%
+        var namespace = dig_string(route, "", "metadata", "namespace")
+        var name = dig_string(route, "", "metadata", "name")
+        var routeKey = routeKind + "/" + namespace + "/" + name
+        var routeIndex, foundRoute = shared.Select("gateway-route-analysis", "routes", routeKey)
+        if !foundRoute { return }
+        var entries = []any{}
+        for _, entryIDAny := range toSlice(dig(routeIndex, "entries")) {
+          var entry, foundEntry = shared.Select(
+            "gateway-route-analysis", "entries", tostring(entryIDAny))
+          if foundEntry { entries = append(entries, entry) }
+        }
+        var rules = toSlice(dig(route, "spec", "rules"))
+        for _, entry := range entries {
+          var entryID = dig_string(entry, "", "entryID")
+          var routeID = dig_string(entry, "", "routeId")
+          var conflictGroup = dig_string(entry, "", "conflictGroup")
+          var ruleIndex = toint(dig(entry, "ruleIdx") | fallback(0))
+          var matchIndex = toint(dig(entry, "matchIdx") | fallback(0))
+          if ruleIndex < 0 || ruleIndex >= len(rules) { continue }
+          var rule = rules[ruleIndex]
+          var matches = toSlice(dig(rule, "matches"))
+          var match any = nil
+          if matchIndex >= 0 && matchIndex < len(matches) { match = matches[matchIndex] }
+          var advancedScope = tostring(dig(entry, "advancedScope") | fallback(false)) == "true"
+          if advancedScope {
+            var pathType = dig_string(entry, "PathPrefix", "pathType")
+            var pathValue = dig_string(entry, "/", "pathValue")
+            var hasMethod = false
+            var method = ""
+            var headerSpecs = []any{}
+            var parameterSpecs = []any{}
+            var hasGRPCMethod = false
+            var grpcService = ""
+            var grpcMethod = ""
+            var grpcType = "Exact"
+            if match != nil {
+              if routeKind == "HTTPRoute" {
+                method = dig_string(match, "", "method")
+                hasMethod = method != ""
+                for _, header := range toSlice(dig(match, "headers")) {
+                  var headerType = dig_string(header, "Exact", "type")
+                  if headerType == "" { headerType = "Exact" }
+                  headerSpecs = append(headerSpecs, map[string]any{
+                    "type": headerType,
+                    "name": dig_string(header, "", "name"),
+                    "value": dig_string(header, "", "value"),
+                  })
+                }
+                for _, parameter := range toSlice(dig(match, "queryParams")) {
+                  var parameterType = dig_string(parameter, "Exact", "type")
+                  if parameterType == "" { parameterType = "Exact" }
+                  parameterSpecs = append(parameterSpecs, map[string]any{
+                    "type": parameterType,
+                    "name": dig_string(parameter, "", "name"),
+                    "value": dig_string(parameter, "", "value"),
+                  })
+                }
+              } else {
+                grpcService = dig_string(match, "", "method", "service")
+                grpcMethod = dig_string(match, "", "method", "method")
+                grpcType = dig_string(match, "Exact", "method", "type")
+                if grpcType == "" { grpcType = "Exact" }
+                hasGRPCMethod = grpcService != ""
+                for _, header := range toSlice(dig(match, "headers")) {
+                  var headerType = dig_string(header, "Exact", "type")
+                  if headerType == "" { headerType = "Exact" }
+                  headerSpecs = append(headerSpecs, map[string]any{
+                    "type": headerType,
+                    "name": dig_string(header, "", "name"),
+                    "value": dig_string(header, "", "value"),
+                  })
+                }
+              }
+            }
+            var pathOnly = !hasMethod && len(headerSpecs) == 0 && len(parameterSpecs) == 0 && !hasGRPCMethod
+            var matchValues = []any{}
+            if pathOnly { matchValues = append(matchValues, pathValue) }
+            for _, header := range headerSpecs { matchValues = append(matchValues, dig_string(header, "", "value")) }
+            for _, parameter := range parameterSpecs { matchValues = append(matchValues, dig_string(parameter, "", "value")) }
+            if hasGRPCMethod { matchValues = append(matchValues, grpcService, grpcMethod) }
+            var matchInjection = ""
+            for _, value := range matchValues {
+              if matchInjection == "" { matchInjection = ConfigValueInjection(tostring(value)) }
+            }
+            if matchInjection != "" {
+              _ = WebhookRejectOrWarn(route, "InvalidMatch", routeKind + " " + namespace + "/" + name + " has a match value containing " + matchInjection + ", which would break out of its routing ACL; the route is not applied. Remove double quotes and control characters from the match value.")
+            } else {
+              var conditions = []string{"!{ var(txn.gw_rule_id) -m found }"}
+              if pathOnly {
+                conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + namespace + "_" + name + "_\" }")
+                if pathType == "Exact" {
+                  conditions = append(conditions, "{ path \"" + pathValue + "\" }")
+                } else if pathType == "RegularExpression" {
+                  conditions = append(conditions, "{ path -m reg \"" + replace(pathValue, "$", "\\$") + "\" }")
+                } else if pathValue == "/" || pathValue == "" {
+                  conditions = append(conditions, "{ path_beg \"/\" }")
+                } else {
+                  var prefix = pathValue
+                  if hasSuffix(prefix, "/") { prefix = prefix[:len(prefix)-1] }
+                  conditions = append(conditions, "{ path -m reg \"^" + sanitize_regex(prefix) + "(/|\\$)\" }")
+                }
+              } else {
+                conditions = append(conditions, "{ var(req.gw_routeId) -m str \"" + conflictGroup + "\" }")
+              }
+              if hasMethod { conditions = append(conditions, "{ method " + method + " }") }
+              for _, header := range headerSpecs {
+                var headerType = dig_string(header, "", "type")
+                var headerName = dig_string(header, "", "name")
+                var headerValue = dig_string(header, "", "value")
+                if headerType == "Exact" {
+                  conditions = append(conditions, "{ req.hdr(" + headerName + ") \"" + headerValue + "\" }")
+                } else if headerType == "RegularExpression" {
+                  conditions = append(conditions, "{ req.hdr(" + headerName + ") -m reg \"" + replace(headerValue, "$", "\\$") + "\" }")
+                }
+              }
+              for _, parameter := range parameterSpecs {
+                var parameterType = dig_string(parameter, "", "type")
+                var parameterName = dig_string(parameter, "", "name")
+                var parameterValue = dig_string(parameter, "", "value")
+                if parameterType == "Exact" {
+                  conditions = append(conditions, "{ urlp(" + parameterName + ") \"" + parameterValue + "\" }")
+                } else if parameterType == "RegularExpression" {
+                  conditions = append(conditions, "{ urlp(" + parameterName + ") -m reg \"" + replace(parameterValue, "$", "\\$") + "\" }")
+                }
+              }
+              if hasGRPCMethod {
+                var grpcPath = "/" + grpcService
+                if grpcMethod != "" { grpcPath = grpcPath + "/" + grpcMethod }
+                if grpcType == "Exact" {
+                  conditions = append(conditions, "{ path \"" + grpcPath + "\" }")
+                } else if grpcType == "RegularExpression" {
+                  conditions = append(conditions, "{ path -m reg \"" + replace(grpcPath, "$", "\\$") + "\" }")
+                }
+              }
+              var description = []string{}
+              if hasMethod { description = append(description, "method " + method) }
+              if len(headerSpecs) > 0 { description = append(description, tostring(len(headerSpecs)) + " headers") }
+              if len(parameterSpecs) > 0 { description = append(description, tostring(len(parameterSpecs)) + " query params") }
+              if hasGRPCMethod { description = append(description, "gRPC method") }
+              var matcherDescription = "path-only"
+              if len(description) > 0 { matcherDescription = join(description, ", ") }
+              var conditionText = join(conditions, " ")
+              var fragment = "\n# Rule: " + routeKind + " " + namespace + "/" + name + " rule[" +
+                tostring(ruleIndex) + "] - " + matcherDescription +
+                "\nhttp-request set-var(txn.gw_rule_id) str(" + routeID + ") if " + conditionText
+              if tostring(dig(routeProps, "debug") | fallback(false)) == "true" {
+                var matchTypes = []string{}
+                if hasMethod { matchTypes = append(matchTypes, "method") }
+                if len(headerSpecs) > 0 { matchTypes = append(matchTypes, "header") }
+                if len(parameterSpecs) > 0 { matchTypes = append(matchTypes, "query") }
+                if hasGRPCMethod { matchTypes = append(matchTypes, "grpc-method") }
+                var matchReason = "advanced"
+                if len(matchTypes) > 0 { matchReason = join(matchTypes, "+") }
+                fragment = fragment + "\nhttp-request set-var(txn.matched_route) str(" + namespace + "/" + name +
+                  "/rule" + tostring(ruleIndex) + ") if " + conditionText +
+                  "\nhttp-request set-var(txn.match_reason) str(" + matchReason + ") if " + conditionText
+              }
+              _ = shared.PublishRanked("advanced", entryID, dig_string(entry, "", "sortRank"), fragment)
+            }
+          }
+          var backendRefs = toSlice(dig(rule, "backendRefs"))
+          var validRefs = []any{}
+          for _, backendRef := range backendRefs {
+            if BackendRefValid(routeKind, namespace, backendRef) == "true" {
+              validRefs = append(validRefs, backendRef)
+            }
+          }
+          var qualifier = ""
+          if len(validRefs) == 0 {
+            qualifier = "BACKEND:gw-invalid-backend"
+          } else if len(backendRefs) == 1 {
+            var backendRef = validRefs[0]
+            qualifier = "BACKEND:gtw_" + namespace + "_" + name + "_" +
+              dig_string(backendRef, "", "name") + "_" + dig_string(backendRef, "", "port")
+          } else {
+            var totalWeight = 0
+            for _, backendRef := range backendRefs {
+              totalWeight = totalWeight + toint(dig(backendRef, "weight") | fallback(1))
+            }
+            if totalWeight <= 0 {
+              qualifier = "BACKEND:gw-invalid-backend"
+            } else {
+              qualifier = "MULTIBACKEND:" + tostring(totalWeight) + ":" + routeID
+            }
+          }
+          if advancedScope {
+            _ = shared.PublishRanked("backend-config", entryID, dig_string(entry, "", "allRank"),
+              "\nhttp-request set-var(txn.path_match) str(" + qualifier +
+                ") if { var(txn.gw_rule_id) -m str \"" + routeID + "\" }")
+          } else if tostring(dig(entry, "groupWinner") | fallback(false)) == "true" {
+            var winnerLine = conflictGroup + " " + routeID
+            _ = shared.PublishRanked("route-winner", conflictGroup, winnerLine, winnerLine + "\n")
+            var backendLine = routeID + " " + qualifier
+            _ = shared.PublishRanked("route-backend", conflictGroup + "\x00" + routeID,
+              backendLine + "\x00" + conflictGroup, backendLine + "\n")
+          }
+          if routeKind != "HTTPRoute" { continue }
+          for _, filter := range toSlice(dig(rule, "filters")) {
+            if dig_string(filter, "", "type") != "CORS" || dig(filter, "cors") == nil { continue }
+            var cors = dig(filter, "cors")
+            var allowOrigins = toSlice(dig(cors, "allowOrigins"))
+            var wildcardOrigin = false
+            var originAlternatives = []string{}
+            for _, originAny := range allowOrigins {
+              var origin = tostring(originAny)
+              if origin == "*" {
+                wildcardOrigin = true
+              } else if regex_search(origin, "\\*") {
+                var literal = sanitize_regex(origin)
+                originAlternatives = append(originAlternatives, "^" +
+                  replace(literal, "\\*\\.", "[^.]+(?:\\.[^.]+)*\\.") + "\\$")
+              } else {
+                originAlternatives = append(originAlternatives, "^" + sanitize_regex(origin) + "\\$")
+              }
+            }
+            var originRegex = ""
+            if !wildcardOrigin && len(originAlternatives) > 0 {
+              originRegex = "(?:" + join(originAlternatives, "|") + ")"
+            }
+            var allowCredentials = tostring(dig(cors, "allowCredentials") | fallback(false)) == "true"
+            var methods = []string{}
+            var wildcardMethod = false
+            for _, methodAny := range toSlice(dig(cors, "allowMethods")) {
+              var method = tostring(methodAny)
+              if method == "*" { wildcardMethod = true; break }
+              methods = append(methods, method)
+            }
+            var headers = []string{}
+            for _, headerAny := range toSlice(dig(cors, "allowHeaders")) {
+              var header = tostring(headerAny)
+              if header == "*" { headers = []string{"*"}; break }
+              headers = append(headers, header)
+            }
+            var exposed = []string{}
+            for _, headerAny := range toSlice(dig(cors, "exposeHeaders")) {
+              exposed = append(exposed, tostring(headerAny))
+            }
+            var injection = ""
+            for _, value := range methods { if injection == "" { injection = ConfigInjectionKind(value, "line") } }
+            for _, value := range headers { if injection == "" && value != "*" { injection = ConfigInjectionKind(value, "line") } }
+            for _, value := range exposed { if injection == "" { injection = ConfigInjectionKind(value, "line") } }
+            for _, value := range allowOrigins { if injection == "" { injection = ConfigInjectionKind(tostring(value), "dquote") } }
+            if injection != "" {
+              _ = WebhookRejectOrWarn(route, "InvalidCORS", "HTTPRoute " + namespace + "/" + name + " has a CORS filter value containing " + injection + ", which would break out of the CORS response header directive; the CORS filter is not applied. Remove control characters and double quotes from allowMethods, allowHeaders, exposeHeaders and allowOrigins.")
+              continue
+            }
+            var routeCondition = "{ var(txn.gw_rule_id) -m str \"" + routeID + "\" }"
+            var originCondition = "{ req.fhdr(Origin) -m found }"
+            if originRegex != "" { originCondition = originCondition + " { req.fhdr(Origin) -m reg \"" + originRegex + "\" }" }
+            var corsFragment = "\nhttp-request set-var(txn.gw_cors_origin) req.fhdr(Origin) if " +
+              originCondition + " " + routeCondition
+            if len(headers) > 0 && headers[0] == "*" {
+              corsFragment = corsFragment + "\nhttp-request set-var(txn.gw_cors_acrh) req.fhdr(Access-Control-Request-Headers) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }"
+            }
+            if wildcardMethod {
+              corsFragment = corsFragment + "\nhttp-request set-var(txn.gw_cors_acrm) req.fhdr(Access-Control-Request-Method) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }"
+            }
+            var preflight = []string{"hdr access-control-allow-origin \"%[var(txn.gw_cors_origin)]\""}
+            if allowCredentials { preflight = append(preflight, "hdr access-control-allow-credentials \"true\"") }
+            if wildcardMethod {
+              preflight = append(preflight, "hdr access-control-allow-methods \"%[var(txn.gw_cors_acrm)]\"")
+            } else if len(methods) > 0 {
+              preflight = append(preflight, "hdr access-control-allow-methods \"" + EscapeLogFormatValue(join(methods, ", ")) + "\"")
+            }
+            if len(headers) > 0 {
+              if headers[0] == "*" {
+                preflight = append(preflight, "hdr access-control-allow-headers \"%[var(txn.gw_cors_acrh)]\"")
+              } else {
+                preflight = append(preflight, "hdr access-control-allow-headers \"" + EscapeLogFormatValue(join(headers, ", ")) + "\"")
+              }
+            }
+            var maxAge = toint(dig(cors, "maxAge") | fallback(0))
+            if maxAge > 0 { preflight = append(preflight, "hdr access-control-max-age \"" + tostring(maxAge) + "\"") }
+            if len(exposed) > 0 {
+              preflight = append(preflight, "hdr access-control-expose-headers \"" + EscapeLogFormatValue(join(exposed, ", ")) + "\"")
+            }
+            corsFragment = corsFragment + "\nhttp-request return status 200 " + join(preflight, " ") +
+              " if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } " + routeCondition +
+              "\nhttp-request return status 204 if METH_OPTIONS { req.fhdr(Origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } " + routeCondition + " !{ var(txn.gw_cors_origin) -m found }" +
+              "\nhttp-response set-header \"access-control-allow-origin\" \"%[var(txn.gw_cors_origin)]\" if { var(txn.gw_cors_origin) -m found } " + routeCondition
+            if allowCredentials {
+              corsFragment = corsFragment + "\nhttp-response set-header \"access-control-allow-credentials\" \"true\" if { var(txn.gw_cors_origin) -m found } " + routeCondition
+            }
+            if len(exposed) > 0 {
+              corsFragment = corsFragment + "\nhttp-response set-header \"access-control-expose-headers\" \"" +
+                EscapeLogFormatValue(join(exposed, ", ")) + "\" if { var(txn.gw_cors_origin) -m found } " + routeCondition
+            }
+            corsFragment = corsFragment + "\n"
+            _ = shared.PublishRanked("cors", entryID + "\x00" + tostring(len(corsFragment)),
+              dig_string(entry, "", "allRank"), corsFragment)
+          }
+        }
+      %%}
+      {%- end macro -%}
+
+  gateway-route-frontend-100-http:
+    requires: [grpcroutes, httproutes, referencegrants, services]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-http-route-frontend-bindings" -}}'
+      root: gateway-http-route-post-analysis
+      group: gateway-route-frontend
+      consumes: [gateway-route-analysis]
+      effects: [publishValue, recordEvent]
+    template: |
+      {%- import "util-publish-gateway-route-frontend" for PublishGatewayRouteFrontend -%}
+      {{- PublishGatewayRouteFrontend(item, "HTTPRoute", props) -}}
+
+  gateway-route-frontend-200-grpc:
+    requires: [grpcroutes, httproutes, referencegrants, services]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-grpc-route-frontend-bindings" -}}'
+      group: gateway-route-frontend
+      consumes: [gateway-route-analysis]
+      effects: [publishValue, recordEvent]
+    template: |
+      {%- import "util-publish-gateway-route-frontend" for PublishGatewayRouteFrontend -%}
+      {{- PublishGatewayRouteFrontend(item, "GRPCRoute", props) -}}
+
+  util-gateway-route-frontend-publications:
+    requires: [configmaps, gateways, grpcroutes, httproutes, namespaces, referencegrants, secrets, services]
+    template: |-
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "map-hostvalues-490-gateway-port-scopes" -}}
+      {{- render "gateway-route-candidates-100-http" -}}
+      {{- render "gateway-route-candidates-200-grpc" -}}
+      {{- render "gateway-route-analysis-100-http" -}}
+      {{- render "gateway-route-analysis-200-grpc" -}}
+      {{- render "gateway-route-frontend-100-http" -}}
+      {{- render "gateway-route-frontend-200-grpc" -}}
+
+  util-register-gateway-route-frontend-map:
+    template: |-
+      {%- macro RegisterGatewayRouteFrontendMap(name string, header string, cell string) string -%}
+      {%%
+        var content = header + "\n" + incremental_ranked_fragments("gateway-route-frontend", cell)
+        var path, registerErr = fileRegistry.Register("map", name, content)
+        if registerErr != nil { fail(tostring(registerErr)) }
+        var metadataErr = planRegistry.MapMeta(name, false)
+        if metadataErr != nil { fail(tostring(metadataErr)) }
+        show path
+      %%}
+      {%- end macro -%}
+
   frontend-matchers-advanced-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- import "util-config-value-injection" for ConfigValueInjection -%}
+      {{- render "util-gateway-route-frontend-publications" -}}
+      {# Declared as a plan fragment rather than shown: at 3,000 routes these
+         rules are ~2.5 MB, 90% of the raw document, and emitting them sends
+         every byte through the template writer on every render even though the
+         fragment tree is already memoised per publication. The token costs ~40
+         bytes; assembly splices the memoised text in its place, so the rendered
+         config is byte-identical. #}
+      {%- var advancedBytes = incremental_ranked_fragment_bytes("gateway-route-frontend", "advanced") -%}
       {{- "" }}
-      {# Non-stripping form: keeps the blank line before the section marker. #}
       # gateway/frontend-matchers-advanced-500-gateway
-      {{ render "util-gateway-analysis" -}}
-      {%- var gatewayAnalysis = shared.Get("gatewayAnalysis").(map[string]any) %}
-      {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
-      {{ render "util-gateway-match-groups" -}}
-      {%- var advancedGroups = shared.Get("gatewayMatchGroups").(map[string]any)["advanced"].(map[string]bool) %}
-      {%- if len(sortedRoutes) > 0 %}
+      {%- if advancedBytes > 0 %}
       # Advanced route matching (method/header/query)
-      {%- for _, routeInfo := range sortedRoutes %}
-        {%- var riRouteId = routeInfo["routeId"] %}
-        {%- var riConflictGroup = routeInfo["conflictGroup"] %}
-        {%- var riRuleIdx int = routeInfo["ruleIdx"] %}
-        {%- var riMatchIdx int = routeInfo["matchIdx"] %}
-        {#- Map-decidable routes emit nothing here (every line below is gated on advancedGroups);
-            skip them before the wasted type-switch + extraction. Their path is validated in the path-map builder. -#}
-        {%- if !advancedGroups[tostring(routeInfo | dig("route", "metadata", "namespace")) + "_" + tostring(routeInfo | dig("route", "metadata", "name")) + "_"] %}{%- continue %}{%- end %}
-
-        {%%
-          var riKind = ""
-          var riNs = ""
-          var riName = ""
-          var riIsGrpc = false
-          var pathType = "PathPrefix"
-          var pathValue = "/"
-          var hasMethod = false
-          var riMethod = ""
-          var headerSpecs = []any{}
-          var paramSpecs = []any{}
-          var hasGrpcMethod = false
-          var grpcService = ""
-          var grpcMethodName = ""
-          var grpcType = "Exact"
-        %%}
-
-        {%- switch r := routeInfo["route"].(type) %}
-        {%- case *resources.httproutes.T %}
-          {%- riKind = "HTTPRoute" %}
-          {%- riNs = r.Metadata.Namespace %}
-          {%- riName = r.Metadata.Name %}
-          {%- if riRuleIdx >= 0 && riRuleIdx < len(r.Spec.Rules) %}
-            {%- var rule = r.Spec.Rules[riRuleIdx] %}
-            {%- if riMatchIdx >= 0 && riMatchIdx < len(rule.Matches) %}
-              {%- var match = rule.Matches[riMatchIdx] %}
-              {%- if match.Path.Type != "" %}{%- pathType = match.Path.Type %}{%- end %}
-              {%- if match.Path.Value != "" %}{%- pathValue = match.Path.Value %}{%- end %}
-              {%- if match.Method != "" %}
-                {%- hasMethod = true %}
-                {%- riMethod = match.Method %}
-              {%- end %}
-              {%- for _, h := range match.Headers %}
-                {#- Gateway API defaults the match type to "Exact"; the chart sees the
-                    route as authored, and the offline harness applies no CRD defaults. -#}
-                {%- var hType = h.Type %}
-                {%- if hType == "" %}{%- hType = "Exact" %}{%- end %}
-                {%- headerSpecs = append(headerSpecs, map[string]any{
-                  "type": hType, "name": h.Name, "value": h.Value,
-                }) %}
-              {%- end %}
-              {%- for _, p := range match.QueryParams %}
-                {%- var pType = p.Type %}
-                {%- if pType == "" %}{%- pType = "Exact" %}{%- end %}
-                {%- paramSpecs = append(paramSpecs, map[string]any{
-                  "type": pType, "name": p.Name, "value": p.Value,
-                }) %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- case *resources.grpcroutes.T %}
-          {%- riKind = "GRPCRoute" %}
-          {%- riIsGrpc = true %}
-          {%- riNs = r.Metadata.Namespace %}
-          {%- riName = r.Metadata.Name %}
-          {#- 20-route-analysis.yaml synthesizes PathPrefix "/" for GRPCRoutes; the gRPC
-              method matchers narrow within it, so the defaults above already hold. -#}
-          {%- if riRuleIdx >= 0 && riRuleIdx < len(r.Spec.Rules) %}
-            {%- var rule = r.Spec.Rules[riRuleIdx] %}
-            {%- if riMatchIdx >= 0 && riMatchIdx < len(rule.Matches) %}
-              {%- var match = rule.Matches[riMatchIdx] %}
-              {%- if match.Method.Service != "" %}
-                {%- hasGrpcMethod = true %}
-                {%- grpcService = match.Method.Service %}
-                {%- grpcMethodName = match.Method.Method %}
-                {%- if match.Method.Type != "" %}{%- grpcType = match.Method.Type %}{%- end %}
-              {%- end %}
-              {%- for _, h := range match.Headers %}
-                {%- var hType = h.Type %}
-                {%- if hType == "" %}{%- hType = "Exact" %}{%- end %}
-                {%- headerSpecs = append(headerSpecs, map[string]any{
-                  "type": hType, "name": h.Name, "value": h.Value,
-                }) %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-
-        {#- Path-only rules need the relaxed scope check below: gw_routeId holds only the
-            most-specific path's rule IDs, so a path-only catch-all would lose to a
-            more-specific sibling whose sub-matchers failed, but the spec wants fallback. -#}
-        {%- var isPathOnly = !hasMethod && len(headerSpecs) == 0 && len(paramSpecs) == 0 && !hasGrpcMethod %}
-
-        {#- #155: match values land inside double-quoted HAProxy ACL patterns below; a "
-            breaks out and appends ACL terms (routing hijack), a control char splits the
-            line into a new directive. Names and Exact gRPC service/method are token-charset
-            validated by the Gateway API, but every RegularExpression value and header/query
-            value is arbitrary, so check the values that reach an emitted pattern. The path
-            value is only emitted for path-only rules (otherwise the derived conflictGroup
-            matches). -#}
-        {%- var matchValues = []any{} %}
-        {%- if isPathOnly %}{%- matchValues = append(matchValues, tostring(pathValue)) %}{%- end %}
-        {%- for _, hSpec := range headerSpecs %}{%- var hm map[string]any = hSpec %}{%- matchValues = append(matchValues, tostring(hm["value"])) %}{%- end %}
-        {%- for _, pSpec := range paramSpecs %}{%- var pm map[string]any = pSpec %}{%- matchValues = append(matchValues, tostring(pm["value"])) %}{%- end %}
-        {%- if hasGrpcMethod %}{%- matchValues = append(matchValues, tostring(grpcService), tostring(grpcMethodName)) %}{%- end %}
-        {%- var matchInjection = "" %}
-        {%- for _, mv := range matchValues %}
-          {%- if matchInjection == "" %}{%- matchInjection = ConfigValueInjection(tostring(mv)) %}{%- end %}
-        {%- end %}
-        {%- if matchInjection != "" %}
-          {{- WebhookRejectOrWarn(routeInfo["route"], "InvalidMatch", riKind + " " + riNs + "/" + riName + " has a match value containing " + matchInjection + ", which would break out of its routing ACL; the route is not applied. Remove double quotes and control characters from the match value.") -}}
-          {%- continue %}
-        {%- end %}
-
-        {%- var conditions = []any{"!{ var(txn.gw_rule_id) -m found }"} %}
-
-        {%- if isPathOnly %}
-          {%- var httprouteScope = riNs + "_" + riName + "_" %}
-          {%- conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + httprouteScope + "\" }") %}
-          {%- if pathType == "Exact" %}
-            {%- conditions = append(conditions, "{ path \"" + pathValue + "\" }") %}
-          {%- else if pathType == "RegularExpression" %}
-            {%- var escapedPathOnly = replace(pathValue, "$", "\\$") %}
-            {%- conditions = append(conditions, "{ path -m reg \"" + escapedPathOnly + "\" }") %}
-          {%- else %}
-            {#- Gateway API PathPrefix matches whole segments anchored at the path start:
-                `path_beg` is a byte prefix (matches /v2example) and `path_dir` matches a
-                segment anywhere (/foo/v2/example), so neither works — use `^<prefix>(/|$)`. -#}
-            {%- if pathValue == "/" || pathValue == "" %}
-              {%- conditions = append(conditions, "{ path_beg \"/\" }") %}
-            {%- else %}
-              {%- var pathPrefixValue = pathValue %}
-              {%- if hasSuffix(pathPrefixValue, "/") %}
-                {%- pathPrefixValue = pathPrefixValue[:len(pathPrefixValue)-1] %}
-              {%- end %}
-              {%- var escaped = sanitize_regex(pathPrefixValue) %}
-              {#- HAProxy expands $VAR in config strings; `\$` is the literal-dollar escape. -#}
-              {%- conditions = append(conditions, "{ path -m reg \"^" + escaped + "(/|\\$)\" }") %}
-            {%- end %}
-          {%- end %}
-        {%- else %}
-          {%- conditions = append(conditions, "{ var(req.gw_routeId) -m str \"" + riConflictGroup + "\" }") %}
-        {%- end %}
-
-        {%- if hasMethod && riKind == "HTTPRoute" %}
-          {%- conditions = append(conditions, "{ method " + riMethod + " }") %}
-        {%- end %}
-
-        {%- for _, hSpec := range headerSpecs %}
-          {%- var hm map[string]any = hSpec %}
-          {%- var hType = tostring(hm["type"]) %}
-          {%- var hName = tostring(hm["name"]) %}
-          {%- var hValue = tostring(hm["value"]) %}
-          {%- if hType == "Exact" %}
-            {%- conditions = append(conditions, "{ req.hdr(" + hName + ") \"" + hValue + "\" }") %}
-          {%- else if hType == "RegularExpression" %}
-            {%- var escapedHeaderValue = replace(hValue, "$", "\\$") %}
-            {%- conditions = append(conditions, "{ req.hdr(" + hName + ") -m reg \"" + escapedHeaderValue + "\" }") %}
-          {%- end %}
-        {%- end %}
-
-        {%- for _, pSpec := range paramSpecs %}
-          {%- var pm map[string]any = pSpec %}
-          {%- var pType = tostring(pm["type"]) %}
-          {%- var pName = tostring(pm["name"]) %}
-          {%- var pValue = tostring(pm["value"]) %}
-          {%- if pType == "Exact" %}
-            {%- conditions = append(conditions, "{ urlp(" + pName + ") \"" + pValue + "\" }") %}
-          {%- else if pType == "RegularExpression" %}
-            {%- var escapedParamValue = replace(pValue, "$", "\\$") %}
-            {%- conditions = append(conditions, "{ urlp(" + pName + ") -m reg \"" + escapedParamValue + "\" }") %}
-          {%- end %}
-        {%- end %}
-
-        {#- HAProxy exposes the HTTP/2 `:path` pseudo-header through the `path` fetch, NOT
-            through `req.hdr(:path)` — that yields "" and every gRPC method matcher then
-            silently never fires, dropping the request to default_backend (404). -#}
-        {%- if hasGrpcMethod %}
-          {%- var grpcPath = "/" + grpcService %}
-          {%- if grpcMethodName != "" %}
-            {%- grpcPath = grpcPath + "/" + grpcMethodName %}
-          {%- end %}
-          {%- if grpcType == "Exact" %}
-            {%- conditions = append(conditions, "{ path \"" + grpcPath + "\" }") %}
-          {%- else if grpcType == "RegularExpression" %}
-            {%- var escapedGrpcPath = replace(grpcPath, "$", "\\$") %}
-            {%- conditions = append(conditions, "{ path -m reg \"" + escapedGrpcPath + "\" }") %}
-          {%- end %}
-        {%- end %}
-
-        {%- if len(conditions) > 0 %}
-          {%- var descParts = []any{} %}
-          {%- if hasMethod && riKind == "HTTPRoute" %}
-            {%- descParts = append(descParts, "method " + riMethod) %}
-          {%- end %}
-          {%- if len(headerSpecs) > 0 %}
-            {%- descParts = append(descParts, tostring(len(headerSpecs)) + " headers") %}
-          {%- end %}
-          {%- if len(paramSpecs) > 0 %}
-            {%- descParts = append(descParts, tostring(len(paramSpecs)) + " query params") %}
-          {%- end %}
-          {%- if hasGrpcMethod %}
-            {%- descParts = append(descParts, "gRPC method") %}
-          {%- end %}
-          {%- var matcherDesc = "path-only" %}
-          {%- if len(descParts) > 0 %}{%- matcherDesc = join(descParts, ", ") %}{%- end %}
-          {#- Map-decidable HTTPRoute: the two route maps resolve it, no per-request rule. -#}
-          {%- if advancedGroups[riNs + "_" + riName + "_"] %}
-      # Rule: {{ riKind }} {{ riNs }}/{{ riName }} rule[{{ riRuleIdx }}] - {{ matcherDesc }}
-      http-request set-var(txn.gw_rule_id) str({{ riRouteId }}) if {{ join(conditions, " ") }}
-          {%- end %}
-          {#- Same gate as the rule line above: a map-decidable HTTPRoute has no chain for
-              these to annotate, and they are per-route too. -#}
-          {%- if advancedGroups[riNs + "_" + riName + "_"] && (debug | fallback(false) | tostring()) == "true" %}
-            {%- var matchTypes = []any{} %}
-            {%- if hasMethod && riKind == "HTTPRoute" %}
-              {%- matchTypes = append(matchTypes, "method") %}
-            {%- end %}
-            {%- if len(headerSpecs) > 0 %}
-              {%- matchTypes = append(matchTypes, "header") %}
-            {%- end %}
-            {%- if len(paramSpecs) > 0 %}
-              {%- matchTypes = append(matchTypes, "query") %}
-            {%- end %}
-            {%- if hasGrpcMethod %}
-              {%- matchTypes = append(matchTypes, "grpc-method") %}
-            {%- end %}
-            {%- var matchTypes_str = "advanced" %}
-            {%- if len(matchTypes) > 0 %}{%- matchTypes_str = join(matchTypes, "+") %}{%- end %}
-      http-request set-var(txn.matched_route) str({{ riNs }}/{{ riName }}/rule{{ riRuleIdx }}) if {{ join(conditions, " ") }}
-      http-request set-var(txn.match_reason) str({{ matchTypes_str }}) if {{ join(conditions, " ") }}
-          {% end %}
-        {% end %}
-      {% end %}
-      {% end %}
+      {%- var advancedToken, advancedErr = planRegistry.Fragment(
+        "gateway-route-frontend-advanced",
+        incremental_ranked_text_fragment("gateway-route-frontend", "advanced")) -%}
+      {%- if advancedErr != nil %}{{ fail(tostring(advancedErr)) }}{%- end -%}
+      {{- advancedToken -}}
+      {%- end %}
 
   frontend-matchers-advanced-900-path-match:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {%- import "util-backend-ref-valid" for BackendRefValid -%}
-      {%- import "util-register-map" for RegisterMap -%}
+      {%- import "util-register-gateway-route-frontend-map" for RegisterGatewayRouteFrontendMap -%}
+      {{- render "util-gateway-route-frontend-publications" -}}
       {{- "" }}
-      {# Reads txn.gw_rule_id, set by frontend-matchers-advanced-500-gateway. Non-stripping
-         form: keeps the blank line before the section marker. #}
       # gateway/frontend-matchers-advanced-900-path-match
-      {{ render "util-gateway-analysis" -}}
-      {{ render "util-gateway-match-groups" -}}
-      {%- var matchGroups = shared.Get("gatewayMatchGroups").(map[string]any) %}
-      {%- var advancedGroups = matchGroups["advanced"].(map[string]bool) %}
-      {%- var groupWinner = matchGroups["winner"].(map[string]string) %}
-      {#- One entry per map-decidable group: the candidate set -> its winning routeId, and
-          that routeId -> its path_match value. Two lookups rather than one so txn.gw_rule_id
-          is still set: the access log's resource / gw_route fields derive from it, as do the
-          debug matched_route vars. -#}
-      {%- var routeWinnerEntries = []any{} %}
-      {%- var routeBackendEntries = []any{} %}
-      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
-      {%- if gaVal == nil %}{% return %}{% end %}
-      {%- var ga = gaVal.(map[string]any) %}
-      {%- var gatewayAllRoutes = ga["allRoutes"] | toSlice() %}
-      {%- if len(gatewayAllRoutes) > 0 %}
-      # Set txn.path_match for backend selection based on txn.gw_rule_id
-      {% for _, routeInfo := range gatewayAllRoutes -%}
-        {%- var backendRefs []any = nil %}
-        {%%
-          var rm = routeInfo.(map[string]any)
-          var ruleIdx = toint(rm["ruleIdx"])
-          switch r := rm["route"].(type) {
-          case *resources.httproutes.T:
-            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
-              for _, br := range r.Spec.Rules[ruleIdx].BackendRefs {
-                backendRefs = append(backendRefs, br)
-              }
-            }
-          case *resources.grpcroutes.T:
-            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
-              for _, br := range r.Spec.Rules[ruleIdx].BackendRefs {
-                backendRefs = append(backendRefs, br)
-              }
-            }
-          }
-        %%}
-        {#- Deliberately no `len(backendRefs) > 0` guard: a matched rule with zero
-            backendRefs must reach the 500 sink below too, not fall through to 404
-            (conformance HTTPRouteNoBackendRefs). -#}
-        {%- if true %}
-          {#- The route's ResolvedRefs=InvalidKind/BackendNotFound condition is set elsewhere. -#}
-          {%- var validRefs = []any{} %}
-          {%- var routeNs = tostring(routeInfo | dig("route", "metadata", "namespace") | fallback("")) %}
-          {%- var routeKind = tostring(routeInfo | dig("route", "kind") | fallback("HTTPRoute")) %}
-          {%- for _, ref := range backendRefs %}
-            {%- if BackendRefValid(routeKind, routeNs, ref) == "true" %}
-              {%- validRefs = append(validRefs, ref) %}
-            {%- end %}
-          {%- end %}
-
-          {%- var qualifier = "" %}
-          {%- if len(validRefs) == 0 %}
-            {#- Spec wants 500 (not 503) when every backendRef is unresolvable;
-                gw-invalid-backend is the sink carrying `http-request return status 500`. -#}
-            {%- qualifier = "BACKEND:gw-invalid-backend" %}
-          {%- else if len(backendRefs) == 1 %}
-            {%- var backendRef any = validRefs[0] %}
-            {%- var backendName = "gtw_" + (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (backendRef | dig("name")) + "_" + (backendRef | dig("port")) %}
-            {%- qualifier = "BACKEND:" + backendName %}
-          {%- else %}
-            {#- Spec: an invalid ref's weight share must return 500, so the total
-                counts every ref; the weighted map sends invalid shares to
-                gw-invalid-backend. -#}
-            {%- var totalWeight = 0 %}
-            {%- for _, ref := range backendRefs %}
-              {%- var refMap any = ref %}
-              {%- var weight = refMap | dig("weight") | fallback(1) %}
-              {%- totalWeight = totalWeight + (weight) %}
-            {%- end %}
-            {%- if totalWeight <= 0 %}
-              {%- qualifier = "BACKEND:gw-invalid-backend" %}
-            {%- else %}
-              {%- var routeKey = (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (routeInfo | dig("ruleIdx")) %}
-              {%- qualifier = "MULTIBACKEND:" + totalWeight + ":" + routeKey %}
-            {%- end %}
-          {%- end %}
-          {%- var riCg = tostring(routeInfo | dig("conflictGroup")) %}
-          {%- var riScope = tostring(routeInfo | dig("route", "metadata", "namespace")) + "_" + tostring(routeInfo | dig("route", "metadata", "name")) + "_" %}
-          {%- if advancedGroups[riScope] %}
-      http-request set-var(txn.path_match) str({{ qualifier }}) if { var(txn.gw_rule_id) -m str "{{ routeInfo | dig("routeId") }}" }
-          {%- else if groupWinner[riCg] == tostring(routeInfo | dig("routeId")) %}
-            {#- Only the group's precedence winner contributes; its siblings would have
-                lost the chain's first-match-wins evaluation anyway. -#}
-            {%- routeWinnerEntries = append(routeWinnerEntries, riCg + " " + tostring(routeInfo | dig("routeId"))) %}
-            {%- routeBackendEntries = append(routeBackendEntries, tostring(routeInfo | dig("routeId")) + " " + qualifier) %}
-          {%- end %}
-        {% end %}
-      {% end %}
-      {% end %}
-      {#- Registered and referenced even with no entries: creating the map on the first
-          map-decidable route and deleting it with the last are both structural changes to
-          haproxy.cfg, which is the reload this whole map machinery exists to avoid. -#}
-      {%- var routeWinnerPath = RegisterMap("route-winner.map",
-            append([]string{"# Candidate group -> the routeId that wins it"}, sort_strings(routeWinnerEntries)...),
-            map[string]any{"ordered": false}) %}
-      {%- var routeBackendPath = RegisterMap("route-backend.map",
-            append([]string{"# routeId -> its path_match qualifier"}, sort_strings(routeBackendEntries)...),
-            map[string]any{"ordered": false}) %}
-      {#- Resolves every group that needed no chain, in two lookups instead of ~4
-          http-request lines per route. Gated on gw_rule_id being unset so a group that DID
-          match through the chain keeps its answer, and on the GW_ROUTE_ID qualifier so a
-          request that never reached the route maps is untouched. Only map-decidable groups
-          have entries, so an advanced group whose matchers all failed still falls through
-          to the default backend exactly as before. #}
+      {{- incremental_ranked_text_fragment("gateway-route-frontend", "backend-config") -}}
+      {%- var routeWinnerPath = RegisterGatewayRouteFrontendMap(
+        "route-winner.map", "# Candidate group -> the routeId that wins it", "route-winner") -%}
+      {%- var routeBackendPath = RegisterGatewayRouteFrontendMap(
+        "route-backend.map", "# routeId -> its path_match qualifier", "route-backend") -%}
+      {#- A fragment that ranks nothing emits no newline of its own. #}
+      {{- "" }}
       http-request set-var(txn.gw_rule_id) var(req.gw_routeId),map({{ routeWinnerPath }}) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID } !{ var(txn.gw_rule_id) -m found } { var(req.gw_routeId),map({{ routeWinnerPath }}) -m found }
       http-request set-var(txn.path_match) var(txn.gw_rule_id),map({{ routeBackendPath }}) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID } { var(txn.gw_rule_id),map({{ routeBackendPath }}) -m found }
+
   frontend-filters-450-gateway-cors:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
-    template: |
-      {%- import "util-route-condition" for RouteIdCondition -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {{- render "util-gateway-analysis" -}}
-      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
-      {%- if gaVal == nil %}{% return %}{% end %}
-      {%- var ga = gaVal.(map[string]any) %}
-      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {%- var _, isHTTPRoute = routeInfo.(map[string]any)["route"].(*resources.httproutes.T) %}
-        {%- if !isHTTPRoute %}{%- continue %}{%- end %}
-        {%- var routeId = routeInfo | dig("routeId") | tostring() %}
-        {%- var filters = []any{} %}
-        {%%
-          var rm = routeInfo.(map[string]any)
-          var ruleIdx = toint(rm["ruleIdx"])
-          switch r := rm["route"].(type) {
-          case *resources.httproutes.T:
-            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
-              for _, f := range r.Spec.Rules[ruleIdx].Filters {
-                filters = append(filters, f)
-              }
-            }
-          case *resources.grpcroutes.T:
-            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
-              for _, f := range r.Spec.Rules[ruleIdx].Filters {
-                filters = append(filters, f)
-              }
-            }
-          }
-        %%}
-        {%- for _, filter := range filters %}
-          {%- if (filter | dig("type")) != "CORS" %}{%- continue %}{%- end %}
-          {%- var cors = filter | dig("cors") %}
-          {%- if cors == nil %}{%- continue %}{%- end %}
-          {%- var allowOrigins = cors | dig("allowOrigins") | fallback([]any{}) | toSlice() %}
-          {%- var hasWildcardOrigin = false %}
-          {%- var originAlternatives = []any{} %}
-          {%- for _, o := range allowOrigins %}
-            {%- var os = tostring(o) %}
-            {%- if os == "*" %}
-              {%- hasWildcardOrigin = true %}
-            {%- else if regex_search(os, "\\*") %}
-              {#- Gateway API allows any subdomain depth, so `*.` matches one-or-more labels. -#}
-              {%- var literal = tostring(sanitize_regex(os)) %}
-              {%- var pattern = tostring(replace(literal, "\\*\\.", "[^.]+(?:\\.[^.]+)*\\.")) %}
-              {%- originAlternatives = append(originAlternatives, "^" + pattern + "\\$") %}
-            {%- else %}
-              {%- originAlternatives = append(originAlternatives, "^" + tostring(sanitize_regex(os)) + "\\$") %}
-            {%- end %}
-          {%- end %}
-          {%- var originRegex = "" %}
-          {%- if !hasWildcardOrigin && len(originAlternatives) > 0 %}
-            {%- originRegex = "(?:" + join(originAlternatives, "|") + ")" %}
-          {%- end %}
-          {#- Browsers reject a literal `*` in Allow-Origin when credentials are on, so
-              Allow-Origin always echoes the request Origin. -#}
-          {%- var allowCreds = cors | dig("allowCredentials") | fallback(false) %}
-          {%- var methods = cors | dig("allowMethods") | fallback([]any{}) | toSlice() %}
-          {%- var methodsList = []any{} %}
-          {%- var hasWildcardMethod = false %}
-          {%- for _, m := range methods %}
-            {%- var ms = tostring(m) %}
-            {%- if ms == "*" %}
-              {#- Echo Access-Control-Request-Method rather than `*` or an expanded method
-                  list: browsers reject a literal `*` when credentials are on, and the
-                  HTTPRouteCORS conformance cases accept only `*` or the requested method. -#}
-              {%- hasWildcardMethod = true %}
-              {%- break %}
-            {%- end %}
-            {%- methodsList = append(methodsList, ms) %}
-          {%- end %}
-          {%- var headers = cors | dig("allowHeaders") | fallback([]any{}) | toSlice() %}
-          {%- var headersList = []any{} %}
-          {%- for _, h := range headers %}
-            {%- var hs = tostring(h) %}
-            {%- if hs == "*" %}
-              {#- Sentinel: a `["*"]` list means echo Access-Control-Request-Headers per request. -#}
-              {%- headersList = []any{"*"} %}
-              {%- break %}
-            {%- end %}
-            {%- headersList = append(headersList, hs) %}
-          {%- end %}
-          {%- var exposeHeaders = cors | dig("exposeHeaders") | fallback([]any{}) | toSlice() %}
-          {%- var exposeList = []any{} %}
-          {%- for _, eh := range exposeHeaders %}
-            {%- exposeList = append(exposeList, tostring(eh)) %}
-          {%- end %}
-          {%- var maxAge = cors | dig("maxAge") | fallback(0) %}
-          {#- #157: list values ride inside double-quoted log-format hdr/set-header values
-              (a control char splits the line; % / " / $ need escaping) and origins ride
-              inside a -m reg "..." ACL (a " breaks out — sanitize_regex escapes neither).
-              Reject control/quote here, then EscapeLogFormatValue handles the rest below. -#}
-          {%- var corsInj = "" %}
-          {%- for _, m := range methodsList %}{%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(tostring(m), "line") %}{%- end %}{%- end %}
-          {%- for _, h := range headersList %}{%- if corsInj == "" && tostring(h) != "*" %}{%- corsInj = ConfigInjectionKind(tostring(h), "line") %}{%- end %}{%- end %}
-          {%- for _, e := range exposeList %}{%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(tostring(e), "line") %}{%- end %}{%- end %}
-          {%- for _, o := range allowOrigins %}{%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(tostring(o), "dquote") %}{%- end %}{%- end %}
-          {%- if corsInj != "" %}
-            {{- WebhookRejectOrWarn(routeInfo.(map[string]any)["route"], "InvalidCORS", "HTTPRoute " + tostring(dig(routeInfo.(map[string]any)["route"], "metadata", "namespace")) + "/" + tostring(dig(routeInfo.(map[string]any)["route"], "metadata", "name")) + " has a CORS filter value containing " + corsInj + ", which would break out of the CORS response header directive; the CORS filter is not applied. Remove control characters and double quotes from allowMethods, allowHeaders, exposeHeaders and allowOrigins.") -}}
-            {%- continue %}
-          {%- end %}
-          {%- var ruleCond = RouteIdCondition(routeId) %}
-          {%- var originCond = "{ req.fhdr(Origin) -m found }" %}
-          {%- if originRegex != "" %}
-            {%- originCond = originCond + " { req.fhdr(Origin) -m reg \"" + originRegex + "\" }" %}
-          {%- end %}
-          {# HAProxy quirk: `http-request return` responses skip the http-response phase,
-              so preflight CORS headers must ride inline as `hdr` arguments; only
-              backend-served responses can use http-response set-header. #}
-      http-request set-var(txn.gw_cors_origin) req.fhdr(Origin) if {{ originCond }} {{ ruleCond }}
-          {%- if len(headersList) > 0 && headersList[0] == "*" %}
-      http-request set-var(txn.gw_cors_acrh) req.fhdr(Access-Control-Request-Headers) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
-          {%- end %}
-          {%- if hasWildcardMethod %}
-      http-request set-var(txn.gw_cors_acrm) req.fhdr(Access-Control-Request-Method) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
-          {%- end %}
-          {#- HAProxy caps a directive at 64 tokens and each `hdr` triple costs 3. -#}
-          {%- var preflightHdrs = []any{} %}
-          {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-origin \"%[var(txn.gw_cors_origin)]\"") %}
-          {%- if allowCreds %}
-            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-credentials \"true\"") %}
-          {%- end %}
-          {%- if hasWildcardMethod %}
-            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"%[var(txn.gw_cors_acrm)]\"") %}
-          {%- else if len(methodsList) > 0 %}
-            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"" + EscapeLogFormatValue(join(methodsList, ", ")) + "\"") %}
-          {%- end %}
-          {%- if len(headersList) > 0 %}
-            {%- if headersList[0] == "*" %}
-              {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-headers \"%[var(txn.gw_cors_acrh)]\"") %}
-            {%- else %}
-              {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-headers \"" + EscapeLogFormatValue(join(headersList, ", ")) + "\"") %}
-            {%- end %}
-          {%- end %}
-          {%- if toint(maxAge) > 0 %}
-            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-max-age \"" + tostring(maxAge) + "\"") %}
-          {%- end %}
-          {%- if len(exposeList) > 0 %}
-            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-expose-headers \"" + EscapeLogFormatValue(join(exposeList, ", ")) + "\"") %}
-          {%- end %}
-      http-request return status 200 {{ join(preflightHdrs, " ") }} if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }}
-      {# A disallowed-origin preflight must get no access-control-* headers; falling through
-         to the backend echoes its body and fails the conformance body/path check. #}
-      http-request return status 204 if METH_OPTIONS { req.fhdr(Origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }} !{ var(txn.gw_cors_origin) -m found }
-          {# Non-preflight responses come from the backend, so set-header applies to them. #}
-      http-response set-header "access-control-allow-origin" "%[var(txn.gw_cors_origin)]" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
-          {%- if allowCreds %}
-      http-response set-header "access-control-allow-credentials" "true" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
-          {%- end %}
-          {%- if len(exposeList) > 0 %}
-      http-response set-header "access-control-expose-headers" "{{ EscapeLogFormatValue(join(exposeList, ", ")) }}" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
-          {%- end %}
-      {# The `{%-` end markers below strip the prior directive's newline, fusing successive
-         routes' CORS directives onto one malformed line; only the explicit show survives. #}{% show "\n" %}
-        {%- end %}
-      {%- end %}
+    template: |-
+      {{- render "util-gateway-route-frontend-publications" -}}
+      {{- incremental_ranked_text_fragment("gateway-route-frontend", "cors") -}}
+
   # Gated on Content-Length, not frontend-wide `option http-buffer-request`: one
   # mirrored route turns this on for the whole shared frontend, and unconditional
   # buffering deadlocks a gRPC stream into a 408 the backend never saw. Nothing that

@@ -19,8 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
@@ -45,8 +48,10 @@ type HTTPStoreWrapper struct {
 	sourceMode     SourceMode
 	transientStore *httpstore.HTTPStore
 	transaction    *InputTransaction
+	readOnlyGroup  singleflight.Group
 	mu             sync.Mutex
-	declared       map[string]string
+	declared       map[string]httpstore.SourceDescriptor
+	snapshots      map[string]httpstore.ContentSnapshot
 }
 
 // NewHTTPStoreWrapper creates a new HTTPStoreWrapper.
@@ -57,6 +62,21 @@ func NewHTTPStoreWrapper(
 	overlay stores.HTTPContentOverlay,
 	sourceMode SourceMode,
 ) *HTTPStoreWrapper {
+	return NewHTTPStoreWrapperWithRetrySeed(ctx, component, logger, overlay, sourceMode, nil)
+}
+
+// NewHTTPStoreWrapperWithRetrySeed creates a wrapper with detached retry inputs.
+func NewHTTPStoreWrapperWithRetrySeed(
+	ctx context.Context,
+	component *Component,
+	logger *slog.Logger,
+	overlay stores.HTTPContentOverlay,
+	sourceMode SourceMode,
+	retrySeed *InputRetrySeed,
+) *HTTPStoreWrapper {
+	if sourceMode == SourceModeReadOnly && overlay == nil {
+		overlay = httpstore.NewAcceptedHTTPOverlay(component.GetStore())
+	}
 	wrapper := &HTTPStoreWrapper{
 		component:      component,
 		logger:         logger.With("component", "http-wrapper"),
@@ -64,10 +84,11 @@ func NewHTTPStoreWrapper(
 		ctx:            ctx,
 		sourceMode:     sourceMode,
 		transientStore: httpstore.New(logger, 0),
-		declared:       make(map[string]string),
+		declared:       make(map[string]httpstore.SourceDescriptor),
+		snapshots:      make(map[string]httpstore.ContentSnapshot),
 	}
 	if sourceMode == SourceModeAuthoritative {
-		wrapper.transaction = newInputTransaction(component)
+		wrapper.transaction = newInputTransaction(component, retrySeed)
 	}
 	return wrapper
 }
@@ -75,6 +96,141 @@ func NewHTTPStoreWrapper(
 // InputTransaction returns the authoritative render's candidate transaction.
 func (w *HTTPStoreWrapper) InputTransaction() *InputTransaction {
 	return w.transaction
+}
+
+// RevisionSource identifies the accepted content stream observed by this wrapper.
+func (w *HTTPStoreWrapper) RevisionSource() httpstore.SourceID {
+	if w == nil || w.component == nil {
+		return 0
+	}
+	return w.component.RevisionSource()
+}
+
+// ReplaySnapshot pins a cached accepted dependency without performing network I/O.
+func (w *HTTPStoreWrapper) ReplaySnapshot(
+	snapshot *httpstore.ContentSnapshot,
+) (httpstore.ContentSnapshot, bool, error) {
+	if snapshot == nil || !snapshot.Found || !snapshot.Cacheable || !snapshot.Token.Valid() ||
+		snapshot.Token.Kind() != httpstore.SnapshotAccepted ||
+		snapshot.URL != snapshot.Token.URL() || snapshot.Descriptor != snapshot.Token.SourceDescriptor() {
+		return httpstore.ContentSnapshot{}, false,
+			errors.New("HTTP snapshot replay requires an exact accepted snapshot")
+	}
+	if err := w.declare(snapshot.URL, snapshot.Descriptor); err != nil {
+		return httpstore.ContentSnapshot{}, false, err
+	}
+	if current, observed := w.observedSnapshot(snapshot); observed {
+		return current, true, nil
+	}
+	if w.sourceMode == SourceModeReadOnly {
+		current, found, err := w.getCachedSnapshot(snapshot.URL, snapshot.Descriptor)
+		if err != nil || !found {
+			return current, false, err
+		}
+		current = w.recordSnapshot(&current)
+		return current, true, nil
+	}
+	if w.transaction == nil || w.sourceMode != SourceModeAuthoritative {
+		return httpstore.ContentSnapshot{}, false,
+			errors.New("HTTP snapshot replay requires a supported source mode")
+	}
+	current, source, ok := w.component.replayAcceptedSnapshot(snapshot.Token)
+	if !ok {
+		return httpstore.ContentSnapshot{
+			URL:        snapshot.URL,
+			Descriptor: snapshot.Descriptor,
+		}, false, nil
+	}
+	if err := w.transaction.replay(&current, source); err != nil {
+		return httpstore.ContentSnapshot{}, false, err
+	}
+	return current, true, nil
+}
+
+// CaptureAcceptedReplayState binds every accepted read to one selective cursor.
+func (w *HTTPStoreWrapper) CaptureAcceptedReplayState(
+	snapshots []httpstore.ContentSnapshot,
+) (*httpstore.AcceptedReplayState, bool) {
+	if w == nil || w.component == nil {
+		return nil, false
+	}
+	return w.component.captureAcceptedReplayState(snapshots)
+}
+
+// RequireAcceptedReplayState adds selective accepted HTTP inputs to the end fence.
+func (w *HTTPStoreWrapper) RequireAcceptedReplayState(
+	state *httpstore.AcceptedReplayState,
+) (*httpstore.AcceptedReplayState, error) {
+	if w == nil || w.transaction == nil || w.sourceMode != SourceModeAuthoritative {
+		return nil, errors.New("accepted HTTP replay state requires authoritative source mode")
+	}
+	if w.component == nil {
+		return nil, errors.New("accepted HTTP replay state has no source store")
+	}
+	advanced, ok := w.component.AdvanceAcceptedReplayState(state)
+	if !ok {
+		return nil, errors.New("accepted HTTP replay inputs changed")
+	}
+	if err := w.transaction.requireAcceptedReplayState(advanced); err != nil {
+		return nil, err
+	}
+	return advanced, nil
+}
+
+func (w *HTTPStoreWrapper) observedSnapshot(
+	expected *httpstore.ContentSnapshot,
+) (httpstore.ContentSnapshot, bool) {
+	if w.transaction != nil {
+		return w.transaction.observedSnapshot(expected)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	current, exists := w.snapshots[expected.URL]
+	if !exists || !sameObservedHTTPSnapshot(&current, expected) {
+		return httpstore.ContentSnapshot{}, false
+	}
+	return current, true
+}
+
+func sameObservedHTTPSnapshot(left, right *httpstore.ContentSnapshot) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	// Unrelated accepted changes may advance the store watermark without changing this read.
+	return left.URL == right.URL && left.Descriptor == right.Descriptor &&
+		left.Content == right.Content && left.Found == right.Found &&
+		left.Cacheable == right.Cacheable && left.Token == right.Token &&
+		left.StoreSource == right.StoreSource && left.Observation == right.Observation
+}
+
+// ContentSnapshots returns the exact HTTP versions read by this render.
+func (w *HTTPStoreWrapper) ContentSnapshots() ([]httpstore.ContentSnapshot, bool) {
+	if w.transaction != nil {
+		return w.transaction.Snapshots(), w.transaction.Cacheable()
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	urls := make([]string, 0, len(w.snapshots))
+	for url := range w.snapshots {
+		urls = append(urls, url)
+	}
+	slices.Sort(urls)
+	snapshots := make([]httpstore.ContentSnapshot, 0, len(urls))
+	cacheable := true
+	for _, url := range urls {
+		snapshot := w.snapshots[url]
+		snapshots = append(snapshots, snapshot)
+		cacheable = cacheable && snapshot.Cacheable
+	}
+	return snapshots, cacheable
+}
+
+// CommittedAcceptedReplayState returns the exact HTTP publication retained by this render.
+func (w *HTTPStoreWrapper) CommittedAcceptedReplayState() (*httpstore.AcceptedReplayState, bool) {
+	if w == nil || w.transaction == nil {
+		return nil, false
+	}
+	return w.transaction.committedAcceptedReplayState()
 }
 
 // Fetch fetches content from a URL.
@@ -104,92 +260,203 @@ func (w *HTTPStoreWrapper) InputTransaction() *InputTransaction {
 //   - Content string (empty if fetch failed and not critical)
 //   - Error if critical fetch fails
 func (w *HTTPStoreWrapper) Fetch(args ...any) (any, error) {
-	// Parse all arguments
+	content, _, err := w.FetchSnapshot(args...)
+	return content, err
+}
+
+// FetchSnapshot performs one fetch and returns the exact input version used by this call.
+func (w *HTTPStoreWrapper) FetchSnapshot(args ...any) (any, httpstore.ContentSnapshot, error) {
 	url, opts, auth, err := w.parseArgs(args)
 	if err != nil {
-		return nil, err
+		return nil, httpstore.ContentSnapshot{}, err
 	}
-	identity, err := httpstore.SourceIdentity(opts, auth)
+	descriptor, err := httpstore.DescribeSource(opts, auth)
 	if err != nil {
-		return nil, fmt.Errorf("http.Fetch: %w", err)
+		return nil, httpstore.ContentSnapshot{}, fmt.Errorf("http.Fetch: %w", err)
 	}
-	if err := w.declare(url, identity); err != nil {
-		return nil, err
+	failed := httpstore.ContentSnapshot{URL: url, Descriptor: descriptor}
+	if err := w.declare(url, descriptor); err != nil {
+		return nil, failed, err
 	}
-	if err := w.rejectOverlaySourceConflict(url, identity); err != nil {
-		return nil, err
+	if err := w.rejectOverlaySourceConflict(url, descriptor); err != nil {
+		return nil, failed, err
 	}
 
+	var snapshot httpstore.ContentSnapshot
 	if w.sourceMode != SourceModeAuthoritative {
-		return w.fetchReadOnly(url, identity, opts, auth)
+		snapshot, err = w.fetchReadOnly(url, descriptor, opts, auth)
+	} else {
+		snapshot, err = w.fetchAuthoritative(url, opts, auth)
 	}
-	return w.fetchAuthoritative(url, opts, auth)
+	if err != nil {
+		return nil, failed, err
+	}
+	return snapshot.Content, snapshot, nil
 }
 
 func (w *HTTPStoreWrapper) fetchReadOnly(
 	url string,
-	identity string,
+	descriptor httpstore.SourceDescriptor,
 	opts httpstore.FetchOptions,
 	auth *httpstore.AuthConfig,
-) (any, error) {
-	content, ok, err := w.getCachedContent(url, identity)
+) (httpstore.ContentSnapshot, error) {
+	if snapshot, exists := w.recordedSnapshot(url); exists {
+		return snapshot, nil
+	}
+	value, err, _ := w.readOnlyGroup.Do(url, func() (any, error) {
+		if snapshot, exists := w.recordedSnapshot(url); exists {
+			return snapshot, nil
+		}
+		return w.fetchReadOnlyOnce(url, descriptor, opts, auth)
+	})
 	if err != nil {
-		return nil, err
+		return httpstore.ContentSnapshot{}, err
+	}
+	snapshot, ok := value.(httpstore.ContentSnapshot)
+	if !ok {
+		return httpstore.ContentSnapshot{}, errors.New("HTTP read-only fetch returned an invalid snapshot")
+	}
+	return snapshot, nil
+}
+
+func (w *HTTPStoreWrapper) fetchReadOnlyOnce(
+	url string,
+	descriptor httpstore.SourceDescriptor,
+	opts httpstore.FetchOptions,
+	auth *httpstore.AuthConfig,
+) (httpstore.ContentSnapshot, error) {
+	snapshot, ok, err := w.getCachedSnapshot(url, descriptor)
+	if err != nil {
+		return httpstore.ContentSnapshot{}, err
 	}
 	if ok {
-		return content, nil
+		return w.recordSnapshot(&snapshot), nil
 	}
 
-	content, err = w.transientStore.Fetch(w.ctx, url, opts, auth)
+	content, err := w.transientStore.Fetch(w.ctx, url, opts, auth)
 	if err != nil {
-		return nil, err
+		return httpstore.ContentSnapshot{}, err
 	}
-	return content, nil
+	snapshot = w.transientStore.AcceptedSnapshot(url, descriptor)
+	if !snapshot.Found {
+		snapshot.Content = content
+	}
+	snapshot.Cacheable = false
+	snapshot.Token = httpstore.SnapshotToken{}
+	return w.recordSnapshot(&snapshot), nil
+}
+
+func (w *HTTPStoreWrapper) recordedSnapshot(url string) (httpstore.ContentSnapshot, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	snapshot, exists := w.snapshots[url]
+	return snapshot, exists
+}
+
+func (w *HTTPStoreWrapper) recordSnapshot(snapshot *httpstore.ContentSnapshot) httpstore.ContentSnapshot {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if previous, exists := w.snapshots[snapshot.URL]; exists && previous.Token != snapshot.Token {
+		snapshot.Cacheable = false
+	}
+	if !snapshot.Cacheable {
+		snapshot.Token = httpstore.SnapshotToken{}
+	}
+	w.snapshots[snapshot.URL] = *snapshot
+	return *snapshot
 }
 
 func (w *HTTPStoreWrapper) fetchAuthoritative(
 	url string,
 	opts httpstore.FetchOptions,
 	auth *httpstore.AuthConfig,
-) (any, error) {
-	state, err := w.component.ReconcileSource(url, opts, auth)
+) (httpstore.ContentSnapshot, error) {
+	snapshot, err := w.transaction.fetch(w.ctx, url, opts, auth)
 	if err != nil {
-		return nil, fmt.Errorf("http.Fetch: %w", err)
+		return httpstore.ContentSnapshot{}, err
 	}
-	content, err := w.transaction.fetch(w.ctx, url, state)
-	if err != nil {
-		return nil, err
-	}
-
-	return content, nil
+	return snapshot, nil
 }
 
-func (w *HTTPStoreWrapper) declare(url, identity string) error {
+func (w *HTTPStoreWrapper) declare(url string, descriptor httpstore.SourceDescriptor) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	previous, exists := w.declared[url]
-	if exists && previous != identity {
+	if exists && previous != descriptor {
 		return fmt.Errorf(
 			"http.Fetch: URL %s uses conflicting authentication or options in one render; use one declaration per URL",
 			url,
 		)
 	}
-	w.declared[url] = identity
+	w.declared[url] = descriptor
 	return nil
 }
 
-func (w *HTTPStoreWrapper) rejectOverlaySourceConflict(url, sourceIdentity string) error {
+func (w *HTTPStoreWrapper) rejectOverlaySourceConflict(
+	url string,
+	descriptor httpstore.SourceDescriptor,
+) error {
 	if w.overlay == nil || !w.overlay.HasPendingURL(url) {
 		return nil
 	}
-	if _, ok := w.overlay.GetContentForSource(url, sourceIdentity); ok {
+	provider, ok := w.overlay.(interface {
+		GetContentForDescriptor(string, httpstore.SourceDescriptor) (string, bool)
+	})
+	if ok {
+		_, ok = provider.GetContentForDescriptor(url, descriptor)
+	}
+	if ok {
 		return nil
 	}
 	return fmt.Errorf(
 		"http.Fetch: URL %s has pending content from different authentication or options; retry after the source change settles",
 		url,
 	)
+}
+
+func (w *HTTPStoreWrapper) getCachedSnapshot(
+	url string,
+	descriptor httpstore.SourceDescriptor,
+) (httpstore.ContentSnapshot, bool, error) {
+	if w.overlay == nil {
+		snapshot := w.component.GetStore().AcceptedSnapshot(url, descriptor)
+		return snapshot, snapshot.Found, nil
+	}
+	missing := httpstore.ContentSnapshot{URL: url, Descriptor: descriptor}
+	snapshotProvider, ok := w.overlay.(interface {
+		Snapshot(string, httpstore.SourceDescriptor) httpstore.ContentSnapshot
+	})
+	if ok {
+		snapshot := snapshotProvider.Snapshot(url, descriptor)
+		snapshot.URL = url
+		snapshot.Descriptor = descriptor
+		if snapshot.Found {
+			return snapshot, true, nil
+		}
+		missing = snapshot
+	} else if provider, exact := w.overlay.(interface {
+		GetContentForDescriptor(string, httpstore.SourceDescriptor) (string, bool)
+	}); exact {
+		if content, found := provider.GetContentForDescriptor(url, descriptor); found {
+			return httpstore.ContentSnapshot{
+				URL:        url,
+				Descriptor: descriptor,
+				Content:    content,
+				Found:      true,
+			}, true, nil
+		}
+	} else {
+		return httpstore.ContentSnapshot{}, false,
+			errors.New("http.Fetch: HTTP overlay does not support exact source matching")
+	}
+	if w.overlay.HasPendingURL(url) {
+		return httpstore.ContentSnapshot{}, false, fmt.Errorf(
+			"http.Fetch: URL %s has pending content from different authentication or options; retry after the source change settles",
+			url,
+		)
+	}
+	return missing, false, nil
 }
 
 // parseArgs extracts and validates URL, options, and auth from variadic arguments.
@@ -252,35 +519,6 @@ func parseAuthFromArg(arg any) (*httpstore.AuthConfig, error) {
 		return nil, fmt.Errorf("http.Fetch: %w", err)
 	}
 	return auth, nil
-}
-
-// getCachedContent returns matching overlay content or accepted shared content.
-func (w *HTTPStoreWrapper) getCachedContent(url, sourceIdentity string) (content string, found bool, err error) {
-	if w.overlay != nil {
-		if content, ok := w.overlay.GetContentForSource(url, sourceIdentity); ok {
-			w.logger.Debug("Returning content via overlay",
-				"url", url,
-				"size", len(content),
-				"has_pending", w.overlay.HasPendingURL(url))
-			return content, true, nil
-		}
-		if w.overlay.HasPendingURL(url) {
-			return "", false, fmt.Errorf(
-				"http.Fetch: URL %s has pending content from different authentication or options; retry after the source change settles",
-				url,
-			)
-		}
-		return "", false, nil
-	}
-
-	store := w.component.GetStore()
-	if content, ok := store.GetSource(url, sourceIdentity); ok {
-		w.logger.Debug("Returning accepted content",
-			"url", url,
-			"size", len(content))
-		return content, true, nil
-	}
-	return "", false, nil
 }
 
 // parseFetchOptions parses a map into FetchOptions.

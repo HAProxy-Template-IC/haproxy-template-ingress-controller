@@ -122,6 +122,12 @@ var subscriberInventory = map[string]mailboxDecision{
 		mailbox: false,
 		why:     "shared loader scaffold; its events are per-config-change",
 	},
+	"warmer": {
+		mailbox: true,
+		why: "runs a full reconcile render per trigger on a follower, and the " +
+			"trigger stream is one event per resource change; the newest trigger " +
+			"is all a render needs",
+	},
 	"statusapplier": {
 		mailbox: true,
 		why:     "server-side apply of status patches per render and per deploy",

@@ -171,3 +171,150 @@ func TestWrapInto_PreserveUnknownPassThrough(t *testing.T) {
 	require.True(t, ok, "preserve-unknown subtree must pass through as map[string]any")
 	assert.Equal(t, "goes", asMap["anything"])
 }
+
+func TestWrapImmutableIntoMatchesJSONProjection(t *testing.T) {
+	itemType := reflect.StructOf([]reflect.StructField{
+		{Name: "Name", Type: reflect.TypeFor[string](), Tag: `json:"name"`},
+		{Name: "Port", Type: reflect.TypeFor[int64](), Tag: `json:"port"`},
+	})
+	typ := reflect.StructOf([]reflect.StructField{
+		{Name: "Name", Type: reflect.TypeFor[string](), Tag: `json:"name"`},
+		{Name: "Count", Type: reflect.TypeFor[*int64](), Tag: `json:"count,omitempty"`},
+		{Name: "Labels", Type: reflect.TypeFor[map[string]string](), Tag: `json:"labels"`},
+		{Name: "Items", Type: reflect.SliceOf(itemType), Tag: `json:"items"`},
+		{Name: "Opaque", Type: reflect.TypeFor[any](), Tag: `json:"opaque"`},
+	})
+	registerImmutableProjectionType(typ)
+	source := map[string]any{
+		"name":   "route",
+		"count":  int64(3),
+		"labels": map[string]any{"team": "edge"},
+		"items":  []any{map[string]any{"name": "backend", "port": int64(8080)}},
+		"opaque": map[string]any{"number": int64(7), "nested": []any{"value"}},
+	}
+
+	want, err := WrapInto(source, typ)
+	require.NoError(t, err)
+	got, err := WrapImmutableInto(source, typ)
+	require.NoError(t, err)
+	assert.True(t, reflect.DeepEqual(want.Interface(), got.Interface()))
+
+	source["labels"].(map[string]any)["team"] = "poison"
+	source["opaque"].(map[string]any)["nested"].([]any)[0] = "poison"
+	assert.Equal(t, "edge", got.FieldByName("Labels").MapIndex(reflect.ValueOf("team")).String())
+	assert.Equal(t, "value", got.FieldByName("Opaque").Interface().(map[string]any)["nested"].([]any)[0])
+}
+
+func TestWrapImmutableIntoFallsBackForNonCanonicalInput(t *testing.T) {
+	typ := reflect.StructOf([]reflect.StructField{
+		{Name: "Labels", Type: reflect.TypeFor[map[string]string](), Tag: `json:"labels"`},
+	})
+	registerImmutableProjectionType(typ)
+	source := map[string]any{"labels": map[string]string{"team": "edge"}}
+	want, err := WrapInto(source, typ)
+	require.NoError(t, err)
+	got, err := WrapImmutableInto(source, typ)
+	require.NoError(t, err)
+	assert.True(t, reflect.DeepEqual(want.Interface(), got.Interface()))
+}
+
+func TestWrapImmutableIntoPointerOwnsGeneratedAndFallbackValues(t *testing.T) {
+	typ := reflect.StructOf([]reflect.StructField{
+		{Name: "Name", Type: reflect.TypeFor[string](), Tag: `json:"name"`},
+		{Name: "Labels", Type: reflect.TypeFor[map[string]string](), Tag: `json:"labels"`},
+		{Name: "Opaque", Type: reflect.TypeFor[any](), Tag: `json:"opaque"`},
+	})
+	registerImmutableProjectionType(typ)
+	canonical := map[string]any{
+		"name":   "arbitrary-crd",
+		"labels": map[string]any{"team": "edge"},
+		"opaque": map[string]any{"nested": []any{"value"}},
+	}
+	want, err := WrapInto(canonical, typ)
+	require.NoError(t, err)
+	pointer, err := WrapImmutableIntoPointer(canonical, typ)
+	require.NoError(t, err)
+	require.Equal(t, reflect.PointerTo(typ), pointer.Type())
+	assert.True(t, reflect.DeepEqual(want.Interface(), pointer.Elem().Interface()))
+
+	canonical["labels"].(map[string]any)["team"] = "source-poison"
+	canonical["opaque"].(map[string]any)["nested"].([]any)[0] = "source-poison"
+	assert.Equal(t, "edge", pointer.Elem().FieldByName("Labels").MapIndex(reflect.ValueOf("team")).String())
+	assert.Equal(t, "value", pointer.Elem().FieldByName("Opaque").Interface().(map[string]any)["nested"].([]any)[0])
+
+	fallback := map[string]any{
+		"name":   "fallback",
+		"labels": map[string]string{"team": "edge"},
+		"opaque": map[string]any{"nested": []any{"value"}},
+	}
+	pointer, err = WrapImmutableIntoPointer(fallback, typ)
+	require.NoError(t, err)
+	fallback["labels"].(map[string]string)["team"] = "source-poison"
+	assert.Equal(t, "edge", pointer.Elem().FieldByName("Labels").MapIndex(reflect.ValueOf("team")).String())
+
+	invalid, err := WrapImmutableIntoPointer(map[string]any{}, nil)
+	require.Error(t, err)
+	assert.False(t, invalid.IsValid())
+}
+
+func BenchmarkWrapImmutableInto(b *testing.B) {
+	typ := reflect.StructOf([]reflect.StructField{
+		{Name: "Name", Type: reflect.TypeFor[string](), Tag: `json:"name"`},
+		{Name: "Count", Type: reflect.TypeFor[*int64](), Tag: `json:"count"`},
+		{Name: "Labels", Type: reflect.TypeFor[map[string]string](), Tag: `json:"labels"`},
+		{Name: "Values", Type: reflect.TypeFor[[]string](), Tag: `json:"values"`},
+	})
+	source := map[string]any{
+		"name": "route", "count": int64(3),
+		"labels": map[string]any{"team": "edge"},
+		"values": []any{"one", "two", "three"},
+	}
+	registerImmutableProjectionType(typ)
+	b.ReportAllocs()
+	for range b.N {
+		if _, err := WrapImmutableInto(source, typ); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkWrapImmutableIntoPointer(b *testing.B) {
+	typ := reflect.StructOf([]reflect.StructField{
+		{Name: "Name", Type: reflect.TypeFor[string](), Tag: `json:"name"`},
+		{Name: "Count", Type: reflect.TypeFor[*int64](), Tag: `json:"count"`},
+		{Name: "Labels", Type: reflect.TypeFor[map[string]string](), Tag: `json:"labels"`},
+		{Name: "Values", Type: reflect.TypeFor[[]string](), Tag: `json:"values"`},
+	})
+	source := map[string]any{
+		"name": "route", "count": int64(3),
+		"labels": map[string]any{"team": "edge"},
+		"values": []any{"one", "two", "three"},
+	}
+	registerImmutableProjectionType(typ)
+	b.ReportAllocs()
+	for range b.N {
+		if _, err := WrapImmutableIntoPointer(source, typ); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkWrapInto(b *testing.B) {
+	typ := reflect.StructOf([]reflect.StructField{
+		{Name: "Name", Type: reflect.TypeFor[string](), Tag: `json:"name"`},
+		{Name: "Count", Type: reflect.TypeFor[*int64](), Tag: `json:"count"`},
+		{Name: "Labels", Type: reflect.TypeFor[map[string]string](), Tag: `json:"labels"`},
+		{Name: "Values", Type: reflect.TypeFor[[]string](), Tag: `json:"values"`},
+	})
+	source := map[string]any{
+		"name": "route", "count": int64(3),
+		"labels": map[string]any{"team": "edge"},
+		"values": []any{"one", "two", "three"},
+	}
+	b.ReportAllocs()
+	for range b.N {
+		if _, err := WrapInto(source, typ); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

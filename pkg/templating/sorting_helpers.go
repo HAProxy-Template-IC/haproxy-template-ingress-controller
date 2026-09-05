@@ -15,7 +15,6 @@
 package templating
 
 import (
-	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -157,27 +156,12 @@ func compareValues(a, b any) int {
 		return -1
 	}
 
-	// Try numeric comparison first
-	if numA, okA := toFloat64(a); okA {
-		if numB, okB := toFloat64(b); okB {
-			if numA < numB {
-				return -1
-			} else if numA > numB {
-				return 1
-			}
-			return 0
-		}
+	left := mustDeterministicScalar("sort_by", a)
+	right := mustDeterministicScalar("sort_by", b)
+	if deterministicNumericScalar(left.kind) && deterministicNumericScalar(right.kind) {
+		return compareDeterministicNumbers(left, right)
 	}
-
-	// Fast path: direct string comparison (avoids fmt.Sprint allocation)
-	if strA, okA := a.(string); okA {
-		if strB, okB := b.(string); okB {
-			return strings.Compare(strA, strB)
-		}
-	}
-
-	// Fallback: convert to string via fmt.Sprint
-	return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
+	return strings.Compare(left.text, right.text)
 }
 
 // getLength returns the length of a value.
@@ -280,11 +264,11 @@ func convertToMap(v any) (map[string]any, bool) {
 		val = val.Elem()
 	}
 
-	if val.Kind() == reflect.Map {
+	if val.Kind() == reflect.Map && val.Type().Key().Kind() == reflect.String {
 		result := make(map[string]any)
 		iter := val.MapRange()
 		for iter.Next() {
-			key := fmt.Sprint(iter.Key().Interface())
+			key := iter.Key().String()
 			result[key] = iter.Value().Interface()
 		}
 		return result, true

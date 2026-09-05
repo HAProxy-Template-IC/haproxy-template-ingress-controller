@@ -569,9 +569,15 @@ validationTests:
         target: map:path-prefix.map
         pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com/ GW_ROUTE_ID:http:default_attaches-to-abc-foo-example-com_0$"
 
+      # Anchored per line: an unanchored pattern still matched when the first
+      # entry fused into the marker comment above it and stopped being an entry.
       - type: contains
         target: map:host-regex.map
-        pattern: "(?ms)foo\\\\\\.example\\\\\\.com\\$ \\.foo\\.example\\.com.*\\^\\[\\^\\.\\]\\+\\(\\?:\\\\\\.\\[\\^\\.\\]\\+\\)\\*\\\\\\.example\\\\\\.com\\$ \\.example\\.com"
+        pattern: "(?m)^\\^\\[\\^\\.\\]\\+\\(\\?:\\\\\\.\\[\\^\\.\\]\\+\\)\\*\\\\\\.foo\\\\\\.example\\\\\\.com\\$ \\.foo\\.example\\.com$"
+
+      - type: contains
+        target: map:host-regex.map
+        pattern: "(?m)^\\^\\[\\^\\.\\]\\+\\(\\?:\\\\\\.\\[\\^\\.\\]\\+\\)\\*\\\\\\.example\\\\\\.com\\$ \\.example\\.com$"
 
       # Conformance shape: trace each of the 16
       # GatewayHTTPListenerIsolation upstream cases through the

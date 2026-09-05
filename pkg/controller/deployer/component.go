@@ -33,6 +33,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
@@ -89,6 +90,9 @@ type Component struct {
 	plans   *planCache
 	fence   LeadershipFence
 
+	contentProofMu sync.Mutex
+	contentProofs  map[string]map[string]contentProof
+
 	// renderSeq orders this leadership term's applies inside its epoch. It
 	// restarts per term, which the epoch makes unambiguous.
 	renderSeq atomic.Uint64
@@ -142,6 +146,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, syncTimeout time.Dur
 		ReadySignal:     component.NewReadySignal(),
 		clients:         newAgentClients(agentStateTimeout, syncTimeout),
 		plans:           newPlanCache(),
+		contentProofs:   map[string]map[string]contentProof{},
 		invalidBaseline: map[string]struct{}{},
 		observedPlans:   map[string][]string{},
 		validatedPlans:  newValidatedPlanSet(),
@@ -246,19 +251,14 @@ func (c *Component) HealthCheck() error {
 	return c.healthTracker.Check()
 }
 
-// SetValidatedPlan records a plan the controller proved good.
-//
-// It is a set, not a single value: the gate checks superseded plans that pods
-// still run as well as the newest one, and their verdicts arrive in check
-// order, not render order. A pod promotes its rollback baseline only when the
-// manifest names the plan that pod applied (agent statemachine), so recording
-// one id and overwriting it would leave every pod on another plan unable to
-// promote — the fleet's oldest straggler deciding when the newest pod's
-// last-known-good may advance.
-func (c *Component) SetValidatedPlan(planID string) {
+// SetValidatedOccurrence records one exact render execution the gate passed.
+func (c *Component) SetValidatedOccurrence(occurrence *rendercycle.Occurrence) {
+	if occurrence == nil || occurrence.ValidateAuthentication() != nil {
+		return
+	}
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	c.validatedPlans.add(planID)
+	c.validatedPlans.addOccurrence(occurrence)
 }
 
 // validatedPlanFor is what a pod's manifest carries: the pod's own applied plan
@@ -266,10 +266,28 @@ func (c *Component) SetValidatedPlan(planID string) {
 // otherwise the newest passed plan, which is inert for this pod but keeps the
 // field meaningful for a pod that catches up between the state read and the
 // apply.
-func (c *Component) validatedPlanFor(appliedPlanID string) string {
+func (c *Component) validatedPlanFor(authority string, state *api.State) planReference {
+	if state == nil {
+		return planReference{}
+	}
+	applied := c.plans.Baseline(authority, state)
+	occurrence := c.planOccurrence(authority, state.AppliedPlanID, state.AppliedPlanProof)
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	return c.validatedPlans.resolve(appliedPlanID)
+	return c.validatedPlans.resolve(
+		state.AppliedPlanID, state.AppliedPlanProof, applied, occurrence,
+	)
+}
+
+// planOccurrence logs a stored occurrence that stopped authenticating instead of
+// reading it as an absent binding; none of the callers can return an error.
+func (c *Component) planOccurrence(authority, planID, planProof string) *rendercycle.Occurrence {
+	occurrence, err := c.plans.Occurrence(authority, planID, planProof)
+	if err != nil {
+		c.Logger().Error("Dropping a cached render occurrence that no longer authenticates",
+			"plan", planID, "error", err)
+	}
+	return occurrence
 }
 
 func (c *Component) leaderEpoch() uint64 {
@@ -330,41 +348,42 @@ func (c *Component) clearBaselineInvalidations() {
 // contributes, not only the ones that ACKed: a pod whose apply failed still
 // runs its plans, and evicting them costs it a full-state reload on the retry
 // seconds later.
-func (c *Component) notePodPlans(endpoint *dataplane.Endpoint, ids ...string) {
+func (c *Component) notePodPlans(endpoint *dataplane.Endpoint, proofs ...string) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	c.observedPlans[podKey(endpoint)] = planIDs(ids)
+	c.observedPlans[podKey(endpoint)] = planProofs(proofs)
 }
 
 // fleetPlanRefs is every plan the fleet still refers to, forgetting the pods
 // that are gone. A pod this deployment could not read keeps its last answer:
 // a blip that failed every pod would otherwise evict the whole cache and
 // reload the fleet on the next round.
-func (c *Component) fleetPlanRefs(endpoints []dataplane.Endpoint) []string {
+func (c *Component) fleetPlanRefs(endpoints []dataplane.Endpoint) []planCacheKey {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	live := make(map[string]struct{}, len(endpoints))
 	for i := range endpoints {
 		live[podKey(&endpoints[i])] = struct{}{}
 	}
-	refs := make([]string, 0, len(c.observedPlans))
-	for key, ids := range c.observedPlans {
+	refs := make([]planCacheKey, 0, len(c.observedPlans)*3)
+	for key, proofs := range c.observedPlans {
 		if _, wanted := live[key]; !wanted {
 			delete(c.observedPlans, key)
 			continue
 		}
-		refs = append(refs, ids...)
+		for _, proof := range proofs {
+			refs = append(refs, planCacheKey{authority: key, proof: proof})
+		}
 	}
 	return refs
 }
 
-// planIDs drops the empty and repeated ids, so one pod's entry stays the few
-// plans it actually holds.
-func planIDs(ids []string) []string {
-	kept := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if id != "" && !slices.Contains(kept, id) {
-			kept = append(kept, id)
+// planProofs drops empty and repeated proofs.
+func planProofs(proofs []string) []string {
+	kept := make([]string, 0, len(proofs))
+	for _, proof := range proofs {
+		if proof != "" && !slices.Contains(kept, proof) {
+			kept = append(kept, proof)
 		}
 	}
 	return kept
@@ -389,6 +408,10 @@ func (c *Component) applyPosture(endpoint *dataplane.Endpoint, state *api.State)
 	}
 	if c.baselineInvalid(endpoint) {
 		notes = append(notes, "the previous apply was rejected, resending the complete state")
+		full = true
+	}
+	if state.AppliedPlanID != "" && state.AppliedPlanProof == "" {
+		notes = append(notes, "the agent cannot prove its applied plan, resending the complete state")
 		full = true
 	}
 	return full, notes

@@ -507,7 +507,7 @@ func TestWrapFilterForScriggo(t *testing.T) {
 	}
 
 	wrapped := wrapFilterForScriggo(filter)
-	result, err := wrapped("test", nil)
+	result, err := wrapped(&fakeEnv{ctx: context.Background()}, "test", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "filtered: test", result)
@@ -523,14 +523,15 @@ func TestWrapFunctionForScriggo(t *testing.T) {
 	}
 
 	wrapped := wrapFunctionForScriggo(fn)
+	env := &fakeEnv{ctx: context.Background()}
 
 	// Test with no args
-	result, err := wrapped()
+	result, err := wrapped(env)
 	require.NoError(t, err)
 	assert.Equal(t, "no args", result)
 
 	// Test with args
-	result, err = wrapped("hello")
+	result, err = wrapped(env, "hello")
 	require.NoError(t, err)
 	assert.Equal(t, "got: hello", result)
 }

@@ -1,130 +1,81 @@
 # nginx-ingress library — feature registration + passthrough backends.
-# util-ssl-passthrough, features-100 (ssl-passthrough), features-110 (mTLS),
-# backends-501 (ssl-passthrough backend emission).
 templateSnippets:
   # ============================================================================
   # SSL Passthrough
   # ============================================================================
 
-  util-nginx-ingress-ssl-passthrough:
-    template: |
-      {# Caches SSL passthrough backends from nginx.ingress.kubernetes.io/ssl-passthrough annotations.
-          Build logic lives in ingress-annotations-compat.yaml's BuildAnnotationSSLPassthrough macro;
-          this snippet only owns the per-library cache key and naming-convention parameters. #}
-      {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
-      {%%
-        var _, _ = shared.ComputeIfAbsent("ni_sslPassthrough", func() any {
-          var sslData = map[string]any{"backends": []any{}}
-          BuildAnnotationSSLPassthrough(sslData,
-            "nginx.ingress.kubernetes.io/ssl-passthrough",
-            "ssl-passthrough-ni-",
-            "ni_sslPassthrough_host")
-          return sslData
-        })
-      %%}
-
   features-080-nginx-ingress-canary-coexist:
-    template: |
-      {#
-        Mark nginx canary Ingresses as base-route co-locators so they don't
-        compete for host+path ownership in the core Ingress path map
-        (ingress.yaml util-path-map-entry-ingress-shard).
-
-        A canary Ingress carries nginx.ingress.kubernetes.io/canary: "true" and
-        DELIBERATELY shares a host+path with a non-canary (main) Ingress. The
-        canary does NOT own the base route — its traffic is split off by a
-        use_backend rule (frontend-filters-780) that fires before the base map
-        lookup; the main Ingress owns the base map entry. Without this marker
-        the canary would compete for the route and (being alphabetically or
-        chronologically first) could win the base map, so non-canary traffic
-        would land on the canary backend.
-
-        We register the canary Ingress's IDENTITY (namespace/name) in
-        gf["coLocatedIngresses"]. The path-map owner computation skips these
-        Ingresses entirely, so the main owns the route alone and a genuine
-        SECOND non-canary Ingress on the same host+path still competes with the
-        main under oldest-wins. This runs at features-080 during the haproxy.cfg
-        render, which completes before the aux-file (map) render reads the set.
-        When the nginx-ingress library is disabled there are no canary Ingresses
-        and the set stays absent (the owner computation treats a missing set as
-        "no co-locators").
-      #}
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/canary']"]
+      group: ingress-route-colocation
+      effects: [publishValue]
+    template: |-
       {%%
-        var gf = shared.Get("globalFeatures").(map[string]any)
-        if gf["coLocatedIngresses"] == nil {
-          gf["coLocatedIngresses"] = map[string]any{}
-        }
-        var coLocated = gf["coLocatedIngresses"].(map[string]any)
-        for _, ingress := range resources.ingresses.List() {
-          if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary"] == "true" {
-            coLocated[ingress.Metadata.Namespace + "/" + ingress.Metadata.Name] = true
-          }
+        var ingress = item
+        if dig_string(ingress, "", "metadata", "annotations", "nginx.ingress.kubernetes.io/canary") == "true" {
+          var identity = dig_string(ingress, "", "metadata", "namespace") + "/" +
+            dig_string(ingress, "", "metadata", "name")
+          show shared.Publish("identities", identity, true)
         }
       %%}
-
-  features-100-nginx-ingress-ssl-passthrough:
-    template: |
-      {#
-        Nginx Ingress SSL Passthrough Registration
-
-        Annotation: nginx.ingress.kubernetes.io/ssl-passthrough: "true"
-
-        Registers SSL passthrough backends with global feature registry.
-        The ssl.yaml library consumes these to generate:
-          - TCP frontend for SNI-based routing
-          - SSL passthrough backends
-
-        Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#ssl-passthrough
-      #}
-      {{ render "util-nginx-ingress-ssl-passthrough" }}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
-      {%- if sslBackends != nil %}
-        {%- var niVal, _ = shared.ComputeIfAbsent("ni_sslPassthrough", func() any { return nil }) %}
-        {%- if niVal != nil %}
-          {%- var niBackends = niVal.(map[string]any)["backends"].([]any) %}
-          {%- for _, backend := range niBackends %}
-            {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
 
   features-105-nginx-ingress-ssl-redirect:
-    template: |
-      {#
-        Nginx Ingress ssl-redirect / force-ssl-redirect — host registration into the
-        shared map. Code = extraContext.nginxHttpRedirectCode (default 308, the nginx
-        http-redirect-code equivalent). Registers redirected hosts into
-        gf["sslRedirectHosts"] in the features phase (before features-160-ssl-redirect-map);
-        ssl.yaml builds ssl-redirect-<code>.map and emits the shared redirect rule.
-        Replaces the per-ingress inline-ACL redirect, so adding/removing a redirected
-        host is a map-only, reload-free update.
-      #}
+    requires: [ingresses]
+    template: |-
+      {{- render "nginx-ingress-ssl-redirect-publications" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
-      {%- var redirectCode = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() %}
-      {%- if redirectCode != "301" && redirectCode != "302" && redirectCode != "303" && redirectCode != "307" && redirectCode != "308" %}
-        {{- fail("Invalid extraContext.nginxHttpRedirectCode '" + redirectCode + "': must be one of 301, 302, 303, 307, 308 (the nginx http-redirect-code values).") -}}
-      {%- end %}
-      {#- Iterates unconditionally (no cross-render first_seen): features-* renders
-          once, so each ingress is visited once anyway, and features-160-ssl-redirect-map
-          dedups hosts locally. Routing registration through first_seen would re-expose
-          the cross-render cache leak that features-160 was rewritten to avoid (a leaked
-          key would skip registration, silently dropping the redirect for that render). -#}
-      {%- for _, ingress := range resources.ingresses.List() %}
-          {%- var sslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"] %}
-          {%- var forceSslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/force-ssl-redirect"] %}
-          {%- if forceSslRedirect == "true" || sslRedirect == "true" %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}
-                {%- var redirectHosts []any = gf["sslRedirectHosts"] -%}
-                {%- gf["sslRedirectHosts"] = append(redirectHosts, map[string]any{"host": toLower(rule.Host), "code": redirectCode}) -%}
-              {%- end %}
-            {%- end %}
-          {%- end %}
+      {%- for _, entry := range incremental_values("nginx-ingress-ssl-redirect-hosts", "hosts") -%}
+        {%- var redirectHosts []any = gf["sslRedirectHosts"] -%}
+        {%- gf["sslRedirectHosts"] = append(redirectHosts, entry) -%}
+      {%- end -%}
+
+  nginx-ingress-ssl-redirect-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var code = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() -%}
+        {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" -%}
+          {{- fail("Invalid extraContext.nginxHttpRedirectCode '" + code + "': must be one of 301, 302, 303, 307, 308 (the nginx http-redirect-code values).") -}}
+        {%- end -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{"code": code}}) -}}
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/ssl-redirect']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/force-ssl-redirect']"
+      group: nginx-ingress-ssl-redirect-hosts
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && (ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"] == "true" ||
+          ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/force-ssl-redirect"] == "true") -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- for ruleIndex, rule := range ingress.Spec.Rules -%}
+          {%- if rule.Host != "" -%}
+            {{- shared.Publish("hosts", key + "/" + tostring(ruleIndex), map[string]any{
+              "host": toLower(rule.Host), "code": tostring(props["code"]),
+            }) -}}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   features-110-nginx-ingress-mtls:
-    template: |
+    requires: [ingresses]
+    template: |-
+      {%- for _, warning := range incremental_values("mtls-host-policies", "warnings-nginx-ingress") -%}
+        {{- tostring(warning) -}}
+      {%- end -%}
+      {{- render "mtls-host-policies-300-nginx-ingress" -}}
+
+  mtls-host-policies-300-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-tls-secret']"]
+      group: mtls-host-policies
+      effects: [publishValue]
+    template: |-
       {#
         Nginx Ingress Client-Cert Verification Registration
 
@@ -162,17 +113,16 @@ templateSnippets:
                                certs should set verify=optional and inspect
                                ssl_c_used in their auth-tls-error-page logic)
       #}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var secretRef = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] %}
         {%- if secretRef != "" %}
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
           {%- var verifyClient = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-verify-client"] | toLower() %}
           {%- if verifyClient == "" %}{%- verifyClient = "on" %}{%- end %}
-          {%- if verifyClient == "off" %}
-            {%- continue %}
-          {%- end %}
+          {%- if verifyClient != "off" %}
           {%- var verifyMode = "" %}
           {%- if verifyClient == "on" %}
             {%- verifyMode = "required" %}
@@ -190,120 +140,188 @@ templateSnippets:
             {%- secretName = parts[1] %}
           {%- end %}
           {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
-          {%- if secret == nil %}
-            {# See the matching block in haproxy-ingress.yaml for why we
+          {%- if secret == nil -%}
+            {#- See the matching block in haproxy-ingress.yaml for why we
                 skip-and-continue rather than fail() here: a missing
                 referenced Secret on one Ingress should not cascade to
-                webhook-rejection of every other Ingress in the cluster. #}
-            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
-            {%- continue %}
-          {%- end %}
-          {%- var caBundleB64 = secret.Data["ca.crt"] %}
-          {%- if caBundleB64 == "" %}
-            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret referenced on Ingress {{ ns }}/{{ name }} is missing data.ca.crt; skipping mTLS for this ingress.
-            {%- continue %}
-          {%- end %}
-          {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
+                webhook-rejection of every other Ingress in the cluster. -#}
+            {{- shared.Publish("warnings-nginx-ingress", "nginx-ingress/" + ns + "/" + name + "/0",
+              "\n            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret referenced on Ingress " + ns + "/" + name + " not found at render time; skipping mTLS for this ingress.") -}}
+          {%- else -%}
+            {%- var caBundleB64 = secret.Data["ca.crt"] %}
+            {%- if caBundleB64 == "" -%}
+            {{- shared.Publish("warnings-nginx-ingress", "nginx-ingress/" + ns + "/" + name + "/0",
+              "\n            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret referenced on Ingress " + ns + "/" + name + " is missing data.ca.crt; skipping mTLS for this ingress.") -}}
+            {%- else -%}
+            {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
           {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/).
               HAProxy's runtime cert API takes ssl/ entries as
               cert+key bundles ("file should contain both certificate and
               private key" / 500), but a CA bundle has no private key. -#}
           {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}
-          {%- var _, regErr = fileRegistry.Register("file", caFilename, caBundle) -%}
-          {%- if regErr != nil -%}
-            {{- fail("failed to register client CA " + caFilename + ": " + tostring(regErr)) -}}
-          {%- end -%}
-          {%- var caPath, _ = pathResolver.GetPath(caFilename, "file") %}
+          {{- shared.Publish("files", "nginx-ingress/" + ns + "/" + name + "/0",
+            map[string]any{"filename": caFilename, "content": caBundle}) -}}
 
-          {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for ruleIndex, rule := range ingress.Spec.Rules %}
             {%- var host = rule.Host %}
             {%- if host == "" %}
               {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
             {%- end %}
-            {%- gf["clientCertVerifyHosts"].(map[string]any)[host] = map[string]any{
-              "ca_path": caPath,
-              "verify_mode": verifyMode,
-            } %}
+            {{- shared.Publish("verifyHosts", "nginx-ingress/" + ns + "/" + name + "/" + tostring(ruleIndex), map[string]any{
+              "host": host, "filename": caFilename, "verifyMode": verifyMode,
+            }) -}}
+          {%- end %}
+            {%- end %}
+          {%- end %}
           {%- end %}
         {%- end %}
       {%- end %}
 
   features-140-nginx-ingress-redirects:
-    template: |
-      {#
-        nginx permanent-redirect / temporal-redirect — host registration into the
-        shared host-keyed redirect map. base.yaml's frontend-filters-060-redirect-location
-        emits the rule from redirect-loc-<code>.map, so adding/changing a host redirect
-        is a map-only, reload-free update (replaces the per-ingress inline-ACL redirect).
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/permanent-redirect[-code]  (default 301)
-          - nginx.ingress.kubernetes.io/temporal-redirect[-code]   (default 302)
-      #}
-      {# Registration iterates ingresses unconditionally (no cross-render first_seen):
-          features-* renders once, so each ingress is visited once anyway, and
-          features-170-redirect-location-map dedups hosts locally. This keeps the
-          map registration and the rule emitter in lockstep under churn, matching
-          the features-160-ssl-redirect-map rationale. #}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+    requires: [ingresses]
+    template: |-
+      {{- render "nginx-ingress-redirect-publications" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-          {%- var permUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect"] %}
-          {%- if permUrl != "" %}
-            {%- if regex_search(permUrl, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'nginx.ingress.kubernetes.io/permanent-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
-            {%- var pc = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect-code"] %}
-            {%- if pc == "" %}{%- pc = "301" %}{%- end %}
-            {%- if pc != "301" && pc != "302" && pc != "303" && pc != "307" && pc != "308" %}{{- WebhookRejectOrWarn(ingress, "InvalidRedirect", "Annotation 'nginx.ingress.kubernetes.io/permanent-redirect-code' on Ingress '" + key + "' must be one of 301, 302, 303, 307, 308; the redirect is not applied.") -}}{%- continue %}{%- end %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}
-                {%- var rh []any = coalesce(gf["redirectHosts"], []any{}) -%}
-                {%- gf["redirectHosts"] = append(rh, map[string]any{"host": toLower(rule.Host), "location": permUrl, "code": pc}) -%}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-          {%- var tempUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect"] %}
-          {%- if tempUrl != "" %}
-            {%- if regex_search(tempUrl, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'nginx.ingress.kubernetes.io/temporal-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
-            {%- var tc = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect-code"] %}
-            {%- if tc == "" %}{%- tc = "302" %}{%- end %}
-            {%- if tc != "301" && tc != "302" && tc != "303" && tc != "307" && tc != "308" %}{{- WebhookRejectOrWarn(ingress, "InvalidRedirect", "Annotation 'nginx.ingress.kubernetes.io/temporal-redirect-code' on Ingress '" + key + "' must be one of 301, 302, 303, 307, 308; the redirect is not applied.") -}}{%- continue %}{%- end %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}
-                {%- var rh []any = coalesce(gf["redirectHosts"], []any{}) -%}
-                {%- gf["redirectHosts"] = append(rh, map[string]any{"host": toLower(rule.Host), "location": tempUrl, "code": tc}) -%}
-              {%- end %}
-            {%- end %}
-          {%- end %}
+      {%- for _, entry := range incremental_values("nginx-ingress-redirect-hosts", "hosts") -%}
+        {%- var redirects []any = coalesce(gf["redirectHosts"], []any{}) -%}
+        {%- gf["redirectHosts"] = append(redirects, entry) -%}
+      {%- end -%}
+
+  nginx-ingress-redirect-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/permanent-redirect']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/temporal-redirect']"
+      group: nginx-ingress-redirect-hosts
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var valid = true -%}
+        {%- var permUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect"] -%}
+        {%- if permUrl != "" -%}
+          {%- if regex_search(permUrl, "[[:cntrl:]]") -%}
+            {%- var message = "Invalid value for annotation 'nginx.ingress.kubernetes.io/permanent-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard." -%}
+            {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
+              {{- fail(message) -}}
+            {%- else -%}
+              {{- recordEvent(ingress, "InvalidAnnotation", message) -}}
+            {%- end -%}
+            {%- valid = false -%}
+          {%- else -%}
+            {%- var code = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect-code"] -%}
+            {%- if code == "" -%}{%- code = "301" -%}{%- end -%}
+            {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" -%}
+              {%- var message = "Annotation 'nginx.ingress.kubernetes.io/permanent-redirect-code' on Ingress '" + key + "' must be one of 301, 302, 303, 307, 308; the redirect is not applied." -%}
+              {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
+                {{- fail(message) -}}
+              {%- else -%}
+                {{- recordEvent(ingress, "InvalidRedirect", message) -}}
+              {%- end -%}
+              {%- valid = false -%}
+            {%- else -%}
+              {%- for ruleIndex, rule := range ingress.Spec.Rules -%}
+                {%- if rule.Host != "" -%}
+                  {{- shared.Publish("hosts", key + "/permanent/" + tostring(ruleIndex), map[string]any{
+                    "host": toLower(rule.Host), "location": permUrl, "code": code,
+                  }) -}}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+        {%- var tempUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect"] -%}
+        {%- if valid && tempUrl != "" -%}
+          {%- if regex_search(tempUrl, "[[:cntrl:]]") -%}
+            {%- var message = "Invalid value for annotation 'nginx.ingress.kubernetes.io/temporal-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard." -%}
+            {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
+              {{- fail(message) -}}
+            {%- else -%}
+              {{- recordEvent(ingress, "InvalidAnnotation", message) -}}
+            {%- end -%}
+          {%- else -%}
+            {%- var code = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect-code"] -%}
+            {%- if code == "" -%}{%- code = "302" -%}{%- end -%}
+            {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" -%}
+              {%- var message = "Annotation 'nginx.ingress.kubernetes.io/temporal-redirect-code' on Ingress '" + key + "' must be one of 301, 302, 303, 307, 308; the redirect is not applied." -%}
+              {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
+                {{- fail(message) -}}
+              {%- else -%}
+                {{- recordEvent(ingress, "InvalidRedirect", message) -}}
+              {%- end -%}
+            {%- else -%}
+              {%- for ruleIndex, rule := range ingress.Spec.Rules -%}
+                {%- if rule.Host != "" -%}
+                  {{- shared.Publish("hosts", key + "/temporal/" + tostring(ruleIndex), map[string]any{
+                    "host": toLower(rule.Host), "location": tempUrl, "code": code,
+                  }) -}}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   features-145-nginx-ingress-app-root:
-    template: |
-      {#
-        nginx app-root — registers host→path into the shared gf["appRootHosts"].
-        base.yaml features-175-app-root-map builds app-root.map and
-        frontend-filters-065-app-root emits the gated rule, so changing an app-root
-        is a map-only, reload-free update (replaces the inline-ACL app-root redirect).
-        Annotation: nginx.ingress.kubernetes.io/app-root
-      #}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+    requires: [ingresses]
+    template: |-
+      {{- render "nginx-ingress-app-root-publications" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var appRoot = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/app-root"] %}
-        {%- if appRoot != "" %}
-          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-          {%- if regex_search(appRoot, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'nginx.ingress.kubernetes.io/app-root' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
-          {%- for _, rule := range ingress.Spec.Rules %}
-            {%- if rule.Host != "" %}
-              {%- var ar []any = coalesce(gf["appRootHosts"], []any{}) -%}
-              {%- gf["appRootHosts"] = append(ar, map[string]any{"host": toLower(rule.Host), "path": appRoot}) -%}
-            {%- end %}
-          {%- end %}
-        {%- end %}
+      {%- for _, entry := range incremental_values("nginx-ingress-app-root-hosts", "hosts") -%}
+        {%- var roots []any = coalesce(gf["appRootHosts"], []any{}) -%}
+        {%- gf["appRootHosts"] = append(roots, entry) -%}
+      {%- end -%}
+
+  nginx-ingress-app-root-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/app-root']"]
+      group: nginx-ingress-app-root-hosts
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var appRoot = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/app-root"] -%}
+        {%- if appRoot != "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- if regex_search(appRoot, "[[:cntrl:]]") -%}
+            {%- var message = "Invalid value for annotation 'nginx.ingress.kubernetes.io/app-root' on Ingress '" + key + "': must not contain control characters — config-injection guard." -%}
+            {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
+              {{- fail(message) -}}
+            {%- else -%}
+              {{- recordEvent(ingress, "InvalidAnnotation", message) -}}
+            {%- end -%}
+          {%- else -%}
+            {%- for ruleIndex, rule := range ingress.Spec.Rules -%}
+              {%- if rule.Host != "" -%}
+                {{- shared.Publish("hosts", key + "/" + tostring(ruleIndex), map[string]any{
+                  "host": toLower(rule.Host), "path": appRoot,
+                }) -}}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   features-150-nginx-ingress-mtls-error:
-    template: |
+    requires: [ingresses]
+    template: |-
+      {{- render "mtls-host-policies-600-nginx-ingress-error" -}}
+
+  mtls-host-policies-600-nginx-ingress-error:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-tls-error-page']"]
+      group: mtls-host-policies
+      effects: [publishValue]
+    template: |-
       {#
         nginx auth-tls-error-page — registers host→error-page URL into the shared
         gf["mtlsErrorHosts"]. base.yaml features-185-mtls-error-map builds
@@ -312,22 +330,33 @@ templateSnippets:
         reload-free. The cert-passthrough set-headers stay in the vendor
         frontend-filters-790 snippet. Annotation: auth-tls-error-page
       #}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var errorPage = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-error-page"] %}
         {%- if errorPage != "" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
           {%- if regex_search(errorPage, "[[:cntrl:]]") %}{{ fail("Invalid URL in annotation 'nginx.ingress.kubernetes.io/auth-tls-error-page' on Ingress '" + key + "': must not contain control characters (newlines/tabs) — config-injection guard.") }}{%- end %}
-          {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for ruleIndex, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}
-              {%- var me []any = coalesce(gf["mtlsErrorHosts"], []any{}) -%}
-              {%- gf["mtlsErrorHosts"] = append(me, map[string]any{"host": toLower(rule.Host), "location": errorPage}) -%}
+              {{- shared.Publish("errorHosts", "nginx-ingress/" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + "/" + tostring(ruleIndex),
+                map[string]any{"host": toLower(rule.Host), "location": errorPage}) -}}
             {%- end %}
           {%- end %}
         {%- end %}
       {%- end -%}
 
   features-155-nginx-ingress-hsts:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/hsts']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/hsts-max-age']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/hsts-include-subdomains']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/hsts-preload']"
+      group: hsts-hosts
+      effects: [publishValue]
     template: |
       {#
         nginx HSTS — registers host→Strict-Transport-Security value into the shared
@@ -337,7 +366,9 @@ templateSnippets:
         hsts-include-subdomains / hsts-preload.
       #}
       {%- import "util-register-annotation-hsts" for RegisterAnnotationHSTS -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {{ RegisterAnnotationHSTS(ingress,
             "nginx.ingress.kubernetes.io/hsts",
             "nginx.ingress.kubernetes.io/hsts-max-age",
@@ -347,15 +378,14 @@ templateSnippets:
       {%- end -%}
 
   backends-501-nginx-ingress-ssl-passthrough:
-    template: |
-      {#
-        Nginx Ingress SSL Passthrough Backends
-
-        Generates TCP mode backends for Ingress resources with
-        nginx.ingress.kubernetes.io/ssl-passthrough: "true" annotation.
-
-        Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#ssl-passthrough
-      #}
-      {%- import "util-render-annotation-ssl-passthrough-backends" for RenderAnnotationSSLPassthroughBackends -%}
-      {{ render "util-nginx-ingress-ssl-passthrough" }}
-      {{ RenderAnnotationSSLPassthroughBackends("ni_sslPassthrough", "ni_sslPassthrough_backend", "nginx-ingress") }}
+    requires: [ingresses, services, endpoints]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/ssl-passthrough']"]
+      group: ingress-ssl-passthrough
+      effects: [publishValue, backendPlan]
+    template: |-
+      {%- import "util-annotation-ssl-passthrough-component" for RenderAnnotationSSLPassthrough -%}
+      {{- RenderAnnotationSSLPassthrough(item,
+        "nginx.ingress.kubernetes.io/ssl-passthrough",
+        "ssl-passthrough-ni-", "nginx", "nginx-ingress") -}}

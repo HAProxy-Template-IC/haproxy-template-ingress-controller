@@ -57,24 +57,25 @@ canonical order:
 ```
 Merge Order (lowest to highest priority):
  1. base                    - Core HAProxy template and snippets
- 2. ssl                     - HTTPS frontend, TLS certs, SSL passthrough infra
- 3. ingress                 - Kubernetes Ingress support
- 4. gateway                 - Gateway API (only when GatewayClass CRD is present)
- 5. ingress-annotations-compat - Shared scaffold for Ingress vendor annotation libraries (level 2.5)
- 6. governance              - Declarative constraints over any watched resource
- 7. haptic-annotations      - haproxy-haptic.org/* native vocabulary
- 8. haproxytech             - haproxy.org/* annotation compatibility
- 9. haproxy-ingress         - haproxy-ingress.github.io/* annotation compatibility
-10. nginx-ingress           - nginx.ingress.kubernetes.io/* compat (disabled by default)
-11. spoa-hub                - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
-12. vector                  - Vector sidecar config (reads earlier libraries' decisions)
-13. controller.config.*     - User overrides from values.yaml (highest priority)
+ 2. kubernetes-backends     - Kubernetes Service/EndpointSlice backend capability
+ 3. ssl                     - HTTPS frontend, TLS certs, SSL passthrough infra
+ 4. ingress                 - Kubernetes Ingress support
+ 5. gateway                 - Gateway API (only when GatewayClass CRD is present)
+ 6. ingress-annotations-compat - Shared scaffold for Ingress vendor annotation libraries (level 2.5)
+ 7. governance              - Declarative constraints over any watched resource
+ 8. haptic-annotations      - haproxy-haptic.org/* native vocabulary
+ 9. haproxytech             - haproxy.org/* annotation compatibility
+10. haproxy-ingress         - haproxy-ingress.github.io/* annotation compatibility
+11. nginx-ingress           - nginx.ingress.kubernetes.io/* compat (disabled by default)
+12. spoa-hub                - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
+13. vector                  - Vector sidecar config (reads earlier libraries' decisions)
+14. controller.config.*     - User overrides from values.yaml (highest priority)
 ```
 
 Each entry is a subchart under `charts/haptic/charts/<name>/`, holding either a
 single `library.yaml` or an `_index.yaml` plus numbered fragments.
 
-Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false — a skipped library renders no object at all. The `spoa-hub` library is also auto-loaded whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `ingress-annotations-compat.yaml` (level 2.5) provides Ingress-scoped macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
+Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false — a skipped library renders no object at all. The `spoa-hub` library is also auto-loaded whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 6-10 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `ingress-annotations-compat.yaml` (level 2.5) provides Ingress-scoped macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
 
 Annotation libraries keep playground-only classification data under `_migrationCoverage`. The playground build extracts one asset per source directly from those declarations; the generic underscore-key strip ensures they never enter a config or library CR.
 
@@ -249,18 +250,20 @@ Level 0: base.yaml
          │
          ├── Knows: nothing (completely resource-agnostic)
          │
-Level 1: ssl.yaml
+Level 1: kubernetes-backends.yaml, ssl.yaml
          │
          ├── Know: base
+         ├── kubernetes-backends owns the Service/EndpointSlice watch aliases
+         │   and translates them into base's generic Backend records
          │
 Level 2: ingress.yaml, gateway/
          │
-         ├── Know: base, ssl
+         ├── Know: base, kubernetes-backends, ssl
          ├── Don't know: each other
          │
 Level 2.5: ingress-annotations-compat.yaml
          │
-         ├── Knows: base (via shared utilities like HostMatchCondition)
+         ├── Knows: base, kubernetes-backends, ingress
          ├── Provides: parameterized macros for patterns shared across the
          │             three Ingress vendor annotation libraries below
          │             (currently SSL passthrough scan + CIDR allow/deny
@@ -351,9 +354,10 @@ The Go-side guarantee (engine ignores all resource specifics; schemas come from 
 - `ingress.metadata.*`, `ingress.spec.*`
 - `httproute.metadata.*`, `httproute.spec.*`
 - `grpcroute.metadata.*`, `grpcroute.spec.*`
+- `resources.services`, `resources.endpoints`, or any other watched-resource alias
 - Any other resource-specific fields or annotations
 
-The bundled resource-specific libraries (`ingress.yaml`, `gateway/`, `haproxytech.yaml`, `haproxy-ingress/`, `nginx-ingress/`) are illustrative implementations of the pattern; an operator using a different CRD writes their own library file alongside, and `base.yaml` consumes its output through the same shared-context seam without modification.
+The bundled resource-specific libraries (`kubernetes-backends.yaml`, `ingress.yaml`, `gateway/`, `haproxytech.yaml`, `haproxy-ingress/`, `nginx-ingress/`) are illustrative implementations of the pattern; an operator using a different CRD writes their own library file alongside, and `base.yaml` consumes its output through the same shared-context seam without modification.
 
 Resource-specific libraries (ingress.yaml, gateway/, haproxytech.yaml) are responsible for:
 
@@ -415,6 +419,7 @@ In addition to the snippet-based extension points below, libraries may declare f
 | `defaults-settings-*` | Defaults section directives (options, balance, timeouts, errorfiles) | base |
 | `features-*` | Feature registration (SSL, TLS certs) | gateway, haproxytech, ingress, ssl |
 | `backends-*` | Backend definitions | gateway, ingress, ssl |
+| `default-backend-*` | Optional `default_backend` declaration; base emits its gRPC/404 fallback when every contribution is empty | kubernetes-backends, user libraries |
 | `frontends-*` | Additional frontends (HTTPS, TCP) | ssl |
 | `http-bind-extra-*` | Additional HTTP-frontend `bind *:<port>` directives (Gateway HTTP listener ports, the PROXY-protocol port) | base, gateway |
 | `https-bind-extra-*` | Additional HTTPS-frontend `bind *:<port> ssl crt-list ...` directives (Gateway HTTPS listener ports, the PROXY-protocol port) | gateway, ssl |
@@ -1767,8 +1772,9 @@ Scriggo supports both function call syntax and pipe syntax:
 | `ceil(n)` | Ceiling of a float | `ceil(1.2)` → `2` |
 | `to_str_map(v)` | Normalise any string-keyed map (`map[string]string` from typegen, `map[string]any` from the untyped store path) into `map[string]string` — use on labels / matchLabels / annotations | `route.Metadata.Labels \| to_str_map()` |
 | `shard_slice(items, idx, n)` | Type-preserving slice shard for parallel rendering (AdaptiveFunc; return element type matches input) | `shard_slice([]*resources.gateways.T, i, n)` |
-| `resource(name)` | Per-render items of a watched resource named **dynamically** (`[]any` of boxed `*T`), sharing the same memoized objects as `resources.<name>.List()` so a `jsonpathSet` write is observed downstream. Governance layer only | `resource("ingresses")` |
+| `resource(name)` | Per-render items of a watched resource named **dynamically** (`[]any` of boxed `*T`). Governance layer only | `resource("ingresses")` |
 | `jsonpathGet(item, path)` | Read a **concrete** JSONPath out of any watched-resource item (dotted keys, `['bracket']` keys, `[n]` indices). Returns nil if absent | `jsonpathGet(ing, "metadata.annotations['x']")` |
+| `deriveResource(name, item, path, value)` | Publish an immutable transformed value to subsequent resource accessors; returns the transformed item for chained writes | `ing = deriveResource("ingresses", ing, "metadata.annotations['x']", "100")` |
 | `jsonpathSet(item, path, value)` | Write a concrete JSONPath into a resource item **in place** (annotations via a reflect fast path, other fields via a JSON round-trip); returns bool. Filtered/wildcard paths are rejected (validate-only) | `jsonpathSet(ing, "metadata.annotations['x']", "100")` |
 | `map(slice, fn)` | Apply a function to every element; length preserved, result type from the closure | `eps \| map(e => e.TargetRef.Name)` |
 | `filter(slice, pred)` / `reject(slice, pred)` | Keep / drop elements a closure accepts. Type-preserving | `eps \| reject(e => e.Ready)` |

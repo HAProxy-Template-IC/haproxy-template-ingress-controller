@@ -75,7 +75,7 @@ type Options struct {
 	Logger *slog.Logger
 
 	// Workers is the number of parallel workers for test execution.
-	// Default (0): runtime.NumCPU().
+	// Default (0): runtime.GOMAXPROCS(0), which follows the pod's CPU limit.
 	// Set to 1 for sequential execution.
 	Workers int
 

@@ -14,7 +14,10 @@
 
 package templating
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // Engine is the contract every template engine implementation satisfies.
 // The methods are grouped visually by concern — rendering, introspection,
@@ -45,6 +48,8 @@ type Engine interface {
 	// text that did not come from that render pass, so a caller assembling
 	// output from several pieces can normalise each piece the same way.
 	PostProcess(ctx context.Context, templateName string, text string) (string, error)
+
+	BeginPostProcessTransaction(context.Context) (context.Context, PostProcessTransaction)
 
 	// --- Template introspection ---
 
@@ -96,4 +101,36 @@ type Engine interface {
 	// Call after rendering completes to reduce memory from parallel rendering spikes.
 	// No-op for engines that don't use VM pooling.
 	ClearVMPool()
+}
+
+// GlobalUsageIntrospector reports usage across every compiled entry point.
+// A negative result is actionable only when known is true.
+type GlobalUsageIntrospector interface {
+	GlobalUsage(name string) (used, known bool)
+}
+
+// PostProcessBatcher returns one post-processed output per input in the same order.
+type PostProcessBatcher interface {
+	PostProcessBatch(ctx context.Context, templateName string, inputs []string) ([]string, error)
+}
+
+// PostProcessReuseProver returns an exact proof only for deterministic chains.
+type PostProcessReuseProver interface {
+	PostProcessReuseProof(templateName string) (*PostProcessReuseProof, error)
+}
+
+// RawTextRenderer streams template output before newline normalization and post-processing.
+type RawTextRenderer interface {
+	RenderRawTo(context.Context, string, map[string]any, io.Writer) ([]IncludeStats, error)
+	RawTextRenderInstrumented() bool
+}
+
+type PostProcessTransaction interface {
+	Stage(context.Context) (PostProcessPublication, error)
+	Abort()
+}
+
+type PostProcessPublication interface {
+	Publish()
+	Abort()
 }

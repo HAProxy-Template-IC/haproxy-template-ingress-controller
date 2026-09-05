@@ -523,7 +523,7 @@ _migrationCoverage:
         note: "http-request set-src hdr(<name>), host-scoped; header name ValidateConfigValue-guarded"
       haproxy-haptic.org/ssl-passthrough:
         status: supported
-        note: "Via BuildAnnotationSSLPassthrough (cache key haptic_sslPassthrough, namePrefix ssl-passthrough-haptic-) + gf[\"sslPassthroughBackends\"] copy + RenderAnnotationSSLPassthroughBackends; ssl.yaml builds the SNI TCP frontend."
+        note: "Incremental per-Ingress SNI publication with winner-conditioned backends; ssl.yaml builds the SNI TCP frontend."
       haproxy-haptic.org/https-redirect:
         status: supported
         note: "Redirects plain HTTP requests for the host to HTTPS. Hosts that also set `https-redirect-port` are handled there instead, avoiding a double redirect."

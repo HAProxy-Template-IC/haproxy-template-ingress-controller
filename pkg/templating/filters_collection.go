@@ -141,13 +141,7 @@ func extractStringName(item any) string {
 func scriggoSortStrings(items []any) []string {
 	result := make([]string, 0, len(items))
 	for _, item := range items {
-		switch v := item.(type) {
-		case string:
-			result = append(result, v)
-		default:
-			// Convert non-string to string
-			result = append(result, fmt.Sprint(v))
-		}
+		result = append(result, mustDeterministicScalarText("sort_strings", item))
 	}
 	slices.Sort(result)
 	return result

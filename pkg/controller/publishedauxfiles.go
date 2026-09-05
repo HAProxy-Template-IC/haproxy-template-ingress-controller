@@ -41,18 +41,18 @@ const (
 
 // publishedAuxCRD describes one child kind committed by HAProxyCfg status.
 type publishedAuxCRD struct {
-	gvr            schema.GroupVersionResource
-	kind           string
-	referenceField string
-	contentField   string
+	gvr             schema.GroupVersionResource
+	kind            string
+	referenceFields []string
+	contentField    string
 }
 
 func publishedAuxCRDList() []publishedAuxCRD {
 	return []publishedAuxCRD{
-		{haproxyMapFileGVR, "HAProxyMapFile", "mapFiles", "entries"},
-		{secretGVR, secretKind, "sslCertificates", ""},
-		{haproxyGeneralFileGVR, "HAProxyGeneralFile", "generalFiles", "content"},
-		{haproxyCRTListFileGVR, "HAProxyCRTListFile", "crtListFiles", "entries"},
+		{haproxyMapFileGVR, "HAProxyMapFile", []string{"mapFiles"}, "entries"},
+		{secretGVR, secretKind, []string{"sslCertificates", "sslCaFiles"}, ""},
+		{haproxyGeneralFileGVR, "HAProxyGeneralFile", []string{"generalFiles"}, "content"},
+		{haproxyCRTListFileGVR, "HAProxyCRTListFile", []string{"crtListFiles"}, "entries"},
 	}
 }
 
@@ -62,6 +62,7 @@ type publishedAuxFile struct {
 	setID           string
 	checksum        string
 	resourceVersion string
+	caFile          bool
 }
 
 type publishedAuxRef struct {
@@ -87,6 +88,7 @@ type publishedAuxFiles struct {
 	commit         *publishedAuxCommit
 	byGVR          map[string]map[string]publishedAuxFile
 	current        map[string]string
+	currentRoot    *currentAuxFilesMapRoot
 	ready          bool
 	legacy         bool
 	leader         bool
@@ -96,10 +98,16 @@ type publishedAuxFiles struct {
 }
 
 func newPublishedAuxFiles(namespace string) *publishedAuxFiles {
+	empty := map[string]string{}
+	root, err := newCurrentAuxFilesMapRoot(empty)
+	if err != nil {
+		panic(err)
+	}
 	return &publishedAuxFiles{
-		namespace: namespace,
-		byGVR:     map[string]map[string]publishedAuxFile{},
-		current:   map[string]string{},
+		namespace:   namespace,
+		byGVR:       map[string]map[string]publishedAuxFile{},
+		current:     root.files,
+		currentRoot: root,
 	}
 }
 
@@ -109,7 +117,10 @@ func (p *publishedAuxFiles) get() (map[string]string, error) {
 	if p.unavailable != nil {
 		return nil, p.unavailable
 	}
-	return maps.Clone(p.current), nil
+	if p.currentRoot == nil || p.currentRoot.files == nil {
+		return nil, errors.New("published auxiliary root is unavailable")
+	}
+	return maps.Clone(p.currentRoot.files), nil
 }
 
 func (p *publishedAuxFiles) availabilityError() error {
@@ -191,11 +202,18 @@ func (p *publishedAuxFiles) legacyReferencesChanged(gvr string, files map[string
 		return false
 	}
 	previous := p.byGVR[gvr]
-	for _, ref := range p.commit.refs[gvr] {
-		before, beforeExists := previous[ref.name]
-		after, afterExists := files[ref.name]
-		if beforeExists != afterExists || before != after {
-			return true
+	for _, kind := range publishedAuxCRDList() {
+		if kind.gvr.String() != gvr {
+			continue
+		}
+		for _, referenceField := range kind.referenceFields {
+			for _, ref := range p.commit.refs[referenceField] {
+				before, beforeExists := previous[ref.name]
+				after, afterExists := files[ref.name]
+				if beforeExists != afterExists || before != after {
+					return true
+				}
+			}
 		}
 	}
 	return false
@@ -209,9 +227,10 @@ func publishedAuxCommitsEqual(a, b *publishedAuxCommit) bool {
 		return false
 	}
 	for _, kind := range publishedAuxCRDList() {
-		gvr := kind.gvr.String()
-		if !slices.Equal(a.refs[gvr], b.refs[gvr]) {
-			return false
+		for _, referenceField := range kind.referenceFields {
+			if !slices.Equal(a.refs[referenceField], b.refs[referenceField]) {
+				return false
+			}
 		}
 	}
 	return true
@@ -222,7 +241,7 @@ func (p *publishedAuxFiles) advanceLocked() {
 		if p.unavailable != nil {
 			return
 		}
-		p.current = map[string]string{}
+		p.setCurrentLocked(map[string]string{})
 		p.ready = true
 		p.legacy = false
 		p.lastErr = nil
@@ -237,7 +256,7 @@ func (p *publishedAuxFiles) advanceLocked() {
 		p.lastErr = err
 		return
 	}
-	p.current = next
+	p.setCurrentLocked(next)
 	p.ready = true
 	p.legacy = p.commit.setID == ""
 	p.lastErr = nil
@@ -247,26 +266,63 @@ func (p *publishedAuxFiles) advanceLocked() {
 	}
 }
 
+func (p *publishedAuxFiles) setCurrentLocked(next map[string]string) {
+	root, err := retainCurrentAuxFilesMapRoot(p.currentRoot, next)
+	if err != nil {
+		p.lastErr = err
+		return
+	}
+	p.current = root.files
+	p.currentRoot = root
+}
+
 func (p *publishedAuxFiles) resolveCommitLocked() (map[string]string, error) {
+	if ref, aliased := p.aliasedSecretReference(); aliased {
+		return nil, fmt.Errorf("certificate and CA references alias Secret %s/%s", ref.namespace, ref.name)
+	}
 	next := map[string]string{}
 	var legacySetID *string
 	kinds := publishedAuxCRDList()
 	for i := range kinds {
 		kind := &kinds[i]
-		for _, ref := range p.commit.refs[kind.gvr.String()] {
-			file, err := p.resolvePublishedFile(kind, ref)
-			if err != nil {
-				return nil, err
-			}
-			if err := validatePublishedSetID(p.commit.setID, &legacySetID, file.setID); err != nil {
-				return nil, fmt.Errorf("committed %s %s/%s: %w", kind.kind, p.namespace, ref.name, err)
-			}
-			if kind.contentField != "" {
-				next[path.Base(file.path)] = file.content
+		for _, referenceField := range kind.referenceFields {
+			for _, ref := range p.commit.refs[referenceField] {
+				file, err := p.resolvePublishedFile(kind, ref)
+				if err != nil {
+					return nil, err
+				}
+				if err := validatePublishedSetID(p.commit.setID, &legacySetID, file.setID); err != nil {
+					return nil, fmt.Errorf("committed %s %s/%s: %w", kind.kind, p.namespace, ref.name, err)
+				}
+				if kind.contentField != "" && !file.caFile {
+					next[path.Base(file.path)] = file.content
+				}
 			}
 		}
 	}
 	return next, nil
+}
+
+func (p *publishedAuxFiles) aliasedSecretReference() (publishedAuxRef, bool) {
+	if len(p.commit.refs["sslCertificates"]) == 0 || len(p.commit.refs["sslCaFiles"]) == 0 {
+		return publishedAuxRef{}, false
+	}
+	certificates := make(map[publishedAuxRef]struct{}, len(p.commit.refs["sslCertificates"]))
+	for _, ref := range p.commit.refs["sslCertificates"] {
+		if ref.namespace == "" {
+			ref.namespace = p.namespace
+		}
+		certificates[ref] = struct{}{}
+	}
+	for _, ref := range p.commit.refs["sslCaFiles"] {
+		if ref.namespace == "" {
+			ref.namespace = p.namespace
+		}
+		if _, exists := certificates[ref]; exists {
+			return ref, true
+		}
+	}
+	return publishedAuxRef{}, false
 }
 
 func (p *publishedAuxFiles) resolvePublishedFile(kind *publishedAuxCRD, ref publishedAuxRef) (publishedAuxFile, error) {
@@ -490,7 +546,11 @@ func publishedAuxFileFromObject(obj map[string]any, kind *publishedAuxCRD) (name
 			return "", publishedAuxFile{}, false, fmt.Errorf("decompressing %s: %w", filePath, err)
 		}
 	}
-	return name, publishedAuxFile{path: filePath, content: content, setID: setID}, true, nil
+	caFile, _, err := unstructured.NestedBool(obj, "spec", "caFile")
+	if err != nil {
+		return "", publishedAuxFile{}, false, fmt.Errorf("reading %s CA file flag: %w", name, err)
+	}
+	return name, publishedAuxFile{path: filePath, content: content, setID: setID, caFile: caFile}, true, nil
 }
 
 func publishedAuxCommitFromStore(s types.Store, runtimeConfigName string) (*publishedAuxCommit, bool, error) {
@@ -533,17 +593,19 @@ func publishedAuxCommitFromObject(obj map[string]any, runtimeConfigName string) 
 		return nil, fmt.Errorf("reading committed auxiliary set ID: %w", err)
 	}
 	for _, kind := range publishedAuxCRDList() {
-		refs, err := publishedAuxRefs(aux, &kind)
-		if err != nil {
-			return nil, err
+		for _, referenceField := range kind.referenceFields {
+			refs, err := publishedAuxRefs(aux, &kind, referenceField)
+			if err != nil {
+				return nil, err
+			}
+			commit.refs[referenceField] = refs
 		}
-		commit.refs[kind.gvr.String()] = refs
 	}
 	return commit, nil
 }
 
-func publishedAuxRefs(aux map[string]any, kind *publishedAuxCRD) ([]publishedAuxRef, error) {
-	rawRefs, _, err := unstructured.NestedSlice(aux, kind.referenceField)
+func publishedAuxRefs(aux map[string]any, kind *publishedAuxCRD, referenceField string) ([]publishedAuxRef, error) {
+	rawRefs, _, err := unstructured.NestedSlice(aux, referenceField)
 	if err != nil {
 		return nil, fmt.Errorf("reading committed %s references: %w", kind.kind, err)
 	}

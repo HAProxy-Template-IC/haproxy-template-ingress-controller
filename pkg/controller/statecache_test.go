@@ -25,9 +25,12 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
+	controllertestutil "gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -40,6 +43,69 @@ type testEndpoint struct {
 
 func (e *testEndpoint) String() string {
 	return e.url
+}
+
+func newStateCacheRenderedEvent(
+	tb testing.TB,
+	config string,
+	auxFiles *dataplane.AuxiliaryFiles,
+) *events.TemplateRenderedEvent {
+	tb.Helper()
+	const durationMs = 100
+	fixture := controllertestutil.NewRenderCycleFixture(tb)
+	artifacts := fixture.Artifacts(tb, auxFiles, nil)
+	plan := &renderplan.Plan{
+		SchemaVersion: renderplan.SchemaVersion,
+		Sections: []renderplan.Section{{
+			Kind: renderplan.SectionKindCore, Name: "core#0", Text: config,
+			TextKnown: true, TextDigest: renderplan.DigestString(config), Length: len(config),
+		}},
+		Files: []renderplan.File{{
+			Path: renderplan.ConfigFilePath, Kind: renderplan.FileKindConfig,
+			ReloadOnChange: true, Content: config, ContentKnown: true,
+			Digest: renderplan.DigestString(config), Size: int64(len(config)),
+		}},
+	}
+	if auxFiles != nil {
+		for index := range auxFiles.SSLCertificates {
+			file := auxFiles.SSLCertificates[index]
+			plan.Files = append(plan.Files, renderplan.File{
+				Path: file.Path, Kind: renderplan.FileKindCert,
+				Content: file.Content, ContentKnown: true,
+				Digest: renderplan.DigestString(file.Content), Size: int64(len(file.Content)),
+			})
+		}
+	}
+	plan.ComputeID()
+	cycle := fixture.SnapshotWithEffects(tb, config, plan, artifacts, nil, nil, nil, nil)
+	event, err := events.NewTemplateRenderedEventWithCycle(cycle, durationMs, "test", true)
+	require.NoError(tb, err)
+	return event
+}
+
+func mustRenderOccurrence(
+	tb testing.TB,
+	event *events.TemplateRenderedEvent,
+) *rendercycle.Occurrence {
+	tb.Helper()
+	occurrence, err := event.RenderOccurrence()
+	require.NoError(tb, err)
+	return occurrence
+}
+
+func newStateCacheGateEvent(
+	tb testing.TB,
+	rendered *events.TemplateRenderedEvent,
+	newest bool,
+	durationMs int64,
+) *events.RenderGateCompletedEvent {
+	tb.Helper()
+	const refused = false
+	event, err := events.NewRenderGateCompletedEventWithCycle(
+		mustRenderOccurrence(tb, rendered), true, refused, newest, "", false, durationMs,
+	)
+	require.NoError(tb, err)
+	return event
 }
 
 func TestNewStateCache(t *testing.T) {
@@ -199,19 +265,7 @@ func TestStateCache_HandleTemplateRendered(t *testing.T) {
 		},
 	}
 
-	bus.Publish(events.NewTemplateRenderedEvent(
-		testConfig,
-		testAuxFiles,
-		nil, // statusPatches
-		nil, // renderedResources
-		1,
-		100,
-		"",
-		"",   // contentChecksum
-		nil,  // plan
-		"",   // planID
-		true, // coalescible
-	))
+	bus.Publish(newStateCacheRenderedEvent(t, testConfig, testAuxFiles))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -293,10 +347,11 @@ func TestStateCache_HandleRenderGateCompleted(t *testing.T) {
 
 	// First set rendered config (validation stores this as validated config)
 	testConfig := "global\n  daemon\n"
-	bus.Publish(events.NewTemplateRenderedEvent(testConfig, nil, nil, nil, 0, 100, "", "", nil, "plan-1", true))
+	rendered := newStateCacheRenderedEvent(t, testConfig, nil)
+	bus.Publish(rendered)
 	time.Sleep(50 * time.Millisecond)
 
-	bus.Publish(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 150))
+	bus.Publish(newStateCacheGateEvent(t, rendered, true, 150))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -320,15 +375,13 @@ func TestStateCache_HandleRenderGateCompleted(t *testing.T) {
 func TestStateCache_RenderGateVerdictForASupersededPlan(t *testing.T) {
 	cache := NewStateCache(busevents.NewEventBus(100), nil, slog.Default())
 
-	cache.handleTemplateRendered(events.NewTemplateRenderedEvent(
-		"global\n  daemon\n", nil, nil, nil, 0, 100, "", "", nil, "plan-1", true))
-	cache.handleRenderGateCompleted(
-		events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 10))
+	first := newStateCacheRenderedEvent(t, "global\n  daemon\n", nil)
+	cache.handleTemplateRendered(first)
+	cache.handleRenderGateCompleted(newStateCacheGateEvent(t, first, true, 10))
 
-	cache.handleTemplateRendered(events.NewTemplateRenderedEvent(
-		"global\n  daemon\n  nbthread 2\n", nil, nil, nil, 0, 100, "", "", nil, "plan-2", true))
-	cache.handleRenderGateCompleted(
-		events.NewRenderGateCompletedEvent("plan-1", true, false, false, "", false, 10))
+	second := newStateCacheRenderedEvent(t, "global\n  daemon\n  nbthread 2\n", nil)
+	cache.handleTemplateRendered(second)
+	cache.handleRenderGateCompleted(newStateCacheGateEvent(t, first, false, 10))
 
 	validatedInfo, err := cache.GetValidatedConfig()
 	require.NoError(t, err)
@@ -338,7 +391,103 @@ func TestStateCache_RenderGateVerdictForASupersededPlan(t *testing.T) {
 	status, err := cache.GetPipelineStatus()
 	require.NoError(t, err)
 	require.NotNil(t, status.Validation)
-	assert.Equal(t, "plan-1", status.Validation.PlanID)
+	assert.Equal(t, first.PlanID, status.Validation.PlanID)
+}
+
+func TestStateCacheCycleIgnoresPoisonedOutputShadows(t *testing.T) {
+	cache := NewStateCache(busevents.NewEventBus(100), nil, slog.Default())
+	fixture := controllertestutil.NewRenderCycleFixture(t)
+	cycleA := fixture.Snapshot(t, "config-a", nil, nil)
+	cycleB := fixture.Snapshot(t, "config-b", nil, cycleA)
+	outputA, err := cycleA.OutputSnapshot()
+	require.NoError(t, err)
+	outputB, err := cycleB.OutputSnapshot()
+	require.NoError(t, err)
+	planA, err := outputA.PlanID()
+	require.NoError(t, err)
+	planB, err := outputB.PlanID()
+	require.NoError(t, err)
+
+	rendered, err := events.NewTemplateRenderedEventWithCycle(cycleA, 7, "test", false)
+	require.NoError(t, err)
+	rendered.OutputSnapshot = outputB
+	rendered.HAProxyConfig = "poisoned"
+	rendered.PlanID = planB
+	rendered.ContentChecksum = "poisoned"
+	cache.handleTemplateRendered(rendered)
+
+	config, _, err := cache.GetRenderedConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "config-a", config)
+	assert.Same(t, cycleA, cache.lastCycleSnapshot)
+	assert.Same(t, outputA, cache.lastOutputSnapshot)
+
+	gate, err := events.NewRenderGateCompletedEventWithCycle(
+		mustRenderOccurrence(t, rendered), true, false, true, "", false, 11,
+	)
+	require.NoError(t, err)
+	gate.OutputSnapshot = outputB
+	gate.PlanID = planB
+	cache.handleRenderGateCompleted(gate)
+
+	validated, err := cache.GetValidatedConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "config-a", validated.Config)
+	status, err := cache.GetPipelineStatus()
+	require.NoError(t, err)
+	require.NotNil(t, status.Validation)
+	assert.Equal(t, planA, status.Validation.PlanID)
+}
+
+func TestStateCacheCycleDistinguishesABA(t *testing.T) {
+	cache := NewStateCache(busevents.NewEventBus(100), nil, slog.Default())
+	fixture := controllertestutil.NewRenderCycleFixture(t)
+	cycleA1 := fixture.Snapshot(t, "config-a", nil, nil)
+	cycleB := fixture.Snapshot(t, "config-b", nil, cycleA1)
+	cycleA2 := fixture.Snapshot(t, "config-a", nil, cycleB)
+	same, err := cycleA1.SameRoot(cycleA2)
+	require.NoError(t, err)
+	assert.False(t, same)
+
+	renderAndValidate := func(cycleConfig string, cycle *rendercycle.Snapshot) *events.TemplateRenderedEvent {
+		t.Helper()
+		rendered, renderErr := events.NewTemplateRenderedEventWithCycle(cycle, 7, "test", false)
+		require.NoError(t, renderErr)
+		cache.handleTemplateRendered(rendered)
+		gate, gateErr := events.NewRenderGateCompletedEventWithCycle(
+			mustRenderOccurrence(t, rendered), true, false, true, "", false, 11,
+		)
+		require.NoError(t, gateErr)
+		cache.handleRenderGateCompleted(gate)
+		validated, validatedErr := cache.GetValidatedConfig()
+		require.NoError(t, validatedErr)
+		assert.Equal(t, cycleConfig, validated.Config)
+		return rendered
+	}
+
+	renderedA1 := renderAndValidate("config-a", cycleA1)
+	renderAndValidate("config-b", cycleB)
+	renderedA2, err := events.NewTemplateRenderedEventWithCycle(cycleA2, 7, "test", false)
+	require.NoError(t, err)
+	cache.handleTemplateRendered(renderedA2)
+
+	staleGate, err := events.NewRenderGateCompletedEventWithCycle(
+		mustRenderOccurrence(t, renderedA1), true, false, true, "", false, 11,
+	)
+	require.NoError(t, err)
+	cache.handleRenderGateCompleted(staleGate)
+	validated, err := cache.GetValidatedConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "config-b", validated.Config)
+
+	currentGate, err := events.NewRenderGateCompletedEventWithCycle(
+		mustRenderOccurrence(t, renderedA2), true, false, true, "", false, 11,
+	)
+	require.NoError(t, err)
+	cache.handleRenderGateCompleted(currentGate)
+	validated, err = cache.GetValidatedConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "config-a", validated.Config)
 }
 
 func TestStateCache_HandleValidationFailed(t *testing.T) {
@@ -789,8 +938,9 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 	bus.Start()
 
 	// Set up some pipeline state
-	bus.Publish(events.NewTemplateRenderedEvent("config", nil, nil, nil, 0, 100, "", "", nil, "", true))
-	bus.Publish(events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 50))
+	rendered := newStateCacheRenderedEvent(t, "config", nil)
+	bus.Publish(rendered)
+	bus.Publish(newStateCacheGateEvent(t, rendered, true, 50))
 	bus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,

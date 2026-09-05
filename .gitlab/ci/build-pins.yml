@@ -1,7 +1,7 @@
 # Update procedure: docs/agents/build-pins.md
 variables:
   # renovate: datasource=docker depName=golang
-  GO_VERSION: "1.26"
+  GO_VERSION: "1.27"
   # renovate: datasource=docker depName=python
   PYTHON_VERSION: "3.14"
   # renovate: datasource=docker depName=docker
@@ -65,7 +65,7 @@ variables:
   CI_REGISTRY_REPOSITORY_ID: "9595253"
   PYTHON_DOCS_REGISTRY_REPOSITORY_ID: "9595250"
 
-  GO_BUILD_IMAGE: "golang:1.26-bookworm@sha256:6c5605ab3a9a9fb3c4eafe5b3d63cdbf3881caf113262b67862547b54a9db599"
+  GO_BUILD_IMAGE: "golang:1.27-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452"
   PYTHON_DOCS_BASE_IMAGE: "python:3.14-slim@sha256:a7fb1e634c4a578f9e0bd6327f11a3cde11b7a9395f48e24360c0988bcc5c2bc"
   CONFORMANCE_BASE_IMAGE: "gcr.io/distroless/static-debian12:latest@sha256:a9fcaedd4c9b59e12dd65d954f0b5044f19b0647a8a3712e77205df9e7b102cd"
   BUILDKIT_IMAGE: "moby/buildkit:v0.32.2-rootless@sha256:504731e577c20559c00f968f33219f30115e70be29ab96728d1d06e963fc494b"

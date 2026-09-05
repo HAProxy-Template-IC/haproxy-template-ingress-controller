@@ -28,6 +28,7 @@ templateSnippets:
   # Basic auth — userlist generation (global-top)
   # ============================================================================
   global-top-820-haptic-auth:
+    requires: [ingresses]
     template: |
       {#
         HAPTIC Basic Auth Userlist Generation
@@ -58,52 +59,16 @@ templateSnippets:
             user <username> password <hash>
       #}
       {%- var hashRegex = extraContext | dig_string("^\\$(2[aby]|apr1|1|5|6)\\$", "hapticPasswordHashRegex") %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var authType = ingress.Metadata.Annotations["haproxy-haptic.org/auth-type"] %}
-        {%- if authType != "" %}
-          {%- if authType != "basic" %}
-            {{- fail("Unsupported auth-type '" + authType + "' for annotation 'haproxy-haptic.org/auth-type' on Ingress '" + key + "'. Only 'basic' is supported.") -}}
-          {%- end %}
-          {%- var authSecret = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret"] %}
-          {%- if authSecret != "" %}
-            {%- var secretType = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret-type"] %}
-            {%- if secretType == "" %}{%- secretType = "auth-file" %}{%- end %}
-            {%- if secretType != "auth-file" && secretType != "auth-map" %}
-              {{- fail("Invalid value '" + secretType + "' for annotation 'haproxy-haptic.org/auth-secret-type' on Ingress '" + key + "'. Valid values: 'auth-file', 'auth-map'.") -}}
-            {%- end %}
-            {%- var secretNs = ns %}
-            {%- var secretName = authSecret %}
-            {%- if strings_contains(authSecret, "/") %}
-              {%- var parts = split(authSecret, "/") %}
-              {%- secretNs = parts[0] %}
-              {%- secretName = parts[1] %}
-            {%- end %}
-            {%- var userlistName = "haptic_auth_" + secretNs + "_" + secretName %}
-            {%- if first_seen("haptic_userlist", userlistName) %}
-              {#-
-                Skip both the userlist and the matching backend ACL ref when the
-                referenced Secret isn't in the controller's cache (informer lag,
-                or a cascade-delete that removed the Secret while the Ingress
-                still lingers). Routed through shared.ComputeIfAbsent so the
-                matching backend snippet observes the same Secret presence —
-                stores are live during render and two direct GetSingle calls can
-                see different states.
-              -#}
-              {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_auth_secret:" + secretNs + "/" + secretName, func() any {
-                return resources.secrets.GetSingle(secretNs, secretName)
-              }) %}
-              {#- Assert to the typed pointer BEFORE the nil check. GetSingle
-                  returns a typed *resources.secrets.T — a typed-nil when absent —
-                  boxing that through the closure's `any` yields a NON-nil
-                  interface, so `secretAny != nil` would pass for an absent Secret
-                  and the `.Data` access below would dereference a nil pointer. -#}
-              {%- var secret, _ = secretAny.(*resources.secrets.T) %}
-              {%- if secret != nil %}
+      {%- for _, entry := range incremental_values("haptic-auth-userlists", "userlists") %}
+        {%- var record = entry.(map[string]any) %}
+        {%- var key = tostring(record["ingress"]) %}
+        {%- var secretNs = tostring(record["secretNamespace"]) %}
+        {%- var secretName = tostring(record["secretName"]) %}
+        {%- var secretType = tostring(record["secretType"]) %}
+        {%- var userlistName = tostring(record["userlistName"]) %}
+        {%- var secretData = to_str_map(record["data"]) %}
                 {%- if secretType == "auth-file" %}
-                  {%- var authData = secret.Data["auth"] | b64decode() | tostring() %}
+                  {%- var authData = secretData["auth"] | b64decode() | tostring() %}
                   {%- if authData == "" %}
                     {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy-haptic.org/auth-secret' on Ingress '" + key + "' has an empty or missing 'auth' key (auth-file format).") -}}
                   {%- end %}
@@ -136,8 +101,8 @@ templateSnippets:
                   {# auth-map: each Secret data key is a username, its value the hash. #}
       # haptic/auth ({{ key }})
       userlist {{ userlistName }}
-                  {%- for _, username := range keys(secret.Data) %}
-                    {%- var passwordHash = secret.Data[username] | b64decode() | tostring() %}
+                  {%- for _, username := range keys(secretData) %}
+                    {%- var passwordHash = secretData[username] | b64decode() | tostring() %}
                     {%- if username == "" || passwordHash == "" %}
                       {{- fail("Secret '" + secretNs + "/" + secretName + "' (auth-map) referenced on Ingress '" + key + "' has an empty username or hash.") -}}
                     {%- end %}
@@ -150,10 +115,63 @@ templateSnippets:
         user {{ username }} password {{ passwordHash }}
                   {%- end %}
                 {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
+      {%- end -%}
+      {{- render "haptic-auth-userlist-publications" -}}
+
+  haptic-auth-userlist-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/auth-secret']"
+        - "metadata.annotations['haproxy-haptic.org/auth-secret-type']"
+        - "metadata.annotations['haproxy-haptic.org/auth-type']"
+      group: haptic-auth-userlists
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var ns = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
+        {%- var key = ns + "/" + name -%}
+        {%- var authType = ingress.Metadata.Annotations["haproxy-haptic.org/auth-type"] -%}
+        {%- if authType != "" -%}
+          {%- if authType != "basic" -%}
+            {{- fail("Unsupported auth-type '" + authType + "' for annotation 'haproxy-haptic.org/auth-type' on Ingress '" + key + "'. Only 'basic' is supported.") -}}
+          {%- end -%}
+          {%- var authSecret = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret"] -%}
+          {%- if authSecret != "" -%}
+            {%- var secretType = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret-type"] -%}
+            {%- if secretType == "" -%}{%- secretType = "auth-file" -%}{%- end -%}
+            {%- if secretType != "auth-file" && secretType != "auth-map" -%}
+              {{- fail("Invalid value '" + secretType + "' for annotation 'haproxy-haptic.org/auth-secret-type' on Ingress '" + key + "'. Valid values: 'auth-file', 'auth-map'.") -}}
+            {%- end -%}
+            {%- var secretNs = ns -%}
+            {%- var secretName = authSecret -%}
+            {%- if strings_contains(authSecret, "/") -%}
+              {%- var parts = split(authSecret, "/") -%}
+              {%- secretNs = parts[0] -%}
+              {%- secretName = parts[1] -%}
+            {%- end -%}
+            {%- var secret = resources.secrets.GetSingle(secretNs, secretName) -%}
+            {%- if secret != nil -%}
+              {%- var userlistName = "haptic_auth_" + secretNs + "_" + secretName -%}
+              {%- var secretData = map[string]any{} -%}
+              {%- for dataKey, dataValue := range secret.Data -%}
+                {%- secretData[dataKey] = dataValue -%}
+              {%- end -%}
+              {{- shared.Publish("userlists", userlistName, map[string]any{
+                "ingress": key,
+                "secretNamespace": secretNs,
+                "secretName": secretName,
+                "secretType": secretType,
+                "userlistName": userlistName,
+                "data": secretData,
+              }) -}}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   # ============================================================================
@@ -171,9 +189,13 @@ templateSnippets:
   # listener to refuse the handshake.
   # ==========================================================================
   frontend-filters-830-haptic-mtls-unavailable:
+    requires: [ingresses]
     template: |
-      {%- var blockedAny, _ = shared.ComputeIfAbsent("hapticMtlsBlockedHosts", func() any { return map[string]any{} }) %}
-      {%- var blocked = blockedAny.(map[string]any) %}
+      {%- var blocked = map[string]any{} %}
+      {%- for _, entry := range incremental_values("mtls-host-policies", "blockedHosts") %}
+        {%- var policy = entry.(map[string]any) %}
+        {%- blocked[tostring(policy["host"])] = true %}
+      {%- end %}
       {%- if len(blocked) > 0 %}
       {{ "\n" }}# haptic/mtls-unavailable — client-cert verification could not be configured
         {%- for _, host := range keys(blocked) %}
@@ -238,10 +260,7 @@ templateSnippets:
                 would emit an http_auth ref to a userlist that was never
                 produced — `haproxy -c` then fails with "unable to find
                 userlist"). -#}
-            {%- var authSecretAny, _ = shared.ComputeIfAbsent("haptic_auth_secret:" + secretNs + "/" + secretName, func() any {
-              return resources.secrets.GetSingle(secretNs, secretName)
-            }) %}
-            {%- var authSecretObj, _ = authSecretAny.(*resources.secrets.T) %}
+            {%- var authSecretObj = resources.secrets.GetSingle(secretNs, secretName) %}
             {#- Under satisfy=any the challenge is folded into the combined
                 IP-or-auth gate (backend-directives-825); suppress the
                 unconditional challenge here so an allow-listed IP passes. -#}
@@ -326,10 +345,7 @@ templateSnippets:
             secretNs = parts[0]
             secretName = parts[1]
           }
-          var secAny, _ = shared.ComputeIfAbsent("haptic_auth_secret:" + secretNs + "/" + secretName, func() any {
-            return resources.secrets.GetSingle(secretNs, secretName)
-          })
-          var sec, _ = secAny.(*resources.secrets.T)
+          var sec = resources.secrets.GetSingle(secretNs, secretName)
           if sec == nil {
             show ""
             return
@@ -394,7 +410,20 @@ templateSnippets:
   # / mtls-error map empty.
   # ============================================================================
   features-110-haptic-auth-tls:
-    template: |
+    requires: [ingresses]
+    template: |-
+      {{- render "mtls-host-policies-200-haptic-annotations" -}}
+
+  mtls-host-policies-200-haptic-annotations:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/auth-tls-secret']"
+        - "metadata.annotations['haproxy-haptic.org/auth-tls-verify-client']"
+      group: mtls-host-policies
+      effects: [publishValue, recordEvent]
+    template: |-
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
         HAPTIC Client-Cert Verification Registration
@@ -406,25 +435,22 @@ templateSnippets:
           - haproxy-haptic.org/auth-tls-verify-client: "on" | "off" | "optional"
             | "optional_no_ca" (default "on")
 
-        Writes each referenced Secret's `ca.crt` to the general file dir via
-        fileRegistry and registers per-host config in gf["clientCertVerifyHosts"].
-        ssl.yaml's features-150-ssl-crtlist reads that map and emits the crt-list
-        `[ca-file <path> verify <mode>]` line for each affected host.
+        Publishes each referenced Secret's `ca.crt` and per-host verification
+        policy for immutable replay by the shared TLS consumers.
 
         Verify-client mapping (→ HAProxy): on → required; off → no entry;
         optional / optional_no_ca → optional.
       -#}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var secretRef = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-secret"] %}
         {%- if secretRef != "" %}
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
           {%- var verifyClient = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-verify-client"] | toLower() %}
           {%- if verifyClient == "" %}{%- verifyClient = "on" %}{%- end %}
-          {%- if verifyClient == "off" %}
-            {%- continue %}
-          {%- end %}
+          {%- if verifyClient != "off" %}
           {%- var verifyMode = "" %}
           {%- if verifyClient == "on" %}
             {%- verifyMode = "required" %}
@@ -469,39 +495,49 @@ templateSnippets:
           {%- end %}
           {%- if failReason != "" %}
             {{- recordEvent(ingress, failReason, "Ingress " + ns + "/" + name + " sets 'haproxy-haptic.org/auth-tls-secret: " + secretNs + "/" + secretName + "', but " + failCause + ". Client-certificate verification cannot be configured without a CA bundle, so this route fails closed with 503. Fix the Secret, or remove the mTLS annotations.") -}}
-            {%- var blocked, _ = shared.ComputeIfAbsent("hapticMtlsBlockedHosts", func() any { return map[string]any{} }) %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- blocked.(map[string]any)[rule.Host] = true %}{%- end %}
+            {%- for ruleIndex, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}
+                {{- shared.Publish("blockedHosts", "haptic-annotations/" + ns + "/" + name + "/" + tostring(ruleIndex),
+                  map[string]any{"host": rule.Host}) -}}
+              {%- end %}
             {%- end %}
-            {%- continue %}
-          {%- end %}
-          {%- var caBundle = secret.Data["ca.crt"] | b64decode() | tostring() %}
+          {%- else %}
+            {%- var caBundle = secret.Data["ca.crt"] | b64decode() | tostring() %}
           {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/):
               HAProxy's runtime cert API takes ssl/ entries as cert+key bundles, but a
               CA bundle has no private key. HAProxy's crt-list `[ca-file <path>]`
               accepts any path. -#}
-          {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}
-          {%- var _, regErr = fileRegistry.Register("file", caFilename, caBundle) -%}
-          {%- if regErr != nil -%}
-            {{- fail("failed to register client CA " + caFilename + ": " + tostring(regErr)) -}}
-          {%- end -%}
-          {%- var caPath, _ = pathResolver.GetPath(caFilename, "file") %}
+            {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}
+            {{- shared.Publish("files", "haptic-annotations/" + ns + "/" + name + "/0",
+              map[string]any{"filename": caFilename, "content": caBundle}) -}}
 
-          {%- for _, rule := range ingress.Spec.Rules %}
-            {%- var host = rule.Host %}
-            {%- if host == "" %}
-              {{- fail("Ingress " + ns + "/" + name + " has haproxy-haptic.org/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- for ruleIndex, rule := range ingress.Spec.Rules %}
+              {%- var host = rule.Host %}
+              {%- if host == "" %}
+                {{- fail("Ingress " + ns + "/" + name + " has haproxy-haptic.org/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+              {%- end %}
+              {{- shared.Publish("verifyHosts", "haptic-annotations/" + ns + "/" + name + "/" + tostring(ruleIndex), map[string]any{
+                "host": host, "filename": caFilename, "verifyMode": verifyMode,
+              }) -}}
             {%- end %}
-            {%- gf["clientCertVerifyHosts"].(map[string]any)[host] = map[string]any{
-              "ca_path": caPath,
-              "verify_mode": verifyMode,
-            } %}
+          {%- end %}
           {%- end %}
         {%- end %}
       {%- end %}
 
   features-140-haptic-auth-tls-error:
-    template: |
+    requires: [ingresses]
+    template: |-
+      {{- render "mtls-host-policies-400-haptic-annotations-error" -}}
+
+  mtls-host-policies-400-haptic-annotations-error:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-tls-error-page']"]
+      group: mtls-host-policies
+      effects: [publishValue]
+    template: |-
       {#
         HAPTIC auth-tls-error-page — registers host→error-page URL into the
         shared gf["mtlsErrorHosts"]. base.yaml features-185-mtls-error-map builds
@@ -509,16 +545,17 @@ templateSnippets:
         ssl_c_verify-gated redirect (map-only, reload-free).
         Annotation: haproxy-haptic.org/auth-tls-error-page
       #}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var errorPage = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-error-page"] %}
         {%- if errorPage != "" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
           {%- if regex_search(errorPage, "[[:cntrl:]]") %}{{ fail("Invalid URL in annotation 'haproxy-haptic.org/auth-tls-error-page' on Ingress '" + key + "': must not contain control characters (newlines/tabs) — config-injection guard.") }}{%- end %}
-          {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for ruleIndex, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}
-              {%- var me []any = coalesce(gf["mtlsErrorHosts"], []any{}) -%}
-              {%- gf["mtlsErrorHosts"] = append(me, map[string]any{"host": toLower(rule.Host), "location": errorPage}) -%}
+              {{- shared.Publish("errorHosts", "haptic-annotations/" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + "/" + tostring(ruleIndex),
+                map[string]any{"host": toLower(rule.Host), "location": errorPage}) -}}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -527,7 +564,43 @@ templateSnippets:
   # ============================================================================
   # mTLS — client-cert passthrough headers (frontend-filters)
   # ============================================================================
+  features-900-haptic-fragment-819-auth-tls-cert-header-strip:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-tls-cert-header']"]
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true" -%}
+        {{- shared.Publish("fragments", "global", "\n# haptic/auth-tls-cert-header — drop any client-supplied identity headers\n      http-request del-header X-SSL-Client-CN\n      http-request del-header X-SSL-Client-DN\n      http-request del-header X-SSL-Client-Cert") -}}
+      {%- end -%}
+
+  frontend-filters-819-haptic-auth-tls-cert-header-strip:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-819-auth-tls-cert-header-strip", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  features-900-haptic-fragment-820-auth-tls-cert-header:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-tls-cert-header']"]
+      consumes: [haptic-ingress-match-publications]
+      effects: [publishValue]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-820-auth-tls-cert-header" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-820-haptic-auth-tls-cert-header:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-820-auth-tls-cert-header", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-820-auth-tls-cert-header:
     template: |
       {#
         HAPTIC auth-tls-cert-header — forward client-certificate details to the
@@ -540,30 +613,10 @@ templateSnippets:
           http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } <host-match>
           http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } <host-match>
       #}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {#- The strip is deliberately NOT host-scoped, and runs whenever any route
-          enables the annotation. Host-scoping it left two ways for a client to
-          keep its own X-SSL-Client-*: a wildcard rule host, where the exact
-          `-m str *.example.com` match never fires against a concrete request
-          host, and a rule with no host at all, where the whole block was
-          skipped. Both leave the caller's header in place on a route whose
-          backend this annotation has told to trust it. A missed set-header is
-          fail-closed — the backend gets no identity — but a missed del-header
-          is forgery, so the two are scoped differently on purpose. -#}
-      {%- var anyCertHeader = false %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true" %}
-          {%- anyCertHeader = true %}
-          {%- break %}
-        {%- end %}
-      {%- end %}
-      {%- if anyCertHeader %}
-      # haptic/auth-tls-cert-header — drop any client-supplied identity headers
-      http-request del-header X-SSL-Client-CN
-      http-request del-header X-SSL-Client-DN
-      http-request del-header X-SSL-Client-Cert
-      {%- end %}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -573,7 +626,7 @@ templateSnippets:
               {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
-            {%- var cond = HostMatchCondition(hosts) %}
+            {%- var cond = HapticHostMatchCondition(key) %}
       # haptic/auth-tls-cert-header ({{ key }})
       http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } {{ cond }}
       http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } {{ cond }}
@@ -592,8 +645,13 @@ templateSnippets:
   #   resolved is covered.
   # ============================================================================
   map-auth-url-820-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-url']"]
     template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
         {%- if authUrl != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -606,8 +664,13 @@ templateSnippets:
       {%- end -%}
 
   map-auth-signin-820-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-signin']"]
     template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var authSignin = ingress.Metadata.Annotations["haproxy-haptic.org/auth-signin"] -%}
         {%- if authSignin != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -620,8 +683,13 @@ templateSnippets:
       {%- end -%}
 
   map-auth-method-820-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-method']"]
     template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var authMethod = ingress.Metadata.Annotations["haproxy-haptic.org/auth-method"] -%}
         {%- if authMethod != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -637,9 +705,14 @@ templateSnippets:
 
   # auth-headers-request → auth-forward-headers.map (SPOE forward_headers arg).
   map-auth-forward-headers-820-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-headers-request']"]
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var authHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-request"] -%}
         {%- if authHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -657,17 +730,17 @@ templateSnippets:
   # across all ingresses, so operators don't hand-edit spoe-message-check-auth-body.
   # The six standard headers spoa-hub already captures are pre-seeded (underscore
   # form) to avoid duplicate args (HAProxy 3.0 rejects duplicate SPOE arg names).
-  spoe-message-check-auth-extra-args-820-haptic:
+  features-900-haptic-auth-extra-args-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-headers-request']"]
+      effects: [publishValue]
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
-      {%- var seen = map[string]bool{} -%}
-      {%- seen["authorization"] = true -%}
-      {%- seen["cookie"] = true -%}
-      {%- seen["x_forwarded_for"] = true -%}
-      {%- seen["x_forwarded_proto"] = true -%}
-      {%- seen["x_forwarded_host"] = true -%}
-      {%- seen["x_forwarded_uri"] = true -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var authHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-request"] -%}
         {%- if authHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -677,19 +750,34 @@ templateSnippets:
             {%- if hn != "" -%}
               {{- ValidateAuthHeaderName(hn, "haproxy-haptic.org/auth-headers-request", ns, name) -}}
               {%- var argName = replace(toLower(hn), "-", "_") -%}
-              {%- if !seen[argName] -%}
-                {%- seen[argName] = true -%}
-                {{- " hdr_" + argName + "=req.hdr(" + hn + ")" -}}
+              {%- if argName != "authorization" && argName != "cookie" &&
+                argName != "x_forwarded_for" && argName != "x_forwarded_proto" &&
+                argName != "x_forwarded_host" && argName != "x_forwarded_uri" -%}
+                {{- shared.Publish("args", argName, " hdr_" + argName + "=req.hdr(" + hn + ")") -}}
               {%- end -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
       {%- end -%}
 
+  spoe-message-check-auth-extra-args-820-haptic:
+    requires: [ingresses]
+    template: |-
+      {%- for _, arg := range incremental_values("features-900-haptic-auth-extra-args-publications", "args") -%}
+        {{- tostring(arg) -}}
+      {%- end -%}
+
   # auth-headers-succeed ∪ auth-headers-fail → auth-extract-headers.map.
   map-auth-extract-headers-820-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/auth-headers-succeed']"
+        - "metadata.annotations['haproxy-haptic.org/auth-headers-fail']"
     template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var passHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-succeed"] -%}
         {%- var failHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-fail"] -%}
         {%- var union = passHeaders -%}
@@ -710,12 +798,17 @@ templateSnippets:
   # for routes whose extract_headers arg listed the header). Rendered inside
   # frontend-filters-* for both HTTP frontends — a local map dedup (not
   # first_seen) keeps both frontend renders in sync (issue #49).
-  frontend-spoe-set-pass-headers-820-haptic:
+  features-900-haptic-fragment-spoe-pass-headers-820:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-headers-succeed']"]
+      effects: [publishValue]
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
-      {%- var pairs []any = []any{} -%}
-      {%- var seen = map[string]bool{} -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var passHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-succeed"] -%}
         {%- if passHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -725,35 +818,34 @@ templateSnippets:
             {%- if hn != "" -%}
               {{- ValidateAuthHeaderName(hn, "haproxy-haptic.org/auth-headers-succeed", ns, name) -}}
               {%- var varName = replace(toLower(hn), "-", "_") -%}
-              {%- if !seen[varName] -%}
-                {%- seen[varName] = true -%}
-                {%- pairs = append(pairs, map[string]any{"name": hn, "varName": varName}) -%}
-              {%- end -%}
+              {{- shared.Publish("fragments", varName,
+                "\n      http-request del-header " + hn + " if { var(txn.auth_url) -m found }" +
+                "\n      http-request set-header " + hn + " %[var(txn.hub.external_auth." + varName + ")] if { var(txn.hub.external_auth." + varName + ") -m found } { var(txn.hub.external_auth.allowed) -m bool }") -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
       {%- end -%}
-      {%- for _, pair := range pairs -%}
-        {%- var pName = pair.(map[string]any)["name"].(string) -%}
-        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {# Strip any client-supplied copy of the header before setting the auth
-          value, so a spoofed X-Auth-* can't survive to the backend when the auth
-          reply omits it (the set-header below is skipped when its var isn't
-          found). Matches the vendor libraries' always-overwrite semantics. #}
-      {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
-      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
-      {%- end -%}
+
+  frontend-spoe-set-pass-headers-820-haptic:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-spoe-pass-headers-820", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
 
   # One http-after-response set-header per unique auth-headers-fail header,
   # surfaced to the client on auth failure. http-after-response (not
   # http-response) is required because `http-request deny` short-circuits the
   # backend response path.
-  frontend-spoe-set-fail-headers-820-haptic:
+  features-900-haptic-fragment-spoe-fail-headers-820:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-headers-fail']"]
+      effects: [publishValue]
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
-      {%- var pairs []any = []any{} -%}
-      {%- var seen = map[string]bool{} -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var failHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-fail"] -%}
         {%- if failHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -763,19 +855,17 @@ templateSnippets:
             {%- if hn != "" -%}
               {{- ValidateAuthHeaderName(hn, "haproxy-haptic.org/auth-headers-fail", ns, name) -}}
               {%- var varName = replace(toLower(hn), "-", "_") -%}
-              {%- if !seen[varName] -%}
-                {%- seen[varName] = true -%}
-                {%- pairs = append(pairs, map[string]any{"name": hn, "varName": varName}) -%}
-              {%- end -%}
+              {{- shared.Publish("fragments", varName,
+                "\n      http-after-response set-header " + hn + " %[var(txn.hub.external_auth." + varName + ")] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth." + varName + ") -m found }") -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
       {%- end -%}
-      {%- for _, pair := range pairs -%}
-        {%- var pName = pair.(map[string]any)["name"].(string) -%}
-        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {{ "\n" }}      http-after-response set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ pVarName }}) -m found }
-      {%- end -%}
+
+  frontend-spoe-set-fail-headers-820-haptic:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-spoe-fail-headers-820", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
 
   # ============================================================================
   # OAuth2-proxy — desugars onto the external-auth machinery
@@ -785,11 +875,20 @@ templateSnippets:
   #   also set on the same Ingress.
   # ============================================================================
   map-auth-url-825-haptic-oauth:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/oauth']"
+        - "metadata.annotations['haproxy-haptic.org/auth-url']"
+        - "metadata.annotations['haproxy-haptic.org/oauth-uri-prefix']"
+      effects: [recordEvent]
     template: |-
       {%- import "util-service-port-resolution" for ResolveServicePort -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
         {%- if oauth != "" && authUrl == "" -%}
@@ -821,10 +920,20 @@ templateSnippets:
       {%- end -%}
 
   map-auth-signin-825-haptic-oauth:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/oauth']"
+        - "metadata.annotations['haproxy-haptic.org/auth-url']"
+        - "metadata.annotations['haproxy-haptic.org/auth-signin']"
+        - "metadata.annotations['haproxy-haptic.org/oauth-uri-prefix']"
+      effects: [recordEvent]
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
         {#- An explicit auth-signin (its -820- snippet renders first) takes
@@ -846,8 +955,16 @@ templateSnippets:
       {%- end -%}
 
   map-auth-method-825-haptic-oauth:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/oauth']"
+        - "metadata.annotations['haproxy-haptic.org/auth-url']"
+        - "metadata.annotations['haproxy-haptic.org/auth-method']"
     template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
         {#- Explicit auth-method takes precedence over the oauth desugaring. -#}
@@ -858,8 +975,17 @@ templateSnippets:
       {%- end -%}
 
   map-auth-extract-headers-825-haptic-oauth:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/oauth']"
+        - "metadata.annotations['haproxy-haptic.org/auth-url']"
+        - "metadata.annotations['haproxy-haptic.org/auth-headers-succeed']"
+        - "metadata.annotations['haproxy-haptic.org/oauth-headers']"
     template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
         {#- Explicit auth-headers-succeed owns the extract-headers channel. -#}
@@ -871,16 +997,25 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  frontend-spoe-set-pass-headers-825-haptic-oauth:
+  features-900-haptic-fragment-spoe-pass-headers-825-oauth:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/oauth']"
+        - "metadata.annotations['haproxy-haptic.org/auth-url']"
+        - "metadata.annotations['haproxy-haptic.org/auth-headers-succeed']"
+        - "metadata.annotations['haproxy-haptic.org/oauth-headers']"
+      effects: [publishValue]
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
       {#- Forward the oauth-headers (default X-Auth-Request-Email) from the
           oauth2-proxy auth reply to the backend on success; only active for the
           oauth desugaring (auth-url absent, explicit auth-headers-succeed
           absent). -#}
-      {%- var pairs []any = []any{} -%}
-      {%- var seen = map[string]bool{} -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
         {%- var authHeadersSucceed = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-succeed"] -%}
@@ -897,21 +1032,15 @@ templateSnippets:
             {%- if hn != "" -%}
               {{- ValidateAuthHeaderName(hn, "haproxy-haptic.org/oauth-headers", ns, name) -}}
               {%- var varName = replace(toLower(hn), "-", "_") -%}
-              {%- if !seen[varName] -%}
-                {%- seen[varName] = true -%}
-                {%- pairs = append(pairs, map[string]any{"name": hn, "varName": varName}) -%}
-              {%- end -%}
+              {{- shared.Publish("fragments", varName,
+                "\n      http-request del-header " + hn + " if { var(txn.auth_url) -m found }" +
+                "\n      http-request set-header " + hn + " %[var(txn.hub.external_auth." + varName + ")] if { var(txn.hub.external_auth." + varName + ") -m found } { var(txn.hub.external_auth.allowed) -m bool }") -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
       {%- end -%}
-      {%- for _, pair := range pairs -%}
-        {%- var pName = pair.(map[string]any)["name"].(string) -%}
-        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {# Strip any client-supplied copy of the header before setting the auth
-          value, so a spoofed X-Auth-* can't survive to the backend when the auth
-          reply omits it (the set-header below is skipped when its var isn't
-          found). Matches the vendor libraries' always-overwrite semantics. #}
-      {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
-      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
-      {%- end -%}
+
+  frontend-spoe-set-pass-headers-825-haptic-oauth:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-spoe-pass-headers-825-oauth", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}

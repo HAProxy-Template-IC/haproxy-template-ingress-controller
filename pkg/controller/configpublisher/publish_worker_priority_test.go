@@ -78,6 +78,7 @@ func TestPublishWorker_DrainsDeployedWorkFirst(t *testing.T) {
 		publishWork:           make(chan *publishWorkItem, 4),
 		deployedTrigger:       make(chan struct{}, 1),
 		lastPublishedChecksum: published,
+		lastPublishedEntry:    &renderedConfigEntry{config: published, contentChecksum: published},
 		publishThrottle:       throttle.New(time.Hour),
 	}
 
@@ -85,7 +86,7 @@ func TestPublishWorker_DrainsDeployedWorkFirst(t *testing.T) {
 		return &publishWorkItem{
 			correlationID:  id,
 			templateConfig: &v1alpha1.HAProxyTemplateConfig{},
-			entry:          &renderedConfigEntry{contentChecksum: published},
+			entry:          &renderedConfigEntry{config: published, contentChecksum: published},
 			deployDriven:   deployDriven,
 		}
 	}
@@ -154,7 +155,7 @@ func TestEnqueueDeployed_KeepsEveryDistinctChecksum(t *testing.T) {
 	deployed := func(checksum string) *publishWorkItem {
 		return &publishWorkItem{
 			correlationID: "deployed:" + checksum,
-			entry:         &renderedConfigEntry{contentChecksum: checksum},
+			entry:         &renderedConfigEntry{config: checksum, contentChecksum: checksum},
 			deployDriven:  true,
 		}
 	}
@@ -216,7 +217,7 @@ func TestProcessPublishWork_ThrottledDeployedWorkStaysQueued(t *testing.T) {
 		return &publishWorkItem{
 			correlationID:  "deployed:" + checksum,
 			templateConfig: &v1alpha1.HAProxyTemplateConfig{},
-			entry:          &renderedConfigEntry{contentChecksum: checksum},
+			entry:          &renderedConfigEntry{config: checksum, contentChecksum: checksum},
 			deployDriven:   true,
 		}
 	}

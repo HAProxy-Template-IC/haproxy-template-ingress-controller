@@ -59,7 +59,6 @@ func newABFleet(t *testing.T, bus *deployerBus, haproxyVersion string) *abFleet 
 	s.schedulerMutex.Unlock()
 	s.mu.Lock()
 	s.currentEndpoints = []dataplane.Endpoint{agentEndpoint(agent, "haproxy-0")}
-	s.hasValidConfig = true
 	s.mu.Unlock()
 
 	return &abFleet{s: s, component: component, agent: agent, ctx: ctx}
@@ -71,12 +70,9 @@ func newABFleet(t *testing.T, bus *deployerBus, haproxyVersion string) *abFleet 
 func (f *abFleet) deploy(t *testing.T, bus *deployerBus, plan *renderplan.Plan, config string, aux *dataplane.AuxiliaryFiles) bool {
 	t.Helper()
 	s := f.s
+	occurrence := mustOccurrenceFor(plan, config, aux, nil)
 	s.mu.Lock()
-	s.lastRenderedConfig = config
-	s.lastAuxiliaryFiles = aux
-	s.lastContentChecksum = "checksum-" + plan.ID
-	s.lastRenderedPlan = plan
-	s.lastRenderedPlanID = plan.ID
+	s.lastRenderedOccurrence = occurrence
 	s.mu.Unlock()
 
 	s.dispatchRender(f.ctx, "corr-"+plan.ID, false, "config_validation")
@@ -95,6 +91,7 @@ func (f *abFleet) deploy(t *testing.T, bus *deployerBus, plan *renderplan.Plan, 
 	s.state.deployInFlight = true
 	s.state.activeDeploymentID = deploymentID
 	s.state.activeCorrelationID = dep.correlationID
+	s.state.activeOccurrence = dep.occurrence
 	s.schedulerMutex.Unlock()
 
 	f.component.deployToEndpoints(f.ctx, func() {}, event, deploymentID)
@@ -131,7 +128,7 @@ func TestScheduler_RecurringDeleteConvergesOnReloadGatedFleet(t *testing.T) {
 	// The fleet starts fully deployed on the delete plan (route absent): a full,
 	// unpaced deploy that records "plan-del" as the last deployed config.
 	f.mustDeploy(t, bus, "initial delete", planDel, cfgDel, auxDel)
-	assert.Equal(t, "plan-del", f.agent.State().RunningPlanID, "fleet starts on the delete plan")
+	assert.Equal(t, planDel.ID, f.agent.State().RunningPlanID, "fleet starts on the delete plan")
 
 	const cycles = 3
 	for cycle := 1; cycle <= cycles; cycle++ {
@@ -143,7 +140,7 @@ func TestScheduler_RecurringDeleteConvergesOnReloadGatedFleet(t *testing.T) {
 		// mid-transition (applied=add, running=delete) and, because reloads are
 		// pending, does not advance the last-deployed checksum.
 		f.mustDeploy(t, bus, "add", planAdd, cfgAdd, auxAdd)
-		assert.Equal(t, "plan-add", f.agent.State().AppliedPlanID, "the add landed on the pod")
+		assert.Equal(t, planAdd.ID, f.agent.State().AppliedPlanID, "the add landed on the pod")
 
 		// Remove it again — the recurring delete. Its checksum equals the fleet's
 		// stale last-deployed checksum from the initial delete, but the fleet is
@@ -152,9 +149,9 @@ func TestScheduler_RecurringDeleteConvergesOnReloadGatedFleet(t *testing.T) {
 
 		// The paced reload fires: the pod runs whatever it last applied.
 		f.agent.FirePendingReload()
-		assert.Equalf(t, "plan-del", f.agent.State().RunningPlanID,
+		assert.Equalf(t, planDel.ID, f.agent.State().RunningPlanID,
 			"cycle %d: fleet must converge on the delete plan, not the stale add", cycle)
-		assert.Equalf(t, "plan-del", f.agent.State().AppliedPlanID,
+		assert.Equalf(t, planDel.ID, f.agent.State().AppliedPlanID,
 			"cycle %d: the delete plan must be the pod's applied baseline", cycle)
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -49,6 +50,7 @@ func compileTemplatesForBenchmark(cfg *config.Config, typedResult *typebootstrap
 
 // renderSingleTemplate renders a single template and returns timing and profiling stats.
 func renderSingleTemplate(
+	ctx context.Context,
 	engine templating.Engine,
 	templateName string,
 	displayName string,
@@ -56,15 +58,16 @@ func renderSingleTemplate(
 ) (FileRenderResult, []templating.IncludeStats, error) {
 	start := time.Now()
 	var stats []templating.IncludeStats
+	ctx = templating.WithIncrementalScope(ctx, templateName)
 
 	if benchmarkProfileIncludes {
-		_, profileStats, err := engine.RenderWithProfiling(context.Background(), templateName, renderCtx)
+		_, profileStats, err := engine.RenderWithProfiling(ctx, templateName, renderCtx)
 		if err != nil {
 			return FileRenderResult{}, nil, err
 		}
 		stats = profileStats
 	} else {
-		_, err := engine.Render(context.Background(), templateName, renderCtx)
+		_, err := engine.Render(ctx, templateName, renderCtx)
 		if err != nil {
 			return FileRenderResult{}, nil, err
 		}
@@ -78,9 +81,10 @@ func renderSingleTemplate(
 
 // renderMainConfig renders and assembles haproxy.cfg, returning its timing and
 // profiling stats.
-func renderMainConfig(engine templating.Engine, bctx *rendercontext.BuildResult) (FileRenderResult, []templating.IncludeStats, error) {
+func renderMainConfig(ctx context.Context, engine templating.Engine, bctx *rendercontext.BuildResult) (FileRenderResult, []templating.IncludeStats, error) {
 	start := time.Now()
-	main, err := rendercontext.RenderMain(context.Background(), engine, bctx.Context, bctx.PlanRegistry, benchmarkProfileIncludes)
+	ctx = templating.WithIncrementalScope(ctx, names.MainTemplateName)
+	main, err := rendercontext.RenderMain(ctx, engine, bctx.Context, bctx.PlanRegistry, benchmarkProfileIncludes)
 	if err != nil {
 		return FileRenderResult{}, nil, err
 	}
@@ -96,39 +100,65 @@ type templateGroup struct {
 	prefix string   // display prefix (e.g., "map:", "file:", "cert:")
 }
 
-// renderAllFiles renders all templates (haproxy.cfg + maps + files + certs) and returns timing for each.
-func renderAllFiles(engine templating.Engine, cfg *config.Config, bctx *rendercontext.BuildResult) (IterationResult, error) {
+// renderAllFiles renders every production root and returns timing for each.
+func renderAllFiles(
+	engine templating.Engine,
+	cfg *config.Config,
+	bctx *rendercontext.BuildResult,
+	storeMap map[string]stores.Store,
+	typedResourceTypes map[string]reflect.Type,
+	logger *slog.Logger,
+) (IterationResult, error) {
 	var result IterationResult
 	totalStart := time.Now()
 	renderCtx := bctx.Context
+	ctx := context.Background()
+	coldRender, err := renderer.NewColdIncrementalRender(ctx, &renderer.ColdIncrementalRenderConfig{
+		Config:             cfg,
+		Engine:             engine,
+		StoreProvider:      stores.NewRealStoreProvider(storeMap),
+		Mode:               rendercontext.RenderModeReconcile,
+		TemplateContext:    renderCtx,
+		ResourceErrors:     bctx.ResourceErrors,
+		Logger:             logger,
+		TypedResourceTypes: typedResourceTypes,
+	})
+	if err != nil {
+		return result, fmt.Errorf("starting cold incremental benchmark render: %w", err)
+	}
+	ctx = coldRender.Context(ctx)
 
 	// Collect all include stats across renders when profiling is enabled
 	var allIncludeStats []templating.IncludeStats
 
 	// Render and assemble haproxy.cfg through the production path, so the
 	// benchmark measures what the controller actually does per render.
-	fileResult, stats, err := renderMainConfig(engine, bctx)
+	fileResult, stats, err := renderMainConfig(ctx, engine, bctx)
 	if err != nil {
 		return result, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 	result.FileResults = append(result.FileResults, fileResult)
 	allIncludeStats = append(allIncludeStats, stats...)
 
-	// Render auxiliary files (maps, general files, SSL certificates) in sorted order
+	// Render the remaining roots in sorted order.
 	groups := []templateGroup{
 		{names: sortedKeys(cfg.Maps), prefix: "map:"},
 		{names: sortedKeys(cfg.Files), prefix: "file:"},
 		{names: sortedKeys(cfg.SSLCertificates), prefix: "cert:"},
+		{names: sortedKeys(cfg.K8sResources), prefix: "k8s:"},
 	}
 	for _, group := range groups {
 		for _, name := range group.names {
-			fileResult, stats, err := renderSingleTemplate(engine, name, group.prefix+name, renderCtx)
+			fileResult, stats, err := renderSingleTemplate(ctx, engine, name, group.prefix+name, renderCtx)
 			if err != nil {
 				return result, fmt.Errorf("rendering %s%s: %w", group.prefix, name, err)
 			}
 			result.FileResults = append(result.FileResults, fileResult)
 			allIncludeStats = append(allIncludeStats, stats...)
 		}
+	}
+	if err := coldRender.ValidateIncrementalCalls(); err != nil {
+		return result, err
 	}
 
 	// Store aggregated include stats in result

@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"reflect"
@@ -28,6 +29,12 @@ import (
 // renderContextKey is the context key for storing the render context (globals).
 type renderContextKey struct{}
 
+type incrementalRenderContextValuesKey struct{}
+
+type incrementalRenderContextValues interface {
+	incrementalRenderContextValue(string) (any, bool)
+}
+
 // RenderContextContextKey is exported for use in engine_scriggo.go.
 var RenderContextContextKey = renderContextKey{}
 
@@ -39,18 +46,35 @@ func getRenderContextValue[T any](env native.Env, key string) *T {
 	if ctx == nil {
 		return nil
 	}
-	renderCtx, ok := ctx.Value(RenderContextContextKey).(map[string]any)
+	value, ok := lookupRenderContextValue(ctx, key)
 	if !ok {
 		return nil
 	}
-	v, _ := renderCtx[key].(*T)
+	v, _ := value.(*T)
 	return v
+}
+
+func lookupRenderContextValue(ctx context.Context, name string) (any, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	if values, ok := ctx.Value(incrementalRenderContextValuesKey{}).(incrementalRenderContextValues); ok {
+		if value, exists := values.incrementalRenderContextValue(name); exists {
+			return value, true
+		}
+	}
+	renderCtx, ok := ctx.Value(RenderContextContextKey).(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	value, exists := renderCtx[name]
+	return value, exists
 }
 
 // getSharedContext retrieves the SharedContext from the template context.
 // Returns nil if not found or not properly configured.
 func getSharedContext(env native.Env) *SharedContext {
-	return getRenderContextValue[SharedContext](env, "shared")
+	return getRenderContextValue[SharedContext](env, declShared)
 }
 
 // scriggoFail stops template execution with an error message using
@@ -580,7 +604,7 @@ func scriggoKeys(dict any) []string {
 	}
 
 	rv := reflect.ValueOf(dict)
-	if rv.Kind() != reflect.Map {
+	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
 		return []string{}
 	}
 
@@ -595,8 +619,7 @@ func scriggoKeys(dict any) []string {
 // scriggoNamespace creates a mutable map for storing state across loop iterations,
 // enabling mutable state patterns in templates.
 //
-// Maps in Go are reference types and mutable by default, so this function
-// simply returns the provided map (or creates an empty one if nil).
+// The returned top-level map never aliases init.
 //
 // Usage in Scriggo templates:
 //
@@ -615,7 +638,7 @@ func scriggoNamespace(init map[string]any) map[string]any {
 	if init == nil {
 		return make(map[string]any)
 	}
-	return init
+	return maps.Clone(init)
 }
 
 // scriggoCoalesce returns the first non-nil value, or the default if all are nil.

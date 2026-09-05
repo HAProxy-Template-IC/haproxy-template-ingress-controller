@@ -143,7 +143,12 @@ fi
 # scrolled past in a few hundred lines of render output.
 #
 # CI is unaffected — `make validate-helm-libraries` depends on `build`.
-if find cmd/haptic pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null | grep -q .; then
+# No `| grep -q`: grep exits at the first match, find takes SIGPIPE finishing its
+# walk of pkg/, and pipefail turns that into a non-zero pipeline — so the check
+# reads "not stale" exactly when files ARE stale, and the run proceeds on the
+# binary this guard exists to reject.
+stale_sources="$(find cmd/haptic pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null || true)"
+if [ -n "$stale_sources" ]; then
     echo -e "${RED}Error: $CONTROLLER_BIN is older than the source tree${NC}" >&2
     echo "Run 'make build', then re-run this script." >&2
     echo "(A stale binary reports 'no validation tests found in config' instead of failing recognisably.)" >&2
@@ -886,6 +891,8 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     if ! helm template "$CHART_DIR" \
         --namespace default \
         $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.haproxyIngress.enabled=true \
+        --set controller.templateLibraries.nginxIngress.enabled=true \
         --set controller.config.templatingSettings.extraContext.proxyProtocol.enabled=true \
         | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
         > "$PROXY_PROTOCOL_CONFIG"; then
@@ -914,6 +921,8 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         $HAPROXY_VERSION_ARG \
         --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
         --set controller.templateLibraries.gateway.enabled=true \
+        --set controller.templateLibraries.haproxyIngress.enabled=true \
+        --set controller.templateLibraries.nginxIngress.enabled=true \
         --set controller.config.templatingSettings.extraContext.tracing.enabled=true \
         --set controller.config.templatingSettings.extraContext.tracing.otlp.endpoint=http://tempo:4318/v1/traces \
         | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
@@ -947,6 +956,8 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     if ! helm template "$CHART_DIR" \
         --namespace haptic-ns-probe \
         $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.haproxyIngress.enabled=true \
+        --set controller.templateLibraries.nginxIngress.enabled=true \
         --set controller.config.templatingSettings.extraContext.tracing.enabled=true \
         --set controller.config.templatingSettings.extraContext.tracing.otlp.endpoint=http://tempo:4318/v1/traces \
         | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
@@ -976,6 +987,8 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     if ! helm template "$CHART_DIR" \
         --namespace default \
         $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.haproxyIngress.enabled=true \
+        --set controller.templateLibraries.nginxIngress.enabled=true \
         --set-string controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.namespace=security \
         --set-string controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.name=haptic-waf-policies \
         --set-string controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.key=policies.yaml \

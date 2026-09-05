@@ -34,33 +34,6 @@ var (
 	syntaxParserErr  error
 )
 
-// cachedValidatorSlot lazily constructs a CachedValidator for one
-// (major, minor) HAProxy version on first use and reuses it thereafter.
-type cachedValidatorSlot struct {
-	once  sync.Once
-	cache *validators.CachedValidator
-	major int
-	minor int
-}
-
-// get returns the slot's CachedValidator, constructing it on first call.
-func (s *cachedValidatorSlot) get() *validators.CachedValidator {
-	s.once.Do(func() {
-		s.cache = validators.NewCachedValidator(s.major, s.minor)
-	})
-	return s.cache
-}
-
-// Per-version validator slots. Allocation is deferred until first use, so
-// instances that only ever see one HAProxy version pay the cost for that
-// version only.
-var (
-	validatorSlotV30 = &cachedValidatorSlot{major: 3, minor: 0}
-	validatorSlotV31 = &cachedValidatorSlot{major: 3, minor: 1}
-	validatorSlotV32 = &cachedValidatorSlot{major: 3, minor: 2}
-	validatorSlotV33 = &cachedValidatorSlot{major: 3, minor: 3}
-)
-
 // validateSyntax performs syntax validation using client-native parser.
 // Returns the parsed configuration for use in Phase 1.5 (API schema validation).
 // Uses a package-level singleton parser to avoid re-initializing parser internals
@@ -87,25 +60,13 @@ func validateSyntax(config string) (*parser.StructuredConfig, error) {
 	return parsed, nil
 }
 
-// getCachedValidatorForVersion returns the cached validator for a HAProxy
+// getValidatorForVersion returns the immutable validator set for a HAProxy
 // version. Unknown or pre-3.x versions fall back to the v3.0 validator;
 // versions newer than v3.3 fall back to the v3.3 validator (since that is the
 // newest schema currently bundled).
-func getCachedValidatorForVersion(version *Version) *validators.CachedValidator {
-	if version == nil || version.Major < 3 {
-		return validatorSlotV30.get()
+func getValidatorForVersion(version *Version) *validators.ValidatorSet {
+	if version == nil {
+		return validators.ForVersion(3, 0)
 	}
-	if version.Major > 3 {
-		return validatorSlotV33.get()
-	}
-	switch {
-	case version.Minor >= 3:
-		return validatorSlotV33.get()
-	case version.Minor >= 2:
-		return validatorSlotV32.get()
-	case version.Minor >= 1:
-		return validatorSlotV31.get()
-	default:
-		return validatorSlotV30.get()
-	}
+	return validators.ForVersion(version.Major, version.Minor)
 }

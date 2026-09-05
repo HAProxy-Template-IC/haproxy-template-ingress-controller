@@ -16,26 +16,9 @@ package dataplane
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"hash"
 	"log/slog"
-	"sync"
 	"time"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
-
-// validationResultCache caches the result of the last successful validation.
-// Running `haproxy -c` costs a process and a config parse, so an unchanged
-// config is not checked twice.
-type validationResultCache struct {
-	mu             sync.RWMutex
-	lastConfigHash string
-	lastAuxHash    string
-}
-
-var validationCache = &validationResultCache{}
 
 // ValidationPaths holds the filesystem paths for HAProxy validation. They
 // mirror the layout the agent writes on the pod, so a config that passes here
@@ -53,11 +36,7 @@ type ValidationPaths struct {
 	ConfigFile        string
 }
 
-// ValidateSemantics performs semantic validation using the haproxy binary (-c flag).
-//
-// This function runs only Phase 2 (semantic validation) and assumes syntax/schema validation
-// has already been done. Use this after ValidateSyntaxAndSchema() when you need to validate
-// a modified config (e.g., with temp paths) separately from parsing.
+// ValidateSemantics asks the HAProxy binary whether it can load the configuration.
 //
 // Parameters:
 //   - mainConfig: The HAProxy configuration content (may have modified paths for temp directory)
@@ -85,11 +64,6 @@ func ValidateSemanticsContext(ctx context.Context, mainConfig string, auxFiles *
 // The validation writes files to the directories specified in paths. Callers must ensure
 // that paths are isolated (e.g., per-worker temp directories) to allow parallel execution.
 //
-// Validation result caching: if the same config (main + aux files) has been
-// successfully validated before, ErrValidationCacheHit is returned immediately.
-// This is safe because the verdict is deterministic — the same bytes and the
-// same binary always produce the same answer.
-//
 // skipDNSValidation adds -dr, which skips DNS resolution failures. Use true for
 // runtime validation (permissive, prevents blocking when DNS fails) and false
 // for webhook validation (strict, catches DNS issues before admission).
@@ -105,78 +79,14 @@ func ValidateConfigurationContext(ctx context.Context, mainConfig string, auxFil
 		return cause
 	}
 
-	// Check validation cache first - skip validation if same config already validated
-	configHash := hashValidationInput(mainConfig)
-	auxHash := hashAuxFiles(auxFiles)
-	if isValidationCached(configHash, auxHash) {
-		if cause := context.Cause(ctx); cause != nil {
-			return cause
-		}
-		slog.Debug("Validation cache hit, skipping validation")
-		return ErrValidationCacheHit
-	}
-
 	start := time.Now()
 	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate); err != nil {
 		return phaseSemantic.wrap(err)
 	}
 	slog.Debug("Validation completed", "semantic_ms", time.Since(start).Milliseconds())
 
-	return cacheValidationResult(ctx, configHash, auxHash)
-}
-
-// hashValidationInput computes a SHA256 hash of the main config content.
-func hashValidationInput(config string) string {
-	h := sha256.Sum256([]byte(config))
-	return hex.EncodeToString(h[:])
-}
-
-// hashAuxFiles computes a combined hash of all auxiliary files.
-// The hash includes file paths and contents to detect any changes.
-func hashAuxFiles(auxFiles *AuxiliaryFiles) string {
-	if auxFiles == nil {
-		return ""
-	}
-
-	h := sha256.New()
-	hashAuxByPath(h, auxFiles.MapFiles, func(f auxiliaryfiles.MapFile) string { return f.Path })
-	hashAuxByPath(h, auxFiles.GeneralFiles, func(f auxiliaryfiles.GeneralFile) string { return f.Path })
-	hashAuxByPath(h, auxFiles.SSLCertificates, func(f auxiliaryfiles.SSLCertificate) string { return f.Path })
-	hashAuxByPath(h, auxFiles.SSLCaFiles, func(f auxiliaryfiles.SSLCaFile) string { return f.Path })
-	hashAuxByPath(h, auxFiles.CRTListFiles, func(f auxiliaryfiles.CRTListFile) string { return f.Path })
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// hashAuxByPath writes (path, content) for each item to h. Used for the
-// validation cache key, which keys on Path (the on-disk location HAProxy will
-// see) rather than the API-side identifier returned by FileItem.GetIdentifier()
-// (which differs from Path for GeneralFile, where it's the bare Filename).
-func hashAuxByPath[T auxiliaryfiles.FileItem](h hash.Hash, items []T, getPath func(T) string) {
-	for _, item := range items {
-		h.Write([]byte(getPath(item)))
-		h.Write([]byte(item.GetContent()))
-	}
-}
-
-// isValidationCached checks if the given config combination was already validated successfully.
-func isValidationCached(configHash, auxHash string) bool {
-	validationCache.mu.RLock()
-	defer validationCache.mu.RUnlock()
-
-	return validationCache.lastConfigHash == configHash &&
-		validationCache.lastAuxHash == auxHash &&
-		validationCache.lastConfigHash != "" // Ensure cache is not empty
-}
-
-// cacheValidationResult stores the successful validation result for future checks.
-func cacheValidationResult(ctx context.Context, configHash, auxHash string) error {
-	validationCache.mu.Lock()
-	defer validationCache.mu.Unlock()
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
 	}
-
-	validationCache.lastConfigHash = configHash
-	validationCache.lastAuxHash = auxHash
 	return nil
 }

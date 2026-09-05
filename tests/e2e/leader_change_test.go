@@ -65,7 +65,12 @@ func TestLeaderChangeReloadsNothing(t *testing.T) {
 		client    klient.Client
 		clientset kubernetes.Interface
 		oldLeader string
+		standby   string
 		baseline  map[string]podPlanState
+		// The standby's render counters before it leads. A follower renders
+		// to keep its incremental graph warm, so its first render as leader
+		// must not be a cold one.
+		coldBefore, rendersBefore float64
 	)
 
 	feature := features.New("Leader change: a new leader reloads nothing").
@@ -101,13 +106,16 @@ func TestLeaderChangeReloadsNothing(t *testing.T) {
 			// inside this measurement and be charged to the failover.
 			waitForNoTerminatingNamespaces(ctx, t, clientset)
 			oldLeader = currentLeader(ctx, t, clientset)
+			standby = standbyController(ctx, t, clientset, oldLeader)
 			waitForQuietFleet(ctx, t, clientset)
 			baseline = fleetPlanState(ctx, t, client, clientset)
-			t.Logf("leader %s, fleet baseline %v", oldLeader, baseline)
+			coldBefore, rendersBefore = renderCounters(ctx, t, clientset, standby)
+			t.Logf("leader %s, standby %s (%v renders, %v cold), fleet baseline %v",
+				oldLeader, standby, rendersBefore, coldBefore, baseline)
 			return ctx
 		}).
 		Assess("the handover does not touch the fleet", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			handLeaseTo(ctx, t, clientset, standbyController(ctx, t, clientset, oldLeader))
+			handLeaseTo(ctx, t, clientset, standby)
 			waitForLeadershipHandover(ctx, t, clientset, oldLeader)
 
 			// The new leader's first reconciliation is what would reload:
@@ -157,11 +165,41 @@ func TestLeaderChangeReloadsNothing(t *testing.T) {
 				BackendPort:    backend.Port,
 			})
 			httpclient.New(t).GET(freshHost, "/").ExpectOK(t)
+
+			// The new leader rendered at least twice by now (the became_leader
+			// trigger and this route) and, having warmed its graph as a
+			// follower, none of them cold.
+			coldAfter, rendersAfter := renderCounters(ctx, t, clientset, standby)
+			if rendersAfter <= rendersBefore {
+				t.Fatalf("new leader %s rendered nothing since the handover (%v renders before, %v after)",
+					standby, rendersBefore, rendersAfter)
+			}
+			if coldAfter != coldBefore {
+				t.Fatalf("new leader %s ran %v cold render(s) after the handover: a follower keeps its "+
+					"incremental graph warm, so its first render as leader must reuse it",
+					standby, coldAfter-coldBefore)
+			}
+			t.Logf("new leader %s rendered %v times since the handover, none cold",
+				standby, rendersAfter-rendersBefore)
 			return ctx
 		}).
 		Feature()
 
 	testEnv.Test(t, feature)
+}
+
+// renderCounters reads one controller's cold-render and total-render counts.
+func renderCounters(ctx context.Context, t *testing.T, cs kubernetes.Interface, pod string) (cold, total float64) {
+	t.Helper()
+	cold, err := labelledMetricSum(ctx, cs, pod, `haptic_render_total{cache_state="cold"}`)
+	if err != nil {
+		t.Fatalf("scrape %s render counters: %v", pod, err)
+	}
+	total, err = labelledMetricSum(ctx, cs, pod, "haptic_render_total")
+	if err != nil {
+		t.Fatalf("scrape %s render counters: %v", pod, err)
+	}
+	return cold, total
 }
 
 // currentLeader returns the controller pod holding the lease.

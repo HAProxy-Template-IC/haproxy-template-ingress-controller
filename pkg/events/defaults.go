@@ -41,6 +41,14 @@ const (
 	// batch many small events back-to-back before draining.
 	PublishingSubscriberBuffer = 200
 
+	// ResourceChurnSubscriberBuffer covers the subscribers whose input arrives
+	// once per resource change: a bulk apply, a namespace teardown or a fleet
+	// rolling restart delivers hundreds back-to-back, faster than any handler
+	// is scheduled to drain them. These subscribers are critical, so a drop
+	// ends the controller iteration rather than losing one event — which is
+	// why the tier is sized for the burst rather than the average.
+	ResourceChurnSubscriberBuffer = 1000
+
 	// DebugSubscriberBuffer is used for debug/introspection subscriptions
 	// that tap every event flowing through the bus.
 	DebugSubscriberBuffer = 1000

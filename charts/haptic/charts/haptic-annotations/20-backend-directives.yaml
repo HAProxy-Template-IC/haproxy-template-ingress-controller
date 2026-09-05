@@ -76,9 +76,17 @@ templateSnippets:
   # `<backend>|server` / `<backend>|tunnel` entries in backend-timeouts.map, read
   # by the two uniform set-timeout lines every ingress backend carries.
   map-backend-timeout-800-haptic-timeouts:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - metadata.annotations['haproxy-haptic.org/timeout-server']
+        - metadata.annotations['haproxy-haptic.org/timeout-tunnel']
+      group: map-backend-timeout-ingress
+      effects: [recordEvent]
     template: |
       {%- import "util-ingress-backend-timeout" for IngressBackendTimeoutMapEntries -%}
-      {{- IngressBackendTimeoutMapEntries("haproxy-haptic.org/timeout-server", "haproxy-haptic.org/timeout-tunnel") -}}
+      {{- IngressBackendTimeoutMapEntries(item, "haproxy-haptic.org/timeout-server", "haproxy-haptic.org/timeout-tunnel") -}}
 
   backend-directives-810-haptic-load-balance:
     template: |
@@ -298,7 +306,7 @@ templateSnippets:
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
-        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/scale-server-slots"] != "" && first_seen("haptic-scale-server-slots-removed", ns, name) %}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/scale-server-slots"] != "" %}
           {%- _ = WebhookRejectOrWarn(ingress, "UnsupportedAnnotation", "Ingress " + ns + "/" + name + " sets 'haproxy-haptic.org/scale-server-slots', which no longer has any effect: servers are named after pods and scale with no reserved slots and no reload. Remove the annotation.") %}
         {%- end %}
       {%- end -%}

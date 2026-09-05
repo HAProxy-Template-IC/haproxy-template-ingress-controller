@@ -202,6 +202,44 @@ func TestBuildFullHealthChecker_InitializedGate(t *testing.T) {
 			"Standby leader-only components must individually report Healthy=true on followers")
 	})
 
+	t.Run("replica that lost the lease reports Healthy=true", func(t *testing.T) {
+		// A leadership term that ends gracefully leaves leader-only components
+		// on StatusStopped, not Standby. Counting that as unhealthy made the
+		// old leader fail /healthz, and the kubelet killed it 25s after
+		// "Lost leadership (reason: lease_lost)" — handing the fleet a cold
+		// incremental graph on the replica that took over.
+		status := map[string]lifecycle.ComponentInfo{
+			"reconciler": {Status: lifecycle.StatusRunning},
+			"discovery":  {Status: lifecycle.StatusRunning},
+			"deployer":   {Status: lifecycle.StatusStopped, LeaderOnly: true},
+			"scheduler":  {Status: lifecycle.StatusStopped, LeaderOnly: true},
+		}
+		result := map[string]introspection.ComponentHealth{}
+		firstPending := collectComponentHealth(status, result)
+		init := computeInitializedHealth(true, firstPending)
+
+		assert.True(t, init.Healthy,
+			"a replica that handed leadership over must stay Healthy — otherwise kubelet kills the pod that just lost the lease")
+		assert.True(t, result["deployer"].Healthy,
+			"a gracefully stopped leader-only component is the follower state, like Standby")
+	})
+
+	t.Run("a stopped component that is not leader-only stays unhealthy", func(t *testing.T) {
+		// Negative control for the case above: only leader-only components are
+		// Stopped as a matter of course. Anything else stopping has died and
+		// must keep failing /healthz.
+		status := map[string]lifecycle.ComponentInfo{
+			"reconciler": {Status: lifecycle.StatusStopped},
+			"deployer":   {Status: lifecycle.StatusStopped, LeaderOnly: true},
+		}
+		result := map[string]introspection.ComponentHealth{}
+		collectComponentHealth(status, result)
+
+		assert.False(t, result["reconciler"].Healthy,
+			"a non-leader-only component that stopped has died; it must not be reported healthy")
+		assert.True(t, result["deployer"].Healthy)
+	})
+
 	t.Run("leader with all components Running reports Healthy=true", func(t *testing.T) {
 		status := map[string]lifecycle.ComponentInfo{
 			"reconciler": {Status: lifecycle.StatusRunning},

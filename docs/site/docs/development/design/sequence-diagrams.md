@@ -153,67 +153,52 @@ There is no event-adapter for rendering or HAProxy-config validation — the syn
 
 ## Configuration validation process
 
-This is the inside view of step 4 in the previous diagram — `Pipeline.Execute` runs `ValidationService.Validate` after rendering, all inside the leader-only Coordinator's call stack:
+This is the strict proposal and load-gate path. Reconciliation runs the same
+HAProxy check asynchronously in `RenderGate`, after its render pipeline runs
+the configured rendered-output validators.
 
 ```mermaid
 sequenceDiagram
-    participant Coord as Coordinator<br/>(leader-only)
+    participant Caller
     participant Pipeline
     participant Render as RenderService
     participant Validate as ValidationService
-    participant Parser as client-native Parser
-    participant Schema as OpenAPI Schema
     participant Binary as haproxy Binary
+    participant External as Protocol-v1 Validators
 
-    Coord->>Pipeline: Execute(ctx, storeProvider)
+    Caller->>Pipeline: Execute(ctx, storeProvider)
     Pipeline->>Render: Render(ctx, storeProvider)
-    Render-->>Pipeline: *RenderResult (config + aux files)
+    Render-->>Pipeline: authenticated output snapshot
 
-    Pipeline->>Pipeline: ComputeContentChecksum(config, aux)
-    Pipeline->>Validate: ValidateWithChecksum(ctx, config, aux, checksum)
-    Note over Validate: Per-instance cache (cacheMu, RWMutex)<br/>checksum hit → return cached parsed config
+    Pipeline->>Pipeline: retain authenticated content checksum
+    Pipeline->>Validate: ValidateOutputSnapshotWithChecksum(ctx, output, checksum)
+    Validate->>Validate: authenticate and materialize exact output
 
     Validate->>Validate: os.MkdirTemp("", "haproxy-validation-*")
-    Note over Validate: Per-call sandbox — every Validate gets<br/>its own unique /tmp dir. File I/O is per-call;<br/>a cancellable gate serialises haproxy -c
-
-    Validate->>Parser: validateSyntax(config)
-    alt Syntax error
-        Parser-->>Validate: error
-        Validate-->>Pipeline: ValidationResult{Valid:false, Phase:"syntax"}
+    Note over Validate: Every occurrence gets a new sandbox;<br/>the checksum never bypasses the binary
+    Validate->>Binary: haproxy -c -f /tmp/<unique>/haproxy.cfg
+    alt HAProxy refuses the output
+        Binary-->>Validate: exit 1 + stderr
+        Validate-->>Pipeline: ValidationResult{Valid:false, Phase:"semantic"}
     else
-        Parser-->>Validate: *parser.StructuredConfig
-        Validate->>Schema: validateAPISchema(parsed, version)
-        alt Schema error
-            Schema-->>Validate: error
-            Validate-->>Pipeline: ValidationResult{Valid:false, Phase:"schema"}
-        else
-            Schema-->>Validate: ok
-            Note over Validate: Every changed render runs semantic validation;<br/>identical content returns from the cache above
-            Validate->>Binary: haproxy -c -f /tmp/<unique>/haproxy.cfg
-            alt Semantic error
-                Binary-->>Validate: exit 1 + stderr
-                Validate-->>Pipeline: ValidationResult{Valid:false, Phase:"semantic"}
-            else
-                Binary-->>Validate: exit 0
-                Validate->>Validate: cacheResult(checksum, parsedConfig)
-                Validate-->>Pipeline: ValidationResult{Valid:true, ParsedConfig:...}
-            end
-        end
+        Binary-->>Validate: exit 0
+        Validate-->>Pipeline: ValidationResult{Valid:true}
+        Pipeline->>External: ValidateRenderedOutput(ctx, exact files)
+        Note over External: Every matching v1 validator receives<br/>every request, including exact repeats
+        External-->>Pipeline: warnings or error
     end
 
-    Pipeline-->>Coord: *PipelineResult or *PipelineError
+    Pipeline-->>Caller: *PipelineResult or *PipelineError
 ```
 
 **Validation Steps:**
 
-1. **Pipeline call**: `Coordinator.handleReconciliationTriggered` calls `Pipeline.Execute` synchronously. The pipeline first renders, then validates — both in the same call stack, no event hop.
-2. **Cache check**: `ValidationService` keys its cache on a digest of `(config + aux files)`. Identical content during drift-prevention cycles returns the cached `*parser.StructuredConfig` without running any phase. Failures are *not* cached — every failure retries.
-3. **Sandbox**: each `Validate` call creates its own `os.MkdirTemp("", "haproxy-validation-*")` and rewrites the rendered config's `default-path origin` to point at it. File I/O is fully isolated per call. A context-aware gate serialises `haproxy -c`; cancellation removes queued checks or terminates the running process. A per-instance `cacheMu` (`sync.RWMutex`) guards the cached `*parser.StructuredConfig` lookup.
-4. **Phase 1 — Syntax**: client-native parser checks grammar and section structure. Cheap.
-5. **Phase 1.5 — OpenAPI schema**: parsed structure cross-checked against a version-specific OpenAPI schema via `pkg/generated/validators`. Catches out-of-range values, pattern violations, missing required fields. Also cheap (in-memory, no fork).
-6. **Phase 2 — Semantic**: writes the config + auxiliary files into a per-call temp directory, runs `haproxy -c -f <tempdir>/haproxy.cfg`, parses the binary's stderr on failure. The temp directory mirrors the production layout (`maps/`, `ssl/`, `general/`) under `default-path origin <tempdir>` so file references resolve exactly like at runtime.
-7. **Rendered-output validators**: after the built-in phases pass, the pipeline sends the complete rendered file set to each configured pluggable validator. An error becomes phase `external`; warnings remain attached to the successful result.
-8. **Result**: Pipeline wraps the result into a `*PipelineResult` (success) or `*PipelineError` (failure carrying `Phase` for `errors.AsType[*PipelineError]`); the Coordinator then publishes `TemplateRenderedEvent` or `ReconciliationFailedEvent` accordingly.
+1. **Render**: the pipeline produces one authenticated immutable output snapshot.
+2. **Identity**: the content checksum travels with that output for publishing and deployment comparisons. It doesn't authorize validation reuse.
+3. **Built-in check**: each applicable call authenticates and materializes the snapshot, creates a fresh temp tree, and invokes `haproxy -c`. The tree mirrors the production `maps/`, `ssl/`, and `general/` layout.
+4. **Rendered-output validators**: every matching protocol-v1 validator receives the complete request on every pipeline invocation. Persistent connections reuse transport only.
+5. **Cancellation**: a context-aware gate removes cancelled waiters and terminates a running check. Cancellation immediately after a successful process exit still prevents a successful result.
+6. **Result**: the pipeline returns `*PipelineResult` or a phase-tagged `*PipelineError`. Reconciliation publishes from its pipeline and receives HAProxy's per-occurrence verdict later from `RenderGate`.
 
 ## Zero-reload deployment strategy
 

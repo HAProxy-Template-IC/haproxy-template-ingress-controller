@@ -1,0 +1,10 @@
+templateSnippets:
+  frontend-filters-999-gateway-debug:
+    template: |
+      {%- var debug bool = extraContext | dig("diagnostics", "routingHeaders", "enabled") | fallback(false) -%}
+      {%- if debug %}
+      # Gateway-specific headers (set by gateway.yaml advanced matchers)
+      http-response set-header X-Gateway-Matched-Route %[var(txn.matched_route)] if { var(txn.matched_route) -m found }
+      http-response set-header X-Gateway-Match-Reason %[var(txn.match_reason)] if { var(txn.match_reason) -m found }
+      http-response set-header X-Gateway-Filters-Applied %[var(txn.filters_applied)] if { var(txn.filters_applied) -m found }
+      {%- end %}

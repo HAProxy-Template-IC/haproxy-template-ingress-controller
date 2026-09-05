@@ -9,13 +9,135 @@
 #   - response-cookie-*          (nginx proxy_cookie_* upstream Set-Cookie rewriting)
 #   - response-location-rewrite-* (nginx proxy_redirect Location/Refresh rewriting)
 #
-# frontend-filters-* snippets inherit NO locals (see charts/CLAUDE.md extension
-# table); each iterates resources.ingresses.List() itself and host-scopes its
-# output via HostMatchCondition. Snippets sit in the 800-band (600s=haproxy-
-# ingress, 700s=nginx are taken).
+# Public frontend wrappers replay host-scoped fragments from exact per-Ingress
+# producers. Snippets sit in the 800-band (600s=haproxy-ingress, 700s=nginx).
 templateSnippets:
 
+  util-haptic-emit-annotation-access-control:
+    template: |-
+      {%- import "util-haptic-ingress-match" for HapticResourceMatchCondition -%}
+      {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {%- macro EmitHapticAnnotationAccessControl(ingress *resources.ingresses.T, allowAnnotation string, denyAnnotation string, aclPrefix string, allowCommentFmt string, denyCommentFmt string) -%}
+        {%- var ns = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
+        {%- var key = ns + "/" + name -%}
+        {%- var cond = HapticResourceMatchCondition(key) -%}
+        {%- var allowlist = ingress.Metadata.Annotations[allowAnnotation] -%}
+        {%- var denylist = ingress.Metadata.Annotations[denyAnnotation] -%}
+        {%- if allowlist != "" %}
+      # {{ replace(allowCommentFmt, "{KEY}", key) }}
+      acl {{ aclPrefix }}_allowlist_{{ ns }}_{{ name }} src {{ ValidateCidrList(allowlist, allowAnnotation, key) }}
+
+      http-request deny if {{ cond }} !{{ aclPrefix }}_allowlist_{{ ns }}_{{ name }}
+        {%- end -%}
+        {%- if denylist != "" %}
+      # {{ replace(denyCommentFmt, "{KEY}", key) }}
+      acl {{ aclPrefix }}_denylist_{{ ns }}_{{ name }} src {{ ValidateCidrList(denylist, denyAnnotation, key) }}
+
+      http-request deny if {{ cond }} {{ aclPrefix }}_denylist_{{ ns }}_{{ name }}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-haptic-emit-annotation-cors:
+    template: |-
+      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
+      {%- macro EmitHapticAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) -%}
+        {%- if ingress.Metadata.Annotations[enabledAnn] == "true" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- var key = ns + "/" + name -%}
+          {%- var cond = HapticHostMatchCondition(key) -%}
+          {%- if cond != "" -%}
+            {%- var rawOrigin = ingress.Metadata.Annotations[prefix + "/cors-allow-origin"] -%}
+            {%- if rawOrigin == "" -%}{%- rawOrigin = "*" -%}{%- end -%}
+            {%- var methods = ingress.Metadata.Annotations[prefix + "/cors-allow-methods"] -%}
+            {%- if methods == "" -%}{%- methods = "GET, PUT, POST, DELETE, PATCH, OPTIONS" -%}{%- end -%}
+            {%- var headers = ingress.Metadata.Annotations[prefix + "/cors-allow-headers"] -%}
+            {%- if headers == "" -%}{%- headers = "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" -%}{%- end -%}
+            {%- var credentials = ingress.Metadata.Annotations[prefix + "/cors-allow-credentials"] -%}
+            {%- var exposeHeaders = ingress.Metadata.Annotations[prefix + "/cors-expose-headers"] -%}
+            {%- var maxAge = ingress.Metadata.Annotations[prefix + "/cors-max-age"] -%}
+            {%- if maxAge == "" -%}{%- maxAge = defaultMaxAge -%}{%- end -%}
+            {%- var corsInj = "" -%}
+            {%- for _, value := range []string{methods, headers, maxAge, exposeHeaders} -%}
+              {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(value, "line") -%}{%- end -%}
+            {%- end -%}
+            {%- if corsInj != "" -%}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " has a CORS annotation value containing " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the cors-allow-methods/-headers/-max-age/-expose-headers values.") -}}
+              {%- return -%}
+            {%- end -%}
+            {%- var allowAny = false -%}
+            {%- var exact = []string{} -%}
+            {%- var regexes = []string{} -%}
+            {%- for _, token := range split(rawOrigin, ",") -%}
+              {%- var origin = strip(token) -%}
+              {%- if origin == "" -%}{%- continue -%}{%- end -%}
+              {%- if origin == "*" -%}{%- allowAny = true -%}{%- break -%}{%- end -%}
+              {%- if !regex_search(origin, "^([a-z]+://(\\*\\.)?[A-Za-z0-9\\-.]*(:[0-9]+)?|null)$") -%}
+                {{- fail("Invalid CORS origin '" + origin + "' in annotation '" + prefix + "/cors-allow-origin' on Ingress '" + key + "' — must be scheme://host[:port], scheme://*.host[:port], null, or *.") -}}
+              {%- end -%}
+              {%- if strings_contains(origin, "*") -%}
+                {%- regexes = append(regexes, "^" + replace(sanitize_regex(origin), "\\*", "[A-Za-z0-9\\-]+") + "$") -%}
+              {%- else -%}
+                {%- exact = append(exact, origin) -%}
+              {%- end -%}
+            {%- end -%}
+            {%- var aclName = "cors_origin_" + replace(replace(prefix, ".", "_"), "/", "_") + "_" + ns + "_" + name -%}
+            {%- var originHdr = "%[var(txn.cors_origin)]" -%}
+            {%- if allowAny -%}{%- originHdr = "*" -%}{%- end %}
+      # {{ commentLabel }} ({{ key }})
+      http-request set-var(txn.cors_origin) req.hdr(Origin) if {{ cond }}{{ "\n" -}}
+            {%- if allowAny %}
+      acl {{ aclName }} var(txn.cors_origin) -m found
+            {%- else -%}
+              {%- for i := 0; i < len(exact); i += 20 -%}
+                {%- var hi = i + 20 -%}{%- if hi > len(exact) -%}{%- hi = len(exact) -%}{%- end %}
+      acl {{ aclName }} var(txn.cors_origin) -m str {{ join(exact[i:hi], " ") }}
+              {%- end -%}
+              {%- for i := 0; i < len(regexes); i += 20 -%}
+                {%- var hi = i + 20 -%}{%- if hi > len(regexes) -%}{%- hi = len(regexes) -%}{%- end %}
+      acl {{ aclName }} var(txn.cors_origin) -m reg {{ join(regexes[i:hi], " ") }}
+              {%- end -%}
+            {%- end %}
+      http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Allow-Methods "{{ EscapeLogFormatValue(methods) }}" if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Allow-Headers "{{ EscapeLogFormatValue(headers) }}" if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Max-Age "{{ EscapeLogFormatValue(maxAge) }}" if {{ cond }} {{ aclName }}
+            {%- if credentials == "true" %}
+      http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ aclName }}
+            {%- end -%}
+            {%- if exposeHeaders != "" %}
+      http-after-response set-header Access-Control-Expose-Headers "{{ EscapeLogFormatValue(exposeHeaders) }}" if {{ cond }} {{ aclName }}
+            {%- end -%}
+            {%- if !allowAny %}
+      http-after-response add-header Vary Origin if {{ cond }} {{ aclName }}
+            {%- end %}
+      http-request return status 204 if {{ cond }} {{ aclName }} METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  features-900-haptic-fragment-800-forwardfor:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/forwardfor']"]
+      effects: [publishValue]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-800-forwardfor" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-800-haptic-forwardfor:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-800-forwardfor", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-800-forwardfor:
     template: |
       {#
         HAPTIC forwardfor Annotation (best-of-breed: haproxy-ingress semantics)
@@ -29,8 +151,9 @@ templateSnippets:
           ifmissing → http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found }
           ignore    → (no rule)
       #}
-      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- import "util-haptic-ingress-match" for HapticResourceMatchCondition -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
           {#- Annotation first: the ns/name/key strings are only needed when it is set. -#}
           {%- var forwardfor = ingress.Metadata.Annotations["haproxy-haptic.org/forwardfor"] %}
           {%- if forwardfor == "" %}{%- continue %}{%- end %}
@@ -44,7 +167,7 @@ templateSnippets:
             {#- Scoped by matched route: the previous exact host gate emitted
                 nothing for a wildcard or host-less rule, so a client-supplied
                 X-Forwarded-For reached the backend unmodified. -#}
-            {%- var xffCond = ResourceMatchCondition([]string{key}) %}
+            {%- var xffCond = HapticResourceMatchCondition(key) %}
       # haptic/forwardfor ({{ key }})
               {%- if forwardfor == "ifmissing" %}
       http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ xffCond }}
@@ -56,7 +179,27 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
+  features-900-haptic-fragment-810-access-control:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/allowlist-source-range']"
+        - "metadata.annotations['haproxy-haptic.org/denylist-source-range']"
+        - "metadata.annotations['haproxy-haptic.org/satisfy']"
+      effects: [publishValue]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-810-access-control" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-810-haptic-access-control:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-810-access-control", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-810-access-control:
     template: |
       {#
         HAPTIC IP allow/deny-list (best-of-breed: shared CIDR-ACL macro)
@@ -70,16 +213,17 @@ templateSnippets:
           http-request deny if <host-match> !<acl>   (allowlist)
           http-request deny if <host-match>  <acl>   (denylist)
       #}
-      {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
+      {%- import "util-haptic-emit-annotation-access-control" for EmitHapticAnnotationAccessControl -%}
       {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {#- Under satisfy=any the combined IP-or-auth gate (backend-directives-825)
             owns the allowlist so an allow-listed OR authenticated request passes;
             suppress the standalone allowlist deny here by passing an empty key
             (the macro then skips it). The denylist deny still applies. -#}
         {%- var allowKey = "haproxy-haptic.org/allowlist-source-range" %}
         {%- if SatisfyAnyMode(ingress) == "any" %}{%- allowKey = "" %}{%- end %}
-        {{ EmitAnnotationAccessControl(ingress,
+        {{ EmitHapticAnnotationAccessControl(ingress,
             allowKey,
             "haproxy-haptic.org/denylist-source-range",
             "haptic",
@@ -94,11 +238,52 @@ templateSnippets:
   # rather than every request for the host — the wildcard/host-less
   # HostMatchCondition gap goes with it.
   features-820-haptic-header-mods:
-    template: |
-      {%- import "util-ingress-header-contribute" for IngressHeaderContribute -%}
-      {{- IngressHeaderContribute("haproxy-haptic.org/request-set-header", "haproxy-haptic.org/response-set-header", "\n", " ") -}}
+    template: '{{- "" -}}'
+
+  ingress-header-mods-0820-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/request-set-header']"
+        - "metadata.annotations['haproxy-haptic.org/response-set-header']"
+      group: ingress-header-mods
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-ingress-header-publish" for PublishIngressHeaderContributions -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {{- PublishIngressHeaderContributions(ingress,
+          "haproxy-haptic.org/request-set-header", "haproxy-haptic.org/response-set-header", "\n", " ", "0820-haptic") -}}
+      {%- end -%}
+
+  features-900-haptic-fragment-830-cors:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/cors-enable']"
+        - "metadata.annotations['haproxy-haptic.org/cors-allow-origin']"
+        - "metadata.annotations['haproxy-haptic.org/cors-allow-methods']"
+        - "metadata.annotations['haproxy-haptic.org/cors-allow-headers']"
+        - "metadata.annotations['haproxy-haptic.org/cors-allow-credentials']"
+        - "metadata.annotations['haproxy-haptic.org/cors-expose-headers']"
+        - "metadata.annotations['haproxy-haptic.org/cors-max-age']"
+      consumes: [haptic-ingress-match-publications]
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-830-cors" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
 
   frontend-filters-830-haptic-cors:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-830-cors", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-830-cors:
     template: |
       {#
         HAPTIC CORS (best-of-breed: shared EmitAnnotationCORS macro).
@@ -121,19 +306,37 @@ templateSnippets:
           http-after-response set-header Access-Control-* ... if <host-match> <acl>
           http-request return status 204 if <host-match> <acl> METH_OPTIONS ...
       #}
-      {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- import "util-haptic-emit-annotation-cors" for EmitHapticAnnotationCORS -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {#- No enable annotation → the macro emits nothing; skip the call. A
             present-but-invalid value still reaches the macro's own handling. -#}
         {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cors-enable"] == "" %}{%- continue %}{%- end %}
-        {{ EmitAnnotationCORS(ingress,
+        {{ EmitHapticAnnotationCORS(ingress,
             "haproxy-haptic.org",
             "haproxy-haptic.org/cors-enable",
             "86400",
             "haptic/cors") }}
       {%- end -%}
 
+  features-900-haptic-fragment-840-src-ip-header:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/src-ip-header']"]
+      effects: [publishValue]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-840-src-ip-header" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-840-haptic-src-ip-header:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-840-src-ip-header", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-840-src-ip-header:
     template: |
       {#
         HAPTIC source-IP override (best-of-breed: haproxytech src-ip-header).
@@ -148,9 +351,10 @@ templateSnippets:
         Generated HAProxy Config (host-scoped):
           http-request set-src hdr(<header-name>) if <host-match>
       #}
-      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
+      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition, HapticResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
           {#- Annotation first: the ns/name/key strings are only needed when it is set. -#}
           {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"] %}
           {%- if srcIpHeader == "" %}{%- continue %}{%- end %}
@@ -163,11 +367,30 @@ templateSnippets:
                 that skipped this left the CIDR allow/deny lists judging the
                 proxy's address instead of the client's. #}
       # haptic/src-ip-header ({{ key }})
-      http-request set-src hdr({{ ValidateConfigValue(srcIpHeader, "haproxy-haptic.org/src-ip-header", key, false) }}) if {{ ResourceMatchCondition([]string{key}) }}
+      http-request set-src hdr({{ ValidateConfigValue(srcIpHeader, "haproxy-haptic.org/src-ip-header", key, false) }}) if {{ HapticResourceMatchCondition(key) }}
           {%- end %}
       {%- end -%}
 
+  features-900-haptic-fragment-850-request-capture:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/request-capture']"
+        - "metadata.annotations['haproxy-haptic.org/request-capture-len']"
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-850-request-capture" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-850-haptic-request-capture:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-850-request-capture", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-850-request-capture:
     template: |
       {#
         HAPTIC request capture (best-of-breed: haproxytech request-capture).
@@ -185,7 +408,8 @@ templateSnippets:
       #}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -207,7 +431,27 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
+  features-900-haptic-fragment-860-response-cookie:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/response-cookie-domain']"
+        - "metadata.annotations['haproxy-haptic.org/response-cookie-path']"
+      consumes: [haptic-ingress-match-publications]
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-860-response-cookie" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-860-haptic-response-cookie:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-860-response-cookie", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-860-response-cookie:
     template: |
       {#
         HAPTIC upstream Set-Cookie rewriting (best-of-breed: nginx
@@ -225,10 +469,11 @@ templateSnippets:
           http-response replace-header Set-Cookie (.*)Domain=<from>(.*) \1Domain=<to>\2 if <host-match>
           http-response replace-header Set-Cookie (.*)Path=<from>(.*)   \1Path=<to>\2   if <host-match>
       #}
-      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
+      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition, HapticResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -240,7 +485,7 @@ templateSnippets:
               {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
-              {%- var cond = HostMatchCondition(hosts) %}
+              {%- var cond = HapticHostMatchCondition(key) %}
               {%- if cookieDomain != "" %}
                 {%- var parts = split(strip(cookieDomain), " ") %}
                 {%- if len(parts) == 2 %}
@@ -265,7 +510,27 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
+  features-900-haptic-fragment-870-response-location-rewrite:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/response-location-rewrite-from']"
+        - "metadata.annotations['haproxy-haptic.org/response-location-rewrite-to']"
+      consumes: [haptic-ingress-match-publications]
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-870-response-location-rewrite" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-870-haptic-response-location-rewrite:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-870-response-location-rewrite", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-870-response-location-rewrite:
     template: |
       {#
         HAPTIC upstream Location/Refresh rewriting (adapted from nginx
@@ -286,10 +551,11 @@ templateSnippets:
           http-response replace-header Location <from-regex> <to> if <host-match>
           http-response replace-header Refresh  <from-regex> <to> if <host-match>
       #}
-      {%- import "util-ingress-helpers" for HostMatchCondition, ResourceMatchCondition -%}
+      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition, HapticResourceMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -307,7 +573,7 @@ templateSnippets:
               {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
-              {%- var cond = HostMatchCondition(hosts) %}
+              {%- var cond = HapticHostMatchCondition(key) %}
               {%- var fromRe = sanitize_regex(ValidateConfigValue(from, "haproxy-haptic.org/response-location-rewrite-from", key, false)) %}
               {%- var toV = ValidateConfigValue(to, "haproxy-haptic.org/response-location-rewrite-to", key, false) %}
       # haptic/response-location-rewrite ({{ key }})

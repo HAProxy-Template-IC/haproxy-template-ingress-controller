@@ -2,7 +2,7 @@
 
 # Build arguments for version control
 # renovate: datasource=docker depName=golang
-ARG GO_VERSION=1.26
+ARG GO_VERSION=1.27
 # Must match DEFAULT_HAPROXY in versions.env. Clamped to stable series by a
 # packageRule in renovate.json (HAProxy's floating `X.Y` tag on Docker Hub can
 # point at a dev release before the first `X.Y.Z` patch ships, so the rule

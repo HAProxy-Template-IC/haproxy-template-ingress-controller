@@ -38,13 +38,35 @@ import (
 )
 
 // EventBufferSize is the size of the event subscription buffer.
-// High-volume component that receives resource change events from every
-// configured watcher, sized to handle bursts when many resources change
-// simultaneously.
-const EventBufferSize = busevents.HighVolumeSubscriberBuffer
+//
+// One resource-index update per watcher per debounce window, which a bulk
+// apply or a namespace teardown delivers in the hundreds. The handler only
+// logs and publishes a trigger, so it is not slow — the burst is simply wider
+// than 100, and this subscriber is critical, so one drop ends the controller
+// iteration and the fleet loses its routing until it rebuilds (measured in
+// e2e). Same input volume as the Coordinator downstream, which has been sized
+// for the burst all along.
+const EventBufferSize = busevents.ResourceChurnSubscriberBuffer
 
 // ComponentName is the unique identifier for this component.
 const ComponentName = "reconciler"
+
+// reconcilerWantsEvent drops the HAProxy pod index updates before they reach
+// the buffer.
+//
+// They are the one resource-index update handleResourceChange throws away: the
+// fleet is a deployment target, not a configuration source, and pod changes
+// reach the deployer as HAProxyPodsDiscoveredEvent instead. Discarding them in
+// the handler still spends a buffer slot each, and a fleet rolling restart or a
+// scale-up makes that the loudest churn on the bus. This subscriber is
+// non-lossy, so one drop ends the controller iteration.
+func reconcilerWantsEvent(event busevents.Event) bool {
+	indexUpdate, ok := event.(*events.ResourceIndexUpdatedEvent)
+	if !ok {
+		return true
+	}
+	return indexUpdate.ResourceTypeName != names.HAProxyPodsResourceType
+}
 
 // Trigger reasons published on ReconciliationTriggeredEvent. The two state
 // updates (reasonResourceChange, reasonHTTPResourceChange) are coalescible; the
@@ -112,6 +134,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Reconciler {
 			events.EventTypeDriftPreventionTriggered,
 			events.EventTypeBecameLeader,
 		},
+		EventFilter: reconcilerWantsEvent,
 	})
 	return r
 }

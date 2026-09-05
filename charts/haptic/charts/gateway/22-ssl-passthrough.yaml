@@ -1,59 +1,43 @@
 templateSnippets:
-  util-gateway-ssl-passthrough:
-    requires: [gateways, httproutes, referencegrants, tlsroutes]
+  util-publish-gateway-http-ssl-passthrough:
+    requires: [httproutes]
     template: |
-      {# Caches SSL passthrough backends in shared["gateway_ssl_passthrough"].backends
-          Uses ComputeIfAbsent for race-free caching across parallel template renders.
-          Note: first_seen() calls are safe inside the compute function due to the
-          deadlock-free implementation of ComputeIfAbsent. #}
-      {%- import "util-build-ssl-passthrough" for BuildSSLPassthrough %}
-      {%%
-        var _, _ = shared.ComputeIfAbsent("gateway_ssl_passthrough", func() any {
-          var sslData = map[string]any{"backends": []any{}}
-          BuildSSLPassthrough(sslData)
-          return sslData
-        })
-      %%}
+      {%- macro PublishGatewayHTTPSSLPassthrough(route any) %}
+        {%%
+          var hasPassthrough = false
+          for _, rule := range toSlice(dig(route, "spec", "rules")) {
+            for _, filter := range toSlice(dig(rule, "filters")) {
+              if dig_string(filter, "", "type") != "ExtensionRef" { continue }
+              var extensionRef = dig(filter, "extensionRef")
+              var kind = dig_string(extensionRef, "", "kind")
+              var name = dig_string(extensionRef, "", "name")
+              if kind == "SSLPassthrough" || (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
+                hasPassthrough = true
+              }
+            }
+          }
+          var namespace = dig_string(route, "", "metadata", "namespace")
+          var routeName = dig_string(route, "", "metadata", "name")
+        %%}
+        {%- if hasPassthrough %}
+        {%- for _, host := range toSlice(dig(route, "spec", "hostnames")) %}
+          {%%
+            show shared.Publish("backends", "0/http/" + tostring(host), map[string]any{
+              "name": "ssl-passthrough-" + namespace + "-" + routeName,
+              "sni": host, "namespace": namespace, "route": routeName, "route_type": "httproute",
+            })
+          %%}
+        {%- end %}
+        {%- end %}
+      {%- end macro %}
 
-  util-build-ssl-passthrough:
-    requires: [gateways, httproutes, referencegrants, tlsroutes]
+  util-publish-gateway-tls-ssl-passthrough:
+    requires: [gateways, namespaces, referencegrants, services, tlsroutes]
     template: |
-      {# Macro to populate SSL passthrough backend data.
-          Called from ComputeIfAbsent to enable use of template functions (dig, toSlice, etc.). #}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection %}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted %}
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocol, ListenerHostname %}
-      {%- macro BuildSSLPassthrough(sslData map[string]any) %}
-        {#- Pass 1: HTTPRoute SSL passthrough (annotation-driven) -#}
-        {%- for _, route := range resources.httproutes.List() %}
-          {%%
-            // Flattened via `[*]`: outer rule loop only accessed
-            // rule.Filters and the inner body never references rule.
-            var hasPassthrough = false
-            for _, filter := range route.Spec.Rules[*].Filters {
-              if filter.Type == "ExtensionRef" {
-                var kind = filter.ExtensionRef.Kind
-                var name = filter.ExtensionRef.Name
-                if kind == "SSLPassthrough" || (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
-                  hasPassthrough = true
-                }
-              }
-            }
-            if !hasPassthrough { continue }
-
-            var ns = route.Metadata.Namespace
-            var routeName = route.Metadata.Name
-          %%}
-          {%- for _, host := range route.Spec.Hostnames %}
-            {%- if first_seen("gateway_ssl_passthrough_hosts", host) %}
-              {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
-                "name": "ssl-passthrough-" + ns + "-" + routeName,
-                "sni": host, "namespace": ns, "route": routeName, "route_type": "httproute",
-              }) %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-
+      {%- macro PublishGatewayTLSSSLPassthrough(tlsRoute *resources.tlsroutes.T) %}
         {#- Pass 2: TLSRoute (Gateway API spec — TLS Passthrough listener)
 
             For each TLSRoute / rule that survives the listener-attachment
@@ -65,7 +49,8 @@ templateSnippets:
             then renders one `use_backend ... if { req_ssl_sni -m str
             <host> }` line per entry, all pointing at the same backend
             for a given rule. -#}
-        {%- for _, route := range resources.tlsroutes.List() %}
+        {%- if tlsRoute != nil %}
+          {%- var route = tlsRoute %}
           {%%
             var nsStr = route.Metadata.Namespace
             var nameStr = route.Metadata.Name
@@ -284,7 +269,13 @@ templateSnippets:
             {#- Emit one entry per intersected SNI; backend dedup happens
                 downstream in backends-501-gateway-ssl-passthrough. -#}
             {%%
-              var beName = "gtw_tls_" + nsStr + "_" + nameStr + "_" + sprintf("%d", ruleIdx)
+              var beName = "gtw_tls_" + nsStr + "_" + nameStr + "_" + tostring(ruleIdx)
+              var fixed = func(value int) string {
+                var encoded = tostring(value)
+                var zeroes = "0000000000"
+                if len(encoded) >= len(zeroes) { return encoded }
+                return zeroes[:len(zeroes)-len(encoded)] + encoded
+              }
             %%}
             {%%
               // Dump the SNI set into a slice so we iterate over a known
@@ -293,6 +284,15 @@ templateSnippets:
               var sniSlice = []any{}
               for k, _ := range snisForRule {
                 sniSlice = append(sniSlice, k)
+              }
+              if len(sniSlice) > 0 {
+                var definitionKey = "1/tls/" + nsStr + "/" + route.Metadata.Name + "/" + fixed(ruleIdx)
+                var sortedSNIs = sort_strings(sniSlice)
+                show shared.Publish("definitions", definitionKey, map[string]any{
+                  "name": beName,
+                  "invalid": !ruleResolved,
+                  "rank": definitionKey + "/" + sortedSNIs[0],
+                })
               }
             %%}
             {%- for _, sniVal := range sniSlice %}
@@ -321,51 +321,62 @@ templateSnippets:
                 entry["gw_name"] = meta["gw_name"]
                 entry["listener_hostname"] = meta["listener_hostname"]
                 entry["invalid"] = !ruleResolved
-                sslData["backends"] = append(sslData["backends"].([]any), entry)
+                show shared.Publish("backends", "1/tls/" + nsStr + "/" + route.Metadata.Name + "/" +
+                  fixed(ruleIdx) + "/" + tostring(sniVal), entry)
               %%}
             {%- end %}
           {%- end %}
         {%- end %}
       {%- end macro %}
 
-  # util-gateway-tlsroute-count-contrib
-  #
-  # TLSRoute contribution to the Gateway listener attachedRoutes count.
-  # Compile-safe seam: util-generate-gateway-status-patches renders this with
-  # `default ""` and reads the entries back from the shared key — the typed
-  # resources.tlsroutes access lives HERE, in a snippet stripped together
-  # with the tlsroutes watch. needsTLSProtocol tags the entries so the
-  # listener loop counts them only toward TLS-protocol listeners.
-  util-gateway-tlsroute-count-contrib:
-    requires: [tlsroutes]
-    template: |
-      {%%
-        var _, _ = shared.ComputeIfAbsent("tlsrouteCountEntries", func() any {
-          var entries = []any{}
-          for _, r := range resources.tlsroutes.List() {
-            entries = append(entries, map[string]any{
-              "kind":  "TLSRoute",
-              "route": r,
-              "needsTLSProtocol": true,
-              "needsTCPProtocol": false,
-            })
-          }
-          return entries
-        })
-      %%}
+  gateway-ssl-passthrough-100-http:
+    requires: [httproutes]
+    incremental:
+      source: httproutes
+      root: gateway-http-route-pre-analysis
+      group: gateway-ssl-passthrough
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-http-ssl-passthrough" for PublishGatewayHTTPSSLPassthrough -%}
+      {%- var route = item -%}
+      {%- if route != nil -%}{%% PublishGatewayHTTPSSLPassthrough(route) %%}{%- end -%}
 
-  # status-patches-205-gateway-tlsroute
-  #
-  # TLSRoute status patch registration. Hooks into base.yaml's
-  # `render_glob "status-patches-*"` extension point. Lives apart from
-  # status-patches-200-gateway ONLY because the typed import must not appear
-  # in a snippet that survives when the TLSRoute feature is stripped —
-  # `import` has no `default` clause. render_glob tolerates its absence.
+  gateway-ssl-passthrough-200-tls:
+    requires: [gateways, namespaces, referencegrants, services, tlsroutes]
+    incremental:
+      source: tlsroutes
+      group: gateway-ssl-passthrough
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-tls-ssl-passthrough" for PublishGatewayTLSSSLPassthrough -%}
+      {%- var route = resources.tlsroutes.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if route != nil -%}{%% PublishGatewayTLSSSLPassthrough(route) %%}{%- end -%}
+
+  gateway-route-attachments-300-tls:
+    requires: [gateways, namespaces, tlsroutes]
+    incremental:
+      source: tlsroutes
+      group: gateway-route-attachments
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-route-attachments" for PublishGatewayRouteAttachments -%}
+      {{- PublishGatewayRouteAttachments(item, "TLSRoute", true, false) -}}
+
+  util-gateway-tlsroute-status-bindings:
+    template: |-
+      {{- toJSON(map[string]any{"tlsroutes": map[string]any{
+        "controllerName": extraContext | dig_string("", "controllerName"),
+      }}) -}}
+
   status-patches-205-gateway-tlsroute:
-    requires: [gateways, referencegrants, tlsroutes]
-    template: |
-      {%- import "util-sharded-tlsroute-status-patches" for ShardedTLSRouteStatusPatches -%}
-      {%- var allTLSRoutes = resources.tlsroutes.List() -%}
-      {%- if len(allTLSRoutes) > 0 -%}
-        {{- ShardedTLSRouteStatusPatches(allTLSRoutes) -}}
-      {%- end -%}
+    requires: [gateways, namespaces, referencegrants, services, tlsroutes]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-tlsroute-status-bindings" -}}'
+      group: gateway-tlsroute-status
+      effects: [statusPatch]
+    template: |-
+      {%- import "util-generate-tlsroute-status-patches" for GenerateTLSRouteStatusPatch -%}
+      {%- var route = resources.tlsroutes.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if route != nil -%}{{- GenerateTLSRouteStatusPatch(route) -}}{%- end -%}

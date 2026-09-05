@@ -36,16 +36,22 @@ The engine is safe for concurrent use — compile once at startup, render concur
 func New(templates map[string]string, opts *Options) (*ScriggoEngine, error)
 
 type Options struct {
-    EntryPoints    []string                         // template names compiled explicitly; nil = all
-    Filters        map[string]FilterFunc            // custom filters merged over the built-in set
-    Functions      map[string]GlobalFunc            // custom global functions merged over the built-in set
-    PostProcessors map[string][]PostProcessorConfig // per-template post-processing chains
-    Declarations   map[string]any                   // domain-specific Scriggo type declarations
-    Profiling      bool                             // enable Scriggo's built-in profiler
+    EntryPoints                   []string                         // template names compiled explicitly; nil = all
+    IncrementalEntryPoints        []string                         // deterministic component entry points
+    IncrementalBindingEntryPoints []string                         // deterministic binding-planner entry points
+    Filters                       map[string]FilterFunc            // custom filters merged over the built-in set
+    Functions                     map[string]GlobalFunc            // custom global functions merged over the built-in set
+    PostProcessors                map[string][]PostProcessorConfig // per-template post-processing chains
+    Declarations                  map[string]any                   // domain-specific Scriggo type declarations
+    Profiling                     bool                             // enable Scriggo's built-in profiler
 }
 ```
 
 A nil `*Options` (or the zero value) compiles every template as an entry point with no custom filters, functions, post-processors, declarations, or profiling. Set `EntryPoints` to compile only some templates explicitly — the rest are snippets, discovered and compiled on demand via `render`/`render_glob` statements with `inherit_context`. `Filters` plug into the pipe syntax (`{{ value | myFilter }}`), `Functions` into the call syntax (`{{ myFunc(value) }}`), and `PostProcessors` chain per-template transformations (regex replace, or a Scriggo template whose `input` variable is the previously rendered output).
+
+`IncrementalEntryPoints` must be a subset of `EntryPoints`. Those templates and their imports can access only tracked watched-resource, controller-resource, and HTTP inputs; `item`, immutable `props`, `renderSubject`, `shared`; and deterministic built-ins. Custom functions and ambient render globals aren't declared there.
+
+`IncrementalBindingEntryPoints` must also be a disjoint subset of `EntryPoints`. A binding planner receives detached, immutable `extraContext`, `capabilities`, `currentConfig`, `currentFiles`, `pathResolver`, `runtimeEnvironment`, and `templateSnippets` values. It has no watched-resource, controller-resource, HTTP, admission, or shared-state globals and must emit one JSON object. The selected values become the component's canonical immutable `props`; changing an unselected ambient value doesn't execute the component. `RenderIncrementalBindings` returns that object in canonical JSON form.
 
 ## Engine Interface (Highlights)
 
@@ -116,7 +122,7 @@ Scriggo needs to know the *type* of each runtime variable at compile time even t
 | `pathResolver` | `*PathResolver` | `pathResolver.GetPath(name, kind)` for map / SSL / file / crt-list paths |
 | `fileRegistry` | `*FileRegistrar` | Templates can register dynamically generated auxiliary files via this |
 | `templateSnippets` | `*[]string` | Names of available snippets; useful with `render_glob` |
-| `shared` | `*SharedContext` | Per-render cache; `shared.ComputeIfAbsent(key, fn)` memoises expensive work |
+| `shared` | `*SharedContext` | Root memoisation; incremental components use keyed unique output, publication, ranked publication, and exact selection |
 | `dataplane` | `*map[string]any` | The CRD's `spec.dataplane` block — port, timeouts, paths |
 | `capabilities` | `*map[string]any` | HAProxy feature flags derived from the local HAProxy version |
 | `http` | `*HTTPFetcher` | `http.Fetch(url, opts)` for HTTP resources |

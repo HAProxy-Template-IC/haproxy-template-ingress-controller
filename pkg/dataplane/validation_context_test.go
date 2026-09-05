@@ -115,31 +115,3 @@ func TestDetectLocalVersionContextCancelsExecutor(t *testing.T) {
 	cancel(cause)
 	require.ErrorIs(t, <-done, cause)
 }
-
-func TestValidationCacheDoesNotCommitAfterCancellationWhileWaiting(t *testing.T) {
-	validationCache.mu.Lock()
-	previousConfig := validationCache.lastConfigHash
-	previousAux := validationCache.lastAuxHash
-	validationCache.lastConfigHash = "baseline"
-	validationCache.lastAuxHash = "baseline"
-
-	cause := errors.New("validation retired while caching")
-	ctx, cancel := context.WithCancelCause(t.Context())
-	started := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		close(started)
-		done <- cacheValidationResult(ctx, "new", "new")
-	}()
-	<-started
-	cancel(cause)
-	validationCache.mu.Unlock()
-
-	require.ErrorIs(t, <-done, cause)
-	validationCache.mu.Lock()
-	assert.Equal(t, "baseline", validationCache.lastConfigHash)
-	assert.Equal(t, "baseline", validationCache.lastAuxHash)
-	validationCache.lastConfigHash = previousConfig
-	validationCache.lastAuxHash = previousAux
-	validationCache.mu.Unlock()
-}

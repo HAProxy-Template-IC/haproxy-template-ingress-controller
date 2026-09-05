@@ -162,9 +162,12 @@ func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *hapr
 
 	secrets, err := p.k8sClient.CoreV1().Secrets(namespace).List(ctx, listOptions)
 	if err != nil {
-		return cleanupError(runtimeConfig, "Secret", ownerName, fmt.Errorf("listing certificate secrets: %w", err))
+		return cleanupError(runtimeConfig, "Secret", ownerName, fmt.Errorf("listing SSL file Secrets: %w", err))
 	}
-	if err := pruneOwnedResources(ctx, runtimeConfig, "Secret", "certificate secret", result.SecretNames, secrets.Items,
+	secretNames := make([]string, 0, len(result.SecretNames)+len(result.SSLCaFileNames))
+	secretNames = append(secretNames, result.SecretNames...)
+	secretNames = append(secretNames, result.SSLCaFileNames...)
+	if err := pruneOwnedResources(ctx, runtimeConfig, "Secret", "SSL file Secret", secretNames, secrets.Items,
 		func(secret *corev1.Secret) metav1.Object { return secret },
 		publicationCurrent,
 		func(ctx context.Context, name string, options metav1.DeleteOptions) error {

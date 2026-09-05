@@ -25,6 +25,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -399,7 +400,27 @@ func markIterationInitialized(setup *componentSetup, state *configState, infra *
 	setup.ConfigChangeHandler.EnableReinitialization()
 	state.SetInitialized()
 	infra.NoteInitialized(state.iterationID)
+	// Counted on arrival rather than on teardown: an iteration that never
+	// finishes starting is not one the fleet got back, and this metric answers
+	// "how often has the controller rebuilt itself", which is what an operator
+	// correlates a propagation gap against.
+	//
+	// Add the running total, never Inc: a reinit swaps the metrics registry, so
+	// this counter is born at zero each time. Inc made it report 1 after every
+	// rebuild, and any two samples therefore differed by nothing.
+	if setup.MetricsComponent != nil {
+		recordReinitializations(setup.MetricsComponent.Metrics(), state.iterationID)
+	}
 	logger.Info("Controller iteration initialized successfully - entering event loop")
+}
+
+// recordReinitializations publishes the process's running rebuild total onto a
+// counter that a reinit has just re-created at zero.
+func recordReinitializations(m *metrics.Metrics, id iterationID) {
+	if m == nil || m.ControllerReinitializationsTotal == nil || id <= 1 {
+		return
+	}
+	m.ControllerReinitializationsTotal.Add(float64(id - 1))
 }
 
 func teardownIteration(setup *componentSetup, logger *slog.Logger) error {

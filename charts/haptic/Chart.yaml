@@ -9,13 +9,16 @@ appVersion: "0.2.0-alpha.1"
 # pruned from the Helm release Secret, keeping it under the 1 MiB limit. The
 # parent merges each enabled subchart's library YAML into the
 # HAProxyTemplateConfig (templates/_libraries.tpl). Every library is a subchart,
-# including base/ssl/ingress; spoa-hub carries no condition because its enable
+# including base/kubernetes-backends/ssl/ingress; spoa-hub carries no condition because its enable
 # predicate is an `or` over a template helper, which a Helm condition cannot
 # express — its own _helm_load.enable still gates it.
 dependencies:
   - name: base
     version: 0.1.0
     condition: controller.templateLibraries.base.enabled
+  - name: kubernetes-backends
+    version: 0.1.0
+    condition: controller.templateLibraries.kubernetesBackends.enabled
   - name: ssl
     version: 0.1.0
     condition: controller.templateLibraries.ssl.enabled

@@ -37,6 +37,50 @@ type contextPostProcessor interface {
 	processContext(ctx context.Context, templateName, input string) (string, error)
 }
 
+type contextBatchPostProcessor interface {
+	processBatchContext(ctx context.Context, templateName string, inputs []string) ([]string, error)
+}
+
+type cacheablePostProcessor interface {
+	postProcessCacheable() bool
+}
+
+type totalPostProcessor interface {
+	postProcessTotal() bool
+}
+
+func postProcessorChainCacheable(processors []PostProcessor) bool {
+	for _, processor := range processors {
+		cacheable, ok := processor.(cacheablePostProcessor)
+		if !ok || !cacheable.postProcessCacheable() {
+			return false
+		}
+	}
+	return len(processors) > 0
+}
+
+func postProcessorChainBatchable(processors []PostProcessor) bool {
+	batchProcessors := 0
+	for _, processor := range processors {
+		cacheable, ok := processor.(cacheablePostProcessor)
+		if !ok || !cacheable.postProcessCacheable() {
+			return false
+		}
+		if _, ok := processor.(contextBatchPostProcessor); ok {
+			batchProcessors++
+			if batchProcessors > 1 {
+				return false
+			}
+			continue
+		}
+		total, ok := processor.(totalPostProcessor)
+		if !ok || !total.postProcessTotal() {
+			return false
+		}
+	}
+	return len(processors) > 0
+}
+
 // PostProcessorType identifies the type of post-processor.
 type PostProcessorType string
 

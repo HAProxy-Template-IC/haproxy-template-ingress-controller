@@ -154,7 +154,12 @@ type file struct {
 
 // buildManifest turns the test's files into the wire manifest.
 func buildManifest(planID string, list []file) api.Manifest {
-	m := api.Manifest{PlanID: planID, PlanSchemaVersion: 1, Mode: api.ModeAuto}
+	m := api.Manifest{
+		IdentityVersion:   api.ExactIdentityVersion,
+		PlanID:            planID,
+		PlanSchemaVersion: 1,
+		Mode:              api.ModeAuto,
+	}
 	for _, f := range list {
 		kind := f.Kind
 		if kind == "" {
@@ -166,6 +171,7 @@ func buildManifest(planID string, list []file) api.Manifest {
 		m.Files = append(m.Files, api.File{
 			Path:           f.Path,
 			Digest:         renderplan.DigestString(f.Content),
+			Proof:          renderplan.DigestString(f.Content),
 			Size:           int64(len(f.Content)),
 			Kind:           kind,
 			ReloadOnChange: f.Reload,
@@ -195,6 +201,17 @@ func (h *harness) applyWithPlan(m *api.Manifest, list []file, plan []byte) api.A
 }
 
 func (h *harness) postWithPlan(m *api.Manifest, list []file, plan []byte, omit ...string) (status int, answer []byte) {
+	h.t.Helper()
+	h.prepareExactManifest(m)
+	return h.postPrepared(m, list, plan, omit...)
+}
+
+func (h *harness) postRaw(m *api.Manifest, list []file, omit ...string) (status int, answer []byte) {
+	h.t.Helper()
+	return h.postPrepared(m, list, nil, omit...)
+}
+
+func (h *harness) postPrepared(m *api.Manifest, list []file, plan []byte, omit ...string) (status int, answer []byte) {
 	h.t.Helper()
 	skip := map[string]struct{}{}
 	for _, path := range omit {
@@ -232,6 +249,50 @@ func (h *harness) postWithPlan(m *api.Manifest, list []file, plan []byte, omit .
 	raw, err := io.ReadAll(response.Body)
 	require.NoError(h.t, err)
 	return response.StatusCode, raw
+}
+
+func (h *harness) prepareExactManifest(m *api.Manifest) {
+	state := h.state(false)
+	m.IdentityVersion = api.ExactIdentityVersion
+	m.ExpectedPrevPlanProof = ""
+	if m.ExpectedPrevPlanID == state.AppliedPlanID {
+		m.ExpectedPrevPlanProof = state.AppliedPlanProof
+	}
+	m.ExpectedWorkerOpsPlanProof = ""
+	if m.ExpectedWorkerOpsPlanID == state.WorkerOpsPlanID {
+		m.ExpectedWorkerOpsPlanProof = state.WorkerOpsPlanProof
+	}
+	if len(m.InPlaceOps) > 0 && m.ExpectedWorkerOpsPlanProof == "" {
+		m.ExpectedWorkerOpsPlanProof = "test:stale-worker"
+	}
+	m.ValidatedPlanProof = ""
+	if m.ValidatedPlanID == state.AppliedPlanID {
+		m.ValidatedPlanProof = state.AppliedPlanProof
+	}
+	if m.ValidatedPlanID != "" && m.ValidatedPlanProof == "" {
+		m.ValidatedPlanProof = "test:stale-validated"
+	}
+	if m.Mode == api.ModeRevertLKG {
+		m.PlanProof = ""
+		switch m.PlanID {
+		case state.AppliedPlanID:
+			m.PlanProof = state.AppliedPlanProof
+		case state.WorkerOpsPlanID:
+			m.PlanProof = state.WorkerOpsPlanProof
+		}
+		if m.PlanProof == "" {
+			m.PlanProof = "test:stale-revert"
+		}
+		return
+	}
+	if state.AppliedPlanID != "" && state.AppliedPlanProof == "" {
+		m.Mode = api.ModeReload
+		m.Ops = nil
+		m.InPlaceOps = nil
+		m.ExpectedWorkerOpsPlanID = ""
+		m.ExpectedWorkerOpsPlanProof = ""
+		m.WorkerOpsPlanID = ""
+	}
 }
 
 // applyConflict posts and requires a 409, returning the conflict.

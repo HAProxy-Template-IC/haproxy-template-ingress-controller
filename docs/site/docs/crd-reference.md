@@ -175,6 +175,7 @@ The main HAProxy configuration template. **Required.**
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
 | `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
+| `createOnlyFields` | `[]string` | No | — |
 
 ```yaml
 haproxyConfig:
@@ -223,6 +224,7 @@ Reusable template fragments, included in other templates via `{{ render "snippet
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
 | `requires` | `[]string` | No | — (names of `watchedResources` keys) |
+| `incremental` | object | No | — |
 
 ```yaml
 templateSnippets:
@@ -238,6 +240,235 @@ configuration. A snippet that must survive stripping may reach a stripped
 resource only through compile-safe seams — `render "..." default ""`,
 `render_glob` extension points, or shared state — never a direct typed
 `resources.<name>` reference. See [Templating — Template Snippets](./templating.md#template-snippets).
+
+#### Incremental snippets
+
+Set `incremental` when a snippet can render independently for each watched
+object. While exact store history remains available, the controller retains
+each object's fragment and re-executes only components whose explicit inputs or
+dynamically tracked reads changed. Store replacement, journal loss, or an
+unidentified change runs a pinned cold graph instead of reusing an unprovable
+result. Every exposed watched and controller store and the configured HTTP store
+must provide immutable snapshots and exact commit proofs; otherwise, the live
+render fails before component execution.
+
+```yaml
+templateSnippets:
+  route-backends:
+    requires: [routes]
+    incremental:
+      source: routes
+    template: |
+      backend {{ item | dig_string("", "metadata", "name") }}
+```
+
+`source` names one `watchedResources` key and must also appear in `requires`.
+For sources selected from configuration, use `bindingsTemplate` instead. It
+must render one JSON object whose keys are watched-resource names and whose
+values are immutable `props` objects:
+
+```yaml
+incremental:
+  bindingsTemplate: |
+    {{ toJSON(map[string]any{
+      tostring(extraContext["routeResource"]): map[string]any{"class": "edge"},
+    }) }}
+```
+
+The binding planner receives detached, immutable `extraContext`, `capabilities`,
+`currentConfig`, `currentFiles`, `pathResolver`, `runtimeEnvironment`, and
+`templateSnippets` values plus approved pure helpers. It can't read watched or
+controller resources, HTTP content, admission state, or shared state. Only the
+values it emits become component props, so changing an unselected ambient value
+doesn't execute the component.
+
+In the default Scriggo mode, exactly one of `source` and `bindingsTemplate` is
+required. A component receives `source`, `item`, `props`, `renderSubject`,
+`resources`, `controller`, `http`, and `shared`. Reads through watched resources,
+controller resources, and HTTP content are tracked dynamically, including
+missing objects and missing HTTP content. `requires` still controls
+optional-resource stripping; it isn't a dependency declaration or an access
+allowlist.
+
+Set `mode: resourceProjection` to publish one exactly indexed watched object
+without running the snippet's Scriggo template. The binding template must select
+the watched-resource alias and emit a canonical projection descriptor:
+
+```yaml
+templateSnippets:
+  selected-certificate:
+    requires: [certificates]
+    incremental:
+      mode: resourceProjection
+      bindingsTemplate: |
+        {{ toJSON(map[string]any{"certificates": map[string]any{
+          "cell": "selected",
+          "key": extraContext["certificateName"],
+          "keys": []any{extraContext["namespace"], extraContext["certificateName"]},
+        }}) }}
+      group: selected-certificates
+      effects: [publishValue]
+    template: '{{- "" -}}'
+```
+
+`keys` is the non-empty exact key vector used by that watched store's `Get`.
+`cell` and `key` identify the publication; optional `rank` applies the same
+ranked-winner selection as `shared.PublishRanked`. An empty binding object
+selects nothing. Zero matches publishes no winner and records the negative read,
+so creating the object invalidates the result. More than one match fails the
+render. The published value is the complete detached resource object and roots
+read it with `incremental_values`.
+
+A resource projection requires `bindingsTemplate` and exactly the
+`publishValue` effect. It forbids `source`, `whenAnyPathExists`, `root`,
+`consumes`, and `optionalConsumes`. Unknown descriptor fields, non-canonical
+JSON, empty keys, and corrupted provenance fail closed. The renderer evaluates
+the projection group and its `consumes` dependents only when a root requests
+that chain. Replacement, deletion, recreation, and away-and-back transitions
+use the same exact store observations as Scriggo components. The protocol is
+resource-agnostic: the source alias and key shape come from configuration, not
+a Go resource type.
+
+`root` optionally groups components under one authenticated Scriggo runner.
+Members keep separate bindings, tracked reads, effects, groups, and cached
+results. The renderer batches only members for the same source object and
+dependency wave; a root name never widens a member's dependency or effect
+authority.
+
+`item` is one immutable object-valued prop. While a component is active, any
+semantic change to that object executes the component; selected store and HTTP
+reads add their own exact dependencies. Use `whenAnyPathExists` to keep a
+component inactive when none of its finite trigger fields exists.
+
+Use `whenAnyPathExists` when the component has no output or effects unless its
+source object carries one of a finite set of fields:
+
+```yaml
+incremental:
+  source: ingresses
+  whenAnyPathExists:
+    - metadata.annotations['haproxy-haptic.org/hsts-enable']
+    - metadata.annotations['haproxy-haptic.org/hsts-max-age']
+```
+
+The paths accept dotted keys, quoted bracket keys, array indices, and `[*]` for
+any array element. Filters are rejected. For example,
+`spec.rules[*].filters` activates a component when at least one rule has a
+`filters` field. An existing field with a null value counts as present. The
+predicate reads the post-derivation `item`, so governance can add or remove a
+field to activate or deactivate the component without mutating the watched
+store. While the predicate remains false, item, or props changes recompute only
+the predicate; they don't execute the component body. A false/true transition
+replaces the complete component result, including its declared effects.
+`whenAnyPathExists` can't guard a `deriveResource` component because that owner
+must run before the derived item exists.
+
+`consumes` names publication groups that must exist. `optionalConsumes` names
+publication groups that may be absent only when effective-config resolution
+authenticated that every producer was stripped with an unavailable optional
+resource. Both lists are validated against the complete declaration graph, so
+resource absence can't hide a misspelled group or a dependency cycle. Every
+extant producer group must complete its canonical root call before the consumer
+group runs. An auxiliary root may consume a producer mounted in `haproxy.cfg`,
+which always renders first. Once a root starts its own producer sequence, that
+sequence must complete before the root reads the group. A different auxiliary
+root can't authorize the read because auxiliary roots render concurrently.
+
+`renderSubject` is an immutable object with `mode`, `source`, `namespace`, and
+`name`. During admission, `mode` is `admission` only for the proposed object and
+each source selected for that object; every other component instance receives
+`reconcile`.
+
+The component entry point is compiled against those deterministic globals and
+approved pure helpers. Ambient values are available only through selected
+immutable `props`; clock and random sources, custom native functions, and
+goroutines are unavailable. The component can mutate new local values, but it
+can't mutate its published inputs or values returned by tracked stores.
+
+Components in the same `group` can share keyed results. Without `group`, the
+snippet name is the group, so snippets don't share results. Render a group
+through one or more complete sequences. Each sequence renders every component
+in snippet-name order from one root template. Repeating the sequence mounts
+cached text again without re-executing component bodies or effects. Winners
+are selected by component name, source name, namespace, object name, and call
+order.
+
+`shared.Unique(cell, key, text)` contributes deduplicated output. A component
+that calls it must emit no ordinary text, including whitespace.
+
+`shared.Publish(cell, key, value)` publishes a detached structured value. A
+root reads the winning values with `incremental_values(group, cell)`, ordered
+by their winner locations. The function may evaluate the group before its
+normal render call, but roots must still render at least one complete canonical
+group sequence. An unknown group or a group without `publishValue` fails; a known
+publication group with no winners in that cell returns an empty slice. Every
+call returns fresh immutable values, and the same group can be read from the
+main configuration, maps, files, certificates, and Kubernetes-resource roots.
+Neither `shared.Publish` nor `incremental_values` is available to a binding
+template; `incremental_values` is also unavailable inside a component.
+
+`shared.PublishRanked(cell, key, rank, value)` selects the lexicographically
+smallest non-empty rank before applying the normal deterministic owner order.
+Every publisher for the same cell and key must use either ranked or rank-free
+publication consistently.
+
+A component declared with `consumes` or `optionalConsumes` reads one winning
+value with `shared.Select(group, cell, key)`, which returns the value and a
+boolean. The render graph records only that exact selector. A missing winner is
+also recorded, so creating its first publisher executes that consumer, while a
+losing publisher change doesn't. Values are detached and immutable. Winner
+replacement, deletion, and promotion invalidate the consumer only when the
+selected bytes change.
+
+`shared.SelectValues(group, cell)` reads all winners in canonical order.
+`shared.Count(group, cell)` reads the number of unique winning keys in the
+cell in O(1). The count invalidates its consumer only when it changes, so an
+equal-count winner promotion doesn't execute it. Both calls require the group
+in `consumes` or `optionalConsumes` and a complete authenticated canonical
+producer call before the read.
+
+Declare each supported effect before using it:
+
+| `effects` value | Result |
+|-----------------|--------|
+| `deriveResource` | Publishes an immutable transformed view of the source object before root templates read resources. |
+| `recordEvent` | Records a Warning Event for the resource passed to `recordEvent`. |
+| `backendPlan` | Records canonical `planRegistry.Profile` and `planRegistry.Backend` declarations for replay into the current `haproxy.cfg` render. |
+| `publishValue` | Enables immutable keyed structured values through `shared.Publish` or `shared.PublishRanked`, read by roots with `incremental_values` or by declared consumers with `shared.Select`, `shared.SelectValues`, or `shared.Count`. |
+| `statusPatch` | Records detached raw `statusPatch` calls for deterministic replay after every component group has completed. |
+
+Only one active component may declare `deriveResource` for a source. When
+incremental snippets are configured, every derivation producer for that source
+must use that owner; a later root-level `deriveResource` call fails.
+
+A component that declares `backendPlan` receives a restricted `planRegistry`
+with `Profile`, `Backend`, and `BackendWhenAny`. It must render from
+`haproxy.cfg` and can't use `shared.Unique`. Backend calls use first-winner
+arbitration by backend name. The renderer orders candidates by component name,
+source name, namespace, object name, and call order. A later declaration for
+the same backend is suppressed even when its record or text differs; deleting
+the winner promotes the next cached candidate.
+
+`BackendWhenAny(record, text, cell, keys)` makes its declaration eligible only
+when that same component instance owns a winning `shared.Publish` contribution
+for at least one listed key in the cell. Keys must be non-empty; they're sorted
+and deduplicated, and every referenced publication must exist in the component
+result. Publications from every component in the group participate, including
+components without `backendPlan`. Cells in different groups never compete.
+
+Every non-empty winning backend profile must have a matching `Profile`
+declaration. Profile declarations are resolved globally by name and replayed
+once, even when the matching local backend lost arbitration. Cached output
+stores logical references, so every render registers the winner in its fresh
+plan registry and emits a fresh token. An integrity digest covers the complete
+declaration, condition, publication, ownership, and logical-output payload
+before it enters the cache.
+
+The renderer commits fragments, dependencies, derived views, HTTP observations,
+and logical effects together only after the complete render succeeds.
+The pipeline creates Kubernetes Events after validation and transaction commit.
+Admission renders use scratch state and never publish their cache or derived
+resources.
 
 ### `maps`
 
@@ -358,6 +589,31 @@ k8sResources:
           port: 80
           protocol: TCP
 ```
+
+#### `createOnlyFields`
+
+Dotted field paths whose rendered value applies when the object is created and never again. After that the controller reads the value the object currently has and re-applies that, so the template's value is the state the object *starts* in rather than the state it's held to.
+
+Use it for a field something else legitimately owns while the object runs. `spec.replicas` on a workload is the case it exists for: HAProxy routes to whatever pods are there, so the replica count belongs to an operator draining the workload, or to a HorizontalPodAutoscaler. Without this the field is re-applied on every reconciliation, and a deliberate `kubectl scale` is overwritten a second after it's made.
+
+```yaml
+k8sResources:
+  cache:
+    createOnlyFields: ["spec.replicas"]
+    template: |
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: cache
+        namespace: {{ extraContext["controllerNamespace"] }}
+      spec:
+        replicas: {{ extraContext | dig("cache", "replicas") | fallback(2) }}
+        # …
+```
+
+Change the value in your configuration and it takes effect only on a workload that doesn't exist yet; to resize a running one, scale it directly. A path the rendered object doesn't set is ignored, and each path must name a field the template itself sets — the controller keeps ownership of it, so a path it never sends would be deleted from the object.
+
+The bundled chart declares this on the two workloads it manages whose size is operational rather than structural: the Varnish cache and the shared rate-limit Valkey store.
 
 Use this when the resource shape derives from observed cluster state (Ingresses, Gateways, Endpoints, …); use the chart's own static `templates/*.yaml` for fixed install-time wiring (RBAC, the internal agent Service, etc.). The chart's `charts/haptic/charts/base/library.yaml` ships a canonical example: the `haproxy-service` entry that renders the user-facing HAProxy LoadBalancer Service from listener state.
 

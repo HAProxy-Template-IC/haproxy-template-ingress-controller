@@ -155,7 +155,7 @@ The dashed arrows between Coordinator and the synchronous pipeline are direct fu
 **Key Architecture Properties:**
 
 - **EventBus** is the single coordination mechanism - zero direct component-to-component function calls
-- **Event-Driven Components** (Reconciler, Coordinator, Scheduler, Deployer, ConfigPublisher, Discovery, …) wrap pure libraries (`pkg/templating`, `pkg/dataplane`, `pkg/k8s`) in event adapters; the rendering and HAProxy-validation services they call are themselves *not* event-adapter components — they're synchronous services driven from inside Coordinator's `Pipeline.Execute` (see [Design Decisions](design-decisions.md#event-driven-architecture))
+- **Event-Driven Components** (Reconciler, Coordinator, Scheduler, Deployer, ConfigPublisher, Discovery, …) wrap pure libraries (`pkg/templating`, `pkg/dataplane`, `pkg/k8s`) in event adapters; rendering remains a synchronous pipeline service, while `RenderGate` and strict proposal pipelines call the synchronous HAProxy-validation service (see [Design Decisions](design-decisions.md#event-driven-architecture))
 - **Pure Libraries** (`pkg/templating`, `pkg/dataplane`, `pkg/k8s`) contain testable business logic with no event dependencies
 - **Event Adapters** translate between EventBus pub/sub and pure library function calls
 - **Extensibility** - new features can subscribe to existing events without modifying existing code
@@ -166,33 +166,38 @@ The dashed arrows between Coordinator and the synchronous pipeline are direct fu
 ```mermaid
 graph TD
     RENDER[Rendered Configuration]
-    PARSE[client-native Parser<br/>Syntax & Structure Check]
-    SCHEMA[OpenAPI Schema Check<br/>Field Patterns & Ranges]
-    BIN[haproxy Binary<br/>Semantic Validation]
-    DEPLOY[Deploy to Production]
+    BIN[haproxy -c<br/>Built-in Validation]
+    EXT[Protocol-v1 Validators<br/>Rendered Output Validation]
+    ACCEPT[Accept This Occurrence]
     ERROR[Reject & Log Error]
 
-    RENDER --> PARSE
-    PARSE -->|Valid Syntax| SCHEMA
-    PARSE -->|Invalid| ERROR
-    SCHEMA -->|Schema OK| BIN
-    SCHEMA -->|Invalid| ERROR
-    BIN -->|Valid Semantics| DEPLOY
+    RENDER --> BIN
+    RENDER --> EXT
+    BIN -->|Pass| ACCEPT
     BIN -->|Invalid| ERROR
+    EXT -->|Pass| ACCEPT
+    EXT -->|Error| ERROR
 
 ```
 
 **Validation Strategy:**
 
-Three phases run in-process, eliminating the need for a separate validation sidecar container:
+Production validation delegates the complete verdict to `haproxy -c -f config`.
+Each call creates a temp directory mirroring the production layout (`maps/`,
+`ssl/`, `general/`), writes the auxiliary files there, and rewrites
+`default-path origin <baseDir>` to that directory. A context-aware gate bounds
+binary concurrency; cancellation removes a queued check or terminates its
+process. The pure-Go syntax and schema check remains only in the browser
+playground, which has no HAProxy binary.
 
-1. **Phase 1 — Syntax parsing.** client-native parses the configuration and validates it against the HAProxy config grammar.
-2. **Phase 1.5 — OpenAPI schema check.** The parsed structure is cross-checked against a version-specific OpenAPI schema — catches out-of-range values, pattern violations, and missing required fields before they reach HAProxy.
-3. **Phase 2 — Semantic validation.** `haproxy -c -f config` performs full semantic validation including resource availability. Each call creates a per-process temp directory mirroring the production layout (`maps/`, `ssl/`, `general/`), writes the auxiliary files there, and rewrites the rendered config's `default-path origin <baseDir>` line to point at the temp dir — so file references resolve exactly like at runtime. File I/O is isolated per call. A context-aware gate serialises binary invocations because concurrent checks have been observed to interfere; cancellation removes a queued check or terminates its process.
-
-Results are cached by an SHA-256 over (config + auxiliary files) per instance — repeat validations during drift-prevention cycles short-circuit before touching disk. Because Phase 2 runs the real `haproxy` binary against a mirror of the production file layout, a passing check means a live HAProxy instance would accept the config.
-
-One validation pipeline is wired in `pkg/controller/reconciliation.go` and shared by leader reconciliation, watched-resource admission, and HTTP-store promotion. Every changed render runs all three phases, then every configured rendered-output validator, before any success event can publish or deploy it. Identical output returns from the pipeline's content-checksum caches. [ADR-0020](../adr/0020-authoritative-render-validation-pipeline.md) records why validation is attached to output rather than assumed from the trigger that produced it.
+Built-in HAProxy validation and every matching protocol-v1 rendered-output
+validator execute on every occurrence, including exact repeats. The checksum
+identifies output but doesn't identify the executable or runtime environment
+that judges it. Future reuse requires an authenticated hermetic-environment
+root covering the executable, configuration, dependencies, and runtime
+generation, bound to the exact input. [ADR-0020](../adr/0020-authoritative-render-validation-pipeline.md)
+records why validation is attached to output rather than assumed from its
+trigger.
 
 ## Operating assumptions and constraints
 

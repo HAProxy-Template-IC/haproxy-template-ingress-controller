@@ -22,8 +22,11 @@ import (
 	"log/slog"
 	"path"
 	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -32,9 +35,12 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -51,11 +57,24 @@ type RenderInputTransaction interface {
 
 // RenderResult contains the output of a render operation.
 type RenderResult struct {
+	// CycleSnapshot binds the output and every effect from this render.
+	CycleSnapshot *rendercycle.Snapshot
+
+	// OutputSnapshot binds the exact config, plan, and auxiliary artifacts.
+	OutputSnapshot *renderoutput.Snapshot
+
 	// HAProxyConfig is the rendered HAProxy configuration.
 	HAProxyConfig string
 
 	// AuxiliaryFiles contains all rendered auxiliary files (maps, certs, general).
+	// Production renders leave it nil and use AuxiliaryFileSnapshot.
 	AuxiliaryFiles *dataplane.AuxiliaryFiles
+
+	// AuxiliaryFileSnapshot is the authenticated immutable production representation.
+	AuxiliaryFileSnapshot *renderartifact.Snapshot
+
+	// ContentChecksum covers HAProxyConfig and every auxiliary-file identifier and byte.
+	ContentChecksum string
 
 	// Plan is the structure the templates declared about this render: the
 	// ordered sections of the config, the backend records behind them, the map
@@ -65,24 +84,43 @@ type RenderResult struct {
 	// PlanID identifies the plan — the digest downstream consumers compare on.
 	PlanID string
 
-	// StatusPatches contains status patches registered by templates during rendering.
-	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
+	// StatusPatches is the detached compatibility representation.
+	// Production renders leave it nil and use StatusPatchSnapshot.
 	StatusPatches []templating.StatusPatch
+
+	// StatusPatchSnapshot carries the same patches without materializing payload maps.
+	StatusPatchSnapshot *templating.StatusPatchSnapshot
 
 	// Events contains Kubernetes Events templates asked to emit via recordEvent()
 	// (e.g. a RouteConflict Warning on an Ingress whose route lost to an older
 	// one). Resource-agnostic — each carries its own apiVersion/kind/namespace/name.
+	// Production renders leave it nil and use EventSnapshot.
 	Events []templating.RenderedEvent
+
+	// EventSnapshot is the authenticated immutable production representation.
+	EventSnapshot *templating.RenderedEventSnapshot
 
 	// RenderedResources contains full Kubernetes resources the templates declared
 	// the controller should own and reconcile (e.g. an auxiliary Service or other
 	// object a template emits alongside the HAProxy config). The applier compares
 	// each against the last-applied checksum and skips unchanged entries to avoid
 	// hammering the API server.
+	// Production renders leave it nil and use RenderedResourceSnapshot.
 	RenderedResources []templating.RenderedResource
+
+	// RenderedResourceSnapshot is the authenticated immutable production representation.
+	RenderedResourceSnapshot *templating.RenderedResourceSnapshot
 
 	// DurationMs is the total render duration in milliseconds.
 	DurationMs int64
+
+	// CacheState is "warm" when this render had a graph to build on, "cold" when
+	// it re-evaluated everything, and "replay" when it reused the previous output.
+	CacheState string
+
+	// CacheBuildMs is what the most recent completed cache build cost, or 0 while
+	// none has completed.
+	CacheBuildMs int64
 
 	// IncludeStats holds per-snippet render counts/timing for the main template.
 	// Populated only when the engine was built with profiling enabled (nil in
@@ -94,6 +132,159 @@ type RenderResult struct {
 
 	// InputTransaction owns render-local inputs until the full pipeline decides their fate.
 	InputTransaction RenderInputTransaction
+
+	renderCachePublication *rendercontext.PreparedRenderCachePublication
+	planIdentity           *rendercontext.RenderPlanIdentity
+}
+
+// MaterializePlan returns a caller-owned plan from the authenticated output root.
+func (r *RenderResult) MaterializePlan() (*renderplan.Plan, error) {
+	if r == nil {
+		return nil, errors.New("render result is nil")
+	}
+	output := r.OutputSnapshot
+	if r.CycleSnapshot != nil {
+		var err error
+		output, err = r.CycleSnapshot.OutputSnapshot()
+		if err != nil {
+			return nil, fmt.Errorf("reading render cycle output: %w", err)
+		}
+	}
+	if output != nil {
+		snapshot, err := output.PlanSnapshot()
+		if err != nil {
+			return nil, fmt.Errorf("reading render output plan: %w", err)
+		}
+		plan, err := snapshot.LegacyCopy()
+		if err != nil {
+			return nil, fmt.Errorf("materializing render output plan: %w", err)
+		}
+		return plan, nil
+	}
+	return r.Plan.Clone(), nil
+}
+
+// MaterializeAuxiliaryFiles returns a caller-isolated compatibility view.
+func (r *RenderResult) MaterializeAuxiliaryFiles() (*dataplane.AuxiliaryFiles, error) {
+	if r == nil {
+		return nil, errors.New("render result is nil")
+	}
+	output := r.OutputSnapshot
+	if r.CycleSnapshot != nil {
+		var err error
+		output, err = r.CycleSnapshot.OutputSnapshot()
+		if err != nil {
+			return nil, fmt.Errorf("reading render cycle output: %w", err)
+		}
+	}
+	if output != nil {
+		snapshot, err := output.ArtifactSnapshot()
+		if err != nil {
+			return nil, fmt.Errorf("reading render output artifacts: %w", err)
+		}
+		return dataplane.MaterializeAuxiliaryFileSnapshot(snapshot)
+	}
+	if r.AuxiliaryFileSnapshot != nil {
+		if r.AuxiliaryFiles != nil {
+			return nil, errors.New("render result carries both mutable and immutable auxiliary files")
+		}
+		return dataplane.MaterializeAuxiliaryFileSnapshot(r.AuxiliaryFileSnapshot)
+	}
+	return dataplane.CloneAuxiliaryFiles(r.AuxiliaryFiles), nil
+}
+
+// MaterializeStatusPatches returns a caller-isolated compatibility view.
+func (r *RenderResult) MaterializeStatusPatches() ([]templating.StatusPatch, error) {
+	if r == nil {
+		return nil, errors.New("render result is nil")
+	}
+	statusSnapshot := r.StatusPatchSnapshot
+	if r.CycleSnapshot != nil {
+		var err error
+		statusSnapshot, err = r.CycleSnapshot.StatusPatchSnapshot()
+		if err != nil {
+			return nil, fmt.Errorf("reading render cycle status patches: %w", err)
+		}
+	}
+	if statusSnapshot != nil {
+		if len(r.StatusPatches) > 0 {
+			return nil, errors.New("render result carries both mutable and immutable status patches")
+		}
+		return statusSnapshot.Patches()
+	}
+	if r.StatusPatches == nil {
+		return nil, nil
+	}
+	projection, err := templating.NewStatusPatchProjection(r.StatusPatches)
+	if err != nil {
+		return nil, fmt.Errorf("materializing status patches: %w", err)
+	}
+	replay, err := projection.PrepareReplay()
+	if err != nil {
+		return nil, fmt.Errorf("materializing status patches: %w", err)
+	}
+	collector := templating.NewStatusPatchCollector()
+	if err := collector.ReplayProjections([]*templating.StatusPatchProjectionReplay{replay}); err != nil {
+		return nil, fmt.Errorf("materializing status patches: %w", err)
+	}
+	return collector.Patches()
+}
+
+// MaterializeEvents returns a caller-isolated compatibility view.
+func (r *RenderResult) MaterializeEvents() ([]templating.RenderedEvent, error) {
+	if r == nil {
+		return nil, errors.New("render result is nil")
+	}
+	eventSnapshot := r.EventSnapshot
+	if r.CycleSnapshot != nil {
+		var err error
+		eventSnapshot, err = r.CycleSnapshot.RenderedEventSnapshot()
+		if err != nil {
+			return nil, fmt.Errorf("reading render cycle events: %w", err)
+		}
+	}
+	if eventSnapshot != nil {
+		if len(r.Events) > 0 {
+			return nil, errors.New("render result carries both mutable and immutable events")
+		}
+		return eventSnapshot.Events()
+	}
+	return slices.Clone(r.Events), nil
+}
+
+// MaterializeRenderedResources returns a caller-isolated compatibility view.
+func (r *RenderResult) MaterializeRenderedResources() ([]templating.RenderedResource, error) {
+	if r == nil {
+		return nil, errors.New("render result is nil")
+	}
+	resourceSnapshot := r.RenderedResourceSnapshot
+	if r.CycleSnapshot != nil {
+		var err error
+		resourceSnapshot, err = r.CycleSnapshot.RenderedResourceSnapshot()
+		if err != nil {
+			return nil, fmt.Errorf("reading render cycle resources: %w", err)
+		}
+	}
+	if resourceSnapshot != nil {
+		if len(r.RenderedResources) > 0 {
+			return nil, errors.New("render result carries both mutable and immutable rendered resources")
+		}
+		return resourceSnapshot.Resources()
+	}
+	if r.RenderedResources == nil {
+		return nil, nil
+	}
+	collector := templating.NewRenderedResourceCollector()
+	for index := range r.RenderedResources {
+		resource := &r.RenderedResources[index]
+		if err := collector.RegisterWithCreateOnlyFields(
+			resource.APIVersion, resource.Kind, resource.Namespace, resource.Name, resource.Object,
+			resource.CreateOnlyFields,
+		); err != nil {
+			return nil, fmt.Errorf("materializing rendered resource %d: %w", index, err)
+		}
+	}
+	return collector.Resources(), nil
 }
 
 // RenderService is a pure service that transforms stores into HAProxy configuration.
@@ -105,10 +296,17 @@ type RenderResult struct {
 // Resources in stores are already converted (floats to ints) at storage time,
 // so the service simply passes through store data without additional processing.
 type RenderService struct {
-	engine       templating.Engine
-	config       *config.Config
-	pathResolver *templating.PathResolver
-	logger       *slog.Logger
+	engine                      templating.Engine
+	config                      *config.Config
+	pathResolver                *templating.PathResolver
+	logger                      *slog.Logger
+	incremental                 *incrementalRenderState
+	mainDocumentCache           *rendercontext.RenderDocumentCache
+	planTokenAuthority          *rendercontext.PlanTokenAuthority
+	exactCycleProgram           *templating.ExactCycleReplayProgram
+	exactCycleCandidate         *exactCycleCandidate
+	skipCurrentConfigProjection bool
+	skipCurrentFilesProjection  bool
 
 	// renderTimeout is the maximum time allowed for rendering a single template.
 	renderTimeout time.Duration
@@ -122,9 +320,27 @@ type RenderService struct {
 	// planMu guards both plans below. ackedPlan — the newest plan the fleet
 	// confirmed running — is the source for the next render's `currentConfig`;
 	// lastPlan, the newest reconcile render's plan, stands in until the first ACK.
-	planMu    sync.Mutex
-	ackedPlan *renderplan.Plan
-	lastPlan  *renderplan.Plan
+	planMu                 sync.Mutex
+	ackedPlan              *renderplan.Plan
+	lastPlan               *renderplan.Plan
+	ackedCurrentConfigRoot *exactCycleCurrentConfigRoot
+	lastCurrentConfigRoot  *exactCycleCurrentConfigRoot
+
+	planAuthority              *renderplan.Authority
+	planDigestFallbacks        atomic.Uint64
+	assemblyFallbackReason     atomic.Pointer[string]
+	artifactAuthority          *renderartifact.Authority
+	outputAuthority            *renderoutput.Authority
+	cycleAuthority             *rendercycle.Authority
+	lastOutputSnapshot         *renderoutput.Snapshot
+	lastCycleSnapshot          *rendercycle.Snapshot
+	lastPlanIdentity           *rendercontext.RenderPlanIdentity
+	lastRenderCache            *rendercontext.PreparedRenderCachePublication
+	nextOutputGeneration       uint64
+	publishedOutputGeneration  uint64
+	outputGenerationExhausted  bool
+	outputReservations         map[uint64]*renderOutputReservation
+	committedOutputReservation atomic.Pointer[renderOutputReservation]
 
 	// Optional dependencies for building render context
 	haproxyPodStore         stores.Store
@@ -164,6 +380,9 @@ type RenderServiceConfig struct {
 
 	// HTTPStoreComponent is the HTTP store for dynamic content (optional).
 	HTTPStoreComponent *httpstore.Component
+
+	// IncrementalCacheBuildObserver receives optional cold-cache lifecycle notifications.
+	IncrementalCacheBuildObserver IncrementalCacheBuildObserver
 
 	// CurrentAuxFilesProvider returns the default auxiliary baseline. The
 	// Coordinator overrides it with a leader-term snapshot for reconciliation.
@@ -218,19 +437,52 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		CRTListDir: crtListDir,
 		GeneralDir: generalDir,
 	}
+	mainDocumentCache, _ := rendercontext.NewRenderDocumentCache(cfg.Engine)
+	planTokenAuthority := rendercontext.NewPlanTokenAuthority()
 
-	return &RenderService{
-		engine:                  cfg.Engine,
-		config:                  cfg.Config,
-		pathResolver:            pathResolver,
-		logger:                  cfg.Logger,
-		renderTimeout:           cfg.Config.TemplatingSettings.GetRenderTimeout(),
-		capabilities:            cfg.Capabilities,
-		haproxyPodStore:         cfg.HAProxyPodStore,
-		httpStoreComponent:      cfg.HTTPStoreComponent,
-		currentAuxFilesProvider: cfg.CurrentAuxFilesProvider,
-		typedResourceTypes:      cfg.TypedResourceTypes,
+	planAuthority := renderplan.NewAuthority()
+	artifactAuthority := renderartifact.NewAuthority()
+	outputAuthority, err := renderoutput.NewAuthority(planAuthority, artifactAuthority)
+	if err != nil {
+		panic(fmt.Sprintf("creating render output authority: %v", err))
 	}
+	cycleAuthority, err := rendercycle.NewAuthority(outputAuthority)
+	if err != nil {
+		panic(fmt.Sprintf("creating render cycle authority: %v", err))
+	}
+	service := &RenderService{
+		engine:                      cfg.Engine,
+		config:                      cfg.Config,
+		pathResolver:                pathResolver,
+		logger:                      cfg.Logger,
+		mainDocumentCache:           mainDocumentCache,
+		planTokenAuthority:          planTokenAuthority,
+		planAuthority:               planAuthority,
+		artifactAuthority:           artifactAuthority,
+		outputAuthority:             outputAuthority,
+		cycleAuthority:              cycleAuthority,
+		renderTimeout:               cfg.Config.TemplatingSettings.GetRenderTimeout(),
+		capabilities:                cfg.Capabilities,
+		haproxyPodStore:             cfg.HAProxyPodStore,
+		httpStoreComponent:          cfg.HTTPStoreComponent,
+		currentAuxFilesProvider:     cfg.CurrentAuxFilesProvider,
+		typedResourceTypes:          cfg.TypedResourceTypes,
+		skipCurrentConfigProjection: engineProvesGlobalUnused(cfg.Engine, "currentConfig"),
+		skipCurrentFilesProjection:  engineProvesGlobalUnused(cfg.Engine, "currentFiles"),
+	}
+	service.incremental = newIncrementalRenderState(cfg.Config, cfg.Engine)
+	if service.incremental != nil {
+		service.incremental.cacheBuildObserver = cfg.IncrementalCacheBuildObserver
+	}
+	if preparer, ok := cfg.Engine.(exactCycleReplayPreparer); ok {
+		program, prepareErr := preparer.PrepareExactCycleReplay(exactCycleRootEntryPoints(cfg.Config))
+		if prepareErr == nil {
+			service.exactCycleProgram = program
+		} else if service.logger != nil {
+			service.logger.Debug("Exact cycle replay is unavailable", "reason", prepareErr)
+		}
+	}
+	return service
 }
 
 // withRenderTimeout bounds a render by the configured timeout, if any.
@@ -239,6 +491,24 @@ func (s *RenderService) withRenderTimeout(ctx context.Context) (context.Context,
 		return context.WithTimeout(ctx, s.renderTimeout)
 	}
 	return ctx, func() {}
+}
+
+// incrementalCacheFigures reports whether this render built on a graph and what
+// the last completed cache build cost. A fleet steadily reporting "cold" pays
+// full render cost on every reconcile.
+func (s *RenderService) incrementalCacheFigures(
+	transaction RenderInputTransaction,
+) (cacheState string, cacheBuildMs int64) {
+	if s.incremental == nil {
+		return "cold", 0
+	}
+	state := "warm"
+	if combined, ok := transaction.(*combinedRenderInputTransaction); ok {
+		if _, session, _ := combined.references(); session != nil && session.cold {
+			state = "cold"
+		}
+	}
+	return state, s.incremental.cache.LastBuildMs()
 }
 
 // Render transforms the stores into HAProxy configuration.
@@ -254,114 +524,1084 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	startTime := time.Now()
 	ctx, cancel := s.withRenderTimeout(ctx)
 	defer cancel()
+	attemptInputs, err := s.captureRenderAttemptInputs(mode)
+	if err != nil {
+		return nil, err
+	}
+
+	retryInputs := &renderRetryInputs{}
+	tryExactReuse := true
+	forceCold := false
+	for range 3 {
+		result, restart, err := s.renderAttempt(
+			ctx, provider, mode, startTime, forceCold, tryExactReuse, attemptInputs, retryInputs, extraOpts...,
+		)
+		if errors.Is(err, errExactCycleOutputOnlyRetry) && tryExactReuse {
+			tryExactReuse = false
+			forceCold = true
+			continue
+		}
+		if errors.Is(err, errExactCycleInvalidCandidateRetry) && tryExactReuse {
+			tryExactReuse = false
+			forceCold = true
+			attemptInputs.renderCache = nil
+			continue
+		}
+		if errors.Is(err, errExactCycleRetry) && tryExactReuse {
+			tryExactReuse = false
+			continue
+		}
+		if err != nil || !restart {
+			return result, err
+		}
+		if forceCold {
+			return nil, errors.New("exact cold incremental render requested another restart")
+		}
+		tryExactReuse = false
+		forceCold = true
+	}
+	return nil, errors.New("render attempt restart limit exceeded")
+}
+
+type renderRetryInputs struct {
+	http *httpstore.InputRetrySeed
+}
+
+type renderAttemptInputs struct {
+	capabilities        dataplane.Capabilities
+	currentConfig       *renderplan.CurrentConfig
+	currentConfigSource rendercontext.CurrentConfigSource
+	currentAuxFiles     rendercontext.CurrentAuxFilesSource
+	extraContext        map[string]any
+	runtimeEnvironment  templating.RuntimeEnvironment
+	outputGeneration    uint64
+	renderCache         *rendercontext.PreparedRenderCachePublication
+	exactCycle          *exactCycleCandidate
+}
+
+func (s *RenderService) captureRenderAttemptInputs(modes ...rendercontext.RenderMode) (*renderAttemptInputs, error) {
+	if len(modes) > 1 {
+		return nil, errors.New("capturing render inputs for more than one mode")
+	}
+	extraContext, err := rendercontext.DetachExtraContext(s.config.TemplatingSettings.ExtraContext)
+	if err != nil {
+		return nil, fmt.Errorf("detaching render extra context: %w", err)
+	}
+	result := &renderAttemptInputs{
+		capabilities:       s.currentCapabilities(),
+		extraContext:       extraContext,
+		runtimeEnvironment: templating.RuntimeEnvironment{GOMAXPROCS: runtime.GOMAXPROCS(0)},
+	}
+	s.planMu.Lock()
+	if !s.skipCurrentConfigProjection {
+		plan := s.ackedPlan
+		root := s.ackedCurrentConfigRoot
+		if plan == nil {
+			plan = s.lastPlan
+			root = s.lastCurrentConfigRoot
+		}
+		if len(modes) == 0 {
+			switch {
+			case plan != nil:
+				current := plan.CurrentConfig()
+				result.currentConfig = &current
+			case root != nil:
+				current, materializeErr := root.materialize()
+				if materializeErr != nil {
+					s.planMu.Unlock()
+					return nil, fmt.Errorf("materializing currentConfig: %w", materializeErr)
+				}
+				result.currentConfig = &current
+			}
+		} else {
+			result.currentConfigSource = newExactCycleCurrentConfigSource(root)
+		}
+	}
+	result.renderCache = s.lastRenderCache
+	result.exactCycle = s.exactCycleCandidate
+	if len(modes) == 1 && modes[0] == rendercontext.RenderModeReconcile {
+		result.outputGeneration, err = s.reserveOutputGenerationLocked()
+	}
+	s.planMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if !s.skipCurrentFilesProjection {
+		if s.currentAuxFilesProvider != nil {
+			result.currentAuxFiles = newUnversionedCurrentAuxFilesSource(s.currentAuxFilesProvider)
+		} else {
+			result.currentAuxFiles = newExactCycleCurrentAuxFilesSource(emptyExactCycleCurrentAuxFilesRoot)
+		}
+	}
+	return result, nil
+}
+
+func engineProvesGlobalUnused(engine templating.Engine, name string) bool {
+	introspector, ok := engine.(templating.GlobalUsageIntrospector)
+	if !ok {
+		return false
+	}
+	used, known := introspector.GlobalUsage(name)
+	return known && !used
+}
+
+func (i *renderAttemptInputs) options() []rendercontext.Option {
+	opts := []rendercontext.Option{
+		rendercontext.WithCapabilities(i.capabilities),
+		rendercontext.WithDetachedExtraContext(i.extraContext),
+		rendercontext.WithRuntimeEnvironment(i.runtimeEnvironment),
+	}
+	if i.currentConfigSource != nil {
+		opts = append(opts, rendercontext.WithCurrentConfigSource(i.currentConfigSource))
+	} else {
+		opts = append(opts, rendercontext.WithCurrentConfig(i.currentConfig))
+	}
+	if i.currentAuxFiles != nil {
+		opts = append(opts, rendercontext.WithCurrentAuxFilesSource(i.currentAuxFiles))
+	}
+	return opts
+}
+
+func (s *RenderService) renderAttempt(
+	ctx context.Context,
+	provider stores.StoreProvider,
+	mode rendercontext.RenderMode,
+	startTime time.Time,
+	forceCold bool,
+	tryExactReuse bool,
+	attemptInputs *renderAttemptInputs,
+	retryInputs *renderRetryInputs,
+	extraOpts ...rendercontext.Option,
+) (result *RenderResult, restart bool, err error) {
+	var postProcessTransaction templating.PostProcessTransaction
+	ctx, postProcessTransaction = s.engine.BeginPostProcessTransaction(ctx)
+	postProcessTransactionHandedOff := false
+	defer func() {
+		if postProcessTransaction != nil && !postProcessTransactionHandedOff {
+			postProcessTransaction.Abort()
+		}
+	}()
 
 	// Build rendering context from stores
-	bctx := s.buildRenderingContext(ctx, provider, mode, extraOpts...)
+	bctx := s.buildRenderingContextFromAttemptInputs(
+		ctx,
+		provider,
+		mode,
+		httpSourceModeForRender(mode),
+		attemptInputs,
+		retryInputs.http,
+		extraOpts...,
+	)
+	cacheSession, err := s.mainDocumentCache.Begin(
+		s.engine,
+		attemptInputs.outputGeneration,
+		attemptInputs.renderCache,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("starting render cache transaction: %w", err)
+	}
+	ctx, err = templating.WithBoundImmutableResourceInputs(ctx, bctx.Context)
+	if err != nil {
+		return nil, false, fmt.Errorf("binding immutable render inputs: %w", err)
+	}
 	inputTransaction := bctx.inputTransaction
 	transactionHandedOff := false
 	defer func() {
+		if restart {
+			retryInputs.http = inputRetrySeed(inputTransaction)
+		}
 		if inputTransaction != nil && !transactionHandedOff {
 			inputTransaction.Abort()
 		}
 	}()
-	renderContext, fileRegistry := bctx.Context, bctx.FileRegistry
-	statusPatchCollector, renderedResourceCollector := bctx.StatusPatchCollector, bctx.RenderedResourceCollector
-	eventCollector := bctx.EventCollector
+	renderContext := bctx.Context
+	var incrementalValidator incrementalCallValidator
+	var renderSession *incrementalRenderSession
+	ctx, inputTransaction, incrementalValidator, renderSession, err = s.beginIncrementalRender(
+		ctx, provider, mode, bctx, inputTransaction, forceCold, attemptInputs.outputGeneration,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	reused, hit, reuseErr := s.tryExactCycleReuseAttempt(
+		ctx, bctx, renderSession, cacheSession, inputTransaction, attemptInputs, startTime,
+		mode, tryExactReuse, forceCold,
+	)
+	if reuseErr != nil {
+		return nil, false, reuseErr
+	}
+	if hit {
+		transactionHandedOff = true
+		return reused, false, nil
+	}
+	if err := bctx.MaterializeUsedPreviousOutputs(
+		!s.skipCurrentConfigProjection,
+		!s.skipCurrentFilesProjection,
+	); err != nil {
+		return nil, false, err
+	}
+	ctx, exactInputs, err := s.beginExactCycleReplay(
+		ctx, renderContext, renderSession, mode, attemptInputs.outputGeneration,
+	)
+	if err != nil {
+		return nil, false, err
+	}
 
-	// Render main HAProxy config and assemble the sections the templates
-	// declared. RenderWithProfiling is a superset of Render: it renders
-	// identically and, only when the engine was built with profiling enabled,
-	// additionally returns per-snippet include stats (nil otherwise), so
-	// requesting it is behaviour-neutral in production.
-	mainRender, err := rendercontext.RenderMain(ctx, s.engine, renderContext, bctx.PlanRegistry, true)
+	mainRender, staticFiles, restart, err := s.renderDocuments(
+		ctx, bctx, renderContext, forceCold, renderSession, cacheSession, inputTransaction,
+	)
+	if err != nil || restart {
+		return nil, restart, err
+	}
+	if err := validateExecutedIncrementalCalls(incrementalValidator, exactInputs != nil); err != nil {
+		return nil, false, err
+	}
+	exactInputs = s.finalizedExactCycleInputs(exactInputs)
+
+	var handedOff bool
+	result, handedOff, err = s.publishRenderAttempt(ctx, bctx, mode, &renderArtifacts{
+		main:             mainRender,
+		staticFiles:      staticFiles,
+		inputTransaction: inputTransaction,
+		startTime:        startTime,
+		outputGeneration: attemptInputs.outputGeneration,
+		cacheSession:     cacheSession,
+	}, renderSession, exactInputs, postProcessTransaction)
+	if err != nil {
+		return nil, false, err
+	}
+	postProcessTransactionHandedOff = handedOff
+	transactionHandedOff = true
+	return result, false, nil
+}
+
+func (s *RenderService) publishRenderAttempt(
+	ctx context.Context,
+	bctx *builtRenderingContext,
+	mode rendercontext.RenderMode,
+	artifacts *renderArtifacts,
+	renderSession *incrementalRenderSession,
+	exactInputs *templating.ExactCycleReplayInputs,
+	postProcessTransaction templating.PostProcessTransaction,
+) (*RenderResult, bool, error) {
+	result, err := s.finishRender(ctx, bctx, mode, artifacts)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := s.attachExactCycleCandidate(
+		result, bctx, renderSession, exactInputs, mode, artifacts.outputGeneration,
+	); err != nil {
+		return nil, false, err
+	}
+	handedOff, stageErr := s.stagePostProcessPublication(ctx, postProcessTransaction, result)
+	if stageErr != nil {
+		return nil, false, stageErr
+	}
+	return result, handedOff, nil
+}
+
+func (s *RenderService) beginIncrementalRender(
+	ctx context.Context,
+	provider stores.StoreProvider,
+	mode rendercontext.RenderMode,
+	bctx *builtRenderingContext,
+	inputTransaction RenderInputTransaction,
+	forceCold bool,
+	outputGeneration uint64,
+) (context.Context, RenderInputTransaction, incrementalCallValidator, *incrementalRenderSession, error) {
+	if mode == rendercontext.RenderModeReconcile && s.incremental != nil && outputGeneration != 0 {
+		s.incremental.cache.supersede(outputGeneration)
+	}
+	if s.incremental != nil {
+		// Binding planners snapshot prior outputs at session begin, before the
+		// post-reuse materialization point, so install what they read now.
+		if err := bctx.MaterializeUsedPreviousOutputs(
+			s.incremental.bindingsUseCurrentConfig && !s.skipCurrentConfigProjection,
+			s.incremental.bindingsUseCurrentFiles && !s.skipCurrentFilesProjection,
+		); err != nil {
+			return ctx, inputTransaction, nil, nil, err
+		}
+	}
+	nextCtx, nextTransaction, validator, session, err := s.startIncrementalRender(
+		ctx,
+		provider,
+		mode,
+		bctx,
+		inputTransaction,
+		forceCold,
+	)
+	if err != nil {
+		return nextCtx, nextTransaction, validator, session, err
+	}
+	if session != nil {
+		session.bindCacheOutputGeneration(outputGeneration)
+	}
+	return nextCtx, nextTransaction, validator, session, nil
+}
+
+func (s *RenderService) tryExactCycleReuseAttempt(
+	ctx context.Context,
+	bctx *builtRenderingContext,
+	renderSession *incrementalRenderSession,
+	cacheSession *rendercontext.RenderCacheSession,
+	inputTransaction RenderInputTransaction,
+	attemptInputs *renderAttemptInputs,
+	startTime time.Time,
+	mode rendercontext.RenderMode,
+	tryExactReuse bool,
+	forceCold bool,
+) (*RenderResult, bool, error) {
+	if !tryExactReuse || forceCold || mode != rendercontext.RenderModeReconcile {
+		return nil, false, nil
+	}
+	return s.tryExactCycleReuse(
+		ctx, bctx, renderSession, cacheSession, inputTransaction, attemptInputs, startTime,
+	)
+}
+
+func (s *RenderService) beginExactCycleReplay(
+	ctx context.Context,
+	renderContext map[string]any,
+	renderSession *incrementalRenderSession,
+	mode rendercontext.RenderMode,
+	outputGeneration uint64,
+) (context.Context, *templating.ExactCycleReplayInputs, error) {
+	if mode != rendercontext.RenderModeReconcile || s.exactCycleProgram == nil {
+		return ctx, nil, nil
+	}
+	var exactInputs *templating.ExactCycleReplayInputs
+	if renderSession != nil && renderSession.cachePublicationEnabled {
+		exactCtx, inputs, beginErr := s.exactCycleProgram.BeginWithInvocations(
+			ctx, outputGeneration, renderContext, exactCycleRootInvocations(s.config),
+		)
+		if beginErr == nil {
+			ctx = exactCtx
+			exactInputs = inputs
+		} else if s.logger != nil {
+			s.logger.Debug("Exact cycle candidate is unavailable", "reason", beginErr)
+		}
+	}
+	if exactInputs == nil {
+		exactCtx, executionErr := s.exactCycleProgram.ExecutionContext(ctx)
+		if executionErr != nil {
+			return nil, nil, executionErr
+		}
+		ctx = exactCtx
+	}
+	return ctx, exactInputs, nil
+}
+
+func (s *RenderService) renderDocuments(
+	ctx context.Context,
+	bctx *builtRenderingContext,
+	renderContext map[string]any,
+	forceCold bool,
+	renderSession *incrementalRenderSession,
+	cacheSession *rendercontext.RenderCacheSession,
+	inputTransaction RenderInputTransaction,
+) (rendercontext.MainDocumentRender, *dataplane.AuxiliaryFiles, bool, error) {
+	mainRender, restart, err := s.renderMainAttempt(
+		ctx, bctx, renderContext, forceCold, renderSession, cacheSession, inputTransaction,
+	)
+	if err != nil || restart {
+		return rendercontext.MainDocumentRender{}, nil, restart, err
+	}
+	staticFiles, restart, err := s.renderAuxiliaryAttempt(
+		ctx, bctx, renderContext, forceCold, renderSession, inputTransaction,
+	)
+	if err != nil || restart {
+		return rendercontext.MainDocumentRender{}, nil, restart, err
+	}
+	restart, err = s.renderResourcesAttempt(
+		ctx, bctx, renderContext, forceCold, renderSession, inputTransaction,
+	)
+	if err != nil || restart {
+		return rendercontext.MainDocumentRender{}, nil, restart, err
+	}
+	return mainRender, staticFiles, false, nil
+}
+
+// validateExecutedIncrementalCalls holds a render to its calls only when it
+// executed something. A render that executed nothing while a replay was engaged
+// reused the recorded cycle's invocations wholesale, so every group reads as
+// silent -- 20 of 20 at once, in the failure that found this -- and that cycle
+// was validated when it was produced.
+func validateExecutedIncrementalCalls(validator incrementalCallValidator, replayed bool) error {
+	if replayed && validator != nil && !validator.HasIncrementalCalls() {
+		return nil
+	}
+	return validateIncrementalRenderCalls(validator)
+}
+
+func validateIncrementalRenderCalls(validator incrementalCallValidator) error {
+	if validator == nil {
+		return nil
+	}
+	return validator.ValidateIncrementalCalls()
+}
+
+func (s *RenderService) finalizedExactCycleInputs(
+	exactInputs *templating.ExactCycleReplayInputs,
+) *templating.ExactCycleReplayInputs {
+	if exactInputs == nil {
+		return nil
+	}
+	if finalizeErr := exactInputs.Finalize(); finalizeErr != nil {
+		if s.logger != nil {
+			s.logger.Debug("Exact cycle candidate is incomplete", "reason", finalizeErr)
+		}
+		return nil
+	}
+	return exactInputs
+}
+
+func (s *RenderService) attachExactCycleCandidate(
+	result *RenderResult,
+	bctx *builtRenderingContext,
+	renderSession *incrementalRenderSession,
+	exactInputs *templating.ExactCycleReplayInputs,
+	mode rendercontext.RenderMode,
+	outputGeneration uint64,
+) error {
+	var exactCandidate *exactCycleCandidate
+	if exactInputs != nil {
+		candidate, err := captureExactCycleCandidate(
+			s.exactCycleProgram,
+			exactInputs,
+			bctx,
+			renderSession,
+			s.httpStoreComponent,
+			result.CycleSnapshot,
+			result.renderCachePublication,
+			result.planIdentity,
+		)
+		if err != nil && !errors.Is(err, errExactCycleUnavailable) {
+			return exactCycleCaptureError("candidate", err)
+		}
+		if err == nil {
+			exactCandidate = candidate
+		}
+	}
+	if mode != rendercontext.RenderModeReconcile || outputGeneration == 0 {
+		return nil
+	}
+	if exactInputs != nil && exactCandidate == nil {
+		result.InputTransaction = s.stageExactCycleCandidateCapture(
+			result.InputTransaction,
+			outputGeneration,
+			exactInputs,
+			bctx,
+			renderSession,
+			result.CycleSnapshot,
+			result.renderCachePublication,
+			result.planIdentity,
+		)
+		return nil
+	}
+	result.InputTransaction = s.stageExactCycleCandidatePublication(
+		result.InputTransaction, outputGeneration, exactCandidate, renderSession,
+	)
+	return nil
+}
+
+func (s *RenderService) stagePostProcessPublication(
+	ctx context.Context,
+	postProcessTransaction templating.PostProcessTransaction,
+	result *RenderResult,
+) (bool, error) {
+	if postProcessTransaction == nil {
+		return false, nil
+	}
+	publication, stageErr := postProcessTransaction.Stage(ctx)
+	if stageErr != nil {
+		return false, fmt.Errorf("staging post-process cache: %w", stageErr)
+	}
+	result.InputTransaction = newPostProcessPublicationTransaction(result.InputTransaction, publication)
+	return true, nil
+}
+
+func (s *RenderService) renderMainAttempt(
+	ctx context.Context,
+	bctx *builtRenderingContext,
+	renderContext map[string]any,
+	forceCold bool,
+	renderSession *incrementalRenderSession,
+	cacheSession *rendercontext.RenderCacheSession,
+	inputTransaction RenderInputTransaction,
+) (mainRender rendercontext.MainDocumentRender, restart bool, err error) {
+	mainCtx := templating.WithIncrementalScope(ctx, names.MainTemplateName)
+	mainCtx = templating.WithExactCycleRootInvocation(mainCtx, templating.ExactCycleRootInvocation{
+		Kind: "main", Name: names.MainTemplateName,
+	})
+	mainRender, err = rendercontext.RenderMainDocument(
+		mainCtx,
+		s.engine,
+		renderContext,
+		bctx.PlanRegistry,
+		true,
+		cacheSession,
+	)
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
-		return nil, resourceErr
+		return rendercontext.MainDocumentRender{}, false, resourceErr
 	}
 	if err != nil {
-		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+		if !forceCold && errors.Is(err, errIncrementalColdRestart) {
+			return rendercontext.MainDocumentRender{}, true, nil
+		}
+		return rendercontext.MainDocumentRender{}, false, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
-	haproxyConfig, includeStats := mainRender.Config, mainRender.IncludeStats
+	if !forceCold && incrementalAttemptRequiresColdRestart(renderSession, inputTransaction) {
+		return rendercontext.MainDocumentRender{}, true, nil
+	}
+	return mainRender, false, nil
+}
 
+func (s *RenderService) renderAuxiliaryAttempt(
+	ctx context.Context,
+	bctx *builtRenderingContext,
+	renderContext map[string]any,
+	forceCold bool,
+	renderSession *incrementalRenderSession,
+	inputTransaction RenderInputTransaction,
+) (*dataplane.AuxiliaryFiles, bool, error) {
 	staticFiles, err := s.renderAuxiliaryFiles(ctx, renderContext)
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
-		return nil, resourceErr
+		return nil, false, resourceErr
 	}
 	if err != nil {
-		return nil, err
+		if !forceCold && errors.Is(err, errIncrementalColdRestart) {
+			return nil, true, nil
+		}
+		return nil, false, err
 	}
+	if !forceCold && incrementalAttemptRequiresColdRestart(renderSession, inputTransaction) {
+		return nil, true, nil
+	}
+	return staticFiles, false, nil
+}
 
-	// Render Kubernetes resource templates (`spec.k8sResources`). Each
-	// template's output is one or more YAML documents; every doc gets
-	// parsed and registered with the same RenderedResourceCollector
-	// the runtime renderResource() filter populated previously, so
-	// downstream consumers (resourceapplier) see no shape change.
-	resourceRenderErr := s.renderK8sResources(ctx, renderContext, renderedResourceCollector)
+func (s *RenderService) renderResourcesAttempt(
+	ctx context.Context,
+	bctx *builtRenderingContext,
+	renderContext map[string]any,
+	forceCold bool,
+	renderSession *incrementalRenderSession,
+	inputTransaction RenderInputTransaction,
+) (bool, error) {
+	err := s.renderK8sResources(ctx, renderContext, bctx.RenderedResourceCollector)
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
-		return nil, resourceErr
+		return false, resourceErr
 	}
-	if resourceRenderErr != nil {
-		return nil, resourceRenderErr
-	}
-
-	// Merge static and dynamic (FileRegistry) auxiliary files
-	dynamicFiles := fileRegistry.GetFiles()
-	auxiliaryFiles, err := rendercontext.MergeAuxiliaryFiles(staticFiles, dynamicFiles)
 	if err != nil {
-		return nil, fmt.Errorf("merging auxiliary files: %w", err)
+		if !forceCold && errors.Is(err, errIncrementalColdRestart) {
+			return true, nil
+		}
+		return false, err
 	}
+	if !forceCold && incrementalAttemptRequiresColdRestart(renderSession, inputTransaction) {
+		return true, nil
+	}
+	return false, nil
+}
 
-	// Defensive consistency check: fail the render if the config references
-	// map files the renderer did not register. Without this, a chart-side
-	// inconsistency where a snippet emits a map_str(...) reference but
-	// skips its fileRegistry.Register call would silently push a config
-	// whose post-config-delete phase deletes the missing map, breaking
-	// every subsequent HAProxy reload until the offending Ingress is
-	// removed.
+func inputRetrySeed(transaction RenderInputTransaction) *httpstore.InputRetrySeed {
+	seeder, ok := transaction.(interface {
+		RetrySeed() *httpstore.InputRetrySeed
+	})
+	if !ok {
+		return nil
+	}
+	return seeder.RetrySeed()
+}
+
+type renderArtifacts struct {
+	main             rendercontext.MainDocumentRender
+	staticFiles      *dataplane.AuxiliaryFiles
+	inputTransaction RenderInputTransaction
+	startTime        time.Time
+	outputGeneration uint64
+	cacheSession     *rendercontext.RenderCacheSession
+}
+
+func (s *RenderService) materializeRenderDocuments(
+	ctx context.Context,
+	bctx *builtRenderingContext,
+	artifacts *renderArtifacts,
+) (string, *dataplane.AuxiliaryFiles, error) {
+	haproxyConfig, err := artifacts.main.Document.String()
+	if err != nil {
+		return "", nil, fmt.Errorf("materializing %s: %w", names.MainTemplateName, err)
+	}
+	dynamicFiles := bctx.FileRegistry.GetFiles()
+	auxiliaryFiles, err := rendercontext.MergeAuxiliaryFiles(artifacts.staticFiles, dynamicFiles)
+	if err != nil {
+		return "", nil, fmt.Errorf("merging auxiliary files: %w", err)
+	}
 	consistencyErr := validateAuxiliaryFilesConsistency(haproxyConfig, auxiliaryFiles)
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
-		return nil, resourceErr
+		return "", nil, resourceErr
 	}
 	if consistencyErr != nil {
-		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, consistencyErr)
+		return "", nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, consistencyErr)
 	}
-
-	auxFileCount := len(auxiliaryFiles.MapFiles) +
-		len(auxiliaryFiles.GeneralFiles) +
-		len(auxiliaryFiles.SSLCertificates) +
-		len(auxiliaryFiles.SSLCaFiles) +
-		len(auxiliaryFiles.CRTListFiles)
-
-	// Validate rendered resources before surfacing them. Any structural
-	// problem aborts the render so the deployment scheduler doesn't get a
-	// half-formed payload.
-	collectorErr := renderedResourceCollector.Validate()
+	collectorErr := bctx.RenderedResourceCollector.Validate()
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
-		return nil, resourceErr
+		return "", nil, resourceErr
 	}
 	if collectorErr != nil {
-		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, collectorErr)
+		return "", nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, collectorErr)
 	}
+	return haproxyConfig, auxiliaryFiles, nil
+}
 
-	plan, err := s.buildPlan(bctx.PlanRegistry, mode, haproxyConfig, auxiliaryFiles)
+func (s *RenderService) resolveRenderPlan(
+	bctx *builtRenderingContext,
+	haproxyConfig string,
+	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	artifacts *renderArtifacts,
+	planTransition *rendercontext.DocumentPlanTransition,
+	transitionErr error,
+	previousOutputSnapshot *renderoutput.Snapshot,
+) (*renderplan.Plan, *rendercontext.RenderPlanIdentity, bool, error) {
+	var plan *renderplan.Plan
+	var planIdentity *rendercontext.RenderPlanIdentity
+	err := transitionErr
+	fullOutputBuild := previousOutputSnapshot == nil
+	if errors.Is(err, renderplan.ErrDocumentTransitionRequiresRebuild) {
+		fullOutputBuild = true
+		plan, planIdentity, err = s.buildPlan(
+			bctx.PlanRegistry,
+			haproxyConfig,
+			auxiliaryFiles,
+			artifacts.cacheSession,
+		)
+	}
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("building the render plan: %w", err)
+	}
+	if fullOutputBuild && plan == nil {
+		plan, err = planTransition.Plan.LegacyCopy()
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("materializing the render plan: %w", err)
+		}
+	}
+	return plan, planIdentity, fullOutputBuild, nil
+}
+
+func (s *RenderService) collectRenderSnapshots(
+	bctx *builtRenderingContext,
+	previousStatusPatchSnapshot *templating.StatusPatchSnapshot,
+	previousEventSnapshot *templating.RenderedEventSnapshot,
+	previousRenderedResourceSnapshot *templating.RenderedResourceSnapshot,
+) (
+	*templating.StatusPatchSnapshot,
+	*templating.RenderedEventSnapshot,
+	*templating.RenderedResourceSnapshot,
+	error,
+) {
+	statusPatchSnapshot, err := bctx.StatusPatchCollector.Snapshot(previousStatusPatchSnapshot)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("snapshotting status patches: %w", err)
+	}
+	eventSnapshot, err := bctx.EventCollector.Snapshot(previousEventSnapshot)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("snapshotting rendered events: %w", err)
+	}
+	renderedResourceSnapshot, err := bctx.RenderedResourceCollector.Snapshot(previousRenderedResourceSnapshot)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("snapshotting rendered resources: %w", err)
+	}
+	return statusPatchSnapshot, eventSnapshot, renderedResourceSnapshot, nil
+}
+
+func planTransitionDelta(transition *rendercontext.DocumentPlanTransition) *renderplan.Delta {
+	if transition == nil {
+		return nil
+	}
+	return transition.PlanDelta
+}
+
+// reportPlanDigestFallbacks surfaces a plan digest that had to rebuild the whole
+// plan instead of streaming it. The render is still correct, so this is the only
+// signal that the incremental digest stopped engaging.
+func (s *RenderService) reportPlanDigestFallbacks() {
+	total := s.planAuthority.DigestFallbacks()
+	if s.planDigestFallbacks.Swap(total) == total || s.logger == nil {
+		return
+	}
+	s.logger.Warn("Incremental plan digest is unavailable",
+		"reason", "snapshot walk order is unproven", "fallbacks", total)
+}
+
+// reportAssemblyReuse surfaces how much of the previous assembled configuration
+// the render kept. A fallback reason that never clears means the incremental
+// assembly stopped engaging, which is otherwise invisible.
+func (s *RenderService) reportAssemblyReuse(reuse rendercontext.AssemblyReuse) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Debug("Assembled configuration reuse",
+		"reused", reuse.Reused, "rebuilt", reuse.Rebuilt, "fallback", reuse.FallbackReason)
+	previous := s.assemblyFallbackReason.Swap(&reuse.FallbackReason)
+	if previous != nil && *previous == reuse.FallbackReason {
+		return
+	}
+	if reuse.FallbackReason == "" {
+		s.logger.Info("Incremental configuration assembly is engaged",
+			"reused", reuse.Reused, "rebuilt", reuse.Rebuilt)
+		return
+	}
+	s.logger.Info("Incremental configuration assembly is unavailable",
+		"reason", reuse.FallbackReason)
+}
+
+func outputSnapshotIdentity(snapshot *renderoutput.Snapshot) (contentChecksum, planID string, err error) {
+	contentChecksum, err = snapshot.ContentChecksum()
+	if err != nil {
+		return "", "", fmt.Errorf("reading rendered output checksum: %w", err)
+	}
+	planID, err = snapshot.PlanID()
+	if err != nil {
+		return "", "", fmt.Errorf("reading rendered plan ID: %w", err)
+	}
+	return contentChecksum, planID, nil
+}
+
+func (s *RenderService) finishRender(
+	ctx context.Context,
+	bctx *builtRenderingContext,
+	mode rendercontext.RenderMode,
+	artifacts *renderArtifacts,
+) (*RenderResult, error) {
+	haproxyConfig, auxiliaryFiles, err := s.materializeRenderDocuments(ctx, bctx, artifacts)
 	if err != nil {
 		return nil, err
 	}
-
-	result := &RenderResult{
-		HAProxyConfig:     haproxyConfig,
-		AuxiliaryFiles:    auxiliaryFiles,
-		Plan:              plan,
-		PlanID:            plan.ID,
-		StatusPatches:     statusPatchCollector.Patches(),
-		Events:            eventCollector.Events(),
-		RenderedResources: renderedResourceCollector.Resources(),
-		DurationMs:        time.Since(startTime).Milliseconds(),
-		AuxFileCount:      auxFileCount,
-		IncludeStats:      includeStats,
-		InputTransaction:  inputTransaction,
+	previousCycleSnapshot, previousPlanIdentity, previousCurrentConfigRoot := s.previousCycleState()
+	previousOutputSnapshot, previousStatusPatchSnapshot, previousEventSnapshot,
+		previousRenderedResourceSnapshot, err := renderCycleChildren(previousCycleSnapshot)
+	if err != nil {
+		return nil, fmt.Errorf("reading previous render cycle: %w", err)
 	}
-	transactionHandedOff = true
-	return result, nil
+	planTransition, transitionErr := bctx.PlanRegistry.PlanDocument(
+		artifacts.main.Document,
+		auxiliaryFiles,
+		s.planAuthority,
+		previousOutputSnapshot,
+	)
+	plan, planIdentity, fullOutputBuild, err := s.resolveRenderPlan(
+		bctx, haproxyConfig, auxiliaryFiles, artifacts,
+		planTransition, transitionErr, previousOutputSnapshot,
+	)
+	if err != nil {
+		return nil, err
+	}
+	statusPatchSnapshot, eventSnapshot, renderedResourceSnapshot, err := s.collectRenderSnapshots(
+		bctx, previousStatusPatchSnapshot, previousEventSnapshot, previousRenderedResourceSnapshot,
+	)
+	if err != nil {
+		return nil, err
+	}
+	artifactSnapshot, artifactDelta, auxFileCount, err := s.buildAuxiliaryFileTransition(
+		previousOutputSnapshot, auxiliaryFiles,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var outputSnapshot *renderoutput.Snapshot
+	if fullOutputBuild {
+		outputSnapshot, err = renderoutput.NewSnapshotFromDocument(
+			s.outputAuthority,
+			artifacts.main.Document,
+			plan,
+			artifactSnapshot,
+			previousOutputSnapshot,
+		)
+	} else {
+		outputSnapshot, err = s.commitIncrementalOutput(
+			previousOutputSnapshot,
+			planTransition.DocumentDelta,
+			planTransition.PlanDelta,
+			artifactDelta,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sealing rendered output: %w", err)
+	}
+	planDelta := planTransitionDelta(planTransition)
+	var currentConfigRoot *exactCycleCurrentConfigRoot
+	if !s.skipCurrentConfigProjection {
+		currentConfigRoot, err = currentConfigRootForOutputTransition(
+			previousCurrentConfigRoot,
+			previousOutputSnapshot,
+			outputSnapshot,
+			planDelta,
+			plan,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("projecting currentConfig: %w", err)
+		}
+	}
+	if outputSnapshot == previousOutputSnapshot {
+		planIdentity = previousPlanIdentity
+	}
+	cycleSnapshot, err := rendercycle.NewSnapshot(
+		s.cycleAuthority,
+		outputSnapshot,
+		statusPatchSnapshot,
+		eventSnapshot,
+		renderedResourceSnapshot,
+		previousCycleSnapshot,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sealing render cycle: %w", err)
+	}
+	contentChecksum, planID, err := outputSnapshotIdentity(outputSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	s.reportPlanDigestFallbacks()
+	s.reportAssemblyReuse(artifacts.main.Reuse)
+	cachePublication, err := artifacts.cacheSession.Prepare(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("preparing render cache publication: %w", err)
+	}
+	inputTransaction, err := s.stageCyclePublicationWithPlan(
+		artifacts.inputTransaction,
+		mode,
+		artifacts.outputGeneration,
+		planIdentity,
+		plan,
+		currentConfigRoot,
+		cycleSnapshot,
+		cachePublication,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("staging rendered output: %w", err)
+	}
+	cacheState, cacheBuildMs := s.incrementalCacheFigures(artifacts.inputTransaction)
+	return &RenderResult{
+		CycleSnapshot:            cycleSnapshot,
+		OutputSnapshot:           outputSnapshot,
+		HAProxyConfig:            haproxyConfig,
+		AuxiliaryFileSnapshot:    artifactSnapshot,
+		ContentChecksum:          contentChecksum,
+		Plan:                     plan,
+		PlanID:                   planID,
+		StatusPatchSnapshot:      statusPatchSnapshot,
+		EventSnapshot:            eventSnapshot,
+		RenderedResourceSnapshot: renderedResourceSnapshot,
+		DurationMs:               time.Since(artifacts.startTime).Milliseconds(),
+		CacheState:               cacheState,
+		CacheBuildMs:             cacheBuildMs,
+		AuxFileCount:             auxFileCount,
+		IncludeStats:             artifacts.main.IncludeStats,
+		InputTransaction:         inputTransaction,
+		renderCachePublication:   cachePublication,
+		planIdentity:             planIdentity,
+	}, nil
+}
+
+func (s *RenderService) buildAuxiliaryFileTransition(
+	previousOutputSnapshot *renderoutput.Snapshot,
+	auxiliaryFiles *dataplane.AuxiliaryFiles,
+) (*renderartifact.Snapshot, *renderartifact.Delta, int, error) {
+	var previousArtifactSnapshot *renderartifact.Snapshot
+	if previousOutputSnapshot != nil {
+		var err error
+		previousArtifactSnapshot, err = previousOutputSnapshot.ArtifactSnapshot()
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("reading previous render output: %w", err)
+		}
+	}
+	artifactSnapshot, artifactDelta, err := dataplane.BuildAuxiliaryFileTransitionWithRuntimePaths(
+		s.artifactAuthority,
+		previousArtifactSnapshot,
+		auxiliaryFiles,
+		s.resolveAuxiliaryRuntimePath,
+	)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("snapshotting auxiliary files: %w", err)
+	}
+	auxFileCount, err := artifactSnapshot.Len()
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("counting auxiliary files: %w", err)
+	}
+	return artifactSnapshot, artifactDelta, auxFileCount, nil
+}
+
+func renderCycleChildren(
+	cycle *rendercycle.Snapshot,
+) (
+	*renderoutput.Snapshot,
+	*templating.StatusPatchSnapshot,
+	*templating.RenderedEventSnapshot,
+	*templating.RenderedResourceSnapshot,
+	error,
+) {
+	if cycle == nil {
+		return nil, nil, nil, nil, nil
+	}
+	output, err := cycle.OutputSnapshot()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	status, err := cycle.StatusPatchSnapshot()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	events, err := cycle.RenderedEventSnapshot()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	resources, err := cycle.RenderedResourceSnapshot()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	return output, status, events, resources, nil
+}
+
+func (s *RenderService) resolveAuxiliaryRuntimePath(
+	family renderartifact.Family,
+	name string,
+) (string, error) {
+	var kind string
+	switch family {
+	case renderartifact.Map:
+		kind = "map"
+	case renderartifact.Certificate:
+		kind = "cert"
+	case renderartifact.CRTList:
+		kind = "crt-list"
+	default:
+		return "", fmt.Errorf("resolving auxiliary runtime path: unsupported family %d", family)
+	}
+	directoryValue, err := s.pathResolver.GetPath("", kind)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s directory: %w", kind, err)
+	}
+	directory, ok := directoryValue.(string)
+	if !ok {
+		return "", fmt.Errorf("resolving %s directory returned %T", kind, directoryValue)
+	}
+	resolved, err := s.pathResolver.GetPath(strings.TrimPrefix(name, directory+"/"), kind)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s %q: %w", kind, name, err)
+	}
+	runtimePath, ok := resolved.(string)
+	if !ok {
+		return "", fmt.Errorf("resolving %s %q returned %T", kind, name, resolved)
+	}
+	return runtimePath, nil
+}
+
+type incrementalCallValidator interface {
+	ValidateIncrementalCalls() error
+	// HasIncrementalCalls reports whether this render executed any component.
+	// A replay executes none, so its call bookkeeping describes the recorded
+	// cycle's walk rather than this render.
+	HasIncrementalCalls() bool
+}
+
+func incrementalAttemptRequiresColdRestart(
+	renderSession *incrementalRenderSession,
+	transaction RenderInputTransaction,
+) bool {
+	if renderSession == nil {
+		return false
+	}
+	if renderSession.requiresColdRestart() {
+		return true
+	}
+	provisional, ok := transaction.(interface{ ProvisionalURLs() []string })
+	if ok && renderSession.provisionalHTTPAffectsReplayedOutput(provisional.ProvisionalURLs()) {
+		return true
+	}
+	return false
+}
+
+func (s *RenderService) startIncrementalRender(
+	ctx context.Context,
+	provider stores.StoreProvider,
+	mode rendercontext.RenderMode,
+	bctx *builtRenderingContext,
+	inputTransaction RenderInputTransaction,
+	forceCold bool,
+) (context.Context, RenderInputTransaction, incrementalCallValidator, *incrementalRenderSession, error) {
+	if s.incremental == nil {
+		return ctx, newCombinedRenderInputTransaction(inputTransaction, nil, s.logger), nil, nil, nil
+	}
+	loggerContext := incrementalLoggerContext{logger: s.logger, typedResourceTypes: s.typedResourceTypes}
+	renderSession, err := s.incremental.begin(
+		ctx,
+		provider,
+		s.httpStoreComponent,
+		mode,
+		bctx.Context,
+		bctx.ResourceErrors,
+		loggerContext,
+	)
+	if err != nil {
+		if forceCold {
+			return ctx, inputTransaction, nil, nil,
+				fmt.Errorf("starting exact cold incremental render: %w", err)
+		}
+		return ctx, inputTransaction, nil, nil, fmt.Errorf("starting incremental render: %w", err)
+	}
+	if forceCold {
+		renderSession.usePinnedColdRenderer()
+		coldRenderer, coldErr := newPinnedColdIncrementalRenderer(
+			ctx,
+			renderSession,
+			bctx.Context,
+			bctx.ResourceErrors,
+			loggerContext,
+		)
+		if coldErr != nil {
+			renderSession.abort()
+			return ctx, inputTransaction, nil, nil,
+				fmt.Errorf("starting exact cold incremental render: %w", coldErr)
+		}
+		ctx = templating.WithIncrementalRenderer(ctx, coldRenderer)
+		bctx.Context[incrementalResourcesContextName] = s.incremental.resourcesValue(
+			ctx,
+			renderSession.stores,
+			bctx.ResourceErrors,
+			&incrementalPinnedResourceView{session: renderSession},
+			bctx.DerivedResources,
+			loggerContext,
+			true,
+		)
+		return ctx, newCombinedRenderInputTransaction(inputTransaction, renderSession, s.logger),
+			coldRenderer, renderSession, nil
+	}
+	if err := renderSession.prepareDerivedStage(ctx); err != nil {
+		renderSession.abort()
+		return ctx, inputTransaction, nil, nil, fmt.Errorf("preparing incremental derived resources: %w", err)
+	}
+	if len(renderSession.bindingPlan.owners) > 0 {
+		if err := bctx.DerivedResources.SetResolver(&incrementalDerivedResourceResolver{session: renderSession}); err != nil {
+			renderSession.abort()
+			return ctx, inputTransaction, nil, nil, fmt.Errorf("configuring incremental derived resources: %w", err)
+		}
+	}
+	if err := renderSession.prepareColdComponentGraph(ctx); err != nil {
+		renderSession.abort()
+		return ctx, inputTransaction, nil, nil, fmt.Errorf("preparing incremental cold graph: %w", err)
+	}
+	bctx.DerivedResources.Freeze()
+	ctx = templating.WithIncrementalRenderer(ctx, renderSession)
+	bctx.Context[incrementalResourcesContextName] = s.incremental.resourcesValue(
+		ctx,
+		renderSession.stores,
+		bctx.ResourceErrors,
+		&incrementalPinnedResourceView{session: renderSession},
+		bctx.DerivedResources,
+		loggerContext,
+		true,
+	)
+	return ctx, newCombinedRenderInputTransaction(inputTransaction, renderSession, s.logger),
+		renderSession, renderSession, nil
 }
 
 type builtRenderingContext struct {
@@ -378,7 +1618,7 @@ type builtRenderingContext struct {
 // StoreProvider, resolving the current deployed config, and wiring the HTTP
 // fetcher (whose overlay depends on the provider type); everything else is the
 // Builder's responsibility.
-func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) *builtRenderingContext {
+func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*builtRenderingContext, error) {
 	return s.buildRenderingContextWithHTTPSourceMode(ctx, provider, mode, httpSourceModeForRender(mode), extraOpts...)
 }
 
@@ -394,6 +1634,24 @@ func (s *RenderService) buildRenderingContextWithHTTPSourceMode(
 	provider stores.StoreProvider,
 	mode rendercontext.RenderMode,
 	httpSourceMode httpstore.SourceMode,
+	extraOpts ...rendercontext.Option,
+) (*builtRenderingContext, error) {
+	attemptInputs, err := s.captureRenderAttemptInputs()
+	if err != nil {
+		return nil, err
+	}
+	return s.buildRenderingContextFromAttemptInputs(
+		ctx, provider, mode, httpSourceMode, attemptInputs, nil, extraOpts...,
+	), nil
+}
+
+func (s *RenderService) buildRenderingContextFromAttemptInputs(
+	ctx context.Context,
+	provider stores.StoreProvider,
+	mode rendercontext.RenderMode,
+	httpSourceMode httpstore.SourceMode,
+	attemptInputs *renderAttemptInputs,
+	httpRetrySeed *httpstore.InputRetrySeed,
 	extraOpts ...rendercontext.Option,
 ) *builtRenderingContext {
 	// Snapshot the live stores off the provider. The haproxy-pods store is
@@ -415,20 +1673,11 @@ func (s *RenderService) buildRenderingContextWithHTTPSourceMode(
 	opts := []rendercontext.Option{
 		rendercontext.WithStores(resourceStores),
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
-		rendercontext.WithCapabilities(s.currentCapabilities()),
 		rendercontext.WithTypedResources(s.typedResourceTypes),
 		rendercontext.WithRenderMode(mode),
+		rendercontext.WithPlanTokenAuthority(s.planTokenAuthority),
 	}
-
-	// Add current config if available (for slot preservation). Passing a nil
-	// *CurrentConfig is fine — the Builder omits the key (Scriggo panics on
-	// nil pointer initializers).
-	opts = append(opts, rendercontext.WithCurrentConfig(s.currentConfig()))
-
-	// Add the default auxiliary baseline for self-referential templates.
-	if s.currentAuxFilesProvider != nil {
-		opts = append(opts, rendercontext.WithCurrentAuxFiles(s.currentAuxFilesProvider()))
-	}
+	opts = append(opts, attemptInputs.options()...)
 
 	var inputTransaction RenderInputTransaction
 	if s.httpStoreComponent != nil {
@@ -436,12 +1685,13 @@ func (s *RenderService) buildRenderingContextWithHTTPSourceMode(
 		if overlayProvider, ok := provider.(*stores.OverlayStoreProvider); ok {
 			httpOverlay = overlayProvider.GetHTTPOverlay()
 		}
-		httpFetcher := httpstore.NewHTTPStoreWrapper(
+		httpFetcher := httpstore.NewHTTPStoreWrapperWithRetrySeed(
 			ctx,
 			s.httpStoreComponent,
 			s.logger,
 			httpOverlay,
 			httpSourceMode,
+			httpRetrySeed,
 		)
 		if transaction := httpFetcher.InputTransaction(); transaction != nil {
 			inputTransaction = transaction
@@ -473,6 +1723,37 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 		MapFiles:        make([]auxiliaryfiles.MapFile, 0, len(s.config.Maps)),
 		GeneralFiles:    make([]auxiliaryfiles.GeneralFile, 0, len(s.config.Files)),
 		SSLCertificates: make([]auxiliaryfiles.SSLCertificate, 0, len(s.config.SSLCertificates)),
+	}
+	if templating.ExactCycleReplayExecutionActive(ctx) {
+		if err := renderAuxGroupSerial(
+			ctx, s.engine, renderCtx, s.config.Maps, "map", &auxFiles.MapFiles,
+			func(name, content string) auxiliaryfiles.MapFile {
+				return auxiliaryfiles.MapFile{Path: name, Content: content}
+			},
+		); err != nil {
+			return nil, err
+		}
+		if err := renderAuxGroupSerial(
+			ctx, s.engine, renderCtx, s.config.Files, "file", &auxFiles.GeneralFiles,
+			func(name, content string) auxiliaryfiles.GeneralFile {
+				return auxiliaryfiles.GeneralFile{
+					Filename: name, Path: path.Join(s.pathResolver.GeneralDir, name),
+					Content: content, ReloadOnPush: s.config.Files[name].ReloadOnPush,
+				}
+			},
+		); err != nil {
+			return nil, err
+		}
+		if err := renderAuxGroupSerial(
+			ctx, s.engine, renderCtx, s.config.SSLCertificates, "SSL certificate",
+			&auxFiles.SSLCertificates,
+			func(name, content string) auxiliaryfiles.SSLCertificate {
+				return auxiliaryfiles.SSLCertificate{Path: name, Content: content}
+			},
+		); err != nil {
+			return nil, err
+		}
+		return auxFiles, nil
 	}
 
 	// Create errgroup for parallel rendering. We discard the derived context because:
@@ -548,16 +1829,34 @@ func (s *RenderService) RenderSourceMaps(ctx context.Context, provider stores.St
 	}
 	// Source-map introspection is read-only provenance, not enforcement — use
 	// the lenient reconcile mode so it never fails on a conflict.
-	bctx := s.buildRenderingContextWithHTTPSourceMode(
+	bctx, err := s.buildRenderingContextWithHTTPSourceMode(
 		ctx,
 		provider,
 		rendercontext.RenderModeReconcile,
 		httpstore.SourceModeReadOnly,
 	)
+	if err != nil {
+		return nil, err
+	}
 	renderCtx := bctx.Context
+	coldRender, err := NewColdIncrementalRender(ctx, &ColdIncrementalRenderConfig{
+		Config:             s.config,
+		Engine:             s.engine,
+		StoreProvider:      provider,
+		Mode:               rendercontext.RenderModeReconcile,
+		TemplateContext:    renderCtx,
+		ResourceErrors:     bctx.ResourceErrors,
+		Logger:             s.logger,
+		TypedResourceTypes: s.typedResourceTypes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("starting cold incremental source-map render: %w", err)
+	}
+	ctx = coldRender.Context(ctx)
 	out := make(map[string]TemplateSourceMap)
 	add := func(name string) {
-		if raw, spans, err := sm.RenderWithSourceMap(ctx, name, renderCtx); err == nil {
+		scopedCtx := templating.WithIncrementalScope(ctx, name)
+		if raw, spans, err := sm.RenderWithSourceMap(scopedCtx, name, renderCtx); err == nil {
 			out[name] = TemplateSourceMap{Raw: raw, Spans: spans}
 		}
 	}
@@ -576,6 +1875,9 @@ func (s *RenderService) RenderSourceMaps(ctx context.Context, provider stores.St
 	// displayed lines against this raw source map to attribute each one.
 	for name := range s.config.K8sResources {
 		add(name)
+	}
+	if err := coldRender.ValidateIncrementalCalls(); err != nil {
+		return nil, err
 	}
 	if err := bctx.Err(ctx); err != nil {
 		return nil, err
@@ -597,14 +1899,36 @@ func (s *RenderService) renderK8sResources(ctx context.Context, renderCtx map[st
 	if len(s.config.K8sResources) == 0 {
 		return nil
 	}
-	g, _ := errgroup.WithContext(ctx)
-	for name := range s.config.K8sResources {
-		g.Go(func() error {
-			rendered, err := s.engine.Render(ctx, name, renderCtx)
+	if templating.ExactCycleReplayExecutionActive(ctx) {
+		templateNames := make([]string, 0, len(s.config.K8sResources))
+		for name := range s.config.K8sResources {
+			templateNames = append(templateNames, name)
+		}
+		slices.Sort(templateNames)
+		for _, name := range templateNames {
+			scopedCtx := templating.WithIncrementalScope(ctx, name)
+			scopedCtx = templating.WithExactCycleRootInvocation(
+				scopedCtx, templating.ExactCycleRootInvocation{Kind: "k8s resource", Name: name},
+			)
+			rendered, err := s.engine.Render(scopedCtx, name, renderCtx)
 			if err != nil {
 				return fmt.Errorf("rendering k8sResources %s: %w", name, err)
 			}
-			return registerK8sResourceDocs(name, rendered, collector)
+			if err := registerK8sResourceDocs(name, rendered, collector, s.config.K8sResources[name].CreateOnlyFields); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	g, _ := errgroup.WithContext(ctx)
+	for name := range s.config.K8sResources {
+		g.Go(func() error {
+			scopedCtx := templating.WithIncrementalScope(ctx, name)
+			rendered, err := s.engine.Render(scopedCtx, name, renderCtx)
+			if err != nil {
+				return fmt.Errorf("rendering k8sResources %s: %w", name, err)
+			}
+			return registerK8sResourceDocs(name, rendered, collector, s.config.K8sResources[name].CreateOnlyFields)
 		})
 	}
 	return g.Wait()
@@ -612,7 +1936,11 @@ func (s *RenderService) renderK8sResources(ctx context.Context, renderCtx map[st
 
 // registerK8sResourceDocs parses rendered YAML (one or more documents
 // separated by `---`), validates each, and adds it to the collector.
-func registerK8sResourceDocs(templateName, rendered string, collector *templating.RenderedResourceCollector) error {
+func registerK8sResourceDocs(
+	templateName, rendered string,
+	collector *templating.RenderedResourceCollector,
+	createOnlyFields []string,
+) error {
 	if strings.TrimSpace(rendered) == "" {
 		// Empty render is a valid "no resources to emit this cycle"
 		// signal — common when a template gates its output on a
@@ -651,7 +1979,9 @@ func registerK8sResourceDocs(templateName, rendered string, collector *templatin
 		// them back over no-ops. metadata is intentionally kept
 		// since templates may add labels / annotations / ownerRefs
 		// the applier then merges with the resource it sends.
-		if err := collector.Register(apiVersion, kind, namespace, name, doc); err != nil {
+		if err := collector.RegisterWithCreateOnlyFields(
+			apiVersion, kind, namespace, name, doc, createOnlyFields,
+		); err != nil {
 			return fmt.Errorf("k8sResources %s document %d: %w", templateName, docIdx, err)
 		}
 	}
@@ -676,7 +2006,8 @@ func renderAuxGroup[V any, T any](
 ) {
 	for name := range sources {
 		g.Go(func() error {
-			rendered, err := engine.Render(ctx, name, renderCtx)
+			scopedCtx := templating.WithIncrementalScope(ctx, name)
+			rendered, err := engine.Render(scopedCtx, name, renderCtx)
 			if err != nil {
 				return fmt.Errorf("rendering %s %s: %w", label, name, err)
 			}
@@ -686,4 +2017,32 @@ func renderAuxGroup[V any, T any](
 			return nil
 		})
 	}
+}
+
+func renderAuxGroupSerial[V any, T any](
+	ctx context.Context,
+	engine templating.Engine,
+	renderCtx map[string]any,
+	sources map[string]V,
+	label string,
+	out *[]T,
+	build func(name, content string) T,
+) error {
+	templateNames := make([]string, 0, len(sources))
+	for name := range sources {
+		templateNames = append(templateNames, name)
+	}
+	slices.Sort(templateNames)
+	for _, name := range templateNames {
+		scopedCtx := templating.WithIncrementalScope(ctx, name)
+		scopedCtx = templating.WithExactCycleRootInvocation(
+			scopedCtx, templating.ExactCycleRootInvocation{Kind: label, Name: name},
+		)
+		rendered, err := engine.Render(scopedCtx, name, renderCtx)
+		if err != nil {
+			return fmt.Errorf("rendering %s %s: %w", label, name, err)
+		}
+		*out = append(*out, build(name, rendered))
+	}
+	return nil
 }

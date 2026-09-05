@@ -34,13 +34,12 @@ The `*PipelineResult` carries everything downstream consumers need without
 re-running render or validate:
 
 - `HAProxyConfig` (string), `AuxiliaryFiles` (`*dataplane.AuxiliaryFiles`)
-- `StatusPatches []templating.StatusPatch` — registered by templates during the render
+- `StatusPatchSnapshot *templating.StatusPatchSnapshot` — authenticated immutable patches from the render
 - `AuxFileCount int` — convenience aggregate
 - `ContentChecksum string` — pre-computed checksum of config + aux files (see below)
 - `RenderDurationMs`, `ValidateDurationMs`, `TotalDurationMs` — phase timings
 - `ValidationPhase string` — last completed validation phase (empty if all passed)
 - `ValidationWarnings []string` — non-fatal rendered-output diagnostics
-- `ParsedConfig *parser.StructuredConfig` — see "Pre-Parsed Config Optimisation"
 
 `pipeline.New` panics if `Renderer` or `Validator` is nil — these are required dependencies and a missing one is a configuration bug, not a runtime error to be surfaced later.
 
@@ -55,22 +54,22 @@ re-running render or validate:
 
 1. **Render** — calls the render service with the supplied store provider. The render mode (production vs validation) is auto-detected: if the provider is an `*OverlayStoreProvider` with overlays, it's a validation render; otherwise it's a production render.
 2. **Compute checksum** — `dataplane.ComputeContentChecksum(config, auxFiles)` runs once and is propagated through `PipelineResult.ContentChecksum`. Downstream consumers (publishing, deployment) reuse it instead of re-hashing.
-3. **Validate** — calls the three-phase validation service with the rendered config + aux files + pre-computed checksum (so the validation cache key is consistent across callers).
-4. **Validate rendered output** — after the built-in phases pass, calls the optional validator with the complete rendered file set. Errors use validation phase `external`; warnings remain on the result.
+3. **Validate** — when the pipeline owns the built-in gate, calls `haproxy -c` with the rendered config and auxiliary files. The checksum is propagated identity, not permission to reuse a verdict.
+4. **Validate rendered output** — after the built-in gate passes, calls the optional validator with the complete rendered file set. Protocol-v1 validators execute on every matching invocation, including exact repeats. Errors use validation phase `external`; warnings remain on the result.
 5. **Wrap errors** — failures come back as `*PipelineError` with `Phase` (`render` / `validation`) and, for validation, `ValidationPhase` (`syntax` / `schema` / `semantic` / `external`). Use `errors.As` to pull the phase out instead of string-matching the message.
 
 The pipeline checks `context.Cause` before and after every phase and immediately
 before returning success. Cancellation returns a phase-tagged `*PipelineError`
 that wraps the cancellation cause; a partial validation result is never valid.
 
-## Pre-Parsed Config Optimisation
-
-`PipelineResult.ParsedConfig` carries the `*parser.StructuredConfig` produced during syntax validation. Downstream sync operations (`pkg/dataplane.Client.Sync`) accept it as input to skip a redundant parse. The reconciliation validation service caches this pointer for identical renders; the admission service discards it because no admission consumer reads it.
+Neither built-in nor protocol-v1 external validation reuses a positive verdict.
+Future reuse requires an authenticated hermetic-environment root bound to the
+exact rendered output and validator request.
 
 ## See Also
 
 - [`pkg/controller/renderer`](../renderer/) — the render service this pipeline drives (event adapter and pure service both live there)
-- [`pkg/controller/validation`](../validation/) — the three-phase validation service this pipeline drives
+- [`pkg/controller/validation`](../validation/) — the HAProxy validation service this pipeline drives
 - [`pkg/controller/pluggablevalidator`](../pluggablevalidator/) — the production rendered-output validator
 - [`pkg/controller/proposalvalidator`](../proposalvalidator/) — webhook-side caller (sync mode)
 - [`pkg/controller/reconciler`](../reconciler/) — reconciliation-side caller (driven by `Coordinator`)

@@ -15,9 +15,16 @@
 package rendercontext
 
 import (
+	"bytes"
+	"cmp"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
+	"slices"
+	"strconv"
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
@@ -54,66 +61,9 @@ func toString(v any) string {
 	}
 }
 
-// StoreWrapper wraps a stores.Store with template-friendly value-only methods,
-// records read failures for the render boundary, and pins a single per-render
-// snapshot of the underlying store so every read in one render — List(),
-// Fetch(), or GetSingle() — observes the same state.
-//
-// Why per-render pinning matters: the live informer-backed store mutates
-// during admission validation (a parallel test's Ingress lands in the
-// store between two snippet executions), so two raw List() calls in one
-// render can return different snapshots, and a List() vs Fetch() pair on
-// the same resource type can disagree about what's in the store. The
-// chart's auth pattern hit exactly the first variant — global-top emits
-// userlists from one List() snapshot, backend-directives emits
-// http_auth(...) refs from a later (mutated) List() snapshot, leaving
-// the rendered config with an http_auth pointing at a userlist that no
-// snippet emitted. HAProxy then rejects the config at admission time.
-//
-// On first access we call Store.List() once and build an in-memory
-// composite-key index using the configured IndexBy JSONPath
-// expressions. List() returns the snapshot; Fetch()/GetSingle() resolve
-// against the in-memory index, with the same exact-match-vs-prefix-scan
-// semantics MemoryStore.Get(...) offers. The wrapper is constructed
-// fresh per Render() in rendercontext.Builder, so the cache lifetime
-// is naturally one render.
-//
-// LazySnapshot mode (CachedStore-backed resources, typically Secrets):
-// the eager Store.List() defeats the whole point of CachedStore —
-// listing a CachedStore fans out into one API fetch per cached
-// reference (see pkg/k8s/store/cached.go's "Listing cached store
-// causes individual API lookups" WARN). For wrappers whose
-// WatchedResources[name].Store == "on-demand", set LazySnapshot=true:
-//
-//  1. Snapshot is primed at first access from the underlying store's
-//     CachedList() (only the LRU's warm entries — no API fetches).
-//     If the store doesn't expose CachedList(), the snapshot starts
-//     empty.
-//  2. The first exact Fetch/GetSingle for a key calls
-//     Store.Get(stringKeys...) and folds the complete bucket into the
-//     snapshot. Warm entries alone can't prove that a non-unique bucket
-//     is complete. Later lookups use the snapshot.
-//  3. List() returns the snapshot as-is — the partial set the
-//     render has assembled. No surprise full-cluster fetch, no
-//     warning. Operators who set `store: on-demand` are opting out
-//     of full-cluster iteration; templates that need to scan every
-//     instance of a kind should use the default `store: full`.
-//
-// Per-render consistency: a key looked up via Fetch/GetSingle and
-// then iterated via List() returns the same value (both served
-// from the snapshot). The narrow weakening vs eager mode is that
-// List() doesn't include uncached items the render never asked
-// for — for the canonical "many Secrets, only a few touched" use
-// case (Secrets is the whole reason `store: on-demand` exists),
-// that's the contract, not a bug.
-//
-// If IndexBy is empty (e.g., a wrapper constructed for a store whose
-// indexing config wasn't passed through), we still snapshot for List()
-// but fall back to Store.Get(...) for keyed lookups — and warn, because
-// that path can't honor the cross-method coherence guarantee.
-//
-// Resources in stores are already converted (floats to ints) at storage
-// time, so StoreWrapper passes data through without additional processing.
+// StoreWrapper exposes one immutable resource view to a template render.
+// Lazy snapshots load exact and prefix reads on demand; List still resolves the
+// complete store because cache warmth isn't a semantic input.
 type StoreWrapper struct {
 	Store          stores.Store
 	ResourceType   string
@@ -130,28 +80,181 @@ type StoreWrapper struct {
 	// (WatchedResources[name].Store == "on-demand"). See type doc.
 	LazySnapshot bool
 
-	cacheMu       sync.Mutex
-	loaded        bool
-	indexer       *indexer.Indexer // lazy mode: used to extract keys from items added incrementally
-	snapshot      []any
-	snapshotByKey map[string][]any // encoded index components → matching items
-	resolvedKeys  map[string]struct{}
+	SnapshotView        StoreSnapshotView
+	DerivedView         *DerivedResourceView
+	MemoizeSnapshotView bool
+
+	cacheMu          sync.Mutex
+	loaded           bool
+	listed           bool
+	indexer          *indexer.Indexer // lazy mode: used to extract keys from items added incrementally
+	snapshot         []any
+	snapshotByKey    map[string][]any // encoded index components → matching items
+	snapshotViewGets map[string][]any
+	resolvedKeys     map[string]struct{}
 }
 
-// cachedLister is an optional interface implemented by stores that can
-// return their in-memory cache contents without triggering API fetches.
-// LazySnapshot wrappers use it to prime the snapshot cheaply at first
-// access. CachedStore implements it; MemoryStore doesn't need to
-// because eager mode is always cheap there.
-type cachedLister interface {
-	ListCached() ([]any, error)
+// StoreSnapshotView supplies transaction-pinned reads for incremental components.
+type StoreSnapshotView interface {
+	List(resourceType string, store stores.Store) ([]any, error)
+	Get(resourceType string, store stores.Store, keys ...string) ([]any, error)
+}
+
+type contextualStoreSnapshotView interface {
+	ListContext(context.Context, string, stores.Store) ([]any, error)
+	GetContext(context.Context, string, stores.Store, ...string) ([]any, error)
+}
+
+type storeInvocationGuard interface {
+	BeginStoreInvocation(context.Context) (context.Context, func(), error)
+}
+
+type boundStoreInvocationGuard interface {
+	BeginBoundStoreInvocation(
+		context.Context,
+		templating.IncrementalResourceInvocationLease,
+	) (context.Context, func(), error)
+}
+
+// StoreLookupKeyNormalizer replaces legacy lookup-key coercion for a snapshot view.
+type StoreLookupKeyNormalizer interface {
+	NormalizeLookupKeys(resourceType string, keys []any) ([]string, error)
+}
+
+// StoreLookupKeySource exposes synchronous lookup arguments without materializing a slice.
+type StoreLookupKeySource interface {
+	Len() int
+	Value(index int) any
+}
+
+// StoreLookupReflectKeySource preserves an argument's reflection value without boxing it.
+type StoreLookupReflectKeySource interface {
+	StoreLookupKeySource
+	ReflectValue(index int) reflect.Value
+}
+
+// StoreLookupKeySourceNormalizer normalizes a non-retainable lookup-key source synchronously.
+type StoreLookupKeySourceNormalizer interface {
+	NormalizeLookupKeySource(resourceType string, keys StoreLookupKeySource) ([]string, error)
+}
+
+type selectiveStoreSnapshotView interface {
+	Supports(resourceType string) bool
+}
+
+type storeReadContextProvider interface {
+	StoreReadContext() context.Context
+}
+
+type storeMaterializationPolicy interface {
+	MemoizeStoreMaterialization() bool
+}
+
+type storeItemMaterializationPolicy interface {
+	MemoizeStoreItems() bool
+}
+
+type storeValueIsolationPolicy interface {
+	PreserveStoreValues() bool
+}
+
+// CloneWithSnapshotView returns an empty per-render cache over the supplied view.
+func (w *StoreWrapper) CloneWithSnapshotView(view StoreSnapshotView, memoize bool) *StoreWrapper {
+	if w == nil {
+		return nil
+	}
+	return w.CloneWithSnapshotViewContext(w.readContext, view, memoize)
+}
+
+// CloneWithSnapshotViewContext returns an empty per-render cache with a new read context.
+func (w *StoreWrapper) CloneWithSnapshotViewContext(
+	ctx context.Context,
+	view StoreSnapshotView,
+	memoize bool,
+) *StoreWrapper {
+	if w == nil {
+		return nil
+	}
+	return &StoreWrapper{
+		Store:               w.Store,
+		ResourceType:        w.ResourceType,
+		Logger:              w.Logger,
+		readContext:         ctx,
+		resourceErrors:      w.resourceErrors,
+		IndexBy:             slices.Clone(w.IndexBy),
+		LazySnapshot:        w.LazySnapshot,
+		SnapshotView:        view,
+		DerivedView:         w.DerivedView,
+		MemoizeSnapshotView: memoize,
+	}
+}
+
+func (w *StoreWrapper) usesSnapshotView() bool {
+	if w.SnapshotView == nil {
+		return false
+	}
+	selective, ok := w.SnapshotView.(selectiveStoreSnapshotView)
+	return !ok || selective.Supports(w.ResourceType)
+}
+
+func (w *StoreWrapper) memoizeStoreMaterialization() bool {
+	policy, ok := w.SnapshotView.(storeMaterializationPolicy)
+	return !ok || policy.MemoizeStoreMaterialization()
+}
+
+func (w *StoreWrapper) memoizeStoreItems() bool {
+	policy, ok := w.SnapshotView.(storeItemMaterializationPolicy)
+	return !ok || policy.MemoizeStoreItems()
 }
 
 func (w *StoreWrapper) storeContext() context.Context {
+	if provider, ok := w.SnapshotView.(storeReadContextProvider); ok {
+		if ctx := provider.StoreReadContext(); ctx != nil {
+			return ctx
+		}
+	}
 	if w.readContext != nil {
 		return w.readContext
 	}
 	return context.Background()
+}
+
+func (w *StoreWrapper) beginStoreInvocation(ctx context.Context) (context.Context, func(), error) {
+	if ctx == nil {
+		ctx = w.storeContext()
+	}
+	if guard, ok := w.SnapshotView.(storeInvocationGuard); ok {
+		return guard.BeginStoreInvocation(ctx)
+	}
+	return ctx, func() {}, nil
+}
+
+func (w *StoreWrapper) supportsBoundStoreInvocation() bool {
+	if w == nil || w.memoizeStoreMaterialization() {
+		return false
+	}
+	if w.supportsDirectBoundStoreInvocation() {
+		return true
+	}
+	_, ok := w.SnapshotView.(boundStoreInvocationGuard)
+	return ok
+}
+
+func (w *StoreWrapper) beginBoundStoreInvocation(
+	ctx context.Context,
+	lease templating.IncrementalResourceInvocationLease,
+) (context.Context, func(), error) {
+	if w == nil || lease == nil {
+		return nil, nil, errors.New("bound resource invocation is unavailable")
+	}
+	if ctx == nil {
+		ctx = w.storeContext()
+	}
+	guard, ok := w.SnapshotView.(boundStoreInvocationGuard)
+	if !ok || w.memoizeStoreMaterialization() {
+		return nil, nil, errors.New("bound resource invocation is unsupported")
+	}
+	return guard.BeginBoundStoreInvocation(ctx, lease)
 }
 
 func (w *StoreWrapper) getStore(keys ...string) ([]any, error) {
@@ -194,6 +297,18 @@ func (w *StoreWrapper) recordReadFailure(err error) {
 	w.resourceErrors.Record(err)
 }
 
+func (w *StoreWrapper) project(items []any, operation string) []any {
+	if w.DerivedView == nil {
+		return items
+	}
+	projected, err := w.DerivedView.Project(w.ResourceType, items)
+	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q %s could not apply its derived view: %w", w.ResourceType, operation, err))
+		return nil
+	}
+	return projected
+}
+
 func (w *StoreWrapper) prepareSnapshotIndex() {
 	if len(w.IndexBy) == 0 {
 		w.Logger.Warn("StoreWrapper has no IndexBy; Fetch/GetSingle will bypass the snapshot",
@@ -216,6 +331,17 @@ func (w *StoreWrapper) prepareSnapshotIndex() {
 }
 
 func (w *StoreWrapper) loadInitialSnapshot() []any {
+	if w.MemoizeSnapshotView && w.usesSnapshotView() {
+		if w.LazySnapshot {
+			return nil
+		}
+		items, err := w.SnapshotView.List(w.ResourceType, w.Store)
+		if err != nil {
+			w.recordReadFailure(fmt.Errorf("resource %q List failed: %w", w.ResourceType, err))
+			return nil
+		}
+		return w.project(w.cloneStoreItems(items, "List"), "List")
+	}
 	if !w.LazySnapshot {
 		items, err := w.listStore()
 		if err != nil {
@@ -224,30 +350,111 @@ func (w *StoreWrapper) loadInitialSnapshot() []any {
 				"resource_type", w.ResourceType, "error", err)
 			return nil
 		}
-		return items
+		return w.cloneStoreItems(items, "List")
 	}
 
-	if w.storeContext().Err() != nil {
-		return nil
-	}
-	lister, ok := w.Store.(cachedLister)
-	if !ok {
-		return nil
-	}
-	items, err := lister.ListCached()
-	if err != nil {
-		w.recordReadFailure(fmt.Errorf("resource %q cached snapshot failed: %w", w.ResourceType, err))
-		w.warnReadFailure("Failed to list cached resources for snapshot prime",
-			"resource_type", w.ResourceType, "error", err)
-		return nil
-	}
-	return items
+	return nil
 }
 
-// loadSnapshot pins the per-instance snapshot on first access. In
-// eager mode, calls Store.List() and indexes everything. In lazy mode,
-// primes from the underlying store's ListCached() (LRU-only, no API
-// fetches) and leaves room for incremental growth via addToSnapshot.
+func (w *StoreWrapper) cloneStoreItems(items []any, operation string) []any {
+	if policy, ok := w.SnapshotView.(storeValueIsolationPolicy); ok && policy.PreserveStoreValues() {
+		return items
+	}
+	cloned, err := cloneTemplateItems(items)
+	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q %s could not be isolated: %w", w.ResourceType, operation, err))
+		return nil
+	}
+	return cloned
+}
+
+func cloneTemplateItems(items []any) ([]any, error) {
+	cloned := make([]any, len(items))
+	for i, item := range items {
+		value, err := cloneTemplateValue(item)
+		if err != nil {
+			return nil, fmt.Errorf("item %d: %w", i, err)
+		}
+		cloned[i] = value
+	}
+	return cloned, nil
+}
+
+func cloneTemplateValue(value any) (any, error) {
+	switch typed := value.(type) {
+	case nil, string, bool, int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+		return typed, nil
+	case map[string]any:
+		cloned := make(map[string]any, len(typed))
+		for key, item := range typed {
+			value, err := cloneTemplateValue(item)
+			if err != nil {
+				return nil, err
+			}
+			cloned[key] = value
+		}
+		return cloned, nil
+	case []any:
+		cloned := make([]any, len(typed))
+		for i, item := range typed {
+			value, err := cloneTemplateValue(item)
+			if err != nil {
+				return nil, err
+			}
+			cloned[i] = value
+		}
+		return cloned, nil
+	}
+
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var cloned any
+	if err := decoder.Decode(&cloned); err != nil {
+		return nil, err
+	}
+	return normalizeTemplateNumbers(cloned)
+}
+
+func normalizeTemplateNumbers(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		if integer, err := strconv.ParseInt(string(typed), 10, 64); err == nil {
+			return integer, nil
+		}
+		if integer, err := strconv.ParseUint(string(typed), 10, 64); err == nil {
+			return integer, nil
+		}
+		decimal, err := strconv.ParseFloat(string(typed), 64)
+		if err != nil {
+			return nil, err
+		}
+		return decimal, nil
+	case map[string]any:
+		for key, item := range typed {
+			normalized, err := normalizeTemplateNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[key] = normalized
+		}
+	case []any:
+		for i, item := range typed {
+			normalized, err := normalizeTemplateNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[i] = normalized
+		}
+	}
+	return value, nil
+}
+
+// loadSnapshot initializes the per-render index without forcing a lazy List.
 // Caller must hold cacheMu.
 func (w *StoreWrapper) loadSnapshot() {
 	if w.loaded {
@@ -257,6 +464,7 @@ func (w *StoreWrapper) loadSnapshot() {
 	w.prepareSnapshotIndex()
 	items := w.loadInitialSnapshot()
 	w.snapshot = items
+	w.listed = !w.LazySnapshot
 	if w.snapshotByKey == nil {
 		return
 	}
@@ -281,12 +489,12 @@ func (w *StoreWrapper) getWithoutSnapshotIndex(stringKeys []string, op string) [
 		"op", op,
 		"keys", stringKeys,
 		"found_count", len(items))
-	return items
+	return w.cloneStoreItems(items, op)
 }
 
 func (w *StoreWrapper) getExact(stringKeys []string, op string) []any {
 	composite := indexer.EncodeKey(stringKeys)
-	if !w.LazySnapshot {
+	if !w.LazySnapshot || w.listed {
 		items := w.snapshotByKey[composite]
 		w.Logger.Log(context.Background(), logging.LevelTrace, "store get called (snapshot, exact)",
 			"resource_type", w.ResourceType,
@@ -315,6 +523,7 @@ func (w *StoreWrapper) getExact(stringKeys []string, op string) []any {
 			"error", err)
 		return []any{}
 	}
+	items = w.cloneStoreItems(items, op)
 	w.replaceSnapshotBucketLocked(composite, items)
 	w.resolvedKeys[composite] = struct{}{}
 	if _, indexed := w.snapshotByKey[composite]; !indexed {
@@ -341,6 +550,31 @@ func (w *StoreWrapper) replaceSnapshotBucketLocked(composite string, items []any
 	w.addToSnapshotLocked(items)
 }
 
+func (w *StoreWrapper) replaceSnapshotPrefixLocked(encodedPrefix string, items []any) {
+	remaining := make([]any, 0, len(w.snapshot)+len(items))
+	for _, item := range w.snapshot {
+		keys, err := w.indexer.ExtractKeys(item)
+		if err != nil || !indexer.HasEncodedKeyPrefix(indexer.EncodeKey(keys), encodedPrefix) {
+			remaining = append(remaining, item)
+		}
+	}
+	w.snapshot = remaining
+	w.snapshotByKey = map[string][]any{}
+	for _, item := range w.snapshot {
+		w.indexItemLocked(item)
+	}
+	w.addToSnapshotLocked(items)
+}
+
+func (w *StoreWrapper) replaceCompleteSnapshotLocked(items []any) {
+	w.snapshot = nil
+	if w.snapshotByKey != nil {
+		w.snapshotByKey = map[string][]any{}
+	}
+	w.addToSnapshotLocked(items)
+	w.listed = true
+}
+
 func (w *StoreWrapper) getPrefix(stringKeys []string, op string) []any {
 	var results []any
 	encodedPrefix := indexer.EncodeKey(stringKeys)
@@ -349,6 +583,17 @@ func (w *StoreWrapper) getPrefix(stringKeys []string, op string) []any {
 			results = append(results, items...)
 		}
 	}
+	slices.SortStableFunc(results, func(left, right any) int {
+		leftIdentity, leftErr := derivedResourceIdentity("", left)
+		rightIdentity, rightErr := derivedResourceIdentity("", right)
+		if leftErr != nil || rightErr != nil {
+			return 0
+		}
+		if byNamespace := cmp.Compare(leftIdentity.Namespace, rightIdentity.Namespace); byNamespace != 0 {
+			return byNamespace
+		}
+		return cmp.Compare(leftIdentity.Name, rightIdentity.Name)
+	})
 	w.Logger.Log(context.Background(), logging.LevelTrace, "store get called (snapshot, prefix)",
 		"resource_type", w.ResourceType,
 		"op", op,
@@ -390,22 +635,72 @@ func (w *StoreWrapper) addToSnapshotLocked(items []any) {
 
 // List returns all resources from the per-render snapshot.
 //
-// First call lazily loads the snapshot. In eager mode the snapshot
-// covers everything in the underlying store. In lazy mode it covers
-// (initial: LRU-warm entries) + (incrementally: any keys touched via
-// Fetch/GetSingle during this render). Subsequent calls return the
-// current snapshot. An exact lookup may replace an incomplete warm
-// bucket, but a slice returned by an earlier List call remains stable.
-func (w *StoreWrapper) List() []any {
+// A lazy List resolves the complete pinned store once.
+func (w *StoreWrapper) List() (result []any) {
+	ctx, release, err := w.beginStoreInvocation(w.storeContext())
+	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q List failed: %w", w.ResourceType, err))
+		return nil
+	}
+	defer release()
+	result, err = w.listInInvocation(ctx)
+	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q List failed: %w", w.ResourceType, err))
+		return nil
+	}
+	if err := templating.RegisterIncrementalImmutableInputs(ctx, result); err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q List failed: %w", w.ResourceType, err))
+		return nil
+	}
+	return result
+}
+
+func (w *StoreWrapper) listInInvocation(ctx context.Context) ([]any, error) {
+	if view, ok := w.SnapshotView.(contextualStoreSnapshotView); ok && w.usesSnapshotView() {
+		items, err := view.ListContext(ctx, w.ResourceType, w.Store)
+		if err != nil {
+			return nil, err
+		}
+		return w.project(w.cloneStoreItems(items, "List"), "List"), nil
+	}
+	if w.MemoizeSnapshotView && w.usesSnapshotView() {
+		w.cacheMu.Lock()
+		defer w.cacheMu.Unlock()
+		w.loadSnapshot()
+		if w.LazySnapshot && !w.listed {
+			items, err := w.SnapshotView.List(w.ResourceType, w.Store)
+			if err != nil {
+				return nil, err
+			}
+			w.replaceCompleteSnapshotLocked(w.project(w.cloneStoreItems(items, "List"), "List"))
+		}
+		return w.snapshot, nil
+	}
+	if w.usesSnapshotView() {
+		items, err := w.SnapshotView.List(w.ResourceType, w.Store)
+		if err != nil {
+			return nil, err
+		}
+		return w.project(w.cloneStoreItems(items, "List"), "List"), nil
+	}
 	w.cacheMu.Lock()
 	defer w.cacheMu.Unlock()
 	w.loadSnapshot()
+	if w.LazySnapshot && !w.listed {
+		items, err := w.listStore()
+		if err != nil {
+			w.warnReadFailure("Failed to list resources for snapshot",
+				"resource_type", w.ResourceType, "error", err)
+			return nil, err
+		}
+		w.replaceCompleteSnapshotLocked(w.cloneStoreItems(items, "List"))
+	}
 
 	w.Logger.Log(context.Background(), logging.LevelTrace, "store list called",
 		"resource_type", w.ResourceType,
 		"count", len(w.snapshot))
 
-	return w.snapshot
+	return w.project(w.snapshot, "List"), nil
 }
 
 // get is the shared snapshot-keyed lookup used by Fetch and GetSingle.
@@ -415,12 +710,8 @@ func (w *StoreWrapper) List() []any {
 // partial-match (prefix) does a small scan — same shape as
 // MemoryStore.Get.
 //
-// In LazySnapshot mode, the first exact lookup for each key calls
-// Store.Get(stringKeys...) (LRU-cached for CachedStore); the complete
-// bucket replaces any warm subset in the snapshot. Partial lookups
-// don't trigger a fetch — there's no general way to enumerate "all
-// keys with this prefix" without doing the very full-list we're
-// avoiding, so prefix scans see only items already in the snapshot.
+// In LazySnapshot mode, each exact or prefix scope resolves once from the
+// pinned store; List resolves every item.
 //
 // When the snapshot wasn't indexed (no IndexBy), falls back to
 // Store.Get(stringKeys...) — that path can disagree with the snapshot
@@ -438,19 +729,108 @@ func (w *StoreWrapper) get(stringKeys []string, op string) []any {
 			"index_key_count", len(w.IndexBy))
 		return []any{}
 	}
+	if w.MemoizeSnapshotView && w.usesSnapshotView() {
+		return w.getMemoizedSnapshotView(stringKeys, op)
+	}
+	if w.usesSnapshotView() {
+		items, err := w.SnapshotView.Get(w.ResourceType, w.Store, stringKeys...)
+		if err != nil {
+			w.recordReadFailure(fmt.Errorf("resource %q %s failed: %w", w.ResourceType, op, err))
+			return nil
+		}
+		return w.project(w.cloneStoreItems(items, op), op)
+	}
 
 	w.cacheMu.Lock()
 	defer w.cacheMu.Unlock()
 	w.loadSnapshot()
 
 	if w.snapshotByKey == nil {
-		return w.getWithoutSnapshotIndex(stringKeys, op)
+		return w.project(w.getWithoutSnapshotIndex(stringKeys, op), op)
 	}
 
 	if len(stringKeys) == len(w.IndexBy) {
-		return w.getExact(stringKeys, op)
+		return w.project(w.getExact(stringKeys, op), op)
 	}
+	encodedPrefix := indexer.EncodeKey(stringKeys)
+	if w.LazySnapshot && !w.listed {
+		if _, resolved := w.resolvedKeys[encodedPrefix]; !resolved {
+			items, err := w.getStore(stringKeys...)
+			if err != nil {
+				w.recordReadFailure(fmt.Errorf("resource %q %s lookup %q failed: %w", w.ResourceType, op, stringKeys, err))
+				return nil
+			}
+			w.replaceSnapshotPrefixLocked(encodedPrefix, w.cloneStoreItems(items, op))
+			w.resolvedKeys[encodedPrefix] = struct{}{}
+		}
+	}
+	return w.project(w.getPrefix(stringKeys, op), op)
+}
+
+func (w *StoreWrapper) getMemoizedSnapshotView(stringKeys []string, op string) []any {
+	w.cacheMu.Lock()
+	defer w.cacheMu.Unlock()
+	w.loadSnapshot()
+	if w.snapshotByKey == nil {
+		return w.getMemoizedUnindexedSnapshotView(stringKeys, op)
+	}
+	if len(stringKeys) == len(w.IndexBy) {
+		return w.getMemoizedExactSnapshotView(stringKeys, op)
+	}
+	return w.getMemoizedPrefixSnapshotView(stringKeys, op)
+}
+
+func (w *StoreWrapper) getMemoizedExactSnapshotView(stringKeys []string, op string) []any {
+	composite := indexer.EncodeKey(stringKeys)
+	if !w.LazySnapshot || w.listed {
+		return w.snapshotByKey[composite]
+	}
+	if _, resolved := w.resolvedKeys[composite]; resolved {
+		return w.snapshotByKey[composite]
+	}
+	items := w.readSnapshotView(stringKeys, op)
+	w.replaceSnapshotBucketLocked(composite, items)
+	w.resolvedKeys[composite] = struct{}{}
+	if _, indexed := w.snapshotByKey[composite]; !indexed {
+		w.snapshotByKey[composite] = []any{}
+	}
+	return w.snapshotByKey[composite]
+}
+
+func (w *StoreWrapper) getMemoizedPrefixSnapshotView(stringKeys []string, op string) []any {
+	encodedPrefix := indexer.EncodeKey(stringKeys)
+	if !w.LazySnapshot || w.listed {
+		return w.getPrefix(stringKeys, op)
+	}
+	if _, resolved := w.resolvedKeys[encodedPrefix]; resolved {
+		return w.getPrefix(stringKeys, op)
+	}
+	items := w.readSnapshotView(stringKeys, op)
+	w.replaceSnapshotPrefixLocked(encodedPrefix, items)
+	w.resolvedKeys[encodedPrefix] = struct{}{}
 	return w.getPrefix(stringKeys, op)
+}
+
+func (w *StoreWrapper) getMemoizedUnindexedSnapshotView(stringKeys []string, op string) []any {
+	if w.snapshotViewGets == nil {
+		w.snapshotViewGets = map[string][]any{}
+	}
+	key := indexer.EncodeKey(stringKeys)
+	if items, exists := w.snapshotViewGets[key]; exists {
+		return items
+	}
+	items := w.readSnapshotView(stringKeys, op)
+	w.snapshotViewGets[key] = items
+	return items
+}
+
+func (w *StoreWrapper) readSnapshotView(stringKeys []string, op string) []any {
+	items, err := w.SnapshotView.Get(w.ResourceType, w.Store, stringKeys...)
+	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q %s failed: %w", w.ResourceType, op, err))
+		return nil
+	}
+	return w.project(w.cloneStoreItems(items, op), op)
 }
 
 // Fetch performs O(1) indexed lookup over the per-render snapshot using
@@ -480,12 +860,97 @@ func (w *StoreWrapper) get(stringKeys []string, op string) []any {
 //
 // A failed read returns an empty slice to the template and fails the render at
 // its next phase boundary.
-func (w *StoreWrapper) Fetch(keys ...any) []any {
-	stringKeys := make([]string, len(keys))
-	for i, key := range keys {
-		stringKeys[i] = toString(key)
+func (w *StoreWrapper) Fetch(keys ...any) (result []any) {
+	ctx, release, err := w.beginStoreInvocation(w.storeContext())
+	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q Fetch failed: %w", w.ResourceType, err))
+		return nil
 	}
-	return w.get(stringKeys, "Fetch")
+	defer release()
+	result, err = w.fetchInInvocation(ctx, keys)
+	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q Fetch failed: %w", w.ResourceType, err))
+		return nil
+	}
+	if err := templating.RegisterIncrementalImmutableInputs(ctx, result); err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q Fetch failed: %w", w.ResourceType, err))
+		return nil
+	}
+	return result
+}
+
+func (w *StoreWrapper) fetchInInvocation(ctx context.Context, keys []any) ([]any, error) {
+	stringKeys, ok := w.lookupKeys(keys, "Fetch")
+	if !ok {
+		return []any{}, nil
+	}
+	if view, ok := w.SnapshotView.(contextualStoreSnapshotView); ok && w.usesSnapshotView() {
+		items, err := view.GetContext(ctx, w.ResourceType, w.Store, stringKeys...)
+		if err != nil {
+			return nil, err
+		}
+		return w.project(w.cloneStoreItems(items, "Fetch"), "Fetch"), nil
+	}
+	return w.get(stringKeys, "Fetch"), nil
+}
+
+func (w *StoreWrapper) lookupKeys(keys []any, operation string) ([]string, bool) {
+	if w.usesSnapshotView() {
+		if normalizer, ok := w.SnapshotView.(StoreLookupKeyNormalizer); ok {
+			stringKeys, err := normalizer.NormalizeLookupKeys(w.ResourceType, keys)
+			if err != nil {
+				w.recordReadFailure(fmt.Errorf(
+					"resource %q %s lookup keys were rejected: %w",
+					w.ResourceType, operation, err,
+				))
+				return nil, false
+			}
+			if len(stringKeys) != len(keys) {
+				w.recordReadFailure(fmt.Errorf(
+					"resource %q %s lookup key normalizer returned %d keys for %d inputs",
+					w.ResourceType, operation, len(stringKeys), len(keys),
+				))
+				return nil, false
+			}
+			return stringKeys, true
+		}
+	}
+	stringKeys := make([]string, len(keys))
+	for index := range keys {
+		stringKeys[index] = toString(keys[index])
+	}
+	return stringKeys, true
+}
+
+func (w *StoreWrapper) lookupKeySource(
+	keys StoreLookupKeySource,
+	operation string,
+) ([]string, bool) {
+	if w.usesSnapshotView() {
+		if normalizer, ok := w.SnapshotView.(StoreLookupKeySourceNormalizer); ok {
+			stringKeys, err := normalizer.NormalizeLookupKeySource(w.ResourceType, keys)
+			if err != nil {
+				w.recordReadFailure(fmt.Errorf(
+					"resource %q %s lookup keys were rejected: %w",
+					w.ResourceType, operation, err,
+				))
+				return nil, false
+			}
+			if len(stringKeys) != keys.Len() {
+				w.recordReadFailure(fmt.Errorf(
+					"resource %q %s lookup key normalizer returned %d keys for %d inputs",
+					w.ResourceType, operation, len(stringKeys), keys.Len(),
+				))
+				return nil, false
+			}
+			return stringKeys, true
+		}
+	}
+	values := make([]any, keys.Len())
+	for index := range values {
+		values[index] = keys.Value(index)
+	}
+	return w.lookupKeys(values, operation)
 }
 
 // GetSingle performs O(1) indexed lookup over the per-render snapshot
@@ -513,16 +978,47 @@ func (w *StoreWrapper) Fetch(keys ...any) []any {
 //
 // A failed read returns nil to the template and fails the render at its next
 // phase boundary.
-func (w *StoreWrapper) GetSingle(keys ...any) any {
-	stringKeys := make([]string, len(keys))
-	for i, key := range keys {
-		stringKeys[i] = toString(key)
+func (w *StoreWrapper) GetSingle(keys ...any) (result any) {
+	ctx, release, err := w.beginStoreInvocation(w.storeContext())
+	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q GetSingle failed: %w", w.ResourceType, err))
+		return nil
+	}
+	defer release()
+	result, _, err = w.getSingleInInvocation(ctx, keys)
+	if err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q GetSingle failed: %w", w.ResourceType, err))
+		return nil
+	}
+	if err := templating.RegisterIncrementalImmutableInputs(ctx, result); err != nil {
+		w.recordReadFailure(fmt.Errorf("resource %q GetSingle failed: %w", w.ResourceType, err))
+		return nil
+	}
+	return result
+}
+
+func (w *StoreWrapper) getSingleInInvocation(
+	ctx context.Context,
+	keys []any,
+) (item any, found bool, err error) {
+	stringKeys, ok := w.lookupKeys(keys, "GetSingle")
+	if !ok {
+		return nil, false, nil
 	}
 
-	items := w.get(stringKeys, "GetSingle")
+	var items []any
+	if view, ok := w.SnapshotView.(contextualStoreSnapshotView); ok && w.usesSnapshotView() {
+		resolved, err := view.GetContext(ctx, w.ResourceType, w.Store, stringKeys...)
+		if err != nil {
+			return nil, false, err
+		}
+		items = w.project(w.cloneStoreItems(resolved, "GetSingle"), "GetSingle")
+	} else {
+		items = w.get(stringKeys, "GetSingle")
+	}
 
 	if len(items) == 0 {
-		return nil
+		return nil, false, nil
 	}
 
 	if len(items) > 1 {
@@ -533,8 +1029,8 @@ func (w *StoreWrapper) GetSingle(keys ...any) any {
 			"resource_type", w.ResourceType,
 			"keys", stringKeys,
 			"count", len(items))
-		return nil
+		return nil, false, nil
 	}
 
-	return items[0]
+	return items[0], true, nil
 }

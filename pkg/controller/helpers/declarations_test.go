@@ -70,6 +70,22 @@ func TestBuildAdditionalDeclarations_WithResult(t *testing.T) {
 		"per-resource field points at the closure-bearing store struct")
 }
 
+func TestBuildAdditionalDeclarationsHasNoTopLevelFunctions(t *testing.T) {
+	result := &typebootstrap.Result{
+		Types:  map[string]reflect.Type{"routes": reflect.TypeFor[struct{}]()},
+		Kinds:  map[string]string{"routes": "Route"},
+		Errors: map[string]error{},
+	}
+	declarations := BuildAdditionalDeclarations(&config.Config{}, result)
+	require.Len(t, declarations, 3)
+	for _, name := range []string{"currentConfig", "currentFiles", "resources"} {
+		require.Contains(t, declarations, name)
+	}
+	for name, declaration := range declarations {
+		require.NotEqualf(t, reflect.Func, reflect.TypeOf(declaration).Kind(), "%s must not inject a native function", name)
+	}
+}
+
 // TestBuildAdditionalDeclarations_NilResultPanics pins the
 // contract that callers MUST provide a real typebootstrap.Result.
 // The previous envelope-only fallback was removed because it

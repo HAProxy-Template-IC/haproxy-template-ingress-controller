@@ -29,8 +29,10 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -44,6 +46,26 @@ type scriptedChecker struct {
 	entered  chan string
 	hold     string
 	release  chan struct{}
+}
+
+type snapshotRecordingChecker struct {
+	received chan *renderartifact.Snapshot
+}
+
+func (c *snapshotRecordingChecker) Check(
+	context.Context, string, *dataplane.AuxiliaryFiles, string,
+) error {
+	return errors.New("legacy checker called for immutable render")
+}
+
+func (c *snapshotRecordingChecker) CheckSnapshot(
+	_ context.Context,
+	_ string,
+	snapshot *renderartifact.Snapshot,
+	_ string,
+) error {
+	c.received <- snapshot
+	return nil
 }
 
 func newScriptedChecker() *scriptedChecker {
@@ -99,12 +121,16 @@ func refusal(message string) error {
 }
 
 type gateHarness struct {
+	t         *testing.T
 	bus       *busevents.EventBus
 	verdicts  <-chan busevents.Event
 	checker   *scriptedChecker
 	metrics   *metrics.Metrics
 	registry  *prometheus.Registry
 	component *Component
+	cycles    *testutil.RenderCycleFixture
+	previous  *rendercycle.Snapshot
+	planIDs   map[string]string
 }
 
 func newGateHarness(t *testing.T) *gateHarness {
@@ -139,18 +165,30 @@ func newGateHarness(t *testing.T) *gateHarness {
 	}
 
 	return &gateHarness{
-		bus: bus, verdicts: verdicts, checker: checker,
+		t: t, bus: bus, verdicts: verdicts, checker: checker,
 		metrics: domainMetrics, registry: registry, component: component,
+		cycles: testutil.NewRenderCycleFixture(t), planIDs: map[string]string{},
 	}
 }
 
-func (h *gateHarness) render(planID, config string) {
-	h.bus.Publish(events.NewTemplateRenderedEvent(
-		config, &dataplane.AuxiliaryFiles{}, nil, nil, 0, 1, "config_change",
-		"checksum-"+planID, nil, planID, true,
-		events.WithCorrelation("corr-"+planID, "cause-"+planID),
-	))
+func (h *gateHarness) render(label, config string) string {
+	cycle := h.cycles.Snapshot(h.t, config, nil, h.previous)
+	h.previous = cycle
+	event, err := events.NewTemplateRenderedEventWithCycle(
+		cycle, 1, "config_change", true,
+		events.WithCorrelation("corr-"+label, "cause-"+label),
+	)
+	require.NoError(h.t, err)
+	h.planIDs[label] = event.PlanID
+	h.bus.Publish(event)
+	occurrence, err := event.RenderOccurrence()
+	require.NoError(h.t, err)
+	proof, err := occurrence.Proof()
+	require.NoError(h.t, err)
+	return proof
 }
+
+func (h *gateHarness) planID(label string) string { return h.planIDs[label] }
 
 func (h *gateHarness) verdict(t *testing.T) *events.RenderGateCompletedEvent {
 	t.Helper()
@@ -160,8 +198,9 @@ func (h *gateHarness) verdict(t *testing.T) *events.RenderGateCompletedEvent {
 // awaitNewest blocks until the event loop has recorded planID as the render to
 // check next. Publishing is asynchronous, so a test that releases a held check
 // before the burst has landed would race its own setup.
-func (h *gateHarness) awaitNewest(t *testing.T, planID string) {
+func (h *gateHarness) awaitNewest(t *testing.T, label string) {
 	t.Helper()
+	planID := h.planID(label)
 	require.Eventually(t, func() bool {
 		h.component.mu.Lock()
 		defer h.component.mu.Unlock()
@@ -213,7 +252,7 @@ func TestRenderGate_LatchTransitions(t *testing.T) {
 			h.render(step.planID, config)
 
 			verdict := h.verdict(t)
-			assert.Equal(t, step.planID, verdict.PlanID)
+			assert.Equal(t, h.planID(step.planID), verdict.PlanID)
 			assert.Equal(t, step.wantOK, verdict.OK)
 			assert.Equal(t, step.wantRefused, verdict.Refused,
 				"only HAProxy's own verdict may revert the fleet, so it must be distinguishable")
@@ -264,9 +303,9 @@ func TestRenderGate_CoalescesToNewest(t *testing.T) {
 	h.checker.releaseHold()
 
 	first := h.verdict(t)
-	require.Equal(t, "plan-1", first.PlanID)
+	require.Equal(t, h.planID("plan-1"), first.PlanID)
 	second := h.verdict(t)
-	assert.Equal(t, "plan-4", second.PlanID, "the gate validates the newest render, not the queue")
+	assert.Equal(t, h.planID("plan-4"), second.PlanID, "the gate validates the newest render, not the queue")
 
 	testutil.AssertNoEvent[*events.RenderGateCompletedEvent](t, h.verdicts, testutil.NoEventTimeout)
 	assert.Equal(t, []string{"config-plan-1", "config-plan-4"}, h.checker.checked())
@@ -285,14 +324,14 @@ func TestRenderGate_ValidatesSupersededPlansPodsStillRun(t *testing.T) {
 	// plan-2 is superseded by plan-3 while the gate is busy, but a pod applied it.
 	h.checker.answer("config-plan-2", refusal("plan-2 does not load"))
 	h.checker.answer("config-plan-3", nil)
-	h.render("plan-2", "config-plan-2")
+	plan2Proof := h.render("plan-2", "config-plan-2")
 	h.render("plan-3", "config-plan-3")
 	h.bus.Publish(events.NewConfigAppliedToPodEvent(
 		"rt-cfg", "haptic", "haproxy-0", "haptic", "uid-0", "runtime-0", "checksum", false,
-		&events.SyncMetadata{AppliedPlanID: "plan-2"},
+		&events.SyncMetadata{AppliedPlanID: h.planID("plan-2"), AppliedRenderProof: plan2Proof},
 	))
 	h.awaitNewest(t, "plan-3")
-	h.awaitAppliedPlan(t, "plan-2")
+	h.awaitAppliedPlan(t, plan2Proof)
 	h.checker.releaseHold()
 
 	seen := map[string]*events.RenderGateCompletedEvent{}
@@ -300,10 +339,10 @@ func TestRenderGate_ValidatesSupersededPlansPodsStillRun(t *testing.T) {
 		verdict := h.verdict(t)
 		seen[verdict.PlanID] = verdict
 	}
-	require.Contains(t, seen, "plan-3", "the newest render is always checked")
-	require.Contains(t, seen, "plan-2", "a plan a pod still runs must be checked even once superseded")
-	assert.False(t, seen["plan-2"].OK)
-	assert.True(t, seen["plan-2"].Refused)
+	require.Contains(t, seen, h.planID("plan-3"), "the newest render is always checked")
+	require.Contains(t, seen, h.planID("plan-2"), "a plan a pod still runs must be checked even once superseded")
+	assert.False(t, seen[h.planID("plan-2")].OK)
+	assert.True(t, seen[h.planID("plan-2")].Refused)
 }
 
 // A leadership change resets the latch: the new leader starts optimistic
@@ -330,7 +369,7 @@ func TestRenderGate_TrimNeverEvictsAPlanAPodRuns(t *testing.T) {
 	c := &Component{appliedByPod: map[string]string{}}
 	for i := range maxRetainedRenders + 2 {
 		planID := fmt.Sprintf("plan-%d", i)
-		c.superseded = append(c.superseded, &render{planID: planID})
+		c.superseded = append(c.superseded, &render{planID: planID, renderProof: planID})
 		c.appliedByPod[fmt.Sprintf("haptic/haproxy-%d", i)] = planID
 	}
 
@@ -351,7 +390,7 @@ func TestRenderGate_TrimNeverEvictsAPlanAPodRuns(t *testing.T) {
 
 // A render without a plan is not gated: the deployer cannot apply it, and there
 // would be nothing to revert to.
-func TestRenderGate_IgnoresRendersWithoutAPlan(t *testing.T) {
+func TestRenderGate_IgnoresRendersWithoutAnAuthenticatedOccurrence(t *testing.T) {
 	h := newGateHarness(t)
 
 	h.bus.Publish(events.NewTemplateRenderedEvent(
@@ -359,4 +398,64 @@ func TestRenderGate_IgnoresRendersWithoutAPlan(t *testing.T) {
 
 	testutil.AssertNoEvent[*events.RenderGateCompletedEvent](t, h.verdicts, testutil.NoEventTimeout)
 	assert.Empty(t, h.checker.checked())
+}
+
+func TestRenderGatePassesAuthenticatedSnapshotToSnapshotChecker(t *testing.T) {
+	bus := testutil.NewTestBus()
+	verdicts := bus.SubscribeTypes("snapshot-gate-test", 4, events.EventTypeRenderGateCompleted)
+	checker := &snapshotRecordingChecker{received: make(chan *renderartifact.Snapshot, 1)}
+	component := New(&Config{EventBus: bus, Logger: testutil.NewTestLogger(), Checker: checker})
+	bus.Start()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = component.Start(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	select {
+	case <-component.SubscriptionReady():
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("render gate did not start")
+	}
+
+	cycle := testutil.NewRenderCycleFixture(t).Snapshot(t, "config", nil, nil)
+	output, err := cycle.OutputSnapshot()
+	require.NoError(t, err)
+	snapshot, err := output.ArtifactSnapshot()
+	require.NoError(t, err)
+	event, err := events.NewTemplateRenderedEventWithCycle(cycle, 1, "test", true)
+	require.NoError(t, err)
+	bus.Publish(event)
+
+	select {
+	case received := <-checker.received:
+		assert.Same(t, snapshot, received)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("snapshot checker was not called")
+	}
+	verdict := testutil.WaitForEvent[*events.RenderGateCompletedEvent](t, verdicts, testutil.LongTimeout)
+	assert.True(t, verdict.OK)
+}
+
+func TestRenderGateIgnoresMutableLegacyShadows(t *testing.T) {
+	cycle := testutil.NewRenderCycleFixture(t).Snapshot(t, "config", nil, nil)
+	event, err := events.NewTemplateRenderedEventWithCycle(cycle, 1, "test", true)
+	require.NoError(t, err)
+	event.HAProxyConfig = "poison"
+	event.AuxiliaryFiles = &dataplane.AuxiliaryFiles{}
+	event.AuxiliaryFileSnapshot = &renderartifact.Snapshot{}
+	event.RenderProof = "poison"
+	component := &Component{appliedByPod: map[string]string{}}
+
+	component.handleTemplateRendered(event)
+	require.NotNil(t, component.newest)
+	config, err := component.newest.output.Config()
+	require.NoError(t, err)
+	assert.Equal(t, "config", config)
+	assert.NotEqual(t, "poison", component.newest.renderProof)
 }

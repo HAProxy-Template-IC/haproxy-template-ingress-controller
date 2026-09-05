@@ -25,10 +25,20 @@ templateSnippets:
   # (fail-open on request validation). features-* always renders, so the opt-in
   # check lives here; util-821 keeps its own guard for the enabled-type check.
   features-806-haptic-request-validation-optin:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: '{{- toJSON(map[string]any{"ingresses": map[string]any{"enabled": extraContext | dig("apiGateway", "requestSchemaValidation", "enabled") | fallback(false)}}) -}}'
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/request-schema-configmap']"
+        - "metadata.annotations['haproxy-haptic.org/request-schema-secret']"
+        - "metadata.annotations['haproxy-haptic.org/request-schema-content-types']"
+        - "metadata.annotations['haproxy-haptic.org/request-schema-max-body-size']"
+        - "metadata.annotations['haproxy-haptic.org/request-schema-fail-open']"
     template: |-
-      {%- var enabled = extraContext | dig("apiGateway", "requestSchemaValidation", "enabled") | fallback(false) | tostring() -%}
+      {%- var enabled = tostring(props["enabled"]) -%}
       {%- if enabled != "true" -%}
-        {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
           {%%
             var a = ingress.Metadata.Annotations
             var hasAny = a["haproxy-haptic.org/request-schema-configmap"] != "" || a["haproxy-haptic.org/request-schema-secret"] != "" || a["haproxy-haptic.org/request-schema-content-types"] != "" || a["haproxy-haptic.org/request-schema-max-body-size"] != "" || a["haproxy-haptic.org/request-schema-fail-open"] != ""
@@ -39,30 +49,19 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  # Public entry point for the schema scan. The body below mutates the shared
-  # `globalFeatures` map in place, and SharedContext's mutex guards only its own
-  # top-level map — not writes into a value it handed out. This wrapper routes
-  # every caller through one `shared.ComputeIfAbsent` key so the body runs once
-  # and late callers BLOCK on singleflight until it has finished, exactly like
-  # util-*-coraza-scan (charts/haptic/charts/nginx-ingress/40-auth-spoe.yaml).
-  #
-  # This matters because the scan has two callers that can both be cold in the
-  # same render: `map-request-schema-820-haptic` below, reached from the static
-  # `request-schema.map` entry (charts/haptic/libraries/spoa-hub/_index.yaml),
-  # and `spoa-hub-config-content` via `render_glob "util-*-api-gateway-schemas"`.
-  # spec.maps and spec.files templates all render in one unbounded errgroup
-  # (pkg/controller/renderer/service.go), so two unguarded callers would race on
-  # `gf[...] = ...` — a `fatal error: concurrent map writes`, which is a runtime
-  # throw that bypasses recover() and takes the controller process down.
+  # Both parallel legacy consumers replay the immutable publications through one root-local write.
   util-820-api-gateway-schemas:
     template: |-
-      {%- var _, _ = shared.ComputeIfAbsent("apiGatewaySchemaScan", func() any { return render "util-821-api-gateway-schema-scan" }) -%}
+      {%- var _, _ = shared.ComputeIfAbsent("apiGatewaySchemaScan", func() any {
+        var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} })
+        var _ = render "haptic-request-validation-publications"
+        var gf = shared.Get("globalFeatures").(map[string]any)
+        gf["apiGatewaySchemas"] = incremental_values("haptic-request-validation", "schemas")
+        gf["apiGatewaySchemaRules"] = incremental_values("haptic-request-validation", "rules")
+        return true
+      }) -%}
 
-  # Implementation of util-820-api-gateway-schemas. Never render this directly —
-  # go through util-820 so the ComputeIfAbsent serialisation applies. The name
-  # deliberately does not end in "-api-gateway-schemas" so the glob in
-  # spoa-hub-config-content matches only the wrapper.
-  util-821-api-gateway-schema-scan:
+  util-haptic-request-validation-bindings:
     template: |-
       {%- var apiGatewayAny = extraContext | dig("apiGateway") -%}
       {%- if apiGatewayAny == nil %}{%- apiGatewayAny = map[string]any{} %}{%- end -%}
@@ -121,15 +120,35 @@ templateSnippets:
       {%- if validationBufferReservedN < 1 || validationBufferReservedN >= validationBufferN %}{{- fail("extraContext.requestBodyInspection.haproxyBuffer.reservedBytes must be positive and smaller than sizeBytes.") -}}{%- end -%}
       {%- var validationBodyCapacityN = validationBufferN - validationBufferReservedN -%}
       {%- if toint(defaultMaxBody) > validationBodyCapacityN %}{{- fail("extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes exceeds the shared HAProxy request-body capacity.") -}}{%- end -%}
-      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
-      {%- if gf["apiGatewaySchemas"] == nil -%}
-        {%- gf["apiGatewaySchemas"] = []any{} -%}
-      {%- end -%}
-      {%- if gf["apiGatewaySchemaRules"] == nil -%}
-        {%- gf["apiGatewaySchemaRules"] = []any{} -%}
-      {%- end -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {{- toJSON(map[string]any{"ingresses": map[string]any{
+        "enabled": enabled,
+        "defaultMaxBody": defaultMaxBody,
+        "defaultFailOpen": defaultFailOpen,
+        "validationBodyCapacity": validationBodyCapacityN,
+        "validationBufferReserved": validationBufferReservedN,
+      }}) -}}
+
+  haptic-request-validation-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: '{{- render "util-haptic-request-validation-bindings" -}}'
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/request-schema-configmap']"
+        - "metadata.annotations['haproxy-haptic.org/request-schema-secret']"
+        - "metadata.annotations['haproxy-haptic.org/request-schema-content-types']"
+        - "metadata.annotations['haproxy-haptic.org/request-schema-max-body-size']"
+        - "metadata.annotations['haproxy-haptic.org/request-schema-fail-open']"
+      group: haptic-request-validation
+      effects: [publishValue]
+    template: |-
+      {%- var enabled = props["enabled"].(bool) -%}
+      {%- var defaultMaxBody = tostring(props["defaultMaxBody"]) -%}
+      {%- var defaultFailOpen = props["defaultFailOpen"].(bool) -%}
+      {%- var validationBodyCapacityN = toint(props["validationBodyCapacity"]) -%}
+      {%- var validationBufferReservedN = toint(props["validationBufferReserved"]) -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var ns = ingress.Metadata.Namespace -%}
         {%- var name = ingress.Metadata.Name -%}
         {%- var key = ns + "/" + name -%}
@@ -179,8 +198,7 @@ templateSnippets:
 
           {%- var schemaB64 = "" -%}
           {%- if sourceKind == "configmap" -%}
-            {%- var cmAny, _ = shared.ComputeIfAbsent("api_gateway_schema_cm:" + sourceNs + "/" + sourceName, func() any { return resources.configmaps.GetSingle(sourceNs, sourceName) }) -%}
-            {%- var cm, _ = cmAny.(*resources.configmaps.T) -%}
+            {%- var cm = resources.configmaps.GetSingle(sourceNs, sourceName) -%}
             {%- if cm == nil -%}
               {{- fail("ConfigMap '" + sourceNs + "/" + sourceName + "' referenced by 'haproxy-haptic.org/request-schema-configmap' on Ingress '" + key + "' was not found.") -}}
             {%- end -%}
@@ -190,8 +208,7 @@ templateSnippets:
             {%- end -%}
             {%- schemaB64 = schemaText | b64encode() -%}
           {%- else -%}
-            {%- var secAny, _ = shared.ComputeIfAbsent("api_gateway_schema_secret:" + sourceNs + "/" + sourceName, func() any { return resources.secrets.GetSingle(sourceNs, sourceName) }) -%}
-            {%- var sec, _ = secAny.(*resources.secrets.T) -%}
+            {%- var sec = resources.secrets.GetSingle(sourceNs, sourceName) -%}
             {%- if sec == nil -%}
               {{- fail("Secret '" + sourceNs + "/" + sourceName + "' referenced by 'haproxy-haptic.org/request-schema-secret' on Ingress '" + key + "' was not found.") -}}
             {%- end -%}
@@ -220,7 +237,7 @@ templateSnippets:
             {{- fail("Invalid value '" + failOpenRaw + "' for annotation 'haproxy-haptic.org/request-schema-fail-open' on Ingress '" + key + "'. Expected 'true' or 'false'.") -}}
           {%- end -%}
 
-          {%- var contentTypes = []string{} -%}
+          {%- var contentTypes = []any{} -%}
           {%- if contentTypesRaw == "" -%}{%- contentTypesRaw = "application/json" -%}{%- end -%}
           {%- for _, tok := range split(contentTypesRaw, ",") -%}
             {%- var ct = strings_lower(strip(tok)) -%}
@@ -240,22 +257,18 @@ templateSnippets:
               id so two routes can reuse the same schema source with different
               accepted media types without sharing the wrong compiled policy. -#}
           {%- var schemaID = sourceKind + "/" + sourceNs + "/" + sourceName + "/" + dataKey + "/" + contentTypesJoined -%}
-          {%- if first_seen("api_gateway_schema:" + schemaID, schemaID) -%}
-            {%- gf["apiGatewaySchemas"] = append(gf["apiGatewaySchemas"].([]any), map[string]any{
+          {{- shared.Publish("schemas", schemaID, map[string]any{
               "id": schemaID,
               "schemaBase64": schemaB64,
               "contentTypes": contentTypes,
-            }) -%}
-          {%- end -%}
-          {%- if first_seen("api_gateway_schema_rule:" + key, key) -%}
-            {%- gf["apiGatewaySchemaRules"] = append(gf["apiGatewaySchemaRules"].([]any), map[string]any{
+            }) -}}
+          {{- shared.Publish("rules", key, map[string]any{
               "resourceID": key,
               "schemaID": schemaID,
               "maxBodyBytes": tostring(maxBodyN),
               "failOpen": failOpen,
               "contentTypes": contentTypesJoined,
-            }) -%}
-          {%- end -%}
+            }) -}}
         {%- end -%}
       {%- end -%}
 

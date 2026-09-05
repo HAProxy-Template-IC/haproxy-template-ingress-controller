@@ -42,8 +42,10 @@ func TestDiffGeneralFiles(t *testing.T) {
 			file := renderplan.File{
 				Path: "general/errors/503.http", Kind: renderplan.FileKindGeneral, ReloadOnChange: tt.reloadOnChange,
 			}
-			prev := basePlan(withFile(withDigest(file, "before")))
-			next := basePlan(withFile(withDigest(file, "after")))
+			before := withDigest(&file, "before")
+			after := withDigest(&file, "after")
+			prev := basePlan(withFile(&before))
+			next := basePlan(withFile(&after))
 
 			got := deployplan.Diff(next, on34(prev))
 
@@ -77,7 +79,7 @@ func TestDiffRemovedFiles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prev := basePlan(withFile(renderplan.File{
+			prev := basePlan(withFile(&renderplan.File{
 				Path: "general/rules/extra.conf", Kind: renderplan.FileKindGeneral,
 				Digest: "before", ReloadOnChange: tt.reloadOnChange,
 			}))
@@ -93,7 +95,7 @@ func TestDiffRemovedFiles(t *testing.T) {
 
 func TestFilesProjectsTheWholeSet(t *testing.T) {
 	plan := basePlan(
-		withFile(renderplan.File{
+		withFile(&renderplan.File{
 			Path: "general/errors/503.http", Kind: renderplan.FileKindGeneral,
 			Digest: "d1", Size: 42, ReloadOnChange: true,
 		}),
@@ -105,12 +107,30 @@ func TestFilesProjectsTheWholeSet(t *testing.T) {
 	require.Len(t, files, len(plan.Files))
 	assert.Equal(t, api.File{
 		Path: "general/errors/503.http", Kind: renderplan.FileKindGeneral,
-		Digest: "d1", Size: 42, ReloadOnChange: true,
+		Digest: "d1", Proof: "d1", Size: 42, ReloadOnChange: true,
 	}, files[0])
 	assert.Nil(t, deployplan.Files(nil))
 }
 
-func withDigest(f renderplan.File, digest string) renderplan.File {
-	f.Digest = digest
-	return f
+// TestFilesCarryAProof pins the field the agent needs to answer "I already
+// hold this". Without it every file is reported missing on every apply, so the
+// pod rewrites its whole tree and no render can ever settle as a noop.
+func TestFilesCarryAProof(t *testing.T) {
+	plan := basePlan(
+		withFile(&renderplan.File{
+			Path: "general/errors/503.http", Kind: renderplan.FileKindGeneral,
+			Digest: "d1", Size: 42,
+		}),
+		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a", "1")}}),
+	)
+
+	for _, file := range deployplan.Files(plan) {
+		assert.NotEmpty(t, file.Proof, "file %s ships no equality witness", file.Path)
+	}
+}
+
+func withDigest(f *renderplan.File, digest string) renderplan.File {
+	cloned := *f
+	cloned.Digest = digest
+	return cloned
 }

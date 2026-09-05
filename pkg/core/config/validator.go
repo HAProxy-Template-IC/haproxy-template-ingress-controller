@@ -3,7 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -51,8 +53,7 @@ func ValidateStructure(cfg *Config) error {
 		return fmt.Errorf("validators: %w", err)
 	}
 
-	// Validate requires references (snippets/tests → watched resources)
-	return validateRequires(cfg)
+	return ValidateTemplateStructure(cfg)
 }
 
 func validateLeaderElectionConfig(cfg *LeaderElectionConfig) error {
@@ -182,19 +183,26 @@ func validateValidationTests(cfg *Config) error {
 	return nil
 }
 
-// validateRequires checks that every `requires` entry on templateSnippets and
-// validationTests names an existing watchedResources key, and that every
-// `requiresFields` entry on validationTests is of the form
-// "<watchedResource>.<field.path>" with an existing watchedResources key as
-// its first dot-segment. A dangling entry would silently never strip (the
-// availability / schema-field check could not match it), so it is rejected at
-// load time instead.
-func validateRequires(cfg *Config) error {
+// ValidateTemplateStructure checks cross-field template references, test requirements, and incremental metadata.
+func ValidateTemplateStructure(cfg *Config) error {
+	if cfg == nil {
+		return errors.New("config is nil")
+	}
+
+	if err := validatePrivateTemplateNames(cfg); err != nil {
+		return err
+	}
 	for name, snippet := range cfg.TemplateSnippets {
 		for _, req := range snippet.Requires {
 			if _, ok := cfg.WatchedResources[req]; !ok {
 				return fmt.Errorf("template_snippets.%s: requires %q does not name a watched resource", name, req)
 			}
+		}
+		if snippet.Incremental == nil {
+			continue
+		}
+		if err := validateIncrementalTemplate(cfg, name, snippet); err != nil {
+			return err
 		}
 	}
 	for name := range cfg.ValidationTests {
@@ -202,6 +210,393 @@ func validateRequires(cfg *Config) error {
 		if err := validateTestRequires(cfg, name, &test); err != nil {
 			return err
 		}
+	}
+	return validateIncrementalDependencies(cfg)
+}
+
+func validatePrivateTemplateNames(cfg *Config) error {
+	if err := validatePrivateNamesIn("template_snippets", cfg.TemplateSnippets); err != nil {
+		return err
+	}
+	if err := validatePrivateNamesIn("maps", cfg.Maps); err != nil {
+		return err
+	}
+	if err := validatePrivateNamesIn("files", cfg.Files); err != nil {
+		return err
+	}
+	if err := validatePrivateNamesIn("ssl_certificates", cfg.SSLCertificates); err != nil {
+		return err
+	}
+	return validatePrivateNamesIn("k8s_resources", cfg.K8sResources)
+}
+
+func validatePrivateNamesIn[V any](field string, values map[string]V) error {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		for _, prefix := range []string{IncrementalTemplatePrefix, IncrementalBindingsTemplatePrefix} {
+			if strings.HasPrefix(name, prefix) {
+				return fmt.Errorf("%s.%s: names starting with %q are reserved", field, name, prefix)
+			}
+		}
+	}
+	return nil
+}
+
+func validateIncrementalTemplate(cfg *Config, name string, snippet TemplateSnippet) error {
+	incremental := snippet.Incremental
+	if err := validateIncrementalEffects(name, incremental.Effects); err != nil {
+		return err
+	}
+	if err := validateIncrementalMode(name, incremental); err != nil {
+		return err
+	}
+	hasSource := incremental.Source != ""
+	hasBindings := incremental.BindingsTemplate != ""
+	if incremental.Mode == IncrementalModeScriggo && hasSource == hasBindings {
+		return fmt.Errorf("template_snippets.%s: incremental requires exactly one of source or bindings_template", name)
+	}
+	if hasSource {
+		source := incremental.Source
+		if _, ok := cfg.WatchedResources[source]; !ok {
+			return fmt.Errorf("template_snippets.%s: incremental.source %q does not name a watched resource", name, source)
+		}
+		if !slices.Contains(snippet.Requires, source) {
+			return fmt.Errorf("template_snippets.%s: incremental.source %q must also appear in requires", name, source)
+		}
+	}
+	if incremental.WhenAnyPathExists != nil && len(incremental.WhenAnyPathExists) == 0 {
+		return fmt.Errorf("template_snippets.%s: incremental.when_any_path_exists must not be empty", name)
+	}
+	paths := make(map[string]struct{}, len(incremental.WhenAnyPathExists))
+	for index, path := range incremental.WhenAnyPathExists {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("template_snippets.%s: incremental.when_any_path_exists[%d] is empty", name, index)
+		}
+		if _, duplicate := paths[path]; duplicate {
+			return fmt.Errorf("template_snippets.%s: incremental.when_any_path_exists contains duplicate path %q", name, path)
+		}
+		paths[path] = struct{}{}
+	}
+	if len(paths) > 0 && slices.Contains(incremental.Effects, IncrementalEffectDeriveResource) {
+		return fmt.Errorf("template_snippets.%s: incremental.when_any_path_exists cannot be combined with deriveResource", name)
+	}
+	return nil
+}
+
+func validateIncrementalMode(name string, incremental *IncrementalTemplate) error {
+	switch incremental.Mode {
+	case IncrementalModeScriggo:
+		return nil
+	case IncrementalModeResourceProjection:
+		return validateResourceProjection(name, incremental)
+	default:
+		return fmt.Errorf("template_snippets.%s: incremental.mode contains unsupported value %q", name, incremental.Mode)
+	}
+}
+
+func validateResourceProjection(name string, incremental *IncrementalTemplate) error {
+	const field = "template_snippets.%s: incremental.resourceProjection"
+	if incremental.Source != "" {
+		return fmt.Errorf(field+" cannot set source", name)
+	}
+	if incremental.BindingsTemplate == "" {
+		return fmt.Errorf(field+" requires bindings_template", name)
+	}
+	if incremental.WhenAnyPathExists != nil {
+		return fmt.Errorf(field+" cannot set when_any_path_exists", name)
+	}
+	if incremental.Root != "" {
+		return fmt.Errorf(field+" cannot set root", name)
+	}
+	if incremental.Consumes != nil {
+		return fmt.Errorf(field+" cannot set consumes", name)
+	}
+	if incremental.OptionalConsumes != nil {
+		return fmt.Errorf(field+" cannot set optional_consumes", name)
+	}
+	if len(incremental.Effects) != 1 || incremental.Effects[0] != IncrementalEffectPublishValue {
+		return fmt.Errorf(field+" requires exactly effects [publishValue]", name)
+	}
+	return nil
+}
+
+type incrementalGroupDeclaration struct {
+	publishes bool
+	edges     map[string]struct{}
+}
+
+func validateIncrementalDependencies(cfg *Config) error {
+	if err := validateIncrementalRootNames(cfg); err != nil {
+		return err
+	}
+	groups, names := collectIncrementalGroups(cfg)
+	for _, name := range names {
+		if err := validateIncrementalSnippetDependencies(cfg, groups, name); err != nil {
+			return err
+		}
+	}
+	if err := validateIncrementalDependencyCycles(groups); err != nil {
+		return err
+	}
+	return validateIncrementalRootBarriers(cfg, groups)
+}
+
+func collectIncrementalGroups(cfg *Config) (groups map[string]*incrementalGroupDeclaration, names []string) {
+	groups = make(map[string]*incrementalGroupDeclaration)
+	names = make([]string, 0, len(cfg.TemplateSnippets))
+	for name, snippet := range cfg.TemplateSnippets {
+		if snippet.Incremental == nil {
+			continue
+		}
+		names = append(names, name)
+		group := incrementalGroupName(name, snippet.Incremental)
+		declaration := groups[group]
+		if declaration == nil {
+			declaration = &incrementalGroupDeclaration{edges: map[string]struct{}{}}
+			groups[group] = declaration
+		}
+		if slices.Contains(snippet.Incremental.Effects, IncrementalEffectPublishValue) {
+			declaration.publishes = true
+		}
+	}
+	slices.Sort(names)
+	return groups, names
+}
+
+func validateIncrementalSnippetDependencies(
+	cfg *Config,
+	groups map[string]*incrementalGroupDeclaration,
+	name string,
+) error {
+	incremental := cfg.TemplateSnippets[name].Incremental
+	group := incrementalGroupName(name, incremental)
+	seen := make(map[string]string, len(incremental.Consumes)+len(incremental.OptionalConsumes))
+	for _, dependency := range []struct {
+		field    string
+		groups   []string
+		optional bool
+	}{
+		{field: "consumes", groups: incremental.Consumes},
+		{field: "optional_consumes", groups: incremental.OptionalConsumes, optional: true},
+	} {
+		for _, target := range dependency.groups {
+			err := validateIncrementalDependencyTarget(cfg, groups, seen, incrementalDependencyEdge{
+				snippet: name, group: group, field: dependency.field,
+				optional: dependency.optional, target: target,
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type incrementalDependencyEdge struct {
+	snippet  string
+	group    string
+	field    string
+	optional bool
+	target   string
+}
+
+func validateIncrementalDependencyTarget(
+	cfg *Config,
+	groups map[string]*incrementalGroupDeclaration,
+	seen map[string]string,
+	edge incrementalDependencyEdge,
+) error {
+	if edge.target == "" {
+		return fmt.Errorf("template_snippets.%s: incremental.%s contains an empty group", edge.snippet, edge.field)
+	}
+	if previous, duplicate := seen[edge.target]; duplicate {
+		return fmt.Errorf("template_snippets.%s: incremental.%s contains group %q already declared in %s",
+			edge.snippet, edge.field, edge.target, previous)
+	}
+	seen[edge.target] = edge.field
+	if edge.target == edge.group {
+		return fmt.Errorf("template_snippets.%s: incremental.%s group %q depends on itself", edge.snippet, edge.field, edge.group)
+	}
+	producer := groups[edge.target]
+	if producer == nil {
+		if _, authenticated := cfg.AbsentIncrementalGroups[edge.target]; edge.optional && authenticated {
+			return nil
+		}
+		return fmt.Errorf("template_snippets.%s: incremental.%s %q does not name an incremental group",
+			edge.snippet, edge.field, edge.target)
+	}
+	if !producer.publishes {
+		return fmt.Errorf("template_snippets.%s: incremental.%s group %q has no publishValue component",
+			edge.snippet, edge.field, edge.target)
+	}
+	groups[edge.group].edges[edge.target] = struct{}{}
+	return nil
+}
+
+func validateIncrementalRootNames(cfg *Config) error {
+	names := make([]string, 0, len(cfg.TemplateSnippets))
+	for name, snippet := range cfg.TemplateSnippets {
+		if snippet.Incremental != nil && snippet.Incremental.Root != "" {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		root := cfg.TemplateSnippets[name].Incremental.Root
+		if strings.TrimSpace(root) != root {
+			return fmt.Errorf("template_snippets.%s: incremental.root must not contain surrounding whitespace", name)
+		}
+	}
+	return nil
+}
+
+func validateIncrementalRootBarriers(
+	cfg *Config,
+	groups map[string]*incrementalGroupDeclaration,
+) error {
+	rootGroups := make(map[string]map[string]struct{})
+	for name, snippet := range cfg.TemplateSnippets {
+		if snippet.Incremental == nil || snippet.Incremental.Root == "" {
+			continue
+		}
+		root := snippet.Incremental.Root
+		if rootGroups[root] == nil {
+			rootGroups[root] = map[string]struct{}{}
+		}
+		rootGroups[root][incrementalGroupName(name, snippet.Incremental)] = struct{}{}
+	}
+	roots := make([]string, 0, len(rootGroups))
+	for root := range rootGroups {
+		roots = append(roots, root)
+	}
+	slices.Sort(roots)
+	for _, root := range roots {
+		members := rootGroups[root]
+		groupNames := make([]string, 0, len(members))
+		for group := range members {
+			groupNames = append(groupNames, group)
+		}
+		slices.Sort(groupNames)
+		for _, group := range groupNames {
+			targets := maps.Clone(members)
+			delete(targets, group)
+			if path := incrementalDependencyPath(groups, group, targets, nil); len(path) > 0 {
+				return fmt.Errorf(
+					"incremental.root %q crosses a dependency barrier: %s",
+					root,
+					strings.Join(path, " -> "),
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func incrementalDependencyPath(
+	groups map[string]*incrementalGroupDeclaration,
+	group string,
+	targets map[string]struct{},
+	visiting map[string]struct{},
+) []string {
+	if len(targets) == 0 {
+		return nil
+	}
+	if visiting == nil {
+		visiting = map[string]struct{}{}
+	}
+	if _, seen := visiting[group]; seen {
+		return nil
+	}
+	visiting[group] = struct{}{}
+	defer delete(visiting, group)
+	targetNames := make([]string, 0, len(groups[group].edges))
+	for target := range groups[group].edges {
+		targetNames = append(targetNames, target)
+	}
+	slices.Sort(targetNames)
+	for _, target := range targetNames {
+		if _, matched := targets[target]; matched {
+			return []string{group, target}
+		}
+		if suffix := incrementalDependencyPath(groups, target, targets, visiting); len(suffix) > 0 {
+			return append([]string{group}, suffix...)
+		}
+	}
+	return nil
+}
+
+func incrementalGroupName(name string, incremental *IncrementalTemplate) string {
+	if incremental.Group != "" {
+		return incremental.Group
+	}
+	return name
+}
+
+func validateIncrementalDependencyCycles(groups map[string]*incrementalGroupDeclaration) error {
+	const (
+		incrementalGroupUnvisited = iota
+		incrementalGroupVisiting
+		incrementalGroupVisited
+	)
+	states := make(map[string]int, len(groups))
+	stack := make([]string, 0, len(groups))
+	var visit func(string) error
+	visit = func(group string) error {
+		states[group] = incrementalGroupVisiting
+		stack = append(stack, group)
+		targets := make([]string, 0, len(groups[group].edges))
+		for target := range groups[group].edges {
+			targets = append(targets, target)
+		}
+		slices.Sort(targets)
+		for _, target := range targets {
+			switch states[target] {
+			case incrementalGroupVisiting:
+				start := slices.Index(stack, target)
+				cycle := append(slices.Clone(stack[start:]), target)
+				return fmt.Errorf("incremental group dependency cycle: %s", strings.Join(cycle, " -> "))
+			case incrementalGroupUnvisited:
+				if err := visit(target); err != nil {
+					return err
+				}
+			}
+		}
+		stack = stack[:len(stack)-1]
+		states[group] = incrementalGroupVisited
+		return nil
+	}
+	groupNames := make([]string, 0, len(groups))
+	for group := range groups {
+		groupNames = append(groupNames, group)
+	}
+	slices.Sort(groupNames)
+	for _, group := range groupNames {
+		if states[group] == incrementalGroupUnvisited {
+			if err := visit(group); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateIncrementalEffects(name string, effects []IncrementalEffect) error {
+	seen := make(map[IncrementalEffect]struct{}, len(effects))
+	for _, effect := range effects {
+		switch effect {
+		case IncrementalEffectDeriveResource, IncrementalEffectRecordEvent, IncrementalEffectBackendPlan,
+			IncrementalEffectPublishValue, IncrementalEffectStatusPatch:
+		default:
+			return fmt.Errorf("template_snippets.%s: incremental.effects contains unsupported value %q", name, effect)
+		}
+		if _, duplicate := seen[effect]; duplicate {
+			return fmt.Errorf("template_snippets.%s: incremental.effects contains duplicate value %q", name, effect)
+		}
+		seen[effect] = struct{}{}
 	}
 	return nil
 }

@@ -60,6 +60,10 @@ type Resolution struct {
 	StrippedSnippets []string
 	StrippedTests    []string
 
+	// AbsentIncrementalGroups lists publication groups whose every component
+	// was stripped with an unavailable optional watched resource.
+	AbsentIncrementalGroups []string
+
 	// StrippedFieldTests lists the names of validationTests removed because
 	// a field named in their RequiresFields is absent from the resolved
 	// schema generation, sorted alphabetically. Disjoint from StrippedTests:
@@ -154,8 +158,34 @@ func ResolveEffective(cfg *Config, served ServedVersionChecker, fields SchemaFie
 	effective := *cfg
 	effective.WatchedResources = watched
 	effective.TemplateSnippets = snippets
+	effective.AbsentIncrementalGroups = absentIncrementalGroups(cfg.TemplateSnippets, snippets)
+	for group := range effective.AbsentIncrementalGroups {
+		res.AbsentIncrementalGroups = append(res.AbsentIncrementalGroups, group)
+	}
+	sort.Strings(res.AbsentIncrementalGroups)
 	effective.ValidationTests = tests
 	return &effective, res, nil
+}
+
+func absentIncrementalGroups(
+	declared map[string]TemplateSnippet,
+	effective map[string]TemplateSnippet,
+) map[string]struct{} {
+	groups := make(map[string]struct{})
+	for name, snippet := range declared {
+		if snippet.Incremental != nil {
+			groups[incrementalGroupName(name, snippet.Incremental)] = struct{}{}
+		}
+	}
+	for name, snippet := range effective {
+		if snippet.Incremental != nil {
+			delete(groups, incrementalGroupName(name, snippet.Incremental))
+		}
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	return groups
 }
 
 // stripTests applies both stripping levels to the validation tests:

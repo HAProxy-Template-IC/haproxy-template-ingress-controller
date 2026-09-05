@@ -65,7 +65,8 @@ func TestHTTPStoreWrapper_GetCachedContent_ValidationModeReturnsContent(t *testi
 	overlay := purehttpstore.NewHTTPOverlay(component.GetStore())
 	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, overlay, SourceModeReadOnly)
 
-	got, ok, err := wrapper.getCachedContent(url, "")
+	snapshot, ok, err := wrapper.getCachedSnapshot(url, purehttpstore.SourceDescriptor{})
+	got := snapshot.Content
 
 	require.NoError(t, err)
 	require.True(t, ok,
@@ -91,7 +92,8 @@ func TestHTTPStoreWrapper_GetCachedContent_ProductionModeReturnsAcceptedContent(
 	// store.Get directly (which returns accepted content only).
 	wrapper := NewHTTPStoreWrapper(context.Background(), component, logger, nil, SourceModeAuthoritative)
 
-	got, ok, err := wrapper.getCachedContent(url, "")
+	snapshot, ok, err := wrapper.getCachedSnapshot(url, purehttpstore.SourceDescriptor{})
+	got := snapshot.Content
 
 	require.NoError(t, err)
 	require.True(t, ok,

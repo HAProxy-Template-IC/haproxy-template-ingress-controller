@@ -46,12 +46,7 @@ func TestPerformPodsDiscovered_EmptyEndpointsWithValidConfigSkipsDeployment(t *t
 	scheduler.lastPodSetHash = computePodSetHash(oldEndpoints)
 	scheduler.schedulerMutex.Unlock()
 
-	// The scheduler HAS a validated config, so the first guard does not fire.
-	scheduler.mu.Lock()
-	scheduler.hasValidConfig = true
-	scheduler.lastValidatedConfig = "global\n  daemon\n"
-	scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
-	scheduler.mu.Unlock()
+	primeValidated(scheduler, "global\n  daemon\n", "checksum", "plan")
 
 	scheduler.performPodsDiscovered(ctx, events.NewHAProxyPodsDiscoveredEvent([]dataplane.Endpoint{}, 0))
 

@@ -21,47 +21,19 @@ import (
 	"strconv"
 )
 
-// scriggoToString converts any value to its string representation.
+// scriggoToString converts a deterministic scalar to text.
 //
 // Usage in Scriggo templates:
 //
 //	{% var s = tostring(port) %}
 func scriggoToString(v any) string {
-	if v == nil {
-		return ""
-	}
-	// Typegen tristate (issue #52): optional numeric / bool fields
-	// surface as *int64 / *bool through direct typed access. Most
-	// chart sites flow through digStructField (which dereferences),
-	// but a few direct accesses like `gateway.Metadata.Generation`
-	// hand the raw pointer to coercion filters — dereference here so
-	// `tostring(gateway.Metadata.Generation)` keeps producing "5" and
-	// not "0xc0000a1c08".
-	if d, ok := derefTristateScalar(v); ok {
-		v = d
-		// derefTristateScalar returns (nil, true) for a nil pointer.
-		// Without this guard, fmt.Sprint(nil) emits "<nil>" — chart
-		// code reading `tostring(gateway.Metadata.<optional-int>)` on
-		// an absent field would get "<nil>" instead of "" (matching
-		// the nil-fast-path at the top of this function).
-		if v == nil {
+	if err, ok := v.(error); ok {
+		if isNilValue(err) {
 			return ""
 		}
+		return err.Error()
 	}
-	switch val := v.(type) {
-	case string:
-		return val
-	case int:
-		return strconv.Itoa(val)
-	case int64:
-		return strconv.FormatInt(val, 10)
-	case float64:
-		return strconv.FormatFloat(val, 'f', -1, 64)
-	case bool:
-		return strconv.FormatBool(val)
-	default:
-		return fmt.Sprint(v)
-	}
+	return mustDeterministicScalarText("tostring", v)
 }
 
 // derefTristateScalar unwraps the pointer types typegen emits for
@@ -163,7 +135,6 @@ func scriggoToFloat(v any) (float64, error) {
 }
 
 // scriggoToStringSlice converts []any to []string.
-// Each element is converted to string via fmt.Sprint.
 //
 // Usage in Scriggo templates:
 //
@@ -174,11 +145,13 @@ func scriggoToStringSlice(items any) []string {
 	}
 	switch v := items.(type) {
 	case []string:
-		return v
+		result := make([]string, len(v))
+		copy(result, v)
+		return result
 	case []any:
 		result := make([]string, len(v))
 		for i, item := range v {
-			result[i] = fmt.Sprint(item)
+			result[i] = mustDeterministicScalarText("toStringSlice", item)
 		}
 		return result
 	default:
@@ -201,7 +174,12 @@ func scriggoToSlice(items any) []any {
 	if items == nil {
 		return []any{}
 	}
-	result, _ := toSlice(items)
+	values, ok := toSlice(items)
+	if !ok {
+		return nil
+	}
+	result := make([]any, len(values))
+	copy(result, values)
 	return result
 }
 
@@ -213,9 +191,7 @@ func scriggoToSlice(items any) []any {
 // typed-watched-resources path produced `map[string]string`; this
 // function gives them a single shape to iterate.
 //
-// Returns nil for nil input. Non-string values from a map[string]any
-// input are coerced via fmt.Sprint to mirror existing chart
-// `tostring()` usage. Reflection fallback handles any other
+// Returns nil for nil input. Reflection fallback handles any other
 // string-keyed map type (e.g. `map[string]int` from a counter).
 func scriggoToStrMap(items any) map[string]string {
 	if items == nil {
@@ -223,15 +199,15 @@ func scriggoToStrMap(items any) map[string]string {
 	}
 	switch v := items.(type) {
 	case map[string]string:
-		return v
+		result := make(map[string]string, len(v))
+		for key, value := range v {
+			result[key] = value
+		}
+		return result
 	case map[string]any:
 		result := make(map[string]string, len(v))
 		for k, val := range v {
-			if val == nil {
-				result[k] = ""
-				continue
-			}
-			result[k] = fmt.Sprint(val)
+			result[k] = mustDeterministicScalarText("to_str_map", val)
 		}
 		return result
 	}
@@ -243,18 +219,14 @@ func scriggoToStrMap(items any) map[string]string {
 	for iter := rv.MapRange(); iter.Next(); {
 		k := iter.Key().String()
 		v := iter.Value()
-		if v.Kind() == reflect.Interface {
+		if v.Kind() == reflect.Interface && !v.IsNil() {
 			v = v.Elem()
 		}
-		if !v.IsValid() {
+		if !v.IsValid() || v.Kind() == reflect.Interface && v.IsNil() {
 			result[k] = ""
 			continue
 		}
-		if v.Kind() == reflect.String {
-			result[k] = v.String()
-			continue
-		}
-		result[k] = fmt.Sprint(v.Interface())
+		result[k] = mustDeterministicScalarText("to_str_map", v.Interface())
 	}
 	return result
 }

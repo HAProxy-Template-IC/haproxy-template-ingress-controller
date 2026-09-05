@@ -58,11 +58,12 @@ The full values reference lives in [Chart Values Reference](https://haproxy-hapt
 
 ## Template Libraries
 
-Templates are merged at Helm render time in a fixed priority order (later libraries override earlier ones):
+The controller merges templates in a fixed priority order (later libraries override earlier ones):
 
 | Library | Default | Covers |
 |---------|---------|--------|
 | `base` | on | Core `haproxyConfig`, extension points (`render_glob` patterns) — must stay resource-agnostic; disabling drops the haproxyConfig the other libraries plug into |
+| `kubernetesBackends` | on | Shared Kubernetes Service port and EndpointSlice backend resolution used by the bundled routing libraries |
 | `ssl` | on | Terminate TLS, crt-list management, SSL passthrough |
 | `ingress` | on | Kubernetes `networking.k8s.io/v1` Ingress |
 | `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` / `TLSRoute` (requires Gateway CRDs installed) |

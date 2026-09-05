@@ -17,15 +17,16 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
-	"slices"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -37,18 +38,18 @@ type PipelineExecutor interface {
 	Execute(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*pipeline.PipelineResult, error)
 }
 
-// CurrentFilesAuthority binds accepted auxiliary output to a leader term.
-//
-// Accept records a render's files provisionally; Confirm and Rollback settle
-// them once the render gate has judged that render, so the term's idea of
-// "what is deployed" never keeps files the fleet was reverted away from.
+// CurrentFilesAuthority binds exact render outputs to a leader term.
 type CurrentFilesAuthority interface {
 	BeginTerm() uint64
 	EndTerm(generation uint64)
 	Snapshot(generation uint64) (map[string]string, error)
-	Accept(generation uint64, planID string, auxiliaryFiles *dataplane.AuxiliaryFiles)
-	Confirm(generation uint64, planID string)
-	Rollback(generation uint64, planID string)
+	AcceptOutput(generation uint64, output *renderoutput.Snapshot) error
+	ConfirmOutput(generation uint64, output *renderoutput.Snapshot) error
+	RollbackOutput(generation uint64, output *renderoutput.Snapshot) error
+}
+
+type exactCurrentFilesAuthority interface {
+	ExactSource(generation uint64) (rendercontext.CurrentAuxFilesSource, error)
 }
 
 const (
@@ -63,7 +64,7 @@ const (
 	// loop drains this buffer to a single trigger per render (coalesceQueuedTriggers),
 	// so it only ever needs to hold the triggers that arrive during one
 	// render+validate cycle.
-	CoordinatorEventBufferSize = busevents.DebugSubscriberBuffer
+	CoordinatorEventBufferSize = busevents.ResourceChurnSubscriberBuffer
 )
 
 // Coordinator orchestrates reconciliation by calling the Pipeline directly.
@@ -90,12 +91,14 @@ type Coordinator struct {
 	pipeline      PipelineExecutor
 	storeProvider stores.StoreProvider
 	currentFiles  CurrentFilesAuthority
+	metrics       *metrics.Metrics
 	logger        *slog.Logger
 
 	// lastStatusPatches caches the most recent successful render's status patches.
 	// Used by StatusApplier (via events) to apply failure variants (renderFailed,
 	// deployFailed) when a subsequent pipeline execution fails.
-	lastStatusPatches []templating.StatusPatch
+	lastStatusPatches       []templating.StatusPatch
+	lastStatusPatchSnapshot *templating.StatusPatchSnapshot
 }
 
 // CoordinatorConfig contains configuration for creating a Coordinator.
@@ -112,6 +115,9 @@ type CoordinatorConfig struct {
 
 	// CurrentFiles owns the last accepted auxiliary output for each leader term.
 	CurrentFiles CurrentFilesAuthority
+
+	// Metrics receives one render count per reconcile; optional.
+	Metrics *metrics.Metrics
 
 	// Logger is the structured logger.
 	Logger *slog.Logger
@@ -141,6 +147,7 @@ func NewCoordinator(cfg *CoordinatorConfig) *Coordinator {
 		pipeline:      cfg.Pipeline,
 		storeProvider: cfg.StoreProvider,
 		currentFiles:  cfg.CurrentFiles,
+		metrics:       cfg.Metrics,
 		logger:        logger.With("component", CoordinatorComponentName),
 	}
 }
@@ -187,20 +194,35 @@ func (c *Coordinator) Start(ctx context.Context) error {
 
 	c.logger.Debug("Reconciliation coordinator starting")
 
+	var pending busevents.Event
 	for {
-		select {
-		case event := <-c.eventChan:
-			switch e := event.(type) {
-			case *events.ReconciliationTriggeredEvent:
-				triggered := c.coalesceQueuedTriggers(e)
-				c.handleReconciliationTriggered(ctx, triggered, generation)
-			case *events.RenderGateCompletedEvent:
-				c.settleCurrentFiles(generation, e)
+		var event busevents.Event
+		if pending != nil {
+			select {
+			case <-ctx.Done():
+				c.logger.Info("Reconciliation coordinator shutting down", "reason", ctx.Err())
+				return nil
+			default:
 			}
+			event = pending
+			pending = nil
+		} else {
+			select {
+			case event = <-c.eventChan:
+			case <-ctx.Done():
+				c.logger.Info("Reconciliation coordinator shutting down", "reason", ctx.Err())
+				return nil
+			}
+		}
 
-		case <-ctx.Done():
-			c.logger.Info("Reconciliation coordinator shutting down", "reason", ctx.Err())
-			return nil
+		switch e := event.(type) {
+		case *events.ReconciliationTriggeredEvent:
+			var boundary busevents.Event
+			e, boundary = c.coalesceQueuedTriggers(e)
+			pending = boundary
+			c.handleReconciliationTriggered(ctx, e, generation)
+		case *events.RenderGateCompletedEvent:
+			c.settleCurrentFiles(generation, e)
 		}
 	}
 }
@@ -213,39 +235,37 @@ func (c *Coordinator) settleCurrentFiles(generation uint64, event *events.Render
 	if c.currentFiles == nil || !event.Newest {
 		return
 	}
-	if event.OK {
-		c.currentFiles.Confirm(generation, event.PlanID)
+	occurrence, err := event.RenderOccurrence()
+	if err != nil {
+		c.logger.Error("currentFiles could not authenticate render occurrence", "error", err)
 		return
 	}
-	// Only HAProxy's own refusal says the files are wrong; a gate that could
-	// not run leaves the baseline where it is.
-	if event.Refused {
-		c.currentFiles.Rollback(generation, event.PlanID)
+	cycle, err := occurrence.Snapshot()
+	if err != nil {
+		c.logger.Error("currentFiles could not authenticate render occurrence", "error", err)
+		return
+	}
+	outputSnapshot, err := cycle.OutputSnapshot()
+	if err != nil {
+		c.logger.Error("currentFiles could not read render output", "error", err)
+		return
+	}
+	switch {
+	case event.OK:
+		err = c.currentFiles.ConfirmOutput(generation, outputSnapshot)
+	case event.Refused:
+		err = c.currentFiles.RollbackOutput(generation, outputSnapshot)
+	}
+	if err != nil {
+		c.logger.Error("currentFiles could not settle render output", "error", err)
 	}
 }
 
-// coalesceQueuedTriggers drains any reconciliation triggers already queued
-//
-// NOTE: deliberately NOT pkg/controller/coalesce.DrainLatest and not
-// component.Base's mailbox — those preserve per-event dispatch with
-// arrival ordering, while this merges the whole drained run into ONE
-// re-render (correct here because a render always reads current store
-// state, so intermediate triggers carry no information of their own).
-// behind `first` and returns a single representative to render. A render reads
-// the LATEST store state, so ONE render after draining N triggers is equivalent
-// to N serial renders — but it collapses a churn burst into O(1) renders
-// instead of O(N). This bounds the render rate and, with it, the downstream
-// template.rendered / reconciliation.completed event volume: without it, a
-// conformance-scale burst floods the status-applier and resource-applier
-// subscriber buffers, their (coalescible) events get dropped, and a dropped
-// deployment.completed leaves a Gateway's Programmed=True unapplied for tens of
-// seconds (the Programmed-lag stall). Draining is non-blocking, so it never
-// waits: it stops the instant the queue is empty.
-//
-// If the first trigger or any drained trigger is non-coalescible, the returned
-// trigger is non-coalescible too, so the downstream deploy scheduler does not
-// skip the resulting deployment.
-func (c *Coordinator) coalesceQueuedTriggers(first *events.ReconciliationTriggeredEvent) *events.ReconciliationTriggeredEvent {
+// coalesceQueuedTriggers collapses one uninterrupted trigger run and returns
+// the first different event as the event loop's ordering boundary.
+func (c *Coordinator) coalesceQueuedTriggers(
+	first *events.ReconciliationTriggeredEvent,
+) (*events.ReconciliationTriggeredEvent, busevents.Event) {
 	latest := first
 	var forced *events.ReconciliationTriggeredEvent // first non-coalescible seen, if any
 	if !first.Coalescible() {
@@ -257,7 +277,7 @@ func (c *Coordinator) coalesceQueuedTriggers(first *events.ReconciliationTrigger
 		case ev := <-c.eventChan:
 			t, ok := ev.(*events.ReconciliationTriggeredEvent)
 			if !ok {
-				continue
+				return c.finishTriggerCoalescing(latest, forced, drained, ev)
 			}
 			drained++
 			latest = t
@@ -265,15 +285,24 @@ func (c *Coordinator) coalesceQueuedTriggers(first *events.ReconciliationTrigger
 				forced = t
 			}
 		default:
-			if drained > 0 {
-				c.logger.Debug("coalesced queued reconciliation triggers", "drained", drained)
-			}
-			if forced != nil {
-				return forced
-			}
-			return latest
+			return c.finishTriggerCoalescing(latest, forced, drained, nil)
 		}
 	}
+}
+
+func (c *Coordinator) finishTriggerCoalescing(
+	latest *events.ReconciliationTriggeredEvent,
+	forced *events.ReconciliationTriggeredEvent,
+	drained int,
+	boundary busevents.Event,
+) (*events.ReconciliationTriggeredEvent, busevents.Event) {
+	if drained > 0 {
+		c.logger.Debug("coalesced queued reconciliation triggers", "drained", drained)
+	}
+	if forced != nil {
+		return forced, boundary
+	}
+	return latest, boundary
 }
 
 // handleReconciliationTriggered orchestrates a reconciliation cycle.
@@ -294,12 +323,21 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 
 	var renderOpts []rendercontext.Option
 	if c.currentFiles != nil {
-		currentFiles, err := c.currentFiles.Snapshot(generation)
-		if err != nil {
-			c.handlePipelineFailure(ctx, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: err}, event, startTime)
-			return
+		if exact, ok := c.currentFiles.(exactCurrentFilesAuthority); ok {
+			source, err := exact.ExactSource(generation)
+			if err != nil {
+				c.handlePipelineFailure(ctx, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: err}, event, startTime)
+				return
+			}
+			renderOpts = append(renderOpts, rendercontext.WithCurrentAuxFilesSource(source))
+		} else {
+			currentFiles, err := c.currentFiles.Snapshot(generation)
+			if err != nil {
+				c.handlePipelineFailure(ctx, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: err}, event, startTime)
+				return
+			}
+			renderOpts = append(renderOpts, rendercontext.WithCurrentAuxFiles(currentFiles))
 		}
-		renderOpts = append(renderOpts, rendercontext.WithCurrentAuxFiles(currentFiles))
 	}
 	result, err := c.pipeline.Execute(ctx, c.storeProvider, rendercontext.RenderModeReconcile, renderOpts...)
 	if cause := context.Cause(ctx); cause != nil {
@@ -312,12 +350,40 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 		c.handlePipelineFailure(ctx, err, event, startTime)
 		return
 	}
-	if c.currentFiles != nil {
-		c.currentFiles.Accept(generation, result.PlanID, result.AuxiliaryFiles)
+	if result == nil {
+		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
+			Phase: pipeline.PhaseRender,
+			Cause: errors.New("pipeline returned no result"),
+		}, event, startTime)
+		return
+	}
+	if err := c.acceptCurrentFiles(generation, result); err != nil {
+		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
+			Phase: pipeline.PhaseRender,
+			Cause: err,
+		}, event, startTime)
+		return
 	}
 
 	// Pipeline succeeded - publish events for downstream components
 	c.handlePipelineSuccess(ctx, result, event, startTime)
+}
+
+func (c *Coordinator) acceptCurrentFiles(generation uint64, result *pipeline.PipelineResult) error {
+	if result == nil || result.CycleSnapshot == nil {
+		return errors.New("pipeline returned no authenticated render cycle")
+	}
+	outputSnapshot, err := result.CycleSnapshot.OutputSnapshot()
+	if err != nil {
+		return fmt.Errorf("reading render cycle output: %w", err)
+	}
+	if c.currentFiles == nil {
+		return nil
+	}
+	if err := c.currentFiles.AcceptOutput(generation, outputSnapshot); err != nil {
+		return fmt.Errorf("accepting render output: %w", err)
+	}
+	return nil
 }
 
 // handlePipelineSuccess publishes events for successful render+validate.
@@ -330,71 +396,80 @@ func (c *Coordinator) handlePipelineSuccess(
 	if context.Cause(ctx) != nil {
 		return
 	}
+	if result.CycleSnapshot == nil {
+		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
+			Phase: pipeline.PhaseRender,
+			Cause: errors.New("pipeline returned no authenticated render cycle"),
+		}, triggerEvent, startTime)
+		return
+	}
 	coalescible := triggerEvent.Coalescible()
 
-	// Cache status patches for failure variant application.
-	// If a subsequent render fails, StatusApplier can apply renderFailed variants
-	// using the most recent successful patches.
-	c.lastStatusPatches = result.StatusPatches
+	statusSnapshot, err := result.CycleSnapshot.StatusPatchSnapshot()
+	if err != nil {
+		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
+			Phase: pipeline.PhaseRender,
+			Cause: fmt.Errorf("reading render cycle status patches: %w", err),
+		}, triggerEvent, startTime)
+		return
+	}
+	c.lastStatusPatches = nil
+	c.lastStatusPatchSnapshot = statusSnapshot
 
-	// Publish TemplateRenderedEvent for DeploymentScheduler
-	// Config uses relative paths that work everywhere with `default-path origin`
-	templateEvent := events.NewTemplateRenderedEvent(
-		result.HAProxyConfig,
-		result.AuxiliaryFiles,
-		result.StatusPatches,
-		result.RenderedResources,
-		result.AuxFileCount,
-		result.RenderDurationMs,
-		triggerEvent.Reason,
-		result.ContentChecksum,
-		result.Plan,
-		result.PlanID,
-		coalescible,
-		events.PropagateCorrelation(triggerEvent),
+	templateEvent, err := events.NewTemplateRenderedEventWithCycle(
+		result.CycleSnapshot, result.RenderDurationMs, triggerEvent.Reason,
+		coalescible, events.PropagateCorrelation(triggerEvent),
 	)
+	if err != nil {
+		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
+			Phase: pipeline.PhaseRender,
+			Cause: fmt.Errorf("building rendered cycle event: %w", err),
+		}, triggerEvent, startTime)
+		return
+	}
+	occurrence, err := templateEvent.RenderOccurrence()
+	if err != nil {
+		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
+			Phase: pipeline.PhaseRender,
+			Cause: fmt.Errorf("reading rendered occurrence: %w", err),
+		}, triggerEvent, startTime)
+		return
+	}
+
+	totalDuration := time.Since(startTime).Milliseconds()
+	completed, err := events.NewReconciliationCompletedEventWithCycle(
+		totalDuration, occurrence, events.PropagateCorrelation(triggerEvent),
+	)
+	if err != nil {
+		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
+			Phase: pipeline.PhaseRender,
+			Cause: fmt.Errorf("building reconciliation cycle event: %w", err),
+		}, triggerEvent, startTime)
+		return
+	}
 	if context.Cause(ctx) != nil {
 		return
 	}
 	c.eventBus.Publish(templateEvent)
 
 	// No validation event follows: TemplateRenderedEvent is the deploy trigger
-	// now, and HAProxy's verdict arrives asynchronously from the render gate
-	// (ADR-0022). Any warnings the synchronous output validators produced ride
-	// the log, not a second event nobody would pair with this render.
+	// now, and HAProxy's verdict arrives asynchronously from the render gate.
 	for _, warning := range result.ValidationWarnings {
 		c.logger.Warn("Rendered output validator warning",
 			"warning", warning, "correlation_id", triggerEvent.CorrelationID())
 	}
-
-	// Publish ReconciliationCompletedEvent carrying the rendered resources so
-	// ResourceApplier reads them directly from the event payload (stateless
-	// on the success path, same pattern as StatusApplier + status patches).
-	totalDuration := time.Since(startTime).Milliseconds()
-	completed := events.NewReconciliationCompletedEvent(
-		totalDuration,
-		result.PlanID,
-		result.RenderedResources,
-		result.StatusPatches,
-		events.PropagateCorrelation(triggerEvent),
-	)
-	// Carry the render's Events (recordEvent) for the leader-only EventEmitter.
-	// Cloned so the published event never aliases the pipeline result; set on
-	// the freshly-built local event before Publish (no subscriber holds it yet).
-	completed.Events = slices.Clone(result.Events)
-	if result.Plan != nil {
-		completed.ProfileCount = len(result.Plan.Profiles)
-	}
-	if context.Cause(ctx) != nil {
-		return
-	}
 	c.eventBus.Publish(completed)
 
+	if c.metrics != nil {
+		c.metrics.RecordRender(result.CacheState)
+	}
 	c.logger.Debug("Reconciliation completed",
 		"correlation_id", triggerEvent.CorrelationID(),
 		"render_ms", result.RenderDurationMs,
 		"validate_ms", result.ValidateDurationMs,
-		"total_ms", totalDuration)
+		"total_ms", totalDuration,
+		"cache_state", result.CacheState,
+		"cache_build_ms", result.CacheBuildMs)
 }
 
 // handlePipelineFailure publishes phase-specific failure events followed by ReconciliationFailedEvent.
@@ -458,9 +533,13 @@ func (c *Coordinator) handlePipelineFailure(
 	if context.Cause(ctx) != nil {
 		return
 	}
-	c.eventBus.Publish(events.NewReconciliationFailedEvent(
-		err.Error(),
-		phase,
-		c.lastStatusPatches,
-	))
+	if c.lastStatusPatchSnapshot != nil {
+		c.eventBus.Publish(events.NewReconciliationFailedEventWithStatusSnapshot(
+			err.Error(), phase, c.lastStatusPatchSnapshot,
+		))
+	} else {
+		c.eventBus.Publish(events.NewReconciliationFailedEvent(
+			err.Error(), phase, c.lastStatusPatches,
+		))
+	}
 }

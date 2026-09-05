@@ -11,6 +11,7 @@ package conversion
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
@@ -57,6 +58,10 @@ func ResolveEffectiveSpec(
 	logger *slog.Logger,
 ) (*SpecResolution, error) {
 	res := &SpecResolution{StrippedTests: map[string]string{}}
+	declaredIncrementalGroups := specIncrementalGroups(spec.TemplateSnippets)
+	for _, group := range spec.AbsentIncrementalGroups {
+		declaredIncrementalGroups[group] = struct{}{}
+	}
 	unavailable := map[string]bool{}
 	for name := range spec.WatchedResources {
 		wr := spec.WatchedResources[name]
@@ -74,10 +79,43 @@ func ResolveEffectiveSpec(
 	if len(unavailable) > 0 {
 		stripSpecRequiring(spec, unavailable, res, logger)
 	}
+	spec.AbsentIncrementalGroups = missingSpecIncrementalGroups(
+		declaredIncrementalGroups,
+		specIncrementalGroups(spec.TemplateSnippets),
+	)
 	if err := stripSpecRequiringFields(spec, unavailable, fieldServed, res, logger); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+func specIncrementalGroups(snippets map[string]v1alpha1.TemplateSnippet) map[string]struct{} {
+	groups := make(map[string]struct{})
+	for name, snippet := range snippets {
+		if snippet.Incremental == nil {
+			continue
+		}
+		group := snippet.Incremental.Group
+		if group == "" {
+			group = name
+		}
+		groups[group] = struct{}{}
+	}
+	return groups
+}
+
+func missingSpecIncrementalGroups(
+	declared map[string]struct{},
+	effective map[string]struct{},
+) []string {
+	missing := make([]string, 0, len(declared))
+	for group := range declared {
+		if _, exists := effective[group]; !exists {
+			missing = append(missing, group)
+		}
+	}
+	slices.Sort(missing)
+	return missing
 }
 
 // resolveSpecResource returns the version the resource resolves to, or ""

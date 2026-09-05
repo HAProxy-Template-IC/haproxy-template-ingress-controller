@@ -90,6 +90,34 @@ func TestResolveEffectiveSpec_WithoutAvailabilitySignal(t *testing.T) {
 	assert.Empty(t, res.StrippedTests)
 }
 
+func TestResolveEffectiveSpecAuthenticatesStrippedIncrementalGroup(t *testing.T) {
+	spec := specForEffectiveTest()
+	policy := spec.TemplateSnippets["udp-feature"]
+	policy.Incremental = &v1alpha1.IncrementalTemplate{
+		BindingsTemplate: "{}",
+		Group:            "udp-policies",
+		Effects:          []v1alpha1.IncrementalEffect{v1alpha1.IncrementalEffectPublishValue},
+	}
+	spec.TemplateSnippets["udp-feature"] = policy
+	consumer := spec.TemplateSnippets["tcp-feature"]
+	consumer.Incremental = &v1alpha1.IncrementalTemplate{
+		BindingsTemplate: "{}",
+		Group:            "tcp-routes",
+		OptionalConsumes: []string{"udp-policies"},
+	}
+	spec.TemplateSnippets["tcp-feature"] = consumer
+
+	_, err := ResolveEffectiveSpec(spec, func(_, resources string) bool {
+		return resources == "tcproutes"
+	}, nil, slog.Default())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"udp-policies"}, spec.AbsentIncrementalGroups)
+
+	converted, err := ConvertSpec(spec)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]struct{}{"udp-policies": {}}, converted.AbsentIncrementalGroups)
+}
+
 // TestResolveEffectiveSpec_RequiresFields pins the offline mirror of the
 // field-level stripping: a validationTest whose requiresFields names a field
 // the schema-dir's resolved generation lacks is stripped and reported with a

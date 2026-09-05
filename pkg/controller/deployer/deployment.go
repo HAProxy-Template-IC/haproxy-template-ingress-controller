@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/planblob"
@@ -30,14 +31,17 @@ import (
 
 // deployRequest is one deployment's desired state, identical for every pod.
 type deployRequest struct {
-	plan     *renderplan.Plan
-	planID   string
-	contents map[string]string // file content by digest, the manifest's join key
-	blob     []byte            // the plan, zstd-compressed, as the agent stores it
-	token    api.Token
+	occurrence      *rendercycle.Occurrence
+	plan            *renderplan.Plan
+	planID          string
+	occurrenceProof string
+	checksum        string
+	contents        map[string]string // file content by manifest path
+	blob            []byte            // the plan, zstd-compressed, as the agent stores it
+	token           api.Token
 	// validatedPlanFor answers, per pod, which passed plan its manifest should
 	// name — the pod's own applied plan when that one passed.
-	validatedPlanFor func(appliedPlanID string) string
+	validatedPlanFor func(authority string, state *api.State) planReference
 	// verify makes each pod re-hash its tree before it reports: the drift pass
 	// asks what is on disk, not what the agent last wrote.
 	verify bool
@@ -87,8 +91,8 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 	c.Logger().Debug("Deployment scheduled, starting execution",
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
-		"config_bytes", len(event.Config),
-		"plan", event.PlanID,
+		"config_bytes", deploymentConfigBytes(event),
+		"plan", deploymentPlanID(event),
 		"deployment_id", deploymentID,
 		"correlation_id", correlationID)
 
@@ -107,8 +111,25 @@ func (c *Component) deployToEndpoints(
 
 	startTime := time.Now()
 	correlationID := event.CorrelationID()
-	if len(event.Endpoints) == 0 || event.Plan == nil {
-		c.reportUndeployable(event, deploymentID)
+	occurrence, err := scheduledEventOccurrence(event)
+	if err != nil {
+		c.Logger().Error("Scheduled deployment has no exact output", "error", err)
+		c.reportUndeployable(event, deploymentID, nil)
+		return
+	}
+	identity, err := materializeOccurrence(occurrence)
+	if err != nil {
+		c.Logger().Error("Scheduled deployment has no exact output", "error", err)
+		c.reportUndeployable(event, deploymentID, nil)
+		return
+	}
+	if len(event.Endpoints) == 0 {
+		c.reportUndeployable(event, deploymentID, occurrence)
+		return
+	}
+	plan := identity.plan
+	if plan == nil {
+		c.reportUndeployable(event, deploymentID, occurrence)
 		return
 	}
 
@@ -116,7 +137,13 @@ func (c *Component) deployToEndpoints(
 	// HAProxyCfg.spec.Checksum is comparable to. Plan ids do not replace it:
 	// aux bytes outside the plan still ride it.
 	podSetHash := computePodSetHash(event.Endpoints)
-	request := c.newDeployRequest(event)
+	request := c.newDeployRequest(
+		occurrence, &identity, event.Reason == events.TriggerReasonDriftPrevention,
+	)
+	if request == nil {
+		c.reportUndeployable(event, deploymentID, occurrence)
+		return
+	}
 	c.recordFleet(event.Endpoints)
 
 	c.EventBus().Publish(events.NewDeploymentStartedEvent(
@@ -140,7 +167,7 @@ func (c *Component) deployToEndpoints(
 
 	c.plans.Retain(c.fleetPlanRefs(event.Endpoints))
 	c.clients.Retain(event.Endpoints)
-	c.recordFleetAck(event.Plan, atomic.LoadInt32(&state.ackCount))
+	c.recordFleetAck(plan, atomic.LoadInt32(&state.ackCount))
 
 	c.Logger().Debug("Deployment completed",
 		"total_endpoints", len(event.Endpoints),
@@ -150,17 +177,32 @@ func (c *Component) deployToEndpoints(
 		"duration_ms", time.Since(startTime).Milliseconds(),
 		"correlation_id", correlationID)
 
-	c.publishCompleted(event, deploymentID, podSetHash, state, time.Since(startTime).Milliseconds())
-	c.publishDeployedConfig(event, int(atomic.LoadInt32(&state.ackCount)))
-	c.observeConvergence(event, podSetHash, state)
+	c.publishCompleted(event, deploymentID, podSetHash, state, time.Since(startTime).Milliseconds(), occurrence)
+	c.publishDeployedConfig(event, occurrence, int(atomic.LoadInt32(&state.ackCount)))
+	c.observeConvergence(event, podSetHash, state, occurrence)
 }
 
 // reportUndeployable completes a deployment that cannot be executed: a render
 // without a plan carries no file set, and a fleet without pods has no target.
 // Both report through the normal completion so the scheduler is never wedged.
-func (c *Component) reportUndeployable(event *events.DeploymentScheduledEvent, deploymentID string) {
-	result := &events.DeploymentResult{DeploymentID: deploymentID, StatusPatches: event.StatusPatches}
-	if event.Plan == nil && len(event.Endpoints) > 0 {
+func (c *Component) reportUndeployable(
+	event *events.DeploymentScheduledEvent,
+	deploymentID string,
+	occurrence *rendercycle.Occurrence,
+) {
+	if occurrence == nil {
+		c.Logger().Error("Render carries no authenticated occurrence",
+			"endpoint_count", len(event.Endpoints),
+			"correlation_id", event.CorrelationID())
+		return
+	}
+	result, err := events.NewDeploymentResultWithOccurrence(occurrence)
+	if err != nil {
+		c.Logger().Error("Refusing to publish an unauthenticated deployment completion", "error", err)
+		return
+	}
+	result.DeploymentID = deploymentID
+	if len(event.Endpoints) > 0 {
 		c.Logger().Error("Render carries no plan; the agent needs one to apply it",
 			"endpoint_count", len(event.Endpoints),
 			"correlation_id", event.CorrelationID())
@@ -169,55 +211,56 @@ func (c *Component) reportUndeployable(event *events.DeploymentScheduledEvent, d
 	} else {
 		c.Logger().Error("No valid endpoints to deploy to")
 	}
-	c.EventBus().Publish(events.NewDeploymentCompletedEvent(result,
-		events.WithCorrelation(event.CorrelationID(), deploymentID)))
+	completed, err := events.NewDeploymentCompletedEventWithCycle(result,
+		events.WithCorrelation(event.CorrelationID(), deploymentID))
+	if err != nil {
+		c.Logger().Error("Refusing to publish an unauthenticated deployment completion", "error", err)
+		return
+	}
+	c.EventBus().Publish(completed)
 }
 
-func (c *Component) newDeployRequest(event *events.DeploymentScheduledEvent) *deployRequest {
-	c.plans.Put(event.Plan)
-	blob, err := planblob.Encode(event.Plan)
+func (c *Component) newDeployRequest(
+	occurrence *rendercycle.Occurrence,
+	identity *renderOccurrenceIdentity,
+	verify bool,
+) *deployRequest {
+	if !sameOccurrence(occurrence, identity.occurrence) {
+		return nil
+	}
+	blob, err := planblob.Encode(identity.plan)
 	if err != nil {
 		// Without the blob a pod that outlives this controller reports a
 		// baseline nobody can decode, which costs it one reload — never
 		// correctness, so the deployment goes ahead.
 		c.Logger().Error("Encoding the plan blob failed; pods will not retain this baseline",
-			"plan", event.PlanID, "error", err)
+			"plan", identity.plan.ID, "error", err)
 	}
 	return &deployRequest{
-		plan:             event.Plan,
-		planID:           event.PlanID,
-		contents:         contentsByDigest(event.Config, event.AuxiliaryFiles),
+		occurrence:       occurrence,
+		plan:             identity.plan,
+		planID:           identity.plan.ID,
+		occurrenceProof:  identity.proof,
+		checksum:         identity.checksum,
+		contents:         contentsByPath(identity.plan),
 		blob:             blob,
 		token:            api.Token{LeaderEpoch: c.leaderEpoch(), RenderSeq: c.nextRenderSeq()},
 		validatedPlanFor: c.validatedPlanFor,
-		verify:           event.Reason == events.TriggerReasonDriftPrevention,
+		verify:           verify,
 		diffs:            newDiffMemo(),
 	}
 }
 
-// contentsByDigest indexes every rendered byte string by its plan digest. The
-// digest is the manifest's join key, so no consumer re-derives the path
-// conventions the render used.
-func contentsByDigest(config string, aux *dataplane.AuxiliaryFiles) map[string]string {
-	contents := map[string]string{renderplan.DigestString(config): config}
-	if aux == nil {
-		return contents
+func contentsByPath(plan *renderplan.Plan) map[string]string {
+	if plan == nil {
+		return nil
 	}
-	add := func(content string) { contents[renderplan.DigestString(content)] = content }
-	for i := range aux.MapFiles {
-		add(aux.MapFiles[i].Content)
-	}
-	for i := range aux.SSLCertificates {
-		add(aux.SSLCertificates[i].Content)
-	}
-	for i := range aux.SSLCaFiles {
-		add(aux.SSLCaFiles[i].Content)
-	}
-	for i := range aux.CRTListFiles {
-		add(aux.CRTListFiles[i].Content)
-	}
-	for i := range aux.GeneralFiles {
-		add(aux.GeneralFiles[i].Content)
+	contents := make(map[string]string, len(plan.Files))
+	for i := range plan.Files {
+		file := &plan.Files[i]
+		if file.ContentKnown {
+			contents[file.Path] = file.Content
+		}
 	}
 	return contents
 }
@@ -248,36 +291,48 @@ type deploymentState struct {
 	operationBreakdown map[string]int
 	stoodDown          bool
 	pendingReloadUntil time.Time
-	running            map[string]string // pod → the plan its worker runs, from its ACK
+	running            map[string]runningRender // pod → exact render its worker runs, from its ACK
+}
+
+type runningRender struct {
+	plan       *renderplan.Plan
+	occurrence *rendercycle.Occurrence
 }
 
 // noteRunning records which plan a pod's worker runs after its apply.
-func (s *deploymentState) noteRunning(endpoint *dataplane.Endpoint, planID string) {
+func (s *deploymentState) noteRunning(endpoint *dataplane.Endpoint, running runningRender) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.running == nil {
-		s.running = map[string]string{}
+		s.running = map[string]runningRender{}
 	}
-	s.running[podKey(endpoint)] = planID
+	if !exactPlan(running.plan, running.plan) {
+		s.running[podKey(endpoint)] = runningRender{}
+		return
+	}
+	s.running[podKey(endpoint)] = running
 }
 
-// fleetRunningPlan is the plan every pod reported running, or "" when a pod
-// did not answer or the fleet disagrees.
-func (s *deploymentState) fleetRunningPlan(total int) string {
+// fleetRunningRender is the render every pod reported running.
+func (s *deploymentState) fleetRunningRender(total int) runningRender {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if total == 0 || len(s.running) != total {
-		return ""
+		return runningRender{}
 	}
-	consensus := ""
-	for _, planID := range s.running {
+	var consensus runningRender
+	for _, running := range s.running {
 		switch {
-		case planID == "":
-			return ""
-		case consensus == "":
-			consensus = planID
-		case consensus != planID:
-			return ""
+		case !exactPlan(running.plan, running.plan):
+			return runningRender{}
+		case consensus.plan == nil:
+			consensus = running
+		case consensus.occurrence != nil || running.occurrence != nil:
+			if !sameOccurrence(consensus.occurrence, running.occurrence) {
+				return runningRender{}
+			}
+		case !exactPlan(consensus.plan, running.plan):
+			return runningRender{}
 		}
 	}
 	return consensus
@@ -320,14 +375,14 @@ func (c *Component) deployToPod(
 	case errors.Is(err, errStaleEpoch):
 		c.standDown(state, endpoint, err)
 	case err != nil:
-		c.handleEndpointFailure(endpoint, err, durationMs, event, state)
+		c.handleEndpointFailure(endpoint, err, durationMs, event, state, request)
 	// An apply that reports an error did not do what it was asked, whether or
 	// not the agent called the transaction a success: a refused in-place batch
 	// answers OK with an error and no applied plan.
 	case !outcome.result.OK || outcome.result.Error != nil:
-		c.handleEndpointRejection(endpoint, outcome, event, state)
+		c.handleEndpointRejection(endpoint, outcome, event, state, request)
 	default:
-		c.handleEndpointSuccess(endpoint, outcome, durationMs, event, state)
+		c.handleEndpointSuccess(endpoint, outcome, durationMs, event, state, request)
 	}
 }
 

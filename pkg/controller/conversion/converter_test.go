@@ -260,6 +260,81 @@ func TestConvertSpec(t *testing.T) {
 	}
 }
 
+func TestConvertSpecIncrementalBindingsTemplate(t *testing.T) {
+	spec := &v1alpha1.HAProxyTemplateConfigSpec{
+		TemplateSnippets: map[string]v1alpha1.TemplateSnippet{
+			"dynamic": {
+				Template: "{{ source }}",
+				Incremental: &v1alpha1.IncrementalTemplate{
+					BindingsTemplate:  `{{ toJSON(extraContext) }}`,
+					WhenAnyPathExists: []string{`metadata.annotations['example.test/enabled']`},
+					Root:              "features-root",
+					Group:             "features",
+					Consumes:          []string{"policies"},
+					OptionalConsumes:  []string{"optional-policies"},
+					Effects: []v1alpha1.IncrementalEffect{
+						v1alpha1.IncrementalEffectRecordEvent,
+						v1alpha1.IncrementalEffectPublishValue,
+						v1alpha1.IncrementalEffectStatusPatch,
+					},
+				},
+			},
+		},
+	}
+
+	converted, err := ConvertSpec(spec)
+	require.NoError(t, err)
+	require.NotNil(t, converted.TemplateSnippets["dynamic"].Incremental)
+	assert.Equal(t, &config.IncrementalTemplate{
+		BindingsTemplate:  `{{ toJSON(extraContext) }}`,
+		WhenAnyPathExists: []string{`metadata.annotations['example.test/enabled']`},
+		Root:              "features-root",
+		Group:             "features",
+		Consumes:          []string{"policies"},
+		OptionalConsumes:  []string{"optional-policies"},
+		Effects: []config.IncrementalEffect{
+			config.IncrementalEffectRecordEvent,
+			config.IncrementalEffectPublishValue,
+			config.IncrementalEffectStatusPatch,
+		},
+	}, converted.TemplateSnippets["dynamic"].Incremental)
+
+	spec.TemplateSnippets["dynamic"].Incremental.Effects[0] = v1alpha1.IncrementalEffectRecordEvent
+	spec.TemplateSnippets["dynamic"].Incremental.Consumes[0] = "mutated"
+	spec.TemplateSnippets["dynamic"].Incremental.OptionalConsumes[0] = "mutated"
+	spec.TemplateSnippets["dynamic"].Incremental.WhenAnyPathExists[0] = "mutated"
+	assert.Equal(t, config.IncrementalEffectRecordEvent, converted.TemplateSnippets["dynamic"].Incremental.Effects[0])
+	assert.Equal(t, []string{"policies"}, converted.TemplateSnippets["dynamic"].Incremental.Consumes)
+	assert.Equal(t, []string{"optional-policies"}, converted.TemplateSnippets["dynamic"].Incremental.OptionalConsumes)
+	assert.Equal(t, []string{`metadata.annotations['example.test/enabled']`},
+		converted.TemplateSnippets["dynamic"].Incremental.WhenAnyPathExists)
+}
+
+func TestConvertSpecIncrementalResourceProjection(t *testing.T) {
+	spec := &v1alpha1.HAProxyTemplateConfigSpec{
+		TemplateSnippets: map[string]v1alpha1.TemplateSnippet{
+			"projection": {
+				Template: `{{- "" -}}`,
+				Incremental: &v1alpha1.IncrementalTemplate{
+					Mode:             v1alpha1.IncrementalModeResourceProjection,
+					BindingsTemplate: `{{ toJSON(extraContext) }}`,
+					Group:            "selected-resources",
+					Effects:          []v1alpha1.IncrementalEffect{v1alpha1.IncrementalEffectPublishValue},
+				},
+			},
+		},
+	}
+
+	converted, err := ConvertSpec(spec)
+	require.NoError(t, err)
+	assert.Equal(t, &config.IncrementalTemplate{
+		Mode:             config.IncrementalModeResourceProjection,
+		BindingsTemplate: `{{ toJSON(extraContext) }}`,
+		Group:            "selected-resources",
+		Effects:          []config.IncrementalEffect{config.IncrementalEffectPublishValue},
+	}, converted.TemplateSnippets["projection"].Incremental)
+}
+
 func TestParseLabelSelector(t *testing.T) {
 	tests := []struct {
 		name     string

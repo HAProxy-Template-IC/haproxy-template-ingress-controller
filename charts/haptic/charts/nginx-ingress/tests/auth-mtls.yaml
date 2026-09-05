@@ -395,7 +395,7 @@ validationTests:
       - {type: not_contains, target: map:auth-url.map, pattern: '\.example\.com'}
   test-nginx-ingress-external-auth-resource-id-keying-deterministic:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: "Regression guard: the new <ns>/<name>-keyed renderer must produce byte-identical output across re-renders for the same input. Re-renders iterate resources.ingresses.List(), and store ordering must be stable."
+    description: Re-rendering the same Ingress produces byte-identical basic-auth output.
     extraContext: *extracontextSpoahubEnabled
     fixtures:
       services:

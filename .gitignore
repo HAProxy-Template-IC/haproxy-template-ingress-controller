@@ -113,5 +113,5 @@ plugins/
 __pycache__/
 
 # Core dumps (a crashed test binary drops these in the repo root)
-core
-core.*
+/core
+/core.*

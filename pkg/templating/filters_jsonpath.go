@@ -15,55 +15,106 @@
 package templating
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/scriggo/native"
 )
 
-// This file implements three generic, resource-agnostic engine helpers for
+// This file implements generic, resource-agnostic engine helpers for
 // accessing and mutating watched resources by dynamic name and concrete
 // JSONPath (RULE #1: they know nothing about any specific resource). The
 // chart's governance layer is the first consumer, but nothing here is
 // governance-specific:
 //
-//   - resource(name)          — dynamic-by-name access to a watched resource,
-//                               returning the same per-render objects the typed
-//                               `resources.<name>.List()` returns (so a write is
-//                               observed downstream).
+//   - resource(name)          — dynamic-by-name access to a watched resource.
 //   - jsonpathGet(item, path) — read a CONCRETE JSONPath out of any resource.
-//   - jsonpathSet(item, path, value) — write a CONCRETE JSONPath into any
-//                               resource (annotations + any concrete field).
+//   - jsonpathSet(item, path, value) — write a CONCRETE JSONPath into a
+//                               detached or template-local resource value.
+//   - deriveResourceJSONPath(item, path, value) — return a detached value.
 //
 // "Concrete" means dotted keys, bracket-quoted keys (`['k8s.io/x']`), and array
 // indices (`[0]`). Filtered/wildcard expressions (`[?(...)]`, `[*]`) are NOT
 // supported — they are ambiguous as a write target — and callers validate that
 // at config time.
 //
-// CONCURRENCY CONTRACT. `jsonpathSet` mutates the memoized per-render resource
-// pointer in place, and `jsonpathGet`'s annotation fast path reads it — both
-// WITHOUT synchronization. The memoized pointers are shared across the whole
-// render: the parallel aux-file phase (renderer.renderAuxiliaryFiles) and any
-// `shard_slice`/`{{ go }}` goroutines read the SAME pointers concurrently (this
-// is exactly why builder.go guards the wrap path with a mutex). These two
-// helpers are therefore only safe to call from the single synchronous
-// main-config render (service.go renders haproxy.cfg fully before spawning the
-// aux goroutines), where governance runs today. Do NOT call `jsonpathSet` (or
-// `jsonpathGet` on a value another goroutine may be writing) from an aux-file
-// template, a `{{ go }}` block, or any concurrently-rendered snippet — a Go map
-// mutation racing a concurrent read is a data race. If a future feature needs
-// concurrent mutation, add synchronization here (or a copy-on-write path)
-// first.
+// Watched-resource values are immutable for a render. jsonpathSet fails the
+// render before changing one; deriveResource is the copy-on-write path.
 
-// pathSeg is one segment of a parsed concrete JSONPath: either a map key or an
-// array index.
+// pathSeg is one segment of a parsed JSONPath.
 type pathSeg struct {
-	key     string
-	index   int
-	isIndex bool
+	key        string
+	index      int
+	isIndex    bool
+	anyElement bool
+}
+
+// ConcreteJSONPath is a parsed path that can test object-field presence.
+type ConcreteJSONPath struct {
+	segments []pathSeg
+}
+
+// Equal reports whether both paths have the same compiled representation.
+func (p ConcreteJSONPath) Equal(other ConcreteJSONPath) bool {
+	return (p.segments == nil) == (other.segments == nil) && slices.Equal(p.segments, other.segments)
+}
+
+// CompileConcreteJSONPath validates and parses one concrete JSONPath.
+func CompileConcreteJSONPath(path string) (ConcreteJSONPath, error) {
+	segments, err := parseConcreteJSONPath(path)
+	if err != nil {
+		return ConcreteJSONPath{}, err
+	}
+	return ConcreteJSONPath{segments: segments}, nil
+}
+
+// Exists reports whether every segment exists. A final null value still exists.
+func (p ConcreteJSONPath) Exists(item any) (bool, error) {
+	if len(p.segments) == 0 {
+		return false, fmt.Errorf("concrete JSONPath is not compiled")
+	}
+	root, err := itemToMap(item)
+	if err != nil {
+		return false, err
+	}
+	_, exists := getAtPath(root, p.segments)
+	return exists, nil
+}
+
+// ExistenceJSONPath is a parsed path that may select any array element.
+type ExistenceJSONPath struct {
+	segments []pathSeg
+}
+
+// Equal reports whether both paths have the same compiled representation.
+func (p ExistenceJSONPath) Equal(other ExistenceJSONPath) bool {
+	return (p.segments == nil) == (other.segments == nil) && slices.Equal(p.segments, other.segments)
+}
+
+// CompileExistenceJSONPath validates a path used by a presence predicate.
+func CompileExistenceJSONPath(path string) (ExistenceJSONPath, error) {
+	segments, err := parseJSONPath(path, true)
+	if err != nil {
+		return ExistenceJSONPath{}, err
+	}
+	return ExistenceJSONPath{segments: segments}, nil
+}
+
+// Exists reports whether any selected branch contains every remaining segment.
+func (p ExistenceJSONPath) Exists(item any) (bool, error) {
+	if len(p.segments) == 0 {
+		return false, fmt.Errorf("existence JSONPath is not compiled")
+	}
+	root, err := itemToMap(item)
+	if err != nil {
+		return false, err
+	}
+	return existsAtPath(root, p.segments), nil
 }
 
 // parseConcreteJSONPath parses a concrete JSONPath into segments. It accepts an
@@ -71,6 +122,10 @@ type pathSeg struct {
 // double quotes — the only safe way to express a key containing `.` or `/`), and
 // `[<int>]` array indices. It rejects filtered/wildcard expressions.
 func parseConcreteJSONPath(path string) ([]pathSeg, error) {
+	return parseJSONPath(path, false)
+}
+
+func parseJSONPath(path string, allowAnyElement bool) ([]pathSeg, error) {
 	p := strings.TrimPrefix(strings.TrimSpace(path), "$")
 	p = strings.TrimPrefix(p, ".")
 	var segs []pathSeg
@@ -81,7 +136,7 @@ func parseConcreteJSONPath(path string) ([]pathSeg, error) {
 			err  error
 		)
 		if p[i] == '[' {
-			seg, next, err = parseBracketSeg(path, p, i)
+			seg, next, err = parseBracketSeg(path, p, i, allowAnyElement)
 		} else {
 			seg, next, err = parseDotSeg(path, p, i)
 		}
@@ -91,7 +146,7 @@ func parseConcreteJSONPath(path string) ([]pathSeg, error) {
 		// Reject an empty non-index segment (a `..` run or a `['']` key) instead
 		// of silently dropping it, so a malformed admin path like `metadata..name`
 		// fails config validation rather than quietly resolving to `metadata.name`.
-		if !seg.isIndex && seg.key == "" {
+		if !seg.isIndex && !seg.anyElement && seg.key == "" {
 			return nil, fmt.Errorf("path %q has an empty segment", path)
 		}
 		segs = append(segs, seg)
@@ -112,19 +167,28 @@ func parseConcreteJSONPath(path string) ([]pathSeg, error) {
 // parseBracketSeg parses a `[...]` segment starting at p[i] (p[i] == '['). It
 // accepts a quoted key (`['k8s.io/x']`) or an integer index (`[0]`) and returns
 // the segment plus the index just past the closing ']'.
-func parseBracketSeg(path, p string, i int) (pathSeg, int, error) {
+func parseBracketSeg(path, p string, i int, allowAnyElement bool) (pathSeg, int, error) {
 	end := strings.IndexByte(p[i:], ']')
 	if end < 0 {
 		return pathSeg{}, 0, fmt.Errorf("unterminated '[' in path %q", path)
 	}
 	inner := strings.TrimSpace(p[i+1 : i+end])
 	next := i + end + 1
+	if inner == "*" && allowAnyElement {
+		return pathSeg{anyElement: true}, next, nil
+	}
 	if len(inner) >= 2 && (inner[0] == '\'' || inner[0] == '"') && inner[len(inner)-1] == inner[0] {
 		return pathSeg{key: inner[1 : len(inner)-1]}, next, nil
 	}
 	idx, err := strconv.Atoi(inner)
 	if err != nil {
+		if allowAnyElement {
+			return pathSeg{}, 0, fmt.Errorf("path %q: unsupported bracket %q (filtered expressions are not supported)", path, inner)
+		}
 		return pathSeg{}, 0, fmt.Errorf("path %q: unsupported bracket %q (filtered/wildcard expressions are not supported)", path, inner)
+	}
+	if idx < 0 {
+		return pathSeg{}, 0, fmt.Errorf("path %q: array index must not be negative", path)
 	}
 	return pathSeg{index: idx, isIndex: true}, next, nil
 }
@@ -138,7 +202,10 @@ func parseDotSeg(path, p string, i int) (pathSeg, int, error) {
 		j++
 	}
 	key := p[i:j]
-	if key == "*" || strings.ContainsAny(key, "?@()") {
+	if strings.Contains(key, "]") {
+		return pathSeg{}, 0, fmt.Errorf("path %q: unexpected ']' in segment %q", path, key)
+	}
+	if strings.ContainsAny(key, "*?@()") {
 		return pathSeg{}, 0, fmt.Errorf("path %q: wildcard/filter segment %q is not supported", path, key)
 	}
 	return pathSeg{key: key}, j, nil
@@ -170,6 +237,36 @@ func getAtPath(root any, segs []pathSeg) (any, bool) {
 		cur = v
 	}
 	return cur, true
+}
+
+func existsAtPath(value any, segments []pathSeg) bool {
+	if len(segments) == 0 {
+		return true
+	}
+	segment := segments[0]
+	if segment.anyElement {
+		items, ok := value.([]any)
+		if !ok {
+			return false
+		}
+		for _, item := range items {
+			if existsAtPath(item, segments[1:]) {
+				return true
+			}
+		}
+		return false
+	}
+	if segment.isIndex {
+		items, ok := value.([]any)
+		return ok && segment.index >= 0 && segment.index < len(items) &&
+			existsAtPath(items[segment.index], segments[1:])
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	next, exists := object[segment.key]
+	return exists && existsAtPath(next, segments[1:])
 }
 
 // setAtPath sets value at segs within root (a map[string]any tree), creating
@@ -283,20 +380,77 @@ func itemToMap(item any) (map[string]any, error) {
 	return m, nil
 }
 
+// DeriveResourceJSONPath returns a detached resource value with one concrete path changed.
+func DeriveResourceJSONPath(item any, path string, value any) (any, error) {
+	if item == nil {
+		return nil, fmt.Errorf("cannot derive a nil resource")
+	}
+	segs, err := parseConcreteJSONPath(path)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		return nil, fmt.Errorf("encoding resource: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var derived map[string]any
+	if err := decoder.Decode(&derived); err != nil {
+		return nil, fmt.Errorf("decoding resource: %w", err)
+	}
+	if _, annotation := annotationKey(segs); annotation {
+		value = tostringValue(value)
+	}
+	if err := setAtPath(derived, segs, value); err != nil {
+		return nil, err
+	}
+	return normalizeDerivedNumbers(derived)
+}
+
+func normalizeDerivedNumbers(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		if integer, err := strconv.ParseInt(string(typed), 10, 64); err == nil {
+			return integer, nil
+		}
+		decimal, err := strconv.ParseFloat(string(typed), 64)
+		if err != nil {
+			return nil, err
+		}
+		return decimal, nil
+	case map[string]any:
+		for key, item := range typed {
+			normalized, err := normalizeDerivedNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[key] = normalized
+		}
+	case []any:
+		for index, item := range typed {
+			normalized, err := normalizeDerivedNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[index] = normalized
+		}
+	}
+	return value, nil
+}
+
 // scriggoResource returns the per-render items of the watched resource named
-// `name` — the same objects `resources.<name>.List()` returns (memoized, so a
-// jsonpathSet write is observed downstream). Returns an empty slice for an
-// unknown/absent resource. Registered as the `resource` template function.
+// `name`. Returns an empty slice for an unknown/absent resource. Registered as
+// the `resource` template function.
 func scriggoResource(env native.Env, name string) []any {
 	goctx := env.Context()
 	if goctx == nil {
 		return nil
 	}
-	renderCtx, ok := goctx.Value(RenderContextContextKey).(map[string]any)
+	res, ok := lookupRenderContextValue(goctx, declResources)
 	if !ok {
 		return nil
 	}
-	res := renderCtx["resources"]
 	if res == nil {
 		return nil
 	}
@@ -327,7 +481,7 @@ func scriggoResource(env native.Env, name string) []any {
 	for inner.Kind() == reflect.Pointer {
 		inner = inner.Elem()
 	}
-	listFn := inner.FieldByName("List")
+	listFn := inner.FieldByName(memberList)
 	if !listFn.IsValid() || listFn.Kind() != reflect.Func {
 		return nil
 	}
@@ -377,16 +531,8 @@ func scriggoJSONPathGet(item any, path string) any {
 	return v
 }
 
-// scriggoJSONPathSet writes a concrete JSONPath into a resource item, in place,
-// so downstream reads of the same (memoized) item observe it. Returns true on
-// success. Annotation paths on a typed item avoid a json round-trip; other
-// concrete paths marshal the item to a map, set the value, and unmarshal back
-// into the same pointer. Untyped map items are also supported (set directly).
-// Registered as `jsonpathSet`.
-//
-// Not safe under concurrent render — see the CONCURRENCY CONTRACT at the top of
-// this file. Callable only from the synchronous main-config render.
-func scriggoJSONPathSet(item any, path string, value any) bool {
+// scriggoJSONPathSet writes a concrete JSONPath into a detached or local item.
+func scriggoJSONPathSet(env native.Env, item any, path string, value any) bool {
 	if item == nil {
 		return false
 	}
@@ -394,6 +540,25 @@ func scriggoJSONPathSet(item any, path string, value any) bool {
 	if err != nil {
 		return false
 	}
+	if err := immutableNativeMutationError(env, item); err != nil {
+		env.Stop(err)
+		return false
+	}
+	return setJSONPathSegments(item, segs, value)
+}
+
+func setJSONPath(item any, path string, value any) bool {
+	if item == nil {
+		return false
+	}
+	segs, err := parseConcreteJSONPath(path)
+	if err != nil {
+		return false
+	}
+	return setJSONPathSegments(item, segs, value)
+}
+
+func setJSONPathSegments(item any, segs []pathSeg, value any) bool {
 	// Annotation fast path (typed item): reflect-set the map directly.
 	if key, ok := annotationKey(segs); ok {
 		if anns := annotationsMap(item); anns.IsValid() {
@@ -430,12 +595,5 @@ func scriggoJSONPathSet(item any, path string, value any) bool {
 // tostringValue coerces a value to string for annotation storage (annotations
 // are map[string]string).
 func tostringValue(v any) string {
-	switch s := v.(type) {
-	case string:
-		return s
-	case nil:
-		return ""
-	default:
-		return fmt.Sprintf("%v", s)
-	}
+	return mustDeterministicScalarText("jsonpathSet", v)
 }

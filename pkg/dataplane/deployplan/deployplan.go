@@ -138,8 +138,14 @@ func Files(p *renderplan.Plan) []api.File {
 	for i := range p.Files {
 		f := &p.Files[i]
 		files = append(files, api.File{
-			Path:           f.Path,
-			Digest:         f.Digest,
+			Path:   f.Path,
+			Digest: f.Digest,
+			// The witness the agent stores and compares on the next apply. It
+			// is the content digest, but it answers a different question than
+			// Digest does: Digest asks whether the bytes the agent holds match
+			// what this render asserts, Proof asks whether this render asserts
+			// what the last one did. A file with no proof always ships bytes.
+			Proof:          f.Digest,
 			Size:           f.Size,
 			Kind:           f.Kind,
 			ReloadOnChange: f.ReloadOnChange,

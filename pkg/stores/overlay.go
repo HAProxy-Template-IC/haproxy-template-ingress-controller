@@ -2,7 +2,9 @@
 package stores
 
 import (
+	"cmp"
 	"context"
+	"slices"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,6 +38,76 @@ type StoreOverlay struct {
 	// These are the template-friendly representations with floats converted to ints.
 	convertedAdditions     []any
 	convertedModifications []any
+}
+
+// OverlayChange is one immutable proposed identity replacement or deletion.
+type OverlayChange struct {
+	Namespace string
+	Name      string
+	Deleted   bool
+	Value     any
+}
+
+// IdentityChanges returns a deterministic snapshot and false for ambiguous overlays.
+func (o *StoreOverlay) IdentityChanges() ([]OverlayChange, bool) {
+	if o == nil {
+		return nil, true
+	}
+	changes := make(map[ktypes.NamespacedName]OverlayChange)
+	if !addOverlayObjects(changes, o.Additions, o.convertedAdditions) ||
+		!addOverlayObjects(changes, o.Modifications, o.convertedModifications) ||
+		!addOverlayDeletions(changes, o.Deletions) {
+		return nil, false
+	}
+	result := make([]OverlayChange, 0, len(changes))
+	for _, change := range changes {
+		result = append(result, change)
+	}
+	slices.SortFunc(result, func(left, right OverlayChange) int {
+		if byNamespace := cmp.Compare(left.Namespace, right.Namespace); byNamespace != 0 {
+			return byNamespace
+		}
+		return cmp.Compare(left.Name, right.Name)
+	})
+	return result, true
+}
+
+func addOverlayObjects(
+	changes map[ktypes.NamespacedName]OverlayChange,
+	objects []runtime.Object,
+	converted []any,
+) bool {
+	for index, object := range objects {
+		identity := getResourceKey(object)
+		if identity == nil || identity.Name == "" {
+			return false
+		}
+		if _, duplicate := changes[*identity]; duplicate {
+			return false
+		}
+		value := any(object)
+		if index < len(converted) {
+			value = converted[index]
+		}
+		changes[*identity] = OverlayChange{Namespace: identity.Namespace, Name: identity.Name, Value: value}
+	}
+	return true
+}
+
+func addOverlayDeletions(
+	changes map[ktypes.NamespacedName]OverlayChange,
+	deletions []ktypes.NamespacedName,
+) bool {
+	for _, deletion := range deletions {
+		if deletion.Name == "" {
+			return false
+		}
+		if _, duplicate := changes[deletion]; duplicate {
+			return false
+		}
+		changes[deletion] = OverlayChange{Namespace: deletion.Namespace, Name: deletion.Name, Deleted: true}
+	}
+	return true
 }
 
 // NewStoreOverlay creates a new empty StoreOverlay.
@@ -106,8 +178,9 @@ func (o *StoreOverlay) AddModification(obj runtime.Object) {
 //
 // This design avoids synchronization overhead since each request gets its own instance.
 type CompositeStore struct {
-	base    Store
-	overlay *StoreOverlay
+	base     Store
+	overlay  *StoreOverlay
+	revision overlayRevisionState
 }
 
 // NewCompositeStore creates a new CompositeStore.
@@ -116,9 +189,13 @@ type CompositeStore struct {
 //   - base: The underlying store with actual state
 //   - overlay: The proposed changes to apply on top
 func NewCompositeStore(base Store, overlay *StoreOverlay) *CompositeStore {
+	if overlay == nil {
+		overlay = NewStoreOverlay()
+	}
 	return &CompositeStore{
-		base:    base,
-		overlay: overlay,
+		base:     base,
+		overlay:  overlay,
+		revision: buildOverlayRevisionState(overlay),
 	}
 }
 
@@ -295,6 +372,10 @@ func (s *CompositeStore) matchesKeys(resource any, keys []string) bool {
 
 // getResourceKey extracts namespace/name from a resource.
 func (s *CompositeStore) getResourceKey(resource any) *ktypes.NamespacedName {
+	return getResourceKey(resource)
+}
+
+func getResourceKey(resource any) *ktypes.NamespacedName {
 	// Try to get metadata via accessor (typed objects, *unstructured.Unstructured).
 	if accessor, ok := resource.(interface {
 		GetNamespace() string

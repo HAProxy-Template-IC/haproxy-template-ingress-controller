@@ -35,6 +35,12 @@ type Event interface {
 
 The `CoalescibleEvent` interface marks events that `pkg/controller/coalesce` can collapse when bursts arrive faster than a component can process them.
 
+An event with authoritative private state can implement `FanoutIsolatedEvent`.
+The bus then snapshots it before pre-start buffering and gives every subscriber
+an independent event container. Mutating one delivered container can't change
+what another subscriber observes. Events without this interface retain the
+zero-copy fan-out behavior.
+
 ## Startup Buffering
 
 Subscribers must register **before** `Start()` or they miss the replay of events published during initialisation. The controller's reinitialisation loop does this in a strict order inside `iteration.go`; bespoke users of this library should follow the same pattern:

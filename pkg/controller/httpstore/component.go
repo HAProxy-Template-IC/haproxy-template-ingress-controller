@@ -67,6 +67,7 @@ type Component struct {
 	refreshStoreURL  func(context.Context, string, uint64) (*httpstore.PendingVersion, error)
 	evictStoreUnused func() []string
 	logger           *slog.Logger
+	prepareAuthority chan struct{}
 
 	// Refresh timer management
 	mu                      sync.Mutex
@@ -121,7 +122,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, evictionMaxAge time.
 	)
 	store := httpstore.New(logger, evictionMaxAge)
 
-	return &Component{
+	result := &Component{
 		eventBus:                eventBus,
 		eventChan:               eventChan,
 		store:                   store,
@@ -135,7 +136,10 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, evictionMaxAge time.
 		refreshGeneration:       make(map[string]uint64),
 		refreshSourceGeneration: make(map[string]uint64),
 		evictionInterval:        evictionMaxAge, // Run eviction at same cadence as maxAge
+		prepareAuthority:        make(chan struct{}, 1),
 	}
+	result.prepareAuthority <- struct{}{}
+	return result
 }
 
 // Name returns the unique identifier for this component.
@@ -262,6 +266,153 @@ func (c *Component) GetStore() *httpstore.HTTPStore {
 	return c.store
 }
 
+// RevisionSource identifies this component's accepted HTTP content stream.
+func (c *Component) RevisionSource() httpstore.SourceID {
+	return c.store.RevisionSource()
+}
+
+// Watermark returns the latest accepted HTTP semantic revision.
+func (c *Component) Watermark() httpstore.Revision {
+	return c.store.Watermark()
+}
+
+// ReplayWatermark returns the complete render-relevant HTTP source epoch.
+func (c *Component) ReplayWatermark() httpstore.Revision {
+	return c.store.ReplayWatermark()
+}
+
+// VerifyReplayEpoch verifies the complete render-relevant HTTP root.
+func (c *Component) VerifyReplayEpoch(epoch *httpstore.ReplayEpoch) bool {
+	return c.store.VerifyReplayEpoch(epoch)
+}
+
+// AcceptedSnapshot returns the current accepted bytes for one exact declaration.
+func (c *Component) AcceptedSnapshot(
+	url string,
+	descriptor httpstore.SourceDescriptor,
+) (httpstore.ContentSnapshot, bool) {
+	snapshot := c.store.AcceptedSnapshot(url, descriptor)
+	return snapshot, snapshot.Found
+}
+
+// ChangesSince returns exact accepted HTTP changes after revision.
+func (c *Component) ChangesSince(revision httpstore.Revision) (
+	httpstore.Revision,
+	[]httpstore.SemanticChange,
+	bool,
+) {
+	return c.store.ChangesSince(revision)
+}
+
+// NewActiveLeaseSet allocates an empty persistent render-cache lease owner.
+func (c *Component) NewActiveLeaseSet() (
+	*httpstore.ActiveLeaseSet,
+	httpstore.ActiveLeaseToken,
+	error,
+) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
+		return nil, httpstore.ActiveLeaseToken{}, errors.New("HTTP store stopped before lease allocation")
+	}
+	return c.store.NewActiveLeaseSet()
+}
+
+// BeginActiveLeases captures exact relevant changes for one render cache.
+func (c *Component) BeginActiveLeases(
+	set *httpstore.ActiveLeaseSet,
+	token httpstore.ActiveLeaseToken,
+) (*httpstore.ActiveLeaseSnapshot, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
+		return nil, errors.New("HTTP store stopped before lease snapshot")
+	}
+	return set.BeginActiveLeases(token)
+}
+
+// RetireActiveLeases removes one render cache's leases and refresh timers.
+func (c *Component) RetireActiveLeases(
+	set *httpstore.ActiveLeaseSet,
+	token httpstore.ActiveLeaseToken,
+) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	urls, err := set.RetireActiveLeases(token)
+	if err != nil {
+		return err
+	}
+	for _, url := range urls {
+		if !c.store.HasActiveLease(url) {
+			c.stopRefresherLocked(url)
+		}
+	}
+	return nil
+}
+
+// VerifySnapshots checks that every accepted HTTP token is still current.
+func (c *Component) VerifySnapshots(tokens []httpstore.SnapshotToken) bool {
+	return c.store.VerifySnapshots(tokens)
+}
+
+// VerifyObservations checks exact present and negative HTTP reads.
+func (c *Component) VerifyObservations(tokens []httpstore.ObservationToken) bool {
+	return c.store.VerifyObservations(tokens)
+}
+
+func (c *Component) replayAcceptedSnapshot(
+	token httpstore.SnapshotToken,
+) (httpstore.ContentSnapshot, *httpstore.StagedSource, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
+		return httpstore.ContentSnapshot{}, nil, false
+	}
+	return c.store.StageAcceptedSnapshot(token)
+}
+
+// AdvanceAcceptedReplayState rebases selective replay state across unrelated changes.
+func (c *Component) AdvanceAcceptedReplayState(
+	state *httpstore.AcceptedReplayState,
+) (*httpstore.AcceptedReplayState, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
+		return nil, false
+	}
+	return c.store.AdvanceAcceptedReplayState(state)
+}
+
+func (c *Component) captureAcceptedReplayState(
+	snapshots []httpstore.ContentSnapshot,
+) (*httpstore.AcceptedReplayState, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
+		return nil, false
+	}
+	return c.store.CaptureAcceptedReplayState(snapshots)
+}
+
+func (c *Component) stageSource(
+	url string,
+	opts httpstore.FetchOptions,
+	auth *httpstore.AuthConfig,
+) (*httpstore.StagedSource, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
+		return nil, errors.New("HTTP store stopped before source staging")
+	}
+	return c.store.StageSource(url, opts, auth)
+}
+
+func (c *Component) verifyStagedSource(source *httpstore.StagedSource) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.stopped && c.store.VerifyStagedSource(source)
+}
+
 // ReconcileSource serializes source, timer, and validation-batch authority.
 func (c *Component) ReconcileSource(
 	url string,
@@ -301,25 +452,55 @@ func (c *Component) CommitInitialCandidates(
 	ctx context.Context,
 	candidates []*httpstore.InitialCandidate,
 ) error {
-	if len(candidates) == 0 {
-		return nil
-	}
+	_, _, err := c.CommitInitialCandidatesAndVerify(ctx, candidates, nil)
+	return err
+}
 
+// CommitInitialCandidatesAndVerify accepts candidates only if all content read
+// earlier in the render still has the same accepted versions.
+func (c *Component) CommitInitialCandidatesAndVerify(
+	ctx context.Context,
+	candidates []*httpstore.InitialCandidate,
+	accepted []httpstore.SnapshotToken,
+) ([]httpstore.CandidateCommit, httpstore.Revision, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stopped {
-		return errors.New("HTTP store stopped before validated render inputs could be accepted")
+		return nil, 0, errors.New("HTTP store stopped before validated render inputs could be accepted")
 	}
 	if cause := context.Cause(ctx); cause != nil {
-		return fmt.Errorf("accepting validated render inputs: %w", cause)
+		return nil, 0, fmt.Errorf("accepting validated render inputs: %w", cause)
 	}
-	if err := c.store.CommitInitialCandidates(ctx, candidates); err != nil {
-		return err
+	commits, watermark, err := c.store.CommitInitialCandidatesAndVerify(ctx, candidates, accepted)
+	if err != nil {
+		return nil, 0, err
 	}
 	for _, candidate := range candidates {
 		c.reconcileURLLocked(candidate.URL())
 	}
-	return nil
+	return commits, watermark, nil
+}
+
+// CommitInitialCandidatesAndVerifyObservations accepts candidates only if all
+// exact present and negative reads still match.
+func (c *Component) CommitInitialCandidatesAndVerifyObservations(
+	ctx context.Context,
+	candidates []*httpstore.InitialCandidate,
+	observations []httpstore.ObservationToken,
+) ([]httpstore.CandidateCommit, httpstore.Revision, error) {
+	prepared, err := c.PrepareInitialCandidatesAndVerifyObservations(ctx, candidates, observations)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer prepared.Abort()
+	commits, watermark := prepared.Planned()
+	if cause := context.Cause(ctx); cause != nil {
+		prepared.Abort()
+		return nil, 0, fmt.Errorf("committing validated render inputs: %w", cause)
+	}
+	prepared.Publish()
+	prepared.Release()
+	return commits, watermark, nil
 }
 
 // RegisterURL reconciles a URL's timer with its current source policy.
@@ -336,6 +517,10 @@ func (c *Component) ReconcileURL(url string) {
 
 func (c *Component) reconcileURLLocked(url string) {
 	state, exists := c.store.GetSourceState(url)
+	c.reconcilePreparedURLLocked(url, state, exists)
+}
+
+func (c *Component) reconcilePreparedURLLocked(url string, state httpstore.SourceState, exists bool) {
 	if c.stopped {
 		return
 	}
@@ -531,8 +716,20 @@ func (c *Component) beginValidationLocked(source string) *events.ProposalValidat
 	}
 
 	overlay := httpstore.NewHTTPOverlay(c.store)
-	if overlay.IsEmpty() {
+	req, batch := prepareValidationRequest(overlay, source)
+	if batch == nil {
 		return nil
+	}
+	c.pendingValidation = batch
+	return req
+}
+
+func prepareValidationRequest(
+	overlay *httpstore.HTTPOverlay,
+	source string,
+) (*events.ProposalValidationRequestedEvent, *validationBatch) {
+	if overlay.IsEmpty() {
+		return nil, nil
 	}
 	if source == "" || !overlay.HasPendingURL(source) {
 		source = overlay.PendingURLs()[0]
@@ -556,10 +753,9 @@ func (c *Component) beginValidationLocked(source string) *events.ProposalValidat
 		})
 	}
 	if len(batch.entries) == 0 {
-		return nil
+		return nil, nil
 	}
-	c.pendingValidation = batch
-	return req
+	return req, batch
 }
 
 func (c *Component) retireSupersededValidationLocked(url string, revision uint64) {

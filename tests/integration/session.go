@@ -65,10 +65,12 @@ type Session struct {
 	// leaves everything else — including files HAProxy itself writes — alone.
 	declared map[string]struct{}
 
-	applied   *renderplan.Plan
-	appliedID string
-	token     api.Token
-	workerOps string
+	applied        *renderplan.Plan
+	appliedID      string
+	appliedProof   string
+	token          api.Token
+	workerOps      string
+	workerOpsProof string
 }
 
 // NewSession starts a controller session against the test pod. Its desired set
@@ -281,20 +283,31 @@ func (s *Session) Apply(ctx context.Context, decision deployplan.Decision) *api.
 	s.t.Helper()
 	plan := s.Plan()
 	s.seq++
+	// IdentityVersion and the plan proofs are what the deployer sends; without
+	// them the agent normalises the manifest as legacy, which forces a reload
+	// and drops every op — so the suite would assert runtime behaviour it never
+	// asked for.
 	manifest := &api.Manifest{
-		PlanID:                  plan.ID,
-		PlanSchemaVersion:       plan.SchemaVersion,
-		Token:                   api.Token{LeaderEpoch: s.epoch, RenderSeq: s.seq},
-		ExpectedPrevPlanID:      s.appliedID,
-		ExpectedPrevToken:       s.token,
-		ExpectedWorkerOpsPlanID: s.workerOps,
+		IdentityVersion:       api.ExactIdentityVersion,
+		PlanID:                plan.ID,
+		PlanSchemaVersion:     plan.SchemaVersion,
+		Token:                 api.Token{LeaderEpoch: s.epoch, RenderSeq: s.seq},
+		ExpectedPrevPlanID:    s.appliedID,
+		ExpectedPrevPlanProof: s.appliedProof,
+		ExpectedPrevToken:     s.token,
 		// Every apply this suite makes reached HAProxy, so the plan the pod
 		// already holds is the newest one that passed validation.
-		ValidatedPlanID: s.appliedID,
-		Files:           decision.Files,
-		Ops:             decision.Ops,
-		InPlaceOps:      decision.InPlace,
-		Mode:            decision.Mode,
+		ValidatedPlanID:    s.appliedID,
+		ValidatedPlanProof: s.appliedProof,
+		Files:              decision.Files,
+		Ops:                decision.Ops,
+		InPlaceOps:         decision.InPlace,
+		Mode:               decision.Mode,
+	}
+	if len(manifest.InPlaceOps) > 0 {
+		manifest.ExpectedWorkerOpsPlanID = s.workerOps
+		manifest.ExpectedWorkerOpsPlanProof = s.workerOpsProof
+		manifest.WorkerOpsPlanID = decision.WorkerPlan.ID
 	}
 
 	start := time.Now()
@@ -373,8 +386,10 @@ func (s *Session) absorb(plan *renderplan.Plan, result *api.ApplyResult) {
 		return
 	}
 	s.appliedID = result.AppliedPlanID
+	s.appliedProof = result.AppliedPlanProof
 	s.token = result.AppliedToken
 	s.workerOps = result.WorkerOpsPlanID
+	s.workerOpsProof = result.WorkerOpsPlanProof
 	s.applied = nil
 	if result.AppliedPlanID == plan.ID {
 		s.applied = plan

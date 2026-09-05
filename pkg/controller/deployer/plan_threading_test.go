@@ -47,23 +47,19 @@ func (s *recordingPlanSink) SetCapabilities(capabilities dataplane.Capabilities)
 }
 
 func renderedEventWithPlan(config string, plan *renderplan.Plan) *events.TemplateRenderedEvent {
-	planID := ""
-	if plan != nil {
-		planID = plan.ID
+	if plan == nil {
+		return events.NewTemplateRenderedEvent(
+			config, &dataplane.AuxiliaryFiles{}, nil, nil, 0, 1, "", "checksum-"+config,
+			nil, "", true,
+		)
 	}
-	return events.NewTemplateRenderedEvent(
-		config,
-		&dataplane.AuxiliaryFiles{},
-		nil, // statusPatches
-		nil, // renderedResources
-		0,   // auxFileCount
-		1,   // durationMs
-		"",  // triggerReason
-		"checksum-"+config,
-		plan,
-		planID,
-		true, // coalescible
+	event, err := events.NewTemplateRenderedEventWithOccurrence(
+		mustOccurrenceFor(plan, config, &dataplane.AuxiliaryFiles{}, nil), 1, "", true,
 	)
+	if err != nil {
+		panic(err)
+	}
+	return event
 }
 
 // scheduleFromRender routes a render through the scheduler and returns the
@@ -83,47 +79,52 @@ func scheduleFromRender(t *testing.T, rendered *events.TemplateRenderedEvent) *s
 
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
-	require.NotNil(t, scheduler.state.pending, "the render must be scheduled")
 	return scheduler.state.pending
 }
 
 func TestScheduler_PlanTravelsWithTheRenderItDescribes(t *testing.T) {
-	plan := &renderplan.Plan{ID: "plan-abc"}
+	config := "global\n  daemon\n"
+	plan := exactTestPlan("plan-abc", config)
 
-	pending := scheduleFromRender(t, renderedEventWithPlan("global\n  daemon\n", plan))
+	pending := scheduleFromRender(t, renderedEventWithPlan(config, plan))
 
-	assert.Same(t, plan, pending.plan,
-		"the plan must travel with the config it describes, like the content checksum")
-	assert.Equal(t, "plan-abc", pending.planID)
+	require.NotNil(t, pending)
+	identity, err := materializeOccurrence(pending.occurrence)
+	require.NoError(t, err)
+	assert.True(t, exactPlan(plan, identity.plan))
+	assert.NotSame(t, plan, identity.plan)
+	assert.Equal(t, plan.ID, identity.planID)
 }
 
 func TestScheduler_ScheduledEventCarriesThePlan(t *testing.T) {
-	plan := &renderplan.Plan{ID: "plan-abc"}
+	plan := exactTestPlan("plan-abc", "global\n  daemon\n")
 	bus := testutil.NewTestBus()
 	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	occurrence := mustOccurrenceFor(plan, "global\n  daemon\n", &dataplane.AuxiliaryFiles{}, nil)
 
 	event := scheduler.newScheduledEvent(&scheduledDeployment{
-		config: "global\n  daemon\n",
-		plan:   plan,
-		planID: plan.ID,
+		occurrence: occurrence,
 	})
 
-	assert.Same(t, plan, event.Plan)
-	assert.Equal(t, "plan-abc", event.PlanID)
+	carried, err := event.RenderOccurrence()
+	require.NoError(t, err)
+	assert.True(t, sameOccurrence(occurrence, carried))
+	identity, err := inspectOccurrence(carried)
+	require.NoError(t, err)
+	assert.Equal(t, plan.ID, identity.planID)
 }
 
 func TestScheduler_RenderWithoutAPlanSchedulesNothingNil(t *testing.T) {
 	pending := scheduleFromRender(t, renderedEventWithPlan("global\n  daemon\n", nil))
 
-	assert.Nil(t, pending.plan, "a planless render must schedule, carrying no plan")
-	assert.Empty(t, pending.planID)
+	assert.Nil(t, pending, "a planless render has unknown equality and must not be scheduled")
 }
 
 func TestRecordFleetAck_ReportsThePlanAfterOnePodTookIt(t *testing.T) {
 	sink := &recordingPlanSink{}
 	component := createTestDeployer(testutil.NewTestBus())
 	component.ackedPlans = sink
-	plan := &renderplan.Plan{ID: "plan-abc"}
+	plan := exactTestPlan("plan-abc", "global\n  daemon\n")
 
 	component.recordFleetAck(plan, 1)
 
@@ -151,10 +152,13 @@ func TestDeployToEndpoints_UnreachablePodAcksNothing(t *testing.T) {
 	component.ackedPlans = sink
 
 	// Port 1 refuses connections, so every pod's state read fails.
-	plan := &renderplan.Plan{ID: "plan-abc"}
-	event := events.NewDeploymentScheduledEvent("global\n  daemon\n", nil,
+	plan := exactTestPlan("plan-abc", "global\n  daemon\n")
+	event, err := events.NewDeploymentScheduledEventWithCycle(
+		mustOccurrenceFor(plan, "global\n  daemon\n", nil, nil),
 		[]dataplane.Endpoint{{URL: "http://127.0.0.1:1", PodName: "haproxy-1"}},
-		"", "", "test", "checksum", plan, plan.ID, nil, true)
+		"", "", "test", true,
+	)
+	require.NoError(t, err)
 	component.deployToEndpoints(context.Background(), func() {}, event, "deployment-1")
 
 	assert.Empty(t, sink.plans, "a failed deployment must not claim the fleet runs the plan")

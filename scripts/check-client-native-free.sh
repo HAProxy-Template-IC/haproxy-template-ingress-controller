@@ -41,7 +41,13 @@ check "cmd/playground (untagged)" ./cmd/playground GOOS=js GOARCH=wasm
 
 # The playground bundle is the one build that may link it, and only with the
 # tag. A build that stops needing the tag means the fallback was lost.
-if ! GOOS=js GOARCH=wasm go list -deps -tags=playground ./cmd/playground | grep -qE "$BANNED"; then
+# Capture before matching. Under `set -o pipefail`, `producer | grep -q` reports
+# the producer's SIGPIPE (141) rather than grep's hit, because grep exits at the
+# first match and closes the pipe — so a found dependency intermittently reads as
+# missing, depending on whether go list finished writing first. check() above
+# already captures for this reason.
+playground_deps="$(GOOS=js GOARCH=wasm go list -deps -tags=playground ./cmd/playground)"
+if ! printf '%s\n' "$playground_deps" | grep -qE "$BANNED"; then
   echo "FAIL: the playground no longer links the syntax + schema check it answers haproxy_valid with"
   fail=1
 else

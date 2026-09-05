@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
@@ -77,7 +76,7 @@ func TestValidationService_Validate_ValidConfig(t *testing.T) {
 	assert.GreaterOrEqual(t, result.DurationMs, int64(0))
 }
 
-func TestValidationService_CancellationDoesNotCacheSuccess(t *testing.T) {
+func TestValidationService_CancellationIsFollowedByFreshValidation(t *testing.T) {
 	started := make(chan struct{})
 	restoreBlocking := dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheckContext(
 		func(ctx context.Context, _ string, _ []string) ([]byte, error) {
@@ -126,29 +125,6 @@ func TestValidationService_PreservesPreCancellationCause(t *testing.T) {
 	require.False(t, result.Valid)
 	require.ErrorIs(t, result.Error, cause)
 	assert.EqualError(t, result.Error, "validation cancelled: iteration replaced")
-}
-
-func TestValidationService_DoesNotCacheAfterCancellationWhileWaiting(t *testing.T) {
-	svc := NewValidationService(&ValidationServiceConfig{Logger: slog.Default()})
-	svc.cacheMu.Lock()
-	svc.cachedChecksum = "baseline"
-
-	cause := errors.New("reconciliation retired while caching")
-	ctx, cancel := context.WithCancelCause(t.Context())
-	started := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		close(started)
-		done <- svc.cacheResult(ctx, "new")
-	}()
-	<-started
-	cancel(cause)
-	svc.cacheMu.Unlock()
-
-	require.ErrorIs(t, <-done, cause)
-	svc.cacheMu.RLock()
-	defer svc.cacheMu.RUnlock()
-	assert.Equal(t, "baseline", svc.cachedChecksum)
 }
 
 func TestValidationService_Validate_SyntaxError(t *testing.T) {
@@ -347,10 +323,45 @@ func TestValidationService_Validate_Concurrent(t *testing.T) {
 	}
 }
 
-// validConfig is a minimal valid HAProxy configuration used by cache tests.
+// validConfig is a minimal valid HAProxy configuration used by validation tests.
 const validConfig = testutil.MinimalHAProxyConfig
 
-func TestValidationService_CacheHit(t *testing.T) {
+func TestValidationService_RevalidatesIdenticalBytesAfterExecutorSwap(t *testing.T) {
+	acceptChecks := 0
+	restoreAccepting := dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheck(
+		func(string, []string) ([]byte, error) {
+			acceptChecks++
+			return nil, nil
+		},
+	))
+
+	svc := NewValidationService(&ValidationServiceConfig{
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
+	})
+	checksum := dataplane.ComputeContentChecksum(validConfig, nil)
+
+	result := svc.ValidateWithChecksum(t.Context(), validConfig, nil, checksum)
+	restoreAccepting()
+	require.True(t, result.Valid, "first validation failed: %v", result.Error)
+	require.Equal(t, 1, acceptChecks)
+
+	rejectChecks := 0
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheck(
+		func(string, []string) ([]byte, error) {
+			rejectChecks++
+			return []byte("[ALERT] config : runtime policy now refuses this config\n"), errors.New("exit status 1")
+		},
+	)))
+
+	result = svc.ValidateWithChecksum(t.Context(), validConfig, nil, checksum)
+	require.False(t, result.Valid)
+	assert.Equal(t, "semantic", result.Phase)
+	assert.ErrorContains(t, result.Error, "runtime policy now refuses this config")
+	assert.Equal(t, 1, rejectChecks, "identical bytes must reach the replacement executor")
+}
+
+func TestValidationService_ChecksumCollisionCannotSkipValidation(t *testing.T) {
 	checks := 0
 	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheck(
 		func(string, []string) ([]byte, error) {
@@ -359,162 +370,14 @@ func TestValidationService_CacheHit(t *testing.T) {
 		},
 	)))
 
-	svc := NewValidationService(&ValidationServiceConfig{
-		Logger:            slog.Default(),
-		SkipDNSValidation: true,
-	})
+	svc := NewValidationService(&ValidationServiceConfig{Logger: slog.Default(), SkipDNSValidation: true})
+	left := &dataplane.AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{Path: "a", Content: "bc"}}}
+	right := &dataplane.AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{Path: "ab", Content: "c"}}}
+	require.Equal(t, dataplane.ComputeContentChecksum(validConfig, left), dataplane.ComputeContentChecksum(validConfig, right))
 
-	result1 := validate(svc, context.Background(), validConfig, nil)
-	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
-
-	result2 := validate(svc, context.Background(), validConfig, nil)
-	require.True(t, result2.Valid)
-	assert.Equal(t, 1, checks, "cache hit must not run haproxy -c again")
-
-	svc.cacheMu.RLock()
-	defer svc.cacheMu.RUnlock()
-	assert.NotEmpty(t, svc.cachedChecksum)
-}
-
-func TestValidationService_CacheMiss_ConfigChange(t *testing.T) {
-	svc := NewValidationService(&ValidationServiceConfig{
-		Logger:            slog.Default(),
-		SkipDNSValidation: true,
-	})
-
-	// First call with config A
-	result1 := validate(svc, context.Background(), validConfig, nil)
-	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
-
-	// Record cached checksum after first call
-	svc.cacheMu.RLock()
-	checksumAfterFirst := svc.cachedChecksum
-	svc.cacheMu.RUnlock()
-	require.NotEmpty(t, checksumAfterFirst)
-
-	// Second call with different config -> cache miss
-	differentConfig := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:9090
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
-	result2 := validate(svc, context.Background(), differentConfig, nil)
-	require.True(t, result2.Valid, "second call should succeed: %v", result2.Error)
-
-	svc.cacheMu.RLock()
-	checksumAfterSecond := svc.cachedChecksum
-	svc.cacheMu.RUnlock()
-
-	assert.NotEqual(t, checksumAfterFirst, checksumAfterSecond,
-		"different config should produce a different cached checksum")
-}
-
-func TestValidationService_CacheMiss_AuxFileChange(t *testing.T) {
-	svc := NewValidationService(&ValidationServiceConfig{
-		Logger:            slog.Default(),
-		SkipDNSValidation: true,
-	})
-
-	auxFiles1 := &dataplane.AuxiliaryFiles{
-		GeneralFiles: []auxiliaryfiles.GeneralFile{
-			{Filename: "test.txt", Content: "content-v1"},
-		},
-	}
-	auxFiles2 := &dataplane.AuxiliaryFiles{
-		GeneralFiles: []auxiliaryfiles.GeneralFile{
-			{Filename: "test.txt", Content: "content-v2"},
-		},
-	}
-
-	// First call with auxFiles1
-	result1 := validate(svc, context.Background(), validConfig, auxFiles1)
-	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
-
-	// Record cached checksum after first call
-	svc.cacheMu.RLock()
-	checksumAfterFirst := svc.cachedChecksum
-	svc.cacheMu.RUnlock()
-	require.NotEmpty(t, checksumAfterFirst)
-
-	// Second call with different aux files -> cache miss -> new checksum
-	result2 := validate(svc, context.Background(), validConfig, auxFiles2)
-	require.True(t, result2.Valid, "second call should succeed: %v", result2.Error)
-
-	svc.cacheMu.RLock()
-	checksumAfterSecond := svc.cachedChecksum
-	svc.cacheMu.RUnlock()
-
-	assert.NotEqual(t, checksumAfterFirst, checksumAfterSecond,
-		"different aux files should produce a different cached checksum")
-}
-
-func TestValidationService_FailureNotCached(t *testing.T) {
-	// Simulate haproxy rejecting the config (unit tests never shell out).
-	t.Cleanup(dataplanetest.InstallFakeHAProxy(
-		dataplanetest.WithRejectAll("parsing [haproxy.cfg:5] : unknown keyword 'invalid_directive' in 'defaults' section")))
-
-	svc := NewValidationService(&ValidationServiceConfig{
-		Logger:            slog.Default(),
-		SkipDNSValidation: true,
-	})
-
-	invalidConfig := `global
-    daemon
-
-defaults
-    invalid_directive foo
-`
-
-	// First call: fails
-	result1 := validate(svc, context.Background(), invalidConfig, nil)
-	require.False(t, result1.Valid)
-
-	// Second call with same invalid config: should NOT be cached, runs full validation again
-	result2 := validate(svc, context.Background(), invalidConfig, nil)
-	require.False(t, result2.Valid)
-	assert.NotNil(t, result2.Error)
-
-	// Cache should still be empty (no successful validation)
-	svc.cacheMu.RLock()
-	assert.Empty(t, svc.cachedChecksum, "failed validation should not populate cache")
-	svc.cacheMu.RUnlock()
-}
-
-func TestValidationService_CacheConcurrentAccess(t *testing.T) {
-	svc := NewValidationService(&ValidationServiceConfig{
-		Logger:            slog.Default(),
-		SkipDNSValidation: true,
-	})
-
-	// Populate cache
-	result := validate(svc, context.Background(), validConfig, nil)
-	require.True(t, result.Valid, "initial validation should succeed: %v", result.Error)
-
-	// Concurrent cache hits
-	const concurrency = 10
-	var wg sync.WaitGroup
-	wg.Add(concurrency)
-
-	for range concurrency {
-		go func() {
-			defer wg.Done()
-			r := validate(svc, context.Background(), validConfig, nil)
-			assert.True(t, r.Valid)
-		}()
-	}
-
-	wg.Wait()
+	require.True(t, validate(svc, t.Context(), validConfig, left).Valid)
+	require.True(t, validate(svc, t.Context(), validConfig, right).Valid)
+	assert.Equal(t, 2, checks)
 }
 
 func TestValidationService_Validate_TempPathRewriteIsLocalToTheCheck(t *testing.T) {
