@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A `k8sResources` document carrying an unquoted RFC3339 timestamp no longer fails to render. YAML types the scalar as a timestamp, which has no JSON counterpart, so the value is restored to the string the Kubernetes API expects. The bundled ingress library emits one on the degraded-backend Event, and the failure surfaced as the admission webhook denying an Ingress whose Service did not exist yet.
+
 ### Added
 
 - New `haptic_controller_reinitializations_total` counts controller iteration restarts. A restart stops the leader-only components and rebuilds them from a freshly resolved configuration — measured at 54-65s on the bundled chart, dominated by the load gate — and nothing reaches the HAProxy pods until it finishes. Growth means the effective configuration keeps changing, most often a CRD appearing or disappearing.
