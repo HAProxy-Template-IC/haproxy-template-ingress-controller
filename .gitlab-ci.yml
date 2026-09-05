@@ -49,7 +49,7 @@ variables:
   # Toolchain versions and digests live in .gitlab/ci/build-pins.yml, which is
   # included above and is itself an input to the CI image tag.
   # renovate: datasource=docker depName=kindest/node
-  KIND_NODE_VERSION: "v1.36.1"
+  KIND_NODE_VERSION: "v1.37.0"
   # Container registry
   CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-haptic/haptic
   # Coverage packages (excludes generated code) - keep in sync with Makefile
