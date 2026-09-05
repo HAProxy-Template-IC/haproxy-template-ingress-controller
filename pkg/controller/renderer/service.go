@@ -1914,7 +1914,7 @@ func (s *RenderService) renderK8sResources(ctx context.Context, renderCtx map[st
 			if err != nil {
 				return fmt.Errorf("rendering k8sResources %s: %w", name, err)
 			}
-			if err := registerK8sResourceDocs(name, rendered, collector, s.config.K8sResources[name].CreateOnlyFields); err != nil {
+			if err := RegisterK8sResourceDocs(name, rendered, collector, s.config.K8sResources[name].CreateOnlyFields); err != nil {
 				return err
 			}
 		}
@@ -1928,15 +1928,15 @@ func (s *RenderService) renderK8sResources(ctx context.Context, renderCtx map[st
 			if err != nil {
 				return fmt.Errorf("rendering k8sResources %s: %w", name, err)
 			}
-			return registerK8sResourceDocs(name, rendered, collector, s.config.K8sResources[name].CreateOnlyFields)
+			return RegisterK8sResourceDocs(name, rendered, collector, s.config.K8sResources[name].CreateOnlyFields)
 		})
 	}
 	return g.Wait()
 }
 
-// registerK8sResourceDocs parses rendered YAML (one or more documents
+// RegisterK8sResourceDocs parses rendered YAML (one or more documents
 // separated by `---`), validates each, and adds it to the collector.
-func registerK8sResourceDocs(
+func RegisterK8sResourceDocs(
 	templateName, rendered string,
 	collector *templating.RenderedResourceCollector,
 	createOnlyFields []string,
@@ -1962,6 +1962,7 @@ func registerK8sResourceDocs(
 		if len(doc) == 0 {
 			continue
 		}
+		normalizeYAMLTimestamps(doc)
 		apiVersion, _ := doc["apiVersion"].(string)
 		kind, _ := doc["kind"].(string)
 		metadata, _ := doc["metadata"].(map[string]any)
@@ -1985,6 +1986,32 @@ func registerK8sResourceDocs(
 			return fmt.Errorf("k8sResources %s document %d: %w", templateName, docIdx, err)
 		}
 	}
+}
+
+// normalizeYAMLTimestamps rewrites the time.Time values yaml.v3 produces for
+// unquoted RFC3339 scalars back into strings, in place.
+//
+// A Kubernetes object is JSON-shaped and has no timestamp type, so a template
+// writing `lastTimestamp: 2026-01-01T00:00:00Z` means the string. Without this
+// the value reaches the immutable projection, which rejects it and turns a
+// legitimate object into an admission denial.
+//
+// Nano rather than plain RFC3339: it renders a whole second identically and
+// keeps a fraction the template wrote, instead of silently truncating it.
+func normalizeYAMLTimestamps(value any) any {
+	switch typed := value.(type) {
+	case time.Time:
+		return typed.Format(time.RFC3339Nano)
+	case map[string]any:
+		for key, nested := range typed {
+			typed[key] = normalizeYAMLTimestamps(nested)
+		}
+	case []any:
+		for i, nested := range typed {
+			typed[i] = normalizeYAMLTimestamps(nested)
+		}
+	}
+	return value
 }
 
 // renderAuxGroup renders one auxiliary-file group in parallel via g. For each

@@ -167,21 +167,9 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 		return RenderOutput{}, fmt.Errorf("rendering auxiliary files: %w", err)
 	}
 
-	// Render k8sResources templates using the worker-specific engine. These
-	// are surfaced into the test result so assertions can target them via
-	// `target: k8s:<template-name>` and the --dump-rendered flag can show
-	// them alongside haproxy.cfg / map files.
-	k8sResources := make(map[string]string, len(r.config.K8sResources))
-	for name := range r.config.K8sResources {
-		scopedCtx := templating.WithIncrementalScope(ctx, name)
-		rendered, err := engine.Render(scopedCtx, name, renderCtx)
-		if resourceErr := bctx.Err(ctx); resourceErr != nil {
-			return RenderOutput{}, resourceErr
-		}
-		if err != nil {
-			return RenderOutput{}, fmt.Errorf("rendering k8sResources %s: %w", name, err)
-		}
-		k8sResources[name] = rendered
+	k8sResources, err := r.renderK8sResources(ctx, engine, renderCtx, bctx)
+	if err != nil {
+		return RenderOutput{}, err
 	}
 	if err := coldRender.ValidateIncrementalCalls(); err != nil {
 		return RenderOutput{}, err
@@ -390,6 +378,48 @@ func collectEvents(renderCtx map[string]any) string {
 //   - Creates PathResolver from ValidationPaths (not from config.Dataplane)
 //   - Separates haproxy-pods store from resource stores
 //   - Accepts optional currentConfig for slot-aware server assignment testing
+//
+// renderK8sResources renders every `k8sResources` template and returns the
+// rendered text per template, which assertions reach via `target:
+// k8s:<template-name>` and --dump-rendered prints alongside haproxy.cfg.
+//
+// Each document also goes through the registration and validation the
+// controller performs, against one collector shared by every template exactly
+// as production shares it. Assertions only ever see the text, so without this a
+// document the controller rejects still passes every assertion and fails first
+// in a live cluster, as an admission denial.
+func (r *Runner) renderK8sResources(
+	ctx context.Context,
+	engine templating.Engine,
+	renderCtx map[string]any,
+	bctx *rendercontext.BuildResult,
+) (map[string]string, error) {
+	k8sResources := make(map[string]string, len(r.config.K8sResources))
+	collector := templating.NewRenderedResourceCollector()
+	for name := range r.config.K8sResources {
+		scopedCtx := templating.WithIncrementalScope(ctx, name)
+		rendered, err := engine.Render(scopedCtx, name, renderCtx)
+		if resourceErr := bctx.Err(ctx); resourceErr != nil {
+			return nil, resourceErr
+		}
+		if err != nil {
+			return nil, fmt.Errorf("rendering k8sResources %s: %w", name, err)
+		}
+		k8sResources[name] = rendered
+
+		if err := renderer.RegisterK8sResourceDocs(
+			name, rendered, collector,
+			r.config.K8sResources[name].CreateOnlyFields,
+		); err != nil {
+			return nil, err
+		}
+	}
+	if err := collector.Validate(); err != nil {
+		return nil, err
+	}
+	return k8sResources, nil
+}
+
 func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *renderplan.CurrentConfig, currentFiles map[string]string) *rendercontext.BuildResult {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
