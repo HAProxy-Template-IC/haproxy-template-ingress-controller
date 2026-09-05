@@ -30,12 +30,11 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 const (
@@ -72,51 +71,27 @@ type schedulerState struct {
 	deploymentTimedOut  bool
 	activeDeploymentID  string
 	activeCorrelationID string
+	activeOccurrence    *rendercycle.Occurrence
 	deploymentStartTime time.Time
 	pending             *scheduledDeployment
 }
 
-// scheduledDeployment represents a deployment that was triggered while another
-// deployment was in progress. Only the latest scheduled deployment is kept (latest wins).
-//
-// `contentChecksum` is captured at schedule-time (the hash of THIS scheduled
-// deployment's config+auxFiles). It MUST travel with the struct rather than
-// being re-read from `DeploymentScheduler.lastContentChecksum` at deploy-time
-// — otherwise a reconcile that lands between scheduleOrQueue and the actual
-// deploy publishes a new render with a different checksum, the scheduler
-// re-reads the now-newer value, threads that into DeploymentScheduledEvent,
-// and the deployer records it as "what was just deployed". The next
-// reconcile producing that same hash then matches `lastDeployedConfigHash`
-// and incorrectly skips deployment. The fix in commit
-// fix(deployer): cache pod's actual post-sync state (6d4d921e) addressed
-// the analogous race for the per-pod version cache; this field closes the
-// scheduler-side leg.
+// scheduledDeployment is the latest desired deployment waiting for the loop.
+// Its occurrence keeps every render-derived field bound to the scheduled run.
 type scheduledDeployment struct {
 	workRevision    uint64
 	retryGeneration uint64
-	config          string
-	auxFiles        *dataplane.AuxiliaryFiles
-	plan            *renderplan.Plan // Structure of THIS deployment's render — captured with `config`, same rule as contentChecksum
-	planID          string
+	occurrence      *rendercycle.Occurrence
 	endpoints       []dataplane.Endpoint
 	reason          string
-	correlationID   string                   // Correlation ID for event tracing
-	statusPatches   []templating.StatusPatch // Patches to forward to DeploymentScheduledEvent
-	coalescible     bool                     // Whether this deployment can be coalesced (skipped if newer available)
-	contentChecksum string                   // Hash of THIS deployment's config+aux — captured at schedule-time
+	correlationID   string
+	coalescible     bool
 }
 
-// acceptedRender is one render the render gate passed, kept so a later refusal
-// has somewhere to roll back to. Every field is captured together with the
-// config it belongs to, same rule as scheduledDeployment.contentChecksum.
+// acceptedRender is one exact occurrence the render gate passed.
 type acceptedRender struct {
-	config          string
-	auxFiles        *dataplane.AuxiliaryFiles
-	contentChecksum string
-	plan            *renderplan.Plan
-	planID          string
-	statusPatches   []templating.StatusPatch
-	correlationID   string
+	occurrence    *rendercycle.Occurrence
+	correlationID string
 }
 
 // DeploymentScheduler decides which render is deployed next, and when.
@@ -146,34 +121,23 @@ type DeploymentScheduler struct {
 	ctx                   context.Context // Main event loop context for scheduling
 
 	// State protected by mutex
-	mu                           sync.RWMutex
-	lastRenderedConfig           string                    // Last rendered HAProxy config (before validation)
-	lastAuxiliaryFiles           *dataplane.AuxiliaryFiles // Last rendered auxiliary files
-	lastContentChecksum          string                    // Pre-computed content checksum from pipeline
-	lastRenderedPlan             *renderplan.Plan          // Plan of the last rendered config
-	lastRenderedPlanID           string                    // Digest of lastRenderedPlan
-	lastRenderedStatusPatches    []templating.StatusPatch  // Patches of the last render — promoted with the config it belongs to
-	lastValidatedStatusPatches   []templating.StatusPatch  // Patches of the dispatched render — captured with it, forwarded to deploy events for StatusApplier
-	lastValidatedConfig          string                    // Last validated HAProxy config
-	lastValidatedAux             *dataplane.AuxiliaryFiles // Last validated auxiliary files
-	lastValidatedContentChecksum string                    // Hash captured WITH lastValidatedConfig — must travel together, never reconstructed
-	lastValidatedPlan            *renderplan.Plan          // Plan captured WITH lastValidatedConfig
-	lastValidatedPlanID          string                    // Digest of lastValidatedPlan
-	lastCorrelationID            string                    // Correlation ID from last validation event
-	lastCoalescible              bool                      // Coalescibility flag from last validation event
-	currentEndpoints             []dataplane.Endpoint      // Current HAProxy pod endpoints
-	hasValidConfig               bool                      // Whether we have a validated config to deploy
-	runtimeConfigName            string                    // Name of HAProxyCfg resource (set by ConfigPublishedEvent)
-	runtimeConfigNamespace       string                    // Namespace of HAProxyCfg resource (set by ConfigPublishedEvent)
-	templateConfigName           string                    // Name from ConfigValidatedEvent.TemplateConfig (for early runtimeConfigName computation)
-	templateConfigNamespace      string                    // Namespace from ConfigValidatedEvent.TemplateConfig
+	mu                      sync.RWMutex
+	lastRenderedOccurrence  *rendercycle.Occurrence
+	lastValidatedOccurrence *rendercycle.Occurrence
+	lastCorrelationID       string
+	lastCoalescible         bool
+	currentEndpoints        []dataplane.Endpoint
+	runtimeConfigName       string // Name of HAProxyCfg resource (set by ConfigPublishedEvent)
+	runtimeConfigNamespace  string // Namespace of HAProxyCfg resource (set by ConfigPublishedEvent)
+	templateConfigName      string // Name from ConfigValidatedEvent.TemplateConfig (for early runtimeConfigName computation)
+	templateConfigNamespace string // Namespace from ConfigValidatedEvent.TemplateConfig
 
 	// gatePinned holds every render until the render gate passes one. Set from
 	// RenderGateCompletedEvent; the gate itself owns the latch (ADR-0022).
 	gatePinned bool
 
 	// acceptedRender is the newest render the gate passed. A refusal rolls the
-	// lastValidated* fields back to it, so pod discovery, the validation
+	// validated occurrence back to it, so pod discovery, the validation
 	// fallback and the retry timers re-send the config HAProxy accepted rather
 	// than the one it just refused. Nil until the gate has passed a render.
 	acceptedRender *acceptedRender
@@ -186,13 +150,13 @@ type DeploymentScheduler struct {
 
 	// Fast deploy-failure retries requeue the last validated render through the
 	// normal scheduler. schedulerMutex protects the timer owner and retry budget.
-	retryTimer              *time.Timer
-	retryTimerDone          func()
-	retryCallbacks          sync.WaitGroup
-	retryGeneration         uint64
-	retryStopped            bool
-	deployFailureRetries    int
-	lastFailedRetryChecksum string
+	retryTimer           *time.Timer
+	retryTimerDone       func()
+	retryCallbacks       sync.WaitGroup
+	retryGeneration      uint64
+	retryStopped         bool
+	deployFailureRetries int
+	lastFailedRetry      *rendercycle.Occurrence
 
 	// lastPodSetHash is the endpoint authority set the last dispatch targeted.
 	// A change to it retires any in-flight deploy: its pods are not the fleet
@@ -200,20 +164,13 @@ type DeploymentScheduler struct {
 	lastPodSetHash string
 
 	// Cache for deployment optimization - skip if config unchanged
-	lastDeployedConfigHash string    // SHA-256 hash of last successfully deployed config
-	lastDeployedPodSetHash string    // Hash of endpoint authorities for the last deployment
-	lastDeployedTime       time.Time // When the last successful deployment occurred
+	lastDeployedOccurrence *rendercycle.Occurrence
+	lastDeployedPodSetHash string
+	lastDeployedTime       time.Time
 
-	// lastDispatchedConfigHash is the checksum of the last render whose
-	// deployment completed, whether it fully deployed or left reloads pending.
-	// The skip-unchanged gate may only fire when it equals
-	// lastDeployedConfigHash: a paced deploy advances this but not the "deployed"
-	// hash, so the fleet has moved off lastDeployedConfigHash while it still
-	// names an earlier full deploy. Content-addressed renders recur (an add and
-	// its delete hash to the same plan every churn cycle), so without this a
-	// recurring render whose checksum matches that stale hash is dismissed as
-	// unchanged and the fleet never reaches it.
-	lastDispatchedConfigHash string
+	// lastDispatchedOccurrence also advances for pending reloads. An unchanged
+	// skip is safe only while its output still matches lastDeployedOccurrence.
+	lastDispatchedOccurrence *rendercycle.Occurrence
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker

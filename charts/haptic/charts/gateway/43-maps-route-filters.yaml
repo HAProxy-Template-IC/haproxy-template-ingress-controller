@@ -9,510 +9,472 @@
 # route that needs it, and deleting it with the last, are both structural
 # changes to haproxy.cfg — the reload this machinery exists to avoid.
 templateSnippets:
-  util-gateway-route-maps:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
+  util-gateway-route-filter-bindings:
+    template: |-
+      {%- var GatewayRouteFilterProps = func() map[string]any {
+        var reqPath, reqErr = pathResolver.GetPath("gw-reqhdr.map", "map")
+        if reqErr != nil { fail(tostring(reqErr)) }
+        var resPath, resErr = pathResolver.GetPath("gw-reshdr.map", "map")
+        if resErr != nil { fail(tostring(resErr)) }
+        return map[string]any{
+          "reqPath": reqPath,
+          "resPath": resPath,
+          "mirrorTimeoutMs": extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000),
+          "mirrorRetries": extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0),
+        }
+      } -%}
+
+  util-gateway-http-route-filter-bindings:
+    template: |-
+      {%- import "util-gateway-route-filter-bindings" for GatewayRouteFilterProps -%}
+      {{- toJSON(map[string]any{"httproutes": GatewayRouteFilterProps()}) -}}
+
+  util-gateway-grpc-route-filter-bindings:
+    template: |-
+      {%- import "util-gateway-route-filter-bindings" for GatewayRouteFilterProps -%}
+      {{- toJSON(map[string]any{"grpcroutes": GatewayRouteFilterProps()}) -}}
+
+  util-publish-gateway-route-filter-maps:
+    requires: [grpcroutes, httproutes, services]
     template: |
-      {%- import "util-register-map" for RegisterMap -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
-      {{- render "util-gateway-analysis" -}}
-      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
-      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- macro PublishGatewayRouteFilterMaps(route any, routeKind string, routeProps map[string]any) -%}
       {%%
-        var ga = gaVal.(map[string]any)
-        var _, _ = shared.ComputeIfAbsent("gatewayRouteMaps", func() any {
-          var allRoutes = toSlice(ga["allRoutes"])
-          var out = map[string]any{}
-
-          // bucket -> lowercased header name -> the spelling the static line
-          // emits. Smallest spelling wins, so two routes disagreeing on case
-          // still share one line and the choice does not depend on route order.
-          var buckets = []string{
-            "req-rule-set", "req-rule-add", "req-rule-del",
-            "res-rule-set", "res-rule-add", "res-rule-del",
-            "req-be-set", "req-be-add", "req-be-del",
-            "res-be-set", "res-be-add", "res-be-del"}
-          var names = map[string]any{}
-          for _, b := range buckets {
-            names[b] = map[string]string{}
+        var namespace = dig_string(route, "", "metadata", "namespace")
+        var name = dig_string(route, "", "metadata", "name")
+        var routeKey = routeKind + "/" + namespace + "/" + name
+        var routeIndex, foundRoute = shared.Select("gateway-route-analysis", "routes", routeKey)
+        if !foundRoute { return }
+        var fixed = func(value int) string {
+          var encoded = tostring(value)
+          var zeroes = "0000000000"
+          if len(encoded) >= len(zeroes) { return encoded }
+          return zeroes[:len(zeroes)-len(encoded)] + encoded
+        }
+        var routeEntries = []any{}
+        for _, entryIDAny := range toSlice(dig(routeIndex, "entries")) {
+          var entry, foundEntry = shared.Select(
+            "gateway-route-analysis", "entries", tostring(entryIDAny))
+          if foundEntry { routeEntries = append(routeEntries, entry) }
+        }
+        routeEntries = sort_by(routeEntries, []string{"$.allRank"})
+        var entriesByRule = map[string]any{}
+        var ruleOrder = []string{}
+        for _, entry := range routeEntries {
+          var ruleKey = tostring(dig(entry, "ruleIdx") | fallback(0))
+          var entries, found = entriesByRule[ruleKey]
+          if !found {
+            entries = []any{}
+            ruleOrder = append(ruleOrder, ruleKey)
           }
-          var addName = func(bucket string, n string) {
-            var m = names[bucket].(map[string]string)
-            var lower = toLower(n)
-            var cur, seen = m[lower]
-            if !seen || n < cur {
-              m[lower] = n
-            }
+          entriesByRule[ruleKey] = append(entries.([]any), entry)
+        }
+        var nameOk = func(headerName string) bool {
+          return regex_search(headerName, "^[A-Za-z0-9!$&*+.^_~-]+$")
+        }
+        var hostOk = func(host string) bool {
+          return regex_search(toLower(host), "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$")
+        }
+        var normPrefix = func(path string) string {
+          if path == "" || path == "/" { return "" }
+          if hasSuffix(path, "/") { return path[:len(path)-1] }
+          return path
+        }
+        var redirectCodes = map[string]bool{
+          "301": true, "302": true, "303": true, "307": true, "308": true}
+        for _, ruleKey := range ruleOrder {
+          var entries = entriesByRule[ruleKey].([]any)
+          if len(entries) == 0 { continue }
+          var representative = entries[0]
+          var ruleIndex = toint(ruleKey)
+          var routeID = namespace + "_" + name + "_" + ruleKey
+          var representativeRank = dig_string(representative, "", "allRank")
+          var sequence = 0
+          var publishLine = func(cell string, line string) {
+            sequence++
+            _ = shared.PublishRanked(cell, routeKey + "/" + ruleKey + "/" + fixed(sequence),
+              representativeRank + "\x00" + fixed(sequence), line + "\n")
           }
-          // RFC 7230 token minus the characters that mean something to HAProxy
-          // where the name lands: '|' (the map key delimiter), '#' (a comment),
-          // '%' (a fetch), and the quotes its tokenizer pairs up.
-          var nameOk = func(n string) bool {
-            return regex_search(n, "^[A-Za-z0-9!$&*+.^_~-]+$")
+          var publishConfigLine = func(cell string, line string) {
+            sequence++
+            _ = shared.PublishRanked(cell, routeKey + "/" + ruleKey + "/" + fixed(sequence),
+              representativeRank + "\x00" + fixed(sequence), "\n" + line)
           }
-          var hostOk = func(h string) bool {
-            return regex_search(toLower(h), "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$")
-          }
-          // Gateway API treats "/foo/" and "/foo" as one prefix, and the
-          // remainder starts at the byte after the normalised form.
-          var normPrefix = func(p string) string {
-            if p == "" || p == "/" {
-              return ""
-            }
-            if hasSuffix(p, "/") {
-              return p[:len(p)-1]
-            }
-            return p
-          }
-
-          var reqEntries = []string{"# <rule_id>[|<backend>]|set|add|del|<header> -> URL-encoded value"}
-          var resEntries = []string{"# <rule_id>[|<backend>]|set|add|del|<header> -> URL-encoded value"}
-          var redirEntries = []string{"# <rule_id> -> code|scheme|host|port|pathmode|pfxlen|path"}
-          var rwEntries = []string{"# <rule_id> -> host|pathmode|pfxlen|path"}
-          var toEntries = []string{"# <rule_id> -> backend request timeout in ms"}
-          var mirEntries = []string{"# <rule_id> -> scheme|host:port|timeout_ms|retries;... (URL-encoded)"}
-          var mirPctEntries = []string{"# <rule_id> -> mirror sampling percentage"}
-          // Rules a single map value cannot describe keep a per-route line:
-          // prefix lengths per match, mirror targets per sampling percentage.
-          var pfxFallback = []any{}
-          var mirFallback = []any{}
-
-          // A rule matching several path prefixes has several prefix lengths and
-          // a map value carries one, so collect them before the filter loop.
-          var pfxLens = map[string]any{}
-          for _, ri := range allRoutes {
-            var rm = ri.(map[string]any)
-            var rid = tostring(rm["routeId"])
-            var lens map[string]bool
-            var have, ok = pfxLens[rid]
-            if ok {
-              lens = have.(map[string]bool)
+          var pathLens = map[string]bool{}
+          for _, entry := range entries {
+            if dig_string(entry, "", "pathType") != "PathPrefix" {
+              pathLens["none"] = true
             } else {
-              lens = map[string]bool{}
-              pfxLens[rid] = lens
+              pathLens[tostring(len(normPrefix(dig_string(entry, "", "pathValue"))))] = true
             }
-            if tostring(rm["pathType"]) != "PathPrefix" {
-              // An Exact or RegularExpression match has no prefix to strip;
-              // marking it takes the fallback rather than a wrong length.
-              lens["none"] = true
-              continue
-            }
-            lens[tostring(len(normPrefix(tostring(rm["pathValue"]))))] = true
           }
-          var multiPrefix = func(rid string) bool {
-            return len(pfxLens[rid].(map[string]bool)) > 1
-          }
-          // Only a rule that stored "M" needs the per-match lines; emitting them
-          // for any other multi-prefix rule would put a configuration line back
-          // on a route that has no path modifier at all.
-          var needsRuntimePrefix = map[string]bool{}
-
-          // The redirect codes Gateway API expresses and HAProxy's `redirect`
-          // accepts. The static block emits one line per code — HAProxy rejects an
-          // expression there — so the set is fixed rather than per-route.
-          var redirectCodes = map[string]bool{"301": true, "302": true, "303": true, "307": true, "308": true}
-
-          // `<mode>|<prefix length>|<path>`, shared by RequestRedirect and
-          // URLRewrite. "M" as the length defers to the per-match lines a rule
-          // matching several prefixes contributes.
-          var pathFields = func(pathMod any, rid string, rm map[string]any) map[string]any {
-            var pmode = ""
-            var pfxlen = "0"
+          var multiPrefix = len(pathLens) > 1
+          var needsRuntimePrefix = false
+          var pathFields = func(pathMod any, entry any) map[string]any {
+            var mode = ""
+            var prefixLength = "0"
             var newPath = ""
             if pathMod != nil {
-              var ptype = tostring(dig(pathMod, "type"))
-              if ptype == "ReplaceFullPath" {
-                pmode = "F"
-                newPath = tostring(dig(pathMod, "replaceFullPath") | fallback(""))
-              } else if ptype == "ReplacePrefixMatch" {
-                // The remainder is taken from the matched prefix's byte length,
-                // and a regex has no such length — Gateway API defines
-                // ReplacePrefixMatch against a PathPrefix match only.
-                if tostring(rm["pathType"]) == "RegularExpression" {
+              var pathType = dig_string(pathMod, "", "type")
+              if pathType == "ReplaceFullPath" {
+                mode = "F"
+                newPath = dig_string(pathMod, "", "replaceFullPath")
+              } else if pathType == "ReplacePrefixMatch" {
+                if dig_string(entry, "", "pathType") == "RegularExpression" {
                   return map[string]any{"bad": "regex", "packed": ""}
                 }
-                pmode = "P"
-                newPath = normPrefix(tostring(dig(pathMod, "replacePrefixMatch") | fallback("")))
-                pfxlen = tostring(len(normPrefix(tostring(rm["pathValue"]))))
-                if multiPrefix(rid) {
-                  pfxlen = "M"
-                  needsRuntimePrefix[rid] = true
+                mode = "P"
+                newPath = normPrefix(dig_string(pathMod, "", "replacePrefixMatch"))
+                prefixLength = tostring(len(normPrefix(dig_string(entry, "", "pathValue"))))
+                if multiPrefix {
+                  prefixLength = "M"
+                  needsRuntimePrefix = true
                 }
               }
             }
             var bad = ""
-            if newPath != "" && ConfigInjectionKind(newPath, "line") != "" {
-              bad = "cntrl"
-            }
+            if newPath != "" && ConfigInjectionKind(newPath, "line") != "" { bad = "cntrl" }
             return map[string]any{
               "bad": bad,
-              "packed": pmode + "|" + pfxlen + "|" + queryEscape(newPath),
+              "packed": mode + "|" + prefixLength + "|" + queryEscape(newPath),
             }
           }
-
-          var seen = map[string]bool{}
-          for _, ri := range allRoutes {
-            var rm = ri.(map[string]any)
-            var rid = tostring(rm["routeId"])
-            if seen[rid] {
-              continue
+          var rules = toSlice(dig(route, "spec", "rules"))
+          if ruleIndex < 0 || ruleIndex >= len(rules) { continue }
+          var rule = rules[ruleIndex]
+          var filters = toSlice(dig(rule, "filters"))
+          var backendRefs = toSlice(dig(rule, "backendRefs"))
+          var anySeen = map[string]bool{}
+          var publishHeaderName = func(bucket string, operation string, headerName string) {
+            var direction = "http-request"
+            var mapPath = dig_string(routeProps, "", "reqPath")
+            var keyExpr = "var(txn.gw_rule_id)"
+            if hasPrefix(bucket, "res-") {
+              direction = "http-response"
+              mapPath = dig_string(routeProps, "", "resPath")
             }
-            seen[rid] = true
-
-            var route = rm["route"]
-            var ruleIdx = toint(rm["ruleIdx"])
-            var routeKey = tostring(dig(route, "metadata", "namespace")) + "/" + tostring(dig(route, "metadata", "name"))
-            var routeNs = tostring(dig(route, "metadata", "namespace"))
-            var isHTTP = false
-            var ruleAny any = nil
-            var filters = []any{}
-            var backendRefs = []any{}
-            // rm["route"], not the `route` local: a typed value copied into an
-            // any-typed variable loses its dynamic type for a Scriggo type switch.
-            switch r := rm["route"].(type) {
-            case *resources.httproutes.T:
-              isHTTP = true
-              if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
-                ruleAny = r.Spec.Rules[ruleIdx]
-                for _, f := range r.Spec.Rules[ruleIdx].Filters {
-                  filters = append(filters, f)
-                }
-                for _, b := range r.Spec.Rules[ruleIdx].BackendRefs {
-                  backendRefs = append(backendRefs, b)
-                }
-              }
-            case *resources.grpcroutes.T:
-              if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
-                ruleAny = r.Spec.Rules[ruleIdx]
-                for _, f := range r.Spec.Rules[ruleIdx].Filters {
-                  filters = append(filters, f)
-                }
-                for _, b := range r.Spec.Rules[ruleIdx].BackendRefs {
-                  backendRefs = append(backendRefs, b)
-                }
+            if hasSuffix(bucket, "-be") {
+              keyExpr = "var(txn.gw_rule_id),concat(|,txn.backend_name,)"
+            }
+            var lower = toLower(headerName)
+            var line = ""
+            if operation == "del" {
+              line = "\n" + direction + " del-header " + headerName + " if { " + keyExpr +
+                ",concat(|del|" + lower + "),map(" + mapPath + ") -m found }"
+            } else {
+              var key = keyExpr + ",concat(|" + operation + "|" + lower + ")"
+              var directive = "set-header"
+              if operation == "add" { directive = "add-header" }
+              line = "\n" + direction + " " + directive + " " + headerName + " %[" + key +
+                ",map(" + mapPath + "),url_dec(1)] if { " + key + ",map(" + mapPath + ") -m found }"
+            }
+            _ = shared.PublishRanked("cfg-" + bucket + "-" + operation, lower,
+              lower + "\x00" + headerName, line)
+          }
+          var publishModifiers = func(mod any, keyPrefix string, bucket string) {
+            if mod == nil { return }
+            var markAny = func() {
+              var key = routeID + "|" + bucket[:3]
+              if !anySeen[key] {
+                anySeen[key] = true
+                publishLine(bucket[:3], routeID + "|any 1")
               }
             }
-
-            // One `<rule_id>|any` entry per direction, however many headers the
-            // rule touches: it exists so the debug marker costs one static line
-            // rather than one per header name, and a duplicate map line is noise
-            // in every runtime diff of that map.
-            var anySeen = map[string]bool{}
-            var modLines = func(mod any, keyPrefix string, bucketBase string) []string {
-              var lines = []string{}
-              if mod == nil {
-                return lines
-              }
-              var markAny = func() {
-                var key = rid + "|" + bucketBase[:3]
-                if !anySeen[key] {
-                  anySeen[key] = true
-                  lines = append(lines, rid + "|any 1")
-                }
-              }
-              for _, op := range []string{"set", "add"} {
-                for _, h := range toSlice(dig(mod, op)) {
-                  var hn = tostring(dig(h, "name"))
-                  var hv = tostring(dig(h, "value"))
-                  if !nameOk(hn) {
-                    _ = WebhookRejectOrWarn(route, "InvalidHeaderModifier", "Gateway route " + routeKey + " modifies header '" + hn + "', which is not an HTTP token; the header is not applied. Use letters, digits and -._~!$&*+^.")
-                    continue
-                  }
-                  var inj = ConfigInjectionKind(hv, "line")
-                  if inj != "" {
-                    _ = WebhookRejectOrWarn(route, "InvalidHeaderModifier", "Gateway route " + routeKey + " sets header '" + hn + "' to a value containing " + inj + ", which would inject a header break at request time; the header is not applied. Remove control characters from the value.")
-                    continue
-                  }
-                  addName(bucketBase + "-" + op, hn)
-                  markAny()
-                  lines = append(lines, keyPrefix + "|" + op + "|" + toLower(hn) + " " + queryEscape(hv))
-                }
-              }
-              for _, h := range toSlice(dig(mod, "remove")) {
-                var hn = tostring(h)
-                if !nameOk(hn) {
-                  _ = WebhookRejectOrWarn(route, "InvalidHeaderModifier", "Gateway route " + routeKey + " removes header '" + hn + "', which is not an HTTP token; the removal is not applied. Use letters, digits and -._~!$&*+^.")
+            for _, operation := range []string{"set", "add"} {
+              for _, header := range toSlice(dig(mod, operation)) {
+                var headerName = dig_string(header, "", "name")
+                var headerValue = dig_string(header, "", "value")
+                if !nameOk(headerName) {
+                  _ = WebhookRejectOrWarn(route, "InvalidHeaderModifier", "Gateway route " + namespace + "/" + name + " modifies header '" + headerName + "', which is not an HTTP token; the header is not applied. Use letters, digits and -._~!$&*+^.")
                   continue
                 }
-                addName(bucketBase + "-del", hn)
+                var injection = ConfigInjectionKind(headerValue, "line")
+                if injection != "" {
+                  _ = WebhookRejectOrWarn(route, "InvalidHeaderModifier", "Gateway route " + namespace + "/" + name + " sets header '" + headerName + "' to a value containing " + injection + ", which would inject a header break at request time; the header is not applied. Remove control characters from the value.")
+                  continue
+                }
                 markAny()
-                lines = append(lines, keyPrefix + "|del|" + toLower(hn) + " 1")
-              }
-              return lines
-            }
-
-            var mirrorTargets = []any{}
-            var mirrorPcts = map[string]bool{}
-
-            for _, f := range filters {
-              var ft = tostring(dig(f, "type"))
-              if ft == "RequestHeaderModifier" {
-                for _, l := range modLines(dig(f, "requestHeaderModifier"), rid, "req-rule") {
-                  reqEntries = append(reqEntries, l)
-                }
-              } else if ft == "ResponseHeaderModifier" {
-                for _, l := range modLines(dig(f, "responseHeaderModifier"), rid, "res-rule") {
-                  resEntries = append(resEntries, l)
-                }
-              } else if ft == "RequestRedirect" && isHTTP {
-                var redir = dig(f, "requestRedirect")
-                if redir == nil {
-                  continue
-                }
-                var code = toint(dig(redir, "statusCode") | fallback(302))
-                if !redirectCodes[tostring(code)] {
-                  _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + routeKey + " RequestRedirect statusCode is " + tostring(code) + "; the redirect is not applied. Use 301, 302, 303, 307 or 308.")
-                  continue
-                }
-                var scheme = tostring(dig(redir, "scheme") | fallback(""))
-                if scheme != "" && scheme != "http" && scheme != "https" {
-                  _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + routeKey + " RequestRedirect scheme is '" + scheme + "'; the redirect is not applied. Use http or https.")
-                  continue
-                }
-                var host = tostring(dig(redir, "hostname") | fallback(""))
-                if host != "" && !hostOk(host) {
-                  _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + routeKey + " RequestRedirect hostname '" + host + "' is not a DNS name; the redirect is not applied. Use letters, digits, '-' and '.'.")
-                  continue
-                }
-                var portStr = tostring(dig(redir, "port") | fallback(""))
-                if portStr != "" && (toint(portStr) < 1 || toint(portStr) > 65535) {
-                  _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + routeKey + " RequestRedirect port " + portStr + " is outside 1-65535; the redirect is not applied.")
-                  continue
-                }
-                // Spec: Location omits the port when the resulting (scheme, port)
-                // is (http,80) or (https,443); with both unset it is the Gateway
-                // listener's own port, which only the request knows — sentinel "L".
-                var portPart = ""
-                if portStr == "" && scheme == "" {
-                  portPart = "L"
-                } else if portStr != "" {
-                  var isDefault = (portStr == "80" && (scheme == "" || scheme == "http")) ||
-                    (portStr == "443" && (scheme == "" || scheme == "https"))
-                  if !isDefault {
-                    portPart = ":" + portStr
-                  }
-                }
-                var pathSpec = pathFields(dig(redir, "path"), rid, rm)
-                if tostring(pathSpec | dig("bad")) == "cntrl" {
-                  _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + routeKey + " RequestRedirect path contains a control character, which would break the redirect target; the redirect is not applied.")
-                  continue
-                }
-                if tostring(pathSpec | dig("bad")) == "regex" {
-                  _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + routeKey + " uses RequestRedirect ReplacePrefixMatch on a RegularExpression path match, which has no prefix to replace; the redirect is not applied. Match on a PathPrefix, or use ReplaceFullPath.")
-                  continue
-                }
-                redirEntries = append(redirEntries, rid + " " + tostring(code) + "|" + scheme + "|" +
-                  queryEscape(host) + "|" + portPart + "|" + tostring(pathSpec | dig("packed")))
-              } else if ft == "URLRewrite" && isHTTP {
-                var rw = dig(f, "urlRewrite")
-                if rw == nil {
-                  continue
-                }
-                var host = tostring(dig(rw, "hostname") | fallback(""))
-                if host != "" && !hostOk(host) {
-                  _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + routeKey + " URLRewrite hostname '" + host + "' is not a DNS name; the rewrite is not applied. Use letters, digits, '-' and '.'.")
-                  continue
-                }
-                var pathSpec = pathFields(dig(rw, "path"), rid, rm)
-                if tostring(pathSpec | dig("bad")) == "cntrl" {
-                  _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + routeKey + " URLRewrite path contains a control character, which would break the rewritten path; the rewrite is not applied.")
-                  continue
-                }
-                if tostring(pathSpec | dig("bad")) == "regex" {
-                  _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + routeKey + " uses URLRewrite ReplacePrefixMatch on a RegularExpression path match, which has no prefix to replace; the rewrite is not applied. Match on a PathPrefix, or use ReplaceFullPath.")
-                  continue
-                }
-                rwEntries = append(rwEntries, rid + " " + queryEscape(host) + "|" + tostring(pathSpec | dig("packed")))
-              } else if ft == "RequestMirror" {
-                var mirror = dig(f, "requestMirror")
-                var backendRef = dig(mirror, "backendRef")
-                var bName = dig_string(backendRef, "", "name")
-                if bName == "" {
-                  continue
-                }
-                var bNs = tostring(dig(backendRef, "namespace") | fallback(routeNs))
-                var bPort = toint(dig(backendRef, "port") | fallback(80))
-                if bPort < 1 || bPort > 65535 {
-                  _ = WebhookRejectOrWarn(route, "InvalidRequestMirror", "Gateway route " + routeKey + " mirrors to port " + tostring(bPort) + ", outside 1-65535; the mirror is not applied.")
-                  continue
-                }
-                // Service DNS, not pod IPs: mirror dispatch is fire-and-forget,
-                // so an individual endpoint failure must not affect the request.
-                var target = bName + "." + bNs + ".svc.cluster.local"
-                if !hostOk(target) {
-                  _ = WebhookRejectOrWarn(route, "InvalidRequestMirror", "Gateway route " + routeKey + " mirrors to '" + bNs + "/" + bName + "', which is not a DNS name; the mirror is not applied.")
-                  continue
-                }
-                // Mirror dispatch does not validate TLS certs (plugin default
-                // `verify_tls = false`).
-                var bScheme = "http"
-                var svc = resources.services.GetSingle(bNs, bName)
-                if svc != nil {
-                  for _, p := range svc.Spec.Ports {
-                    if toint(p.Port) == bPort &&
-                      (p.AppProtocol == "https" || p.AppProtocol == "kubernetes.io/https" || p.Name == "https") {
-                      bScheme = "https"
-                    }
-                  }
-                }
-                var percent = 100
-                var pct = dig(mirror, "percent")
-                if pct != nil {
-                  percent = toint(pct)
-                } else {
-                  var frac = dig(mirror, "fraction")
-                  if frac != nil {
-                    var den = toint(dig(frac, "denominator") | fallback(100))
-                    if den > 0 {
-                      percent = (toint(dig(frac, "numerator") | fallback(0)) * 100) / den
-                    }
-                  }
-                }
-                if percent < 0 || percent > 100 {
-                  _ = WebhookRejectOrWarn(route, "InvalidRequestMirror", "Gateway route " + routeKey + " mirrors " + tostring(percent) + "% of requests, outside 0-100; the mirror is not applied.")
-                  continue
-                }
-                var timeoutMs = toint(extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000))
-                var retriesCount = toint(extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0))
-                mirrorTargets = append(mirrorTargets, map[string]any{
-                  "entry": bScheme + "|" + target + ":" + tostring(bPort) + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount),
-                  "pct": percent})
-                mirrorPcts[tostring(percent)] = true
+                publishHeaderName(bucket, operation, headerName)
+                publishLine(bucket[:3], keyPrefix + "|" + operation + "|" +
+                  toLower(headerName) + " " + queryEscape(headerValue))
               }
             }
-
-            if len(mirrorTargets) > 0 {
-              var maxPct = 0
-              for _, t := range mirrorTargets {
-                if toint(t | dig("pct")) > maxPct {
-                  maxPct = toint(t | dig("pct"))
-                }
-              }
-              // Every mirroring rule lands here, fallbacks included: the
-              // request-buffering gate keys off this map, and a fallback rule
-              // has no entry in gw-mirror.map to key off.
-              mirPctEntries = append(mirPctEntries, rid + " " + tostring(maxPct))
-              if len(mirrorPcts) > 1 {
-                // One map value carries one percentage, so a rule whose mirrors
-                // disagree keeps a per-target line with its own rand() draw.
-                for _, t := range mirrorTargets {
-                  mirFallback = append(mirFallback,
-                    map[string]any{"rid": rid, "entry": tostring(t | dig("entry")), "pct": toint(t | dig("pct"))})
-                }
-              } else {
-                var packed = []string{}
-                for _, t := range mirrorTargets {
-                  packed = append(packed, tostring(t | dig("entry")))
-                }
-                mirEntries = append(mirEntries, rid + " " + queryEscape(join(packed, ";") + ";"))
-              }
-            }
-
-            // GEP-1742. `request` covers the whole client-facing exchange and
-            // `backendRequest` a single try; HAProxy has one server timeout, so
-            // the wider one wins where both are set.
-            var tval = dig_string(ruleAny, "", "timeouts", "request")
-            if tval == "" || tval == "0s" {
-              tval = dig_string(ruleAny, "", "timeouts", "backendRequest")
-            }
-            if tval != "" && tval != "0s" {
-              var d, dErr = parseDuration(tval)
-              if dErr != nil {
-                _ = WebhookRejectOrWarn(route, "InvalidTimeout", "Gateway route " + routeKey + " sets timeout '" + tval + "', which is not a duration; the timeout is not applied. Use a value like 30s or 1m30s.")
-              } else if toint(d.Milliseconds()) <= 0 {
-                _ = WebhookRejectOrWarn(route, "InvalidTimeout", "Gateway route " + routeKey + " sets timeout '" + tval + "', which is under a millisecond; the timeout is not applied.")
-              } else {
-                toEntries = append(toEntries, rid + " " + tostring(toint(d.Milliseconds())))
-              }
-            }
-
-            for _, br := range backendRefs {
-              var beFilters = toSlice(dig(br, "filters"))
-              if len(beFilters) == 0 {
+            for _, headerAny := range toSlice(dig(mod, "remove")) {
+              var headerName = tostring(headerAny)
+              if !nameOk(headerName) {
+                _ = WebhookRejectOrWarn(route, "InvalidHeaderModifier", "Gateway route " + namespace + "/" + name + " removes header '" + headerName + "', which is not an HTTP token; the removal is not applied. Use letters, digits and -._~!$&*+^.")
                 continue
               }
-              var beKey = rid + "|" + BackendNameGateway(route, br)
-              for _, bf := range beFilters {
-                var bt = tostring(dig(bf, "type"))
-                if bt == "RequestHeaderModifier" {
-                  for _, l := range modLines(dig(bf, "requestHeaderModifier"), beKey, "req-be") {
-                    reqEntries = append(reqEntries, l)
-                  }
-                } else if bt == "ResponseHeaderModifier" {
-                  for _, l := range modLines(dig(bf, "responseHeaderModifier"), beKey, "res-be") {
-                    resEntries = append(resEntries, l)
+              markAny()
+              publishHeaderName(bucket, "del", headerName)
+              publishLine(bucket[:3], keyPrefix + "|del|" + toLower(headerName) + " 1")
+            }
+          }
+          var mirrorTargets = []any{}
+          var mirrorPercentages = map[string]bool{}
+          for _, filter := range filters {
+            var filterType = dig_string(filter, "", "type")
+            if filterType == "RequestHeaderModifier" {
+              publishModifiers(dig(filter, "requestHeaderModifier"), routeID, "req-rule")
+            } else if filterType == "ResponseHeaderModifier" {
+              publishModifiers(dig(filter, "responseHeaderModifier"), routeID, "res-rule")
+            } else if filterType == "RequestRedirect" && routeKind == "HTTPRoute" {
+              var redirect = dig(filter, "requestRedirect")
+              if redirect == nil { continue }
+              var code = toint(dig(redirect, "statusCode") | fallback(302))
+              if !redirectCodes[tostring(code)] {
+                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect statusCode is " + tostring(code) + "; the redirect is not applied. Use 301, 302, 303, 307 or 308.")
+                continue
+              }
+              var scheme = dig_string(redirect, "", "scheme")
+              if scheme != "" && scheme != "http" && scheme != "https" {
+                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect scheme is '" + scheme + "'; the redirect is not applied. Use http or https.")
+                continue
+              }
+              var host = dig_string(redirect, "", "hostname")
+              if host != "" && !hostOk(host) {
+                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect hostname '" + host + "' is not a DNS name; the redirect is not applied. Use letters, digits, '-' and '.'.")
+                continue
+              }
+              var port = dig_string(redirect, "", "port")
+              if port != "" && (toint(port) < 1 || toint(port) > 65535) {
+                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect port " + port + " is outside 1-65535; the redirect is not applied.")
+                continue
+              }
+              var portPart = ""
+              if port == "" && scheme == "" {
+                portPart = "L"
+              } else if port != "" {
+                var isDefault = (port == "80" && (scheme == "" || scheme == "http")) ||
+                  (port == "443" && (scheme == "" || scheme == "https"))
+                if !isDefault { portPart = ":" + port }
+              }
+              var pathSpec = pathFields(dig(redirect, "path"), representative)
+              if dig_string(pathSpec, "", "bad") == "cntrl" {
+                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect path contains a control character, which would break the redirect target; the redirect is not applied.")
+                continue
+              }
+              if dig_string(pathSpec, "", "bad") == "regex" {
+                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " uses RequestRedirect ReplacePrefixMatch on a RegularExpression path match, which has no prefix to replace; the redirect is not applied. Match on a PathPrefix, or use ReplaceFullPath.")
+                continue
+              }
+              publishLine("redirect", routeID + " " + tostring(code) + "|" + scheme + "|" +
+                queryEscape(host) + "|" + portPart + "|" + dig_string(pathSpec, "", "packed"))
+            } else if filterType == "URLRewrite" && routeKind == "HTTPRoute" {
+              var rewrite = dig(filter, "urlRewrite")
+              if rewrite == nil { continue }
+              var host = dig_string(rewrite, "", "hostname")
+              if host != "" && !hostOk(host) {
+                _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + namespace + "/" + name + " URLRewrite hostname '" + host + "' is not a DNS name; the rewrite is not applied. Use letters, digits, '-' and '.'.")
+                continue
+              }
+              var pathSpec = pathFields(dig(rewrite, "path"), representative)
+              if dig_string(pathSpec, "", "bad") == "cntrl" {
+                _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + namespace + "/" + name + " URLRewrite path contains a control character, which would break the rewritten path; the rewrite is not applied.")
+                continue
+              }
+              if dig_string(pathSpec, "", "bad") == "regex" {
+                _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + namespace + "/" + name + " uses URLRewrite ReplacePrefixMatch on a RegularExpression path match, which has no prefix to replace; the rewrite is not applied. Match on a PathPrefix, or use ReplaceFullPath.")
+                continue
+              }
+              publishLine("urlrewrite", routeID + " " + queryEscape(host) + "|" +
+                dig_string(pathSpec, "", "packed"))
+            } else if filterType == "RequestMirror" {
+              var mirror = dig(filter, "requestMirror")
+              var backendRef = dig(mirror, "backendRef")
+              var backendName = dig_string(backendRef, "", "name")
+              if backendName == "" { continue }
+              var backendNamespace = dig_string(backendRef, namespace, "namespace")
+              if backendNamespace == "" { backendNamespace = namespace }
+              var backendPort = toint(dig(backendRef, "port") | fallback(80))
+              if backendPort < 1 || backendPort > 65535 {
+                _ = WebhookRejectOrWarn(route, "InvalidRequestMirror", "Gateway route " + namespace + "/" + name + " mirrors to port " + tostring(backendPort) + ", outside 1-65535; the mirror is not applied.")
+                continue
+              }
+              var target = backendName + "." + backendNamespace + ".svc.cluster.local"
+              if !hostOk(target) {
+                _ = WebhookRejectOrWarn(route, "InvalidRequestMirror", "Gateway route " + namespace + "/" + name + " mirrors to '" + backendNamespace + "/" + backendName + "', which is not a DNS name; the mirror is not applied.")
+                continue
+              }
+              var scheme = "http"
+              var service = resources.services.GetSingle(backendNamespace, backendName)
+              if service != nil {
+                for _, servicePort := range service.Spec.Ports {
+                  if toint(servicePort.Port) == backendPort &&
+                    (servicePort.AppProtocol == "https" || servicePort.AppProtocol == "kubernetes.io/https" || servicePort.Name == "https") {
+                    scheme = "https"
                   }
                 }
               }
+              var percentage = 100
+              var configuredPercent = dig(mirror, "percent")
+              if configuredPercent != nil {
+                percentage = toint(configuredPercent)
+              } else if dig(mirror, "fraction") != nil {
+                var fraction = dig(mirror, "fraction")
+                var denominator = toint(dig(fraction, "denominator") | fallback(100))
+                if denominator > 0 {
+                  percentage = (toint(dig(fraction, "numerator") | fallback(0)) * 100) / denominator
+                }
+              }
+              if percentage < 0 || percentage > 100 {
+                _ = WebhookRejectOrWarn(route, "InvalidRequestMirror", "Gateway route " + namespace + "/" + name + " mirrors " + tostring(percentage) + "% of requests, outside 0-100; the mirror is not applied.")
+                continue
+              }
+              mirrorTargets = append(mirrorTargets, map[string]any{
+                "entry": scheme + "|" + target + ":" + tostring(backendPort) + "|" +
+                  dig_string(routeProps, "2000", "mirrorTimeoutMs") + "|" +
+                  dig_string(routeProps, "0", "mirrorRetries"),
+                "percentage": percentage,
+              })
+              mirrorPercentages[tostring(percentage)] = true
             }
           }
+          if len(mirrorTargets) > 0 {
+            var maxPercentage = 0
+            for _, target := range mirrorTargets {
+              var percentage = toint(dig(target, "percentage") | fallback(0))
+              if percentage > maxPercentage { maxPercentage = percentage }
+            }
+            publishLine("mirror-pct", routeID + " " + tostring(maxPercentage))
+            if len(mirrorPercentages) > 1 {
+              for _, target := range mirrorTargets {
+                var percentage = toint(dig(target, "percentage") | fallback(0))
+                var sampleCondition = ""
+                if percentage < 100 {
+                  sampleCondition = " { rand(100) -m int lt " + tostring(percentage) + " }"
+                }
+                publishConfigLine("cfg-mirror-fallback", "http-request set-var(txn.gw_mirror_targets) str(" +
+                  dig_string(target, "", "entry") + ";),concat(,txn.gw_mirror_targets,) if { var(txn.gw_rule_id) -m str \"" +
+                  routeID + "\" }" + sampleCondition)
+              }
+            } else {
+              var packed = []string{}
+              for _, target := range mirrorTargets {
+                packed = append(packed, dig_string(target, "", "entry"))
+              }
+              publishLine("mirror", routeID + " " + queryEscape(join(packed, ";") + ";"))
+            }
+          }
+          var timeout = dig_string(rule, "", "timeouts", "request")
+          if timeout == "" || timeout == "0s" {
+            timeout = dig_string(rule, "", "timeouts", "backendRequest")
+          }
+          if timeout != "" && timeout != "0s" {
+            var duration, durationErr = parseDuration(timeout)
+            if durationErr != nil {
+              _ = WebhookRejectOrWarn(route, "InvalidTimeout", "Gateway route " + namespace + "/" + name + " sets timeout '" + timeout + "', which is not a duration; the timeout is not applied. Use a value like 30s or 1m30s.")
+            } else if toint(duration.Milliseconds()) <= 0 {
+              _ = WebhookRejectOrWarn(route, "InvalidTimeout", "Gateway route " + namespace + "/" + name + " sets timeout '" + timeout + "', which is under a millisecond; the timeout is not applied.")
+            } else {
+              publishLine("timeout", routeID + " " + tostring(toint(duration.Milliseconds())))
+            }
+          }
+          for _, backendRef := range backendRefs {
+            if len(toSlice(dig(backendRef, "filters"))) == 0 { continue }
+            var backendKey = routeID + "|" + BackendNameGateway(route, backendRef)
+            for _, filter := range toSlice(dig(backendRef, "filters")) {
+              var filterType = dig_string(filter, "", "type")
+              if filterType == "RequestHeaderModifier" {
+                publishModifiers(dig(filter, "requestHeaderModifier"), backendKey, "req-be")
+              } else if filterType == "ResponseHeaderModifier" {
+                publishModifiers(dig(filter, "responseHeaderModifier"), backendKey, "res-be")
+              }
+            }
+          }
+          if needsRuntimePrefix {
+            var seenPaths = map[string]bool{}
+            for _, entry := range entries {
+              var pathType = dig_string(entry, "", "pathType")
+              if pathType != "PathPrefix" && pathType != "Exact" { continue }
+              var pathValue = dig_string(entry, "", "pathValue")
+              if pathType == "PathPrefix" { pathValue = normPrefix(pathValue) }
+              if seenPaths[pathType + "\x00" + pathValue] { continue }
+              seenPaths[pathType + "\x00" + pathValue] = true
+              var injection = ConfigInjectionKind(pathValue, "dquote")
+              if injection != "" {
+                _ = WebhookRejectOrWarn(route, "InvalidPath", "HTTPRoute " + namespace + "/" + name + " has a path match containing " + injection + ", which cannot be written to the prefix-length rule; that match keeps the original path. Remove double quotes and control characters from the path.")
+                continue
+              }
+              var condition = "{ path -m reg \"^" + sanitize_regex(pathValue) + "(/|\\$)\" }"
+              if pathType == "Exact" { condition = "{ path -m str \"" + pathValue + "\" }" }
+              _ = shared.PublishRanked("cfg-prefix-fallback", routeID + "|" + pathType + "|" + pathValue,
+                fixed(len(pathValue)) + "\x00" + routeID + "\x00" + dig_string(entry, "", "allRank"),
+                "\nhttp-request set-var(txn.gw_pfxlen) int(" + tostring(len(pathValue)) +
+                  ") if { var(txn.gw_rule_id) -m str \"" + routeID + "\" } " + condition)
+            }
+          }
+        }
+      %%}
+      {%- end macro -%}
 
-          var pfxSeen = map[string]bool{}
-          for _, ri := range allRoutes {
-            var rm = ri.(map[string]any)
-            var rid = tostring(rm["routeId"])
-            if !needsRuntimePrefix[rid] {
-              continue
-            }
-            var ptype = tostring(rm["pathType"])
-            if ptype != "PathPrefix" && ptype != "Exact" {
-              continue
-            }
-            var np = tostring(rm["pathValue"])
-            if ptype == "PathPrefix" {
-              np = normPrefix(np)
-            }
-            // The value lands inside a double-quoted ACL. sanitize_regex escapes
-            // the regex metacharacters but not a quote or a control character,
-            // and the routing map's own guard lets a quote through.
-            var inj = ConfigInjectionKind(np, "dquote")
-            if inj != "" {
-              _ = WebhookRejectOrWarn(rm["route"], "InvalidPath", "HTTPRoute " + tostring(dig(rm["route"], "metadata", "namespace")) + "/" + tostring(dig(rm["route"], "metadata", "name")) + " has a path match containing " + inj + ", which cannot be written to the prefix-length rule; that match keeps the original path. Remove double quotes and control characters from the path.")
-              continue
-            }
-            // allRoutes carries one entry per (rule, match, hostname), so the same
-            // prefix arrives once per hostname.
-            if pfxSeen[rid + "|" + np] {
-              continue
-            }
-            pfxSeen[rid + "|" + np] = true
-            var cond = "{ path -m reg \"^" + sanitize_regex(np) + "(/|\\$)\" }"
-            if ptype == "Exact" {
-              cond = "{ path -m str \"" + np + "\" }"
-            }
-            pfxFallback = append(pfxFallback,
-              map[string]any{"len": len(np), "rid": rid, "cond": cond})
-          }
-          // Ascending length, so the longest prefix is set last and wins — the
-          // Gateway API precedence a first-match-wins chain gave.
-          var sortedPfx, pfxErr = sort_by(pfxFallback, []string{"$.len", "$.rid"})
-          if pfxErr != nil {
-            fail("failed to sort the gateway prefix-length fallback: " + tostring(pfxErr))
-          }
+  gateway-route-filter-maps-100-http:
+    requires: [grpcroutes, httproutes, services]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-http-route-filter-bindings" -}}'
+      root: gateway-http-route-post-analysis
+      group: gateway-route-filter-maps
+      consumes: [gateway-route-analysis]
+      effects: [publishValue, recordEvent]
+    template: |
+      {%- import "util-publish-gateway-route-filter-maps" for PublishGatewayRouteFilterMaps -%}
+      {{- PublishGatewayRouteFilterMaps(item, "HTTPRoute", props) -}}
 
-          for _, b := range buckets {
-            var m = names[b].(map[string]string)
-            var lowered = []any{}
-            for _, k := range keys(m) {
-              lowered = append(lowered, k)
-            }
-            var display = []string{}
-            for _, k := range sort_strings(lowered) {
-              display = append(display, m[k])
-            }
-            out[b] = display
+  gateway-route-filter-maps-200-grpc:
+    requires: [grpcroutes, httproutes, services]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-grpc-route-filter-bindings" -}}'
+      group: gateway-route-filter-maps
+      consumes: [gateway-route-analysis]
+      effects: [publishValue, recordEvent]
+    template: |
+      {%- import "util-publish-gateway-route-filter-maps" for PublishGatewayRouteFilterMaps -%}
+      {{- PublishGatewayRouteFilterMaps(item, "GRPCRoute", props) -}}
+
+  util-gateway-route-filter-publications:
+    requires: [gateways, grpcroutes, httproutes]
+    template: |-
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "map-hostvalues-490-gateway-port-scopes" -}}
+      {{- render "gateway-route-candidates-100-http" -}}
+      {{- render "gateway-route-candidates-200-grpc" -}}
+      {{- render "gateway-route-analysis-100-http" -}}
+      {{- render "gateway-route-analysis-200-grpc" -}}
+      {{- render "gateway-route-filter-maps-100-http" -}}
+      {{- render "gateway-route-filter-maps-200-grpc" -}}
+
+  util-register-gateway-route-map:
+    template: |-
+      {%- macro RegisterGatewayRouteMap(name string, header string, cell string) string -%}
+      {%%
+        var content = header + "\n" + incremental_ranked_fragments("gateway-route-filter-maps", cell)
+        var path, registerErr = fileRegistry.Register("map", name, content)
+        if registerErr != nil { fail(tostring(registerErr)) }
+        var metadataErr = planRegistry.MapMeta(name, false)
+        if metadataErr != nil { fail(tostring(metadataErr)) }
+        show path
+      %%}
+      {%- end macro -%}
+
+  util-gateway-route-maps:
+    requires: [gateways, grpcroutes, httproutes]
+    template: |-
+      {%- import "util-register-gateway-route-map" for RegisterGatewayRouteMap -%}
+      {{- render "util-gateway-route-filter-publications" -}}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("gatewayRouteMaps", func() any {
+          return map[string]any{
+            "reqPath": RegisterGatewayRouteMap("gw-reqhdr.map", "# <rule_id>[|<backend>]|set|add|del|<header> -> URL-encoded value", "req"),
+            "resPath": RegisterGatewayRouteMap("gw-reshdr.map", "# <rule_id>[|<backend>]|set|add|del|<header> -> URL-encoded value", "res"),
+            "redirectPath": RegisterGatewayRouteMap("gw-redirect.map", "# <rule_id> -> code|scheme|host|port|pathmode|pfxlen|path", "redirect"),
+            "urlrewritePath": RegisterGatewayRouteMap("gw-urlrewrite.map", "# <rule_id> -> host|pathmode|pfxlen|path", "urlrewrite"),
+            "timeoutPath": RegisterGatewayRouteMap("gw-timeout.map", "# <rule_id> -> backend request timeout in ms", "timeout"),
+            "mirrorPath": RegisterGatewayRouteMap("gw-mirror.map", "# <rule_id> -> scheme|host:port|timeout_ms|retries;... (URL-encoded)", "mirror"),
+            "mirrorPctPath": RegisterGatewayRouteMap("gw-mirror-pct.map", "# <rule_id> -> mirror sampling percentage", "mirror-pct"),
           }
-          out["reqPath"] = RegisterMap("gw-reqhdr.map", reqEntries, map[string]any{"ordered": false})
-          out["resPath"] = RegisterMap("gw-reshdr.map", resEntries, map[string]any{"ordered": false})
-          out["redirectPath"] = RegisterMap("gw-redirect.map", redirEntries, map[string]any{"ordered": false})
-          out["urlrewritePath"] = RegisterMap("gw-urlrewrite.map", rwEntries, map[string]any{"ordered": false})
-          out["timeoutPath"] = RegisterMap("gw-timeout.map", toEntries, map[string]any{"ordered": false})
-          out["mirrorPath"] = RegisterMap("gw-mirror.map", mirEntries, map[string]any{"ordered": false})
-          out["mirrorPctPath"] = RegisterMap("gw-mirror-pct.map", mirPctEntries, map[string]any{"ordered": false})
-          out["pfxFallback"] = sortedPfx
-          out["mirrorFallback"] = mirFallback
-          return out
         })
       %%}
 
@@ -535,29 +497,28 @@ templateSnippets:
   frontend-filters-495-gateway-route-filters:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {%- import "util-header-modifier-rules" for HeaderModifierRules -%}
       {{- render "util-gateway-route-maps" -}}
       {%- var gwmVal, _ = shared.ComputeIfAbsent("gatewayRouteMaps", func() any { return nil }) %}
       {%- if gwmVal == nil %}{% return %}{% end %}
       {%- var gwm = gwmVal.(map[string]any) %}
-      {%- for _, fb := range gwm["pfxFallback"] | toSlice() %}
-      http-request set-var(txn.gw_pfxlen) int({{ fb | dig("len") }}) if { var(txn.gw_rule_id) -m str "{{ fb | dig("rid") }}" } {{ fb | dig("cond") }}
-      {%- end %}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-prefix-fallback") -}}
       # gateway/frontend-filters-gateway-headers
       {%- if extraContext | dig("diagnostics", "routingHeaders", "enabled") | fallback(false) %}
       http-request set-var(txn.filters_applied) str(RequestHeaderModifier) if { var(txn.gw_rule_id),concat(|any),map({{ tostring(gwm["reqPath"]) }}) -m found } !{ var(txn.filters_applied) -m found }
       http-request set-var(txn.filters_applied) str(ResponseHeaderModifier) if { var(txn.gw_rule_id),concat(|any),map({{ tostring(gwm["resPath"]) }}) -m found } !{ var(txn.filters_applied) -m found }
       {%- end %}
-      {%- for _, lvl := range []any{
-            map[string]any{"b": "rule", "k": "var(txn.gw_rule_id)"},
-            map[string]any{"b": "be", "k": "var(txn.gw_rule_id),concat(|,txn.backend_name,)"}} %}
-      {%- var b = tostring(lvl | dig("b")) %}
-      {%- var k = tostring(lvl | dig("k")) %}
-      {{- HeaderModifierRules("request", k, tostring(gwm["reqPath"]),
-            gwm["req-" + b + "-set"].([]string), gwm["req-" + b + "-add"].([]string), gwm["req-" + b + "-del"].([]string)) -}}
-      {{- HeaderModifierRules("response", k, tostring(gwm["resPath"]),
-            gwm["res-" + b + "-set"].([]string), gwm["res-" + b + "-add"].([]string), gwm["res-" + b + "-del"].([]string)) -}}
-      {%- end %}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-req-rule-set") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-req-rule-add") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-req-rule-del") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-res-rule-set") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-res-rule-add") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-res-rule-del") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-req-be-set") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-req-be-add") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-req-be-del") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-res-be-set") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-res-be-add") -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-res-be-del") -}}
       {%- var redirMap = tostring(gwm["redirectPath"]) %}
       {#- Fallbacks are the pod-internal 8080/8443 (chart-wide convention);
           extraContext.httpPort/httpsPort is always plumbed in production. -#}
@@ -637,8 +598,4 @@ templateSnippets:
       http-request set-var(txn.gw_mirror_pct) var(txn.gw_rule_id),map_str_int({{ pctMap }}) if { var(txn.gw_rule_id),map_str_int({{ pctMap }}) -m found }
       {# rand(100) draws 0..99, so 100% always samples and 0% never does. #}
       http-request set-var(txn.gw_mirror_targets) var(txn.gw_rule_id),map({{ m }}),url_dec(1) if { var(txn.gw_rule_id),map({{ m }}) -m found } { rand(100),sub(txn.gw_mirror_pct) -m int lt 0 }
-      {%- for _, fb := range gwm["mirrorFallback"] | toSlice() %}
-      {%- var sampleCond = "" %}
-      {%- if toint(fb | dig("pct")) < 100 %}{% sampleCond = " { rand(100) -m int lt " + tostring(toint(fb | dig("pct"))) + " }" %}{% end %}
-      http-request set-var(txn.gw_mirror_targets) str({{ fb | dig("entry") }};),concat(,txn.gw_mirror_targets,) if { var(txn.gw_rule_id) -m str "{{ fb | dig("rid") }}" }{{ sampleCond }}
-      {%- end %}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-mirror-fallback") -}}

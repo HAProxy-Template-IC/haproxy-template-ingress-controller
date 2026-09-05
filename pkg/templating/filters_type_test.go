@@ -15,12 +15,29 @@
 package templating
 
 import (
+	"errors"
 	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type deterministicStringer struct {
+	value string
+	calls *int
+}
+
+type nilDiagnosticError struct{}
+
+func (*nilDiagnosticError) Error() string {
+	panic("typed nil error was formatted")
+}
+
+func (s deterministicStringer) String() string {
+	*s.calls++
+	return s.value
+}
 
 func TestScriggoToString(t *testing.T) {
 	tests := []struct {
@@ -39,7 +56,38 @@ func TestScriggoToString(t *testing.T) {
 		{name: "float64 fractional", in: 3.14, want: "3.14"},
 		{name: "bool true", in: true, want: "true"},
 		{name: "bool false", in: false, want: "false"},
-		{name: "fallback to fmt.Sprint", in: []int{1, 2}, want: "[1 2]"},
+		{name: "named string", in: testNamedString("named"), want: "named"},
+	}
+
+	t.Run("does not invoke hidden formatting behavior", func(t *testing.T) {
+		calls := 0
+		value := deterministicStringer{value: "hidden", calls: &calls}
+		assert.Panics(t, func() { scriggoToString(value) })
+		assert.Zero(t, calls)
+	})
+
+	t.Run("preserves error diagnostics", func(t *testing.T) {
+		assert.Equal(t, "file conflict", scriggoToString(errors.New("file conflict")))
+	})
+
+	t.Run("typed nil error", func(t *testing.T) {
+		var err *nilDiagnosticError
+		assert.Equal(t, "", scriggoToString(err))
+	})
+
+	for name, value := range map[string]any{
+		"slice":          []int{1, 2},
+		"map":            map[string]int{"one": 1},
+		"struct":         struct{ value string }{value: "hidden"},
+		"struct pointer": &struct{ Value int }{Value: 1},
+		"function":       func() {},
+		"channel":        make(chan int),
+		"NaN":            math.NaN(),
+		"infinity":       math.Inf(1),
+	} {
+		t.Run("rejects "+name, func(t *testing.T) {
+			assert.Panics(t, func() { scriggoToString(value) })
+		})
 	}
 
 	for _, tt := range tests {
@@ -48,14 +96,7 @@ func TestScriggoToString(t *testing.T) {
 		})
 	}
 
-	// Tristate-pointer cases (issue #52): typegen emits *int64 / *bool
-	// for optional scalar fields, direct typed access hands the raw
-	// pointer to tostring(). Each pointer kind must (a) dereference
-	// non-nil pointers to their scalar value and (b) treat a nil
-	// pointer as the empty string — matching the function's nil
-	// fast-path semantics.
-	gitarFindings := "after derefTristateScalar unwraps a nil pointer, scriggoToString must return \"\" not fmt.Sprint(nil)=\"<nil>\""
-	t.Run("tristate "+gitarFindings, func(t *testing.T) {
+	t.Run("typed scalar pointers", func(t *testing.T) {
 		i := int64(42)
 		assert.Equal(t, "42", scriggoToString(&i))
 		var nilI64 *int64
@@ -153,7 +194,51 @@ func TestScriggoToStringSlice(t *testing.T) {
 			assert.Equal(t, tt.want, scriggoToStringSlice(tt.in))
 		})
 	}
+
+	t.Run("result does not alias input", func(t *testing.T) {
+		input := []string{"original"}
+		result := scriggoToStringSlice(input)
+		result[0] = "changed"
+		assert.Equal(t, []string{"original"}, input)
+	})
+
+	t.Run("rejects composite element", func(t *testing.T) {
+		assert.Panics(t, func() { scriggoToStringSlice([]any{struct{}{}}) })
+	})
 }
+
+func TestScriggoToStrMap(t *testing.T) {
+	for name, input := range map[string]any{
+		"strings":    map[string]string{"one": "1"},
+		"interfaces": map[string]any{"one": 1, "enabled": true, "nil": nil},
+		"typed":      map[string]int{"one": 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := scriggoToStrMap(input)
+			switch name {
+			case "strings", "typed":
+				assert.Equal(t, map[string]string{"one": "1"}, result)
+			case "interfaces":
+				assert.Equal(t, map[string]string{"one": "1", "enabled": "true", "nil": ""}, result)
+			}
+		})
+	}
+
+	t.Run("result does not alias input", func(t *testing.T) {
+		input := map[string]string{"key": "original"}
+		result := scriggoToStrMap(input)
+		result["key"] = "changed"
+		assert.Equal(t, "original", input["key"])
+	})
+
+	t.Run("rejects composite value", func(t *testing.T) {
+		assert.Panics(t, func() {
+			scriggoToStrMap(map[string]any{"key": struct{ value string }{value: "hidden"}})
+		})
+	})
+}
+
+type testNamedString string
 
 func TestScriggoToSlice(t *testing.T) {
 	tests := []struct {
@@ -174,6 +259,13 @@ func TestScriggoToSlice(t *testing.T) {
 			assert.Equal(t, tt.want, scriggoToSlice(tt.in))
 		})
 	}
+
+	t.Run("result does not alias input", func(t *testing.T) {
+		input := []any{"original"}
+		result := scriggoToSlice(input)
+		result[0] = "changed"
+		assert.Equal(t, []any{"original"}, input)
+	})
 }
 
 func TestToSlice(t *testing.T) {

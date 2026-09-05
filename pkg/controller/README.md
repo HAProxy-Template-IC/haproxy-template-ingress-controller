@@ -41,7 +41,7 @@ This is why the docs consistently say "no pod restart on config change" — the 
 | Shared event-loop scaffold (embedded by nearly every component) | `component/` |
 | Observability (domain-aware logs, ring-buffered event history) | `commentator/`, `debug/`, `metrics/` |
 | Configuration ingestion (CRD + Secret loading) | `configloader/`, `credentialsloader/`, `resourceloader/` |
-| Reconciliation pipeline (debounce → render → validate → publish) | `reconciler/`, `renderer/`, `validator/`, `pipeline/`, `rendercontext/` |
+| Reconciliation pipeline (debounce → render → validate → publish) | `reconciler/`, `renderer/`, `validator/`, `pipeline/`, `rendercontext/`, `warmer/` (follower-side render that keeps the incremental graph warm) |
 | Deployment orchestration (scheduler, executor, drift prevention) | `deployer/`, `discovery/`, `configpublisher/`, `statusapplier/` |
 | Webhook & validation bridges | `webhook/`, `dryrunvalidator/`, `proposalvalidator/`, `testrunner/` |
 | Leader election + leader-only gating | `leaderelection/`, `leadership/` |

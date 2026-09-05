@@ -18,6 +18,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // BuildAdditionalDeclarations returns the additionalDeclarations
@@ -53,6 +54,9 @@ func BuildAdditionalDeclarations(cfg *config.Config, result *typebootstrap.Resul
 		panic("helpers: BuildAdditionalDeclarations requires non-nil Result " +
 			"— see the doc comment for why envelope-only fallback was removed")
 	}
+	// The engine cannot name this package, so its owner registers the type the
+	// exact-cycle replay gate accepts as currentConfig.
+	templating.RegisterExactCyclePreviousOutputDeclaration((*renderplan.CurrentConfig)(nil))
 	decls := map[string]any{
 		"currentConfig": (*renderplan.CurrentConfig)(nil),
 		// Current general aux files (filename → content) — lets a template read

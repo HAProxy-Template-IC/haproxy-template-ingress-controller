@@ -98,7 +98,6 @@ type Config struct {
     Maps                 map[string]MapFile
     Files                map[string]GeneralFile
     SSLCertificates      map[string]SSLCertificate
-    CRTLists             map[string]CRTListFile
     HAProxyConfig        HAProxyConfig          // single template, not "Spec"
     ValidationTests      map[string]ValidationTest
 }
@@ -130,7 +129,6 @@ type (
     MapFile        struct{ Template string; PostProcessing []PostProcessorConfig }
     GeneralFile    struct{ Template string; PostProcessing []PostProcessorConfig }
     SSLCertificate struct{ Template string; PostProcessing []PostProcessorConfig }
-    CRTListFile    struct{ Template string; PostProcessing []PostProcessorConfig }
 )
 type HAProxyConfig struct{ Template string; PostProcessing []PostProcessorConfig }
 ```

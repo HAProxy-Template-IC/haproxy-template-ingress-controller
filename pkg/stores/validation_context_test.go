@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // fakeHTTPOverlay is a test double for HTTPContentOverlay that lets tests
@@ -196,6 +198,26 @@ func TestOverlayStoreProvider_GetHTTPOverlay(t *testing.T) {
 		p := NewOverlayStoreProvider(base, ctx)
 		assert.Equal(t, httpOv, p.GetHTTPOverlay())
 	})
+}
+
+func TestStoreOverlayIdentityChanges(t *testing.T) {
+	created := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"namespace": "default", "name": "created"},
+	}}
+	overlay := NewStoreOverlayForCreate(created)
+	overlay.Deletions = append(overlay.Deletions, types.NamespacedName{Namespace: "default", Name: "deleted"})
+
+	changes, exact := overlay.IdentityChanges()
+	require.True(t, exact)
+	require.Len(t, changes, 2)
+	assert.Equal(t, "created", changes[0].Name)
+	assert.False(t, changes[0].Deleted)
+	assert.Equal(t, "deleted", changes[1].Name)
+	assert.True(t, changes[1].Deleted)
+
+	overlay.AddModification(created)
+	_, exact = overlay.IdentityChanges()
+	assert.False(t, exact)
 }
 
 func TestOverlayStoreProvider_Validate(t *testing.T) {

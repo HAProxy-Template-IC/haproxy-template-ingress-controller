@@ -16,7 +16,9 @@
 package helpers
 
 import (
+	"encoding/base64"
 	"fmt"
+	"strconv"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -43,6 +45,12 @@ type TemplateExtraction struct {
 	// EntryPoints lists template names that should be compiled explicitly.
 	// Only these are compiled; snippets are compiled on-demand.
 	EntryPoints []string
+
+	// IncrementalEntryPoints lists private component entry points.
+	IncrementalEntryPoints []string
+
+	// IncrementalBindingEntryPoints lists private dynamic binding planners.
+	IncrementalBindingEntryPoints []string
 }
 
 // NewEngineFromConfigWithOptions creates a template engine from configuration.
@@ -94,11 +102,13 @@ func NewEngineFromConfigWithOptions(
 	// built-in set. templating.New handles nil Functions/PostProcessors/Declarations
 	// gracefully.
 	return templating.New(extraction.AllTemplates, &templating.Options{
-		EntryPoints:    extraction.EntryPoints,
-		Functions:      globalFunctions,
-		PostProcessors: postProcessorConfigs,
-		Declarations:   additionalDeclarations,
-		Profiling:      options.EnableProfiling,
+		EntryPoints:                   extraction.EntryPoints,
+		IncrementalEntryPoints:        extraction.IncrementalEntryPoints,
+		IncrementalBindingEntryPoints: extraction.IncrementalBindingEntryPoints,
+		Functions:                     globalFunctions,
+		PostProcessors:                postProcessorConfigs,
+		Declarations:                  additionalDeclarations,
+		Profiling:                     options.EnableProfiling,
 	})
 }
 
@@ -118,8 +128,10 @@ func NewEngineFromConfigWithOptions(
 // by Scriggo when referenced via render/render_glob statements with inherit_context.
 func ExtractTemplatesFromConfig(cfg *config.Config) TemplateExtraction {
 	extraction := TemplateExtraction{
-		AllTemplates: make(map[string]string),
-		EntryPoints:  []string{},
+		AllTemplates:                  make(map[string]string),
+		EntryPoints:                   []string{},
+		IncrementalEntryPoints:        []string{},
+		IncrementalBindingEntryPoints: []string{},
 	}
 
 	// Main HAProxy config (entry point)
@@ -128,7 +140,21 @@ func ExtractTemplatesFromConfig(cfg *config.Config) TemplateExtraction {
 
 	// Template snippets (NOT entry points - discovered via render calls)
 	for name, snippet := range cfg.TemplateSnippets {
-		extraction.AllTemplates[name] = snippet.Template
+		if snippet.Incremental == nil {
+			extraction.AllTemplates[name] = snippet.Template
+			continue
+		}
+		componentName := IncrementalEntryPointName(name)
+		extraction.AllTemplates[componentName] = snippet.Template
+		extraction.AllTemplates[name] = "{{ incremental_render(" + strconv.Quote(name) + ") }}"
+		extraction.EntryPoints = append(extraction.EntryPoints, componentName)
+		extraction.IncrementalEntryPoints = append(extraction.IncrementalEntryPoints, componentName)
+		if snippet.Incremental.BindingsTemplate != "" {
+			bindingsName := IncrementalBindingsEntryPointName(name)
+			extraction.AllTemplates[bindingsName] = snippet.Incremental.BindingsTemplate
+			extraction.EntryPoints = append(extraction.EntryPoints, bindingsName)
+			extraction.IncrementalBindingEntryPoints = append(extraction.IncrementalBindingEntryPoints, bindingsName)
+		}
 	}
 
 	// Map files (entry points)
@@ -156,6 +182,16 @@ func ExtractTemplatesFromConfig(cfg *config.Config) TemplateExtraction {
 	}
 
 	return extraction
+}
+
+// IncrementalEntryPointName returns the private entry point for a component snippet.
+func IncrementalEntryPointName(name string) string {
+	return config.IncrementalTemplatePrefix + base64.RawURLEncoding.EncodeToString([]byte(name))
+}
+
+// IncrementalBindingsEntryPointName returns the private entry point for a binding planner.
+func IncrementalBindingsEntryPointName(name string) string {
+	return config.IncrementalBindingsTemplatePrefix + base64.RawURLEncoding.EncodeToString([]byte(name))
 }
 
 // ExtractPostProcessorConfigs extracts post-processor configurations from all templates.

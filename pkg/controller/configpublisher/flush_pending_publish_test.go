@@ -102,6 +102,7 @@ func TestFlushPendingPublish_DeployDedupHitSkipsAndDropsCache(t *testing.T) {
 	// fire and skip the publish.
 	c.mu.Lock()
 	c.lastPublishedChecksum = dupChecksum
+	c.lastPublishedEntry = cloneRenderedConfigEntry(cachedEntry)
 	c.mu.Unlock()
 
 	require.NotPanics(t, func() { c.flushPendingPublish(t.Context()) },

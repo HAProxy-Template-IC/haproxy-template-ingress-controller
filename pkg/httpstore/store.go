@@ -22,6 +22,7 @@ import (
 	"maps"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,13 +37,28 @@ import (
 //
 // Thread-safe for concurrent access.
 type HTTPStore struct {
-	mu                   sync.RWMutex
-	cache                map[string]*CacheEntry // URL -> CacheEntry
-	nextPendingRevision  uint64
-	nextSourceGeneration uint64
-	httpClient           *http.Client
-	logger               *slog.Logger
-	maxAge               time.Duration // Maximum time an entry can remain unused before eviction (0 = disabled)
+	mu                      sync.RWMutex
+	prepareAuthority        chan struct{}
+	publicationPoisoned     atomic.Bool
+	cache                   map[string]*CacheEntry // URL -> CacheEntry
+	nextPendingRevision     uint64
+	nextCandidateRevision   Revision
+	nextSourceGeneration    uint64
+	revisionSource          SourceID
+	semanticRevision        Revision
+	replayRevision          Revision
+	replayJournal           []ReplayChange
+	replayJournalStart      int
+	replayJournalCapacity   int
+	semanticJournal         []SemanticChange
+	semanticJournalStart    int
+	semanticJournalCapacity int
+	nextActiveLeaseSet      uint64
+	activeLeaseSets         map[uint64]*activeLeaseState
+	activeLeaseURLs         map[string]map[uint64]SourceDescriptor
+	httpClient              *http.Client
+	logger                  *slog.Logger
+	maxAge                  time.Duration // Maximum time an entry can remain unused before eviction (0 = disabled)
 
 	// validationStuckAfter bounds how long an entry may sit in StateValidating.
 	// Only PromotePending/RejectPending leave that state, and both are driven by
@@ -50,6 +66,33 @@ type HTTPStore struct {
 	// validator, would otherwise freeze the URL at its accepted content for the
 	// process lifetime. Overridden in tests.
 	validationStuckAfter time.Duration
+}
+
+var errHTTPStorePublicationPoisoned = errors.New("HTTP store is unavailable after publication authentication failure")
+
+func (s *HTTPStore) publicationErrorLocked() error {
+	if s == nil || s.publicationPoisoned.Load() {
+		return errHTTPStorePublicationPoisoned
+	}
+	return nil
+}
+
+func (s *HTTPStore) quarantinePublicationLocked() {
+	s.publicationPoisoned.Store(true)
+	s.cache = nil
+	s.nextPendingRevision = ^uint64(0)
+	s.nextCandidateRevision = Revision(^uint64(0))
+	s.nextSourceGeneration = ^uint64(0)
+	s.revisionSource = 0
+	s.semanticRevision = 0
+	s.replayRevision = 0
+	s.replayJournal = nil
+	s.replayJournalStart = 0
+	s.semanticJournal = nil
+	s.semanticJournalStart = 0
+	s.nextActiveLeaseSet = ^uint64(0)
+	s.activeLeaseSets = nil
+	s.activeLeaseURLs = nil
 }
 
 // DefaultValidationStuckAfter bounds a pending validation. Render plus
@@ -66,8 +109,14 @@ func New(logger *slog.Logger, maxAge time.Duration) *HTTPStore {
 		logger = slog.Default()
 	}
 
-	return &HTTPStore{
-		cache: make(map[string]*CacheEntry),
+	store := &HTTPStore{
+		cache:                   make(map[string]*CacheEntry),
+		prepareAuthority:        make(chan struct{}, 1),
+		revisionSource:          allocateHTTPStoreSource(),
+		replayJournalCapacity:   defaultReplayJournalCapacity,
+		semanticJournalCapacity: defaultSemanticJournalCapacity,
+		activeLeaseSets:         make(map[uint64]*activeLeaseState),
+		activeLeaseURLs:         make(map[string]map[uint64]SourceDescriptor),
 		httpClient: &http.Client{
 			Timeout:       DefaultTimeout,
 			CheckRedirect: checkRedirect,
@@ -76,6 +125,8 @@ func New(logger *slog.Logger, maxAge time.Duration) *HTTPStore {
 		maxAge:               maxAge,
 		validationStuckAfter: DefaultValidationStuckAfter,
 	}
+	store.prepareAuthority <- struct{}{}
+	return store
 }
 
 // redirectSafeHeaders survive a cross-host redirect. Everything else is dropped:
@@ -135,8 +186,8 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 		return "", err
 	}
 	state := reconciled.State
-	if content, ok := s.GetSource(url, state.Identity); ok {
-		return content, nil
+	if snapshot := s.AcceptedSnapshot(url, state.Descriptor); snapshot.Found {
+		return snapshot.Content, nil
 	}
 
 	snapshot, err := s.initialFetchSnapshot(url, state)
@@ -170,7 +221,9 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	s.mu.Lock()
 	entry, exists := s.cache[url]
 	if !exists || entry != snapshot.entry || entry.sourceIdentity != snapshot.sourceIdentity ||
-		entry.sourceGeneration != snapshot.sourceGeneration {
+		entry.sourceDescriptor != snapshot.sourceDescriptor ||
+		entry.sourceGeneration != snapshot.sourceGeneration ||
+		entry.mutationRevision != snapshot.mutationRevision || entry.HasPending {
 		s.mu.Unlock()
 		return "", fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", url)
 	}
@@ -187,6 +240,12 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	entry.ETag = etag
 	entry.LastModified = lastModified
 	entry.mutationRevision++
+	entry.acceptedRevision = s.recordSemanticChangeLocked(
+		url,
+		entry.sourceDescriptor,
+		entry.sourceDescriptor,
+		false,
+	)
 	s.mu.Unlock()
 
 	s.logger.Debug("Cached HTTP content",
@@ -207,15 +266,25 @@ func (s *HTTPStore) ReconcileSource(url string, opts FetchOptions, auth *AuthCon
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.publicationErrorLocked(); err != nil {
+		return SourceReconcileResult{}, err
+	}
 
 	entry, exists := s.cache[url]
-	if exists && entry.sourceIdentity == spec.identity {
+	if exists && entry.sourceDescriptor == spec.descriptor {
 		entry.LastAccessTime = now
 		return SourceReconcileResult{State: sourceState(entry)}, nil
 	}
 
+	if s.nextSourceGeneration == ^uint64(0) {
+		panic("HTTP store source generation exhausted")
+	}
 	s.nextSourceGeneration++
 	generation := s.nextSourceGeneration
+	previousSourceDescriptor := SourceDescriptor{}
+	if exists {
+		previousSourceDescriptor = entry.sourceDescriptor
+	}
 	if !exists || !entry.fixture {
 		s.cache[url] = &CacheEntry{
 			URL:              url,
@@ -223,9 +292,11 @@ func (s *HTTPStore) ReconcileSource(url string, opts FetchOptions, auth *AuthCon
 			ValidationState:  StateAccepted,
 			Options:          spec.options,
 			Auth:             spec.auth,
-			sourceIdentity:   spec.identity,
+			sourceIdentity:   spec.descriptor.Identity(),
+			sourceDescriptor: spec.descriptor,
 			sourceGeneration: generation,
 		}
+		s.recordSemanticChangeLocked(url, previousSourceDescriptor, spec.descriptor, false)
 		return SourceReconcileResult{
 			State:   sourceState(s.cache[url]),
 			Changed: true,
@@ -240,11 +311,18 @@ func (s *HTTPStore) ReconcileSource(url string, opts FetchOptions, auth *AuthCon
 	entry.ValidationStartedAt = time.Time{}
 	entry.Options = spec.options
 	entry.Auth = spec.auth
-	entry.sourceIdentity = spec.identity
+	entry.sourceIdentity = spec.descriptor.Identity()
+	entry.sourceDescriptor = spec.descriptor
 	entry.sourceGeneration = generation
 	entry.LastAccessTime = now
 	entry.fixture = false
 	entry.mutationRevision++
+	entry.acceptedRevision = s.recordSemanticChangeLocked(
+		url,
+		previousSourceDescriptor,
+		spec.descriptor,
+		false,
+	)
 	return SourceReconcileResult{
 		State:   sourceState(entry),
 		Changed: true,
@@ -256,15 +334,20 @@ type initialFetchSnapshot struct {
 	options          FetchOptions
 	auth             *AuthConfig
 	sourceIdentity   string
+	sourceDescriptor SourceDescriptor
 	sourceGeneration uint64
+	mutationRevision uint64
 }
 
 func (s *HTTPStore) initialFetchSnapshot(url string, state SourceState) (initialFetchSnapshot, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if err := s.publicationErrorLocked(); err != nil {
+		return initialFetchSnapshot{}, err
+	}
 
 	entry, exists := s.cache[url]
-	if !exists || entry.sourceIdentity != state.Identity || entry.sourceGeneration != state.Generation {
+	if !exists || entry.sourceDescriptor != state.Descriptor || entry.sourceGeneration != state.Generation {
 		return initialFetchSnapshot{}, fmt.Errorf("HTTP source %s changed before it could be fetched; retry the render", url)
 	}
 	return initialFetchSnapshot{
@@ -272,22 +355,30 @@ func (s *HTTPStore) initialFetchSnapshot(url string, state SourceState) (initial
 		options:          entry.Options,
 		auth:             entry.Auth,
 		sourceIdentity:   entry.sourceIdentity,
+		sourceDescriptor: entry.sourceDescriptor,
 		sourceGeneration: entry.sourceGeneration,
+		mutationRevision: entry.mutationRevision,
 	}, nil
 }
 
 func (s *HTTPStore) sourceCurrent(url string, snapshot *initialFetchSnapshot) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.publicationErrorLocked() != nil {
+		return false
+	}
 
 	entry, exists := s.cache[url]
 	return exists && entry == snapshot.entry && entry.sourceIdentity == snapshot.sourceIdentity &&
-		entry.sourceGeneration == snapshot.sourceGeneration
+		entry.sourceDescriptor == snapshot.sourceDescriptor &&
+		entry.sourceGeneration == snapshot.sourceGeneration &&
+		entry.mutationRevision == snapshot.mutationRevision
 }
 
 func sourceState(entry *CacheEntry) SourceState {
 	return SourceState{
 		Identity:    entry.sourceIdentity,
+		Descriptor:  entry.sourceDescriptor,
 		Generation:  entry.sourceGeneration,
 		Delay:       entry.Options.Delay,
 		HasAccepted: entry.AcceptedChecksum != "",
@@ -300,6 +391,9 @@ func sourceState(entry *CacheEntry) SourceState {
 func (s *HTTPStore) Get(url string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.publicationErrorLocked() != nil {
+		return "", false
+	}
 
 	entry, exists := s.cache[url]
 	if !exists || entry.AcceptedChecksum == "" {
@@ -309,13 +403,16 @@ func (s *HTTPStore) Get(url string) (string, bool) {
 	return entry.AcceptedContent, true
 }
 
-// GetSource returns accepted content only when it belongs to sourceIdentity.
-func (s *HTTPStore) GetSource(url, sourceIdentity string) (string, bool) {
+// GetSource returns accepted content only when it belongs to source.
+func (s *HTTPStore) GetSource(url string, source SourceDescriptor) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.publicationErrorLocked() != nil {
+		return "", false
+	}
 
 	entry, exists := s.cache[url]
-	if !exists || entry.sourceIdentity != sourceIdentity || entry.AcceptedChecksum == "" {
+	if !exists || entry.sourceDescriptor != source || entry.AcceptedChecksum == "" {
 		return "", false
 	}
 	entry.LastAccessTime = time.Now()
@@ -328,6 +425,9 @@ func (s *HTTPStore) GetSource(url, sourceIdentity string) (string, bool) {
 func (s *HTTPStore) GetForValidation(url string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.publicationErrorLocked() != nil {
+		return "", false
+	}
 
 	entry, exists := s.cache[url]
 	if !exists {
@@ -402,12 +502,13 @@ func (s *HTTPStore) RefreshURLVersionForGeneration(
 type refreshSnapshot struct {
 	entry            *CacheEntry
 	mutationRevision uint64
-	sourceIdentity   string
+	sourceDescriptor SourceDescriptor
 	sourceGeneration uint64
 	options          FetchOptions
 	auth             *AuthConfig
 	etag             string
 	lastModified     string
+	acceptedContent  string
 	acceptedChecksum string
 }
 
@@ -425,6 +526,10 @@ func (o refreshOutcome) pendingVersion() *PendingVersion {
 
 func (s *HTTPStore) refreshSnapshot(url string, sourceGeneration uint64) (refreshSnapshot, bool, error) {
 	s.mu.RLock()
+	if err := s.publicationErrorLocked(); err != nil {
+		s.mu.RUnlock()
+		return refreshSnapshot{}, false, err
+	}
 	entry, exists := s.cache[url]
 	if !exists {
 		s.mu.RUnlock()
@@ -458,12 +563,13 @@ func (s *HTTPStore) refreshSnapshot(url string, sourceGeneration uint64) (refres
 	snapshot := refreshSnapshot{
 		entry:            entry,
 		mutationRevision: entry.mutationRevision,
-		sourceIdentity:   entry.sourceIdentity,
+		sourceDescriptor: entry.sourceDescriptor,
 		sourceGeneration: entry.sourceGeneration,
 		options:          entry.Options,
 		auth:             entry.Auth,
 		etag:             entry.ETag,
 		lastModified:     entry.LastModified,
+		acceptedContent:  entry.AcceptedContent,
 		acceptedChecksum: entry.AcceptedChecksum,
 	}
 	s.mu.RUnlock()
@@ -476,7 +582,7 @@ func (s *HTTPStore) updateRefreshMetadata(url string, snapshot *refreshSnapshot,
 
 	entry, exists := s.cache[url]
 	if !exists || entry != snapshot.entry || entry.mutationRevision != snapshot.mutationRevision ||
-		entry.sourceIdentity != snapshot.sourceIdentity || entry.sourceGeneration != snapshot.sourceGeneration ||
+		entry.sourceDescriptor != snapshot.sourceDescriptor || entry.sourceGeneration != snapshot.sourceGeneration ||
 		entry.HasPending || entry.AcceptedChecksum != snapshot.acceptedChecksum {
 		return
 	}
@@ -494,11 +600,14 @@ func (s *HTTPStore) commitPendingRefresh(
 
 	entry, exists := s.cache[url]
 	if !exists || entry != snapshot.entry || entry.mutationRevision != snapshot.mutationRevision ||
-		entry.sourceIdentity != snapshot.sourceIdentity || entry.sourceGeneration != snapshot.sourceGeneration ||
+		entry.sourceDescriptor != snapshot.sourceDescriptor || entry.sourceGeneration != snapshot.sourceGeneration ||
 		entry.HasPending || entry.AcceptedChecksum != snapshot.acceptedChecksum {
 		return PendingVersion{}, false
 	}
 
+	if s.nextPendingRevision == ^uint64(0) {
+		panic("HTTP store pending revision exhausted")
+	}
 	s.nextPendingRevision++
 	version := PendingVersion{Checksum: newChecksum, Revision: s.nextPendingRevision}
 	entry.PendingContent = content
@@ -510,6 +619,9 @@ func (s *HTTPStore) commitPendingRefresh(
 	entry.ETag = etag
 	entry.LastModified = lastModified
 	entry.mutationRevision++
+	entry.replayRevision++
+	s.recordReplayChangeLocked(url)
+	s.recordActiveLeaseChangeLocked(url, entry.sourceDescriptor, entry.sourceDescriptor)
 	return version, true
 }
 
@@ -545,8 +657,8 @@ func (s *HTTPStore) refreshURL(
 	}
 
 	newChecksum := checksum(content)
-	if newChecksum == snapshot.acceptedChecksum {
-		s.logger.Log(context.Background(), levelTrace, "content unchanged (same checksum)",
+	if content == snapshot.acceptedContent {
+		s.logger.Log(context.Background(), levelTrace, "content unchanged",
 			"url", url,
 			"checksum", newChecksum[:16]+"...")
 		s.updateRefreshMetadata(url, &snapshot, newEtag, newLastModified)
@@ -571,6 +683,9 @@ func (s *HTTPStore) refreshURL(
 func (s *HTTPStore) GetDelay(url string) time.Duration {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.publicationErrorLocked() != nil {
+		return 0
+	}
 
 	if entry, exists := s.cache[url]; exists {
 		return entry.Options.Delay
@@ -582,6 +697,9 @@ func (s *HTTPStore) GetDelay(url string) time.Duration {
 func (s *HTTPStore) GetSourceState(url string) (SourceState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.publicationErrorLocked() != nil {
+		return SourceState{}, false
+	}
 
 	entry, exists := s.cache[url]
 	if !exists {
@@ -595,6 +713,9 @@ func (s *HTTPStore) GetSourceState(url string) (SourceState, bool) {
 func (s *HTTPStore) GetEntry(url string) *CacheEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.publicationErrorLocked() != nil {
+		return nil
+	}
 
 	entry, exists := s.cache[url]
 	if !exists {
@@ -623,11 +744,42 @@ func (s *HTTPStore) GetEntry(url string) *CacheEntry {
 func (s *HTTPStore) LoadFixture(url, content string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.publicationErrorLocked(); err != nil {
+		panic(err)
+	}
 
+	previous, exists := s.cache[url]
+	if exists && previous.fixture && previous.sourceDescriptor == (SourceDescriptor{}) &&
+		previous.AcceptedChecksum != "" && previous.AcceptedContent == content {
+		replayChanged := previous.PendingContent != "" || previous.PendingChecksum != "" ||
+			previous.PendingRevision != 0 || previous.HasPending ||
+			previous.ValidationState != StateAccepted || !previous.ValidationStartedAt.IsZero()
+		previous.LastAccessTime = time.Now()
+		previous.PendingContent = ""
+		previous.PendingChecksum = ""
+		previous.PendingRevision = 0
+		previous.HasPending = false
+		previous.ValidationState = StateAccepted
+		previous.ValidationStartedAt = time.Time{}
+		previous.mutationRevision++
+		if replayChanged {
+			previous.replayRevision++
+			s.recordReplayChangeLocked(url)
+			s.recordActiveLeaseChangeLocked(url, previous.sourceDescriptor, previous.sourceDescriptor)
+		}
+		return
+	}
+	previousSourceDescriptor := SourceDescriptor{}
+	if exists {
+		previousSourceDescriptor = previous.sourceDescriptor
+	}
 	checksum := checksum(content)
 	now := time.Now()
+	if s.nextSourceGeneration == ^uint64(0) {
+		panic("HTTP store source generation exhausted")
+	}
 	s.nextSourceGeneration++
-	s.cache[url] = &CacheEntry{
+	entry := &CacheEntry{
 		URL:              url,
 		AcceptedContent:  content,
 		AcceptedChecksum: checksum,
@@ -638,6 +790,13 @@ func (s *HTTPStore) LoadFixture(url, content string) {
 		fixture:          true,
 		// No pending content, no ETag - fixtures are immediately accepted
 	}
+	s.cache[url] = entry
+	entry.acceptedRevision = s.recordSemanticChangeLocked(
+		url,
+		previousSourceDescriptor,
+		SourceDescriptor{},
+		false,
+	)
 
 	s.logger.Debug("Loaded HTTP fixture",
 		"url", url,

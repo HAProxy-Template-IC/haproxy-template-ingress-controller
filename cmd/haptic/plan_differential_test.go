@@ -815,6 +815,10 @@ func bundledChartSetup(tb testing.TB) (*coreconfig.Config, *ValidationSetup, *sl
 
 	cfg, err := conversion.ConvertSpec(setup.ConfigSpec)
 	require.NoError(tb, err)
+	// A chart-scale cold render exceeds the 30s production default once `make
+	// test` instruments it with -race and -coverpkg. Exactness assertions are
+	// unaffected; none of these tests measure latency.
+	cfg.TemplatingSettings.RenderTimeout = "5m"
 
 	return cfg, setup, logger, func() {
 		setup.Cleanup()

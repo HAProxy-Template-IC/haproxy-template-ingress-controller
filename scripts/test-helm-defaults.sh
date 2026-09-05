@@ -904,6 +904,33 @@ dump_debug_info() {
         kubectl exec -n "$NAMESPACE" "$haproxy_pod" -- cat /etc/haproxy/haproxy.cfg 2>/dev/null | grep -A5 "^frontend" || true
     fi
     echo ""
+
+    # The pre-rollout gate runs the load gate in a Job pod labelled
+    # component=pre-rollout-validation, so neither selector above reaches it.
+    # When it fails, helm reports only "BackoffLimitExceeded" and the reason
+    # (which validationTest, which OOM) exists solely in this log.
+    echo "=== Hook Jobs ==="
+    kubectl get jobs -n "$NAMESPACE" -o wide 2>/dev/null || true
+    kubectl describe jobs -n "$NAMESPACE" 2>/dev/null | grep -E "^Name:|^Pods Statuses:|Warning|Error" || true
+    echo ""
+
+    echo "=== Hook and failed pod logs ==="
+    local pod
+    for pod in $(kubectl get pods -n "$NAMESPACE" -o json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    pods = json.load(sys.stdin).get("items", [])
+except Exception:
+    raise SystemExit
+for p in pods:
+    labels = p["metadata"].get("labels", {})
+    hook = labels.get("app.kubernetes.io/component", "").endswith("-validation")
+    if hook or p.get("status", {}).get("phase") in ("Failed", "Unknown"):
+        print(p["metadata"]["name"])' 2>/dev/null); do
+        echo "--- $pod ---"
+        kubectl logs -n "$NAMESPACE" "$pod" --all-containers --prefix --tail=50000 2>&1 || true
+    done
+    echo ""
 }
 
 #------------------------------------------------------------------------------
@@ -917,7 +944,11 @@ cleanup() {
     stop_port_forward
 
     if [[ $exit_code -ne 0 ]]; then
-        dump_debug_info
+        # Also to a file: this trap deletes the cluster below, so a CI
+        # after_script has nothing left to query and can only collect what
+        # was captured here, while it was still alive.
+        mkdir -p debug-logs
+        dump_debug_info 2>&1 | tee -a debug-logs/diagnostics.log
     fi
 
     if [[ "$KEEP_CLUSTER" != "true" ]]; then

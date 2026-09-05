@@ -23,17 +23,30 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 func setPublishedFiles(published *publishedAuxFiles, filesByGVR map[string]map[string]string) {
 	const setID = "sha256:test"
 	refs := make(map[string][]publishedAuxRef, len(filesByGVR))
 	for gvr, files := range filesByGVR {
+		referenceField := ""
+		for _, kind := range publishedAuxCRDList() {
+			if kind.gvr.String() == gvr {
+				referenceField = kind.referenceFields[0]
+				break
+			}
+		}
+		if referenceField == "" {
+			panic("unknown published auxiliary GVR: " + gvr)
+		}
 		resources := make(map[string]publishedAuxFile, len(files))
 		for filePath, content := range files {
 			name := "published-" + path.Base(filePath)
 			resources[name] = publishedAuxFile{path: filePath, content: content, setID: setID}
-			refs[gvr] = append(refs[gvr], publishedAuxRef{name: name, namespace: "haptic"})
+			refs[referenceField] = append(refs[referenceField], publishedAuxRef{name: name, namespace: "haptic"})
 		}
 		published.setForGVR(gvr, resources)
 	}
@@ -52,6 +65,16 @@ func currentFilesPublishedSnapshot(t *testing.T, authority *currentFilesAuthorit
 	files, err := authority.publishedSnapshot()
 	require.NoError(t, err)
 	return files
+}
+
+func buildCurrentFilesArtifactSnapshot(
+	t *testing.T,
+	files *dataplane.AuxiliaryFiles,
+) *renderartifact.Snapshot {
+	t.Helper()
+	snapshot, err := dataplane.BuildAuxiliaryFileSnapshot(renderartifact.NewAuthority(), nil, files)
+	require.NoError(t, err)
+	return snapshot
 }
 
 func TestCurrentFilesAuthorityAcceptsOutputWithinTerm(t *testing.T) {
@@ -78,6 +101,43 @@ func TestCurrentFilesAuthorityAcceptsOutputWithinTerm(t *testing.T) {
 	assert.Equal(t, map[string]string{"ticket.keys": "accepted"}, got)
 	got["ticket.keys"] = "mutated"
 	assert.Equal(t, "accepted", currentFilesSnapshot(t, authority, generation)["ticket.keys"])
+}
+
+func TestCurrentFilesExactSourceTracksOnlyProjectedMapSemantics(t *testing.T) {
+	authority := newCurrentFilesAuthority(nil)
+	generation := authority.BeginTerm()
+	build := func(mapContent, generalContent, certificate string) *renderartifact.Snapshot {
+		return buildCurrentFilesArtifactSnapshot(t, &dataplane.AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{{Path: "maps/shared", Content: mapContent}},
+			GeneralFiles: []auxiliaryfiles.GeneralFile{{
+				Filename: "shared", Path: "general/shared", Content: generalContent,
+			}},
+			SSLCertificates: []auxiliaryfiles.SSLCertificate{{
+				Path: "ssl/certificate.pem", Content: certificate,
+			}},
+		})
+	}
+
+	require.NoError(t, authority.AcceptSnapshot(generation, "first", build("loser-a", "winner", "cert-a")))
+	first, err := authority.ExactSource(generation)
+	require.NoError(t, err)
+	require.NoError(t, authority.AcceptSnapshot(generation, "second", build("loser-b", "winner", "cert-b")))
+	semanticallyEqual, err := authority.ExactSource(generation)
+	require.NoError(t, err)
+
+	same, err := first.SameRoot(semanticallyEqual)
+	require.NoError(t, err)
+	assert.True(t, same)
+	files, err := semanticallyEqual.MaterializeCurrentAuxFiles()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"shared": "winner"}, files)
+
+	require.NoError(t, authority.AcceptSnapshot(generation, "third", build("loser-b", "changed", "cert-b")))
+	changed, err := authority.ExactSource(generation)
+	require.NoError(t, err)
+	same, err = semanticallyEqual.SameRoot(changed)
+	require.NoError(t, err)
+	assert.False(t, same)
 }
 
 // The baseline the next render reads back has to describe what the fleet runs.
@@ -136,7 +196,7 @@ func TestCurrentFilesAuthorityKeepsAcceptedOutputAcrossLegacyMutationInTerm(t *t
 		"map": {path: "maps/routes.map", content: "published"},
 	})
 	published.setCommit(&publishedAuxCommit{refs: map[string][]publishedAuxRef{
-		mapGVR: {{name: "map", namespace: "haptic"}},
+		"mapFiles": {{name: "map", namespace: "haptic"}},
 	}})
 	authority := newCurrentFilesAuthority(published)
 	generation := authority.BeginTerm()
@@ -199,4 +259,191 @@ func TestCurrentFilesAuthorityAcceptedEmptyOutputOverridesPublished(t *testing.T
 
 	authority.EndTerm(generation)
 	assert.Equal(t, "published", currentFilesSnapshot(t, authority, generation)["removed.file"])
+}
+
+func TestCurrentFilesAuthorityAcceptsAuthenticatedSnapshot(t *testing.T) {
+	authority := newCurrentFilesAuthority(nil)
+	generation := authority.BeginTerm()
+	reload := true
+	input := &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{{Path: "maps/routes.map", Content: "map"}},
+		GeneralFiles: []auxiliaryfiles.GeneralFile{
+			{Filename: "ticket.keys", Path: "general/ticket.keys", Content: "general", ReloadOnPush: &reload},
+			{Filename: "backend-ca.pem", Path: "general/backend-ca.pem", Content: "general-ca", IsCaFile: true},
+		},
+		SSLCertificates: []auxiliaryfiles.SSLCertificate{{Path: "ssl/certificate.pem", Content: "certificate"}},
+		SSLCaFiles:      []auxiliaryfiles.SSLCaFile{{Path: "ssl/ca.pem", Content: "ca"}},
+		CRTListFiles:    []auxiliaryfiles.CRTListFile{{Path: "crt-lists/frontend.list", Content: "crt-list"}},
+	}
+	snapshot := buildCurrentFilesArtifactSnapshot(t, input)
+
+	require.NoError(t, authority.AcceptSnapshot(generation, "plan-1", snapshot))
+	require.Same(t, snapshot, authority.acceptedSnapshot)
+	input.MapFiles[0].Content = "mutated"
+	input.GeneralFiles[0].Content = "mutated"
+	input.CRTListFiles[0].Content = "mutated"
+
+	want := map[string]string{
+		"routes.map":    "map",
+		"ticket.keys":   "general",
+		"frontend.list": "crt-list",
+	}
+	got := currentFilesSnapshot(t, authority, generation)
+	assert.Equal(t, want, got)
+	got["routes.map"] = "mutated"
+	assert.Equal(t, want, currentFilesSnapshot(t, authority, generation))
+}
+
+func TestCurrentFilesAuthorityRejectsNilAndUnauthenticatedSnapshots(t *testing.T) {
+	authority := newCurrentFilesAuthority(nil)
+	generation := authority.BeginTerm()
+
+	require.ErrorContains(t, authority.AcceptSnapshot(generation, "plan-1", nil), "snapshot is nil")
+	require.ErrorContains(t,
+		authority.AcceptSnapshot(generation, "plan-1", &renderartifact.Snapshot{}),
+		"snapshot is invalid",
+	)
+	assert.False(t, authority.hasAccepted)
+	assert.Nil(t, authority.acceptedSnapshot)
+}
+
+func TestCurrentFilesAuthorityAuthenticatedEmptySnapshotOverridesPublished(t *testing.T) {
+	published := newPublishedAuxFiles("haptic")
+	setPublishedFiles(published, map[string]map[string]string{
+		haproxyGeneralFileGVR.String(): {"removed.file": "published"},
+	})
+	authority := newCurrentFilesAuthority(published)
+	generation := authority.BeginTerm()
+	empty := buildCurrentFilesArtifactSnapshot(t, &dataplane.AuxiliaryFiles{})
+
+	require.NoError(t, authority.AcceptSnapshot(generation, "plan-1", empty))
+	assert.Empty(t, currentFilesSnapshot(t, authority, generation))
+	require.Same(t, empty, authority.acceptedSnapshot)
+}
+
+func TestCurrentFilesAuthoritySnapshotRootsSettleByPointer(t *testing.T) {
+	authority := newCurrentFilesAuthority(nil)
+	generation := authority.BeginTerm()
+	confirmed := buildCurrentFilesArtifactSnapshot(t, &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{{Path: "maps/routes.map", Content: "confirmed"}},
+	})
+	refused := buildCurrentFilesArtifactSnapshot(t, &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{{Path: "maps/routes.map", Content: "refused"}},
+	})
+
+	require.NoError(t, authority.AcceptSnapshot(generation, "plan-1", confirmed))
+	authority.Confirm(generation, "plan-1")
+	require.Same(t, confirmed, authority.confirmedSnapshot)
+	require.Same(t, confirmed, authority.acceptedSnapshot)
+
+	require.NoError(t, authority.AcceptSnapshot(generation, "plan-2", refused))
+	require.Same(t, refused, authority.acceptedSnapshot)
+	authority.Rollback(generation, "plan-2")
+	require.Same(t, confirmed, authority.acceptedSnapshot)
+	assert.Equal(t, "confirmed", currentFilesSnapshot(t, authority, generation)["routes.map"])
+}
+
+func TestCurrentFilesAuthorityRejectsSnapshotFromStaleTerm(t *testing.T) {
+	authority := newCurrentFilesAuthority(nil)
+	stale := authority.BeginTerm()
+	current := authority.BeginTerm()
+	snapshot := buildCurrentFilesArtifactSnapshot(t, &dataplane.AuxiliaryFiles{})
+
+	require.ErrorContains(t, authority.AcceptSnapshot(stale, "plan-stale", snapshot), "is not active")
+	assert.False(t, authority.hasAccepted)
+	require.NoError(t, authority.AcceptSnapshot(current, "plan-current", snapshot))
+	require.Same(t, snapshot, authority.acceptedSnapshot)
+
+	authority.EndTerm(current)
+	require.ErrorContains(t, authority.AcceptSnapshot(current, "plan-late", snapshot), "is not active")
+}
+
+func TestCurrentFilesAuthoritySettlesOnlyExactOutputRoot(t *testing.T) {
+	authority := newCurrentFilesAuthority(nil)
+	generation := authority.BeginTerm()
+	first := buildCurrentFilesOutput(t, "first")
+	second := buildCurrentFilesOutput(t, "second")
+
+	require.NoError(t, authority.AcceptOutput(generation, first))
+	require.NoError(t, authority.ConfirmOutput(generation, second))
+	assert.False(t, authority.hasConfirmed)
+	firstPlanID, err := first.PlanID()
+	require.NoError(t, err)
+	authority.Confirm(generation, firstPlanID)
+	assert.False(t, authority.hasConfirmed)
+
+	require.NoError(t, authority.ConfirmOutput(generation, first))
+	assert.True(t, authority.hasConfirmed)
+	assert.Same(t, first, authority.confirmedOutput)
+	assert.Equal(t, "first", currentFilesSnapshot(t, authority, generation)["routes.map"])
+
+	require.NoError(t, authority.AcceptOutput(generation, second))
+	require.NoError(t, authority.RollbackOutput(generation, first))
+	assert.Same(t, second, authority.acceptedOutput)
+	assert.Equal(t, "second", currentFilesSnapshot(t, authority, generation)["routes.map"])
+	secondPlanID, err := second.PlanID()
+	require.NoError(t, err)
+	authority.Rollback(generation, secondPlanID)
+	assert.Same(t, second, authority.acceptedOutput)
+
+	require.NoError(t, authority.RollbackOutput(generation, second))
+	assert.Same(t, first, authority.acceptedOutput)
+	assert.Equal(t, "first", currentFilesSnapshot(t, authority, generation)["routes.map"])
+}
+
+func TestCurrentFilesAuthorityRejectsCopiedOutput(t *testing.T) {
+	authority := newCurrentFilesAuthority(nil)
+	generation := authority.BeginTerm()
+	output := buildCurrentFilesOutput(t, "safe")
+	copied := *output
+
+	require.Error(t, authority.AcceptOutput(generation, &copied))
+	assert.False(t, authority.hasAccepted)
+	require.NoError(t, authority.AcceptOutput(generation, output))
+	require.Error(t, authority.ConfirmOutput(generation, &copied))
+	assert.False(t, authority.hasConfirmed)
+	require.Error(t, authority.RollbackOutput(generation, &copied))
+	assert.Same(t, output, authority.acceptedOutput)
+}
+
+func buildCurrentFilesOutput(tb testing.TB, content string) *renderoutput.Snapshot {
+	tb.Helper()
+	artifactAuthority := renderartifact.NewAuthority()
+	files := &dataplane.AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
+		Path: "maps/routes.map", Content: content,
+	}}}
+	artifacts, err := dataplane.BuildAuxiliaryFileSnapshot(artifactAuthority, nil, files)
+	require.NoError(tb, err)
+	config := "global\n"
+	plan := &renderplan.Plan{
+		SchemaVersion: renderplan.SchemaVersion,
+		Sections: []renderplan.Section{{
+			Kind: renderplan.SectionKindCore, Name: "core#0",
+			TextDigest: renderplan.DigestString(config), Length: len(config),
+			Text: config, TextKnown: true,
+		}},
+		Maps: map[string]renderplan.Map{"maps/routes.map": {
+			Path: "maps/routes.map", Ordered: true,
+			Entries: renderplan.ParseMapEntries(content),
+		}},
+		Files: []renderplan.File{
+			{
+				Path: renderplan.ConfigFilePath, Kind: renderplan.FileKindConfig,
+				Digest: renderplan.DigestString(config), Size: int64(len(config)),
+				ReloadOnChange: true, Content: config, ContentKnown: true,
+			},
+			{
+				Path: "maps/routes.map", Kind: renderplan.FileKindMap,
+				Digest: renderplan.DigestString(content), Size: int64(len(content)),
+				Content: content, ContentKnown: true,
+			},
+		},
+	}
+	plan.ComputeID()
+	planAuthority := renderplan.NewAuthority()
+	outputAuthority, err := renderoutput.NewAuthority(planAuthority, artifactAuthority)
+	require.NoError(tb, err)
+	output, err := renderoutput.NewSnapshot(outputAuthority, config, plan, artifacts, nil)
+	require.NoError(tb, err)
+	return output
 }

@@ -16,6 +16,7 @@ package templating
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -113,6 +114,17 @@ func TestRegexReplaceProcessor_EmptyInput(t *testing.T) {
 	result, err := processor.Process("")
 	require.NoError(t, err)
 	assert.Equal(t, "", result)
+}
+
+func TestRegexReplaceProcessor_NormalizesLineEndingsAndLongLines(t *testing.T) {
+	processor, err := NewRegexReplaceProcessor("x$", "y")
+	require.NoError(t, err)
+	long := strings.Repeat("a", 128*1024) + "x"
+
+	result, err := processor.Process("x\r\n" + long + "\r")
+
+	require.NoError(t, err)
+	assert.Equal(t, "y\n"+strings.Repeat("a", 128*1024)+"y", result)
 }
 
 func TestNewPostProcessor_RegexReplace(t *testing.T) {

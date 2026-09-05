@@ -41,8 +41,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -73,11 +76,22 @@ type Checker interface {
 	Check(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles, checksum string) error
 }
 
+// SnapshotChecker validates authenticated immutable auxiliary output directly.
+type SnapshotChecker interface {
+	CheckSnapshot(ctx context.Context, config string, snapshot *renderartifact.Snapshot, checksum string) error
+}
+
+// OutputChecker validates one authenticated complete render output directly.
+type OutputChecker interface {
+	CheckOutput(ctx context.Context, snapshot *renderoutput.Snapshot, checksum string) error
+}
+
 // render is one plan's bytes, kept until no pod needs a verdict on it.
 type render struct {
+	occurrence    *rendercycle.Occurrence
+	output        *renderoutput.Snapshot
 	planID        string
-	config        string
-	auxFiles      *dataplane.AuxiliaryFiles
+	renderProof   string
 	checksum      string
 	correlationID string
 	causationID   string
@@ -115,7 +129,7 @@ type Component struct {
 	newest *render
 	// superseded holds renders some pod may still be running, oldest first.
 	superseded []*render
-	// appliedByPod is each pod's last reported applied plan.
+	// appliedByPod is each pod's last reported applied render proof.
 	appliedByPod map[string]string
 	// pessimistic is the latch: true while renders are held for a verdict.
 	pessimistic bool
@@ -250,22 +264,42 @@ func (c *Component) setPinnedGauge(pinned bool) {
 // carrying no plan cannot be reverted from and is not gated: the deployer
 // refuses it anyway.
 func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) {
-	if event.PlanID == "" {
+	occurrence, err := event.RenderOccurrence()
+	if err != nil {
 		return
 	}
-	next := &render{
-		planID:        event.PlanID,
-		config:        event.HAProxyConfig,
-		auxFiles:      event.AuxiliaryFiles,
-		checksum:      event.ContentChecksum,
-		correlationID: event.CorrelationID(),
-		causationID:   event.EventID(),
+	cycle, err := occurrence.Snapshot()
+	if err != nil {
+		return
 	}
+	output, err := cycle.OutputSnapshot()
+	if err != nil {
+		return
+	}
+	planID, err := output.PlanID()
+	if err != nil || planID == "" {
+		return
+	}
+	checksum, err := cycle.ContentChecksum()
+	if err != nil {
+		return
+	}
+	renderProof, err := occurrence.Proof()
+	if err != nil {
+		return
+	}
+	c.rememberRender(&render{
+		occurrence: occurrence, output: output, planID: planID,
+		renderProof: renderProof, checksum: checksum,
+		correlationID: event.CorrelationID(), causationID: event.EventID(),
+	})
+}
 
+func (c *Component) rememberRender(next *render) {
 	c.mu.Lock()
 	previous := c.newest
 	c.newest = next
-	if previous != nil && previous.planID != next.planID && !previous.checked {
+	if previous != nil && previous.renderProof != next.renderProof && !previous.checked {
 		c.superseded = append(c.superseded, previous)
 		c.trimSupersededLocked()
 	}
@@ -277,15 +311,13 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 // handleConfigAppliedToPod records which plan a pod holds, so a plan the newest
 // render superseded is still checked while some pod runs it.
 func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEvent) {
-	planID := ""
+	renderProof := ""
 	if event.SyncMetadata != nil {
-		planID = event.SyncMetadata.AppliedPlanID
+		renderProof = event.SyncMetadata.AppliedRenderProof
 	}
 	c.mu.Lock()
-	if planID == "" {
-		delete(c.appliedByPod, podKey(event.PodNamespace, event.PodName))
-	} else {
-		c.appliedByPod[podKey(event.PodNamespace, event.PodName)] = planID
+	if renderProof != "" {
+		c.appliedByPod[podKey(event.PodNamespace, event.PodName)] = renderProof
 	}
 	c.mu.Unlock()
 
@@ -334,11 +366,11 @@ func (c *Component) runChecks(ctx context.Context, done chan<- struct{}) {
 			return
 		case <-c.wake:
 		}
-		for job, newest := c.takeJob(); job != nil; job, newest = c.takeJob() {
+		for job := c.takeJob(); job != nil; job = c.takeJob() {
 			if ctx.Err() != nil {
 				return
 			}
-			if c.check(ctx, job, newest) {
+			if c.check(ctx, job) {
 				backoff = 0
 				continue
 			}
@@ -384,16 +416,15 @@ func sleepUntil(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-// takeJob returns the next render to check and whether it is the newest one:
-// the newest first, because that is the one the fleet is converging on (and,
-// while pinned, the one the scheduler is holding), then any superseded render
-// some pod still reports applied.
-func (c *Component) takeJob() (*render, bool) {
+// takeJob returns the next render to check: the newest first, because that is
+// the one the fleet is converging on (and, while pinned, the one the scheduler
+// is holding), then any superseded render some pod still reports applied.
+func (c *Component) takeJob() *render {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.newest != nil && !c.newest.checked {
-		return c.newest, true
+		return c.newest
 	}
 	applied := c.appliedPlansLocked()
 	for _, candidate := range c.superseded {
@@ -402,20 +433,20 @@ func (c *Component) takeJob() (*render, bool) {
 		}
 		// A render no pod reports applied is nothing to answer for yet. It is
 		// skipped, not dropped: the pod that took it may still be reporting.
-		if _, stillRunning := applied[candidate.planID]; !stillRunning {
+		if _, stillRunning := applied[candidate.renderProof]; !stillRunning {
 			continue
 		}
-		return candidate, false
+		return candidate
 	}
-	return nil, false
+	return nil
 }
 
 // appliedPlansLocked is the set of plans the fleet reports applied. Caller
 // holds mu.
 func (c *Component) appliedPlansLocked() map[string]struct{} {
 	applied := make(map[string]struct{}, len(c.appliedByPod))
-	for _, planID := range c.appliedByPod {
-		applied[planID] = struct{}{}
+	for _, renderProof := range c.appliedByPod {
+		applied[renderProof] = struct{}{}
 	}
 	return applied
 }
@@ -438,7 +469,7 @@ func (c *Component) trimSupersededLocked() {
 	applied := c.appliedPlansLocked()
 	kept := make([]*render, 0, maxRetainedRenders)
 	for _, candidate := range c.superseded {
-		if _, stillRunning := applied[candidate.planID]; !stillRunning && excess > 0 {
+		if _, stillRunning := applied[candidate.renderProof]; !stillRunning && excess > 0 {
 			excess--
 			continue
 		}
@@ -450,10 +481,10 @@ func (c *Component) trimSupersededLocked() {
 // check runs one verdict and publishes it. It reports whether a verdict was
 // reached at all: a check that could not run is not one, and its render stays
 // unchecked so the worker can come back to it.
-func (c *Component) check(ctx context.Context, job *render, newest bool) bool {
+func (c *Component) check(ctx context.Context, job *render) bool {
 	checkCtx, cancel := context.WithTimeout(ctx, c.checkTimeout)
 	start := time.Now()
-	err := c.checker.Check(checkCtx, job.config, job.auxFiles, job.checksum)
+	err := c.checkRendered(checkCtx, job)
 	cancel()
 	durationMs := time.Since(start).Milliseconds()
 
@@ -475,9 +506,14 @@ func (c *Component) check(ctx context.Context, job *render, newest bool) bool {
 	// leaves it unchecked, so the retry re-runs this render rather than
 	// leaving it judged by an unwritable temp directory forever.
 	job.checked = verdict
+	// A newer render may arrive while haproxy -c is running. The verdict may
+	// move the latch only if this render is still newest at settlement time.
+	newest := c.newest != nil && c.newest.renderProof == job.renderProof
+	pinned := c.settleLocked(err == nil, newest)
 	c.mu.Unlock()
-
-	pinned := c.settle(err == nil, newest)
+	if newest {
+		c.setPinnedGauge(pinned)
+	}
 
 	switch {
 	case err == nil:
@@ -493,14 +529,46 @@ func (c *Component) check(ctx context.Context, job *render, newest bool) bool {
 			"plan", job.planID, "newest", newest, "error", message, "correlation_id", job.correlationID)
 	}
 
-	c.eventBus.Publish(events.NewRenderGateCompletedEvent(
-		job.planID, err == nil, refused, newest, message, pinned, durationMs,
+	event, eventErr := events.NewRenderGateCompletedEventWithCycle(
+		job.occurrence, err == nil, refused, newest, message, pinned, durationMs,
 		events.WithCorrelation(job.correlationID, job.causationID),
-	))
+	)
+	if eventErr != nil {
+		c.logger.Error("Render gate could not publish an authenticated cycle verdict", "error", eventErr)
+		return false
+	}
+	c.eventBus.Publish(event)
 	return verdict
 }
 
-// settle moves the latch and reports whether the fleet is now pinned.
+func (c *Component) checkRendered(ctx context.Context, job *render) error {
+	checksum, err := job.output.ContentChecksum()
+	if err != nil {
+		return err
+	}
+	if checker, ok := c.checker.(OutputChecker); ok {
+		return checker.CheckOutput(ctx, job.output, checksum)
+	}
+	config, err := job.output.Config()
+	if err != nil {
+		return err
+	}
+	artifacts, err := job.output.ArtifactSnapshot()
+	if err != nil {
+		return err
+	}
+	if checker, ok := c.checker.(SnapshotChecker); ok {
+		return checker.CheckSnapshot(ctx, config, artifacts, checksum)
+	}
+	auxFiles, err := dataplane.MaterializeAuxiliaryFileSnapshot(artifacts)
+	if err != nil {
+		return err
+	}
+	return c.checker.Check(ctx, config, auxFiles, checksum)
+}
+
+// settleLocked moves the latch and reports whether the fleet is now pinned.
+// Caller holds mu.
 //
 // Only a verdict on the newest render moves it. A superseded plan a pod still
 // runs is checked for the revert's sake, but the fleet has already moved past
@@ -513,17 +581,12 @@ func (c *Component) check(ctx context.Context, job *render, newest bool) bool {
 // nothing has judged is what the latch exists to prevent. Pinned is the second
 // consecutive failure: a render the gate was already holding was refused, so
 // nothing new reaches the pods until the operator's input changes.
-func (c *Component) settle(ok, newest bool) bool {
-	c.mu.Lock()
+func (c *Component) settleLocked(ok, newest bool) bool {
 	if !newest {
-		pinned := c.pessimistic
-		c.mu.Unlock()
-		return pinned
+		return c.pessimistic
 	}
 	pinned := !ok && c.pessimistic
 	c.pessimistic = !ok
-	c.mu.Unlock()
-	c.setPinnedGauge(pinned)
 	return pinned
 }
 
@@ -536,6 +599,33 @@ type ServiceChecker struct {
 // caller can tell HAProxy's verdict from a check that could not run.
 func (s ServiceChecker) Check(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles, checksum string) error {
 	result := s.Service.ValidateWithChecksum(ctx, config, auxFiles, checksum)
+	if result.Valid {
+		return nil
+	}
+	return result.Error
+}
+
+// CheckSnapshot validates authenticated immutable auxiliary output.
+func (s ServiceChecker) CheckSnapshot(
+	ctx context.Context,
+	config string,
+	snapshot *renderartifact.Snapshot,
+	checksum string,
+) error {
+	result := s.Service.ValidateSnapshotWithChecksum(ctx, config, snapshot, checksum)
+	if result.Valid {
+		return nil
+	}
+	return result.Error
+}
+
+// CheckOutput validates a complete immutable render output without splitting its identity.
+func (s ServiceChecker) CheckOutput(
+	ctx context.Context,
+	snapshot *renderoutput.Snapshot,
+	checksum string,
+) error {
+	result := s.Service.ValidateOutputSnapshotWithChecksum(ctx, snapshot, checksum)
 	if result.Valid {
 		return nil
 	}

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: kubernetes-backends
+description: Kubernetes Service backend resolution through EndpointSlices. Carries only library YAML; the parent chart merges it into the HAProxyTemplateConfig.
+version: 0.1.0

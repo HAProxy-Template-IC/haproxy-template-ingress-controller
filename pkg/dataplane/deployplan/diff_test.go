@@ -36,7 +36,7 @@ func TestDiffOpOrder(t *testing.T) {
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{
 			entry("keep.example.com", "be-keep"), entry("old.example.com", "be-old"),
 		}}),
-		withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "before"}),
+		withFile(&renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "before"}),
 	)
 	moved := dynBackend("be-keep", srv("SRV_1", "10.0.0.4", 8080))
 	next := basePlan(
@@ -45,7 +45,7 @@ func TestDiffOpOrder(t *testing.T) {
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{
 			entry("keep.example.com", "be-keep"), entry("new.example.com", "be-new"),
 		}}),
-		withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
+		withFile(&renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
 	)
 	base := withMapsLoaded(on34(prev), routeMap)
 	base.Inventory.Certs = []string{certPath}
@@ -213,8 +213,8 @@ func everyRuleDecision(t *testing.T) []deployplan.Decision {
 		withBackend(dynBackend("be-old", srv("SRV_1", "10.0.0.1", 8080))),
 		withBackend(dynBackend("be-keep", disabled)),
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a", "1"), entry("b", "2")}}),
-		withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "before"}),
-		withFile(renderplan.File{Path: caPath, Kind: renderplan.FileKindCA, Digest: "before"}),
+		withFile(&renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "before"}),
+		withFile(&renderplan.File{Path: caPath, Kind: renderplan.FileKindCA, Digest: "before"}),
 		withCRTList(crtList),
 	))
 	lifecycle.Inventory = api.Inventory{Maps: []string{routeMap}, CRTLists: []string{listPath}}
@@ -222,8 +222,8 @@ func everyRuleDecision(t *testing.T) []deployplan.Decision {
 		withBackend(dynBackend("be-new", srv("SRV_2", "10.0.0.2", 8080))),
 		withBackend(dynBackend("be-keep", reweighted)),
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a", "9"), entry("c", "3")}}),
-		withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
-		withFile(renderplan.File{Path: caPath, Kind: renderplan.FileKindCA, Digest: "after"}),
+		withFile(&renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
+		withFile(&renderplan.File{Path: caPath, Kind: renderplan.FileKindCA, Digest: "after"}),
 		withCRTList(renderplan.CRTList{Path: listPath, Entries: []renderplan.CRTListEntry{
 			{Cert: certPath}, {Cert: "certs/other.pem"},
 		}}),

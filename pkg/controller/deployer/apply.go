@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -31,10 +32,11 @@ import (
 
 // The agent's 409 reasons (api.Conflict.Reason).
 const (
-	conflictPrevMismatch      = "prev_mismatch"
-	conflictStaleEpoch        = "stale_epoch"
-	conflictUnknownBaseline   = "unknown_baseline"
-	conflictWorkerOpsMismatch = "worker_ops_mismatch"
+	conflictPrevMismatch         = "prev_mismatch"
+	conflictStaleEpoch           = "stale_epoch"
+	conflictUnknownBaseline      = "unknown_baseline"
+	conflictWorkerOpsMismatch    = "worker_ops_mismatch"
+	conflictRevertTargetMismatch = "revert_target_mismatch"
 )
 
 const (
@@ -109,7 +111,7 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 	if err != nil {
 		return nil, fmt.Errorf("reading agent state: %w", err)
 	}
-	c.notePodPlans(endpoint, state.AppliedPlanID, state.RunningPlanID, state.WorkerOpsPlanID)
+	c.notePodPlans(endpoint, state.AppliedPlanProof, state.RunningPlanProof, state.WorkerOpsPlanProof)
 	attempt := &podApply{client: client, endpoint: endpoint, req: req, state: state}
 	attempt.full, attempt.notes = c.applyPosture(endpoint, state)
 
@@ -134,7 +136,7 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 		if attempt.state, err = client.State(ctx, false); err != nil {
 			return nil, fmt.Errorf("re-reading agent state: %w", err)
 		}
-		c.notePodPlans(endpoint, attempt.state.AppliedPlanID, attempt.state.RunningPlanID, attempt.state.WorkerOpsPlanID)
+		c.notePodPlans(endpoint, attempt.state.AppliedPlanProof, attempt.state.RunningPlanProof, attempt.state.WorkerOpsPlanProof)
 		if conflict.Conflict.Reason == conflictWorkerOpsMismatch {
 			// Only the worker moved on (its pacer fired between the state read
 			// and the apply); the applied plan the blob describes is intact.
@@ -162,23 +164,30 @@ type podApply struct {
 // applyOnce composes the decision for the pod's current state and sends every
 // chunk of it. Each chunk is fenced on what the previous one applied.
 func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutcome, error) {
-	decision := attempt.req.decisionFor(attempt.state, c.plans)
+	authority := podKey(attempt.endpoint)
+	decision := attempt.req.decisionFor(attempt.state, c.plans, authority)
+	if decision.Verdict == deployplan.VerdictReload {
+		c.Logger().Debug("Reload required: this change cannot run as runtime ops",
+			"pod", attempt.endpoint.PodName, "reasons", decision.Reasons)
+	}
 	outcome := &podOutcome{decision: decision}
 	prev := fenceOf(attempt.state)
+	validated := attempt.req.validatedPlanFor(authority, attempt.state)
 
 	chunks := decision.Chunk()
 	if attempt.full || len(chunks) == 0 {
 		chunks = [][]api.Op{nil}
 	}
-	// The blob rides the first chunk only: every chunk carries the same plan id,
-	// so the pod stores it once and the other chunks would repeat 100-200 KB.
-	blob := attempt.sendsPlanBlob()
+	// The blob rides the last chunk only. Every successful chunk gets a fresh
+	// agent role proof, so only the final chunk can bind the stored blob to the
+	// role the completed deployment reports.
+	blob := attempt.sendsPlanBlob(c.plans.Baseline(authority, attempt.state))
 	for i, ops := range chunks {
-		manifest := attempt.req.manifest(&decision, ops, prev, attempt.full, attempt.state.AppliedPlanID)
+		manifest := attempt.req.manifest(&decision, ops, &prev, attempt.full, validated)
 		if i > 0 {
 			manifest.InPlaceOps = nil
 		}
-		result, err := c.send(ctx, attempt, manifest, blob && i == 0)
+		result, err := c.send(ctx, attempt, manifest, blob && i == len(chunks)-1)
 		if err != nil {
 			return nil, err
 		}
@@ -187,12 +196,54 @@ func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutco
 		if !result.OK {
 			return outcome, nil
 		}
-		prev = fence{planID: result.AppliedPlanID, token: result.AppliedToken, workerOps: result.WorkerOpsPlanID}
+		if err := c.bindApplyResult(attempt, authority, &decision, result); err != nil {
+			return nil, err
+		}
+		prev = fence{
+			planID:         result.AppliedPlanID,
+			planProof:      result.AppliedPlanProof,
+			token:          result.AppliedToken,
+			workerOps:      result.WorkerOpsPlanID,
+			workerOpsProof: result.WorkerOpsPlanProof,
+		}
 	}
 	outcome.converged = outcome.result.OK &&
 		outcome.result.AppliedPlanID == attempt.req.planID &&
+		outcome.result.AppliedPlanProof != "" &&
 		outcome.result.Mode != api.ResultScheduled
 	return outcome, nil
+}
+
+func (c *Component) bindApplyResult(
+	attempt *podApply,
+	authority string,
+	decision *deployplan.Decision,
+	result *api.ApplyResult,
+) error {
+	// The agent reports the plan it actually holds, which is not always the one
+	// this apply sent: a revert lands the last known good set, and a baseline
+	// invalidated mid-apply clears the applied plan outright. Both come back OK
+	// with a different -- or empty -- id, and binding this plan under it would
+	// describe a set the pod is not on. They are simply not converged, which the
+	// caller already computes, so the next attempt re-derives the decision.
+	// A stale proof for the plan we DID send is still a fault and still caught.
+	if result.AppliedPlanID != attempt.req.planID {
+		return nil
+	}
+	if err := c.plans.BindOccurrence(
+		authority, result.AppliedPlanID, result.AppliedPlanProof,
+		attempt.req.plan, attempt.req.occurrence,
+	); err != nil {
+		return fmt.Errorf("agent reused or omitted the applied plan proof: %w", err)
+	}
+	if decision.WorkerPlan == nil || result.WorkerOpsPlanID != decision.WorkerPlan.ID ||
+		(result.WorkerOpsPlanProof == result.AppliedPlanProof && !exactPlan(decision.WorkerPlan, attempt.req.plan)) {
+		return nil
+	}
+	if !c.plans.Bind(authority, result.WorkerOpsPlanID, result.WorkerOpsPlanProof, decision.WorkerPlan) {
+		return fmt.Errorf("agent reused or omitted the worker plan proof")
+	}
+	return nil
 }
 
 // send performs one apply, resending the file parts the agent turns out not to
@@ -203,6 +254,7 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 	if attempt.full {
 		held = nil
 	}
+	held = c.prepareContentProofs(attempt, manifest, held)
 	for {
 		parts, err := attempt.req.parts(manifest.Files, held)
 		if err != nil {
@@ -211,6 +263,9 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 		result, err := attempt.client.Apply(ctx, manifest, parts, attempt.planBlob(withBlob))
 		var missing *agentclient.MissingError
 		if !errors.As(err, &missing) || held == nil {
+			if err == nil && result != nil && result.OK {
+				c.acceptContentProofs(attempt, manifest)
+			}
 			return result, err
 		}
 		c.Logger().Debug("Agent is missing file parts, resending them",
@@ -219,19 +274,67 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 	}
 }
 
+type contentProof struct {
+	proof   string
+	content string
+}
+
+func (c *Component) prepareContentProofs(
+	attempt *podApply, manifest *api.Manifest, held map[string]api.FileAt,
+) map[string]api.FileAt {
+	c.contentProofMu.Lock()
+	known := c.contentProofs[podKey(attempt.endpoint)]
+	c.contentProofMu.Unlock()
+	safe := make(map[string]api.FileAt, len(held))
+	for i := range manifest.Files {
+		file := &manifest.Files[i]
+		content, available := attempt.req.contents[file.Path]
+		proof, proved := known[file.Path]
+		at, remote := held[file.Path]
+		if available && proved && remote && proof.proof != "" && proof.proof == at.Proof && proof.content == content &&
+			at.Digest == file.Digest && at.Size == file.Size {
+			file.Proof = proof.proof
+			safe[file.Path] = at
+			continue
+		}
+		file.Proof = fmt.Sprintf("%d:%d:%d", attempt.req.token.LeaderEpoch, attempt.req.token.RenderSeq, i)
+	}
+	if len(safe) == 0 {
+		return nil
+	}
+	return safe
+}
+
+func (c *Component) acceptContentProofs(attempt *podApply, manifest *api.Manifest) {
+	known := make(map[string]contentProof, len(manifest.Files))
+	held := make(map[string]api.FileAt, len(manifest.Files))
+	for i := range manifest.Files {
+		file := &manifest.Files[i]
+		content, available := attempt.req.contents[file.Path]
+		if available && file.Proof != "" {
+			known[file.Path] = contentProof{proof: file.Proof, content: content}
+		}
+		held[file.Path] = api.FileAt{Digest: file.Digest, Proof: file.Proof, Size: file.Size}
+	}
+	c.contentProofMu.Lock()
+	c.contentProofs[podKey(attempt.endpoint)] = known
+	c.contentProofMu.Unlock()
+	attempt.state.Files = held
+}
+
 // sendsPlanBlob reports whether this apply has to carry the plan. A pod hands
 // its stored blob back only while it describes the plan it applied, so every
 // apply that moves that plan on has to bring the new one: the pod is what a
 // leader with a cold cache reads its baseline from, and a pod with none costs
 // a full-state reload.
-func (a *podApply) sendsPlanBlob() bool {
+func (a *podApply) sendsPlanBlob(baseline *renderplan.Plan) bool {
 	if len(a.req.blob) == 0 {
 		return false
 	}
 	if a.full || a.resend || a.req.verify {
 		return true
 	}
-	return a.state.AppliedPlanID != a.req.planID || len(a.state.AppliedPlan) == 0
+	return !renderplan.ExactlyEqual(baseline, a.req.plan) || len(a.state.AppliedPlan) == 0
 }
 
 func (a *podApply) planBlob(send bool) io.Reader {
@@ -243,56 +346,72 @@ func (a *podApply) planBlob(send bool) io.Reader {
 
 // fence is the baseline one apply is composed against.
 type fence struct {
-	planID    string
-	token     api.Token
-	workerOps string
+	planID         string
+	planProof      string
+	token          api.Token
+	workerOps      string
+	workerOpsProof string
 }
 
 func fenceOf(state *api.State) fence {
-	return fence{planID: state.AppliedPlanID, token: state.AppliedToken, workerOps: state.WorkerOpsPlanID}
+	return fence{
+		planID:         state.AppliedPlanID,
+		planProof:      state.AppliedPlanProof,
+		token:          state.AppliedToken,
+		workerOps:      state.WorkerOpsPlanID,
+		workerOpsProof: state.WorkerOpsPlanProof,
+	}
 }
 
 // manifest composes one apply from the decision. full overrides the verdict:
 // a pod whose baseline is unknown or whose agent is a foreign version gets the
 // complete file set and a reload, never ops composed against a guess.
 func (r *deployRequest) manifest(
-	decision *deployplan.Decision, ops []api.Op, prev fence, full bool, appliedPlanID string,
+	decision *deployplan.Decision,
+	ops []api.Op,
+	prev *fence,
+	full bool,
+	validated planReference,
 ) *api.Manifest {
 	manifest := &api.Manifest{
-		PlanID:             r.planID,
-		PlanSchemaVersion:  r.plan.SchemaVersion,
-		Token:              r.token,
-		ExpectedPrevPlanID: prev.planID,
-		ExpectedPrevToken:  prev.token,
-		ValidatedPlanID:    r.validatedPlanFor(appliedPlanID),
-		Files:              decision.Files,
-		Ops:                ops,
-		InPlaceOps:         decision.InPlace,
-		Mode:               decision.Mode,
+		IdentityVersion:       api.ExactIdentityVersion,
+		PlanID:                r.planID,
+		PlanSchemaVersion:     r.plan.SchemaVersion,
+		Token:                 r.token,
+		ExpectedPrevPlanID:    prev.planID,
+		ExpectedPrevPlanProof: prev.planProof,
+		ExpectedPrevToken:     prev.token,
+		ValidatedPlanID:       validated.id,
+		ValidatedPlanProof:    validated.proof,
+		Files:                 slices.Clone(decision.Files),
+		Ops:                   ops,
+		InPlaceOps:            decision.InPlace,
+		Mode:                  decision.Mode,
 	}
 	if len(manifest.InPlaceOps) > 0 {
 		manifest.ExpectedWorkerOpsPlanID = prev.workerOps
+		manifest.ExpectedWorkerOpsPlanProof = prev.workerOpsProof
 		manifest.WorkerOpsPlanID = decision.WorkerPlan.ID
 	}
 	if full {
-		manifest.Ops, manifest.InPlaceOps, manifest.ExpectedWorkerOpsPlanID = nil, nil, ""
+		manifest.Ops, manifest.InPlaceOps = nil, nil
+		manifest.ExpectedWorkerOpsPlanID, manifest.ExpectedWorkerOpsPlanProof = "", ""
+		manifest.WorkerOpsPlanID, manifest.WorkerOpsPlanProof = "", ""
 		manifest.Mode = api.ModeReload
 	}
 	return manifest
 }
 
-// parts carries the content of every file the agent does not already hold at
-// the manifest's digest — haproxy.cfg included, so an unchanged render is a
-// noop on the pod. When it does travel it travels whole: the renderer's exact
-// bytes are what the pod runs.
+// parts carries every file the agent has not proved it holds.
 func (r *deployRequest) parts(files []api.File, held map[string]api.FileAt) (map[string]io.Reader, error) {
 	parts := make(map[string]io.Reader, len(files))
 	for i := range files {
 		file := &files[i]
-		if at, ok := held[file.Path]; ok && at.Digest == file.Digest {
+		if at, ok := held[file.Path]; ok && file.Proof != "" && at.Proof == file.Proof &&
+			at.Digest == file.Digest && at.Size == file.Size {
 			continue
 		}
-		content, ok := r.contents[file.Digest]
+		content, ok := r.contents[file.Path]
 		if !ok {
 			return nil, fmt.Errorf("render carries no content for %s (digest %s)", file.Path, file.Digest)
 		}
@@ -303,12 +422,15 @@ func (r *deployRequest) parts(files []api.File, held map[string]api.FileAt) (map
 
 // decisionFor diffs the render against what this pod applied, reusing the
 // answer across pods that report the same baseline and capabilities.
-func (r *deployRequest) decisionFor(state *api.State, plans *planCache) deployplan.Decision {
+func (r *deployRequest) decisionFor(state *api.State, plans *planCache, authority string) deployplan.Decision {
 	caps := deployplan.CapsFor(state.HAProxy.Version, state.AgentOps)
+	applied := plans.Baseline(authority, state)
+	running := plans.Plan(authority, state.RunningPlanID, state.RunningPlanProof)
+	workerOps := plans.Plan(authority, state.WorkerOpsPlanID, state.WorkerOpsPlanProof)
 	baseline := deployplan.Baseline{
-		Applied:               plans.Baseline(state),
-		Running:               plans.Plan(state.RunningPlanID),
-		WorkerOps:             plans.Plan(state.WorkerOpsPlanID),
+		Applied:               applied,
+		Running:               running,
+		WorkerOps:             workerOps,
 		Inventory:             state.Inventory,
 		Caps:                  caps,
 		PendingServerDeletes:  len(state.PendingDeletes.Servers),
@@ -316,43 +438,33 @@ func (r *deployRequest) decisionFor(state *api.State, plans *planCache) deploypl
 		ReloadPending:         state.ReloadPendingAt != "",
 	}
 	decision := r.diffs.get(&diffKey{
-		applied:         baselineID(baseline.Applied),
-		running:         state.RunningPlanID,
-		workerOps:       state.WorkerOpsPlanID,
+		applied:         applied,
+		running:         running,
+		workerOps:       workerOps,
 		caps:            state.HAProxy.Version + "\x00" + strings.Join(state.AgentOps, ","),
-		inventory:       inventoryDigest(&state.Inventory),
+		inventory:       inventoryIdentity(&state.Inventory),
 		pendingServers:  baseline.PendingServerDeletes,
 		pendingBackends: baseline.PendingBackendDeletes,
 		reloadPending:   baseline.ReloadPending,
 	}, func() deployplan.Decision {
 		return deployplan.Diff(r.plan, &baseline)
 	})
-	// The pod reports the derived plan's id as its worker-ops baseline once
-	// the in-place batch ran; the next diff has to find that plan here.
-	plans.PutDerived(decision.WorkerPlan)
 	return decision
 }
 
 // inventoryDigest identifies what the worker has loaded by its content: the
 // generation next to it counts one pod's reloads, so two pods on the same plan
 // can report the same generation over different sets.
-func inventoryDigest(inventory *api.Inventory) string {
+func inventoryIdentity(inventory *api.Inventory) string {
 	var sets strings.Builder
 	for _, paths := range [][]string{
 		inventory.Maps, inventory.Certs, inventory.CAFiles, inventory.CRLFiles, inventory.CRTLists,
 	} {
 		for _, path := range paths {
+			fmt.Fprintf(&sets, "%d:", len(path))
 			sets.WriteString(path)
-			sets.WriteByte(0)
 		}
-		sets.WriteByte('\n')
+		sets.WriteByte('|')
 	}
-	return renderplan.DigestString(sets.String())
-}
-
-func baselineID(plan *renderplan.Plan) string {
-	if plan == nil {
-		return ""
-	}
-	return plan.ID
+	return sets.String()
 }

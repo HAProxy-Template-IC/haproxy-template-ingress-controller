@@ -9,6 +9,8 @@
 _fx:
   extracontextCoraza: &extracontextCoraza
     haproxyVersion: "3.2"
+    waf:
+      ingressPermissions: {allowCustomRules: true}
     spoaHub:
       enabled: true
       haproxy:
@@ -325,6 +327,8 @@ validationTests:
     description: "An Ingress with modsecurity-snippet and a host-less rule renders successfully — coraza-app.map is keyed by <ns>/<name> (resource id), so the host dimension is irrelevant. The previous fail-loud guard is obsolete."
     extraContext:
       haproxyVersion: "3.2"
+      waf:
+        ingressPermissions: {allowCustomRules: true}
       spoaHub:
         enabled: true
         haproxy:
@@ -378,6 +382,8 @@ validationTests:
       renderMode: admission
       admissionSubject: { store: ingresses, namespace: default, name: injector }
       haproxyVersion: "3.2"
+      waf:
+        ingressPermissions: {allowCustomRules: true}
       spoaHub:
         enabled: true
         haproxy:
@@ -427,6 +433,8 @@ validationTests:
     description: "An Ingress carrying nginx.ingress.kubernetes.io/modsecurity-snippet while the spoaHub coraza plugin is NOT enabled fails the render with an explicit error. Silent ignore would hide a real misconfiguration; the operator wrote a per-Ingress WAF rule and nothing enforces it."
     extraContext:
       haproxyVersion: "3.2"
+      waf:
+        ingressPermissions: {allowCustomRules: true}
       spoaHub:
         enabled: true
         haproxy:

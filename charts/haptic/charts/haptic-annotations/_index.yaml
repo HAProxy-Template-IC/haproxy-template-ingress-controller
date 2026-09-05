@@ -172,9 +172,8 @@ watchedResources:
   # Self-service WAF policy catalogs: the per-namespace well-known ConfigMap
   # (waf.policies.selfService). A dedicated full-body watch — scoped by the
   # injected metadata.name fieldSelector to just those catalogs — because
-  # discovery must iterate every participating namespace, and the on-demand
-  # configmaps store above deliberately does not support full iteration
-  # (its List() returns only entries the render already touched).
+  # one incremental component binds every participating namespace, while the
+  # on-demand configmaps store above retains only explicitly addressed entries.
   waf_selfservice_catalogs:
     apiVersion: v1
     resources: configmaps

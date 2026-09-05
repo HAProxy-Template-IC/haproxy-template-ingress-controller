@@ -15,6 +15,8 @@
 package server
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +24,8 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -44,7 +48,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, api.ApplyError{Stage: "request", Message: err.Error()})
 		return
 	}
-	manifest, digest, err := readManifest(reader)
+	manifest, err := readManifest(reader)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, api.ApplyError{Stage: "manifest", Message: err.Error()})
 		return
@@ -58,22 +62,12 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, conflict)
 		return
 	}
-	if cached := s.cachedNACK(digest); cached != nil {
-		writeJSON(w, http.StatusOK, cached)
-		return
-	}
-	// Promotion comes after both refusals: neither may move the rollback
-	// baseline, and clearing the journal is not undoable.
-	if err := s.promoteLKG(manifest); err != nil {
-		writeJSON(w, http.StatusInternalServerError, api.ApplyError{Stage: "lkg", Message: err.Error()})
-		return
-	}
-	s.stageAndRun(w, reader, manifest, digest)
+	s.stageAndRun(w, reader, manifest)
 }
 
 // stageAndRun consumes the file parts and hands the request to the state
 // machine.
-func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, manifest *api.Manifest, digest string) {
+func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, manifest *api.Manifest) {
 	got, err := s.stageParts(reader, manifest)
 	defer func() {
 		for _, part := range got.files {
@@ -89,51 +83,133 @@ func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, ma
 		writeJSON(w, http.StatusConflict, api.Missing{Missing: missing})
 		return
 	}
-	result := s.runApply(manifest, got, digest)
+	work, workErr := s.exactWorkIdentity(manifest, got.files)
+	digest := ""
+	if workErr != nil {
+		s.logger.Warn("could not build exact NACK identity; cache disabled", "error", workErr)
+	} else {
+		digest = renderplan.Digest(work)
+		if cached := s.cachedNACK(digest, work); cached != nil {
+			writeJSON(w, http.StatusOK, cached)
+			return
+		}
+	}
+	// Promotion comes after every refusal: neither may move the rollback
+	// baseline, and clearing the journal is not undoable.
+	if err := s.promoteLKG(manifest); err != nil {
+		writeJSON(w, http.StatusInternalServerError, api.ApplyError{Stage: "lkg", Message: err.Error()})
+		return
+	}
+	appliedProof, workerProof := "", ""
+	if manifest.Mode != api.ModeRevertLKG {
+		appliedProof, workerProof, err = s.reserveRoleProofs(len(manifest.InPlaceOps) > 0)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, api.ApplyError{Stage: "identity", Message: err.Error()})
+			return
+		}
+	}
+	result := s.runApply(manifest, got, digest, work, appliedProof, workerProof)
 	writeJSON(w, http.StatusOK, result)
 }
 
-// readManifest reads the JSON part, which the controller always sends first,
-// and returns its digest so the NACK cache can recognise the same bytes again.
-func readManifest(reader *multipart.Reader) (*api.Manifest, string, error) {
+// readManifest reads the JSON part, which the controller always sends first.
+func readManifest(reader *multipart.Reader) (*api.Manifest, error) {
 	part, err := reader.NextPart()
 	if err != nil {
-		return nil, "", fmt.Errorf("no manifest part: %w", err)
+		return nil, fmt.Errorf("no manifest part: %w", err)
 	}
 	defer func() { _ = part.Close() }()
 	if part.FormName() != api.PartManifest {
-		return nil, "", fmt.Errorf("first part is %q, expected %q", part.FormName(), api.PartManifest)
+		return nil, fmt.Errorf("first part is %q, expected %q", part.FormName(), api.PartManifest)
 	}
 	raw, err := io.ReadAll(io.LimitReader(part, api.MaxPlanBlobBytes))
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	manifest := &api.Manifest{}
 	if err := json.Unmarshal(raw, manifest); err != nil {
-		return nil, "", err
+		return nil, err
 	}
+	normalizeLegacyManifest(manifest)
 	if err := validateManifest(manifest); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return manifest, workDigest(manifest), nil
+	return manifest, nil
 }
 
-// workDigest identifies the work a manifest asks for. It deliberately leaves
-// out the fencing fields: a NACKed manifest comes back with a different
-// baseline attached, and it is still the same bytes for HAProxy to reject.
-func workDigest(m *api.Manifest) string {
-	work := struct {
-		PlanID     string     `json:"plan_id"`
-		Mode       string     `json:"mode"`
-		Files      []api.File `json:"files"`
-		Ops        []api.Op   `json:"ops"`
-		InPlaceOps []api.Op   `json:"in_place_ops"`
-	}{m.PlanID, m.Mode, m.Files, m.Ops, m.InPlaceOps}
-	raw, err := json.Marshal(work)
-	if err != nil {
-		return ""
+func normalizeLegacyManifest(manifest *api.Manifest) {
+	if manifest.IdentityVersion == api.ExactIdentityVersion {
+		return
 	}
-	return renderplan.Digest(raw)
+	manifest.Mode = api.ModeReload
+	manifest.Ops = nil
+	manifest.InPlaceOps = nil
+	manifest.ExpectedWorkerOpsPlanID = ""
+	manifest.ExpectedPrevPlanProof = ""
+	manifest.ExpectedWorkerOpsPlanProof = ""
+	manifest.WorkerOpsPlanID = ""
+	manifest.WorkerOpsPlanProof = ""
+	manifest.ValidatedPlanID = ""
+	manifest.ValidatedPlanProof = ""
+}
+
+func (s *Server) exactWorkIdentity(m *api.Manifest, staged map[string]*files.Staged) ([]byte, error) {
+	manifest, err := json.Marshal(struct {
+		IdentityVersion            int        `json:"identity_version"`
+		PlanID                     string     `json:"plan_id"`
+		PlanProof                  string     `json:"plan_proof"`
+		PlanSchemaVersion          int        `json:"plan_schema_version"`
+		Files                      []api.File `json:"files"`
+		Ops                        []api.Op   `json:"ops"`
+		InPlaceOps                 []api.Op   `json:"in_place_ops"`
+		ExpectedWorkerOpsPlanID    string     `json:"expected_worker_ops_plan_id"`
+		ExpectedWorkerOpsPlanProof string     `json:"expected_worker_ops_plan_proof"`
+		WorkerOpsPlanID            string     `json:"worker_ops_plan_id"`
+		Mode                       string     `json:"mode"`
+	}{
+		IdentityVersion:            m.IdentityVersion,
+		PlanID:                     m.PlanID,
+		PlanProof:                  m.PlanProof,
+		PlanSchemaVersion:          m.PlanSchemaVersion,
+		Files:                      m.Files,
+		Ops:                        m.Ops,
+		InPlaceOps:                 m.InPlaceOps,
+		ExpectedWorkerOpsPlanID:    m.ExpectedWorkerOpsPlanID,
+		ExpectedWorkerOpsPlanProof: m.ExpectedWorkerOpsPlanProof,
+		WorkerOpsPlanID:            m.WorkerOpsPlanID,
+		Mode:                       m.Mode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var work bytes.Buffer
+	writeExactChunk(&work, manifest)
+	for i := range m.Files {
+		file := &m.Files[i]
+		var content []byte
+		if part := staged[file.Path]; part != nil {
+			content, err = part.Read()
+		} else {
+			var absolute string
+			absolute, err = s.store.Abs(file.Path)
+			if err == nil {
+				content, err = os.ReadFile(filepath.Clean(absolute))
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read exact work file %q: %w", file.Path, err)
+		}
+		writeExactChunk(&work, []byte(file.Path))
+		writeExactChunk(&work, content)
+	}
+	return work.Bytes(), nil
+}
+
+func writeExactChunk(dst *bytes.Buffer, value []byte) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
+	dst.Write(length[:])
+	dst.Write(value)
 }
 
 // validateManifest enforces the wire limits and the path rules. Everything it
@@ -150,6 +226,12 @@ func validateManifest(m *api.Manifest) error {
 		return fmt.Errorf("%d in-place ops exceed the %d-op limit", len(m.InPlaceOps), api.MaxOpsPerApply)
 	case len(m.InPlaceOps) > 0 && (m.ExpectedWorkerOpsPlanID == "" || m.WorkerOpsPlanID == ""):
 		return errors.New("in-place ops need expected_worker_ops_plan_id and worker_ops_plan_id")
+	case len(m.InPlaceOps) > 0 && m.ExpectedWorkerOpsPlanProof == "":
+		return errors.New("in-place ops need an exact expected worker plan proof")
+	case (m.ValidatedPlanID == "") != (m.ValidatedPlanProof == ""):
+		return errors.New("validated plan id and proof must be set together")
+	case m.Mode == api.ModeRevertLKG && (m.IdentityVersion != api.ExactIdentityVersion || m.PlanProof == ""):
+		return errors.New("a revert needs the refused plan proof")
 	}
 	if err := validateEnumeratedMode(m.Mode); err != nil {
 		return err
@@ -186,6 +268,8 @@ func validateEnumeratedMode(mode string) error {
 // pacer fired), the whole apply is refused so the caller re-diffs against the
 // worker as it is now. Everything up to activate runs under the apply lock,
 // so what the fence sees is what the batch would meet.
+const reasonPrevMismatch = "prev_mismatch"
+
 func (s *Server) fence(m *api.Manifest) *api.Conflict {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -194,28 +278,53 @@ func (s *Server) fence(m *api.Manifest) *api.Conflict {
 	case m.Token.LeaderEpoch < s.state.AppliedToken.LeaderEpoch:
 		reason = "stale_epoch"
 	case m.Mode == api.ModeRevertLKG:
-		// A revert carries no usable baseline: it targets the LKG by definition.
+		if !s.carriesRefusedPlanLocked(m.PlanID, m.PlanProof) {
+			reason = "revert_target_mismatch"
+		}
 	case m.ExpectedPrevPlanID != s.state.AppliedPlanID:
-		reason = "prev_mismatch"
+		reason = reasonPrevMismatch
 		if s.state.AppliedPlanID == "" {
 			reason = "unknown_baseline"
 		}
 	case m.ExpectedPrevToken != s.state.AppliedToken:
-		reason = "prev_mismatch"
-	case s.inPlaceWillRunLocked(m) && m.ExpectedWorkerOpsPlanID != s.state.WorkerOpsPlanID:
+		reason = reasonPrevMismatch
+	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode != api.ModeReload &&
+		(m.ExpectedPrevPlanProof == "" || m.ExpectedPrevPlanProof != s.state.AppliedPlanProof):
+		reason = reasonPrevMismatch
+	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode == api.ModeReload &&
+		s.state.AppliedPlanProof != "" && m.ExpectedPrevPlanProof != s.state.AppliedPlanProof:
+		reason = reasonPrevMismatch
+	case s.inPlaceWillRunLocked(m) && (m.ExpectedWorkerOpsPlanID != s.state.WorkerOpsPlanID ||
+		m.ExpectedWorkerOpsPlanProof == "" || m.ExpectedWorkerOpsPlanProof != s.state.WorkerOpsPlanProof):
 		reason = "worker_ops_mismatch"
 	}
 	if reason == "" {
 		return nil
 	}
 	return &api.Conflict{
-		AppliedPlanID:   s.state.AppliedPlanID,
-		AppliedToken:    s.state.AppliedToken,
-		RunningPlanID:   s.state.RunningPlanID,
-		WorkerOpsPlanID: s.state.WorkerOpsPlanID,
-		LKGPlanID:       s.state.LKGPlanID,
-		Reason:          reason,
+		AppliedPlanID:      s.state.AppliedPlanID,
+		AppliedPlanProof:   s.state.AppliedPlanProof,
+		AppliedToken:       s.state.AppliedToken,
+		RunningPlanID:      s.state.RunningPlanID,
+		RunningPlanProof:   s.state.RunningPlanProof,
+		WorkerOpsPlanID:    s.state.WorkerOpsPlanID,
+		WorkerOpsPlanProof: s.state.WorkerOpsPlanProof,
+		LKGPlanID:          s.state.LKGPlanID,
+		LKGPlanProof:       s.state.LKGPlanProof,
+		Reason:             reason,
 	}
+}
+
+func (s *Server) carriesRefusedPlanLocked(planID, proof string) bool {
+	if proof == "" || samePlanRef(planID, proof, s.state.RunningPlanID, s.state.RunningPlanProof) {
+		return false
+	}
+	return samePlanRef(planID, proof, s.state.AppliedPlanID, s.state.AppliedPlanProof) ||
+		samePlanRef(planID, proof, s.state.WorkerOpsPlanID, s.state.WorkerOpsPlanProof)
+}
+
+func samePlanRef(leftID, leftProof, rightID, rightProof string) bool {
+	return leftProof != "" && rightProof != "" && leftID == rightID && leftProof == rightProof
 }
 
 // inPlaceWillRunLocked mirrors activate: the in-place batch runs while a
@@ -314,10 +423,8 @@ func (s *Server) missingParts(m *api.Manifest, staged map[string]*files.Staged) 
 		if _, have := staged[f.Path]; have {
 			continue
 		}
-		if at, onDisk := tree[f.Path]; onDisk && at.Digest == f.Digest {
-			continue
-		}
-		if at, err := s.store.Digest(f.Path); err == nil && at.Digest == f.Digest {
+		if at, held := tree[f.Path]; held && f.Proof != "" && at.Proof == f.Proof &&
+			at.Digest == f.Digest && at.Size == f.Size {
 			continue
 		}
 		missing = append(missing, f.Path)

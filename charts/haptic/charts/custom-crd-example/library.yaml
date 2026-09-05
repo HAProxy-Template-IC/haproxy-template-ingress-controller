@@ -1,10 +1,9 @@
 # Custom-CRD example library — the RULE #1 end-to-end proof that the reload-free
 # author contract is resource-agnostic. It watches a `Route` custom resource
-# (no bundled schema; accessed untyped through the resource-agnostic resource()
-# accessor and dig(), the same way the governance library reads any kind) and builds
-# the same shape the ingress and gateway libraries build from their own inputs:
+# (no bundled schema; accessed through generic incremental bindings and dig())
+# and builds the same shape the ingress and gateway libraries build:
 # one Backend() per Route with a literal server list, and per-Route request
-# headers moved into route-reqhdr.map read by one static HeaderModifierRules line
+# headers moved into route-reqhdr.map read by one static set-header line
 # keyed on the backend. Default-disabled — it exists to document and test the
 # macros, not for production routing. See docs/site/docs/libraries/reload-free.md.
 _helm_load:
@@ -17,71 +16,90 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
 
 templateSnippets:
-  # Builds route-reqhdr.map + the header-name set and emits one static set-header
-  # line per distinct header name, keyed on the resolved backend — a Route reusing
-  # a header name is a map entry, no reload. Values are URL-encoded; names are
-  # validated against the exact charset HeaderModifierRules emits a line for. The
-  # build result is captured from the single ComputeIfAbsent call (memoised across
-  # the three frontend renders); there is deliberately no `func() any { return nil }`
-  # read-back, which would cache nil for the render if it ran before the write.
-  frontend-filters-990-custom-route-headers:
-    template: |
-      {%- import "util-register-map" for RegisterMap -%}
-      {%- import "util-header-modifier-rules" for HeaderModifierRules -%}
-      {%%
-        var hmVal, _ = shared.ComputeIfAbsent("customRouteHeaders", func() any {
-          var names = map[string]string{}
-          var entries = []string{"# <backend>|set|<name> -> URL-encoded value"}
-          for _, r := range resource("routes") {
-            var be = tostring(dig(r, "metadata", "namespace")) + "_" + tostring(dig(r, "metadata", "name"))
-            for _, h := range toSlice(dig(r, "spec", "requestHeaders")) {
-              var hn = tostring(dig(h, "name"))
-              if !regex_search(hn, "^[A-Za-z0-9!$&*+.^_~-]+$") {
-                continue
-              }
-              var lower = toLower(hn)
-              // Smallest spelling wins so two Routes disagreeing on case share one line.
-              var cur, seen = names[lower]
-              if !seen || hn < cur {
-                names[lower] = hn
-              }
-              entries = append(entries, be + "|set|" + lower + " " + queryEscape(tostring(dig(h, "value"))))
-            }
-          }
-          var lowered = []any{}
-          for _, k := range keys(names) {
-            lowered = append(lowered, k)
-          }
-          var display = []string{}
-          for _, k := range sort_strings(lowered) {
-            display = append(display, names[tostring(k)])
-          }
-          return map[string]any{"path": RegisterMap("route-reqhdr.map", entries, map[string]any{"ordered": false}), "set": display}
-        })
-        var hm = hmVal.(map[string]any)
-      %%}
-      {{- HeaderModifierRules("request", "var(txn.backend_name)", tostring(hm["path"]), hm["set"].([]string), []string{}, []string{}) -}}
+  util-custom-route-header-bindings:
+    template: |-
+      {%- var mapPath, mapErr = pathResolver.GetPath("route-reqhdr.map", "map") -%}
+      {%- if mapErr != nil -%}{{- fail(tostring(mapErr)) -}}{%- end -%}
+      {{- toJSON(map[string]any{"routes": map[string]any{"mapPath": mapPath}}) -}}
 
-  # Backends phase: one dynamic-shape Backend() per Route, servers from a literal
-  # list (no Kubernetes Service navigation), so the plan records a dynamic backend.
+  custom-route-header-map-items:
+    requires: [routes]
+    incremental:
+      source: routes
+    template: |-
+      {%%
+        var route = item
+        var backend = tostring(dig(route, "metadata", "namespace")) + "_" +
+          tostring(dig(route, "metadata", "name"))
+        for _, header := range toSlice(dig(route, "spec", "requestHeaders")) {
+          var name = tostring(dig(header, "name"))
+          if !regex_search(name, "^[A-Za-z0-9!$&*+.^_~-]+$") {
+            continue
+          }
+          var lower = toLower(name)
+          show backend + "|set|" + lower + " " +
+            queryEscape(tostring(dig(header, "value"))) + "\n"
+        }
+      %%}
+
+  custom-route-header-rules:
+    requires: [routes]
+    incremental:
+      bindingsTemplate: '{{- render "util-custom-route-header-bindings" -}}'
+      effects: [publishValue]
+    template: |-
+      {%%
+        var mapPath = dig_string(props, "", "mapPath")
+        for _, header := range toSlice(dig(item, "spec", "requestHeaders")) {
+          var name = dig_string(header, "", "name")
+          if !regex_search(name, "^[A-Za-z0-9!$&*+.^_~-]+$") {
+            continue
+          }
+          var lower = toLower(name)
+          var key = "var(txn.backend_name),concat(|set|" + lower + "),map(" + mapPath + ")"
+          var line = "\nhttp-request set-header " + name + " %[" + key +
+            ",url_dec(1)] if { " + key + " -m found }"
+          show shared.PublishRanked("rules", lower, lower + "\x00" + name, line)
+        }
+      %%}
+
+  frontend-filters-990-custom-route-headers:
+    requires: [routes]
+    template: |-
+      {%- var entries = render "custom-route-header-map-items" -%}
+      {{- render "custom-route-header-rules" -}}
+      {%%
+        var content = "# <backend>|set|<name> -> URL-encoded value\n" + entries
+        var _, mapErr = fileRegistry.Register("map", "route-reqhdr.map", content)
+        if mapErr != nil { fail("failed to register route-reqhdr.map: " + tostring(mapErr)) }
+        var metaErr = planRegistry.MapMeta("route-reqhdr.map", false)
+        if metaErr != nil { fail("failed to declare route-reqhdr.map entry order: " + tostring(metaErr)) }
+      %%}
+      {{- incremental_ranked_text_fragment("custom-route-header-rules", "rules") -}}
+
   backends-990-custom-route:
-    template: |
+    requires: [routes]
+    incremental:
+      source: routes
+      effects: [backendPlan]
+    template: |-
       {%- import "util-backend" for Backend -%}
-      {%- for _, r := range resource("routes") -%}
-        {%- var be = tostring(dig(r, "metadata", "namespace")) + "_" + tostring(dig(r, "metadata", "name")) -%}
+      {%- var be = tostring(dig(item, "metadata", "namespace")) + "_" +
+        tostring(dig(item, "metadata", "name")) -%}
       {{ Backend(map[string]any{
            "name": be,
            "guid": make_guid("be", be),
            "shape": "dynamic",
            "comments": []any{"# Custom Route " + be},
-           "servers": []any{map[string]any{"name": "primary", "address": tostring(dig(r, "spec", "backend", "address")), "port": toint(dig(r, "spec", "backend", "port"))}},
+           "servers": []any{map[string]any{"name": "primary",
+             "address": tostring(dig(item, "spec", "backend", "address")),
+             "port": toint(dig(item, "spec", "backend", "port"))}},
          }) }}
-      {%- end -%}
 
 validationTests:
   test-custom-crd-route-reload-free:
     requires: [routes]
-    description: A custom Route CRD drives Backend(), a literal server list, RegisterMap() and HeaderModifierRules() through the same base macros the ingress and gateway libraries use — the resource-agnostic proof. Two Routes sharing a header name emit one static line (smallest spelling wins) and one map entry each.
+    description: A custom Route CRD drives incremental backend and header-map components without resource-specific Go. Two Routes sharing a header name emit one static line (smallest spelling wins) and one map entry each.
     fixtures:
       # One Ingress only so the base builds an HTTP frontend for the shared
       # HeaderModifierRules line to render into; the Route CRD drives everything

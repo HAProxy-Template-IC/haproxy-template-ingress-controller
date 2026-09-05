@@ -561,9 +561,11 @@ validationTests:
       - {type: contains, target: map:route-backend.map, pattern: "default_plain-route_0 BACKEND:gtw_default_plain-route_plain-service_80"}
 
       # txn.gw_rule_id is still set, so the access log keeps its resource attribution.
+      # Anchored: unanchored it also matched the directive fused into the marker
+      # comment above it, which HAProxy reads as comment text -- every route 404s.
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn\\.gw_rule_id\\) var\\(req\\.gw_routeId\\),map\\("
+        pattern: "(?m)^ *http-request set-var\\(txn\\.gw_rule_id\\) var\\(req\\.gw_routeId\\),map\\("
 
       # ...and no per-route matcher line is emitted.
       - type: not_contains

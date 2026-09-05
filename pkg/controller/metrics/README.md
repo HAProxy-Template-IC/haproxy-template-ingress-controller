@@ -19,6 +19,7 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | `haptic_reconciliation_errors_total` | counter | — | Reconciliations that failed |
 | `haptic_reconciliation_duration_seconds` | histogram | — | End-to-end reconciliation wall-clock |
 | `haptic_reconciliation_queue_wait_seconds` | histogram | — | Time between `ReconciliationTriggeredEvent` and the pipeline actually picking it up (debounce + queue depth) |
+| `haptic_render_total` | counter | `cache_state` | Reconcile renders by cache state: `cold` re-evaluated every template, `warm` reused the incremental graph, `replay` reused the previous output. Counts on every replica: followers render to keep their graph warm for a leadership change |
 
 ### Deployment
 

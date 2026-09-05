@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/cache"
@@ -120,6 +122,11 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 		return
 	}
 
+	beforeRevision, exactRevision := identityRevision(
+		w.store,
+		resource.GetNamespace(),
+		resource.GetName(),
+	)
 	if err := w.store.Add(resource.Object, keys); err != nil {
 		w.logger.Error("Failed to add resource to store",
 			"gvr", w.config.GVR.String(),
@@ -139,6 +146,20 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 		"namespace", resource.GetNamespace(),
 		"resource_version", resource.GetResourceVersion(),
 		"keys", keys)
+
+	afterRevision, afterExact := identityRevision(
+		w.store,
+		resource.GetNamespace(),
+		resource.GetName(),
+	)
+	if exactRevision && afterExact && beforeRevision == afterRevision {
+		w.logger.Debug("Watcher add did not change the stored resource",
+			"gvr", w.config.GVR.String(),
+			"name", resource.GetName(),
+			"namespace", resource.GetNamespace(),
+			"resource_version", resource.GetResourceVersion())
+		return
+	}
 
 	// Record change
 	w.debouncer.RecordCreate()
@@ -166,6 +187,11 @@ func (w *Watcher) processUpdate(oldResource, resource *unstructured.Unstructured
 		return
 	}
 
+	beforeRevision, exactRevision := identityRevision(
+		w.store,
+		resource.GetNamespace(),
+		resource.GetName(),
+	)
 	if err := w.store.Update(resource.Object, keys); err != nil {
 		w.logger.Error("Failed to update resource in store",
 			"gvr", w.config.GVR.String(),
@@ -184,20 +210,42 @@ func (w *Watcher) processUpdate(oldResource, resource *unstructured.Unstructured
 		"resource_version", resource.GetResourceVersion(),
 		"keys", keys)
 
-	// The store is fresh either way; only a change that isn't our own write
-	// echoing back is worth a reconcile.
-	if w.config.SelfWrites != nil && w.config.SelfWrites.IsSelfWrite(
-		w.config.GVR.GroupResource(), resource.GetNamespace(), resource.GetName(), resource.GetResourceVersion()) {
-		w.logger.Debug("Watcher update is this controller's own write; store refreshed without triggering",
-			"gvr", w.config.GVR.String(),
-			"name", resource.GetName(),
-			"namespace", resource.GetNamespace(),
-			"resource_version", resource.GetResourceVersion())
+	afterRevision, afterExact := identityRevision(
+		w.store,
+		resource.GetNamespace(),
+		resource.GetName(),
+	)
+	if exactRevision && afterExact && beforeRevision == afterRevision {
+		if w.config.SelfWrites != nil && w.config.SelfWrites.IsSelfWrite(
+			w.config.GVR.GroupResource(), resource.GetNamespace(), resource.GetName(), resource.GetResourceVersion()) {
+			w.logger.Debug("Watcher self-write did not change the stored resource",
+				"gvr", w.config.GVR.String(),
+				"name", resource.GetName(),
+				"namespace", resource.GetNamespace(),
+				"resource_version", resource.GetResourceVersion())
+		} else {
+			w.logger.Debug("Watcher update did not change the stored resource",
+				"gvr", w.config.GVR.String(),
+				"name", resource.GetName(),
+				"namespace", resource.GetNamespace(),
+				"resource_version", resource.GetResourceVersion())
+		}
 		return
 	}
 
 	// Record change
 	w.debouncer.RecordUpdate()
+}
+
+func identityRevision(resourceStore any, namespace, name string) (stores.Revision, bool) {
+	revisioned, ok := resourceStore.(interface {
+		IdentityRevision(namespace, name string) stores.Revision
+	})
+	if !ok {
+		return "", false
+	}
+	revision := revisioned.IdentityRevision(namespace, name)
+	return revision, revision != ""
 }
 
 // processDelete removes a resource from the store and records the change.
@@ -212,6 +260,11 @@ func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
 		return
 	}
 
+	beforeRevision, exactRevision := identityRevision(
+		w.store,
+		resource.GetNamespace(),
+		resource.GetName(),
+	)
 	if err := w.store.Delete(resource.GetNamespace(), resource.GetName(), keys); err != nil {
 		w.logger.Error("Failed to delete resource from store",
 			"gvr", w.config.GVR.String(),
@@ -229,6 +282,20 @@ func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
 		"namespace", resource.GetNamespace(),
 		"resource_version", resource.GetResourceVersion(),
 		"keys", keys)
+
+	afterRevision, afterExact := identityRevision(
+		w.store,
+		resource.GetNamespace(),
+		resource.GetName(),
+	)
+	if exactRevision && afterExact && beforeRevision == afterRevision {
+		w.logger.Debug("Watcher delete did not change the stored resource",
+			"gvr", w.config.GVR.String(),
+			"name", resource.GetName(),
+			"namespace", resource.GetNamespace(),
+			"resource_version", resource.GetResourceVersion())
+		return
+	}
 
 	// Record change
 	w.debouncer.RecordDelete()

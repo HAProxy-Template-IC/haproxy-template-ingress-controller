@@ -76,7 +76,10 @@ func New(
 
 	workers := options.Workers
 	if workers <= 0 {
-		workers = runtime.NumCPU() // Default to number of CPUs
+		// GOMAXPROCS, not NumCPU: inside the controller's pod NumCPU reports the
+		// node's cores, so a CPU-limited pod ran that many workers against a
+		// fraction of one and the suite missed its budget, failing the load gate.
+		workers = runtime.GOMAXPROCS(0)
 	}
 
 	// Capture tracing state from template engine

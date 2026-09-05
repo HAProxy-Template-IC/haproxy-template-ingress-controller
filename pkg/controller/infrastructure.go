@@ -382,9 +382,15 @@ func collectComponentHealth(
 ) string {
 	var firstPending string
 	for name, info := range status {
-		// StatusStandby is healthy - component is intentionally not active
-		// (e.g., leader-only components on non-leader pods)
-		healthy := info.Status == lifecycle.StatusRunning || info.Status == lifecycle.StatusStandby
+		// A leader-only component is Standby before its first term and Stopped
+		// after one ends gracefully; both mean this replica is a follower, which
+		// is healthy. Counting Stopped as unhealthy made a lost lease fail
+		// /healthz, so the kubelet killed the replica that had just handed
+		// leadership over — measured 25s from "Lost leadership" to the kill.
+		// A failed component reports StatusFailed, so this cannot mask a crash.
+		healthy := info.Status == lifecycle.StatusRunning ||
+			info.Status == lifecycle.StatusStandby ||
+			(info.LeaderOnly && info.Status == lifecycle.StatusStopped)
 		if info.Healthy != nil {
 			healthy = *info.Healthy
 		}

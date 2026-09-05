@@ -2,7 +2,7 @@
 
 ## Overview
 
-You declare one or more validator sidecars in `spec.validators`, each pointing at a Unix domain socket inside the controller pod and listing file glob patterns. After the built-in checks pass for any changed render, the controller routes each rendered file to every validator whose globs match. An error blocks publication and deployment. For admission requests, line-numbered diagnostics also appear in the admission response, so `kubectl apply` identifies the offending row.
+You declare one or more validator sidecars in `spec.validators`, each pointing at a Unix domain socket inside the controller pod and listing file glob patterns. On every pipeline invocation, the controller routes each rendered file to every validator whose globs match. An error blocks publication and deployment. For admission requests, line-numbered diagnostics also appear in the admission response, so `kubectl apply` identifies the offending row.
 
 **Why this exists:** HAPTIC's shared pipeline catches template, HAProxy syntax, schema, and HAProxy semantic errors, but rendered auxiliary files can contain payloads that HAProxy doesn't interpret. Examples include Coraza Web Application Firewall (WAF) directives for the Stream Processing Offload Agent (SPOA) hub and OpenID Connect (OIDC) configuration. A typo like `SecResquestBodyAccess On` must fail before that file is published. Pluggable validators add the payload-specific gate to every render path.
 
@@ -161,16 +161,22 @@ The controller's `/healthz` endpoint stat()s and then briefly dials every config
 
 Configure the controller's liveness probe to hit `/healthz` so a stuck validator triggers a pod restart (the chart does this by default). Both containers share the pod lifecycle: when the validator crashes hard, Kubernetes restarts the pod, the sidecar comes back, and admission flows resume.
 
-### Caching
+### Validation execution
 
-The controller maintains an in-memory Least Recently Used (LRU) cache of validator responses keyed by `(validator-name, file-path, sha256(file-content))`. A repeat reconciliation that produces identical files for the same validator skips the round-trip entirely — typical reconciliation churn (label changes, status updates) doesn't re-validate unchanged plugin configs.
+Built-in HAProxy validation and every configured protocol-v1 validator execute
+on every applicable invocation, even when the rendered bytes match an earlier
+request. Persistent connections are reused only as transport; they don't reuse
+a verdict.
 
-The cache:
+Exact bytes don't identify the environment that judged them. HAProxy, its
+executor, or a sidecar can change while the controller stays alive. Future
+verdict reuse requires all the following:
 
-- Is process-local. A controller restart re-warms it.
-- Holds successful round-trips, including responses with `result: "warning"` or `result: "error"`. Validator output is a deterministic function of its input (per the protocol's purity contract).
-- Does **not** cache transport failures (connect refused, decode failure). A transient sidecar outage isn't allowed to poison subsequent renders.
-- Is bounded at 256 entries with LRU eviction.
+- An authenticated hermetic-environment root obtained through a `linearizable` lookup.
+- Coverage of the executable, configuration, dependencies, and runtime generation.
+- An exact canonical input witness covering the complete request.
+- Defensive copies both when a response is stored and when it's returned.
+- Fail-closed handling for cancelled, partial, missing, stale, or otherwise incomplete observations.
 
 ### Connection pooling and parallelism
 
@@ -188,7 +194,7 @@ For a typical webhook call with one validator and a handful of matched files, th
 | Validator returns an error response | The pipeline fails with the validator's message and row + column. |
 | Validator returns a warning response | The pipeline continues. Admission surfaces the warning through `AdmissionResponse.Warnings`. |
 | Validator times out | The pipeline fails with `validator <name>: validation timed out after Ns`. |
-| Validator returns garbage, a wrong `protocol_version`, or a `result` that disagrees with its diagnostics | The pipeline fails with a protocol error identifying the validator. The response isn't cached. |
+| Validator returns garbage, a wrong `protocol_version`, or a `result` that disagrees with its diagnostics | The pipeline fails with a protocol error identifying the validator. The next pipeline invocation calls the validator again. |
 | Validator panics mid-validation | The sidecar returns a synthetic error diagnostic and continues serving subsequent requests. The current render fails. |
 | Idle-closed connection on first reuse | Transparently reconnected and retried once. The operator sees no failure. |
 
@@ -248,7 +254,7 @@ See [`development/validator-protocol.md`](https://gitlab.com/haproxy-haptic/hapt
 
 **`/healthz` returns 503 with `pluggable-validators` failures listed.** Match the failure entries to your `spec.validators` and check the corresponding sidecar container's status. Common causes: OOMKilled (bump container resources), filesystem unmounted (check the chart's `emptyDir` volume), or an upstream image regression (pin a known-good `tag`).
 
-**Cache returning stale answers.** The cache assumes the validator is a pure function of its input — that's the wire-protocol contract. If a validator implementation violates purity (reaches into the cluster, depends on time, etc.), it produces stale results. The fix is in the validator, not the cache. As a workaround, restart the controller pod to clear the in-memory cache.
+**The validator is called again for unchanged files.** This is required for protocol v1. The protocol doesn't authenticate the live validator runtime, so HAPTIC can't safely reuse an earlier response. The persistent connection pool and parallel dispatch reduce the round-trip cost.
 
 **Latency spikes after a long quiet period.** The connection pool reaps idle connections to free file descriptors. The first admission after a quiet stretch may pay one extra connect. If this is a problem, bump `spec.validators[i].maxConnections` so the pool keeps a warmer set of connections (each gets the same idle close — they're just less likely to all be reaped simultaneously).
 

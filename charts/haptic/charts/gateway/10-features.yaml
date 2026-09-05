@@ -1,4 +1,66 @@
 templateSnippets:
+  gateway-listener-state-100-gateway:
+    requires: [gateways]
+    incremental:
+      source: gateways
+      group: gateway-listener-state
+      effects: [publishValue]
+    template: |-
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil {
+          show shared.Publish("resources", namespace + "/" + name, map[string]any{
+            "apiVersion": dig_string(gateway, "", "apiVersion"),
+            "kind": dig_string(gateway, "", "kind"),
+            "metadata": map[string]any{"namespace": namespace, "name": name},
+          })
+          for listenerIndex, listener := range gateway.Spec.Listeners {
+            var certificateRefs = []any{}
+            for _, certificateRef := range listener.Tls.CertificateRefs {
+              var certificateRefKind = certificateRef.Kind
+              if certificateRefKind == "" { certificateRefKind = "Secret" }
+              var certificateRefNamespace = certificateRef.Namespace
+              if certificateRefNamespace == "" { certificateRefNamespace = namespace }
+              certificateRefs = append(certificateRefs, map[string]any{
+                "group": certificateRef.Group,
+                "kind": certificateRefKind,
+                "name": certificateRef.Name,
+                "namespace": certificateRefNamespace,
+              })
+            }
+            var tlsOptions = map[string]any{}
+            for option, value := range listener.Tls.Options {
+              tlsOptions[option] = value
+            }
+            show shared.Publish("listeners", namespace + "/" + name + "/" + tostring(listenerIndex),
+              map[string]any{
+                "gatewayNamespace": namespace,
+                "gatewayName": name,
+                "gatewayHasAddresses": len(gateway.Spec.Addresses) > 0,
+                "listenerIndex": listenerIndex,
+                "name": listener.Name,
+                "hostname": listener.Hostname,
+                "port": listener.Port,
+                "protocol": listener.Protocol,
+                "tls": map[string]any{
+                  "mode": listener.Tls.Mode,
+                  "options": tlsOptions,
+                  "certificateRefs": certificateRefs,
+                },
+              })
+          }
+        }
+      %%}
+
+  features-002-gateway-listener-publications:
+    requires: [gateways]
+    template: |-
+      {{- render "gateway-listener-state-100-gateway" -}}
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+
   # ----------------------------------------------------------------------------
   # util-tls-cert-by-secret
   #
@@ -31,111 +93,115 @@ templateSnippets:
       }) %}
 
   features-100-gateway-ssl-passthrough:
-    requires: [gateways, httproutes, referencegrants, tlsroutes]
+    requires: [gateways, namespaces, referencegrants, services]
     template: |
       {# Register SSL passthrough backends with global feature registry. #}
-      {{ render "util-gateway-ssl-passthrough" }}
+      {{- render_glob "gateway-ssl-passthrough-*" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
       {%- if sslBackends != nil %}
-        {%- var gwVal, _ = shared.ComputeIfAbsent("gateway_ssl_passthrough", func() any { return nil }) %}
-        {%- if gwVal != nil %}
-          {%- var gwPassthrough = gwVal.(map[string]any) %}
-          {%- var gatewayBackends = gwPassthrough["backends"].([]any) %}
-          {%- for _, backend := range gatewayBackends %}
-            {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
-          {%- end %}
+        {%- for _, backend := range incremental_values("gateway-ssl-passthrough", "backends") %}
+          {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
         {%- end %}
       {%- end %}
 
-  # Register Gateway TLS Terminate mode certificates with SSL infrastructure
-  # Pass 1 of the Gateway TLS cert pipeline: walk every
-  # (gateway, listener, certRef) triple and aggregate per-secret
-  # metadata (SNI patterns, listener ports, default-cert eligibility).
-  # Lives in its own snippet so features-100-gateway-tls only contains
-  # the emission (Pass 2) — and so the aggregation runs once per render
-  # via shared.ComputeIfAbsent even if other snippets read the result.
+  gateway-tls-certificates-100-gateway:
+    requires: [gateways, referencegrants, secrets]
+    incremental:
+      source: gateways
+      group: gateway-tls-certificates
+      effects: [publishValue]
+    template: |-
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil {
+          for listenerIndex, listener := range gateway.Spec.Listeners {
+            var tlsMode = listener.Tls.Mode
+            if tlsMode != "" && tlsMode != "Terminate" { continue }
+            for referenceIndex, certificateRef := range listener.Tls.CertificateRefs {
+              var kind = certificateRef.Kind
+              if kind == "" { kind = "Secret" }
+              if kind != "Secret" { continue }
+              var secretName = certificateRef.Name
+              var secretNamespace = certificateRef.Namespace
+              if secretNamespace == "" { secretNamespace = namespace }
+              if secretNamespace != namespace && ReferenceGrantPermitted(
+                "gateway.networking.k8s.io", "Gateway", namespace,
+                "", "Secret", secretNamespace, secretName) != "true" {
+                continue
+              }
+              var occurrenceKey = namespace + "/" + name + "/" +
+                tostring(listenerIndex) + "/" + tostring(referenceIndex)
+              var occurrence = map[string]any{
+                "secret_namespace": secretNamespace,
+                "secret_name": secretName,
+                "listener_hostname": listener.Hostname,
+                "listener_port": listener.Port,
+              }
+              show shared.Publish("occurrences", occurrenceKey, occurrence)
+
+              var secret = resources.secrets.GetSingle(secretNamespace, secretName)
+              if secret == nil { continue }
+              var tlsCrtB64 = secret.Data["tls.crt"]
+              var tlsKeyB64 = secret.Data["tls.key"]
+              if tlsCrtB64 == "" || tlsKeyB64 == "" { continue }
+              var tlsCrt, crtErr = b64decode(tlsCrtB64)
+              var tlsKey, keyErr = b64decode(tlsKeyB64)
+              if crtErr != nil || keyErr != nil { continue }
+              if !hasPrefix(tlsCrt, "-----BEGIN ") || !hasPrefix(tlsKey, "-----BEGIN ") {
+                continue
+              }
+              occurrence["pem"] = tlsCrt + "\n" + tlsKey
+              show shared.Publish("resolved", occurrenceKey, occurrence)
+            }
+          }
+        }
+      %%}
+
   util-aggregate-gateway-cert-metadata:
     requires: [gateways, referencegrants]
     template: |
-      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- import "util-resource-helpers" for ResourceNamespace, ListenerHostname -%}
+      {{- render "gateway-tls-certificates-100-gateway" -}}
       {%%
         var _, _ = shared.ComputeIfAbsent("gatewayCertAggregates", func() any {
           var certAggregates = map[string]map[string]any{}
-          for _, gateway := range resources.gateways.List() {
-            var nsStr = ResourceNamespace(gateway)
-            for _, listener := range gateway.Spec.Listeners {
-              var tlsMode = listener.Tls.Mode
-              // Gateway API: tls.mode defaults to Terminate when
-              // unspecified. Skip only when explicitly set to a
-              // non-Terminate value (Passthrough is handled
-              // separately by the SSL passthrough feature).
-              if tlsMode != "" && tlsMode != "Terminate" {
-                continue
+          for _, occurrence := range incremental_values("gateway-tls-certificates", "resolved") {
+            var secretNamespace = dig_string(occurrence, "", "secret_namespace")
+            var secretName = dig_string(occurrence, "", "secret_name")
+            var secretKey = secretNamespace + "/" + secretName
+            var existing = certAggregates[secretKey]
+            if existing == nil {
+              existing = map[string]any{
+                "secret_namespace": secretNamespace,
+                "secret_name": secretName,
+                "sni_patterns": []any{},
+                "is_gateway_default": false,
+                "listener_ports": []any{},
+                "pem": dig_string(occurrence, "", "pem"),
               }
-              for _, certRef := range listener.Tls.CertificateRefs {
-                var certKind = certRef.Kind
-                if certKind == "" {
-                  certKind = "Secret"
-                }
-                if certKind != "Secret" {
-                  continue
-                }
-                var certName = certRef.Name
-                var certNamespace = certRef.Namespace
-                if certNamespace == "" {
-                  certNamespace = nsStr
-                }
-                var refNsStr = certNamespace
-                // Cross-namespace gate. Same-namespace refs are always
-                // permitted (no grant needed); cross-ns refs without a
-                // matching ReferenceGrant are skipped (the listener-status
-                // path elsewhere surfaces this as ResolvedRefs=False
-                // /RefNotPermitted).
-                if refNsStr != nsStr {
-                  if ReferenceGrantPermitted(
-                    "gateway.networking.k8s.io", "Gateway", nsStr,
-                    "", "Secret", refNsStr, certName) != "true" {
-                    continue
-                  }
-                }
-                var secretKey = refNsStr + "/" + certName
-                var existing = certAggregates[secretKey]
-                if existing == nil {
-                  certAggregates[secretKey] = map[string]any{
-                    "secret_namespace":   certNamespace,
-                    "secret_name":        certName,
-                    "sni_patterns":       []any{},
-                    "is_gateway_default": false,
-                    "listener_ports":     []any{},
-                  }
-                  existing = certAggregates[secretKey]
-                }
-                var listenerHostnameStr = ListenerHostname(listener)
-                if listenerHostnameStr != "" {
-                  existing["sni_patterns"] = append(existing["sni_patterns"].([]any), listenerHostnameStr)
-                } else {
-                  // Listener with no hostname → cert is a default
-                  // candidate (per spec, any SNI accepted).
-                  existing["is_gateway_default"] = true
-                }
-                // Track ports the cert is bound to, so the bind-decision
-                // pass downstream knows which listener ports to enable.
-                var listenerPort = toint(listener.Port)
-                if listenerPort > 0 {
-                  existing["listener_ports"] = append(existing["listener_ports"].([]any), listenerPort)
-                }
-                certAggregates[secretKey] = existing
-              }
+              certAggregates[secretKey] = existing
             }
+            var listenerHostname = dig_string(occurrence, "", "listener_hostname")
+            if listenerHostname != "" {
+              existing["sni_patterns"] = append(existing["sni_patterns"].([]any), listenerHostname)
+            } else {
+              existing["is_gateway_default"] = true
+            }
+            var listenerPort = toint(dig(occurrence, "listener_port") | fallback(0))
+            if listenerPort > 0 {
+              existing["listener_ports"] = append(existing["listener_ports"].([]any), listenerPort)
+            }
+            certAggregates[secretKey] = existing
           }
           return certAggregates
         })
       %%}
 
   features-100-gateway-tls:
-    requires: [gateways, referencegrants]
+    requires: [gateways, referencegrants, secrets]
     template: |
       {# Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
       {# Dynamically generates certificate files using fileRegistry.Register() #}
@@ -184,36 +250,7 @@ templateSnippets:
           var certNamespace = tostring(agg["secret_namespace"])
           var certName = tostring(agg["secret_name"])
 
-          var secret = resources.secrets.GetSingle(certNamespace, certName)
-          if secret == nil {
-            continue
-          }
-          var tlsCrtB64 = secret.Data["tls.crt"]
-          var tlsKeyB64 = secret.Data["tls.key"]
-          if tlsCrtB64 == "" || tlsKeyB64 == "" {
-            continue
-          }
-          // Decode and verify the data really is PEM. The conformance
-          // suite's malformed-cert fixture has non-empty tls.crt /
-          // tls.key fields whose decoded bytes aren't valid PEM —
-          // writing such a cert into the crt-list crashes HAProxy at
-          // reload time, which in turn fails the entire render-validate
-          // pipeline so NO status patch ever reaches the API server
-          // (the listener-level InvalidCertificateRef condition our
-          // status macro produces is silently dropped). Skip the
-          // registration; the listener-status path elsewhere already
-          // surfaces the failure as ResolvedRefs=False
-          // /InvalidCertificateRef.
-          var tlsCrt, crtErr = b64decode(tlsCrtB64)
-          var tlsKey, keyErr = b64decode(tlsKeyB64)
-          if crtErr != nil || keyErr != nil {
-            continue
-          }
-          if !hasPrefix(tlsCrt, "-----BEGIN ") || !hasPrefix(tlsKey, "-----BEGIN ") {
-            continue
-          }
-
-          var combinedPem = tlsCrt + "\n" + tlsKey
+          var combinedPem = tostring(agg["pem"])
           var certFilename = certNamespace + "_" + certName + ".pem"
           var certPath, _ = fileRegistry.Register("cert", certFilename, combinedPem)
           var sanitizedFilename = basename(certPath)
@@ -231,12 +268,112 @@ templateSnippets:
         %%}
       {%- end %}
 
+  gateway-frontend-mtls-100-gateway:
+    requires: [configmaps, gateways, secrets]
+    incremental:
+      source: gateways
+      whenAnyPathExists: [spec.tls.frontend]
+      group: gateway-frontend-mtls
+      effects: [publishValue]
+    template: |-
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil {
+          var resolveValidation = func(validation any) any {
+            if validation == nil { return nil }
+            var refs = toSlice(dig(validation, "caCertificateRefs"))
+            if refs == nil { return nil }
+            var verifyMode = "required"
+            if dig_string(validation, "AllowValidOnly", "mode") == "AllowInsecureFallback" {
+              verifyMode = "optional"
+            }
+            var parts = []any{}
+            for _, ref := range refs {
+              var refGroup = dig_string(ref, "", "group")
+              var refKind = dig_string(ref, "", "kind")
+              var refName = dig_string(ref, "", "name")
+              if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
+                var cm = resources.configmaps.GetSingle(namespace, refName)
+                if cm != nil && cm.Data["ca.crt"] != "" {
+                  parts = append(parts, cm.Data["ca.crt"])
+                }
+              } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
+                var secret = resources.secrets.GetSingle(namespace, refName)
+                if secret == nil { continue }
+                var encoded = secret.Data["ca.crt"]
+                if encoded == "" { encoded = secret.Data["tls.crt"] }
+                if encoded == "" { continue }
+                var decoded, decodeErr = b64decode(encoded)
+                if decodeErr == nil { parts = append(parts, decoded) }
+              }
+            }
+            if len(parts) == 0 { return nil }
+            return map[string]any{"bundle": join(parts, "\n"), "verifyMode": verifyMode}
+          }
+          var detachValidation = func(validation any) any {
+            if validation == nil { return nil }
+            var refs = []any{}
+            for _, ref := range toSlice(dig(validation, "caCertificateRefs")) {
+              refs = append(refs, map[string]any{
+                "group": dig_string(ref, "", "group"),
+                "kind": dig_string(ref, "", "kind"),
+                "name": dig_string(ref, "", "name"),
+                "namespace": dig_string(ref, "", "namespace"),
+              })
+            }
+            return map[string]any{
+              "mode": dig_string(validation, "", "mode"),
+              "caCertificateRefs": refs,
+            }
+          }
+          var listeners = []any{}
+          for _, listener := range gateway.Spec.Listeners {
+            listeners = append(listeners, map[string]any{
+              "name": listener.Name, "hostname": listener.Hostname,
+              "port": listener.Port, "protocol": listener.Protocol,
+            })
+          }
+          var perPort = []any{}
+          var perPortResolutions = []any{}
+          for _, entry := range toSlice(dig(gateway, "spec", "tls", "frontend", "perPort")) {
+            var port = toint(dig(entry, "port") | fallback(0))
+            var validation = dig(entry, "tls", "validation")
+            perPort = append(perPort, map[string]any{
+              "port": port,
+              "tls": map[string]any{
+                "validation": detachValidation(validation),
+              },
+            })
+            perPortResolutions = append(perPortResolutions, map[string]any{
+              "port": port, "resolution": resolveValidation(validation),
+            })
+          }
+          var defaultValidation = dig(gateway, "spec", "tls", "frontend", "default", "validation")
+          show shared.Publish("gateways", namespace + "/" + name, map[string]any{
+            "namespace": namespace,
+            "name": name,
+            "defaultValidation": detachValidation(defaultValidation),
+            "perPort": perPort,
+            "listeners": listeners,
+          })
+          show shared.Publish("resolutions", namespace + "/" + name, map[string]any{
+            "namespace": namespace,
+            "name": name,
+            "default": resolveValidation(defaultValidation),
+            "perPort": perPortResolutions,
+          })
+        }
+      %%}
+
   features-110-gateway-frontend-mtls:
-    requires: [gateways, referencegrants]
+    requires: [configmaps, gateways, referencegrants, secrets]
     template: |
       {%- import "util-resource-helpers" for ListenerKey -%}
-      {%- _ = render "util-listenersets-contrib" default "" -%}
-      {{ render "util-effective-listeners" }}
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "gateway-frontend-mtls-100-gateway" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {#- Self-seed the two gateway-owned mTLS shared-state keys before the
           first read. ssl.yaml used to pre-seed these for convenience, but
@@ -274,110 +411,41 @@ templateSnippets:
           listener-specific verify clause. Phase 4's per-Gateway
           bind references the resulting crt-list. -#}
       {%- var gatewayListenerMTLSConfig = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
-      {%- for _, gateway := range resources.gateways.List() %}
+      {%- var mtlsResolutions = map[string]any{} -%}
+      {%- for _, resolution := range incremental_values("gateway-frontend-mtls", "resolutions") -%}
+        {%- mtlsResolutions[dig_string(resolution, "", "namespace") + "/" +
+          dig_string(resolution, "", "name")] = resolution -%}
+      {%- end -%}
+      {%- for _, gateway := range incremental_values("gateway-frontend-mtls", "gateways") %}
         {%%
-          var gwNs = gateway.Metadata.Namespace
-          var gwName = gateway.Metadata.Name
-          // Outer presence check uses dig() so an absent TLS-frontend
-          // block short-circuits the loop (typed access would yield a
-          // zero-value struct, indistinguishable from "present but
-          // empty"). Same idiom as the route-analysis pass.
-          if dig(gateway, "spec", "tls", "frontend") == nil {
-            continue
-          }
-          // Dig-only: spec.tls is newer than the oldest schema generation
-          // the gateways candidate list can resolve — typed access would
-          // fail to COMPILE against pre-1.4 Gateway schemas.
-          var defaultValidation = dig(gateway, "spec", "tls", "frontend", "default", "validation")
-          var perPortValidations = map[int]any{}
-          for _, pp := range dig(gateway, "spec", "tls", "frontend", "perPort") | toSlice() {
-            var p = toint(dig(pp, "port") | fallback(0))
-            if p > 0 && dig(pp, "tls", "validation") != nil {
-              perPortValidations[p] = dig(pp, "tls", "validation")
+          var gwNs = dig_string(gateway, "", "namespace")
+          var gwName = dig_string(gateway, "", "name")
+          var defaultValidation = dig(gateway, "defaultValidation")
+          var resolution = mtlsResolutions[gwNs + "/" + gwName]
+          var defaultPath = ""
+          var defaultMode = ""
+          var defaultResolution = dig(resolution, "default")
+          if defaultResolution != nil {
+            var fname = "frontend-mtls-" + gwNs + "-" + gwName + "-default.crt"
+            var path, registerErr = fileRegistry.Register(
+              "ca-file", fname, dig_string(defaultResolution, "", "bundle"))
+            if registerErr == nil {
+              defaultPath = path
+              defaultMode = dig_string(defaultResolution, "", "verifyMode")
             }
           }
-
-          // Helper: resolve a validation block to (caPath, mode)
-          // or ("", "") when it can't be resolved.
-          //
-          // HAProxy verify mode is derived from validation.mode (GEP-91):
-          //   AllowValidOnly        → verify required
-          //   AllowInsecureFallback → verify optional
-          // The optional mode lets the TLS handshake complete without a
-          // client cert OR with an invalid cert (HAProxy still records
-          // the verify state in `ssl_c_verify`); applications can then
-          // gate per-route. Required rejects both at handshake time.
-          var resolveValidation = func(validation any, suffix string) (string, string) {
-            if validation == nil {
-              return "", ""
-            }
-            var refs []any = validation | dig("caCertificateRefs") | toSlice()
-            if refs == nil {
-              return "", ""
-            }
-            var validationMode = tostring(validation | dig("mode") | fallback("AllowValidOnly"))
-            var verifyMode = "required"
-            if validationMode == "AllowInsecureFallback" {
-              verifyMode = "optional"
-            }
-            var parts = []any{}
-            for _, ref := range refs {
-              var refGroup = tostring(dig(ref, "group") | fallback(""))
-              var refKind = tostring(dig(ref, "kind") | fallback(""))
-              var refName = tostring(dig(ref, "name") | fallback(""))
-              if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
-                var cm = resources.configmaps.GetSingle(gwNs, refName)
-                if cm == nil {
-                  continue
-                }
-                var caCrt = cm.Data["ca.crt"]
-                if caCrt != "" {
-                  parts = append(parts, caCrt)
-                }
-              } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
-                var sec = resources.secrets.GetSingle(gwNs, refName)
-                if sec == nil {
-                  continue
-                }
-                var b64 = ""
-                var caCrt, ok = sec.Data["ca.crt"]
-                if ok && caCrt != "" {
-                  b64 = caCrt
-                } else {
-                  var tlsCrt, ok2 = sec.Data["tls.crt"]
-                  if ok2 && tlsCrt != "" {
-                    b64 = tlsCrt
-                  }
-                }
-                if b64 != "" {
-                  var decoded, decodeErr = b64decode(b64)
-                  if decodeErr == nil {
-                    parts = append(parts, decoded)
-                  }
-                }
-              }
-            }
-            if len(parts) == 0 {
-              return "", ""
-            }
-            var bundle = join(parts, "\n")
-            var fname = "frontend-mtls-" + gwNs + "-" + gwName + suffix + ".crt"
-            // "ca-file": a general file (same disk path) flagged so a
-            // content-only client-CA bundle rotation applies via the runtime
-            // API (add ssl ca-file) with no reload on v3.2+.
-            var p, fErr = fileRegistry.Register("ca-file", fname, bundle)
-            if fErr != nil {
-              return "", ""
-            }
-            return p, verifyMode
-          }
-
-          var defaultPath, defaultMode = resolveValidation(defaultValidation, "-default")
           var perPortResolved = map[int][]string{}
-          for port, v := range perPortValidations {
-            var p, m = resolveValidation(v, "-port-" + tostring(port))
-            if p != "" && m != "" {
-              perPortResolved[port] = []string{p, m}
+          for _, entry := range toSlice(dig(resolution, "perPort")) {
+            var port = toint(dig(entry, "port") | fallback(0))
+            var resolved = dig(entry, "resolution")
+            if port <= 0 || resolved == nil { continue }
+            var fname = "frontend-mtls-" + gwNs + "-" + gwName +
+              "-port-" + tostring(port) + ".crt"
+            var path, registerErr = fileRegistry.Register(
+              "ca-file", fname, dig_string(resolved, "", "bundle"))
+            var mode = dig_string(resolved, "", "verifyMode")
+            if registerErr == nil && path != "" && mode != "" {
+              perPortResolved[port] = []string{path, mode}
             }
           }
 
@@ -386,37 +454,16 @@ templateSnippets:
           // Gateway API spec the parent Gateway's spec.tls.frontend
           // applies to all listeners under it (Gateway + ListenerSets);
           // there is no per-ListenerSet mTLS config slot.
-          var allListeners = []any{}
-          for _, l := range gateway.Spec.Listeners {
-            allListeners = append(allListeners, l)
-          }
-          // Read pre-computed admission state from the
-          // effectiveListeners cache (populated by util-effective-
-          // listeners) so the gate matches what F3 emits as
-          // Accepted/Programmed conditions on each ListenerSet.
-          var effLAny = shared.Get("effectiveListeners")
-          var lsStatuses = map[string]any{}
-          if effLAny != nil {
-            var effL, ok = effLAny.(map[string]any)
-            if ok {
-              var stAny, hasSt = effL["statuses"]
-              if hasSt {
-                lsStatuses = stAny.(map[string]any)
-              }
+          var allListeners = toSlice(dig(gateway, "listeners"))
+          var listenerSets = incremental_values("gateway-host-listenersets",
+            "gateway\x00" + gwNs + "\x00" + gwName)
+          listenerSets = listenerSets | sort_by([]string{"$.rank"})
+          for _, listenerSet := range listenerSets {
+            if tostring(dig(listenerSet, "accepted") | fallback(false)) != "true" {
+              continue
             }
-          }
-          // Attachment and admission come from util-listenerset-candidates,
-          // which decided both once while reading the resource typed behind its
-          // own CRD gate. Its candidates are already this Gateway's.
-          var lsCandsAny = shared.Get("listenerSetCandidates")
-          if lsCandsAny != nil {
-            var part = lsCandsAny.(map[string]any)[gwNs + "/" + gwName]
-            if part != nil {
-              for _, cAny := range part.(map[string]any)["candidates"].([]any) {
-                if cAny.(map[string]any)["_accepted"].(bool) {
-                  allListeners = append(allListeners, cAny)
-                }
-              }
+            for _, candidate := range toSlice(dig(listenerSet, "candidates")) {
+              allListeners = append(allListeners, candidate)
             }
           }
           for _, listener := range allListeners {
@@ -535,34 +582,60 @@ templateSnippets:
           return map[string]any{"ports": []map[string]any{}}
         })
         var holder = holderAny.(map[string]any)
-        holder["ports"] = resources.gateways.List() |
-          reject(gw => len(gw.Spec.Addresses) > 0) |
-          flat_map(gw => gw.Spec.Listeners) |
-          filter(l => toint(l.Port) > 0) |
-          map(l => ServicePortEntry(toint(l.Port), l.Protocol)) |
-          unique_by(e => tostring(e["name"]))
+        var ports = []map[string]any{}
+        for _, listener := range incremental_values("gateway-listener-state", "listeners") {
+          if tostring(dig(listener, "gatewayHasAddresses") | fallback(false)) == "true" {
+            continue
+          }
+          var port = toint(dig(listener, "port") | fallback(0))
+          if port > 0 {
+            ports = append(ports, ServicePortEntry(port, dig_string(listener, "", "protocol")))
+          }
+        }
+        holder["ports"] = ports | unique_by(e => tostring(e["name"]))
       %%}
 
   # Conservative: all declared listenersets contribute their ports to the
   # Service surface; the routing-layer admission gate still applies separately.
-  #
-  # `requires: [listenersets]` is what makes the typed access below legal: the
-  # snippet is stripped whole on a cluster without the CRD, so it can name the
-  # type that a shared-context seam would otherwise have to hide behind `any`.
+  gateway-listenerset-service-ports-100-listenerset:
+    requires: [listenersets]
+    incremental:
+      source: listenersets
+      group: gateway-listenerset-service-ports
+      effects: [publishValue]
+    template: |-
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var listenerSet = resources.listenersets.GetSingle(namespace, name)
+        if listenerSet != nil {
+          for listenerIndex, listener := range listenerSet.Spec.Listeners {
+            show shared.Publish("ports", namespace + "/" + name + "/" +
+              tostring(listenerIndex), map[string]any{
+                "port": listener.Port,
+                "protocol": listener.Protocol,
+              })
+          }
+        }
+      %%}
+
   features-141-listenerset-service-extra-ports:
     requires: [listenersets]
     template: |
       {%- import "util-gateway-service-port-entry" for ServicePortEntry -%}
+      {{- render "gateway-listenerset-service-ports-100-listenerset" -}}
       {%%
         var holderAny, _ = shared.ComputeIfAbsent("extraServicePorts", func() any {
           return map[string]any{"ports": []map[string]any{}}
         })
         var holder = holderAny.(map[string]any)
         var ports = holder["ports"].([]map[string]any)
-        ports = append(ports, resources.listenersets.List() |
-          flat_map(ls => ls.Spec.Listeners) |
-          filter(l => toint(l.Port) > 0) |
-          map(l => ServicePortEntry(toint(l.Port), l.Protocol))...)
+        for _, listener := range incremental_values("gateway-listenerset-service-ports", "ports") {
+          var port = toint(dig(listener, "port") | fallback(0))
+          if port > 0 {
+            ports = append(ports, ServicePortEntry(port, dig_string(listener, "", "protocol")))
+          }
+        }
         holder["ports"] = ports | unique_by(e => tostring(e["name"]))
       %%}
 
@@ -571,10 +644,11 @@ templateSnippets:
   # ============================================================================
 
   features-150-gateway-bind:
-    requires: [gateways, grpcroutes, httproutes]
+    requires: [configmaps, gateways, grpcroutes, httproutes, namespaces, secrets]
     template: |
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerName, ListenerProtocol, ListenerHostname, ListenerKey -%}
-      {%- _ = render "util-listenersets-contrib" default "" -%}
+      {{- render "gateway-route-candidates-100-http" -}}
+      {{- render "gateway-route-candidates-200-grpc" -}}
       {#-
         Gateway / ListenerSet contribution to the chart-static bind decision.
 
@@ -681,12 +755,14 @@ templateSnippets:
           // and the listener must not bind.
           var hasResolvedCert = false
           for _, certRef := range listener | dig("tls", "certificateRefs") | toSlice() {
-            var refKind = tostring(dig(certRef, "kind") | fallback("Secret"))
+            var refKind = dig_string(certRef, "", "kind")
+            if refKind == "" { refKind = "Secret" }
             if refKind != "Secret" {
               continue
             }
-            var refNs = tostring(dig(certRef, "namespace") | fallback(gwNs))
-            var refName = tostring(dig(certRef, "name") | fallback(""))
+            var refNs = dig_string(certRef, "", "namespace")
+            if refNs == "" { refNs = gwNs }
+            var refName = dig_string(certRef, "", "name")
             if refName == "" {
               continue
             }
@@ -744,36 +820,15 @@ templateSnippets:
         }
       %%}
       {%- end macro %}
-      {%- for _, gw := range resources.gateways.List() %}
-      {%%
-        var gwNs = gw.Metadata.Namespace
-        var gwName = gw.Metadata.Name
-      %%}
-      {%- for _, listener := range gw.Spec.Listeners %}
-      {{ applyListener(gwNs, gwName, listener) }}
+      {%- for _, listener := range incremental_values("gateway-listener-state", "listeners") %}
+      {{ applyListener(dig_string(listener, "", "gatewayNamespace"),
+        dig_string(listener, "", "gatewayName"), listener) }}
       {%- end %}
-      {%- end %}
-      {%- var lsSeamRaw = shared.Get("listenersetsUntyped") %}
-      {%- var lsAll150 = []any{} %}
-      {%- if lsSeamRaw != nil %}
-        {%- var lsSeamAll, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any) %}
-        {%- if lsSeamOk %}{%- lsAll150 = lsSeamAll %}{%- end %}
-      {%- end %}
-      {%- for _, ls := range lsAll150 %}
-      {%%
-        // ListenerSets attach to a parent Gateway via spec.parentRef.
-        // Inherit the parent's namespace + name so mTLS blocking
-        // (keyed under the Gateway's identity in
-        // features-110-gateway-frontend-mtls) applies consistently.
-        // Untyped via util-listenersets-contrib (rendered above).
-        var lsNs = dig_string(ls, "", "metadata", "namespace")
-        var parentName = dig_string(ls, "", "spec", "parentRef", "name")
-        var parentNs = dig_string(ls, "", "spec", "parentRef", "namespace")
-        if parentNs == "" { parentNs = lsNs }
-      %%}
-      {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
-      {{ applyListener(parentNs, parentName, listener) }}
-      {%- end %}
+      {%- for _, listenerSet := range incremental_values("gateway-host-listenersets", "listenersets") %}
+        {%- for _, listener := range toSlice(dig(listenerSet, "candidates")) %}
+      {{ applyListener(dig_string(listenerSet, "", "gatewayNamespace"),
+        dig_string(listenerSet, "", "gatewayName"), listener) }}
+        {%- end %}
       {%- end %}
       {#- HTTPRoutes / GRPCRoutes contribute to needHTTPFrontend
           even when they aren't pinned to a specific Gateway in the
@@ -783,14 +838,10 @@ templateSnippets:
           the frontend has to exist whenever at least one route is
           declared. The narrower bindHTTPDefault flag stays gated on
           actual listeners at the chart's default httpPort. -#}
-      {%%
-        if len(resources.httproutes.List()) > 0 {
-          gf["needHTTPFrontend"] = true
-        }
-        if len(resources.grpcroutes.List()) > 0 {
-          gf["needHTTPFrontend"] = true
-        }
-      %%}
+      {%- if len(incremental_values("gateway-route-candidates", "presence-http")) > 0 ||
+        len(incremental_values("gateway-route-candidates", "presence-grpc")) > 0 -%}
+        {%- gf["needHTTPFrontend"] = true -%}
+      {%- end -%}
       {#- Ingress contribution: any cert registered via
           features-100-ingress-tls indicates an Ingress with spec.tls,
           which the chart routes through the chart-static https

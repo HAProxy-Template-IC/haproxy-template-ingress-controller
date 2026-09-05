@@ -52,11 +52,50 @@ func completionForActiveDeployment(s *DeploymentScheduler, result *events.Deploy
 	if s.state.activeDeploymentID == "" {
 		s.state.activeDeploymentID = "test-deployment"
 	}
+	if s.state.activeOccurrence == nil {
+		s.mu.RLock()
+		s.state.activeOccurrence = s.lastValidatedOccurrence
+		s.mu.RUnlock()
+	}
+	if s.state.activeOccurrence == nil {
+		plan := result.Plan
+		config := "validated-config"
+		if plan == nil {
+			plan = exactTestPlan("test-plan", config)
+		} else {
+			for i := range plan.Files {
+				if plan.Files[i].Path == "haproxy.cfg" && plan.Files[i].ContentKnown {
+					config = plan.Files[i].Content
+					break
+				}
+			}
+		}
+		s.state.activeOccurrence = mustOccurrenceFor(plan, config, nil, nil)
+	}
 	deploymentID := s.state.activeDeploymentID
+	occurrence := s.state.activeOccurrence
 	s.schedulerMutex.Unlock()
-	completed := *result
+	completed, err := events.NewDeploymentResultWithOccurrence(occurrence)
+	if err != nil {
+		panic(err)
+	}
 	completed.DeploymentID = deploymentID
-	return events.NewDeploymentCompletedEvent(&completed)
+	completed.Total = result.Total
+	completed.Succeeded = result.Succeeded
+	completed.Failed = result.Failed
+	completed.DurationMs = result.DurationMs
+	completed.ReloadsTriggered = result.ReloadsTriggered
+	completed.TotalAPIOperations = result.TotalAPIOperations
+	completed.PendingReloads = result.PendingReloads
+	completed.PendingReloadUntil = result.PendingReloadUntil
+	completed.OperationBreakdown = result.OperationBreakdown
+	completed.BackendDiffFields = result.BackendDiffFields
+	completed.PodSetHash = result.PodSetHash
+	event, err := events.NewDeploymentCompletedEventWithCycle(completed)
+	if err != nil {
+		panic(err)
+	}
+	return event
 }
 
 // startLoopForTest wires the deploy-loop channels and starts runDeployLoop in a
@@ -102,25 +141,17 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
 
-	event := events.NewTemplateRenderedEvent(
-		"global\n  daemon\n",        // haproxyConfig
-		&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
-		nil,                         // statusPatches
-		nil,                         // renderedResources
-		2,                           // auxFileCount
-		50,                          // durationMs
-		"",                          // triggerReason
-		"", nil, "",                 // contentChecksum
-		true, // coalescible
-	)
+	config := "global\n  daemon\n"
+	occurrence := mustTestOccurrence(config, "plan-1", nil)
+	event, err := events.NewTemplateRenderedEventWithOccurrence(occurrence, 50, "", true)
+	require.NoError(t, err)
 
 	scheduler.handleTemplateRendered(t.Context(), event)
 
 	scheduler.mu.RLock()
 	defer scheduler.mu.RUnlock()
 
-	assert.Equal(t, "global\n  daemon\n", scheduler.lastRenderedConfig)
-	assert.NotNil(t, scheduler.lastAuxiliaryFiles)
+	assert.True(t, sameOccurrence(occurrence, scheduler.lastRenderedOccurrence))
 }
 
 func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
@@ -137,26 +168,20 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 	startLoopForTest(t, scheduler, ctx)
 
 	t.Run("caches validated config", func(t *testing.T) {
-		// Set rendered config first
-		scheduler.mu.Lock()
-		scheduler.lastRenderedConfig = "global\n  daemon\n"
-		scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
-		scheduler.mu.Unlock()
+		occurrence := primeRendered(scheduler, "global\n  daemon\n", "checksum-cache", "plan-cache")
 
 		scheduler.dispatchRender(ctx, "corr-cache", true, "config_validation")
 
 		scheduler.mu.RLock()
 		defer scheduler.mu.RUnlock()
 
-		assert.True(t, scheduler.hasValidConfig)
-		assert.Equal(t, "global\n  daemon\n", scheduler.lastValidatedConfig)
+		assert.True(t, sameOccurrence(occurrence, scheduler.lastValidatedOccurrence))
 	})
 
 	t.Run("no rendered config available", func(t *testing.T) {
 		// Reset state
 		scheduler.mu.Lock()
-		scheduler.lastRenderedConfig = ""
-		scheduler.hasValidConfig = false
+		scheduler.lastRenderedOccurrence = nil
 		scheduler.mu.Unlock()
 
 		// Should not panic when no config available
@@ -164,14 +189,11 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 	})
 
 	t.Run("schedules deployment when endpoints available", func(t *testing.T) {
-		// Set rendered config and endpoints
+		primeRendered(scheduler, "global\n  daemon\n", "checksum-endpoints", "plan-endpoints")
 		scheduler.mu.Lock()
-		scheduler.lastRenderedConfig = "global\n  daemon\n"
-		scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
 		scheduler.currentEndpoints = []dataplane.Endpoint{
 			{URL: "http://localhost:5555"},
 		}
-		scheduler.hasValidConfig = false
 		scheduler.mu.Unlock()
 
 		scheduler.dispatchRender(ctx, "corr-endpoints", true, "config_validation")
@@ -211,7 +233,7 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 
 	t.Run("skips deployment without valid config", func(t *testing.T) {
 		scheduler.mu.Lock()
-		scheduler.hasValidConfig = false
+		scheduler.lastValidatedOccurrence = nil
 		scheduler.mu.Unlock()
 
 		event := events.NewHAProxyPodsDiscoveredEvent([]dataplane.Endpoint{
@@ -232,11 +254,7 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 	})
 
 	t.Run("schedules deployment with valid config", func(t *testing.T) {
-		scheduler.mu.Lock()
-		scheduler.hasValidConfig = true
-		scheduler.lastValidatedConfig = "global\n  daemon\n"
-		scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
-		scheduler.mu.Unlock()
+		primeValidated(scheduler, "global\n  daemon\n", "checksum-pods", "plan-pods")
 
 		event := events.NewHAProxyPodsDiscoveredEvent([]dataplane.Endpoint{
 			{URL: "http://localhost:5555"},
@@ -263,10 +281,8 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	startLoopForTest(t, scheduler, ctx)
 
 	t.Run("deploys cached config on any validation failure", func(t *testing.T) {
+		primeValidated(scheduler, "global\n  daemon\n", "checksum-fallback", "plan-fallback")
 		scheduler.mu.Lock()
-		scheduler.hasValidConfig = true
-		scheduler.lastValidatedConfig = "global\n  daemon\n"
-		scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
 		scheduler.currentEndpoints = []dataplane.Endpoint{
 			{URL: "http://localhost:5555"},
 		}
@@ -284,7 +300,7 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 
 	t.Run("skips fallback without valid config", func(t *testing.T) {
 		scheduler.mu.Lock()
-		scheduler.hasValidConfig = false
+		scheduler.lastValidatedOccurrence = nil
 		scheduler.mu.Unlock()
 
 		event := events.NewValidationFailedEvent([]string{"error"}, 100, "config_change")
@@ -303,10 +319,8 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 	})
 
 	t.Run("skips fallback without endpoints", func(t *testing.T) {
+		primeValidated(scheduler, "global\n  daemon\n", "checksum-no-pods", "plan-no-pods")
 		scheduler.mu.Lock()
-		scheduler.hasValidConfig = true
-		scheduler.lastValidatedConfig = "global\n  daemon\n"
-		scheduler.lastValidatedAux = &dataplane.AuxiliaryFiles{}
 		scheduler.currentEndpoints = []dataplane.Endpoint{} // No endpoints
 		scheduler.mu.Unlock()
 
@@ -380,8 +394,8 @@ func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 	scheduler.state.deployInFlight = true
 	scheduler.workRevision = 7
 	scheduler.state.pending = &scheduledDeployment{
-		config: "test",
-		reason: "test",
+		occurrence: mustTestOccurrence("test", "test-plan", nil),
+		reason:     "test",
 	}
 	scheduler.schedulerMutex.Unlock()
 
@@ -417,7 +431,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config", nil, []dataplane.Endpoint{}, "test", "test-correlation-id", nil, true, "", nil, "")
+		scheduleExact(scheduler, ctx, "config", nil, "test", "test-correlation-id")
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -432,15 +446,17 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config1", nil, []dataplane.Endpoint{}, "first", "correlation-1", nil, true, "", nil, "")
-		scheduler.scheduleOrQueue(ctx, "config2", nil, []dataplane.Endpoint{}, "second", "correlation-2", nil, true, "", nil, "")
+		scheduleExact(scheduler, ctx, "config1", nil, "first", "correlation-1")
+		scheduleExact(scheduler, ctx, "config2", nil, "second", "correlation-2")
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
 
 		require.NotNil(t, scheduler.state.pending)
 		assert.Equal(t, "second", scheduler.state.pending.reason)
-		assert.Equal(t, "config2", scheduler.state.pending.config)
+		identity, err := inspectOccurrence(scheduler.state.pending.occurrence)
+		require.NoError(t, err)
+		assert.Equal(t, "config2", identity.config)
 	})
 }
 
@@ -454,42 +470,43 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 	initLoopChannels(scheduler)
 
 	t.Run("routes TemplateRenderedEvent", func(t *testing.T) {
-		event := events.NewTemplateRenderedEvent(
-			"global\n  daemon\n",        // haproxyConfig
-			&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
-			nil,                         // statusPatches
-			nil,                         // renderedResources
-			2,                           // auxFileCount
-			50,                          // durationMs
-			"",                          // triggerReason
-			"", nil, "",                 // contentChecksum
-			true, // coalescible
-		)
+		config := "global\n  daemon\n"
+		occurrence := mustTestOccurrence(config, "plan-route-1", nil)
+		event, err := events.NewTemplateRenderedEventWithOccurrence(occurrence, 50, "", true)
+		require.NoError(t, err)
 
 		scheduler.handleEvent(ctx, event)
 
 		scheduler.mu.RLock()
 		defer scheduler.mu.RUnlock()
 
-		assert.Equal(t, "global\n  daemon\n", scheduler.lastRenderedConfig)
+		assert.True(t, sameOccurrence(occurrence, scheduler.lastRenderedOccurrence))
 	})
 
 	t.Run("routes TemplateRenderedEvent", func(t *testing.T) {
 		// The render is the deploy trigger now: routing it must promote the
 		// cache without waiting for a separate verdict.
-		rendered := events.NewTemplateRenderedEvent(
-			"global\n", &dataplane.AuxiliaryFiles{}, nil, nil, 0, 50, "", "", nil, "", true,
-		)
+		config := "global\n"
+		occurrence := mustTestOccurrence(config, "plan-route-2", nil)
+		rendered, err := events.NewTemplateRenderedEventWithOccurrence(occurrence, 50, "", true)
+		require.NoError(t, err)
 		scheduler.handleEvent(ctx, rendered)
 
 		scheduler.mu.RLock()
 		defer scheduler.mu.RUnlock()
 
-		assert.True(t, scheduler.hasValidConfig)
+		assert.True(t, sameOccurrence(occurrence, scheduler.lastValidatedOccurrence))
 	})
 
 	t.Run("routes RenderGateCompletedEvent", func(t *testing.T) {
-		scheduler.handleEvent(ctx, events.NewRenderGateCompletedEvent("plan-1", false, true, true, "boom", false, 5))
+		scheduler.mu.RLock()
+		occurrence := scheduler.lastRenderedOccurrence
+		scheduler.mu.RUnlock()
+		verdict, err := events.NewRenderGateCompletedEventWithCycle(
+			occurrence, false, true, true, "boom", false, 5,
+		)
+		require.NoError(t, err)
+		scheduler.handleEvent(ctx, verdict)
 
 		scheduler.mu.RLock()
 		defer scheduler.mu.RUnlock()
@@ -562,7 +579,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 
 	t.Run("routes DriftPreventionTriggeredEvent", func(t *testing.T) {
 		scheduler.mu.Lock()
-		scheduler.hasValidConfig = false // Ensure no deployment scheduled
+		scheduler.lastValidatedOccurrence = nil
 		scheduler.mu.Unlock()
 
 		event := events.NewDriftPreventionTriggeredEvent(5 * time.Minute)
@@ -678,17 +695,17 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	// parks in awaitCompletion holding deployInFlight — the genuine state this test
 	// needs, reached without touching schedulerState. Observing the published event
 	// is the deterministic signal that the loop is now awaiting completion.
-	scheduler.scheduleOrQueue(ctx, "in-flight-config", nil,
+	scheduleExact(scheduler, ctx, "in-flight-config",
 		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
-		"in-flight-deployment", "in-flight-corr", nil, true, "", nil, "")
+		"in-flight-deployment", "in-flight-corr")
 	inFlight := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	require.Equal(t, "in-flight-config", inFlight.Config)
 
 	// Queue a second deploy behind the in-flight one. latest-wins fills the single
 	// pending slot; the loop cannot dispatch it until the in-flight deploy completes.
-	scheduler.scheduleOrQueue(ctx, "pending-config", nil,
+	scheduleExact(scheduler, ctx, "pending-config",
 		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
-		"pending-deployment", "correlation-123", nil, true, "", nil, "")
+		"pending-deployment", "correlation-123")
 
 	// Completing the in-flight deploy releases awaitCompletion; the loop then grabs
 	// the pending deployment and emits its scheduled event. Order of these two
@@ -726,8 +743,7 @@ func TestDeploymentScheduler_AwaitCompletionExitsOnContextCancellation(t *testin
 
 	// Enqueue work so the loop dispatches it and parks awaiting a completion
 	// that never arrives.
-	scheduler.scheduleOrQueue(ctx, "config", nil, []dataplane.Endpoint{},
-		"test-cancel", "correlation-789", nil, true, "", nil, "")
+	scheduleExact(scheduler, ctx, "config", nil, "test-cancel", "correlation-789")
 
 	time.Sleep(50 * time.Millisecond)
 	cancel()
@@ -764,8 +780,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 
 	// nil parsedConfig → cold-start structural lane (no runtime-raw apply), and
 	// empty endpoints → nothing to apply anyway.
-	scheduler.scheduleOrQueue(ctx, "config", nil, []dataplane.Endpoint{},
-		"test-compute-runtime", "correlation-compute", nil, true, "", nil, "")
+	scheduleExact(scheduler, ctx, "config", nil, "test-compute-runtime", "correlation-compute")
 
 	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	// Runtime config name should be computed from template config name
@@ -867,8 +882,7 @@ func TestScheduler_NoBurstUnderConcurrentReconciles(t *testing.T) {
 			defer wg.Done()
 			reason := "reconcile-" + strconv.Itoa(i)
 			corr := "corr-" + strconv.Itoa(i)
-			scheduler.scheduleOrQueue(ctx, "config", nil, []dataplane.Endpoint{},
-				reason, corr, nil, true, "", nil, "")
+			scheduleExact(scheduler, ctx, "config", nil, reason, corr)
 		}(i)
 	}
 	wg.Wait()
@@ -913,13 +927,13 @@ func TestScheduler_LatestWinsCoalescing(t *testing.T) {
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)
 
-	scheduler.scheduleOrQueue(ctx, "A", nil, []dataplane.Endpoint{}, "first", "corr-a", nil, true, "", nil, "")
+	scheduleExact(scheduler, ctx, "A", nil, "first", "corr-a")
 	first := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	require.Equal(t, "A", first.Config)
 
 	// The loop is parked in awaitCompletion; B and C overwrite the pending slot.
-	scheduler.scheduleOrQueue(ctx, "B", nil, []dataplane.Endpoint{}, "second", "corr-b", nil, true, "", nil, "")
-	scheduler.scheduleOrQueue(ctx, "C", nil, []dataplane.Endpoint{}, "third", "corr-c", nil, true, "", nil, "")
+	scheduleExact(scheduler, ctx, "B", nil, "second", "corr-b")
+	scheduleExact(scheduler, ctx, "C", nil, "third", "corr-c")
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler, &events.DeploymentResult{
 		Total: 1, Succeeded: 1, DurationMs: 10,
 	}))

@@ -34,16 +34,22 @@ const haproxyConfigPath = "/etc/haproxy/haproxy.cfg"
 // happy-path publish and the validation-failed publish. Callers layer the
 // extra fields (NameSuffix, ValidationError) on top.
 func (c *Component) buildPublishRequest(templateConfig *v1alpha1.HAProxyTemplateConfig, entry *renderedConfigEntry) *configpublisher.PublishRequest {
-	return &configpublisher.PublishRequest{
+	request := &configpublisher.PublishRequest{
 		TemplateConfigName:      templateConfig.Name,
 		TemplateConfigNamespace: templateConfig.Namespace,
 		TemplateConfigUID:       templateConfig.UID,
-		Config:                  entry.config,
 		ConfigPath:              haproxyConfigPath,
-		AuxiliaryFiles:          c.convertAuxiliaryFiles(entry.auxFiles),
-		Checksum:                entry.contentChecksum,
 		CompressionThreshold:    c.getCompressionThreshold(templateConfig),
 	}
+	if entry.outputSnapshot != nil {
+		request.OutputSnapshot = entry.outputSnapshot
+		return request
+	}
+	request.Checksum = entry.contentChecksum
+	request.Config = entry.config
+	request.AuxiliaryFileSnapshot = entry.artifactSnapshot
+	request.AuxiliaryFiles = c.convertAuxiliaryFiles(entry.auxFiles)
+	return request
 }
 
 // discardCachedConfig drops the rendered config entry for the given correlation
@@ -229,26 +235,27 @@ func (c *Component) flushPendingPublish(ctx context.Context) {
 	c.executePublish(ctx, work)
 }
 
-// skipIfAlreadyPublished returns true when work's content checksum matches the
-// last successfully published checksum. In that case it logs msg at debug and
-// drops the cached rendered-config entry so the caller can simply
-// early-return. Empty checksums never match (we cannot deduplicate without
-// one). The same content-deduplication check is needed both before throttle
-// buffering and after the throttle timer fires; this helper is the single
-// source of truth for that decision.
+// skipIfAlreadyPublished uses exact root identity for authenticated outputs and
+// exact content comparison for legacy callers. A match drops the cached entry.
 func (c *Component) skipIfAlreadyPublished(work *publishWorkItem, msg string) bool {
-	checksum := work.entry.contentChecksum
-	if checksum == "" {
-		return false
-	}
 	c.mu.RLock()
-	lastChecksum := c.lastPublishedChecksum
+	lastOutput := c.lastPublishedOutputSnapshot
+	lastEntry := c.lastPublishedEntry
 	c.mu.RUnlock()
-	if checksum != lastChecksum {
+
+	if work.entry.outputSnapshot != nil {
+		if lastOutput == nil {
+			return false
+		}
+		same, err := work.entry.outputSnapshot.SameRoot(lastOutput)
+		if err != nil || !same {
+			return false
+		}
+	} else if lastOutput != nil || !sameDeployedOutput(work.entry, lastEntry) {
 		return false
 	}
 	c.logger.Debug(msg,
-		"checksum", checksum,
+		"checksum", work.entry.contentChecksum,
 		"correlation_id", work.correlationID,
 	)
 	c.discardCachedConfig(work.correlationID)
@@ -270,15 +277,14 @@ func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 		c.discardCachedConfig(work.correlationID)
 		return
 	}
-	if !c.commitPublish(ctx, work, request, result) {
+	if !c.commitPublish(ctx, work, result) {
 		return
 	}
 
-	checksumHex := request.Checksum
 	c.logger.Debug("Runtime configuration published successfully",
 		"runtime_config_name", result.RuntimeConfigName,
 		"runtime_config_namespace", result.RuntimeConfigNamespace,
-		"checksum", checksumHex,
+		"checksum", work.entry.contentChecksum,
 		"correlation_id", work.correlationID,
 	)
 }
@@ -286,7 +292,6 @@ func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 func (c *Component) commitPublish(
 	ctx context.Context,
 	work *publishWorkItem,
-	request *configpublisher.PublishRequest,
 	result *configpublisher.PublishResult,
 ) bool {
 	c.mu.Lock()
@@ -296,8 +301,15 @@ func (c *Component) commitPublish(
 		return false
 	}
 
-	alreadyPublished := request.Checksum != "" && request.Checksum == c.lastPublishedChecksum
-	c.lastPublishedChecksum = request.Checksum
+	alreadyPublished := false
+	if work.entry.outputSnapshot != nil && c.lastPublishedOutputSnapshot != nil {
+		alreadyPublished, _ = work.entry.outputSnapshot.SameRoot(c.lastPublishedOutputSnapshot)
+	} else if work.entry.outputSnapshot == nil && c.lastPublishedOutputSnapshot == nil {
+		alreadyPublished = sameDeployedOutput(work.entry, c.lastPublishedEntry)
+	}
+	c.lastPublishedChecksum = work.entry.contentChecksum
+	c.lastPublishedOutputSnapshot = work.entry.outputSnapshot
+	c.lastPublishedEntry = cloneRenderedConfigEntry(work.entry)
 	delete(c.renderedConfigs, work.correlationID)
 	c.publishThrottle.MarkFired()
 	if alreadyPublished {
@@ -307,7 +319,7 @@ func (c *Component) commitPublish(
 		result.RuntimeConfigName,
 		result.RuntimeConfigNamespace,
 		len(result.MapFileNames),
-		len(result.SecretNames),
+		len(result.SecretNames)+len(result.SSLCaFileNames),
 	))
 	return true
 }

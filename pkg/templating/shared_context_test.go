@@ -11,6 +11,64 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type sharedRecorder struct {
+	cell           string
+	key            string
+	rank           string
+	value          string
+	publishedValue any
+}
+
+type mutatingSharedRecorder struct{}
+
+func (*mutatingSharedRecorder) Unique(_, _, _ string) {}
+
+func (*mutatingSharedRecorder) Publish(_, _ string, value any) {
+	value.(map[string]any)["nested"].([]any)[0] = "mutated"
+}
+
+func (*mutatingSharedRecorder) PublishRanked(_, _, _ string, value any) {
+	value.(map[string]any)["nested"].([]any)[0] = "mutated"
+}
+
+func (r *sharedRecorder) Unique(cell, key, value string) {
+	r.cell, r.key, r.value = cell, key, value
+}
+
+func (r *sharedRecorder) Publish(cell, key string, value any) {
+	r.cell, r.key, r.publishedValue = cell, key, value
+}
+
+func (r *sharedRecorder) PublishRanked(cell, key, rank string, value any) {
+	r.cell, r.key, r.rank, r.publishedValue = cell, key, rank, value
+}
+
+type sharedSelector struct {
+	group  string
+	cell   string
+	key    string
+	value  any
+	found  bool
+	err    error
+	values []any
+	count  int
+}
+
+func (s *sharedSelector) Select(group, cell, key string) (value any, found bool, err error) {
+	s.group, s.cell, s.key = group, cell, key
+	return s.value, s.found, s.err
+}
+
+func (s *sharedSelector) SelectValues(group, cell string) ([]any, error) {
+	s.group, s.cell, s.key = group, cell, ""
+	return s.values, s.err
+}
+
+func (s *sharedSelector) Count(group, cell string) (int, error) {
+	s.group, s.cell, s.key = group, cell, ""
+	return s.count, s.err
+}
+
 // TestSharedContext_ComputeIfAbsent_PanicUnwrapped verifies that a panic raised
 // inside compute() (e.g. a template fail()/env.Stop()) is re-raised with its
 // ORIGINAL value, not wrapped in singleflight's *panicError whose Error()
@@ -82,6 +140,73 @@ func TestSharedContext_ComputeIfAbsent_Basic(t *testing.T) {
 	assert.Equal(t, "computed", result)
 	assert.False(t, wasComputed, "second call should have wasComputed=false")
 	assert.Equal(t, 1, computeCount) // Still 1
+}
+
+func TestSharedContributionContextRecordsUnique(t *testing.T) {
+	recorder := &sharedRecorder{}
+	shared := NewSharedContributionContext(recorder)
+
+	assert.Equal(t, "", shared.Unique("routes", "host", "backend"))
+	assert.Equal(t, "routes", recorder.cell)
+	assert.Equal(t, "host", recorder.key)
+	assert.Equal(t, "backend", recorder.value)
+}
+
+func TestSharedContributionContextRecordsPublishedValue(t *testing.T) {
+	recorder := &sharedRecorder{}
+	shared := NewSharedContributionContext(recorder)
+	value := map[string]any{"nested": []any{"value"}}
+
+	assert.Equal(t, "", shared.Publish("routes", "host", value))
+	assert.Equal(t, "routes", recorder.cell)
+	assert.Equal(t, "host", recorder.key)
+	assert.Equal(t, value, recorder.publishedValue)
+}
+
+func TestSharedContributionContextDetachesPublishedValuesFromRecorder(t *testing.T) {
+	shared := NewSharedContributionContext(&mutatingSharedRecorder{})
+
+	for _, publish := range []func(any) string{
+		func(value any) string { return shared.Publish("routes", "host", value) },
+		func(value any) string { return shared.PublishRanked("routes", "host", "rank", value) },
+	} {
+		value := map[string]any{"nested": []any{"original"}}
+		assert.Equal(t, "", publish(value))
+		assert.Equal(t, "original", value["nested"].([]any)[0])
+	}
+}
+
+func TestSharedContributionContextRecordsRankedValueAndSelectsExactPublication(t *testing.T) {
+	recorder := &sharedRecorder{}
+	selector := &sharedSelector{value: map[string]any{"name": "policy"}, found: true}
+	shared := NewSharedContributionContext(recorder, selector)
+
+	assert.Equal(t, "", shared.PublishRanked("targets", "default/echo", "2026/policy", "value"))
+	assert.Equal(t, "2026/policy", recorder.rank)
+	value, found := shared.Select("policies", "targets", "default/echo")
+	assert.True(t, found)
+	assert.Equal(t, map[string]any{"name": "policy"}, value)
+	assert.Equal(t, "policies", selector.group)
+	assert.Equal(t, "targets", selector.cell)
+	assert.Equal(t, "default/echo", selector.key)
+}
+
+func TestSharedContributionContextSelectsPublicationCellValues(t *testing.T) {
+	recorder := &sharedRecorder{}
+	selector := &sharedSelector{values: []any{"first", "second"}}
+	shared := NewSharedContributionContext(recorder, selector)
+
+	assert.Equal(t, []any{"first", "second"}, shared.SelectValues("policies", "targets"))
+	assert.Equal(t, "policies", selector.group)
+	assert.Equal(t, "targets", selector.cell)
+	assert.Empty(t, selector.key)
+}
+
+func TestSharedContributionContextRejectsTypedNilRecorder(t *testing.T) {
+	var recorder *sharedRecorder
+	assert.PanicsWithError(t, "shared contribution recorder is nil", func() {
+		NewSharedContributionContext(recorder)
+	})
 }
 
 func TestSharedContext_FirstSeenPattern(t *testing.T) {

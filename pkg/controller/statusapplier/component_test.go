@@ -18,18 +18,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -72,13 +77,87 @@ func newTestResolver() *mockGVRResolver {
 func newTestPatches(variants map[string]map[string]any) []templating.StatusPatch {
 	return []templating.StatusPatch{
 		{
-			Namespace:  "default",
-			Name:       "my-ingress",
-			APIVersion: "networking.k8s.io/v1",
-			Kind:       "Ingress",
-			Variants:   variants,
+			Namespace:       "default",
+			Name:            "my-ingress",
+			APIVersion:      "networking.k8s.io/v1",
+			Kind:            "Ingress",
+			UID:             "uid-my-ingress",
+			ResourceVersion: "1",
+			Variants:        variants,
 		},
 	}
+}
+
+func newTestStatusPatchSnapshot(tb testing.TB, variants map[string]map[string]any) *templating.StatusPatchSnapshot {
+	tb.Helper()
+	return newTestStatusPatchSnapshotFromPatches(tb, newTestPatches(variants))
+}
+
+func newTestStatusPatchSnapshotFromPatches(
+	tb testing.TB,
+	patches []templating.StatusPatch,
+) *templating.StatusPatchSnapshot {
+	tb.Helper()
+	collector := templating.NewStatusPatchCollector()
+	for index := range patches {
+		patch := &patches[index]
+		require.NoError(tb, collector.RegisterWithLineage(
+			patch.Namespace, patch.Name, patch.APIVersion, patch.Kind,
+			patch.UID, patch.ResourceVersion, patch.Variants,
+		))
+	}
+	snapshot, err := collector.Snapshot()
+	require.NoError(tb, err)
+	return snapshot
+}
+
+func newTestRenderOccurrence(tb testing.TB, patches []templating.StatusPatch) *rendercycle.Occurrence {
+	tb.Helper()
+	status := newTestStatusPatchSnapshotFromPatches(tb, patches)
+	cycle := testutil.NewRenderCycleFixture(tb).Snapshot(tb, "global\n", status, nil)
+	rendered, err := events.NewTemplateRenderedEventWithCycle(cycle, 0, "test", true)
+	require.NoError(tb, err)
+	occurrence, err := rendered.RenderOccurrence()
+	require.NoError(tb, err)
+	return occurrence
+}
+
+func newTestResourcesAppliedEvent(tb testing.TB, patches []templating.StatusPatch) *events.ResourcesAppliedEvent {
+	tb.Helper()
+	event, err := events.NewResourcesAppliedEventWithCycle(newTestRenderOccurrence(tb, patches))
+	require.NoError(tb, err)
+	return event
+}
+
+func newTestDeploymentCompletedEvent(
+	tb testing.TB,
+	total, succeeded, failed, pendingReloads int,
+	patches []templating.StatusPatch,
+) *events.DeploymentCompletedEvent {
+	tb.Helper()
+	result, err := events.NewDeploymentResultWithOccurrence(newTestRenderOccurrence(tb, patches))
+	require.NoError(tb, err)
+	result.Total = total
+	result.Succeeded = succeeded
+	result.Failed = failed
+	result.PendingReloads = pendingReloads
+	event, err := events.NewDeploymentCompletedEventWithCycle(result)
+	require.NoError(tb, err)
+	return event
+}
+
+func newTestDeploymentSkippedEvent(
+	tb testing.TB,
+	total int,
+	reason string,
+	patches []templating.StatusPatch,
+) *events.DeploymentSkippedEvent {
+	tb.Helper()
+	event, err := events.NewDeploymentSkippedEventWithCycle(
+		newTestRenderOccurrence(tb, patches), total, reason, "podset",
+	)
+	require.NoError(tb, err)
+	return event
 }
 
 func newTestComponent(bus *busevents.EventBus, fakeClient *dynamicfake.FakeDynamicClient, resolver GVRResolver) *Component {
@@ -100,8 +179,26 @@ func newFakeDynamicClient() *dynamicfake.FakeDynamicClient {
 // that returns success for all status subresource patch operations.
 func newFakeDynamicClientWithPatchSuccess() *dynamicfake.FakeDynamicClient {
 	client := newFakeDynamicClient()
-	client.PrependReactor("patch", "*", func(_ k8stesting.Action) (bool, runtime.Object, error) {
-		return true, nil, nil
+	var revision atomic.Uint64
+	revision.Store(1)
+	client.PrependReactor("patch", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		patchAction, ok := action.(k8stesting.PatchAction)
+		if !ok {
+			return true, nil, fmt.Errorf("unexpected action %T", action)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(patchAction.GetPatch(), &payload); err != nil {
+			return true, nil, err
+		}
+		metadata, ok := payload["metadata"].(map[string]any)
+		if !ok {
+			return true, nil, fmt.Errorf("patch metadata has type %T", payload["metadata"])
+		}
+		uid, _ := metadata["uid"].(string)
+		result := &unstructured.Unstructured{}
+		result.SetUID(types.UID(uid))
+		result.SetResourceVersion(strconv.FormatUint(revision.Add(1), 10))
+		return true, result, nil
 	})
 	return client
 }
@@ -123,7 +220,7 @@ func TestNew(t *testing.T) {
 	require.NotNil(t, comp)
 	assert.Equal(t, ComponentName, comp.Name())
 	assert.NotNil(t, comp.Base, "must embed the component.Base event loop")
-	assert.NotNil(t, comp.checksumCache)
+	assert.NotNil(t, comp.statusCache)
 	assert.False(t, comp.isLeader)
 }
 
@@ -152,7 +249,7 @@ func TestRun_ContextCancellation(t *testing.T) {
 }
 
 // TestHandleTemplateRendered_NoApplyWhenNotLeader pins that a non-leader
-// replica reads event.StatusPatches and does NOT call the SSA path. There
+// replica receives the event and does NOT call the SSA path. There
 // is no cached state to assert on after the call — the applier is stateless.
 func TestHandleTemplateRendered_NoApplyWhenNotLeader(t *testing.T) {
 	bus := testutil.NewTestBus()
@@ -166,7 +263,7 @@ func TestHandleTemplateRendered_NoApplyWhenNotLeader(t *testing.T) {
 		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
-	renderedEvent := events.NewResourcesAppliedEvent(patches)
+	renderedEvent := newTestResourcesAppliedEvent(t, patches)
 	comp.handleResourcesApplied(context.Background(), renderedEvent)
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
@@ -187,7 +284,7 @@ func TestHandleTemplateRendered_AppliesWhenLeader(t *testing.T) {
 		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
-	renderedEvent := events.NewResourcesAppliedEvent(patches)
+	renderedEvent := newTestResourcesAppliedEvent(t, patches)
 	comp.handleResourcesApplied(context.Background(), renderedEvent)
 
 	// Should publish StatusUpdateCompletedEvent
@@ -195,6 +292,119 @@ func TestHandleTemplateRendered_AppliesWhenLeader(t *testing.T) {
 	assert.Equal(t, events.StatusPatchPhaseRendered, completedEvent.Phase)
 	assert.Equal(t, 1, completedEvent.AppliedCount)
 	assert.Equal(t, 0, completedEvent.SkippedCount)
+}
+
+func TestHandleResourcesAppliedMaterializesSnapshotPhaseOnly(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+	setLeader(comp)
+
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
+		"deployed": {"conditions": []any{map[string]any{"type": "Programmed"}}},
+	})
+	comp.handleResourcesApplied(context.Background(), newTestResourcesAppliedEvent(t, patches))
+
+	completed := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, events.StatusPatchPhaseRendered, completed.Phase)
+	assert.Equal(t, 1, completed.AppliedCount)
+}
+
+func TestSuccessHandlersRejectUnauthenticatedLegacyPayloads(t *testing.T) {
+	statusSnapshot := newTestStatusPatchSnapshot(t, map[string]map[string]any{
+		"rendered": {"conditions": []any{}},
+	})
+	statusPatches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{}},
+	})
+	for _, test := range []struct {
+		name   string
+		handle func(*Component)
+	}{
+		{
+			name: "resources applied with invalid snapshot shadow",
+			handle: func(comp *Component) {
+				comp.handleResourcesApplied(context.Background(),
+					events.NewResourcesAppliedEventWithStatusSnapshot(&templating.StatusPatchSnapshot{}))
+			},
+		},
+		{
+			name: "resources applied with mutable and immutable shadows",
+			handle: func(comp *Component) {
+				event := events.NewResourcesAppliedEventWithStatusSnapshot(statusSnapshot)
+				event.StatusPatches = statusPatches
+				comp.handleResourcesApplied(context.Background(), event)
+			},
+		},
+		{
+			name: "deployment completed",
+			handle: func(comp *Component) {
+				comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(
+					&events.DeploymentResult{Total: 1, Succeeded: 1, StatusPatchSnapshot: statusSnapshot},
+				))
+			},
+		},
+		{
+			name: "deployment skipped",
+			handle: func(comp *Component) {
+				comp.handleDeploymentSkipped(context.Background(), events.NewDeploymentSkippedEvent(
+					1, "config_unchanged", "hash", "podset", statusPatches,
+				))
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bus := testutil.NewTestBus()
+			fakeClient := newFakeDynamicClientWithPatchSuccess()
+			comp := newTestComponent(bus, fakeClient, newTestResolver())
+			eventChan := bus.Subscribe("test", 50)
+			bus.Start()
+			setLeader(comp)
+
+			test.handle(comp)
+
+			failed := testutil.WaitForEvent[*events.StatusUpdateFailedEvent](t, eventChan, testutil.EventTimeout)
+			assert.Equal(t, "status-patch-snapshot", failed.GVR)
+			assert.Empty(t, fakeClient.Actions())
+		})
+	}
+}
+
+func TestHandleResourcesAppliedCycleIgnoresPoisonedStatusShadows(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+	setLeader(comp)
+
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Authenticated"}}},
+	})
+	event := newTestResourcesAppliedEvent(t, patches)
+	event.CycleSnapshot = nil
+	event.RenderProof = "poison"
+	event.StatusPatches = newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "MutablePoison"}}},
+	})
+	event.StatusPatchSnapshot = newTestStatusPatchSnapshot(t, map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "SnapshotPoison"}}},
+	})
+
+	comp.handleResourcesApplied(context.Background(), event)
+
+	completed := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, completed.AppliedCount)
+	require.Len(t, fakeClient.Actions(), 1)
+	patchAction, ok := fakeClient.Actions()[0].(k8stesting.PatchAction)
+	require.True(t, ok)
+	patch := string(patchAction.GetPatch())
+	assert.Contains(t, patch, "Authenticated")
+	assert.NotContains(t, patch, "MutablePoison")
+	assert.NotContains(t, patch, "SnapshotPoison")
 }
 
 // (TestHandleTemplateRendered_SkipsWhenNotLeader removed: redundant with
@@ -211,7 +421,7 @@ func TestHandleTemplateRendered_SkipsEmptyPatches(t *testing.T) {
 
 	setLeader(comp)
 
-	renderedEvent := events.NewResourcesAppliedEvent(nil)
+	renderedEvent := newTestResourcesAppliedEvent(t, nil)
 	comp.handleResourcesApplied(context.Background(), renderedEvent)
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
@@ -236,9 +446,9 @@ func TestHandleDeploymentCompleted_AppliesDeployedVariant(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
-		Total: 1, Succeeded: 1, StatusPatches: deployedPatches(),
-	}))
+	comp.handleDeploymentCompleted(context.Background(), newTestDeploymentCompletedEvent(
+		t, 1, 1, 0, 0, deployedPatches(),
+	))
 
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
@@ -264,9 +474,9 @@ func TestHandleDeploymentCompleted_PartialSuccessIsNotProgrammed(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
-		Total: 2, Succeeded: 1, Failed: 1, StatusPatches: deployedPatches(),
-	}))
+	comp.handleDeploymentCompleted(context.Background(), newTestDeploymentCompletedEvent(
+		t, 2, 1, 1, 0, deployedPatches(),
+	))
 
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, events.StatusPatchPhaseDeployFailed, completedEvent.Phase,
@@ -286,7 +496,9 @@ func TestHandleDeploymentCompleted_SkipsWithoutPatches(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{Total: 1, Succeeded: 1}))
+	comp.handleDeploymentCompleted(context.Background(), newTestDeploymentCompletedEvent(
+		t, 1, 1, 0, 0, nil,
+	))
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
@@ -304,13 +516,14 @@ func TestHandleDeploymentCompleted_PendingReloadsApplyNoVariant(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
-		Total: 2, Succeeded: 0, Failed: 0, PendingReloads: 2, StatusPatches: deployedPatches(),
-	}))
+	comp.handleDeploymentCompleted(context.Background(), newTestDeploymentCompletedEvent(
+		t, 2, 0, 0, 2, deployedPatches(),
+	))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 
-	comp.handleDeploymentSkipped(context.Background(), events.NewDeploymentSkippedEvent(
-		2, events.SkipReasonReloadObserved, "hash", "pods", deployedPatches()))
+	comp.handleDeploymentSkipped(context.Background(), newTestDeploymentSkippedEvent(
+		t, 2, events.SkipReasonReloadObserved, deployedPatches(),
+	))
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.LongTimeout)
 	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
 }
@@ -329,9 +542,9 @@ func TestHandleDeploymentCompleted_SkipsZeroEndpoints(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
-		Total: 0, Succeeded: 0, StatusPatches: deployedPatches(),
-	}))
+	comp.handleDeploymentCompleted(context.Background(), newTestDeploymentCompletedEvent(
+		t, 0, 0, 0, 0, deployedPatches(),
+	))
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
@@ -358,9 +571,9 @@ func TestHandleDeploymentCompleted_FullFailureAppliesDeployFailedVariant(t *test
 			"type": "Programmed", "status": "False", "reason": "DeploymentFailed",
 		}}},
 	})
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
-		Total: 2, Succeeded: 0, Failed: 2, StatusPatches: patches,
-	}))
+	comp.handleDeploymentCompleted(context.Background(), newTestDeploymentCompletedEvent(
+		t, 2, 0, 2, 0, patches,
+	))
 
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, events.StatusPatchPhaseDeployFailed, completedEvent.Phase,
@@ -384,7 +597,9 @@ func TestHandleDeploymentSkipped_AppliesDeployedVariant(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentSkipped(context.Background(), events.NewDeploymentSkippedEvent(1, "config_unchanged", "hash", "podset", deployedPatches()))
+	comp.handleDeploymentSkipped(context.Background(), newTestDeploymentSkippedEvent(
+		t, 1, "config_unchanged", deployedPatches(),
+	))
 
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
@@ -404,7 +619,9 @@ func TestHandleDeploymentSkipped_SkipsZeroEndpoints(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentSkipped(context.Background(), events.NewDeploymentSkippedEvent(0, "config_unchanged", "hash", "podset", deployedPatches()))
+	comp.handleDeploymentSkipped(context.Background(), newTestDeploymentSkippedEvent(
+		t, 0, "config_unchanged", deployedPatches(),
+	))
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
@@ -420,7 +637,9 @@ func TestHandleDeploymentSkipped_SkipsWithoutPatches(t *testing.T) {
 	setLeader(comp)
 
 	// Empty patches; skip event should be ignored.
-	comp.handleDeploymentSkipped(context.Background(), events.NewDeploymentSkippedEvent(1, "config_unchanged", "hash", "podset", nil))
+	comp.handleDeploymentSkipped(context.Background(), newTestDeploymentSkippedEvent(
+		t, 1, "config_unchanged", nil,
+	))
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
@@ -553,22 +772,23 @@ func TestHandleBecameLeader_DoesNotReplayPatches(t *testing.T) {
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
-func TestHandleBecameLeader_ClearsChecksumCache(t *testing.T) {
+func TestHandleBecameLeader_ClearsStatusCache(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClient()
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
 
 	bus.Start()
 
-	// Pre-populate checksum cache
 	comp.mu.Lock()
-	comp.checksumCache["default/my-ingress/networking.k8s.io/v1, Resource=ingresses"] = "abc123"
+	comp.statusCache["default/my-ingress/networking.k8s.io/v1, Resource=ingresses"] = statusCacheEntry{
+		uid: "uid-my-ingress",
+	}
 	comp.mu.Unlock()
 
 	comp.handleBecameLeader(context.Background())
 
 	comp.mu.RLock()
-	assert.Empty(t, comp.checksumCache)
+	assert.Empty(t, comp.statusCache)
 	comp.mu.RUnlock()
 }
 
@@ -586,7 +806,7 @@ func TestHandleLostLeadership(t *testing.T) {
 	comp.mu.RUnlock()
 }
 
-func TestApplyVariant_ChecksumSkip(t *testing.T) {
+func TestApplyVariant_ExactObservedLineageSkips(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClientWithPatchSuccess()
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
@@ -605,11 +825,267 @@ func TestApplyVariant_ChecksumSkip(t *testing.T) {
 	assert.Equal(t, 1, event1.AppliedCount)
 	assert.Equal(t, 0, event1.SkippedCount)
 
-	// Second apply with same patches — should skip via checksum
+	patches[0].ResourceVersion = "2"
 	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
 	event2 := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, 0, event2.AppliedCount)
 	assert.Equal(t, 1, event2.SkippedCount)
+}
+
+func TestApplyVariant_CrossPhaseOverwriteForcesReapply(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Programmed", "status": "False"}}},
+		"deployed": {"conditions": []any{map[string]any{"type": "Programmed", "status": "True"}}},
+	})
+	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+	first := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, first.AppliedCount)
+
+	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseDeployed)
+	second := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, second.AppliedCount)
+
+	patches[0].ResourceVersion = "3"
+	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+	third := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, third.AppliedCount)
+	assert.Equal(t, 0, third.SkippedCount)
+	assert.Len(t, fakeClient.Actions(), 3)
+}
+
+func TestApplyVariant_RecreatedResourceCannotReuseStatusCache(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
+	})
+	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+	first := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, first.AppliedCount)
+
+	patches[0].UID = "uid-recreated"
+	patches[0].ResourceVersion = "1"
+	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+	second := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, second.AppliedCount)
+	assert.Equal(t, 0, second.SkippedCount)
+	assert.Len(t, fakeClient.Actions(), 2)
+}
+
+func TestApplyVariant_ABARequiresObservedLineage(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"status": "A"}}},
+	})
+	for index, value := range []string{"A", "B", "A"} {
+		patches[0].Variants["rendered"] = map[string]any{
+			"conditions": []any{map[string]any{"status": value}},
+		}
+		patches[0].ResourceVersion = strconv.Itoa(index + 1)
+		comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+		completed := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+		assert.Equal(t, 1, completed.AppliedCount)
+		assert.Equal(t, 0, completed.SkippedCount)
+	}
+	assert.Len(t, fakeClient.Actions(), 3)
+}
+
+func TestApplyVariant_MissingLineageAppliesWithoutCache(t *testing.T) {
+	tests := map[string]struct {
+		uid             string
+		resourceVersion string
+	}{
+		"missing UID":              {resourceVersion: "1"},
+		"missing resource version": {uid: "uid-my-ingress"},
+		"both missing":             {},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			bus := testutil.NewTestBus()
+			fakeClient := newFakeDynamicClientWithPatchSuccess()
+			comp := newTestComponent(bus, fakeClient, newTestResolver())
+			eventChan := bus.Subscribe("test", 50)
+			bus.Start()
+
+			patches := newTestPatches(map[string]map[string]any{
+				"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
+			})
+			patches[0].UID = test.uid
+			patches[0].ResourceVersion = test.resourceVersion
+			comp.mu.Lock()
+			comp.statusCache["default/my-ingress/networking.k8s.io/v1, Resource=ingresses"] = statusCacheEntry{
+				uid: "poison", baseResourceVersion: "poison", latestResourceVersion: "poison",
+			}
+			comp.mu.Unlock()
+
+			for range 2 {
+				comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+				completed := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](
+					t, eventChan, testutil.EventTimeout,
+				)
+				assert.Equal(t, 1, completed.AppliedCount)
+				assert.Zero(t, completed.SkippedCount)
+			}
+
+			actions := fakeClient.Actions()
+			require.Len(t, actions, 2)
+			for _, action := range actions {
+				patchAction, ok := action.(k8stesting.PatchAction)
+				require.True(t, ok)
+				var payload map[string]any
+				require.NoError(t, json.Unmarshal(patchAction.GetPatch(), &payload))
+				metadata, ok := payload["metadata"].(map[string]any)
+				require.True(t, ok)
+				assert.NotContains(t, metadata, "uid")
+				assert.NotContains(t, metadata, "resourceVersion")
+			}
+			comp.mu.RLock()
+			assert.Empty(t, comp.statusCache)
+			comp.mu.RUnlock()
+		})
+	}
+}
+
+func TestApplyVariant_MissingLineageFailureDoesNotCache(t *testing.T) {
+	tests := map[string]struct {
+		uid             string
+		resourceVersion string
+	}{
+		"missing UID":              {resourceVersion: "1"},
+		"missing resource version": {uid: "uid-my-ingress"},
+		"both missing":             {},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			bus := testutil.NewTestBus()
+			fakeClient := newFakeDynamicClient()
+			fakeClient.PrependReactor("patch", "ingresses", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, fmt.Errorf("server unavailable")
+			})
+			comp := newTestComponent(bus, fakeClient, newTestResolver())
+			eventChan := bus.Subscribe("test", 50)
+			bus.Start()
+
+			patches := newTestPatches(map[string]map[string]any{
+				"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
+			})
+			patches[0].UID = test.uid
+			patches[0].ResourceVersion = test.resourceVersion
+			comp.mu.Lock()
+			comp.statusCache["default/my-ingress/networking.k8s.io/v1, Resource=ingresses"] = statusCacheEntry{
+				uid: "poison", baseResourceVersion: "poison", latestResourceVersion: "poison",
+			}
+			comp.mu.Unlock()
+
+			comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+			failed := testutil.WaitForEvent[*events.StatusUpdateFailedEvent](t, eventChan, testutil.EventTimeout)
+			assert.Contains(t, failed.Error, "server unavailable")
+			completed := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](
+				t, eventChan, testutil.EventTimeout,
+			)
+			assert.Zero(t, completed.AppliedCount)
+			assert.Zero(t, completed.SkippedCount)
+			assert.Len(t, fakeClient.Actions(), 1)
+			comp.mu.RLock()
+			assert.Empty(t, comp.statusCache)
+			comp.mu.RUnlock()
+		})
+	}
+}
+
+func TestApplyVariant_MissingAndExactLineageTransitions(t *testing.T) {
+	t.Run("exact missing exact cannot reuse pre-missing cache", func(t *testing.T) {
+		bus := testutil.NewTestBus()
+		fakeClient := newFakeDynamicClientWithPatchSuccess()
+		comp := newTestComponent(bus, fakeClient, newTestResolver())
+		eventChan := bus.Subscribe("test", 50)
+		bus.Start()
+
+		patches := newTestPatches(map[string]map[string]any{
+			"rendered": {"conditions": []any{map[string]any{"status": "A"}}},
+		})
+		comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+		first := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+		assert.Equal(t, 1, first.AppliedCount)
+
+		patches[0].UID = ""
+		patches[0].ResourceVersion = ""
+		patches[0].Variants["rendered"] = map[string]any{
+			"conditions": []any{map[string]any{"status": "B"}},
+		}
+		comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+		missing := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+		assert.Equal(t, 1, missing.AppliedCount)
+		assert.Zero(t, missing.SkippedCount)
+
+		patches[0].UID = "uid-my-ingress"
+		patches[0].ResourceVersion = "2"
+		patches[0].Variants["rendered"] = map[string]any{
+			"conditions": []any{map[string]any{"status": "A"}},
+		}
+		comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+		afterMissing := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](
+			t, eventChan, testutil.EventTimeout,
+		)
+		assert.Equal(t, 1, afterMissing.AppliedCount)
+		assert.Zero(t, afterMissing.SkippedCount)
+		assert.Len(t, fakeClient.Actions(), 3)
+
+		patches[0].ResourceVersion = "4"
+		comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+		exactRepeat := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](
+			t, eventChan, testutil.EventTimeout,
+		)
+		assert.Zero(t, exactRepeat.AppliedCount)
+		assert.Equal(t, 1, exactRepeat.SkippedCount)
+		assert.Len(t, fakeClient.Actions(), 3)
+	})
+
+	t.Run("missing exact establishes a fresh exact cache", func(t *testing.T) {
+		bus := testutil.NewTestBus()
+		fakeClient := newFakeDynamicClientWithPatchSuccess()
+		comp := newTestComponent(bus, fakeClient, newTestResolver())
+		eventChan := bus.Subscribe("test", 50)
+		bus.Start()
+
+		patches := newTestPatches(map[string]map[string]any{
+			"rendered": {"conditions": []any{map[string]any{"status": "A"}}},
+		})
+		patches[0].UID = ""
+		patches[0].ResourceVersion = ""
+		comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+		missing := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+		assert.Equal(t, 1, missing.AppliedCount)
+
+		patches[0].UID = "uid-my-ingress"
+		patches[0].ResourceVersion = "2"
+		comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+		exact := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+		assert.Equal(t, 1, exact.AppliedCount)
+		assert.Zero(t, exact.SkippedCount)
+
+		patches[0].ResourceVersion = "3"
+		comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+		repeat := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+		assert.Zero(t, repeat.AppliedCount)
+		assert.Equal(t, 1, repeat.SkippedCount)
+		assert.Len(t, fakeClient.Actions(), 2)
+	})
 }
 
 func TestApplyVariant_DifferentPayloadNotSkipped(t *testing.T) {
@@ -802,28 +1278,34 @@ func TestApplyVariant_MultiplePatches(t *testing.T) {
 
 	patches := []templating.StatusPatch{
 		{
-			Namespace:  "default",
-			Name:       "ingress-1",
-			APIVersion: "networking.k8s.io/v1",
-			Kind:       "Ingress",
+			Namespace:       "default",
+			Name:            "ingress-1",
+			APIVersion:      "networking.k8s.io/v1",
+			Kind:            "Ingress",
+			UID:             "uid-ingress-1",
+			ResourceVersion: "1",
 			Variants: map[string]map[string]any{
 				"deployed": {"conditions": []any{map[string]any{"type": "Ready"}}},
 			},
 		},
 		{
-			Namespace:  "production",
-			Name:       "ingress-2",
-			APIVersion: "networking.k8s.io/v1",
-			Kind:       "Ingress",
+			Namespace:       "production",
+			Name:            "ingress-2",
+			APIVersion:      "networking.k8s.io/v1",
+			Kind:            "Ingress",
+			UID:             "uid-ingress-2",
+			ResourceVersion: "1",
 			Variants: map[string]map[string]any{
 				"deployed": {"conditions": []any{map[string]any{"type": "Ready"}}},
 			},
 		},
 		{
-			Namespace:  "default",
-			Name:       "my-gateway",
-			APIVersion: "gateway.networking.k8s.io/v1",
-			Kind:       "Gateway",
+			Namespace:       "default",
+			Name:            "my-gateway",
+			APIVersion:      "gateway.networking.k8s.io/v1",
+			Kind:            "Gateway",
+			UID:             "uid-my-gateway",
+			ResourceVersion: "1",
 			Variants: map[string]map[string]any{
 				"deployed": {"conditions": []any{map[string]any{"type": "Programmed"}}},
 			},
@@ -864,7 +1346,7 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 	})
 
 	// 1. TemplateRendered while not leader — no apply.
-	bus.Publish(events.NewResourcesAppliedEvent(patches))
+	bus.Publish(newTestResourcesAppliedEvent(t, patches))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 
 	// 2. Become leader — does NOT replay anything (stateless applier).
@@ -872,7 +1354,7 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 
 	// 3. ResourcesApplied after becoming leader applies normally.
-	bus.Publish(events.NewResourcesAppliedEvent(patches))
+	bus.Publish(newTestResourcesAppliedEvent(t, patches))
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, events.StatusPatchPhaseRendered, completedEvent.Phase)
 	assert.Equal(t, 1, completedEvent.AppliedCount)
@@ -886,7 +1368,7 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 	patches2 := newTestPatches(map[string]map[string]any{
 		"rendered": {"conditions": []any{map[string]any{"type": "Accepted", "status": "True"}}},
 	})
-	bus.Publish(events.NewResourcesAppliedEvent(patches2))
+	bus.Publish(newTestResourcesAppliedEvent(t, patches2))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
@@ -1018,8 +1500,8 @@ func TestHandleEvent_RoutesCorrectly(t *testing.T) {
 	comp.ctx = context.Background()
 
 	// Verify each event type is routed without panics
-	comp.HandleEvent(events.NewResourcesAppliedEvent(nil))
-	comp.HandleEvent(events.NewDeploymentCompletedEvent(&events.DeploymentResult{Total: 1, Succeeded: 1}))
+	comp.HandleEvent(newTestResourcesAppliedEvent(t, nil))
+	comp.HandleEvent(newTestDeploymentCompletedEvent(t, 1, 1, 0, 0, nil))
 	comp.HandleEvent(events.NewReconciliationFailedEvent("err", "deploy", nil))
 	comp.HandleEvent(events.NewBecameLeaderEvent("identity"))
 	comp.HandleEvent(events.NewLostLeadershipEvent("identity", "reason"))
@@ -1044,8 +1526,7 @@ func TestApplyVariant_DoesNotCacheOnFailure(t *testing.T) {
 
 	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
 
-	// Checksum should NOT be cached on failure
 	comp.mu.RLock()
-	assert.Empty(t, comp.checksumCache)
+	assert.Empty(t, comp.statusCache)
 	comp.mu.RUnlock()
 }

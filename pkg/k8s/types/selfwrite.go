@@ -28,11 +28,8 @@ type SelfWriteFilter interface {
 }
 
 // SelfWriteRegistry records the resourceVersions of the controller's own
-// writes so watchers can refresh their store from the echoed watch event
-// without treating it as a change worth re-rendering for. Every render
-// derives the status it writes from the same inputs, so nothing downstream
-// changes when that status comes back; before this filter each status write
-// cost a full render (three to four per route change under sequential churn).
+// writes so watchers can identify their echoed watch events. The store's
+// exact identity revision decides whether an echo requires reconciliation.
 //
 // Keyed by GroupResource, not GroupVersionResource: the resourceVersion is a
 // property of the object, so a write through one served version matches the
@@ -48,9 +45,7 @@ type selfWriteKey struct {
 	group, resource, namespace, name, resourceVersion string
 }
 
-// DefaultSelfWriteLimit bounds the registry: entries are consumed by the
-// echo that follows each write within milliseconds, so the bound only matters
-// when watch events are lost; the oldest entry is evicted first.
+// DefaultSelfWriteLimit bounds the registry; the oldest entry is evicted first.
 const DefaultSelfWriteLimit = 4096
 
 // NewSelfWriteRegistry returns an empty registry holding at most limit

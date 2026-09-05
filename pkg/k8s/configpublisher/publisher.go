@@ -27,6 +27,7 @@ import (
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -89,12 +90,15 @@ func NewWithListers(k8sClient kubernetes.Interface, crdClient versioned.Interfac
 // This method:
 // 1. Creates/updates HAProxyCfg with the rendered config
 // 2. Creates/updates HAProxyMapFile resources for each map file
-// 3. Creates/updates Secret resources for SSL certificates
+// 3. Creates/updates Secret resources for SSL certificates and CA files
 // 4. Sets owner references for cascade deletion
 // 5. Updates HAProxyCfg status with references to child resources
 //
 // Returns PublishResult containing the names of created/updated resources.
 func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*PublishResult, error) {
+	if req == nil {
+		return nil, errors.New("publish request is nil")
+	}
 	p.logger.Debug("Publishing runtime config",
 		"template_config", req.TemplateConfigName,
 		"namespace", req.TemplateConfigNamespace,
@@ -130,6 +134,7 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		RuntimeConfigNamespace: runtimeConfig.Namespace,
 		MapFileNames:           []string{},
 		SecretNames:            []string{},
+		SSLCaFileNames:         []string{},
 		GeneralFileNames:       []string{},
 		CRTListFileNames:       []string{},
 	}
@@ -157,7 +162,8 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 	p.logger.Debug("Published runtime config",
 		"runtime_config", runtimeConfig.Name,
 		"map_files", len(result.MapFileNames),
-		"secrets", len(result.SecretNames),
+		"certificate_secrets", len(result.SecretNames),
+		"ca_secrets", len(result.SSLCaFileNames),
 		"general_files", len(result.GeneralFileNames),
 		"crt_list_files", len(result.CRTListFileNames),
 	)
@@ -166,27 +172,27 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 }
 
 func canonicalizePublishRequest(req *PublishRequest) (*PublishRequest, error) {
-	canonical := *req
-	inputFiles := &dataplane.AuxiliaryFiles{}
-	if req.AuxiliaryFiles != nil {
-		inputFiles = &dataplane.AuxiliaryFiles{
-			MapFiles:        req.AuxiliaryFiles.MapFiles,
-			SSLCertificates: req.AuxiliaryFiles.SSLCertificates,
-			SSLCaFiles:      req.AuxiliaryFiles.SSLCaFiles,
-			GeneralFiles:    req.AuxiliaryFiles.GeneralFiles,
-			CRTListFiles:    req.AuxiliaryFiles.CRTListFiles,
-		}
+	if req == nil {
+		return nil, errors.New("publish request is nil")
 	}
-	files, err := dataplane.CanonicalizeAuxiliaryFiles(inputFiles)
+	canonical := *req
+	config, files, authenticatedChecksum, err := canonicalPublishPayload(req)
 	if err != nil {
 		return nil, err
 	}
-	canonical.AuxiliaryFiles = &AuxiliaryFiles{
-		MapFiles:        files.MapFiles,
-		SSLCertificates: files.SSLCertificates,
-		SSLCaFiles:      files.SSLCaFiles,
-		GeneralFiles:    files.GeneralFiles,
-		CRTListFiles:    files.CRTListFiles,
+	canonical.Config = config
+	canonical.OutputSnapshot = nil
+	canonical.AuxiliaryFileSnapshot = nil
+	canonical.AuxiliaryFiles = publisherAuxiliaryFiles(files)
+	if authenticatedChecksum != "" {
+		materializedChecksum := dataplane.ComputeContentChecksum(config, files)
+		if materializedChecksum != authenticatedChecksum {
+			return nil, errors.New("materialized output differs from authenticated snapshot")
+		}
+		if req.OutputSnapshot == nil && canonical.Checksum != "" && canonical.Checksum != authenticatedChecksum {
+			return nil, errors.New("publish checksum differs from authenticated output")
+		}
+		canonical.Checksum = authenticatedChecksum
 	}
 
 	serialized, err := json.Marshal(canonical.AuxiliaryFiles)
@@ -202,6 +208,99 @@ func canonicalizePublishRequest(req *PublishRequest) (*PublishRequest, error) {
 	hashAuxiliaryContents(h, canonical.AuxiliaryFiles.CRTListFiles)
 	canonical.auxiliarySetID = fmt.Sprintf("sha256:%x", h.Sum(nil))
 	return &canonical, nil
+}
+
+func canonicalPublishPayload(req *PublishRequest) (
+	config string,
+	files *dataplane.AuxiliaryFiles,
+	checksum string,
+	err error,
+) {
+	if req.OutputSnapshot != nil {
+		return canonicalOutputSnapshotPayload(req.OutputSnapshot)
+	}
+	if req.AuxiliaryFileSnapshot != nil {
+		return canonicalAuxiliarySnapshotPayload(req)
+	}
+	return canonicalLegacyPayload(req)
+}
+
+func canonicalOutputSnapshotPayload(
+	snapshot *renderoutput.Snapshot,
+) (config string, files *dataplane.AuxiliaryFiles, checksum string, err error) {
+	if err := snapshot.ValidateAuthentication(); err != nil {
+		return "", nil, "", fmt.Errorf("authenticating output snapshot: %w", err)
+	}
+	config, err = snapshot.Config()
+	if err != nil {
+		return "", nil, "", fmt.Errorf("reading output config: %w", err)
+	}
+	artifacts, err := snapshot.ArtifactSnapshot()
+	if err != nil {
+		return "", nil, "", fmt.Errorf("reading output artifacts: %w", err)
+	}
+	if _, err := snapshot.PlanID(); err != nil {
+		return "", nil, "", fmt.Errorf("reading output plan ID: %w", err)
+	}
+	checksum, err = snapshot.ContentChecksum()
+	if err != nil {
+		return "", nil, "", fmt.Errorf("reading output checksum: %w", err)
+	}
+	files, err = dataplane.MaterializeAuxiliaryFileSnapshot(artifacts)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("materializing output artifacts: %w", err)
+	}
+	return config, files, checksum, nil
+}
+
+func canonicalAuxiliarySnapshotPayload(
+	req *PublishRequest,
+) (config string, files *dataplane.AuxiliaryFiles, checksum string, err error) {
+	if req.AuxiliaryFiles != nil {
+		return "", nil, "", errors.New("auxiliary snapshot is mixed with legacy auxiliary files")
+	}
+	if err := req.AuxiliaryFileSnapshot.ValidateAuthentication(); err != nil {
+		return "", nil, "", fmt.Errorf("authenticating auxiliary snapshot: %w", err)
+	}
+	checksum, err = dataplane.ComputeSnapshotContentChecksum(req.Config, req.AuxiliaryFileSnapshot)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("checksumming auxiliary snapshot: %w", err)
+	}
+	files, err = dataplane.MaterializeAuxiliaryFileSnapshot(req.AuxiliaryFileSnapshot)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("materializing auxiliary snapshot: %w", err)
+	}
+	return req.Config, files, checksum, nil
+}
+
+func canonicalLegacyPayload(
+	req *PublishRequest,
+) (config string, files *dataplane.AuxiliaryFiles, checksum string, err error) {
+	inputFiles := &dataplane.AuxiliaryFiles{}
+	if req.AuxiliaryFiles != nil {
+		inputFiles = &dataplane.AuxiliaryFiles{
+			MapFiles:        req.AuxiliaryFiles.MapFiles,
+			SSLCertificates: req.AuxiliaryFiles.SSLCertificates,
+			SSLCaFiles:      req.AuxiliaryFiles.SSLCaFiles,
+			GeneralFiles:    req.AuxiliaryFiles.GeneralFiles,
+			CRTListFiles:    req.AuxiliaryFiles.CRTListFiles,
+		}
+	}
+	files, err = dataplane.CanonicalizeAuxiliaryFiles(inputFiles)
+	if err != nil {
+		return "", nil, "", err
+	}
+	return req.Config, files, "", nil
+}
+
+func publisherAuxiliaryFiles(files *dataplane.AuxiliaryFiles) *AuxiliaryFiles {
+	return &AuxiliaryFiles{
+		MapFiles:        files.MapFiles,
+		SSLCertificates: files.SSLCertificates,
+		SSLCaFiles:      files.SSLCaFiles,
+		GeneralFiles:    files.GeneralFiles,
+		CRTListFiles:    files.CRTListFiles,
+	}
 }
 
 func hashAuxiliaryContents[T auxiliaryfiles.FileItem](h hash.Hash, files []T) {
@@ -290,6 +389,33 @@ func (p *Publisher) publishAuxiliaryFiles(
 			)
 		}
 		result.SecretNames = append(result.SecretNames, secretName)
+	}
+
+	caSecretNames := resolveAuxiliaryResourceNames(
+		req.AuxiliaryFiles.SSLCaFiles,
+		resourceSuffix,
+		func(file auxiliaryfiles.SSLCaFile) string { return p.generateCASecretName(path.Base(file.Path)) },
+		func(file auxiliaryfiles.SSLCaFile) string { return file.Path },
+	)
+	for i, ca := range req.AuxiliaryFiles.SSLCaFiles {
+		baseName := p.generateCASecretName(path.Base(ca.Path))
+		secretName, name, err := publishAuxiliaryResource(
+			caSecretNames[i], baseName, resourceSuffix, ca.Path, runtimeConfig.Name,
+			func(name string) (string, error) {
+				return p.createOrUpdateSSLCASecret(ctx, req, runtimeConfig, ca, name)
+			},
+		)
+		if err != nil {
+			return incompletePublicationError(
+				PublicationStageAuxiliary,
+				runtimeConfig.Namespace,
+				runtimeConfig.Name,
+				"Secret",
+				name,
+				err,
+			)
+		}
+		result.SSLCaFileNames = append(result.SSLCaFileNames, secretName)
 	}
 
 	generalFileNames := resolveAuxiliaryResourceNames(

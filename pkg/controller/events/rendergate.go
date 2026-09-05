@@ -14,6 +14,15 @@
 
 package events
 
+import (
+	"fmt"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+)
+
 // RenderGateCompletedEvent carries the render gate's verdict on one plan:
 // what the controller's own `haproxy -c` said about the render the fleet was
 // (or is about to be) given.
@@ -27,8 +36,22 @@ package events
 // Deliberately NOT coalescible: the latch is a state machine, and skipping a
 // verdict would leave the scheduler pinned on a plan that has since passed.
 type RenderGateCompletedEvent struct {
+	renderOccurrenceCarrier
+
+	// CycleSnapshot identifies the exact output and effects judged by the gate.
+	CycleSnapshot *rendercycle.Snapshot
+
+	// OutputSnapshot identifies the exact complete render judged by the gate.
+	OutputSnapshot *renderoutput.Snapshot
+
 	// PlanID is the render this verdict describes.
 	PlanID string
+
+	// RenderProof identifies the exact render instance this verdict describes.
+	RenderProof string
+
+	// Plan carries the exact controller-local render identity.
+	Plan *renderplan.Plan
 
 	// OK is true when the check passed.
 	OK bool
@@ -63,6 +86,40 @@ type RenderGateCompletedEvent struct {
 	Correlation
 }
 
+// NewRenderGateCompletedEventWithCycle creates a verdict for one exact render cycle.
+func NewRenderGateCompletedEventWithCycle(
+	occurrence *rendercycle.Occurrence,
+	ok, refused, newest bool,
+	message string,
+	pinned bool,
+	durationMs int64,
+	opts ...CorrelationOption,
+) (*RenderGateCompletedEvent, error) {
+	return newRenderGateCompletedEventWithOccurrence(
+		occurrence, ok, refused, newest, message, pinned, durationMs, opts...,
+	)
+}
+
+func newRenderGateCompletedEventWithOccurrence(
+	occurrence *rendercycle.Occurrence,
+	ok, refused, newest bool,
+	message string,
+	pinned bool,
+	durationMs int64,
+	opts ...CorrelationOption,
+) (*RenderGateCompletedEvent, error) {
+	carrier, identity, err := inspectRenderOccurrence(occurrence)
+	if err != nil {
+		return nil, fmt.Errorf("render gate completed event: %w", err)
+	}
+	event := NewRenderGateCompletedEvent(
+		"", ok, refused, newest, message, pinned, durationMs, opts...,
+	)
+	event.renderOccurrenceCarrier = carrier
+	owned := withRenderGateCompletedIdentity(event, identity)
+	return &owned, nil
+}
+
 // NewRenderGateCompletedEvent creates a new RenderGateCompletedEvent.
 //
 // Use PropagateCorrelation() to propagate correlation from the render this
@@ -91,4 +148,43 @@ func NewRenderGateCompletedEvent(
 	}
 }
 
+// NewRenderGateCompletedEventWithIdentity creates a verdict with exact render identity.
+func NewRenderGateCompletedEventWithIdentity(
+	planID, renderProof string,
+	plan *renderplan.Plan,
+	ok, refused, newest bool,
+	message string,
+	pinned bool,
+	durationMs int64,
+	opts ...CorrelationOption,
+) *RenderGateCompletedEvent {
+	event := NewRenderGateCompletedEvent(planID, ok, refused, newest, message, pinned, durationMs, opts...)
+	event.RenderProof = renderProof
+	event.Plan = plan.Clone()
+	return event
+}
+
 func (e *RenderGateCompletedEvent) EventType() string { return EventTypeRenderGateCompleted }
+
+// CloneForSubscriber restores authenticated shadows and isolates the legacy plan.
+func (e *RenderGateCompletedEvent) CloneForSubscriber() busevents.Event {
+	if e == nil {
+		panic("cannot clone nil render gate completed event")
+	}
+	clone := *e
+	clone.Plan = e.Plan.Clone()
+	if e.occurrence != nil {
+		clone = withRenderGateCompletedIdentity(&clone, mustInspectRenderOccurrence(e.renderOccurrenceCarrier))
+	}
+	return &clone
+}
+
+func withRenderGateCompletedIdentity(source *RenderGateCompletedEvent, identity *renderOccurrenceIdentity) RenderGateCompletedEvent {
+	event := *source
+	event.CycleSnapshot = identity.cycle
+	event.OutputSnapshot = identity.output
+	event.PlanID = identity.planID
+	event.RenderProof = identity.proof
+	event.Plan = nil
+	return event
+}

@@ -167,6 +167,33 @@ func TestProjectionTransform_StripsIgnoredMetadataFields(t *testing.T) {
 	assert.Equal(t, "default", h.GetNamespace())
 }
 
+func TestProjectionTransformRetainsIgnoredResourceVersionForSnapshotProof(t *testing.T) {
+	idx, err := indexer.New(indexer.Config{
+		IndexBy:      []string{"metadata.namespace", "metadata.name"},
+		IgnoreFields: []string{"metadata.resourceVersion"},
+	})
+	require.NoError(t, err)
+	transform := newProjectionTransform(
+		projectionRoots([]string{"metadata.namespace", "metadata.name"}, ""),
+		idx,
+	)
+	resource := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"namespace":       "default",
+			"name":            "proof",
+			"resourceVersion": "17",
+		},
+	}}
+
+	transformed, err := transform(resource)
+	require.NoError(t, err)
+	projected, ok := transformed.(*unstructured.Unstructured)
+	require.True(t, ok)
+	require.Equal(t, "17", projected.GetResourceVersion())
+}
+
 func TestProjectionTransform_PassesThroughNonUnstructured(t *testing.T) {
 	transform := newProjectionTransform(projectionRoots([]string{"metadata.name"}, ""), nil)
 

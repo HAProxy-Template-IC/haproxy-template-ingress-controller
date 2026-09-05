@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
@@ -32,8 +33,15 @@ import (
 // when nothing else changes. A refusal scopes a revert to the pods that took the
 // plan without loading it.
 func (c *Component) handleRenderGateCompleted(ctx context.Context, event *events.RenderGateCompletedEvent) {
+	occurrence, err := gateEventOccurrence(event)
+	if err != nil {
+		return
+	}
+	if _, err := inspectOccurrence(occurrence); err != nil {
+		return
+	}
 	if event.OK {
-		c.SetValidatedPlan(event.PlanID)
+		c.SetValidatedOccurrence(occurrence)
 		return
 	}
 	// Only HAProxy's own verdict is evidence about the config. A gate that
@@ -42,24 +50,35 @@ func (c *Component) handleRenderGateCompleted(ctx context.Context, event *events
 	if !event.Refused {
 		return
 	}
-	c.revertFleet(ctx, event.PlanID)
+	c.revertOccurrence(ctx, occurrence)
 }
 
-// revertFleet asks every pod that carries the refused plan to restore its own
-// durable last-known-good set and reload.
-//
-// The target set is computed per pod from what the pod reports, not from
-// controller memory: a leader that dies mid-revert leaves the agents' journals
-// as the authority. A pod whose own binary already reloaded the plan is left
-// alone — its HAProxy accepted the file, which is stronger evidence than the
-// controller image's `haproxy -c`, and reverting it would drop a working config.
-func (c *Component) revertFleet(ctx context.Context, planID string) {
-	if planID == "" {
+type refusedRender struct {
+	occurrence *rendercycle.Occurrence
+	planID     string
+}
+
+func (c *Component) revertOccurrence(
+	ctx context.Context,
+	occurrence *rendercycle.Occurrence,
+) {
+	identity, err := inspectOccurrence(occurrence)
+	if err != nil {
+		return
+	}
+	c.revertExact(ctx, refusedRender{
+		occurrence: occurrence, planID: identity.planID,
+	})
+}
+
+func (c *Component) revertExact(ctx context.Context, refused refusedRender) {
+	identity, err := inspectOccurrence(refused.occurrence)
+	if err != nil || refused.planID == "" || identity.planID != refused.planID {
 		return
 	}
 	endpoints := c.fleetSnapshot()
 	if len(endpoints) == 0 {
-		c.Logger().Warn("Render gate refused a plan but this controller has no fleet to revert", "plan", planID)
+		c.Logger().Warn("Render gate refused a plan but this controller has no fleet to revert", "plan", refused.planID)
 		return
 	}
 
@@ -84,7 +103,7 @@ func (c *Component) revertFleet(ctx context.Context, planID string) {
 			if revertCtx.Err() != nil {
 				return
 			}
-			switch outcome := c.revertPod(revertCtx, endpoint, planID, token); outcome {
+			switch outcome := c.revertPodRender(revertCtx, endpoint, refused, token); outcome {
 			case revertSkipped:
 			case revertDone:
 				mu.Lock()
@@ -106,11 +125,11 @@ func (c *Component) revertFleet(ctx context.Context, planID string) {
 
 	if stoodDown {
 		c.Logger().Warn("Abandoned the revert: a newer leader epoch owns the fleet",
-			"plan", planID, "reverted", reverted, "fleet", len(endpoints))
+			"plan", refused.planID, "reverted", reverted, "fleet", len(endpoints))
 		return
 	}
 	c.Logger().Warn("Reverted the pods carrying a refused plan to their last known good set",
-		"plan", planID, "reverted", reverted, "failed", failed, "fleet", len(endpoints))
+		"plan", refused.planID, "reverted", reverted, "failed", failed, "fleet", len(endpoints))
 }
 
 type revertOutcome int
@@ -125,8 +144,12 @@ const (
 	revertStoodDown
 )
 
-// revertPod reverts one pod when it carries the refused plan.
-func (c *Component) revertPod(ctx context.Context, endpoint *dataplane.Endpoint, planID string, token api.Token) revertOutcome {
+func (c *Component) revertPodRender(
+	ctx context.Context,
+	endpoint *dataplane.Endpoint,
+	refused refusedRender,
+	token api.Token,
+) revertOutcome {
 	client, err := c.clients.For(endpoint)
 	if err != nil {
 		c.Logger().Error("Cannot reach a pod to revert it", "pod", endpoint.PodName, "error", err)
@@ -138,14 +161,17 @@ func (c *Component) revertPod(ctx context.Context, endpoint *dataplane.Endpoint,
 			"pod", endpoint.PodName, "error", err)
 		return revertFailed
 	}
-	if !carriesRefusedPlan(state, planID) {
+	target := c.refusedRenderReference(endpoint, state, refused)
+	if target.id == "" {
 		return revertSkipped
 	}
 
 	result, err := client.Apply(ctx, &api.Manifest{
-		PlanID: planID,
-		Token:  token,
-		Mode:   api.ModeRevertLKG,
+		IdentityVersion: api.ExactIdentityVersion,
+		PlanID:          target.id,
+		PlanProof:       target.proof,
+		Token:           token,
+		Mode:            api.ModeRevertLKG,
 	}, nil, nil)
 	if err != nil {
 		var conflict *agentclient.ConflictError
@@ -156,20 +182,23 @@ func (c *Component) revertPod(ctx context.Context, endpoint *dataplane.Endpoint,
 				"controller_epoch", token.LeaderEpoch)
 			return revertStoodDown
 		}
+		if errors.As(err, &conflict) && conflict.Conflict.Reason == conflictRevertTargetMismatch {
+			return revertSkipped
+		}
 		c.Logger().Error("Reverting a pod to its last known good set failed",
-			"pod", endpoint.PodName, "plan", planID, "error", err)
+			"pod", endpoint.PodName, "plan", refused.planID, "error", err)
 		return revertFailed
 	}
 	if !result.OK {
 		c.Logger().Error("A pod refused to revert to its last known good set",
-			"pod", endpoint.PodName, "plan", planID, "error", applyErrorMessage(result))
+			"pod", endpoint.PodName, "plan", refused.planID, "error", applyErrorMessage(result))
 		return revertFailed
 	}
 
 	// The pod is no longer on a plan this controller composed against.
 	c.invalidateBaseline(endpoint)
 	c.Logger().Warn("Reverted a pod to its last known good set",
-		"pod", endpoint.PodName, "refused_plan", planID, "now_running", result.RunningPlanID)
+		"pod", endpoint.PodName, "refused_plan", refused.planID, "now_running", result.RunningPlanID)
 	return revertDone
 }
 
@@ -177,11 +206,40 @@ func (c *Component) revertPod(ctx context.Context, endpoint *dataplane.Endpoint,
 // HAProxy has not proven loadable: on disk, or in the running worker's runtime
 // state without a reload having read it. A pod whose running worker WAS started
 // from the plan loaded it successfully and is left alone.
-func carriesRefusedPlan(state *api.State, planID string) bool {
-	if state.RunningPlanID == planID {
-		return false
+func (c *Component) refusedRenderReference(
+	endpoint *dataplane.Endpoint,
+	state *api.State,
+	refused refusedRender,
+) planReference {
+	if state == nil || refused.planID == "" {
+		return planReference{}
 	}
-	return state.AppliedPlanID == planID || state.WorkerOpsPlanID == planID
+	authority := podKey(endpoint)
+	if c.roleCarriesRefusedRender(
+		authority, state.RunningPlanID, state.RunningPlanProof, refused,
+	) {
+		return planReference{}
+	}
+	if c.roleCarriesRefusedRender(
+		authority, state.AppliedPlanID, state.AppliedPlanProof, refused,
+	) {
+		return planReference{id: state.AppliedPlanID, proof: state.AppliedPlanProof}
+	}
+	if c.roleCarriesRefusedRender(
+		authority, state.WorkerOpsPlanID, state.WorkerOpsPlanProof, refused,
+	) {
+		return planReference{id: state.WorkerOpsPlanID, proof: state.WorkerOpsPlanProof}
+	}
+	return planReference{}
+}
+
+func (c *Component) roleCarriesRefusedRender(
+	authority, planID, planProof string,
+	refused refusedRender,
+) bool {
+	return sameOccurrence(
+		c.planOccurrence(authority, planID, planProof), refused.occurrence,
+	)
 }
 
 func applyErrorMessage(result *api.ApplyResult) string {

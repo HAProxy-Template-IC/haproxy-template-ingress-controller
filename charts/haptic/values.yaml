@@ -105,10 +105,13 @@ preRolloutValidation:
   resources:
     requests:
       cpu: 200m
-      memory: 256Mi
-    limits:
-      # Measured 215 MiB for the load gate in-cluster; headroom for the render.
       memory: 512Mi
+    limits:
+      # Measured 644 MiB peak RSS rendering the chart with every library
+      # enabled and running its 844 validationTests. The previous 512Mi was
+      # sized against a 215 MiB measurement and OOMKilled the hook once
+      # incremental rendering raised the render's working set.
+      memory: 1Gi
   annotations: {}
   labels: {}
 
@@ -220,12 +223,16 @@ controller:
     runAsNonRoot: true
     runAsUser: 65532
   # Guaranteed memory QoS by default; no CPU limit to avoid throttling.
+  # Both sides move together — splitting them would trade that QoS away.
+  # 512Mi was not enough: the controller runs the bundled validationTests on
+  # every config load, which peaks at 514 MiB on chart defaults and 605 MiB
+  # with every library enabled, so it OOMKilled itself on the load gate.
   resources:
     requests:
       cpu: 100m
-      memory: 512Mi
+      memory: 1Gi
     limits:
-      memory: 512Mi
+      memory: 1Gi
   # Controller-container and controller-pod extension points.
   extraEnv: []
   extraVolumes: []
@@ -381,6 +388,10 @@ controller:
     # Resource-agnostic core. Defines the haproxyConfig template and the
     # render_glob extension points the other libraries plug into.
     base:
+      enabled: true
+    # Kubernetes Service port and EndpointSlice backend resolution shared by
+    # the bundled Ingress, Gateway, and annotation libraries.
+    kubernetesBackends:
       enabled: true
     # HTTPS frontend + SSL passthrough infrastructure + default cert loading.
     ssl:

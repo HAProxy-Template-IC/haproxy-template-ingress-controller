@@ -58,9 +58,18 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 
 		// Best-effort dumps. Each in its own helper so one failure
 		// doesn't prevent the others.
+		// --prefix for the same reason the HAProxy dump below uses it, and one
+		// more: this selector spans BOTH controller replicas, and kubectl
+		// concatenates them pod by pod rather than merging by time. Without the
+		// prefix the file interleaves leader and follower with no way to tell
+		// them apart, and a reader grepping it by timestamp silently mixes the
+		// two — which reads as a controller doing impossible things (renders
+		// with no matching deploy, ops that never appear). The per-pod
+		// continuous tailers stay the instrument for a single replica's
+		// timeline; this dump is the wider net.
 		dumpCommand(t, dumpDir, "controller-logs.txt",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
-			"logs", "-l", LabelSelectorController, "--all-containers", "--tail=50000")
+			"logs", "-l", LabelSelectorController, "--all-containers", "--prefix", "--tail=50000")
 
 		// --prefix tags each line with [pod/<name> container/<name>] so the
 		// haproxy / agent / spoa-hub containers can be told apart when
@@ -227,6 +236,17 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"cat", "/etc/haproxy/haproxy.cfg")
+
+		// The map files, which is where routing actually lives: the config
+		// selects a backend through map lookups, so a request can 404 with the
+		// right backend present and the map missing its host. /v1/state reports
+		// only each map's digest and size, which cannot answer "is this host in
+		// there" — and that is the question every routing failure asks.
+		dumpCommand(t, dumpDir, "haproxy-maps-"+pod+".txt",
+			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"exec", pod, "-c", "haproxy", "--",
+			"sh", "-c", `for m in /etc/haproxy/maps/*.map; do `+
+				`echo "=== $m ($(wc -l < "$m") entries)"; cat "$m"; done`)
 
 		// HAProxy's runtime (in-memory) server table via `show servers
 		// state` on the master socket, routed to worker 1 with the

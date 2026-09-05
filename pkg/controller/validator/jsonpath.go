@@ -11,6 +11,7 @@ import (
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // JSONPathValidator validates JSONPath expressions in configuration.
@@ -82,6 +83,12 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 			expressionCount++
 		}
 	}
+	for name := range cfg.TemplateSnippets {
+		incremental := cfg.TemplateSnippets[name].Incremental
+		if incremental != nil {
+			expressionCount += len(incremental.WhenAnyPathExists)
+		}
+	}
 
 	if valid {
 		v.logger.Debug("JSONPath validation successful",
@@ -115,6 +122,30 @@ func validateJSONPaths(cfg *coreconfig.Config) []string {
 		if resource.FieldSelector != "" {
 			if _, err := indexer.NewFieldSelectorMatcher(resource.FieldSelector); err != nil {
 				errors = append(errors, fmt.Sprintf("watched_resources.%s.field_selector: %v", resourceName, err))
+			}
+		}
+	}
+	errors = append(errors, ValidateIncrementalActivationPaths(cfg)...)
+	return errors
+}
+
+// ValidateIncrementalActivationPaths validates component activation paths.
+func ValidateIncrementalActivationPaths(cfg *coreconfig.Config) []string {
+	var errors []string
+	snippetNames := slices.Sorted(maps.Keys(cfg.TemplateSnippets))
+	for _, snippetName := range snippetNames {
+		incremental := cfg.TemplateSnippets[snippetName].Incremental
+		if incremental == nil {
+			continue
+		}
+		for index, path := range incremental.WhenAnyPathExists {
+			if _, err := templating.CompileExistenceJSONPath(path); err != nil {
+				errors = append(errors, fmt.Sprintf(
+					"template_snippets.%s.incremental.when_any_path_exists[%d]: %v",
+					snippetName,
+					index,
+					err,
+				))
 			}
 		}
 	}

@@ -55,6 +55,12 @@ type Event interface {
 	Timestamp() time.Time
 }
 
+// FanoutIsolatedEvent gives each subscriber an independent event container.
+type FanoutIsolatedEvent interface {
+	Event
+	CloneForSubscriber() Event
+}
+
 // CoalescibleEvent is an optional interface for events that support coalescing.
 // Events implementing this interface can be safely skipped when a newer event
 // of the same type is available in the queue.

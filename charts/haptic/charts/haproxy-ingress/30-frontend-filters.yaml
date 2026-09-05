@@ -1,14 +1,17 @@
 # haproxy-ingress library — frontend-filters-* annotation handlers.
 # forwardfor, access-control, ssl-redirect, hsts, app-root, redirects, cors,
-# headers, mtls-error. util-haproxy-ingress-ssl-passthrough lives here too
-# (contiguous with the filters); its consumer features-100 is in 40-features.
+# headers, mtls-error.
 templateSnippets:
   # ============================================================================
   # Phase 2: Frontend Filters
   # ============================================================================
 
   frontend-filters-600-haproxy-ingress-forwardfor:
-    template: |
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/forwardfor']"]
+    template: |-
       {#
         HAProxy-Ingress forwardfor Annotation
 
@@ -20,8 +23,8 @@ templateSnippets:
         Generated HAProxy Config:
           option forwardfor [header <name>] [if-none]
       #}
-      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -30,7 +33,7 @@ templateSnippets:
             {#- Scoped by matched route: the previous exact host gate emitted
                 nothing for a wildcard or host-less rule, so a client-supplied
                 X-Forwarded-For reached the backend unmodified. -#}
-            {%- var xffCond = ResourceMatchCondition([]string{key}) %}
+            {%- var xffCond = "{ var(txn.resource_id) -m str " + key + " }" %}
       # haproxy-ingress/forwardfor ({{ key }})
               {%- if forwardfor == "ifmissing" %}
       http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ xffCond }}
@@ -44,6 +47,13 @@ templateSnippets:
       {%- end -%}
 
   frontend-filters-610-haproxy-ingress-access-control:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-ingress.github.io/allowlist-source-range']"
+        - "metadata.annotations['haproxy-ingress.github.io/whitelist-source-range']"
+        - "metadata.annotations['haproxy-ingress.github.io/denylist-source-range']"
     template: |
       {#
         HAProxy-Ingress Access Control Annotations
@@ -62,7 +72,8 @@ templateSnippets:
           http-request deny if <host-match> <acl>     (for denylist)
       #}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {#- No participating annotation → the macro emits nothing; skip the call. -#}
         {%- var anns = ingress.Metadata.Annotations %}
         {%- if anns["haproxy-ingress.github.io/allowlist-source-range"] == "" && anns["haproxy-ingress.github.io/whitelist-source-range"] == "" && anns["haproxy-ingress.github.io/denylist-source-range"] == "" %}{%- continue %}{%- end %}
@@ -97,7 +108,106 @@ templateSnippets:
   # redirect-loc-<code>.map), so adding/changing a host redirect is a map-only,
   # reload-free update instead of a per-ingress inline-ACL redirect.
 
+  util-haproxy-ingress-cors-fragment:
+    template: |-
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
+      {%- macro HaproxyIngressCORS(ingress *resources.ingresses.T, cond string) -%}
+        {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-enable"] == "true" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- var key = ns + "/" + name -%}
+          {%- var rawOrigin = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-allow-origin"] -%}
+          {%- if rawOrigin == "" -%}{%- rawOrigin = "*" -%}{%- end -%}
+          {%- var methods = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-allow-methods"] -%}
+          {%- if methods == "" -%}{%- methods = "GET, PUT, POST, DELETE, PATCH, OPTIONS" -%}{%- end -%}
+          {%- var headers = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-allow-headers"] -%}
+          {%- if headers == "" -%}{%- headers = "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" -%}{%- end -%}
+          {%- var credentials = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-allow-credentials"] -%}
+          {%- var exposeHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-expose-headers"] -%}
+          {%- var maxAge = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-max-age"] -%}
+          {%- if maxAge == "" -%}{%- maxAge = "86400" -%}{%- end -%}
+          {%- var corsInj = "" -%}
+          {%- for _, value := range []string{methods, headers, maxAge, exposeHeaders} -%}
+            {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(value, "line") -%}{%- end -%}
+          {%- end -%}
+          {%- if corsInj != "" -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " has a CORS annotation value containing " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the cors-allow-methods/-headers/-max-age/-expose-headers values.") -}}
+            {%- return -%}
+          {%- end -%}
+          {%- var allowAny = false -%}
+          {%- var exact = []string{} -%}
+          {%- var regexes = []string{} -%}
+          {%- for _, token := range split(rawOrigin, ",") -%}
+            {%- var origin = strip(token) -%}
+            {%- if origin == "" -%}{%- continue -%}{%- end -%}
+            {%- if origin == "*" -%}{%- allowAny = true -%}{%- break -%}{%- end -%}
+            {%- if !regex_search(origin, "^([a-z]+://(\\*\\.)?[A-Za-z0-9\\-.]*(:[0-9]+)?|null)$") -%}
+              {{- fail("Invalid CORS origin '" + origin + "' in annotation 'haproxy-ingress.github.io/cors-allow-origin' on Ingress '" + key + "' — must be scheme://host[:port], scheme://*.host[:port], null, or *.") -}}
+            {%- end -%}
+            {%- if strings_contains(origin, "*") -%}
+              {%- regexes = append(regexes, "^" + replace(sanitize_regex(origin), "\\*", "[A-Za-z0-9\\-]+") + "$") -%}
+            {%- else -%}
+              {%- exact = append(exact, origin) -%}
+            {%- end -%}
+          {%- end -%}
+          {%- var aclName = "cors_origin_haproxy-ingress_github_io_" + ns + "_" + name -%}
+          {%- var originHdr = "%[var(txn.cors_origin)]" -%}
+          {%- if allowAny -%}{%- originHdr = "*" -%}{%- end %}
+      # haproxy-ingress/cors ({{ key }})
+      http-request set-var(txn.cors_origin) req.hdr(Origin) if {{ cond }}{{ "\n" -}}{%- if allowAny %}
+      acl {{ aclName }} var(txn.cors_origin) -m found{%- else -%}
+            {%- for i := 0; i < len(exact); i += 20 -%}
+              {%- var hi = i + 20 -%}{%- if hi > len(exact) -%}{%- hi = len(exact) -%}{%- end %}
+      acl {{ aclName }} var(txn.cors_origin) -m str {{ join(exact[i:hi], " ") }}{%- end -%}
+            {%- for i := 0; i < len(regexes); i += 20 -%}
+              {%- var hi = i + 20 -%}{%- if hi > len(regexes) -%}{%- hi = len(regexes) -%}{%- end %}
+      acl {{ aclName }} var(txn.cors_origin) -m reg {{ join(regexes[i:hi], " ") }}{%- end -%}
+          {%- end %}
+      http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Allow-Methods "{{ EscapeLogFormatValue(methods) }}" if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Allow-Headers "{{ EscapeLogFormatValue(headers) }}" if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Max-Age "{{ EscapeLogFormatValue(maxAge) }}" if {{ cond }} {{ aclName }}{{ "\n" -}}{%- if credentials == "true" %}
+      http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ aclName }}{{ "\n" -}}{%- end -%}{%- if exposeHeaders != "" %}
+      http-after-response set-header Access-Control-Expose-Headers "{{ EscapeLogFormatValue(exposeHeaders) }}" if {{ cond }} {{ aclName }}{{ "\n" -}}{%- end -%}{%- if !allowAny %}
+      http-after-response add-header Vary Origin if {{ cond }} {{ aclName }}{{ "\n" -}}{%- end %}
+      http-request return status 204 if {{ cond }} {{ aclName }} METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }{{ "\n" -}}{%- end -%}
+      {%- end macro -%}
+
+  util-incremental-haproxy-ingress-cors:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var fileDir, err = pathResolver.GetPath("", "file") -%}
+        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{"fileDir": fileDir}}) -}}
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/cors-enable']"]
+      group: haproxy-ingress-cors
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-ingress-host-match-publication" for IngressHostMatchPublication -%}
+      {%- import "util-haproxy-ingress-cors-fragment" for HaproxyIngressCORS -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var hosts = []string{} -%}
+        {%- for _, rule := range ingress.Spec.Rules -%}
+          {%- if rule.Host != "" -%}{%- hosts = append(hosts, rule.Host) -%}{%- end -%}
+        {%- end -%}
+        {%- if len(hosts) > 0 -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- var match = IngressHostMatchPublication(hosts, tostring(props["fileDir"])) -%}
+          {%- var fragment = HaproxyIngressCORS(ingress, tostring(match["condition"])) -%}
+          {%- if fragment != "" -%}
+            {{- shared.Publish("fragments", key, fragment) -}}
+            {%- if match["file"] != nil -%}{{- shared.Publish("files", key, match["file"]) -}}{%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
   frontend-filters-660-haproxy-ingress-cors:
+    requires: [ingresses]
     template: |
       {#
         HAProxy-Ingress CORS Annotations
@@ -118,16 +228,15 @@ templateSnippets:
           http-response add-header Access-Control-Allow-Methods <methods> if <host-match> METH_OPTIONS
           ... (other CORS headers)
       #}
-      {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {#- No enable annotation → the macro emits nothing; skip the call. -#}
-        {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-enable"] == "" %}{%- continue %}{%- end %}
-        {{ EmitAnnotationCORS(ingress,
-            "haproxy-ingress.github.io",
-            "haproxy-ingress.github.io/cors-enable",
-            "86400",
-            "haproxy-ingress/cors") }}
+      {%- for _, fileAny := range incremental_values("haproxy-ingress-cors", "files") -%}
+        {%- var file = fileAny.(map[string]any) -%}
+        {%- var _, err = fileRegistry.Register("file", tostring(file["filename"]), tostring(file["content"])) -%}
+        {%- if err != nil -%}{{ fail("Failed to register CORS host match file '" + tostring(file["filename"]) + "': " + err.Error()) }}{%- end -%}
       {%- end -%}
+      {%- var fragments = incremental_values("haproxy-ingress-cors", "fragments") -%}
+      {%- if len(fragments) > 0 -%}{{- "\n  \n" -}}{%- end -%}
+      {%- for _, fragment := range fragments -%}{{- tostring(fragment) -}}{{- "  \n" -}}{%- end -%}
+      {{- render "util-incremental-haproxy-ingress-cors" -}}
 
   # Reload-free: the `headers` annotation (pipe-separated name:value pairs)
   # becomes entries in ing-reqhdr.map (built by ingress.yaml
@@ -135,11 +244,63 @@ templateSnippets:
   # scopes the header to the ingress's own backends rather than every request
   # for the host — the wildcard/host-less HostMatchCondition gap goes with it.
   features-670-haproxy-ingress-headers:
-    template: |
-      {%- import "util-ingress-header-contribute" for IngressHeaderContribute -%}
-      {{- IngressHeaderContribute("haproxy-ingress.github.io/headers", "", "|", ":") -}}
+    template: '{{- "" -}}'
+
+  ingress-header-mods-0670-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/headers']"]
+      group: ingress-header-mods
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-ingress-header-publish" for PublishIngressHeaderContributions -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {{- PublishIngressHeaderContributions(ingress,
+          "haproxy-ingress.github.io/headers", "", "|", ":", "0670-haproxy-ingress") -}}
+      {%- end -%}
+
+  features-600-haproxy-ingress-default-backend-redirect-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/default-backend-redirect']"]
+      group: haproxy-ingress-default-backend-redirect-hosts
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var redirectURL = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect"] -%}
+        {%- if redirectURL != "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- if regex_search(redirectURL, "[[:cntrl:]]") -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-ingress.github.io/default-backend-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}
+          {%- else -%}
+            {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect-code"] -%}
+            {%- if code == "" -%}{%- code = "302" -%}{%- end -%}
+            {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" -%}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + code + "' for annotation 'haproxy-ingress.github.io/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+            {%- else -%}
+              {{- shared.Publish("codes", key, map[string]any{"code": code}) -}}
+              {%- for ruleIndex, rule := range ingress.Spec.Rules -%}
+                {%- var host = toLower(rule.Host) -%}
+                {%- if host != "" -%}
+                  {{- shared.Publish("hosts", key + "/" + tostring(ruleIndex), map[string]any{
+                    "host": host, "code": code, "location": redirectURL,
+                  }) -}}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
 
   frontend-filters-680-haproxy-ingress-default-backend-redirect:
+    requires: [ingresses]
     template: |
       {#
         HAProxy-Ingress Default Backend Redirect
@@ -164,32 +325,22 @@ templateSnippets:
         Single-vendor, so the per-code maps are built and referenced here (not via
         base.yaml). Changing the URL/code set is a map-only, reload-free update.
       #}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var codeMap = map[string]map[string]string{} -%}
       {%- var codeHosts = map[string][]any{} -%}
       {%- var seen = map[string]bool{} -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var redirectURL = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect"] %}
-        {%- if redirectURL != "" %}
-          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-          {%- if regex_search(redirectURL, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-ingress.github.io/default-backend-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
-          {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect-code"] %}
-          {%- if code == "" %}{%- code = "302" %}{%- end %}
-          {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
-          {%- var codeValid = false %}
-          {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
-          {%- if !codeValid %}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + code + "' for annotation 'haproxy-ingress.github.io/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}{%- continue %}
-          {%- end %}
-          {%- if codeMap[code] == nil %}{%- codeMap[code] = map[string]string{} %}{%- end %}
-          {%- for _, rule := range ingress.Spec.Rules %}
-            {%- var host = toLower(rule.Host) %}
-            {%- if host != "" && !seen[host] %}
-              {%- seen[host] = true %}
-              {%- codeMap[code][host] = redirectURL %}
-              {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}).([]any), host) %}
-            {%- end %}
-          {%- end %}
+      {%- for _, entryAny := range incremental_values("haproxy-ingress-default-backend-redirect-hosts", "codes") %}
+        {%- var entry = entryAny.(map[string]any) %}
+        {%- var code = tostring(entry["code"]) %}
+        {%- if codeMap[code] == nil %}{%- codeMap[code] = map[string]string{} %}{%- end %}
+      {%- end %}
+      {%- for _, entryAny := range incremental_values("haproxy-ingress-default-backend-redirect-hosts", "hosts") %}
+        {%- var entry = entryAny.(map[string]any) %}
+        {%- var code = tostring(entry["code"]) %}
+        {%- var host = tostring(entry["host"]) %}
+        {%- if host != "" && !seen[host] %}
+          {%- seen[host] = true %}
+          {%- codeMap[code][host] = tostring(entry["location"]) %}
+          {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}).([]any), host) %}
         {%- end %}
       {%- end %}
       {%- for code, hostURL := range codeMap %}
@@ -208,24 +359,11 @@ templateSnippets:
   # Phase 5: SSL Features
   # ============================================================================
 
-  util-haproxy-ingress-ssl-passthrough:
-    template: |
-      {# Caches SSL passthrough backends from haproxy-ingress.github.io/ssl-passthrough annotations.
-          Build logic lives in ingress-annotations-compat.yaml's BuildAnnotationSSLPassthrough macro;
-          this snippet only owns the per-library cache key and naming-convention parameters. #}
-      {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
-      {%%
-        var _, _ = shared.ComputeIfAbsent("hi_sslPassthrough", func() any {
-          var sslData = map[string]any{"backends": []any{}}
-          BuildAnnotationSSLPassthrough(sslData,
-            "haproxy-ingress.github.io/ssl-passthrough",
-            "ssl-passthrough-hi-",
-            "hi_sslPassthrough_host")
-          return sslData
-        })
-      %%}
-
   frontend-filters-690-haproxy-ingress-mtls-error:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-tls-cert-header']"]
     template: |
       {#
         HAProxy-Ingress mTLS Error Page and Certificate Passthrough
@@ -248,7 +386,6 @@ templateSnippets:
         haproxy-ingress cert-passthrough set-headers (X-SSL-Client-{CN,DN,Cert}),
         which compose with the nginx-ingress equivalents at 790.
       #}
-      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {#- Strip unconditionally, and never host-scoped. The set below fires only
           when a client certificate is present and only for this route, so
           without this a request with no certificate — plain HTTP, or HTTPS where
@@ -256,31 +393,29 @@ templateSnippets:
           through to the application that this annotation tells to trust it. A
           wildcard or host-less rule made the old exact host gate miss entirely.
           A missed set is fail-closed; a missed strip is forgery. -#}
-      {%- var anyCertHeader = false %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] == "true" %}
-          {%- anyCertHeader = true %}{%- break %}
-        {%- end %}
-      {%- end %}
-      {%- if anyCertHeader %}
-      # haproxy-ingress/auth-tls-cert-header — drop client-supplied identity headers
-      http-request del-header X-SSL-Client-CN
-      http-request del-header X-SSL-Client-DN
-      http-request del-header X-SSL-Client-Cert
-      {%- end %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] == "true" %}
-            {%- var cond = ResourceMatchCondition([]string{key}) %}
-      # haproxy-ingress/auth-tls-cert-header ({{ key }})
-      http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } {{ cond }}
-      http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } {{ cond }}
-      http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } {{ cond }}
-          {%- end %}
-      {%- end -%}
+      {%%
+        var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
+        var ns = ingress.Metadata.Namespace
+        var name = ingress.Metadata.Name
+        var key = ns + "/" + name
+        if ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] == "true" {
+          show shared.Unique("haproxy-ingress-mtls-cert-header", "strip", "\n# haproxy-ingress/auth-tls-cert-header — drop client-supplied identity headers\nhttp-request del-header X-SSL-Client-CN\nhttp-request del-header X-SSL-Client-DN\nhttp-request del-header X-SSL-Client-Cert\n")
+          var cond = "{ var(txn.resource_id) -m str " + key + " }"
+          var block = "# haproxy-ingress/auth-tls-cert-header (" + key + ")"
+          block += "\nhttp-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } " + cond
+          block += "\nhttp-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } " + cond
+          block += "\nhttp-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } " + cond + "\n"
+          show shared.Unique("haproxy-ingress-mtls-cert-header", "resource/" + key, block)
+        }
+      %%}
   log-fields-630-haproxy-ingress-mtls:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-ingress.github.io/auth-tls-secret']"
+        - "metadata.annotations['haproxy-ingress.github.io/auth-tls-cert-header']"
     template: |-
       {#
         Client-certificate identity and verification result for the JSON access
@@ -293,13 +428,9 @@ templateSnippets:
         Identical to the haptic-annotations and nginx-ingress contributions; base
         deduplicates.
       #}
-      {%- var enabled = false %}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-secret"] != "" || ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] == "true" %}
-          {%- enabled = true %}
+          {{- shared.Unique("haproxy-ingress-log-fields-mtls", "fields", "\n%(mtls_verify)[ssl_c_verify]\n%(mtls_cn)[ssl_c_s_dn(CN)]") -}}
         {%- end %}
-      {%- end %}
-      {%- if enabled %}
-      %(mtls_verify)[ssl_c_verify]
-      %(mtls_cn)[ssl_c_s_dn(CN)]
       {%- end %}

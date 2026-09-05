@@ -171,7 +171,12 @@ func NewConverter(components map[string]spec.Schema) *Converter {
 // schema with no Items.
 func (c *Converter) Convert(schema *spec.Schema) (reflect.Type, error) {
 	c.compileIgnoreSet()
-	return c.convert(schema, "", 0)
+	typ, err := c.convert(schema, "", 0)
+	if err != nil {
+		return nil, err
+	}
+	registerImmutableProjectionType(typ)
+	return typ, nil
 }
 
 // compileIgnoreSet folds IgnoreFields into a set of plain dotted paths

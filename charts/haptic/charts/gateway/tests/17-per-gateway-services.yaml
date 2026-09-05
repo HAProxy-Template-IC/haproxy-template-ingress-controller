@@ -177,6 +177,13 @@ validationTests:
             listeners:
               - {name: ls-8085, protocol: HTTP, port: 8085}
               - {name: ls-8086, protocol: HTTP, port: 8086}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata: {name: orphan-svc-ports-ls, namespace: default}
+          spec:
+            parentRef: {name: missing-parent}
+            listeners:
+              - {name: ls-8087, protocol: HTTP, port: 8087}
     extraContext:
       haproxyService:
         type: LoadBalancer
@@ -199,3 +206,4 @@ validationTests:
     assertions:
       - {type: contains, target: "k8s:haproxy-service", pattern: "(?ms)name: gw-8085-h.*\\n.*port: 8085"}
       - {type: contains, target: "k8s:haproxy-service", pattern: "(?ms)name: gw-8086-h.*\\n.*port: 8086"}
+      - {type: contains, target: "k8s:haproxy-service", pattern: "(?ms)name: gw-8087-h.*\\n.*port: 8087"}

@@ -33,7 +33,7 @@ result, err := svc.Render(ctx, storeProvider) // *RenderResult, error
 
 - `HAProxyConfig string` — the rendered config
 - `AuxiliaryFiles *dataplane.AuxiliaryFiles` — maps + general files + SSL certificates + crt-list files
-- `StatusPatches []templating.StatusPatch` — status mutations templates registered during the render
+- `StatusPatchSnapshot *templating.StatusPatchSnapshot` — authenticated immutable status mutations; detach only at phase application
 - `Events []templating.RenderedEvent` — Kubernetes Events templates asked to emit via `recordEvent()`
 - `RenderedResources []templating.RenderedResource` — full Kubernetes resources rendered from `spec.k8sResources`, consumed by `pkg/controller/resourceapplier`
 - `IncludeStats []templating.IncludeStats` — per-snippet render counts and timings; nil unless the engine was built with profiling enabled

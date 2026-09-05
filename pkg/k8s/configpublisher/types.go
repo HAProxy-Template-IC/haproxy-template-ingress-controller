@@ -16,6 +16,8 @@ package configpublisher
 
 import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	listersv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/generated/listers/haproxytemplate/v1alpha1"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -30,7 +32,7 @@ type Listers struct {
 	HAProxyCfgs  listersv1alpha1.HAProxyCfgLister
 }
 
-// AuxiliaryFiles contains all auxiliary files (maps, certificates, general files, crt-lists).
+// AuxiliaryFiles contains maps, certificates, CA files, general files, and crt-lists.
 type AuxiliaryFiles struct {
 	// MapFiles contains HAProxy map files.
 	MapFiles []auxiliaryfiles.MapFile
@@ -62,12 +64,19 @@ type PublishRequest struct {
 	// Config is the rendered HAProxy configuration content.
 	Config string
 
+	// OutputSnapshot binds the production config, plan, and auxiliary artifacts.
+	OutputSnapshot *renderoutput.Snapshot
+
 	// ConfigPath is the file system path where the config is stored.
 	// Default: /etc/haproxy/haproxy.cfg
 	ConfigPath string
 
 	// AuxiliaryFiles contains map files, SSL certificates, and general files.
 	AuxiliaryFiles *AuxiliaryFiles
+
+	// AuxiliaryFileSnapshot is the immutable compatibility carrier used before
+	// the complete output root reaches this boundary.
+	AuxiliaryFileSnapshot *renderartifact.Snapshot
 
 	// Checksum is the SHA-256 hash of the configuration content.
 	Checksum string
@@ -102,8 +111,11 @@ type PublishResult struct {
 	// MapFileNames lists the names of created/updated HAProxyMapFile resources.
 	MapFileNames []string
 
-	// SecretNames lists the names of created/updated Secret resources for SSL certificates.
+	// SecretNames lists the names of created/updated certificate Secrets.
 	SecretNames []string
+
+	// SSLCaFileNames lists the names of created/updated CA Secrets.
+	SSLCaFileNames []string
 
 	// GeneralFileNames lists the names of created/updated HAProxyGeneralFile resources.
 	GeneralFileNames []string

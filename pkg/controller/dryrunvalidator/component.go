@@ -130,7 +130,11 @@ func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, nam
 	// via-baseline path, where no proposed-state render (and no event set)
 	// exists.
 	if pipelineResult != nil {
-		warnings = append(warnings, formatRenderedEventWarnings(pipelineResult.Events)...)
+		renderedEvents, err := pipelineResult.MaterializeEvents()
+		if err != nil {
+			return false, fmt.Sprintf("reading rendered warnings: %v", err), warnings
+		}
+		warnings = append(warnings, formatRenderedEventWarnings(renderedEvents)...)
 	}
 
 	return true, "", warnings

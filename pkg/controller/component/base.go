@@ -171,6 +171,14 @@ type Config struct {
 	BufferSize int
 	Handler    EventHandler
 	EventTypes []string
+
+	// EventFilter, when set, is asked about every event that matched
+	// EventTypes, before it reaches the buffer. Use it where one event type
+	// carries many subjects and this component wants a few: filtering in the
+	// handler still spends a buffer slot on each event, and for a non-lossy
+	// subscriber a full buffer ends the controller iteration. Runs on the
+	// publishing path — field comparisons only.
+	EventFilter func(busevents.Event) bool
 }
 
 // New subscribes to the EventBus and returns a Base ready to Start. The
@@ -184,9 +192,13 @@ func New(cfg *Config) *Base {
 	}
 
 	var eventChan <-chan busevents.Event
-	if len(cfg.EventTypes) == 0 {
+	switch {
+	case len(cfg.EventTypes) == 0:
 		eventChan = cfg.EventBus.Subscribe(cfg.Name, cfg.BufferSize)
-	} else {
+	case cfg.EventFilter != nil:
+		eventChan = cfg.EventBus.SubscribeTypesFiltered(
+			cfg.Name, cfg.BufferSize, cfg.EventFilter, cfg.EventTypes...)
+	default:
 		eventChan = cfg.EventBus.SubscribeTypes(cfg.Name, cfg.BufferSize, cfg.EventTypes...)
 	}
 

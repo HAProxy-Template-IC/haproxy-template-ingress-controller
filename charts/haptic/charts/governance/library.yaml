@@ -1,6 +1,6 @@
 # Governance rule engine: declarative constraints over ANY watched resource.
-# Generic via resource() / jsonpathGet / jsonpathSet — a rule names its own
-# target, so it applies to ingresses, httproutes or a custom CRD alike.
+# Generic via dynamic resource bindings, jsonpathGet, and deriveResource — a
+# rule names its own target, so it applies to any watched resource.
 # Rule shape and worked examples: docs/site/docs/operations/governance.md
 
 _fx:
@@ -34,177 +34,179 @@ templatingSettings:
 
 templateSnippets:
   # Applies the admin-declared rules to every item of their target watched
-  # resource. Generic over ANY watched resource via resource() / jsonpathGet /
-  # jsonpathSet — it reads no Ingress-specific field and lives in this library
-  # only because the governance config bag is declared here.
+  # resource without encoding any resource shape.
   features-960-governance:
+    incremental:
+      effects: [deriveResource, recordEvent]
+      bindingsTemplate: |-
+        {%%
+          var bindings = map[string]any{}
+          var gov = extraContext | dig("governance") | fallback(map[string]any{})
+          if tostring(gov | dig("enabled") | fallback("false")) == "true" {
+            var exempt = map[string]any{}
+            for _, n := range toSlice(gov | dig("exemptNamespaces") | fallback([]any{})) {
+              exempt[tostring(n)] = true
+            }
+            var defaultHTTPS = tostring(extraContext | dig("ingressDefaultHTTPS") | fallback("false")) == "true"
+
+            var rulesMap, rulesOk = (gov | dig("rules") | fallback(map[string]any{})).(map[string]any)
+            if !rulesOk { fail("governance.rules must be a map of rule name to rule.") }
+
+            var isConcretePath = func(p string) bool {
+              return p != "" && !regex_search(p, "[*?@]")
+            }
+            var byResource = map[string][]any{}
+            var tlsByResource = map[string]bool{}
+            for _, rname := range keys(rulesMap) {
+              var rule, ok = rulesMap[rname].(map[string]any)
+              if !ok { fail("governance.rules." + rname + " must be a map.") }
+              if tostring(fallback(rule["resource"], "")) == "" {
+                fail("governance.rules." + rname + ".resource is required.")
+              }
+              var enf = tostring(fallback(rule["enforcement"], "reject"))
+              if enf != "reject" && enf != "audit" {
+                fail("governance.rules." + rname + ".enforcement must be \"reject\" or \"audit\", got \"" + enf + "\".")
+              }
+              var onV = tostring(fallback(rule["onViolation"], "reject"))
+              if onV != "reject" && onV != "clamp" {
+                fail("governance.rules." + rname + ".onViolation must be \"reject\" or \"clamp\", got \"" + onV + "\".")
+              }
+              if rule["min"] != nil && rule["max"] != nil && toint(tostring(rule["min"])) > toint(tostring(rule["max"])) {
+                fail("governance.rules." + rname + ".min must be <= max.")
+              }
+              if rule["default"] != nil {
+                var path = tostring(fallback(rule["path"], ""))
+                if !isConcretePath(path) {
+                  fail("governance.rules." + rname + ".default requires a concrete path (filtered/wildcard paths are validate-only).")
+                }
+              }
+              var en = tostring(fallback(rule["enabled"], ""))
+              if en != "true" && en != "false" {
+                fail("governance.rules." + rname + ".enabled is required and must be true or false.")
+              }
+              if en == "true" {
+                var resourceName = tostring(rule["resource"])
+                byResource[resourceName] = append(byResource[resourceName], rulesMap[rname])
+                if tostring(fallback(rule["satisfiedBy"], "")) == "tls" {
+                  tlsByResource[resourceName] = true
+                }
+              }
+            }
+
+            for _, resourceName := range keys(byResource) {
+              var binding = map[string]any{
+                "exemptNamespaces": exempt,
+                "rules": byResource[resourceName],
+              }
+              if tlsByResource[resourceName] {
+                binding["defaultHTTPS"] = defaultHTTPS
+              }
+              bindings[resourceName] = binding
+            }
+          }
+          show toJSON(bindings)
+        %%}
     template: |-
       {%%
-        var gov = extraContext | dig("governance") | fallback(map[string]any{})
-        if tostring(gov | dig("enabled") | fallback("false")) == "true" {
-          var exempt = map[string]bool{}
-          for _, n := range toSlice(gov | dig("exemptNamespaces") | fallback([]any{})) {
-            exempt[tostring(n)] = true
-          }
-          // Chart-wide default HTTPS terminates TLS for every route, so
-          // satisfiedBy: tls passes without per-resource spec.tls.
-          var defaultHTTPS = tostring(extraContext | dig("ingressDefaultHTTPS") | fallback("false")) == "true"
-
-          // A map, not a list: Helm and mergo replace lists wholesale, so an
-          // operator adding one rule would silently drop every rule the chart
-          // ships. keys() is sorted, so application order stays deterministic.
-          var rulesMap, rulesOk = (gov | dig("rules") | fallback(map[string]any{})).(map[string]any)
-          if !rulesOk { fail("governance.rules must be a map of rule name to rule.") }
-
-          // Rule validation is global config validation, not per-resource, so
-          // fail() is right: a typo would otherwise silently drop enforcement.
-          // Disabled rules are validated too — a parked rule that no longer
-          // parses is a trap for whoever re-enables it.
-          var isConcretePath = func(p string) bool {
-            return p != "" && !regex_search(p, "[*?@]")
-          }
-          var byResource = map[string][]any{}
-          for _, rname := range keys(rulesMap) {
-            var rule, ok = rulesMap[rname].(map[string]any)
-            if !ok { fail("governance.rules." + rname + " must be a map.") }
-            if tostring(fallback(rule["resource"], "")) == "" {
-              fail("governance.rules." + rname + ".resource is required.")
-            }
-            var enf = tostring(fallback(rule["enforcement"], "reject"))
-            if enf != "reject" && enf != "audit" {
-              fail("governance.rules." + rname + ".enforcement must be \"reject\" or \"audit\", got \"" + enf + "\".")
-            }
-            var onV = tostring(fallback(rule["onViolation"], "reject"))
-            if onV != "reject" && onV != "clamp" {
-              fail("governance.rules." + rname + ".onViolation must be \"reject\" or \"clamp\", got \"" + onV + "\".")
-            }
-            if rule["min"] != nil && rule["max"] != nil && toint(tostring(rule["min"])) > toint(tostring(rule["max"])) {
-              fail("governance.rules." + rname + ".min must be <= max.")
-            }
-            if rule["default"] != nil {
-              var path = tostring(fallback(rule["path"], ""))
-              if !isConcretePath(path) {
-                fail("governance.rules." + rname + ".default requires a concrete path (filtered/wildcard paths are validate-only).")
-              }
-            }
-            // Required, not defaulted: the chart ships rules of its own, so an
-            // entry missing the flag must fail rather than sit inert.
-            var en = tostring(fallback(rule["enabled"], ""))
-            if en != "true" && en != "false" {
-              fail("governance.rules." + rname + ".enabled is required and must be true or false.")
-            }
-            if en == "true" {
-              byResource[tostring(rule["resource"])] = append(byResource[tostring(rule["resource"])], rulesMap[rname])
-            }
-          }
-
+        var current = item
+        var ns = tostring(jsonpathGet(current, "metadata.namespace"))
+        var name = tostring(jsonpathGet(current, "metadata.name"))
+        var exempt = tostring(props | dig("exemptNamespaces", ns) | fallback(false)) == "true"
+        if !exempt {
+          var defaultHTTPS = tostring(props | dig("defaultHTTPS") | fallback(false)) == "true"
+          var underAdmission = tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission"
           var present = func(v any) bool { return v != nil && strip(tostring(v)) != "" }
+          var violate = func(enf string, custom string, detail string) {
+            var message = custom
+            if message == "" { message = detail }
+            message = source + " " + ns + "/" + name + " violates org policy: " + message
+            if enf == "reject" && underAdmission {
+              fail(message)
+            } else {
+              recordEvent(current, "GovernanceViolation", message)
+            }
+          }
 
-          for res, rrules := range byResource {
-            for _, item := range resource(res) {
-              var ns = tostring(jsonpathGet(item, "metadata.namespace"))
-              var name = tostring(jsonpathGet(item, "metadata.name"))
-              if exempt[ns] { continue }
-              var subjStore = tostring(admissionSubject | dig("store") | fallback(""))
-              var subjNs = tostring(admissionSubject | dig("namespace") | fallback(""))
-              var subjName = tostring(admissionSubject | dig("name") | fallback(""))
-              var subjectMatchesStore = subjStore == res || tostring(admissionSubject | dig("stores", res) | fallback(false)) == "true"
-              var underAdmission = renderMode == "admission" && subjectMatchesStore && subjNs == ns && subjName == name
-              // Scoped to the admission subject: a pre-existing violator must
-              // never wedge an unrelated resource's admission.
-              var violate = func(enf string, custom string, detail string) {
-                var m = custom
-                if m == "" { m = detail }
-                m = res + " " + ns + "/" + name + " violates org policy: " + m
-                if enf == "reject" && underAdmission {
-                  fail(m)
+          for _, ruleAny := range toSlice(props | dig("rules") | fallback([]any{})) {
+            var rule = ruleAny.(map[string]any)
+            var enf = tostring(fallback(rule["enforcement"], "reject"))
+            var custom = tostring(fallback(rule["message"], ""))
+            var path = tostring(fallback(rule["path"], ""))
+
+            if tostring(fallback(rule["satisfiedBy"], "")) == "tls" {
+              var tlsv = jsonpathGet(current, "spec.tls")
+              var hasTLS = tlsv != nil && len(toSlice(tlsv)) > 0
+              if !hasTLS && !defaultHTTPS {
+                violate(enf, custom, "must terminate TLS (add spec.tls, or enable the chart-wide default HTTPS)")
+              }
+              continue
+            }
+
+            var anyOf = toSlice(rule["anyOf"])
+            if len(anyOf) > 0 {
+              var anyPresent = false
+              for _, p := range anyOf {
+                if present(jsonpathGet(current, tostring(p))) { anyPresent = true; break }
+              }
+              if !anyPresent {
+                violate(enf, custom, "must set at least one of the required fields")
+              }
+              continue
+            }
+
+            if path == "" { continue }
+
+            var value = jsonpathGet(current, path)
+            if !present(value) && rule["default"] != nil {
+              current = deriveResource(source, current, path, rule["default"])
+              value = rule["default"]
+            }
+
+            if tostring(fallback(rule["required"], "false")) == "true" && !present(value) {
+              violate(enf, custom, "must set " + path)
+              continue
+            }
+            if !present(value) { continue }
+            var valueString = strip(tostring(value))
+
+            if rule["min"] != nil || rule["max"] != nil {
+              if !regex_search(valueString, "^[0-9]+$") {
+                violate(enf, custom, path + "=" + valueString + " must be a non-negative integer")
+                continue
+              }
+              var number = toint(valueString)
+              var below = rule["min"] != nil && number < toint(tostring(rule["min"]))
+              var above = rule["max"] != nil && number > toint(tostring(rule["max"]))
+              if below || above {
+                if tostring(fallback(rule["onViolation"], "reject")) == "clamp" {
+                  var clamped = number
+                  if below { clamped = toint(tostring(rule["min"])) }
+                  if above { clamped = toint(tostring(rule["max"])) }
+                  current = deriveResource(source, current, path, tostring(clamped))
+                  recordEvent(current, "GovernanceClamped", source + " " + ns + "/" + name + ": " + path + "=" + valueString + " clamped to " + tostring(clamped))
                 } else {
-                  recordEvent(item, "GovernanceViolation", m)
+                  violate(enf, custom, path + "=" + valueString + " must be within the configured bounds")
                 }
+                continue
               }
-              for _, ruleAny := range rrules {
-                var rule = ruleAny.(map[string]any)
-                var enf = tostring(fallback(rule["enforcement"], "reject"))
-                var custom = tostring(fallback(rule["message"], ""))
-                var path = tostring(fallback(rule["path"], ""))
+            }
 
-                if tostring(fallback(rule["satisfiedBy"], "")) == "tls" {
-                  var tlsv = jsonpathGet(item, "spec.tls")
-                  var hasTLS = tlsv != nil && len(toSlice(tlsv)) > 0
-                  if !hasTLS && !defaultHTTPS {
-                    violate(enf, custom, "must terminate TLS (add spec.tls, or enable the chart-wide default HTTPS)")
-                  }
-                  continue
-                }
-
-                var anyOf = toSlice(rule["anyOf"])
-                if len(anyOf) > 0 {
-                  var anyPresent = false
-                  for _, p := range anyOf {
-                    if present(jsonpathGet(item, tostring(p))) { anyPresent = true; break }
-                  }
-                  if !anyPresent {
-                    violate(enf, custom, "must set at least one of the required fields")
-                  }
-                  continue
-                }
-
-                if path == "" { continue }
-
-                var v = jsonpathGet(item, path)
-                // Injected in place so later snippets in this render see it.
-                if !present(v) && rule["default"] != nil {
-                  jsonpathSet(item, path, rule["default"])
-                  v = rule["default"]
-                }
-
-                if tostring(fallback(rule["required"], "false")) == "true" && !present(v) {
-                  violate(enf, custom, "must set " + path)
-                  continue
-                }
-                if !present(v) { continue }
-                var vs = strip(tostring(v))
-
-                if rule["min"] != nil || rule["max"] != nil {
-                  if !regex_search(vs, "^[0-9]+$") {
-                    violate(enf, custom, path + "=" + vs + " must be a non-negative integer")
-                    continue
-                  }
-                  var n = toint(vs)
-                  var below = rule["min"] != nil && n < toint(tostring(rule["min"]))
-                  var above = rule["max"] != nil && n > toint(tostring(rule["max"]))
-                  if below || above {
-                    if tostring(fallback(rule["onViolation"], "reject")) == "clamp" {
-                      var c = n
-                      if below { c = toint(tostring(rule["min"])) }
-                      if above { c = toint(tostring(rule["max"])) }
-                      jsonpathSet(item, path, tostring(c))
-                      recordEvent(item, "GovernanceClamped", res + " " + ns + "/" + name + ": " + path + "=" + vs + " clamped to " + tostring(c))
-                    } else {
-                      violate(enf, custom, path + "=" + vs + " must be within the configured bounds")
-                    }
-                    continue
-                  }
-                }
-
-                var allowed = toSlice(rule["allowed"])
-                if len(allowed) > 0 {
-                  var inSet = false
-                  for _, a := range allowed {
-                    if tostring(a) == vs { inSet = true; break }
-                  }
-                  if !inSet {
-                    violate(enf, custom, path + "=" + vs + " is not one of the allowed values")
-                    continue
-                  }
-                }
-
-                var pattern = tostring(fallback(rule["pattern"], ""))
-                if pattern != "" && !regex_search(vs, pattern) {
-                  violate(enf, custom, path + "=" + vs + " does not match required pattern " + pattern)
-                  continue
-                }
+            var allowed = toSlice(rule["allowed"])
+            if len(allowed) > 0 {
+              var inSet = false
+              for _, allowedValue := range allowed {
+                if tostring(allowedValue) == valueString { inSet = true; break }
               }
+              if !inSet {
+                violate(enf, custom, path + "=" + valueString + " is not one of the allowed values")
+                continue
+              }
+            }
+
+            var pattern = tostring(fallback(rule["pattern"], ""))
+            if pattern != "" && !regex_search(valueString, pattern) {
+              violate(enf, custom, path + "=" + valueString + " does not match required pattern " + pattern)
+              continue
             }
           }
         }
@@ -319,6 +321,41 @@ validationTests:
       # temp path lands in haproxy.cfg and may contain the number.
       - { type: contains, target: haproxy.cfg, pattern: 'sc_http_req_rate\(0\) gt 50' }
       - { type: not_contains, target: haproxy.cfg, pattern: 'sc_http_req_rate\(0\) gt 8888' }
+
+  test-governance-rules-apply-in-name-order:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.governance.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: Rules apply in sorted name order before their derived resource reaches consumers.
+    extraContext:
+      renderMode: reconcile
+      governance:
+        enabled: true
+        rules:
+          z-clamp:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+            max: 50
+            onViolation: clamp
+          a-default:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+            default: "100"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: rule-order, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rule-order.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: haproxy.cfg, pattern: 'sc_http_req_rate\(0\) gt 50' }
+      - { type: not_contains, target: haproxy.cfg, pattern: 'sc_http_req_rate\(0\) gt 100' }
 
   test-governance-min-max-reject:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'

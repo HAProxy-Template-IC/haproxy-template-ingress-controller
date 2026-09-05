@@ -15,6 +15,8 @@
 package httpstore
 
 import (
+	"slices"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -35,9 +37,9 @@ type HTTPOverlay struct {
 	// This is a snapshot - changes to HTTPStore after creation are not reflected.
 	pendingURLs []string
 	pending     map[string]overlayPendingContent
-
-	// store provides accepted fallback content for URLs outside this snapshot.
-	store *HTTPStore
+	accepted    map[string]overlayAcceptedContent
+	source      SourceID
+	watermark   Revision
 }
 
 type overlayPendingContent struct {
@@ -45,6 +47,18 @@ type overlayPendingContent struct {
 	checksum       string
 	revision       uint64
 	sourceIdentity string
+	descriptor     SourceDescriptor
+	token          SnapshotToken
+	cacheable      bool
+}
+
+type overlayAcceptedContent struct {
+	content        string
+	sourceIdentity string
+	descriptor     SourceDescriptor
+	token          SnapshotToken
+	cacheable      bool
+	observation    Revision
 }
 
 // NewHTTPOverlay creates an overlay from the store's current pending state.
@@ -58,27 +72,75 @@ type overlayPendingContent struct {
 // Returns:
 //   - An HTTPOverlay with the current pending URLs snapshot
 func NewHTTPOverlay(store *HTTPStore) *HTTPOverlay {
+	return newHTTPOverlay(store, true)
+}
+
+// NewAcceptedHTTPOverlay freezes accepted content without selecting pending versions.
+func NewAcceptedHTTPOverlay(store *HTTPStore) *HTTPOverlay {
+	return newHTTPOverlay(store, false)
+}
+
+func newHTTPOverlay(store *HTTPStore, includePending bool) *HTTPOverlay {
 	store.mu.RLock()
+	overlay := newHTTPOverlayFromState(
+		store.cache, store.revisionSource, store.semanticRevision, includePending,
+	)
+	store.mu.RUnlock()
+	return overlay
+}
+
+func newHTTPOverlayFromState(
+	cache map[string]*CacheEntry,
+	source SourceID,
+	watermark Revision,
+	includePending bool,
+) *HTTPOverlay {
 	pendingURLs := make([]string, 0)
 	pending := make(map[string]overlayPendingContent)
-	for url, entry := range store.cache {
-		if !entry.HasPending {
+	accepted := make(map[string]overlayAcceptedContent)
+	for url, entry := range cache {
+		if entry.AcceptedChecksum != "" {
+			token := SnapshotToken{
+				source: source, url: entry.URL, descriptor: entry.sourceDescriptor,
+				kind: SnapshotAccepted, revision: entry.acceptedRevision,
+			}
+			accepted[url] = overlayAcceptedContent{
+				content:        entry.AcceptedContent,
+				sourceIdentity: entry.sourceIdentity,
+				descriptor:     entry.sourceDescriptor,
+				token:          token,
+				cacheable:      token.Valid(),
+				observation:    entry.acceptedRevision,
+			}
+		}
+		if !includePending || !entry.HasPending {
 			continue
 		}
 		pendingURLs = append(pendingURLs, url)
+		token := SnapshotToken{
+			source:     source,
+			url:        url,
+			descriptor: entry.sourceDescriptor,
+			kind:       SnapshotPending,
+			revision:   Revision(entry.PendingRevision),
+		}
 		pending[url] = overlayPendingContent{
 			content:        entry.PendingContent,
 			checksum:       entry.PendingChecksum,
 			revision:       entry.PendingRevision,
 			sourceIdentity: entry.sourceIdentity,
+			descriptor:     entry.sourceDescriptor,
+			token:          token,
+			cacheable:      token.Valid(),
 		}
 	}
-	store.mu.RUnlock()
-
+	slices.Sort(pendingURLs)
 	return &HTTPOverlay{
 		pendingURLs: pendingURLs,
 		pending:     pending,
-		store:       store,
+		accepted:    accepted,
+		source:      source,
+		watermark:   watermark,
 	}
 }
 
@@ -104,7 +166,8 @@ func (o *HTTPOverlay) GetContent(url string) (string, bool) {
 	if pending, ok := o.pending[url]; ok {
 		return pending.content, true
 	}
-	return o.store.Get(url)
+	accepted, ok := o.accepted[url]
+	return accepted.content, ok
 }
 
 // GetContentForSource returns overlay content only for its fetch authority.
@@ -115,7 +178,61 @@ func (o *HTTPOverlay) GetContentForSource(url, sourceIdentity string) (string, b
 		}
 		return pending.content, true
 	}
-	return o.store.GetSource(url, sourceIdentity)
+	accepted, ok := o.accepted[url]
+	if !ok || accepted.sourceIdentity != sourceIdentity {
+		return "", false
+	}
+	return accepted.content, true
+}
+
+// GetContentForDescriptor returns content only for the exact fetch declaration.
+func (o *HTTPOverlay) GetContentForDescriptor(url string, descriptor SourceDescriptor) (string, bool) {
+	if pending, ok := o.pending[url]; ok {
+		if pending.descriptor != descriptor {
+			return "", false
+		}
+		return pending.content, true
+	}
+	accepted, ok := o.accepted[url]
+	if !ok || accepted.descriptor != descriptor {
+		return "", false
+	}
+	return accepted.content, true
+}
+
+// Snapshot returns frozen pending or accepted bytes for one exact source.
+func (o *HTTPOverlay) Snapshot(url string, descriptor SourceDescriptor) ContentSnapshot {
+	if pending, ok := o.pending[url]; ok {
+		if pending.descriptor != descriptor {
+			return ContentSnapshot{URL: url, Descriptor: descriptor, StoreSource: o.source, Watermark: o.watermark}
+		}
+		return ContentSnapshot{
+			URL:         url,
+			Descriptor:  descriptor,
+			Content:     pending.content,
+			Found:       true,
+			Cacheable:   pending.cacheable,
+			Token:       pending.token,
+			StoreSource: o.source,
+			Observation: pending.token.revision,
+			Watermark:   o.watermark,
+		}
+	}
+	accepted, ok := o.accepted[url]
+	if !ok || accepted.descriptor != descriptor {
+		return ContentSnapshot{URL: url, Descriptor: descriptor, StoreSource: o.source, Watermark: o.watermark}
+	}
+	return ContentSnapshot{
+		URL:         url,
+		Descriptor:  descriptor,
+		Content:     accepted.content,
+		Found:       true,
+		Cacheable:   accepted.cacheable,
+		Token:       accepted.token,
+		StoreSource: o.source,
+		Observation: accepted.observation,
+		Watermark:   o.watermark,
+	}
 }
 
 // PendingURLs returns the list of URLs with pending content.

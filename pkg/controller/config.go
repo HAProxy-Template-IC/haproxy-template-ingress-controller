@@ -200,8 +200,8 @@ func fetchAndValidateInitialConfig(
 // validationTests gate below. It is deliberately much larger than the live
 // change gate's default (validator.validationTestsRunTimeout, 25s): the live
 // gate answers a scatter-gather aggregation and must self-report before the
-// coordinator's configValidationTimeout, while the load gate runs once at
-// startup where the only outer bound is the startup probe's 300s budget.
+// coordinator's configValidationTimeout, while the load gate is bounded by the
+// startup probe on a fresh pod and by ReinitGraceWindow on a reinit.
 // On a cold, contended node (CI runners provisioning a whole cluster at
 // once) the engine compile plus dozens of `haproxy -c` checks legitimately
 // exceed 25s — observed as "validationTests did not complete within the

@@ -694,7 +694,11 @@ func TestServer_Start_Integration(t *testing.T) {
 	select {
 	case <-done:
 		// Server shut down successfully
-	case <-time.After(5 * time.Second):
+	// Generous because this waits on a real HTTP server's graceful shutdown,
+	// and the coverage build runs every statement through instrumentation: 5s
+	// was enough for the plain build and not for that one, which failed the
+	// coverage job on a server that had shut down perfectly well.
+	case <-time.After(30 * time.Second):
 		t.Fatal("Server did not shut down within timeout")
 	}
 }

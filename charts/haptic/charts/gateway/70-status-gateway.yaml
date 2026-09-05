@@ -1,6 +1,311 @@
 templateSnippets:
+  util-gateway-status-bindings:
+    template: |-
+      {%%
+        var bindings = map[string]any{}
+        var enabled = extraContext | dig("statusPatches", "enabled") | fallback(true)
+        if tostring(enabled) == "true" {
+          bindings["gateways"] = map[string]any{
+            "controllerNamespace": tostring(extraContext | dig("controllerNamespace") | fallback("")),
+            "haproxyPodSelector": extraContext | dig("haproxyPodSelector"),
+          }
+        }
+      %%}
+      {{- toJSON(bindings) -}}
+
+  gateway-status-addresses-100-controller-service:
+    requires: [controller_services, gateways]
+    incremental:
+      source: controller_services
+      group: gateway-status-addresses
+      effects: [publishValue]
+    template: |-
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var service = resources.controller_services.GetSingle(namespace, name)
+        if service != nil {
+          for _, address := range service.Status.LoadBalancer.Ingress {
+            if address.Ip == "" && address.Hostname == "" { continue }
+            var value = map[string]any{}
+            if address.Ip != "" { value["ip"] = address.Ip }
+            if address.Hostname != "" { value["hostname"] = address.Hostname }
+            show shared.Publish("loadbalancer", address.Ip + "/" + address.Hostname, value)
+          }
+          for _, ip := range service.Spec.ClusterIPs {
+            if ip != "" && ip != "None" {
+              show shared.Publish("cluster", ip, map[string]any{"ip": ip})
+            }
+          }
+        }
+      %%}
+
+  util-publish-gateway-route-attachments:
+    requires: [gateways, namespaces]
+    template: |-
+      {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
+      {%- macro PublishGatewayRouteAttachments(route any, routeKind string,
+        needsTLSProtocol bool, needsTCPProtocol bool) -%}
+      {%%
+        var routeNamespace = dig_string(route, "", "metadata", "namespace")
+        var routeName = dig_string(route, "", "metadata", "name")
+        var routeHostnames = toSlice(dig(route, "spec", "hostnames"))
+        var fixed = func(value int) string {
+          var encoded = tostring(value)
+          var zeroes = "0000000000"
+          if len(encoded) >= len(zeroes) { return encoded }
+          return zeroes[:len(zeroes)-len(encoded)] + encoded
+        }
+        for parentIndex, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
+          var parentGroup = dig_string(parentRef, "gateway.networking.k8s.io", "group")
+          if parentGroup == "" { parentGroup = "gateway.networking.k8s.io" }
+          var parentKind = dig_string(parentRef, "Gateway", "kind")
+          if parentKind == "" { parentKind = "Gateway" }
+          if parentGroup != "gateway.networking.k8s.io" {
+            continue
+          }
+          var parentNamespace = dig_string(parentRef, routeNamespace, "namespace")
+          if parentNamespace == "" { parentNamespace = routeNamespace }
+          var parentName = dig_string(parentRef, "", "name")
+          var key = routeKind + "/" + routeNamespace + "/" + routeName + "/" + fixed(parentIndex)
+          var sectionName = dig_string(parentRef, "", "sectionName")
+          var parentPort = toint(dig(parentRef, "port") | fallback(0))
+          if parentKind == "Gateway" {
+            var gateway = resources.gateways.GetSingle(parentNamespace, parentName)
+            if gateway == nil { continue }
+            var mixedTLSPorts = map[int]bool{}
+            if needsTLSProtocol {
+              for _, listener := range gateway.Spec.Listeners {
+                if listener.Protocol != "TLS" { continue }
+                var listenerPort = toint(listener.Port)
+                var listenerMode = listener.Tls.Mode
+                if listenerMode == "" { listenerMode = "Terminate" }
+                for _, sibling := range gateway.Spec.Listeners {
+                  if sibling.Protocol != "TLS" || toint(sibling.Port) != listenerPort { continue }
+                  var siblingMode = sibling.Tls.Mode
+                  if siblingMode == "" { siblingMode = "Terminate" }
+                  if siblingMode != listenerMode {
+                    mixedTLSPorts[listenerPort] = true
+                    break
+                  }
+                }
+              }
+            }
+            for _, listener := range gateway.Spec.Listeners {
+              if sectionName != "" && listener.Name != sectionName { continue }
+              var listenerPort = toint(listener.Port)
+              if parentPort != 0 && listenerPort != parentPort { continue }
+              var listenerProtocol = listener.Protocol
+              if listenerProtocol == "" { listenerProtocol = "HTTP" }
+              if needsTLSProtocol && listenerProtocol != "TLS" { continue }
+              if needsTCPProtocol && listenerProtocol != "TCP" { continue }
+              if needsTLSProtocol && mixedTLSPorts[listenerPort] { continue }
+              if len(listener.AllowedRoutes.Kinds) > 0 {
+                var kindAllowed = false
+                for _, allowedKind := range listener.AllowedRoutes.Kinds {
+                  var allowedGroup = allowedKind.Group
+                  if allowedGroup == "" { allowedGroup = "gateway.networking.k8s.io" }
+                  if allowedGroup == "gateway.networking.k8s.io" && allowedKind.Kind == routeKind {
+                    kindAllowed = true
+                    break
+                  }
+                }
+                if !kindAllowed { continue }
+              }
+              var namespaceMode = listener.AllowedRoutes.Namespaces.From
+              if namespaceMode == "" { namespaceMode = "Same" }
+              var namespaceAllowed = false
+              switch namespaceMode {
+              case "Same":
+                namespaceAllowed = routeNamespace == parentNamespace
+              case "All":
+                namespaceAllowed = true
+              case "Selector":
+                var matchLabels = listener.AllowedRoutes.Namespaces.Selector.MatchLabels
+                if len(matchLabels) > 0 {
+                  var namespace = resources.namespaces.GetSingle(routeNamespace)
+                  if namespace != nil {
+                    namespaceAllowed = true
+                    for label, expected := range matchLabels {
+                      var actual, found = namespace.Metadata.Labels[label]
+                      if !found || actual != expected {
+                        namespaceAllowed = false
+                        break
+                      }
+                    }
+                  }
+                }
+              }
+              if !namespaceAllowed || HostnamesIntersect(listener.Hostname, routeHostnames) != "true" {
+                continue
+              }
+              show shared.Publish("gateway-listener\x00" + parentNamespace + "\x00" +
+                parentName + "\x00" + listener.Name, key, true)
+            }
+          } else if parentKind == "ListenerSet" &&
+            (routeKind == "HTTPRoute" || routeKind == "GRPCRoute") {
+            var listenerSet, found = shared.Select(
+              "gateway-host-listenersets", "listenersets", parentNamespace + "/" + parentName)
+            if !found { continue }
+            for _, listener := range toSlice(dig(listenerSet, "candidates")) {
+              var listenerName = dig_string(listener, "", "name")
+              if sectionName != "" && listenerName != sectionName { continue }
+              var namespaces = dig(listener, "allowedRoutes", "namespaces")
+              var namespaceMode = dig_string(namespaces, "Same", "from")
+              if namespaceMode == "" { namespaceMode = "Same" }
+              var namespaceAllowed = false
+              switch namespaceMode {
+              case "Same":
+                namespaceAllowed = routeNamespace == parentNamespace
+              case "All":
+                namespaceAllowed = true
+              case "Selector":
+                var selector = dig(namespaces, "selector")
+                if selector != nil {
+                  var namespace = resources.namespaces.GetSingle(routeNamespace)
+                  if namespace != nil {
+                    namespaceAllowed = true
+                    for label, expected := range to_str_map(dig(selector, "matchLabels")) {
+                      var actual, hasLabel = namespace.Metadata.Labels[label]
+                      if !hasLabel || actual != expected {
+                        namespaceAllowed = false
+                        break
+                      }
+                    }
+                  }
+                }
+              }
+              if !namespaceAllowed { continue }
+              show shared.Publish("listenerset-listener\x00" + parentNamespace + "\x00" +
+                parentName + "\x00" + listenerName, key, true)
+            }
+          }
+        }
+      %%}
+      {%- end macro -%}
+
+  gateway-route-attachments-100-http:
+    requires: [gateways, httproutes, namespaces]
+    incremental:
+      source: httproutes
+      root: gateway-http-route-pre-analysis
+      group: gateway-route-attachments
+      optionalConsumes: [gateway-host-listenersets]
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-route-attachments" for PublishGatewayRouteAttachments -%}
+      {{- PublishGatewayRouteAttachments(item, "HTTPRoute", false, false) -}}
+
+  gateway-route-attachments-200-grpc:
+    requires: [gateways, grpcroutes, namespaces]
+    incremental:
+      source: grpcroutes
+      group: gateway-route-attachments
+      optionalConsumes: [gateway-host-listenersets]
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-route-attachments" for PublishGatewayRouteAttachments -%}
+      {{- PublishGatewayRouteAttachments(item, "GRPCRoute", false, false) -}}
+
+  gateway-listenerset-schema-100:
+    requires: [gateways, listenersets]
+    incremental:
+      source: gateways
+      group: gateway-listenerset-schema
+      effects: [publishValue]
+    template: |-
+      {{- shared.Publish("available", dig_string(item, "", "metadata", "namespace") + "/" +
+        dig_string(item, "", "metadata", "name"), true) -}}
+
+  gateway-service-resources-100-gateway-status:
+    requires: [gateways]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-status-bindings" -}}'
+      group: gateway-service-resources
+      effects: [publishValue]
+    template: |-
+      {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil {
+          var labels = map[string]any{
+            "gateway.networking.k8s.io/gateway-name": name,
+            "gateway.networking.k8s.io/gateway-namespace": namespace,
+          }
+          var annotations = map[string]any{}
+          var infrastructureLabels = to_str_map(dig(gateway, "spec", "infrastructure", "labels"))
+          var infrastructureAnnotations = to_str_map(dig(gateway, "spec", "infrastructure", "annotations"))
+          for key, value := range infrastructureLabels {
+            if key != "gateway.networking.k8s.io/gateway-name" &&
+              key != "gateway.networking.k8s.io/gateway-namespace" {
+              labels[key] = value
+            }
+          }
+          for key, value := range infrastructureAnnotations { annotations[key] = value }
+
+          var controllerNamespace = dig_string(props, "", "controllerNamespace")
+          var podSelector = dig(props, "haproxyPodSelector")
+          if len(gateway.Spec.Addresses) > 0 && controllerNamespace != "" && podSelector != nil {
+            var ports = []any{}
+            var seenPorts = map[int]bool{}
+            for _, listener := range gateway.Spec.Listeners {
+              var port = toint(listener.Port)
+              if port <= 0 || seenPorts[port] { continue }
+              seenPorts[port] = true
+              ports = append(ports, map[string]any{
+                "name": "p" + tostring(port), "port": port, "targetPort": port, "protocol": "TCP",
+              })
+            }
+            if len(ports) > 0 {
+              for _, address := range gateway.Spec.Addresses {
+                var addressType = address.Type
+                if addressType == "" { addressType = "IPAddress" }
+                if addressType != "IPAddress" || address.Value == "" { continue }
+                var serviceName = BoundedK8sName("gw", namespace, name, replace(address.Value, ".", "-"))
+                var serviceAnnotations = map[string]any{}
+                for key, value := range annotations { serviceAnnotations[key] = value }
+                serviceAnnotations["metallb.universe.tf/loadBalancerIPs"] = address.Value
+                var resource = map[string]any{
+                  "apiVersion": "v1", "kind": "Service",
+                  "metadata": map[string]any{
+                    "name": serviceName, "namespace": controllerNamespace,
+                    "labels": labels, "annotations": serviceAnnotations,
+                  },
+                  "spec": map[string]any{
+                    "type": "LoadBalancer", "selector": podSelector, "ports": ports,
+                  },
+                }
+                var rendered = marshalYAML(resource)
+                var resourceKey = controllerNamespace + "/" + serviceName
+                show shared.PublishRanked("static-addresses", resourceKey, resourceKey, rendered)
+              }
+            }
+          }
+
+          if len(infrastructureLabels) > 0 || len(infrastructureAnnotations) > 0 {
+            var serviceName = BoundedK8sName("gw", namespace, name, "")
+            var resource = map[string]any{
+              "apiVersion": "v1", "kind": "Service",
+              "metadata": map[string]any{
+                "name": serviceName, "namespace": namespace,
+                "labels": labels, "annotations": annotations,
+              },
+              "spec": map[string]any{
+                "type": "ClusterIP", "clusterIP": "None",
+                "ports": []any{map[string]any{"name": "marker", "port": 1, "protocol": "TCP"}},
+              },
+            }
+            var rendered = marshalYAML(resource)
+            var resourceKey = namespace + "/" + serviceName
+            show shared.PublishRanked("infrastructure", resourceKey, resourceKey, rendered)
+          }
+        }
+      %%}
+
   util-generate-gateway-status-patches:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    requires: [configmaps, gateways, namespaces, referencegrants, secrets, services]
     template: |
       {#
         Generate Gateway Status Patches
@@ -14,22 +319,19 @@ templateSnippets:
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
       #}
-      {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
-      {%- import "util-resource-helpers" for ResourceNamespace, ListenerProtocolOr -%}
-      {% macro GenerateGatewayStatusPatches(gateways []*resources.gateways.T) %}
-        {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-        {%- var rawAddresses = gf["addresses"].([]map[string]any) %}
-
-        {#- Convert LoadBalancer addresses to Gateway API format -#}
+      {% macro GenerateGatewayStatusPatch(gateway *resources.gateways.T) %}
+        {%- var rawAddresses = shared.SelectValues("gateway-status-addresses", "loadbalancer") %}
+        {%- if len(rawAddresses) == 0 -%}
+          {%- rawAddresses = shared.SelectValues("gateway-status-addresses", "cluster") -%}
+        {%- end -%}
         {%- var gatewayAddresses = []any{} %}
-        {%- for _, addr := range rawAddresses %}
+        {%- for _, address := range rawAddresses %}
           {%%
-            var ip = addr["ip"]
-            var hostname = addr["hostname"]
+            var ip = dig(address, "ip")
+            var hostname = dig(address, "hostname")
             if ip != nil {
               gatewayAddresses = append(gatewayAddresses, map[string]any{
                 "type": "IPAddress",
@@ -44,361 +346,11 @@ templateSnippets:
           %%}
         {%- end %}
 
-        {#- Count routes attached to each gateway/listener for status.
-
-            The Gateway API spec defines route attachment as the AND of:
-              1. parentRef matches the gateway (ns + name)
-              2. parentRef.sectionName, if set, matches the listener's name
-              3. listener.allowedRoutes.kinds, if set, contains the route kind
-              4. listener.allowedRoutes.namespaces.from selects the route's
-                 namespace (Same / All / Selector(matchLabels))
-              5. The hostname intersection of listener.hostname and
-                 route.spec.hostnames is non-empty (or both empty)
-
-            All five must be true for a route to be "attached" — surfaced
-            both as listener.attachedRoutes in Gateway status and (in a
-            later commit) as the route's parents[].conditions[Accepted].
-
-            Implementation: walk every (route × listener-of-target-gateway)
-            pair and increment the count when all predicates hold. Indexed
-            by `<gw_ns>/<gw_name>/<listener_name>`; the listener-status
-            loop reads back via the same key. This replaces the earlier
-            naive scheme (count per gateway+section, plus a "*" bucket for
-            sectionless routes) which over-counted routes that targeted
-            the gateway but didn't match the listener's hostname /
-            allowedRoutes filters.
-        -#}
-        {%- var routeCounts = map[string]int{} %}
-        {#- TCPRoute count contribution, via a compile-safe seam: the typed
-            resources.tcproutes access lives in a snippet that is stripped
-            together with the tcproutes watch (see 90-tcproute.yaml and the
-            _helm_load.unset block in _index.yaml); `default ""` makes this
-            render a no-op when the feature is stripped. A direct typed
-            reference here would fail to COMPILE on clusters where the
-            TCPRoute CRD is not served. -#}
-        {%- _ = render "util-gateway-tcproute-count-contrib" default "" -%}
-        {%- _ = render "util-gateway-tlsroute-count-contrib" default "" -%}
-        {#- ListenerSet seam (same compile-safe pattern): populates
-            shared "listenersetsUntyped" when the listenersets watch is
-            active; a no-op (key stays nil) when the ListenerSets CRD is
-            not served and the contrib snippet is stripped. The per-
-            gateway loop below reads the key both to count attached
-            ListenerSets AND to decide whether the rendered variant may
-            carry the attachedListenerSets status field at all — the
-            field only exists on Gateway CRD schemas that ship GEP-1713
-            (>= v1.5 experimental), and emitting it against an older
-            schema fails the WHOLE rendered patch at SSA typed-patch
-            construction (".status.attachedListenerSets: field not
-            declared in schema"). -#}
-        {%- _ = render "util-listenersets-contrib" default "" -%}
-        {%%
-          // Gather all routes (HTTPRoute + GRPCRoute + TLSRoute) into a
-          // single iteration so the predicate evaluation is uniform.
-          // TLSRoute requires a protocol-default check (only TLS-protocol
-          // listeners list TLSRoute as a default kind), so we tag the
-          // entry with a needsTLSProtocol flag the listener loop honours.
-          var allRoutesForCount = []any{}
-          for _, r := range resources.httproutes.List() {
-            allRoutesForCount = append(allRoutesForCount, map[string]any{
-              "kind":  "HTTPRoute",
-              "route": r,
-              "needsTLSProtocol": false,
-              "needsTCPProtocol": false,
-            })
-          }
-          for _, r := range resources.grpcroutes.List() {
-            allRoutesForCount = append(allRoutesForCount, map[string]any{
-              "kind":  "GRPCRoute",
-              "route": r,
-              "needsTLSProtocol": false,
-              "needsTCPProtocol": false,
-            })
-          }
-          // TLSRoute entries arrive through the
-          // util-gateway-tlsroute-count-contrib seam (rendered below) —
-          // empty when the TLSRoute feature is stripped. A typed
-          // resources.tlsroutes reference here would fail to COMPILE on
-          // clusters where the CRD is not served.
-          var tlsEntries, _ = shared.Get("tlsrouteCountEntries").([]any)
-          allRoutesForCount = append(allRoutesForCount, tlsEntries...)
-          // TCPRoute counts toward TCP listeners only (needsTCPProtocol gate
-          // below). Without this, a Gateway's TCP listener reported
-          // attachedRoutes=0 because the count only walked HTTP/GRPC/TLS routes
-          // (GatewayAPI TCPRouteMultipleRoutesAttachment expects the count to
-          // reflect attached TCPRoutes). The entries arrive through the
-          // util-gateway-tcproute-count-contrib seam rendered above — empty
-          // when the TCPRoute feature is stripped.
-          var tcpEntries, _ = shared.Get("tcprouteCountEntries").([]any)
-          allRoutesForCount = append(allRoutesForCount, tcpEntries...)
-
-          for _, entry := range allRoutesForCount {
-            var em = entry.(map[string]any)
-            var routeKind = em["kind"].(string)
-            var route = em["route"]
-            var needsTLSProtocol = em["needsTLSProtocol"].(bool)
-            var needsTCPProtocol = em["needsTCPProtocol"].(bool)
-            var routeNs = ResourceNamespace(route)
-            var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
-
-            for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
-              // Default group/kind for parentRef is gateway.networking.k8s.io/Gateway.
-              // Skip any parentRef that targets something else (e.g. Mesh
-              // Service ref); those don't apply to Gateway listener counts.
-              var prGroup = dig_string(parentRef, "gateway.networking.k8s.io", "group")
-              var prKind = dig_string(parentRef, "Gateway", "kind")
-              if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
-                continue
-              }
-              var gwNs = dig_string(parentRef, routeNs, "namespace")
-              var gwName = dig_string(parentRef, "", "name")
-              var section = dig_string(parentRef, "", "sectionName")
-
-              var gw = resources.gateways.GetSingle(gwNs, gwName)
-              if gw == nil {
-                continue
-              }
-
-              // Pre-compute mixed-mode TLS port map for ProtocolConflict
-              // guard. A TLSRoute parented to a listener whose port
-              // mixes Passthrough + Terminate must not count.
-              var mixedTLSPorts = map[int]bool{}
-              for _, l := range gw.Spec.Listeners {
-                if l.Protocol == "TLS" {
-                  var lPort = toint(l.Port)
-                  var lMode = l.Tls.Mode
-                  if lMode == "" { lMode = "Terminate" }
-                  if mixedTLSPorts[lPort] {
-                    continue
-                  }
-                  for _, l2 := range gw.Spec.Listeners {
-                    if l2.Protocol != "TLS" {
-                      continue
-                    }
-                    var l2Port = toint(l2.Port)
-                    if l2Port != lPort {
-                      continue
-                    }
-                    var l2Mode = l2.Tls.Mode
-                    if l2Mode == "" { l2Mode = "Terminate" }
-                    if l2Mode != lMode {
-                      mixedTLSPorts[lPort] = true
-                      break
-                    }
-                  }
-                }
-              }
-
-              for _, listener := range gw.Spec.Listeners {
-                var listenerName = listener.Name
-
-                // (2) sectionName filter
-                if section != "" && listenerName != section {
-                  continue
-                }
-
-                // (2.5) parentRef.port filter (Gateway API spec): if the
-                //       route's parentRef sets `.port`, only attach to
-                //       listeners with the same `spec.port`. Mismatched
-                //       routes get Accepted=False/NoMatchingParent.
-                var parentPort = toint(dig(parentRef, "port") | fallback(0))
-                var listenerPort = toint(listener.Port)
-                if parentPort != 0 && listenerPort != parentPort {
-                  continue
-                }
-
-                // (2.6) Protocol filter for TLSRoute: only TLS-protocol
-                //       listeners list TLSRoute as a default kind. An
-                //       HTTP / HTTPS listener can never accept TLSRoute
-                //       even without explicit allowedRoutes.kinds.
-                var listenerProtoCount = ListenerProtocolOr(listener, "HTTP")
-                if needsTLSProtocol && listenerProtoCount != "TLS" {
-                  continue
-                }
-                // TCPRoute counts only toward TCP listeners — a no-sectionName
-                // TCPRoute parented to a Gateway would otherwise be counted
-                // against every listener (HTTP/HTTPS/TLS) too.
-                if needsTCPProtocol && listenerProtoCount != "TCP" {
-                  continue
-                }
-
-                // (2.7) ProtocolConflict guard for TLSRoute: a TLS
-                //       listener whose port carries mixed Passthrough +
-                //       Terminate is itself unaccepted; routes parented
-                //       to it must not count toward attachedRoutes.
-                if needsTLSProtocol && mixedTLSPorts[listenerPort] {
-                  continue
-                }
-
-                // (3) allowedRoutes.kinds — if specified, the route's
-                //     group/kind must be in the list. Default group is
-                //     gateway.networking.k8s.io.
-                if len(listener.AllowedRoutes.Kinds) > 0 {
-                  var kindOk = false
-                  for _, ak := range listener.AllowedRoutes.Kinds {
-                    var akGroup = ak.Group
-                    if akGroup == "" { akGroup = "gateway.networking.k8s.io" }
-                    if akGroup == "gateway.networking.k8s.io" && ak.Kind == routeKind {
-                      kindOk = true
-                      break
-                    }
-                  }
-                  if !kindOk {
-                    continue
-                  }
-                }
-
-                // (4) allowedRoutes.namespaces.from — Same | All | Selector
-                var fromMode = listener.AllowedRoutes.Namespaces.From
-                if fromMode == "" { fromMode = "Same" }
-                switch fromMode {
-                case "Same":
-                  if routeNs != gwNs {
-                    continue
-                  }
-                case "All":
-                  // anything goes
-                case "Selector":
-                  // Resolve the route's namespace and match its labels
-                  // against the selector's matchLabels. matchExpressions
-                  // is intentionally not supported yet (no conformance
-                  // test exercises it; if/when one does, this falls
-                  // through and the predicate fails — which is the safe
-                  // default for an unrecognised label-selector shape).
-                  var ml = listener.AllowedRoutes.Namespaces.Selector.MatchLabels
-                  if len(ml) == 0 {
-                    continue
-                  }
-                  var nsObj = resources.namespaces.GetSingle(routeNs)
-                  if nsObj == nil {
-                    continue
-                  }
-                  var nsLabels = nsObj.Metadata.Labels
-                  if nsLabels == nil {
-                    continue
-                  }
-                  // ml is typed map[string]string when listener comes
-                  // from gw.Spec.Listeners (typegen schema declares
-                  // matchLabels as additionalProperties:string),
-                  // map[string]any when listener originates from an
-                  // untyped path. to_str_map normalises both shapes
-                  // so the .([]map[string]any) assertion can't panic.
-                  var selMap = to_str_map(ml)
-                  var allMatch = true
-                  for k, v := range selMap {
-                    var actual, ok = nsLabels[k]
-                    if !ok || actual != v {
-                      allMatch = false
-                      break
-                    }
-                  }
-                  if !allMatch {
-                    continue
-                  }
-                default:
-                  // Unknown `from` mode — treat as no match, since the
-                  // implementation can't safely guess intent.
-                  continue
-                }
-
-                // (5) hostname intersection
-                var listenerHostname = listener.Hostname
-                // HostnamesIntersect returns "true"/"false" string —
-                // Scriggo macro return-type constraint, see macro doc.
-                if HostnamesIntersect(listenerHostname, routeHostnames) != "true" {
-                  continue
-                }
-
-                // All predicates passed; this route attaches to this listener.
-                var key = gwNs + "/" + gwName + "/" + listenerName
-                routeCounts[key] = routeCounts[key] + 1
-              }
-            }
-          }
-        %%}
-
-        {%- for _, gateway := range gateways %}
           {%%
             var nsStr = gateway.Metadata.Namespace
             var nameStr = gateway.Metadata.Name
             var generation = gateway.Metadata.Generation
 
-            // SupportGatewayInfrastructurePropagation (Standard channel).
-            //
-            // Per Gateway API spec, when a Gateway sets
-            // spec.infrastructure.{labels,annotations}, the implementation
-            // must propagate those values onto the data-plane resources it
-            // manages on the Gateway's behalf (Pods, Services, ServiceAccounts).
-            //
-            // The conformance test (gateway-infrastructure.go) lists
-            // ServiceAccounts / Pods / Services in the Gateway's namespace
-            // matching label `gateway.networking.k8s.io/gateway-name=<gw>`
-            // and asserts every infrastructure label/annotation is a subset
-            // of the resource's metadata.
-            //
-            // Haptic uses one shared HAProxy Deployment per chart install —
-            // there are no per-Gateway Pods. To carry the propagation
-            // metadata to a discoverable resource, we emit a per-Gateway
-            // marker Service (mirroring the SupportGatewayStaticAddresses
-            // pattern) labelled with `gateway-name` and stamped with the
-            // Gateway's infrastructure metadata. When the Gateway also
-            // declares spec.addresses[], the same Service carries the
-            // LoadBalancer config — single Service per Gateway, both
-            // features composed.
-            //
-            // The marker Service lands in the Gateway's own namespace
-            // (where the upstream conformance test searches via the
-            // `gateway-name` discovery label). The chart's ClusterRole
-            // grants cluster-wide Service write verbs whenever the gateway
-            // library is enabled (templates/clusterrole.yaml), and the
-            // resourceapplier accepts cross-namespace SSA without a local
-            // gate — RBAC is the sole security boundary.
-            // gateway is *resources.gateways.T (the macro signature
-            // declares the parameter typed); Spec.Infrastructure is a
-            // typed sub-struct with Labels / Annotations both typed
-            // map[string]string. Direct field access > dig() + shape
-            // normalisation, since the static type system already
-            // knows the shape. Ranging over an absent (nil) typed
-            // map[string]string is a no-op, so the chart doesn't
-            // need the previous `if infra != nil` guard.
-            // Dig-only: spec.infrastructure is newer than the oldest
-            // schema generation the gateways candidate list can resolve —
-            // typed access fails to COMPILE against pre-v1.1 schemas.
-            var infraLabels = map[string]any{}
-            var infraAnnotations = map[string]any{}
-            for ilK, ilV := range to_str_map(dig(gateway, "spec", "infrastructure", "labels")) {
-              infraLabels[ilK] = ilV
-            }
-            for iaK, iaV := range to_str_map(dig(gateway, "spec", "infrastructure", "annotations")) {
-              infraAnnotations[iaK] = iaV
-            }
-            // The gateway-name label is the discovery key the conformance
-            // test lists by — it must be present even when the Gateway
-            // sets no infrastructure labels of its own. We include the
-            // gateway-namespace label too so that operators auditing the
-            // controller's owned set can see which Gateway each marker
-            // refers to without a second lookup.
-            //
-            var ownedLabels = map[string]any{
-              "gateway.networking.k8s.io/gateway-name":      nameStr,
-              "gateway.networking.k8s.io/gateway-namespace": nsStr,
-            }
-            // Infrastructure labels override the chart's owned labels —
-            // per Gateway API spec the user's metadata wins on conflict.
-            // The conformance test asserts subset-equality, so any chart
-            // label silently overwritten by the user is still spec-correct
-            // ("infra wins"). The gateway-name / gateway-namespace
-            // identity labels are guarded though, because conformance
-            // discovery depends on them.
-            var ownedAnnotations = map[string]any{}
-            for k, v := range infraLabels {
-              if k != "gateway.networking.k8s.io/gateway-name" && k != "gateway.networking.k8s.io/gateway-namespace" {
-                ownedLabels[k] = v
-              }
-            }
-            for k, v := range infraAnnotations {
-              ownedAnnotations[k] = v
-            }
-            var hasInfra = len(infraLabels) > 0 || len(infraAnnotations) > 0
 
             // Static-addresses handling (per Gateway).
             //
@@ -449,7 +401,7 @@ templateSnippets:
             var hasUnusableAddr = false
             if gwSpecAddrs != nil && len(gwSpecAddrs) > 0 {
               // Spec invariant: when spec.addresses is set the implementation
-              // honours *only* those addresses; the LB-derived gf["addresses"]
+              // honours *only* those addresses; the controller-Service address
               // set is no longer the source of truth. Reset upfront so a
               // partial-realize path doesn't silently leak the LB IPs in
               // status. Sets hasUnusableAddr unless every spec entry is
@@ -486,128 +438,30 @@ templateSnippets:
                 // nothing the chart can realize.
                 hasUnusableAddr = true
               } else if len(validIPs) > 0 {
-                // Emit a per-Gateway LoadBalancer Service in the controller
-                // namespace. RBAC scopes Service create to that namespace
-                // (chart Role, not ClusterRole), and resourceapplier's
-                // RestrictToOwnNamespace=true enforces the same boundary.
-                var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
-                var podSelector = extraContext | dig("haproxyPodSelector")
-                if ctrlNs != "" && podSelector != nil {
-                  var svcPorts = []any{}
-                  var seenPorts = map[int]bool{}
-                  for _, listener := range gateway.Spec.Listeners {
-                    var lport = toint(listener.Port)
-                    if lport <= 0 || seenPorts[lport] {
-                      continue
-                    }
-                    seenPorts[lport] = true
-                    svcPorts = append(svcPorts, map[string]any{
-                      "name":       "p" + tostring(lport),
-                      "port":       lport,
-                      "targetPort": lport,
-                      "protocol":   "TCP",
-                    })
-                  }
-                  if len(svcPorts) > 0 {
-                    // Address selection strategy: emit ONE Service per
-                    // requested IPAddress. Each Service is independently
-                    // annotated with `metallb.universe.tf/loadBalancerIPs:
-                    // <single-ip>`. MetalLB allocates each independently
-                    // — a usable IP succeeds, an unusable one fails, and
-                    // the status read-back below aggregates results into
-                    // status.addresses (realized IPs only).
-                    //
-                    // Why per-IP: MetalLB rejects multi-IPv4 annotations
-                    // (its IPFamilyForAddresses guard treats same-family
-                    // multi-IP lists as misconfiguration, not as
-                    // try-each-until-one-works). The Gateway-API
-                    // GatewayStaticAddresses conformance test deliberately
-                    // orders an unusable RFC 5737 IP before a usable pool
-                    // IP and asserts the chart routes around the
-                    // unusable entry — per-IP Service emission gives
-                    // exactly that behaviour.
-                    //   - spec.loadBalancerIP   = first IPAddress (legacy
-                    //     field; non-MetalLB cloud LBs honour this).
-                    //   - metallb.universe.tf/loadBalancerIPs annotation =
-                    //     SINGLE IPAddress per Service. MetalLB
-                    //     {unusable, usable} succeed by skipping the
-                    //     unusable entry. Conformance test
-                    //     GatewayStaticAddresses pins this — it deliberately
-                    //     orders an unusable RFC 5737 IP before a usable
-                    //     pool IP and asserts the realized status.addresses
-                    //     ends up containing the usable one.
-                    //
-                    // metadata.labels / annotations carry the Gateway's
-                    // spec.infrastructure metadata when set (per
-                    // SupportGatewayInfrastructurePropagation), plus the
-                    // gateway.networking.k8s.io/gateway-name discovery
-                    // label the conformance test searches for. ownedLabels
-                    // / ownedAnnotations are precomputed at the top of
-                    // the per-Gateway block. The metallb annotation is
-                    // merged onto ownedAnnotations so user-provided
-                    // infrastructure annotations don't get clobbered.
-                    // Stash one per-(Gateway, IP) LoadBalancer Service
-                    // spec into shared state, keyed by `<ns>/<name>`. The
-                    // declarative `k8sResources.gateway-static-addresses`
-                    // template reads back this map during the post-
-                    // haproxy.cfg render pass and emits one Service per
-                    // entry. We use a map (a mutable reference type)
-                    // because SharedContext is append-only by design —
-                    // ComputeIfAbsent gives us a map to mutate, not a
-                    // Set/Replace handle.
-                    var gwSvcsRaw, _ = shared.ComputeIfAbsent("gatewayStaticAddressServices", func() any { return map[string]any{} })
-                    var gwSvcs = gwSvcsRaw.(map[string]any)
-                    var realizedIPs = map[string]bool{}
-                    for _, validIP := range validIPs {
-                      var ipStr = tostring(validIP)
-                      // Per-IP service name suffix: replace dots with
-                      // dashes so the result is a valid RFC 1123 label.
-                      // E.g. 192.168.1.1 → "192-168-1-1".
-                      var ipSuffix = replace(ipStr, ".", "-")
-                      var svcName = BoundedK8sName("gw", nsStr, nameStr, ipSuffix)
-                      var perIPAnnotations = map[string]any{}
-                      for k, v := range ownedAnnotations {
-                        perIPAnnotations[k] = v
-                      }
-                      perIPAnnotations["metallb.universe.tf/loadBalancerIPs"] = ipStr
-                      gwSvcs[ctrlNs+"/"+svcName] = map[string]any{
-                        "namespace":   ctrlNs,
-                        "name":        svcName,
-                        "labels":      ownedLabels,
-                        "annotations": perIPAnnotations,
-                        "selector":    podSelector,
-                        "ports":       svcPorts,
-                      }
-                      // Read this Service back to determine whether MetalLB
-                      // allocated the IP. resources.services watches all
-                      // Services across the cluster, so this works even
-                      // though the Service we just emitted was applied by
-                      // the resourceapplier (not by us inline) — by the
-                      // next reconciliation, the watcher will have it.
-                      var svc = resources.services.GetSingle(ctrlNs, svcName)
-                      if svc != nil {
-                        for _, ing := range svc.Status.LoadBalancer.Ingress {
-                          if ing.Ip == ipStr {
-                            realizedIPs[ipStr] = true
-                          }
+                var controllerNamespace = dig_string(props, "", "controllerNamespace")
+                var podSelector = dig(props, "haproxyPodSelector")
+                if controllerNamespace != "" && podSelector != nil {
+                  var realizedIPs = map[string]bool{}
+                  for _, validIP := range validIPs {
+                    var ip = tostring(validIP)
+                    var serviceName = BoundedK8sName("gw", nsStr, nameStr, replace(ip, ".", "-"))
+                    var service = resources.services.GetSingle(controllerNamespace, serviceName)
+                    if service != nil {
+                      for _, ingress := range service.Status.LoadBalancer.Ingress {
+                        if ingress.Ip == ip {
+                          realizedIPs[ip] = true
                         }
                       }
                     }
-
-                    // status.addresses = intersection(spec, realized).
-                    // Every spec address not in realized contributes to
-                    // AddressNotUsable below.
-                    gwEffectiveAddresses = []any{}
-                    for _, validIP := range validIPs {
-                      var ipStr = tostring(validIP)
-                      if realizedIPs[ipStr] {
-                        gwEffectiveAddresses = append(gwEffectiveAddresses, map[string]any{
-                          "type":  "IPAddress",
-                          "value": ipStr,
-                        })
-                      } else {
-                        hasUnusableAddr = true
-                      }
+                  }
+                  gwEffectiveAddresses = []any{}
+                  for _, validIP := range validIPs {
+                    var ip = tostring(validIP)
+                    if realizedIPs[ip] {
+                      gwEffectiveAddresses = append(gwEffectiveAddresses,
+                        map[string]any{"type": "IPAddress", "value": ip})
+                    } else {
+                      hasUnusableAddr = true
                     }
                   }
                 }
@@ -642,7 +496,7 @@ templateSnippets:
             //     the chart's main LB IP from gatewayAddresses, which
             //     is fine for the transitional state)
             //   - ctrlNs / podSelector unset (chart-static deployment)
-            var phase5CtrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
+            var phase5CtrlNs = dig_string(props, "", "controllerNamespace")
             if len(gwSpecAddrs) == 0 && phase5CtrlNs != "" {
               var hasIsolatedListener = false
               for _, listener := range gateway.Spec.Listeners {
@@ -673,52 +527,6 @@ templateSnippets:
                     }
                   }
                 }
-              }
-            }
-
-            // Per-Gateway marker Service for SupportGatewayInfrastructurePropagation.
-            //
-            // The conformance test searches the *Gateway's* namespace for
-            // a Service / Pod / ServiceAccount labelled
-            // `gateway.networking.k8s.io/gateway-name=<gw>` and asserts
-            // every infrastructure label/annotation appears on its
-            // metadata. Haptic's shared-HAProxy architecture has no
-            // per-Gateway Pods, so we emit a minimal headless ClusterIP
-            // Service in the Gateway's namespace purely to carry the
-            // metadata.
-            //
-            // We deliberately *don't* emit when spec.infrastructure is
-            // unset: a marker with no metadata to propagate would just
-            // be cluster noise, and the chart's shared-HAProxy
-            // architecture means the Service has no functional role.
-            //
-            // The marker emits in *addition* to any static-address
-            // Services the block above produced. Static-address Services
-            // live in the controller namespace (where MetalLB allocates
-            // and the chart's namespace-scoped Role grants Service
-            // verbs), so they aren't reachable by the conformance test's
-            // Gateway-namespace search even when they carry the same
-            // metadata. The marker bridges that gap.
-            if hasInfra {
-              var svcName = BoundedK8sName("gw", nsStr, nameStr, "")
-              // Headless ClusterIP Service with a placeholder port. The
-              // chart's HAProxy is shared, so per-Gateway port wiring
-              // isn't meaningful here — the Service exists only to
-              // carry the metadata propagation. Selector intentionally
-              // empty: the Service has no endpoints, which matches the
-              // chart's architecture (no per-Gateway data plane).
-              //
-              // Stash spec into shared state keyed by `<ns>/<name>`. The
-              // `k8sResources.gateway-infrastructure-propagation`
-              // template reads it back and emits the Service after
-              // haproxy.cfg has rendered.
-              var gwInfraRaw, _ = shared.ComputeIfAbsent("gatewayInfrastructureServices", func() any { return map[string]any{} })
-              var gwInfra = gwInfraRaw.(map[string]any)
-              gwInfra[nsStr+"/"+svcName] = map[string]any{
-                "namespace":   nsStr,
-                "name":        svcName,
-                "labels":      ownedLabels,
-                "annotations": ownedAnnotations,
               }
             }
 
@@ -1050,11 +858,8 @@ templateSnippets:
                 listenerAcceptedMessage = feFailMessage
               }
 
-              // Count attached routes for this listener. The counting pass
-              // above resolves sectionless routes to every listener they
-              // actually attach to, so routeCounts is keyed purely by
-              // gateway/listener — no "*" wildcard bucket exists anymore.
-              var attached = routeCounts[nsStr + "/" + nameStr + "/" + listenerName]
+              var attached = shared.Count("gateway-route-attachments",
+                "gateway-listener\x00" + nsStr + "\x00" + nameStr + "\x00" + listenerName)
 
               // Per Gateway API spec, when a listener's references are
               // unresolvable (cert invalid, kind unsupported, …) the
@@ -1296,89 +1101,52 @@ templateSnippets:
                 "Gateway is using AllowInsecureFallback for client-cert validation",
                 generation, TopLevelTransitionTime(gateway, "InsecureFrontendValidationMode", "True"))
             }
-            // attachedListenerSets count: how many ListenerSets attach
-            // to this Gateway, are admitted by spec.allowedListeners,
-            // AND have at least one listener that survives conflict
-            // detection (port/hostname/protocol). Conformance test
-            // ListenerSetDefaultNotAllowed asserts =0 when
-            // allowedListeners is unset (default-deny);
-            // ListenerSetHostnameConflict / ListenerSetProtocolConflict
-            // assert that LSes whose every listener loses a conflict
-            // don't count as attached. Mirrors the gate logic in F3
-            // and util-effective-listeners exactly so all three sites
-            // agree. Counted once per render — cheap because
-            // resources.listenersets is already in memory.
-            //
-            // The conflict state lives on the effectiveListeners cache
-            // (sub-key "statuses"), so read it once and use the
-            // listenerConflicts list per-LS to gate the count.
-            var lsStatusCache = map[string]any{}
-            {
-              var effLAny = shared.Get("effectiveListeners")
-              if effLAny != nil {
-                var effL, ok = effLAny.(map[string]any)
-                if ok {
-                  var stAny, hasSt = effL["statuses"]
-                  if hasSt {
-                    lsStatusCache = stAny.(map[string]any)
-                  }
-                }
-              }
-            }
             var attachedLSCount = 0
-            // Attachment and admission are decided once, by
-            // util-listenerset-candidates, which reads the resource typed
-            // behind its own CRD gate. Everything indexed under this Gateway
-            // has already passed the parentRef match this loop used to redo.
-            var lsByKey = map[string]any{}
-            var byLSAny = shared.Get("listenerSetCandidatesByLS")
-            if byLSAny != nil {
-              lsByKey = byLSAny.(map[string]any)
+            var winningProtocolByPort = map[int]string{}
+            var claimedHostnameByPort = map[string]bool{}
+            var claimListener = func(listener any) bool {
+              var port = toint(dig(listener, "port") | fallback(0))
+              if port <= 0 {
+                return false
+              }
+              var protocol = dig_string(listener, "HTTP", "protocol")
+              if protocol == "" { protocol = "HTTP" }
+              var winningProtocol, claimedPort = winningProtocolByPort[port]
+              if !claimedPort {
+                winningProtocolByPort[port] = protocol
+              } else if winningProtocol != protocol {
+                return false
+              }
+              var hostnameKey = tostring(port) + "|" + dig_string(listener, "", "hostname")
+              if claimedHostnameByPort[hostnameKey] {
+                return false
+              }
+              claimedHostnameByPort[hostnameKey] = true
+              return true
             }
-            for _, lsKey := range keys(lsByKey) {
-              var lsInfo = lsByKey[lsKey].(map[string]any)
-              if tostring(lsInfo["gwKey"]) != nsStr + "/" + nameStr {
-                continue
-              }
-              if !lsInfo["accepted"].(bool) {
-                continue
-              }
-              // At least one listener must survive conflict detection.
-              // The cache's listenerConflicts list has ONE entry per
-              // declared listener with both an `accepted` bool and a
-              // `conflicted` reason string; we count an LS as attached
-              // only when at least one entry is `accepted=true` (i.e.
-              // not in conflict and not invalid). LSes with no cache
-              // entry fall through to attached (cache miss = optimistic).
-              var listenersTotal = len(lsInfo["candidates"].([]any))
-              if listenersTotal == 0 {
-                continue
-              }
-              var statusEntryAny, hasEntry = lsStatusCache[lsKey]
-              if hasEntry {
-                // A listener is "valid" when it both (a) passed the
-                // parent admission gate (`accepted=true`, set by the
-                // route-analysis pass when the parent Gateway permits
-                // the LS) AND (b) didn't lose a port/hostname/protocol
-                // conflict (`conflicted=""`). LSes whose every listener
-                // fails one of those checks must NOT count as attached
-                // (per ListenerSetHostnameConflict / -ProtocolConflict).
-                var anyValid = false
-                for _, c := range statusEntryAny.(map[string]any)["listenerConflicts"].([]any) {
-                  var ce = c.(map[string]any)
-                  var acc, ok = ce["accepted"].(bool)
-                  var conf = tostring(ce["conflicted"])
-                  if ok && acc && conf == "" {
-                    anyValid = true
-                    break
-                  }
+            for _, listener := range gateway.Spec.Listeners {
+              claimListener(listener)
+            }
+            var listenerSets = shared.SelectValues("gateway-host-listenersets",
+              "gateway\x00" + nsStr + "\x00" + nameStr)
+            listenerSets = sort_by(listenerSets, []string{"$.rank"})
+            for _, listenerSet := range listenerSets {
+              var accepted = tostring(dig(listenerSet, "accepted") | fallback(false)) == "true"
+              var hasAcceptedListener = false
+              for _, listener := range toSlice(dig(listenerSet, "candidates")) {
+                var survives = false
+                if accepted {
+                  survives = claimListener(listener)
                 }
-                if !anyValid {
-                  continue
+                if survives {
+                  hasAcceptedListener = true
                 }
               }
-              attachedLSCount++
+              if accepted && hasAcceptedListener {
+                attachedLSCount++
+              }
             }
+
 
             // Split the status payload by data-plane dependence so each
             // pipeline phase owns a disjoint slice of the resource:
@@ -1538,12 +1306,12 @@ templateSnippets:
               "conditions": renderedTopConditions,
               "listeners":  renderedListenerEntries,
             }
-            if shared.Get("listenerSetCandidatesByLS") != nil {
+            var _, listenerSetSchemaAvailable = shared.Select(
+              "gateway-listenerset-schema", "available", nsStr + "/" + nameStr)
+            if listenerSetSchemaAvailable {
               renderedVariant["attachedListenerSets"] = attachedLSCount
             }
-            statusPatch(nsStr, nameStr,
-              resources.gateways.APIVersion(), "Gateway",
-              map[string]interface{}{
+            statusPatch(gateway, map[string]interface{}{
                 "rendered": renderedVariant,
                 "deployed": map[string]interface{}{
                   "conditions": deployedTopConditions,
@@ -1555,89 +1323,54 @@ templateSnippets:
                 },
               })
           %%}
-        {%- end %}
       {% end %}
 
-  util-sharded-gateway-status-patches:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
-    template: |
-      {#
-        Sharded Gateway Status Patches
-
-        Wraps GenerateGatewayStatusPatches with automatic parallel sharding.
-      #}
-      {%- import "util-generate-gateway-status-patches" for GenerateGatewayStatusPatches -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedGatewayStatusPatches(gateways []*resources.gateways.T) %}
-        {%- var n = toint(CalculateShardCount(len(gateways), 100)) -%}
-        {%- if n <= 1 || len(gateways) < 100 -%}
-      {{ GenerateGatewayStatusPatches(gateways) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateGatewayStatusPatches(shard_slice(gateways, i, n)) }}
-          {%- end -%}
-        {%- end -%}
-      {% end %}
+  gateway-status-100:
+    requires: [configmaps, gateways, namespaces, referencegrants, secrets, services]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-status-bindings" -}}'
+      group: gateway-status
+      consumes:
+        - gateway-route-attachments
+        - gateway-status-addresses
+      optionalConsumes:
+        - gateway-host-listenersets
+        - gateway-listenerset-schema
+      effects: [statusPatch]
+    template: |-
+      {%- import "util-generate-gateway-status-patches" for GenerateGatewayStatusPatch -%}
+      {%- var gateway = resources.gateways.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if gateway != nil -%}{{- GenerateGatewayStatusPatch(gateway) -}}{%- end -%}
 
   status-patches-200-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
-    template: |
-      {#
-        Gateway API Status Patch Registration
-
-        Extension Point: status-patches-* (priority 200)
-
-        Registers status patches for Gateway, HTTPRoute, GRPCRoute, and
-        TLSRoute resources.
-        - Gateway: Accepted/Programmed conditions, addresses, listener status
-        - HTTPRoute / GRPCRoute: Accepted/ResolvedRefs per parent gateway
-        - TLSRoute: Accepted/ResolvedRefs per parent gateway, with TLS-
-          protocol-only listener filtering and ProtocolConflict guard
-
-        Dependencies:
-          - features-075-address-discovery (provides gf["addresses"])
-      #}
-      {%- import "util-sharded-gateway-status-patches" for ShardedGatewayStatusPatches -%}
-      {%- import "util-sharded-route-status-patches" for ShardedHTTPRouteStatusPatches, ShardedGRPCRouteStatusPatches -%}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- if gf["addresses"] != nil %}
-        {%- var allGateways = resources.gateways.List() -%}
-        {%- if len(allGateways) > 0 -%}
-          {{- ShardedGatewayStatusPatches(allGateways) -}}
-        {%- end -%}
-      {%- end %}
-      {#- Per-Kind typed wrappers (Sharded{HTTPRoute,GRPCRoute,TLSRoute}
-          StatusPatches). The Sharded wrappers each call a Kind-specific
-          Generate macro (GenerateHTTPRouteStatusPatches /
-          GenerateGRPCRouteStatusPatches / GenerateTLSRouteStatusPatches)
-          with a typed `[]*resources.<kind>.T` slice — no `[]any` widening
-          anywhere in the pipeline, kind mismatches surface at the call
-          site instead of as a runtime drop. -#}
-      {%- var allHTTPRoutes = resources.httproutes.List() -%}
-      {%- if len(allHTTPRoutes) > 0 -%}
-        {{- ShardedHTTPRouteStatusPatches(allHTTPRoutes) -}}
-      {%- end -%}
-      {%- var allGRPCRoutes = resources.grpcroutes.List() -%}
-      {%- if len(allGRPCRoutes) > 0 -%}
-        {{- ShardedGRPCRouteStatusPatches(allGRPCRoutes) -}}
-      {%- end -%}
-      {# TLSRoute status registration lives in its own extension-point
-          snippet (status-patches-205-gateway-tlsroute) so the typed import
-          is stripped together with the tlsroutes watch. #}
-      {# TCPRoute status registration lives in its own extension-point
-          snippet (status-patches-210-gateway-tcproute, 90-tcproute.yaml) so
-          the typed import is stripped together with the tcproutes watch. #}
+    template: |-
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "gateway-route-attachments-100-http" -}}
+      {{- render "gateway-route-attachments-200-grpc" -}}
+      {{- render "gateway-route-attachments-300-tls" default "" -}}
+      {{- render "gateway-route-attachments-400-tcp" default "" -}}
+      {{- render "gateway-status-addresses-100-controller-service" -}}
+      {{- render "gateway-listenerset-schema-100" default "" -}}
+      {{- render "gateway-status-100" -}}
 
   status-patches-220-listenerset:
-    requires: [gateways, grpcroutes, httproutes, listenersets, referencegrants]
+    requires: [configmaps, gateways, listenersets, namespaces, referencegrants, secrets]
+    incremental:
+      source: listenersets
+      group: gateway-listenerset-status
+      consumes:
+        - gateway-host-listenersets
+        - gateway-route-attachments
+      effects: [statusPatch]
     template: |
       {#
         ListenerSet (GEP-1713) Status Patches
 
-        Reads pre-computed acceptance / conflict state from the
-        listenersetStatuses cache populated by util-effective-listeners,
-        so the routing/binding sites and the status patch agree
-        byte-for-byte on which listeners survived.
+        Reads the immutable per-ListenerSet publication used by routing and
+        binding components.
 
         Top-level conditions:
           Accepted=True/Accepted          when at least one listener is
@@ -1676,30 +1409,10 @@ templateSnippets:
       #}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener -%}
-      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName -%}
-      {{ render "util-effective-listeners" }}
-      {# Read the per-LS statuses sub-key off the unified
-          effectiveListeners cache populated by util-effective-listeners.
-          Folding statuses into the same cache value as the listener
-          map guarantees that whenever effectiveListeners is populated,
-          statuses is too — eliminating the race that the previous
-          separate-key listenersetStatuses cache exposed. #}
       {%%
-        var effLAny = shared.Get("effectiveListeners")
-        var statuses = map[string]any{}
-        if effLAny != nil {
-          var effL, ok = effLAny.(map[string]any)
-          if ok {
-            var stAny, hasSt = effL["statuses"]
-            if hasSt {
-              statuses = stAny.(map[string]any)
-            }
-          }
-        }
-      %%}
-      {%- for _, ls := range resources.listenersets.List() %}
-        {%%
+        var ls = resources.listenersets.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
+        if ls != nil {
           var lsNs = ls.Metadata.Namespace
           var lsName = ls.Metadata.Name
           var lsKey = lsNs + "/" + lsName
@@ -1718,96 +1431,74 @@ templateSnippets:
           var lsProgrammedReason = "Pending"
           var lsProgrammedMsg = "Awaiting parent Gateway acceptance"
 
-          // attachedRoutes per listener name. Routes whose parentRef.kind
-          // is "ListenerSet" matching this LS's ns/name. Sectionless
-          // parentRefs attach to every listener (matching the
-          // Gateway-listener counter's sectionless-fallback logic) AND
-          // pass each listener's allowedRoutes.namespaces gate; per
-          // ListenerSetAllowedRoutesNamespaces a route in a namespace
-          // not allowed by a listener must NOT count toward that
-          // listener's attachedRoutes (the same route may attach to
-          // some listeners on the LS but not others).
-          var lsListenersByName = map[string]any{}
-          var listenerNamesInLS = []any{}
-          for _, l := range ls.Spec.Listeners {
-            var ln = l.Name
-            listenerNamesInLS = append(listenerNamesInLS, ln)
-            lsListenersByName[ln] = l
-          }
-          var lsAttachedRoutes = map[string]int{}
-          var routeKindsForCount = []any{}
-          for _, r := range resources.httproutes.List() {
-            routeKindsForCount = append(routeKindsForCount, map[string]any{"kind": "HTTPRoute", "route": r})
-          }
-          for _, r := range resources.grpcroutes.List() {
-            routeKindsForCount = append(routeKindsForCount, map[string]any{"kind": "GRPCRoute", "route": r})
-          }
-          for _, entry := range routeKindsForCount {
-            var em = entry.(map[string]any)
-            var route = em["route"]
-            var routeNs = ResourceNamespace(route)
-            for _, pr := range dig(route, "spec", "parentRefs") | toSlice() {
-              var prGroup = tostring(dig(pr, "group") | fallback("gateway.networking.k8s.io"))
-              var prKind = tostring(dig(pr, "kind") | fallback("Gateway"))
-              if prGroup != "gateway.networking.k8s.io" || prKind != "ListenerSet" {
-                continue
-              }
-              var prName = tostring(dig(pr, "name") | fallback(""))
-              if prName != lsName {
-                continue
-              }
-              var prNs = tostring(dig(pr, "namespace") | fallback(routeNs))
-              if prNs != lsNs {
-                continue
-              }
-              var prSection = tostring(dig(pr, "sectionName") | fallback(""))
-              if prSection != "" {
-                var lObj, has = lsListenersByName[prSection]
-                if has && hasPrefix(IsRouteAllowedOnListener(routeNs, lObj, lsNs), "true") {
-                  lsAttachedRoutes[prSection] = lsAttachedRoutes[prSection] + 1
-                }
-              } else {
-                for _, lnAny := range listenerNamesInLS {
-                  var ln = tostring(lnAny)
-                  var lObj, has = lsListenersByName[ln]
-                  if has && hasPrefix(IsRouteAllowedOnListener(routeNs, lObj, lsNs), "true") {
-                    lsAttachedRoutes[ln] = lsAttachedRoutes[ln] + 1
-                  }
-                }
-              }
-            }
-          }
-
-          var statusEntryAny, hasEntry = statuses[lsKey]
+          var statusEntryAny, hasEntry = shared.Select(
+            "gateway-host-listenersets", "listenersets", lsKey)
           var permitted = false
           var rejectReason = "Pending"
           var rejectMsg = "Parent Gateway not yet observed"
           var conflictByName = map[string]any{}
           var hasInlineFallback = false
           if hasEntry {
-            var statusEntry = statusEntryAny.(map[string]any)
-            permitted = statusEntry["permitted"].(bool)
-            rejectReason = tostring(statusEntry["rejectionReason"])
-            rejectMsg = tostring(statusEntry["rejectionMessage"])
-            for _, c := range statusEntry["listenerConflicts"].([]any) {
-              var cm = c.(map[string]any)
-              conflictByName[tostring(cm["name"])] = cm
-            }
-          } else if parentGw != nil {
-            // Cache miss fallback: compute the basic admission gate
-            // inline. We can't recover the conflict state without
-            // re-doing the full util-effective-listeners scan, but
-            // the basic NotAllowed / Accepted distinction matters
-            // most for conformance and is cheap to derive from the
-            // same gate helper the routing layer uses.
-            hasInlineFallback = true
-            if hasPrefix(IsListenerSetAdmitted(parentGw, ls), "true") {
-              permitted = true
-            } else {
+            permitted = tostring(dig(statusEntryAny, "accepted") | fallback(false)) == "true"
+            if !permitted {
               rejectReason = "NotAllowed"
               rejectMsg = "Parent Gateway does not allow ListenerSets from this namespace"
             }
+            var winningProtocolByPort = map[int]string{}
+            var claimedHostnameByPort = map[string]bool{}
+            var claim = func(listener any) string {
+              var port = toint(dig(listener, "port") | fallback(0))
+              if port <= 0 {
+                return ""
+              }
+              var protocol = dig_string(listener, "HTTP", "protocol")
+              if protocol == "" { protocol = "HTTP" }
+              var winner, foundWinner = winningProtocolByPort[port]
+              if !foundWinner {
+                winningProtocolByPort[port] = protocol
+              } else if winner != protocol {
+                return "ProtocolConflict"
+              }
+              var hostnameKey = tostring(port) + "|" + dig_string(listener, "", "hostname")
+              if claimedHostnameByPort[hostnameKey] {
+                return "HostnameConflict"
+              }
+              claimedHostnameByPort[hostnameKey] = true
+              return ""
+            }
+            if parentGw != nil {
+              for _, listener := range parentGw.Spec.Listeners {
+                claim(listener)
+              }
+            }
+            var ownConflicts = []any{}
+            var siblings = shared.SelectValues("gateway-host-listenersets",
+              "gateway\x00" + parentNs + "\x00" + parentName)
+            siblings = sort_by(siblings, []string{"$.rank"})
+            for _, sibling := range siblings {
+              var siblingKey = dig_string(sibling, "", "listenerSetNamespace") + "/" +
+                dig_string(sibling, "", "listenerSetName")
+              var siblingAccepted = tostring(dig(sibling, "accepted") | fallback(false)) == "true"
+              for _, listener := range toSlice(dig(sibling, "candidates")) {
+                var conflictReason = ""
+                if siblingAccepted {
+                  conflictReason = claim(listener)
+                }
+                if siblingKey == lsKey {
+                  var conflict = map[string]any{
+                    "name": dig_string(listener, "", "name"),
+                    "index": toint(dig(listener, "index") | fallback(0)),
+                    "conflicted": conflictReason,
+                    "accepted": siblingAccepted,
+                  }
+                  ownConflicts = append(ownConflicts, conflict)
+                  conflictByName[dig_string(listener, "", "name")] = conflict
+                }
+              }
+            }
+            statusEntryAny = map[string]any{"listenerConflicts": ownConflicts}
           }
+
 
           // Top-level acceptance derivation.
           if parentGw == nil {
@@ -2196,10 +1887,12 @@ templateSnippets:
               }
             }
 
+            var attachedRoutes = shared.Count("gateway-route-attachments",
+              "listenerset-listener\x00" + lsNs + "\x00" + lsName + "\x00" + listenerName)
             renderedListeners = append(renderedListeners, map[string]any{
               "name":           listenerName,
               "supportedKinds": supportedKinds,
-              "attachedRoutes": lsAttachedRoutes[listenerName],
+              "attachedRoutes": attachedRoutes,
               "conditions": []any{
                 condition("Accepted",
                   listenerAcceptedStatus, listenerAcceptedReason, listenerAcceptedMessage,
@@ -2225,7 +1918,7 @@ templateSnippets:
               // Gateway deployed/deployFailed variants, whose entries old
               // Gateway schemas reject without it); identical values make the
               // SSA shared-field co-ownership benign.
-              "attachedRoutes": lsAttachedRoutes[listenerName],
+              "attachedRoutes": attachedRoutes,
               "supportedKinds": supportedKinds,
               "conditions": []any{
                 condition("Programmed",
@@ -2255,9 +1948,7 @@ templateSnippets:
           // the deployed apply still owns Programmed via SSA Force=true,
           // and the checksum cache skips redundant re-applies, so no flicker.
           var lsRenderedCond = []any{lsAcceptedCond, lsProgrammedCond}
-          statusPatch(lsNs, lsName,
-            resources.listenersets.APIVersion(), "ListenerSet",
-            map[string]interface{}{
+          statusPatch(ls, map[string]interface{}{
               "rendered": map[string]interface{}{
                 "conditions": lsRenderedCond,
                 "listeners":  renderedListeners,
@@ -2271,5 +1962,5 @@ templateSnippets:
                 "listeners":  deployedListeners,
               },
             })
-        %%}
-      {%- end %}
+        }
+      %%}

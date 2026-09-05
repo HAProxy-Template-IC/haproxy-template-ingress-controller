@@ -157,7 +157,6 @@ func TestWriteToBuilder(t *testing.T) {
 		{name: "bool true", in: true, want: "true"},
 		{name: "bool false", in: false, want: "false"},
 		{name: "nil writes nothing", in: nil, want: ""},
-		{name: "fallback type via scriggoToString", in: []int{1, 2}, want: "[1 2]"},
 	}
 
 	for _, tt := range tests {
@@ -167,6 +166,13 @@ func TestWriteToBuilder(t *testing.T) {
 			assert.Equal(t, tt.want, b.String())
 		})
 	}
+
+	t.Run("rejects composite", func(t *testing.T) {
+		assert.Panics(t, func() {
+			var b strings.Builder
+			writeToBuilder(&b, []int{1, 2})
+		})
+	})
 }
 
 func TestScriggoShardSlice(t *testing.T) {

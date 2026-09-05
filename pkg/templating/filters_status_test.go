@@ -375,6 +375,10 @@ func TestScriggoToJSON(t *testing.T) {
 	t.Run("empty slice", func(t *testing.T) {
 		assert.Equal(t, "[]", scriggoToJSON([]any{}))
 	})
+
+	t.Run("marshal failure aborts", func(t *testing.T) {
+		assert.Panics(t, func() { scriggoToJSON(make(chan int)) })
+	})
 }
 
 // Note: the previous TestFindTopLevelConditions / TestFindParentConditions

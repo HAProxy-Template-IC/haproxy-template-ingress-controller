@@ -16,8 +16,7 @@ templateSnippets:
   # cache client-leg dispatch scopes itself to cache-enabled routes with it.
   util-spoa-rate-limit-dispatch:
     template: |
-      {% macro DispatchSharedRateLimit(keySpec string, extraCond string) string %}
-      {%- var failClosed = tostring(extraContext | dig("rateLimit", "shared", "failClosed") | fallback(false)) == "true" %}
+      {% macro DispatchSharedRateLimit(keySpec string, extraCond string, failClosed bool) string %}
       {%- if extraCond != "" %}{%- extraCond = " " + extraCond %}{%- end %}
       http-request unset-var(txn.rl_verdict_class)
       {# Build <ns>/<name>|<dimension>. Consumer mode uses the identity set by
@@ -209,7 +208,8 @@ templateSnippets:
       {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-ratelimit" %}
-      {{ DispatchSharedRateLimit("ip", "") }}
+      {%- var failClosed = tostring(extraContext | dig("rateLimit", "shared", "failClosed") | fallback(false)) == "true" %}
+      {{ DispatchSharedRateLimit("ip", "", failClosed) }}
       {%- end %}
 
   # Coraza WAF dispatch. Reusable HAPTIC policies add a per-Ingress body

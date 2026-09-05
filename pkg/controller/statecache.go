@@ -23,10 +23,12 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -66,8 +68,12 @@ type StateCache struct {
 	currentCredsVersion  string
 	lastRendered         string
 	lastRenderedPlanID   string
+	lastRenderProof      string
+	lastRenderOccurrence *rendercycle.Occurrence
 	lastRenderedTime     time.Time
 	lastAuxFiles         *dataplane.AuxiliaryFiles
+	lastOutputSnapshot   *renderoutput.Snapshot
+	lastCycleSnapshot    *rendercycle.Snapshot
 	lastAuxFilesTime     time.Time
 
 	// Pipeline status (new fields for debug endpoints)
@@ -226,20 +232,53 @@ func (sc *StateCache) handleCredentialsUpdated(e *events.CredentialsUpdatedEvent
 }
 
 func (sc *StateCache) handleTemplateRendered(e *events.TemplateRenderedEvent) {
+	occurrence, err := e.RenderOccurrence()
+	if err != nil {
+		sc.Logger().Error("Rejected rendered event without authenticated occurrence", "error", err)
+		return
+	}
+	cycleSnapshot, err := occurrence.Snapshot()
+	if err != nil {
+		sc.Logger().Error("Rejected invalid rendered occurrence", "error", err)
+		return
+	}
+	outputSnapshot, err := cycleSnapshot.OutputSnapshot()
+	if err != nil {
+		sc.Logger().Error("Rejected invalid rendered cycle", "error", err)
+		return
+	}
+	config, err := outputSnapshot.Config()
+	if err != nil {
+		sc.Logger().Error("Rejected invalid rendered output", "error", err)
+		return
+	}
+	planID, err := outputSnapshot.PlanID()
+	if err != nil {
+		sc.Logger().Error("Rejected invalid rendered output plan", "error", err)
+		return
+	}
+	renderProof, err := occurrence.Proof()
+	if err != nil {
+		sc.Logger().Error("Rejected invalid rendered occurrence proof", "error", err)
+		return
+	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	sc.lastRendered = e.HAProxyConfig
-	sc.lastRenderedPlanID = e.PlanID
+	sc.lastRendered = config
+	sc.lastRenderedPlanID = planID
+	sc.lastRenderProof = renderProof
+	sc.lastRenderOccurrence = occurrence
 	sc.lastRenderedTime = time.Now()
 	sc.renderStatus = statusSucceeded
 	sc.renderError = ""
 	sc.renderTime = e.Timestamp()
+	sc.renderDurationMs = e.DurationMs
 
-	if e.AuxiliaryFiles != nil {
-		sc.lastAuxFiles = e.AuxiliaryFiles
-		sc.lastAuxFilesTime = time.Now()
-	}
+	sc.lastCycleSnapshot = cycleSnapshot
+	sc.lastOutputSnapshot = outputSnapshot
+	sc.lastAuxFiles = nil
+	sc.lastAuxFilesTime = time.Now()
 }
 
 func (sc *StateCache) handleTemplateRenderFailed(e *events.TemplateRenderFailedEvent) {
@@ -273,14 +312,42 @@ func (sc *StateCache) handleReconciliationTriggered(e *events.ReconciliationTrig
 // the debug view reports which plan each one judged and only promotes the
 // cached config when the verdict names the render this cache holds.
 func (sc *StateCache) handleRenderGateCompleted(e *events.RenderGateCompletedEvent) {
+	occurrence, err := e.RenderOccurrence()
+	if err != nil {
+		sc.Logger().Error("Rejected render-gate event without authenticated occurrence", "error", err)
+		return
+	}
+	cycleSnapshot, err := occurrence.Snapshot()
+	if err != nil {
+		sc.Logger().Error("Rejected invalid render-gate occurrence", "error", err)
+		return
+	}
+	outputSnapshot, err := cycleSnapshot.OutputSnapshot()
+	if err != nil {
+		sc.Logger().Error("Rejected invalid render-gate cycle", "error", err)
+		return
+	}
+	verdictPlanID, err := outputSnapshot.PlanID()
+	if err != nil {
+		sc.Logger().Error("Rejected invalid render-gate output", "error", err)
+		return
+	}
+
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	describesCurrentRender := e.PlanID != "" && e.PlanID == sc.lastRenderedPlanID
+	describesCurrentRender := false
+	if sc.lastRenderOccurrence != nil {
+		describesCurrentRender, err = sc.lastRenderOccurrence.Same(occurrence)
+		if err != nil {
+			sc.Logger().Error("Rejected invalid render-gate occurrence identity", "error", err)
+			return
+		}
+	}
 	sc.validationTime = e.Timestamp()
 	sc.validationDurationMs = e.DurationMs
 	sc.validationWarnings = nil
-	sc.validationPlanID = e.PlanID
+	sc.validationPlanID = verdictPlanID
 	if !e.OK {
 		sc.validationStatus = statusFailed
 		sc.validationErrors = []string{e.Message}

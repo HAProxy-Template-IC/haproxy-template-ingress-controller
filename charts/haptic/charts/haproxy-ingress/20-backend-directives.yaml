@@ -65,9 +65,17 @@ templateSnippets:
   # Reload-free settable timeouts: timeout-server / timeout-tunnel become
   # `<backend>|server` / `<backend>|tunnel` entries in backend-timeouts.map.
   map-backend-timeout-600-haproxy-ingress-timeouts:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-ingress.github.io/timeout-server']"
+        - "metadata.annotations['haproxy-ingress.github.io/timeout-tunnel']"
+      group: map-backend-timeout-ingress
+      effects: [recordEvent]
     template: |
       {%- import "util-ingress-backend-timeout" for IngressBackendTimeoutMapEntries -%}
-      {{- IngressBackendTimeoutMapEntries("haproxy-ingress.github.io/timeout-server", "haproxy-ingress.github.io/timeout-tunnel") -}}
+      {{- IngressBackendTimeoutMapEntries(item, "haproxy-ingress.github.io/timeout-server", "haproxy-ingress.github.io/timeout-tunnel") -}}
 
   backend-directives-610-haproxy-ingress-load-balance:
     template: |
@@ -324,7 +332,7 @@ templateSnippets:
             {%- if caContent != "" %}
               {%- var caFilename = caNs + "-" + caName + "-ca.pem" %}
               {#- "ca-file": a content-only CA rotation applies at runtime, no reload on v3.2+. -#}
-              {%- var caPath, caRegErr = fileRegistry.Register("ca-file", caFilename, caContent) -%}
+              {%- var caPath, caRegErr = RegisterBackendFile("ca-file", caFilename, caContent) -%}
               {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl") %}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verify required") %}
@@ -354,7 +362,7 @@ templateSnippets:
             {%- if tlsCrt != "" && tlsKey != "" %}
               {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
               {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}
-              {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
+              {%- var _, crtRegErr = RegisterBackendFile("cert", crtFilename, combinedPem) -%}
               {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
               {#- Bare filename: `crt` resolves against crt-base, so the arg can't
                   match the runtime store ident and add server can't carry it —
@@ -517,6 +525,11 @@ templateSnippets:
       {%- end -%}
 
   map-body-size-680-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/proxy-body-size']"]
+      group: map-body-size
     template: |
       {#
         HAProxy-Ingress Proxy Body Size Limit (Strategy 1: relocated to a map)
@@ -534,7 +547,8 @@ templateSnippets:
         it is a map-only, reload-free update.
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var bodySize = ingress.Metadata.Annotations["haproxy-ingress.github.io/proxy-body-size"] -%}
         {%- if bodySize != "" -%}
           {%%
@@ -557,9 +571,7 @@ templateSnippets:
                   rule has no http block, so the loop is a no-op (no nil guard). -#}
               {%- for _, path := range rule.Http.Paths -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}
-                {%- if first_seen("map-body-size", be) -%}
-      {{ "\n" }}{{ be }} {{ bytes }}
-                {%- end -%}
+                {{- shared.Unique("map-body-size", be, "\n" + be + " " + tostring(bytes)) -}}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -684,13 +696,19 @@ templateSnippets:
       {%- end -%}
 
   map-path-rewrite-690-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/rewrite-target']"]
+      group: map-path-rewrite
     template: |
       {# haproxy-ingress rewrite-target LITERAL replacement (no \N capture) →
           path-rewrite.map, consumed by base.yaml frontend-filters-400-path-rewrite.
           Capture rewrites stay as replace-path in backend-directives-690. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var rewrite = ingress.Metadata.Annotations["haproxy-ingress.github.io/rewrite-target"] -%}
         {%- if rewrite != "" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
@@ -709,9 +727,8 @@ templateSnippets:
             {%- for _, rule := range ingress.Spec.Rules -%}
               {%- for _, path := range rule.Http.Paths -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}
-                {%- if first_seen("map-path-rewrite", be) -%}
-      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(rewrite, "haproxy-ingress.github.io/rewrite-target", key, true)) }}
-                {%- end -%}
+                {%- var replacement = queryEscape(ValidateConfigValue(rewrite, "haproxy-ingress.github.io/rewrite-target", key, true)) -%}
+                {{- shared.Unique("map-path-rewrite", be, "\n" + be + " " + replacement) -}}
               {%- end -%}
             {%- end -%}
           {%- end -%}

@@ -17,16 +17,21 @@ package rendercontext
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
 )
 
 // PostProcessFunc normalises a section body the way the surrounding config was
 // normalised — the main template's own post-processor chain.
 type PostProcessFunc func(ctx context.Context, text string) (string, error)
+
+// PostProcessBatchFunc returns one normalised text per input in the same order.
+type PostProcessBatchFunc func(ctx context.Context, texts []string) ([]string, error)
 
 // Assemble replaces every token line in the rendered output with the section
 // text registered for it and returns the final config plus its ordered
@@ -37,22 +42,101 @@ type PostProcessFunc func(ctx context.Context, text string) (string, error)
 // With no registered section the scan is a single search for the render's
 // nonce and the config is returned unchanged.
 func (r *PlanRegistry) Assemble(ctx context.Context, rendered string, post PostProcessFunc) (string, []renderplan.Section, error) {
+	return r.assemble(ctx, rendered, post, nil, rendercontent.Document{}, false, nil, nil)
+}
+
+// AssembleWithBatch uses one ordered call to post-process all section bodies.
+func (r *PlanRegistry) AssembleWithBatch(
+	ctx context.Context,
+	rendered string,
+	post PostProcessFunc,
+	postBatch PostProcessBatchFunc,
+) (string, []renderplan.Section, error) {
+	return r.assemble(ctx, rendered, post, postBatch, rendercontent.Document{}, false, nil, nil)
+}
+
+func (r *PlanRegistry) assemble(
+	ctx context.Context,
+	rendered string,
+	post PostProcessFunc,
+	postBatch PostProcessBatchFunc,
+	document rendercontent.Document,
+	hasDocument bool,
+	cacheSession *RenderCacheSession,
+	renderGeneration *renderDocumentGeneration,
+) (string, []renderplan.Section, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := r.validateTokenAuthority(); err != nil {
+		return "", nil, err
+	}
+	if r.prepared != nil {
+		if err := r.prepared.ValidateAuthentication(); err != nil {
+			return "", nil, err
+		}
+	}
+	r.assembly = nil
+	if hasDocument && cacheSession != nil && renderGeneration != nil {
+		config, sections, generation, hit, err := cacheSession.loadAssembly(document, r, renderGeneration)
+		if err != nil {
+			return "", nil, err
+		}
+		if hit {
+			r.acceptAssembledSections(sections)
+			r.assembly = generation
+			cacheSession.assembly = generation
+			return config, sections, nil
+		}
+	}
 
-	scanner := &planAssembler{ctx: ctx, registry: r, post: post, consumed: make(map[sectionKey]bool)}
+	sectionCount := r.sectionCount()
+	sectionCapacity := sectionCount + 2
+	scanner := &planAssembler{
+		ctx:       ctx,
+		registry:  r,
+		post:      post,
+		postBatch: postBatch,
+		consumed:  make(map[sectionKey]bool, sectionCount),
+		sections:  make([]renderplan.Section, 0, sectionCapacity),
+		offsets:   make([]int, 0, sectionCapacity),
+	}
 	config, sections, err := scanner.run(rendered)
 	if err != nil {
 		return "", nil, err
 	}
-	r.assembled = sections
+	r.acceptAssembledSections(sections)
+	if hasDocument && cacheSession != nil && renderGeneration != nil {
+		generation, _, err := cacheSession.prepareAssembly(document, r, renderGeneration, config, sections)
+		if err != nil {
+			return "", nil, err
+		}
+		r.assembly = generation
+	}
 	return config, sections, nil
 }
 
+func (r *PlanRegistry) acceptAssembledSections(sections []renderplan.Section) {
+	r.documentAssembly = nil
+	r.assembled = slices.Clone(sections)
+	for _, section := range sections {
+		if section.Kind != renderplan.SectionKindBackend {
+			continue
+		}
+		backend, exists := r.backends[section.Name]
+		if !exists {
+			continue
+		}
+		backend.TextDigest = section.TextDigest
+		r.backends[section.Name] = backend
+	}
+}
+
 type planAssembler struct {
-	ctx      context.Context
-	registry *PlanRegistry
-	post     PostProcessFunc
+	ctx       context.Context
+	registry  *PlanRegistry
+	post      PostProcessFunc
+	postBatch PostProcessBatchFunc
+	processed map[sectionKey]string
 
 	out       []byte
 	coreStart int
@@ -64,18 +148,24 @@ type planAssembler struct {
 
 func (a *planAssembler) run(rendered string) (string, []renderplan.Section, error) {
 	if !strings.Contains(rendered, a.registry.marker()) {
-		if len(a.registry.sections) > 0 {
+		if a.registry.sectionCount() > 0 {
 			return "", nil, fmt.Errorf("plan assembly: %d registered sections but the render emitted no token",
-				len(a.registry.sections))
+				a.registry.sectionCount())
 		}
 		return rendered, a.coreOnly(rendered), nil
 	}
+	if err := a.preparePostProcessedSections(rendered); err != nil {
+		return "", nil, err
+	}
 
 	a.out = make([]byte, 0, len(rendered))
-	for _, line := range strings.SplitAfter(rendered, "\n") {
-		if line == "" {
-			continue
+	for start := 0; start < len(rendered); {
+		end := len(rendered)
+		if newline := strings.IndexByte(rendered[start:], '\n'); newline >= 0 {
+			end = start + newline + 1
 		}
+		line := rendered[start:end]
+		start = end
 		token, isToken, err := a.registry.classifyLine(line)
 		if err != nil {
 			return "", nil, err
@@ -94,7 +184,12 @@ func (a *planAssembler) run(rendered string) (string, []renderplan.Section, erro
 	if err := a.verify(); err != nil {
 		return "", nil, err
 	}
-	return string(a.out), a.sections, nil
+	config := string(a.out)
+	for index := range a.sections {
+		start := a.offsets[index]
+		a.sections[index].Text = config[start : start+a.sections[index].Length]
+	}
+	return config, a.sections, nil
 }
 
 // coreOnly is the section list of a config no template split up.
@@ -107,6 +202,8 @@ func (a *planAssembler) coreOnly(rendered string) []renderplan.Section {
 		Name:       "core#0",
 		TextDigest: renderplan.DigestString(rendered),
 		Length:     len(rendered),
+		Text:       rendered,
+		TextKnown:  true,
 	}}
 }
 
@@ -129,14 +226,7 @@ func (a *planAssembler) splice(token planToken) error {
 }
 
 func (a *planAssembler) spliceProfiles() error {
-	names := make([]string, 0, len(a.registry.sections))
-	for key := range a.registry.sections {
-		if key.Kind == renderplan.SectionKindProfile {
-			names = append(names, key.Name)
-		}
-	}
-	slices.Sort(names)
-	for _, name := range names {
+	for _, name := range a.registry.profileNames() {
 		if err := a.spliceSection(renderplan.SectionKindProfile, name); err != nil {
 			return err
 		}
@@ -146,7 +236,7 @@ func (a *planAssembler) spliceProfiles() error {
 
 func (a *planAssembler) spliceSection(kind, name string) error {
 	key := sectionKey{Kind: kind, Name: name}
-	text, registered := a.registry.sections[key]
+	text, registered := a.registry.section(kind, name)
 	if !registered {
 		return fmt.Errorf("plan assembly: token for unregistered %s %q", kind, name)
 	}
@@ -155,7 +245,7 @@ func (a *planAssembler) spliceSection(kind, name string) error {
 	}
 	a.consumed[key] = true
 
-	processed, err := a.postProcess(text)
+	processed, err := a.postProcess(key, text)
 	if err != nil {
 		return fmt.Errorf("plan assembly: post-processing %s %q: %w", kind, name, err)
 	}
@@ -184,7 +274,14 @@ func (a *planAssembler) recordBackendText(kind, name string) {
 	a.registry.backends[name] = backend
 }
 
-func (a *planAssembler) postProcess(text string) (string, error) {
+func (a *planAssembler) postProcess(key sectionKey, text string) (string, error) {
+	if a.processed != nil {
+		processed, exists := a.processed[key]
+		if !exists {
+			return "", fmt.Errorf("batch result is missing %s %q", key.Kind, key.Name)
+		}
+		return processed, nil
+	}
 	if a.post == nil || text == "" {
 		return text, nil
 	}
@@ -199,6 +296,7 @@ func (a *planAssembler) record(kind, name string) {
 		Name:       name,
 		TextDigest: renderplan.Digest(text),
 		Length:     len(text),
+		TextKnown:  true,
 	})
 	a.offsets = append(a.offsets, a.coreStart)
 	a.coreStart = len(a.out)
@@ -208,9 +306,10 @@ func (a *planAssembler) record(kind, name string) {
 // registered section was spliced exactly once, no token survived, and the
 // sections partition the config.
 func (a *planAssembler) verify() error {
-	if len(a.consumed) != len(a.registry.sections) {
+	sectionCount := a.registry.sectionCount()
+	if len(a.consumed) != sectionCount {
 		return fmt.Errorf("plan assembly: %d of %d registered sections have no token in the config: %s",
-			len(a.registry.sections)-len(a.consumed), len(a.registry.sections), a.unconsumedNames())
+			sectionCount-len(a.consumed), sectionCount, a.unconsumedNames())
 	}
 	if index := bytes.Index(a.out, []byte(a.registry.marker())); index >= 0 {
 		return fmt.Errorf("plan assembly: a token survived assembly at byte %d", index)
@@ -239,14 +338,143 @@ func (a *planAssembler) verifyPartition() error {
 }
 
 func (a *planAssembler) unconsumedNames() string {
-	var missing []string
-	for key := range a.registry.sections {
-		if !a.consumed[key] {
-			missing = append(missing, key.Kind+" "+key.Name)
+	return a.registry.unconsumedNames(a.consumed)
+}
+
+func (r *PlanRegistry) unconsumedNames(consumed map[sectionKey]bool) string {
+	unique := make(map[sectionKey]struct{})
+	for key := range r.sections {
+		if !consumed[key] {
+			unique[key] = struct{}{}
 		}
+	}
+	if r.prepared != nil {
+		r.prepared.sections.Root().Walk(func(encoded []byte, _ string) bool {
+			kind, name, found := strings.Cut(string(encoded), "\x00")
+			key := sectionKey{Kind: kind, Name: name}
+			if found && !consumed[key] {
+				unique[key] = struct{}{}
+			}
+			return false
+		})
+	}
+	missing := make([]string, 0, len(unique))
+	for key := range unique {
+		missing = append(missing, key.Kind+" "+key.Name)
 	}
 	slices.Sort(missing)
 	return strings.Join(missing, ", ")
+}
+
+func (r *PlanRegistry) profileNames() []string {
+	unique := make(map[string]struct{})
+	for key := range r.sections {
+		if key.Kind == renderplan.SectionKindProfile {
+			unique[key.Name] = struct{}{}
+		}
+	}
+	if r.prepared != nil {
+		r.prepared.sections.Root().WalkPrefix(preparedSectionKey(renderplan.SectionKindProfile, ""), func(key []byte, _ string) bool {
+			unique[string(key[len(renderplan.SectionKindProfile)+1:])] = struct{}{}
+			return false
+		})
+	}
+	names := make([]string, 0, len(unique))
+	for name := range unique {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+type indexedPostProcessBatchError interface {
+	BatchIndex() int
+}
+
+func (a *planAssembler) preparePostProcessedSections(rendered string) error {
+	if a.postBatch == nil {
+		return nil
+	}
+	keys, err := a.orderedSectionKeys(rendered)
+	if err != nil {
+		return err
+	}
+	a.processed = make(map[sectionKey]string, len(keys))
+	batchKeys := make([]sectionKey, 0, len(keys))
+	texts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		text, exists := a.registry.section(key.Kind, key.Name)
+		if !exists {
+			return fmt.Errorf("plan assembly: token for unregistered %s %q", key.Kind, key.Name)
+		}
+		if text == "" {
+			a.processed[key] = ""
+			continue
+		}
+		batchKeys = append(batchKeys, key)
+		texts = append(texts, text)
+	}
+	if len(texts) == 0 {
+		return nil
+	}
+	processed, err := a.postBatch(a.ctx, texts)
+	if err != nil {
+		var indexed indexedPostProcessBatchError
+		if errors.As(err, &indexed) {
+			index := indexed.BatchIndex()
+			if index >= 0 && index < len(batchKeys) {
+				key := batchKeys[index]
+				return fmt.Errorf("plan assembly: post-processing %s %q: %w", key.Kind, key.Name, err)
+			}
+		}
+		return fmt.Errorf("plan assembly: batch post-processing %d sections: %w", len(batchKeys), err)
+	}
+	if len(processed) != len(batchKeys) {
+		return fmt.Errorf("plan assembly: batch post-processing returned %d of %d sections", len(processed), len(batchKeys))
+	}
+	for index, key := range batchKeys {
+		a.processed[key] = processed[index]
+	}
+	return nil
+}
+
+func (a *planAssembler) orderedSectionKeys(rendered string) ([]sectionKey, error) {
+	collector := &sectionKeyCollector{
+		registry: a.registry,
+		keys:     make([]sectionKey, 0, a.registry.sectionCount()),
+		consumed: make(map[sectionKey]bool, a.registry.sectionCount()),
+	}
+	for start := 0; start < len(rendered); {
+		end := len(rendered)
+		if newline := strings.IndexByte(rendered[start:], '\n'); newline >= 0 {
+			end = start + newline + 1
+		}
+		line := rendered[start:end]
+		start = end
+		if err := collector.visitLine(line); err != nil {
+			return nil, err
+		}
+	}
+	sectionCount := a.registry.sectionCount()
+	if len(collector.consumed) != sectionCount {
+		return nil, fmt.Errorf("plan assembly: %d of %d registered sections have no token in the config: %s",
+			sectionCount-len(collector.consumed), sectionCount, a.registry.unconsumedNames(collector.consumed))
+	}
+	return collector.keys, nil
+}
+
+func (r *PlanRegistry) sectionCount() int {
+	count := len(r.sections)
+	if r.prepared == nil {
+		return count
+	}
+	count += r.prepared.sections.Len()
+	for key := range r.sections {
+		if _, exists := r.prepared.section(key.Kind, key.Name); exists {
+			count--
+		}
+	}
+	return count
 }
 
 // planToken is one recognised placeholder line.
@@ -277,11 +505,25 @@ func (r *PlanRegistry) classifyLine(line string) (planToken, bool, error) {
 	if !found || !strings.HasPrefix(body, "section:") {
 		return planToken{}, false, fmt.Errorf("plan assembly: unknown token %q", trimmed)
 	}
-	if kind != renderplan.SectionKindProfile && kind != renderplan.SectionKindBackend {
+	canonical, known := canonicalSectionKind(kind)
+	if !known {
 		return planToken{}, false, fmt.Errorf("plan assembly: token %q has unknown kind %q", trimmed, kind)
 	}
 	if !sectionNamePattern.MatchString(name) {
 		return planToken{}, false, fmt.Errorf("plan assembly: token %q has an invalid name %q", trimmed, name)
 	}
-	return planToken{Kind: kind, Name: name}, true, nil
+	// The line can be a view into the whole rendered config; a retained token
+	// name must not pin it.
+	return planToken{Kind: canonical, Name: strings.Clone(name)}, true, nil
+}
+
+func canonicalSectionKind(kind string) (string, bool) {
+	switch kind {
+	case renderplan.SectionKindProfile:
+		return renderplan.SectionKindProfile, true
+	case renderplan.SectionKindBackend:
+		return renderplan.SectionKindBackend, true
+	default:
+		return "", false
+	}
 }

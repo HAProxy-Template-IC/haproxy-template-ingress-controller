@@ -154,6 +154,56 @@ validationTests:
         target: map:hsts.map
         pattern: "hsts.example.com max-age%3d31536000%3b%20includeSubDomains%3b%20preload"
 
+  test-annotation-hsts-conflict-preserves-library-order:
+    description: The first HSTS producer in features-155 name order owns a host when annotation families conflict. Ingress names sort the winner last, so name order cannot produce this result.
+    _helm_skip_test: '{{ include "haptic.vendorAnnotationLibraries.incomplete" . }}'
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: z-haproxy
+            annotations:
+              haproxy-ingress.github.io/hsts: "true"
+              haproxy-ingress.github.io/hsts-max-age: "111"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: conflict-hsts.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: a-haptic
+            annotations:
+              haproxy-haptic.org/hsts: "true"
+              haproxy-haptic.org/hsts-max-age: "222"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: conflict-hsts.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: a-nginx
+            annotations:
+              nginx.ingress.kubernetes.io/hsts: "true"
+              nginx.ingress.kubernetes.io/hsts-max-age: "333"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: conflict-hsts.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:hsts.map, pattern: "conflict-hsts.example.com max-age%3d111"}
+      - {type: not_contains, target: map:hsts.map, pattern: "max-age%3d222"}
+      - {type: not_contains, target: map:hsts.map, pattern: "max-age%3d333"}
+
   test-haptic-default-backend:
     description: haproxy-haptic.org/default-backend emits a backend pool plus a per-host catch-all path entry routing unmatched requests to that Service
     fixtures:
@@ -234,18 +284,58 @@ validationTests:
           kind: Ingress
           metadata:
             namespace: default
-            name: cfg-ingress
+            name: z-last
             annotations:
-              haproxy-haptic.org/config-global: "tune.bufsize 32768"
-              haproxy-haptic.org/config-defaults: "option dontlognull"
-              haproxy-haptic.org/config-frontend: "http-request set-header X-Haptic-Test yes"
+              haproxy-haptic.org/config-global: "tune.maxrewrite 1024"
+              haproxy-haptic.org/config-defaults: "timeout queue 1234"
+              haproxy-haptic.org/config-frontend: "http-request set-header X-Haptic-Order last"
           spec:
             ingressClassName: haptic
             rules:
-              - host: cfg.example.com
+              - host: z.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: middle-empty
+            annotations:
+              haproxy-haptic.org/config-global: "   "
+              haproxy-haptic.org/config-defaults: "\n"
+              haproxy-haptic.org/config-frontend: " \t "
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: middle.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: a-first
+            annotations:
+              haproxy-haptic.org/config-global: "  tune.bufsize 32768  "
+              haproxy-haptic.org/config-defaults: "  retries 5  "
+              haproxy-haptic.org/config-frontend: "  http-request set-header X-Haptic-Order first  "
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: a.example.com
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "tune.bufsize 32768"}
-      - {type: contains, target: haproxy.cfg, pattern: "option dontlognull"}
-      - {type: contains, target: haproxy.cfg, pattern: "http-request set-header X-Haptic-Test yes"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  # haptic/config-global$', expected: "1"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  # haptic/config-defaults$', expected: "1"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  # haptic/config-frontend$', expected: "3"}
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^  # haptic/config-global\n  # Ingress: default/a-first\n  tune\.bufsize 32768\n  # Ingress: default/z-last\n  tune\.maxrewrite 1024$'
+        expected: "1"
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^  # haptic/config-defaults\n  # Ingress: default/a-first\n  retries 5\n  # Ingress: default/z-last\n  timeout queue 1234$'
+        expected: "1"
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^  # haptic/config-frontend\n  # Ingress: default/a-first\n  http-request set-header X-Haptic-Order first\n  # Ingress: default/z-last\n  http-request set-header X-Haptic-Order last$'
+        expected: "3"

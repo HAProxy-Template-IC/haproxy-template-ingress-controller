@@ -78,6 +78,7 @@ func newProjectionTransform(roots map[string]bool, idx *indexer.Indexer) cache.T
 		if !ok {
 			return obj, nil
 		}
+		resourceVersion := u.GetResourceVersion()
 		projected := make(map[string]any, len(roots))
 		for k := range roots {
 			if v, present := u.Object[k]; present {
@@ -86,6 +87,10 @@ func newProjectionTransform(roots map[string]bool, idx *indexer.Indexer) cache.T
 		}
 		husk := &unstructured.Unstructured{Object: projected}
 		normalizeInPlace(husk, idx)
+		// CachedStore needs the watch version even when templates ignore it.
+		if resourceVersion != "" {
+			husk.SetResourceVersion(resourceVersion)
+		}
 		return husk, nil
 	}
 }

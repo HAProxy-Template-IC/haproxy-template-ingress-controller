@@ -23,6 +23,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // mutatingStore returns a different snapshot on each List() / Get() call,
@@ -90,6 +91,7 @@ func TestStoreWrapper_ListIsStableAcrossCalls(t *testing.T) {
 		},
 	}
 	wrapper := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "ingresses",
 		Logger:       testutil.NewTestLogger(),
@@ -123,6 +125,7 @@ func TestStoreWrapper_ListAndGetSingleAgree(t *testing.T) {
 		},
 	}
 	wrapper := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "ingresses",
 		Logger:       testutil.NewTestLogger(),
@@ -161,6 +164,7 @@ func TestStoreWrapper_GetSingleFirstThenListAgree(t *testing.T) {
 		},
 	}
 	wrapper := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "ingresses",
 		Logger:       testutil.NewTestLogger(),
@@ -192,6 +196,7 @@ func TestStoreWrapper_FetchPartialMatchUsesSnapshot(t *testing.T) {
 		},
 	}
 	wrapper := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        store,
 		ResourceType: "ingresses",
 		Logger:       testutil.NewTestLogger(),
@@ -216,6 +221,7 @@ func TestStoreWrapper_IndexComponentsAreUnambiguous(t *testing.T) {
 	}
 
 	wrapper := &StoreWrapper{
+		readContext:  templating.WithImmutableResourceInputs(t.Context()),
 		Store:        &mutatingStore{snapshots: [][]any{items}},
 		ResourceType: "custom-resources",
 		Logger:       testutil.NewTestLogger(),

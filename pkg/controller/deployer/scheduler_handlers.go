@@ -22,13 +22,15 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 const (
 	// maxDeployFailureRetries bounds the fast self-reschedule of a retryable
 	// deploy failure. Beyond this many consecutive fast retries for the SAME
-	// render (checksum), the scheduler stops the hot retry and hands off to the
+	// occurrence, the scheduler stops the hot retry and hands off to the
 	// 60s DriftPreventionMonitor backstop — so a permanently-wedged deploy (e.g. a
 	// config HAProxy keeps rejecting) can't spin. A NEW render resets the budget.
 	maxDeployFailureRetries = 5
@@ -47,19 +49,24 @@ const (
 // the wall clock. While the gate holds renders — it refused the previous one —
 // the render is only cached, and the gate's pass for this plan releases it.
 func (s *DeploymentScheduler) handleTemplateRendered(ctx context.Context, event *events.TemplateRenderedEvent) {
+	occurrence, err := templateEventOccurrence(event)
+	if err != nil {
+		s.logger.Error("Ignoring a render without exact deployment identity", "error", err)
+		return
+	}
+	identity, err := inspectOccurrence(occurrence)
+	if err != nil {
+		s.logger.Error("Ignoring a render without exact deployment identity", "error", err)
+		return
+	}
 	s.mu.Lock()
-	s.lastRenderedConfig = event.HAProxyConfig
-	s.lastAuxiliaryFiles = event.AuxiliaryFiles
-	s.lastContentChecksum = event.ContentChecksum
-	s.lastRenderedPlan = event.Plan
-	s.lastRenderedPlanID = event.PlanID
-	s.lastRenderedStatusPatches = event.StatusPatches
+	s.lastRenderedOccurrence = occurrence
 	pinned := s.gatePinned
 	s.mu.Unlock()
 
 	if pinned {
 		s.logger.Warn("Render gate is holding renders; waiting for its verdict before deploying",
-			"plan", event.PlanID,
+			"plan", identity.planID,
 			"correlation_id", event.CorrelationID())
 		return
 	}
@@ -72,17 +79,22 @@ func (s *DeploymentScheduler) handleTemplateRendered(ctx context.Context, event 
 // dispatches the render being held — but only when the verdict names the newest
 // render, so a verdict for a superseded plan never dispatches an unchecked one.
 func (s *DeploymentScheduler) handleRenderGateCompleted(ctx context.Context, event *events.RenderGateCompletedEvent) {
+	occurrence, err := gateEventOccurrence(event)
+	if err != nil {
+		s.logger.Error("Ignoring a render gate verdict without exact deployment identity", "error", err)
+		return
+	}
+	identity, err := inspectOccurrence(occurrence)
+	if err != nil {
+		s.logger.Error("Ignoring a render gate verdict without exact deployment identity", "error", err)
+		return
+	}
 	// A verdict for a plan the fleet has moved past scopes the gate's revert;
 	// it says nothing about the render this scheduler is converging on, so it
 	// must not move the latch, the deployable render or a queued deployment.
 	if !event.Newest {
 		s.logger.Debug("Ignoring a render gate verdict for a superseded plan",
-			"plan", event.PlanID, "ok", event.OK)
-		return
-	}
-
-	if !event.OK {
-		s.holdAfterRefusal(event)
+			"plan", identity.planID, "ok", event.OK)
 		return
 	}
 
@@ -92,8 +104,18 @@ func (s *DeploymentScheduler) handleRenderGateCompleted(ctx context.Context, eve
 	// render from the same event), so the only way this misses is a dropped
 	// render — and then the drift pass produces a fresh one within its
 	// interval, which the gate judges in turn.
-	namesHeldRender := s.lastRenderedPlanID != "" && s.lastRenderedPlanID == event.PlanID
-	alreadyDispatched := s.lastValidatedPlanID == event.PlanID
+	namesHeldRender := sameOccurrence(s.lastRenderedOccurrence, occurrence)
+	alreadyDispatched := sameOccurrence(s.lastValidatedOccurrence, occurrence)
+	if !namesHeldRender && !alreadyDispatched {
+		s.mu.Unlock()
+		s.logger.Error("Ignoring a render gate verdict that does not match scheduler state", "plan", identity.planID)
+		return
+	}
+	if !event.OK {
+		s.mu.Unlock()
+		s.holdAfterRefusal(event, occurrence, identity.planID)
+		return
+	}
 	if alreadyDispatched {
 		s.acceptRenderLocked()
 	}
@@ -106,7 +128,7 @@ func (s *DeploymentScheduler) handleRenderGateCompleted(ctx context.Context, eve
 		return
 	}
 
-	s.logger.Info("Render gate passed the held render, deploying it", "plan", event.PlanID)
+	s.logger.Info("Render gate passed the held render, deploying it", "plan", identity.planID)
 	s.dispatchRender(ctx, event.CorrelationID(), false, "rendergate_release")
 
 	// The released render is now what the fleet runs, so it is what a later
@@ -125,19 +147,29 @@ func (s *DeploymentScheduler) handleRenderGateCompleted(ctx context.Context, eve
 // undo a live, working render because a temp directory was unwritable — the
 // same rule revert.go applies to the pods. Either way the gate holds: nothing
 // has judged the render, so nothing new may be dispatched.
-func (s *DeploymentScheduler) holdAfterRefusal(event *events.RenderGateCompletedEvent) {
+func (s *DeploymentScheduler) holdAfterRefusal(
+	event *events.RenderGateCompletedEvent,
+	occurrence *rendercycle.Occurrence,
+	planID string,
+) {
 	s.mu.Lock()
+	matched := sameOccurrence(s.lastRenderedOccurrence, occurrence) ||
+		sameOccurrence(s.lastValidatedOccurrence, occurrence)
+	if !matched {
+		s.mu.Unlock()
+		return
+	}
 	s.gatePinned = true
 	restored := ""
 	if event.Refused {
-		restored = s.rollBackToAcceptedRenderLocked(event.PlanID)
+		restored = s.rollBackToAcceptedRenderLocked(occurrence)
 	}
 	s.mu.Unlock()
 
-	dropped := s.dropPendingPlan(event.PlanID)
+	dropped := s.dropPendingRender(occurrence)
 
 	s.logger.Warn("Render gate refused a render; holding further renders",
-		"plan", event.PlanID,
+		"plan", planID,
 		"pinned", event.Pinned,
 		"refused_by_haproxy", event.Refused,
 		"rolled_back_to", restored,
@@ -153,13 +185,15 @@ func (s *DeploymentScheduler) holdAfterRefusal(event *events.RenderGateCompleted
 // deploy loop would publish it as soon as the current deployment finishes —
 // after the scoped revert has already run and found no pod carrying it. Scoped
 // to the named plan, because a refusal for one render must not cancel another.
-func (s *DeploymentScheduler) dropPendingPlan(planID string) bool {
-	if planID == "" {
+func (s *DeploymentScheduler) dropPendingRender(
+	occurrence *rendercycle.Occurrence,
+) bool {
+	if occurrence == nil {
 		return false
 	}
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
-	if s.state.pending == nil || s.state.pending.planID != planID {
+	if s.state.pending == nil || !sameOccurrence(s.state.pending.occurrence, occurrence) {
 		return false
 	}
 	s.workRevision++
@@ -171,18 +205,13 @@ func (s *DeploymentScheduler) dropPendingPlan(planID string) bool {
 //
 // The three paths that re-send a render to pods rather than dispatch a new one
 // — pod discovery, the validation fallback and the retry timers — all read the
-// `lastValidated*` fields. Those hold whatever was dispatched last, which under
+// last validated occurrence. That holds whatever was dispatched last, which under
 // the optimistic gate includes a render HAProxy has not judged yet, so this
 // snapshot is what a refusal rolls them back to.
 func (s *DeploymentScheduler) acceptRenderLocked() {
 	s.acceptedRender = &acceptedRender{
-		config:          s.lastValidatedConfig,
-		auxFiles:        s.lastValidatedAux,
-		contentChecksum: s.lastValidatedContentChecksum,
-		plan:            s.lastValidatedPlan,
-		planID:          s.lastValidatedPlanID,
-		statusPatches:   s.lastValidatedStatusPatches,
-		correlationID:   s.lastCorrelationID,
+		occurrence:    s.lastValidatedOccurrence,
+		correlationID: s.lastCorrelationID,
 	}
 }
 
@@ -198,22 +227,23 @@ func (s *DeploymentScheduler) acceptRenderLocked() {
 // refused — there is nothing to roll back to, and the refused render stays the
 // only config this controller has; HAProxy refuses it per pod at apply, which
 // is visible as a NACK rather than a silent stall.
-func (s *DeploymentScheduler) rollBackToAcceptedRenderLocked(refusedPlanID string) string {
-	if s.acceptedRender == nil || refusedPlanID == "" || s.lastValidatedPlanID != refusedPlanID {
+func (s *DeploymentScheduler) rollBackToAcceptedRenderLocked(
+	refused *rendercycle.Occurrence,
+) string {
+	if s.acceptedRender == nil || !sameOccurrence(s.lastValidatedOccurrence, refused) {
 		return ""
 	}
-	if s.acceptedRender.planID == refusedPlanID {
+	if sameOccurrence(s.acceptedRender.occurrence, refused) {
 		return "" // the gate contradicting itself; keep what a pass established
 	}
-	s.lastValidatedConfig = s.acceptedRender.config
-	s.lastValidatedAux = s.acceptedRender.auxFiles
-	s.lastValidatedContentChecksum = s.acceptedRender.contentChecksum
-	s.lastValidatedPlan = s.acceptedRender.plan
-	s.lastValidatedPlanID = s.acceptedRender.planID
-	s.lastValidatedStatusPatches = s.acceptedRender.statusPatches
+	s.lastValidatedOccurrence = s.acceptedRender.occurrence
 	s.lastCorrelationID = s.acceptedRender.correlationID
 	s.lastCoalescible = false
-	return s.acceptedRender.planID
+	identity, err := inspectOccurrence(s.acceptedRender.occurrence)
+	if err != nil {
+		return ""
+	}
+	return identity.planID
 }
 
 // handleConfigValidated handles ConfigValidatedEvent to cache template config metadata.
@@ -238,6 +268,12 @@ func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidate
 		"template_config_namespace", tc.Namespace)
 }
 
+type dispatchRenderState struct {
+	occurrence *rendercycle.Occurrence
+	identity   renderOccurrenceIdentity
+	endpoints  []dataplane.Endpoint
+}
+
 // dispatchRender promotes the cached render to the deployable one and schedules
 // it to the current endpoint set.
 //
@@ -245,88 +281,28 @@ func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidate
 // verdict while it is holding — the two paths differ only in what proved the
 // render dispatchable, never in what is dispatched.
 func (s *DeploymentScheduler) dispatchRender(ctx context.Context, correlationID string, coalescible bool, reason string) {
-	// Get current state and cache the deployable config BEFORE scheduling
-	// This prevents race where pod discovery reads stale config
-	s.mu.Lock()
-	config := s.lastRenderedConfig
-	auxFiles := s.lastAuxiliaryFiles
-	endpoints := s.currentEndpoints
-	statusPatches := s.lastRenderedStatusPatches
-	configChecksum := s.lastContentChecksum
-	plan := s.lastRenderedPlan
-	planID := s.lastRenderedPlanID
-	// Cache validated config immediately to prevent race condition.
-	// `lastValidatedContentChecksum` must be captured AT THE SAME POINT as
-	// `lastValidatedConfig` — otherwise pod-discovery reads (which fall
-	// through to this cache) can re-read a stale or newer
-	// `lastContentChecksum` and the resulting deploy records the wrong
-	// hash. See scheduler.go's scheduledDeployment.contentChecksum doc.
-	s.lastValidatedConfig = config
-	s.lastValidatedAux = auxFiles
-	s.lastValidatedContentChecksum = configChecksum
-	s.lastValidatedPlan = plan
-	s.lastValidatedPlanID = planID
-	s.lastValidatedStatusPatches = statusPatches
-	s.lastCorrelationID = correlationID
-	s.lastCoalescible = coalescible
-	s.hasValidConfig = true
-	s.mu.Unlock()
-
-	if config == "" {
-		s.logger.Error("No rendered config available for deployment")
+	render, ok := s.promoteRendered(correlationID, coalescible)
+	if !ok {
 		return
 	}
 
-	if len(endpoints) == 0 {
+	if len(render.endpoints) == 0 {
 		s.logger.Debug("No endpoints available yet, config cached for later deployment")
 		return
 	}
 
-	// Use the content checksum captured WITH the config being dispatched —
-	// `lastValidatedContentChecksum`, set above under the same lock as
-	// `lastValidatedConfig`. Reading `s.lastContentChecksum` directly here
-	// would let a fresh reconcile (which mutates that field in
-	// handleTemplateRendered) substitute a newer hash than the config we're
-	// about to deploy actually carries.
-	configHash := configChecksum
-	podSetHash := computePodSetHash(endpoints)
-
-	// Drift prevention deployments must ALWAYS execute (bypass cache)
-	isDriftPrevention := reason == events.TriggerReasonDriftPrevention
-
-	// Check if deployment can be skipped (config unchanged for same pod set).
-	// The fleet must be settled on the last deployed config — not merely have it
-	// as the last one that fully deployed while a later render has since moved it
-	// on. Otherwise a content-addressed render recurring after a paced deploy
-	// (add then delete, both hashing to the same recurring plan) matches the
-	// stale hash and the fleet never reaches it.
-	s.mu.RLock()
-	canSkip := !isDriftPrevention &&
-		configHash == s.lastDeployedConfigHash &&
-		s.lastDispatchedConfigHash == s.lastDeployedConfigHash &&
-		podSetHash == s.lastDeployedPodSetHash &&
-		!s.lastDeployedTime.IsZero()
-	s.mu.RUnlock()
+	configHash := render.identity.checksum
+	podSetHash := computePodSetHash(render.endpoints)
+	canSkip, lastDeployedTime := s.renderAlreadyDeployed(&render, podSetHash, reason)
 
 	if canSkip {
 		s.logger.Debug("Skipping deployment - config unchanged since last deploy",
 			"config_hash", configHash[:8],
 			"pod_set_hash", podSetHash[:8],
-			"last_deployed", s.lastDeployedTime.Format(time.RFC3339))
-		// Publish a DeploymentSkippedEvent so consumers that need to know
-		// "the data plane is converged on this config" can react. The
-		// status-applier uses this to write the template's "deployed"
-		// status variant on resources whose addition didn't change the
-		// rendered HAProxy config (a status-only delta) — without this
-		// signal the status would stay at the CRD default forever.
-		s.eventBus.Publish(events.NewDeploymentSkippedEvent(
-			len(endpoints),
-			events.SkipReasonConfigUnchanged,
-			configHash,
-			podSetHash,
-			statusPatches,
-			events.WithCorrelation(correlationID, correlationID),
-		))
+			"last_deployed", lastDeployedTime.Format(time.RFC3339))
+		s.publishUnchangedRender(
+			render.occurrence, len(render.endpoints), podSetHash, correlationID,
+		)
 		return
 	}
 
@@ -334,11 +310,61 @@ func (s *DeploymentScheduler) dispatchRender(ctx context.Context, correlationID 
 	// scheduleOrQueue classifies the render into a lane (runtime-raw vs structural)
 	// against the last-dispatched config; the deploy loop applies it accordingly.
 	//
-	// `configHash` was captured above under the same lock as `config`. Thread it
-	// through scheduleOrQueue so the eventual deploy records THIS hash, not
-	// whatever `s.lastContentChecksum` holds at deploy-time (which a later
-	// reconcile will have overwritten under sustained parallel-test load).
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, reason, correlationID, statusPatches, coalescible, configHash, plan, planID)
+	s.scheduleOrQueueOccurrence(ctx, render.occurrence, render.endpoints, reason, correlationID, coalescible)
+}
+
+func (s *DeploymentScheduler) promoteRendered(correlationID string, coalescible bool) (dispatchRenderState, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	render := dispatchRenderState{
+		occurrence: s.lastRenderedOccurrence,
+		endpoints:  s.currentEndpoints,
+	}
+	identity, err := inspectOccurrence(render.occurrence)
+	if err != nil {
+		s.logger.Error("Rendered config has no exact deployment identity", "error", err)
+		return dispatchRenderState{}, false
+	}
+	render.identity = identity
+
+	s.lastValidatedOccurrence = render.occurrence
+	s.lastCorrelationID = correlationID
+	s.lastCoalescible = coalescible
+	return render, true
+}
+
+func (s *DeploymentScheduler) renderAlreadyDeployed(
+	render *dispatchRenderState,
+	podSetHash, reason string,
+) (bool, time.Time) {
+	if reason == events.TriggerReasonDriftPrevention {
+		return false, time.Time{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	sameAsDeployed := sameOccurrenceOutput(render.occurrence, s.lastDeployedOccurrence)
+	dispatchedSettled := sameOccurrenceOutput(s.lastDispatchedOccurrence, s.lastDeployedOccurrence)
+	canSkip := sameAsDeployed && dispatchedSettled &&
+		podSetHash == s.lastDeployedPodSetHash && !s.lastDeployedTime.IsZero()
+	return canSkip, s.lastDeployedTime
+}
+
+func (s *DeploymentScheduler) publishUnchangedRender(
+	occurrence *rendercycle.Occurrence,
+	total int,
+	podSetHash, correlationID string,
+) {
+	correlation := events.WithCorrelation(correlationID, correlationID)
+	skipped, err := events.NewDeploymentSkippedEventWithCycle(
+		occurrence, total, events.SkipReasonConfigUnchanged, podSetHash, correlation,
+	)
+	if err != nil {
+		s.logger.Error("Refusing to publish an unauthenticated deployment skip", "error", err)
+		return
+	}
+	s.eventBus.Publish(skipped)
 }
 
 // deployReason names why the deploy runs. The drift pass must stay
@@ -408,21 +434,15 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 	s.mu.Lock()
 	s.currentEndpoints = event.Endpoints
 	endpointCount := len(event.Endpoints)
-	config := s.lastValidatedConfig
-	auxFiles := s.lastValidatedAux
-	statusPatches := s.lastValidatedStatusPatches
-	contentChecksum := s.lastValidatedContentChecksum
-	plan := s.lastValidatedPlan
-	planID := s.lastValidatedPlanID
+	occurrence := s.lastValidatedOccurrence
 	correlationID := s.lastCorrelationID
 	coalescible := s.lastCoalescible
-	hasValidConfig := s.hasValidConfig
 	s.mu.Unlock()
 
 	s.logger.Debug("HAProxy pods discovered",
 		"count", endpointCount)
 
-	if !hasValidConfig {
+	if occurrence == nil {
 		s.logger.Debug("No validated config available yet, skipping deployment")
 		return
 	}
@@ -432,13 +452,10 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 		return
 	}
 
-	// Schedule deployment of last validated config to new endpoints (or queue if in progress).
-	// Use the correlation ID, coalescibility, AND content checksum captured
-	// when the config was validated — same lock window in
-	// handleValidationCompleted — so the deploy records the hash that
-	// matches the config it actually carries, not whatever
-	// `lastContentChecksum` holds now (later renders' values).
-	s.scheduleOrQueue(ctx, config, auxFiles, event.Endpoints, "pod_discovery", correlationID, statusPatches, coalescible, contentChecksum, plan, planID)
+	// Schedule the exact last validated occurrence to the new endpoints.
+	s.scheduleOrQueueOccurrence(
+		ctx, occurrence, event.Endpoints, "pod_discovery", correlationID, coalescible,
+	)
 }
 
 // handleValidationFailed handles validation failure events.
@@ -454,14 +471,8 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	correlationID := event.CorrelationID()
 
 	s.mu.RLock()
-	config := s.lastValidatedConfig
-	auxFiles := s.lastValidatedAux
-	statusPatches := s.lastValidatedStatusPatches
-	contentChecksum := s.lastValidatedContentChecksum
-	plan := s.lastValidatedPlan
-	planID := s.lastValidatedPlanID
+	occurrence := s.lastValidatedOccurrence
 	endpoints := s.currentEndpoints
-	hasValidConfig := s.hasValidConfig
 	s.mu.RUnlock()
 
 	s.logger.Warn("Validation failed, deploying cached config as fallback",
@@ -469,7 +480,7 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 		"errors", event.Errors,
 		"correlation_id", correlationID)
 
-	if !hasValidConfig {
+	if occurrence == nil {
 		s.logger.Error("Validation fallback failed: no cached config available",
 			"correlation_id", correlationID)
 		return
@@ -481,12 +492,9 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 		return
 	}
 
-	// Schedule fallback deployment with last known good config. Fallback
-	// deployments are NOT coalescible — they must execute to ensure
-	// consistency. The contentChecksum threaded here is the hash of the
-	// last-validated config (NOT the failed-validation render), so the
-	// deploy records the correct hash for what's actually being applied.
-	s.scheduleOrQueue(ctx, config, auxFiles, endpoints, "validation_fallback", correlationID, statusPatches, false, contentChecksum, plan, planID)
+	// Fallback deployments are not coalescible: they must restore the exact
+	// last validated occurrence.
+	s.scheduleOrQueueOccurrence(ctx, occurrence, endpoints, "validation_fallback", correlationID, false)
 }
 
 // handleDeploymentCompleted handles deployment completion events.
@@ -496,38 +504,31 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 // it only clears deployInFlight and signals the loop, which picks up any pending
 // deployment on its next cycle.
 //
-// The deployed config and pod-set hashes must come from the completion event —
-// the proofs captured from the DeploymentScheduledEvent that triggered this
-// deployment — NOT from mutable scheduler state.
-// A reconcile that lands between deployment-start and deployment-complete
-// overwrites s.lastContentChecksum with the newer render, and using that
-// value here mis-records THIS deployment's checksum as the newer one. The
-// next reconcile that produces the newer hash then matches lastDeployedConfigHash
-// and incorrectly skips deployment — the newer render's content (e.g. a
-// fresh Ingress's redirect directive) never reaches HAProxy. See CI
-// pipeline 2551671212 / TestIngressHaproxyRedirectTo for a real
-// reproduction.
+// The completion must carry the exact occurrence that owns the active slot;
+// mutable latest-render state and public identity shadows are never consulted.
 func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.DeploymentCompletedEvent) {
-	s.schedulerMutex.Lock()
-	if !s.state.deployInFlight || event.DeploymentID == "" || event.DeploymentID != s.state.activeDeploymentID {
-		activeDeploymentID := s.state.activeDeploymentID
-		s.schedulerMutex.Unlock()
+	if event == nil {
+		s.logger.Warn("Ignoring nil deployment completion")
+		return
+	}
+	occurrence, err := completedEventOccurrence(event)
+	if err != nil {
+		s.logger.Warn("Ignoring completion without exact deployment identity", "error", err)
+		return
+	}
+	if _, err := inspectOccurrence(occurrence); err != nil {
+		s.logger.Warn("Ignoring completion without exact deployment identity", "error", err)
+		return
+	}
+	retired := s.retireActiveDeployment(event, occurrence)
+	if !retired.matched {
 		s.logger.Warn("Ignoring completion for a deployment that is not active",
 			"completed_deployment_id", event.DeploymentID,
-			"active_deployment_id", activeDeploymentID,
+			"active_deployment_id", retired.activeDeploymentID,
 			"correlation_id", event.CorrelationID())
 		return
 	}
-
-	timedOut := s.state.deploymentTimedOut
-	s.state.deployInFlight = false
-	s.state.deploymentTimedOut = false
-	s.state.deploymentStartTime = time.Time{}
-	s.state.activeDeploymentID = ""
-	s.state.activeCorrelationID = ""
-
-	if timedOut {
-		s.schedulerMutex.Unlock()
+	if retired.timedOut {
 		s.logger.Info("Timed-out deployment terminated",
 			"deployment_id", event.DeploymentID,
 			"correlation_id", event.CorrelationID())
@@ -535,40 +536,7 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 		return
 	}
 
-	s.schedulerMutex.Unlock()
-
-	// Cache the deployed content checksum for future comparison (skip unchanged deployments).
-	// Empty ContentChecksum means the zero-endpoint code path — nothing deployed, don't
-	// touch the cache (otherwise we'd record "" as "last deployed" and force the next
-	// real deployment to run, which is the safer side of the failure mode but is also
-	// a needless deploy).
-	//
-	// Only cache the hash when the deployment FULLY succeeded (event.Failed == 0).
-	// lastDeployedConfigHash is the "last SUCCESSFULLY deployed" hash that the
-	// skip-unchanged gate compares against; recording a failed/partial deploy here
-	// would make the gate refuse to re-push to the still-stale pods until the
-	// config changes or the drift timer fires, delaying self-heal. A failure leaves
-	// the cache at the last good hash so the next reconcile re-attempts immediately.
-	// A pod holding the render behind a paced reload has not deployed it
-	// yet either: caching the hash now would make the skip-unchanged gate
-	// refuse the follow-up that observes the reload firing.
-	fullyDeployed := event.Failed == 0 && event.PendingReloads == 0
-	s.mu.Lock()
-	if event.ContentChecksum != "" && event.PodSetHash != "" {
-		// Record what the fleet was last sent even when it holds it behind a
-		// paced reload: the skip-unchanged gate reads this to tell "the fleet is
-		// settled on lastDeployedConfigHash" from "a later render moved it off,
-		// and lastDeployedConfigHash is stale". A recurring content-addressed
-		// render must not be skipped just because its checksum matches that
-		// stale value.
-		s.lastDispatchedConfigHash = event.ContentChecksum
-		if fullyDeployed {
-			s.lastDeployedConfigHash = event.ContentChecksum
-			s.lastDeployedPodSetHash = event.PodSetHash
-			s.lastDeployedTime = time.Now()
-		}
-	}
-	s.mu.Unlock()
+	s.cacheDeploymentCompletion(event, retired.occurrence)
 
 	// Fast self-reschedule: a retryable per-pod failure (e.g. a transient DPA
 	// transaction-version conflict) is otherwise only re-driven by the 60s drift
@@ -587,6 +555,58 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	}
 
 	s.signalCompleted()
+}
+
+type retiredDeployment struct {
+	matched            bool
+	timedOut           bool
+	activeDeploymentID string
+	occurrence         *rendercycle.Occurrence
+}
+
+func (s *DeploymentScheduler) retireActiveDeployment(
+	event *events.DeploymentCompletedEvent,
+	occurrence *rendercycle.Occurrence,
+) retiredDeployment {
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+
+	retired := retiredDeployment{activeDeploymentID: s.state.activeDeploymentID}
+	if !s.state.deployInFlight || event.DeploymentID == "" ||
+		event.DeploymentID != s.state.activeDeploymentID ||
+		!sameOccurrence(s.state.activeOccurrence, occurrence) {
+		return retired
+	}
+
+	retired.matched = true
+	retired.timedOut = s.state.deploymentTimedOut
+	retired.occurrence = s.state.activeOccurrence
+	s.state.deployInFlight = false
+	s.state.deploymentTimedOut = false
+	s.state.deploymentStartTime = time.Time{}
+	s.state.activeDeploymentID = ""
+	s.state.activeCorrelationID = ""
+	s.state.activeOccurrence = nil
+	return retired
+}
+
+func (s *DeploymentScheduler) cacheDeploymentCompletion(
+	event *events.DeploymentCompletedEvent,
+	occurrence *rendercycle.Occurrence,
+) {
+	if event.PodSetHash == "" || occurrence == nil || occurrence.ValidateAuthentication() != nil {
+		return
+	}
+	fullyDeployed := event.Failed == 0 && event.PendingReloads == 0
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.lastDispatchedOccurrence = occurrence
+	if fullyDeployed {
+		s.lastDeployedOccurrence = occurrence
+		s.lastDeployedPodSetHash = event.PodSetHash
+		s.lastDeployedTime = time.Now()
+	}
 }
 
 // pendingReloadFollowUpMargin is added to the agent's scheduled_at so the
@@ -637,7 +657,7 @@ func (s *DeploymentScheduler) schedulePendingReloadFollowUp(event *events.Deploy
 	s.logger.Info("Reloads pending on the fleet; following up when they fire",
 		"pending_pods", event.PendingReloads,
 		"wait_ms", wait.Milliseconds(),
-		"checksum", event.ContentChecksum)
+		"checksum", completedContentChecksum(event))
 }
 
 // scheduleFailureRetry arms (or re-arms) the single fast-retry timer after a
@@ -651,8 +671,8 @@ func (s *DeploymentScheduler) schedulePendingReloadFollowUp(event *events.Deploy
 // stays in the one runDeployLoop and no second scheduling path (the reload-storm
 // regression the handleDeploymentCompleted comment warns about) is created.
 //
-// Budget: a NEW render (different ContentChecksum) earns a fresh budget; the same
-// failing render gets at most maxDeployFailureRetries fast retries, after which
+// A new occurrence earns a fresh budget; the same failing occurrence gets at
+// most maxDeployFailureRetries fast retries, after which
 // the 60s drift backstop takes over — no hot loop on a permanently-wedged deploy.
 func (s *DeploymentScheduler) scheduleFailureRetry(event *events.DeploymentCompletedEvent) {
 	s.schedulerMutex.Lock()
@@ -660,17 +680,28 @@ func (s *DeploymentScheduler) scheduleFailureRetry(event *events.DeploymentCompl
 	if s.retryStopped {
 		return
 	}
+	occurrence, err := completedEventOccurrence(event)
+	if err != nil {
+		s.logger.Warn("Deploy failed without exact retry identity; drift backstop continues")
+		return
+	}
+	identity, err := inspectOccurrence(occurrence)
+	if err != nil {
+		s.logger.Warn("Deploy failed without exact retry identity; drift backstop continues")
+		return
+	}
 
-	if event.ContentChecksum != s.lastFailedRetryChecksum {
+	sameFailedRender := sameOccurrence(occurrence, s.lastFailedRetry)
+	if !sameFailedRender {
 		// A different render is failing now — start a fresh budget for it.
-		s.lastFailedRetryChecksum = event.ContentChecksum
+		s.lastFailedRetry = occurrence
 		s.deployFailureRetries = 0
 	}
 
 	if s.deployFailureRetries >= maxDeployFailureRetries {
 		s.logger.Warn("Deploy fast-retry budget exhausted; 60s drift backstop continues",
 			"attempts", s.deployFailureRetries,
-			"checksum", event.ContentChecksum)
+			"checksum", identity.checksum)
 		return
 	}
 
@@ -694,7 +725,7 @@ func (s *DeploymentScheduler) scheduleFailureRetry(event *events.DeploymentCompl
 	s.logger.Info("Deploy failed; scheduling fast retry",
 		"attempt", s.deployFailureRetries,
 		"backoff_ms", backoff.Milliseconds(),
-		"checksum", event.ContentChecksum)
+		"checksum", identity.checksum)
 }
 
 func (s *DeploymentScheduler) runFailureRetry(generation, workRevision uint64) {
@@ -740,7 +771,7 @@ func (s *DeploymentScheduler) stopFailureRetries() {
 		s.state.pending = nil
 	}
 	s.deployFailureRetries = 0
-	s.lastFailedRetryChecksum = ""
+	s.lastFailedRetry = nil
 	s.schedulerMutex.Unlock()
 
 	s.retryCallbacks.Wait()
@@ -784,35 +815,25 @@ func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision u
 		return
 	}
 	s.mu.Lock()
-	config := s.lastValidatedConfig
-	auxFiles := s.lastValidatedAux
-	statusPatches := s.lastValidatedStatusPatches
-	contentChecksum := s.lastValidatedContentChecksum
-	plan := s.lastValidatedPlan
-	planID := s.lastValidatedPlanID
+	occurrence := s.lastValidatedOccurrence
 	correlationID := s.lastCorrelationID
 	endpoints := s.currentEndpoints
-	hasValidConfig := s.hasValidConfig
 	s.mu.Unlock()
 
-	if !hasValidConfig || len(endpoints) == 0 {
+	if len(endpoints) == 0 || occurrence == nil || occurrence.ValidateAuthentication() != nil {
 		s.logger.Debug("Fast retry skipped: no validated config or no endpoints")
 		return
 	}
 
-	s.installPending(s.ctx, &scheduledDeployment{
+	dep := &scheduledDeployment{
 		workRevision:    workRevision,
 		retryGeneration: generation,
-		config:          config,
-		auxFiles:        auxFiles,
-		plan:            plan,
-		planID:          planID,
+		occurrence:      occurrence,
 		endpoints:       endpoints,
 		reason:          reason,
 		correlationID:   correlationID,
-		statusPatches:   statusPatches,
-		contentChecksum: contentChecksum,
-	})
+	}
+	s.installPending(s.ctx, dep)
 }
 
 // cancelFailureRetry stops any armed fast-retry timer and resets the budget.
@@ -826,7 +847,7 @@ func (s *DeploymentScheduler) cancelFailureRetry() {
 		s.state.pending = nil
 	}
 	s.deployFailureRetries = 0
-	s.lastFailedRetryChecksum = ""
+	s.lastFailedRetry = nil
 }
 
 // handleConfigPublished handles ConfigPublishedEvent by caching runtime config metadata.
@@ -872,12 +893,13 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	s.state.deploymentStartTime = time.Time{}
 	s.state.activeDeploymentID = ""
 	s.state.activeCorrelationID = ""
+	s.state.activeOccurrence = nil
 	s.state.pending = nil
 
 	s.retryStopped = true
 	s.stopRetryTimerLocked()
 	s.deployFailureRetries = 0
-	s.lastFailedRetryChecksum = ""
+	s.lastFailedRetry = nil
 
 	s.lastPodSetHash = ""
 
@@ -885,8 +907,8 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	// The render gate's latch is per leadership term: a new leader starts
 	// optimistic because the agents' own last-known-good set protects the fleet.
 	s.mu.Lock()
-	s.lastDeployedConfigHash = ""
-	s.lastDispatchedConfigHash = ""
+	s.lastDeployedOccurrence = nil
+	s.lastDispatchedOccurrence = nil
 	s.lastDeployedPodSetHash = ""
 	s.lastDeployedTime = time.Time{}
 	s.gatePinned = false

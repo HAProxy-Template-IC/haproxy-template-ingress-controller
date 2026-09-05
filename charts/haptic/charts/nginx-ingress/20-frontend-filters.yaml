@@ -1,12 +1,20 @@
 templateSnippets:
   frontend-filters-700-nginx-ingress-access-control:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/whitelist-source-range']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/denylist-source-range']"
+      effects: [recordEvent]
     template: |
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {#- No participating annotation → the macro emits nothing; skip the call. -#}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var anns = ingress.Metadata.Annotations %}
-        {%- if anns["nginx.ingress.kubernetes.io/whitelist-source-range"] == "" && anns["nginx.ingress.kubernetes.io/denylist-source-range"] == "" %}{%- continue %}{%- end %}
+        {%- if anns["nginx.ingress.kubernetes.io/whitelist-source-range"] != "" || anns["nginx.ingress.kubernetes.io/denylist-source-range"] != "" %}
         {#- Under satisfy=any the allow-list deny would block an IP that auth could still
             rescue, so drop that arm; backend-directives-765 emits the combined gate. -#}
         {%- var allowAnn = "nginx.ingress.kubernetes.io/whitelist-source-range" -%}
@@ -17,6 +25,7 @@ templateSnippets:
             "ni",
             "nginx-ingress/whitelist-source-range ({KEY})",
             "nginx-ingress/denylist-source-range ({KEY})") }}
+        {%- end -%}
       {%- end -%}
 
   # ssl-redirect and hsts live in features-105/-155: they register hosts into gf maps
@@ -24,16 +33,50 @@ templateSnippets:
   # to per-ingress inline ACLs here, that costs a reload per host change.
 
   frontend-filters-730-nginx-ingress-cors:
-    template: |
-      {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {#- No enable annotation → the macro emits nothing; skip the call. -#}
-        {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/enable-cors"] == "" %}{%- continue %}{%- end %}
-        {{ EmitAnnotationCORS(ingress,
-            "nginx.ingress.kubernetes.io",
-            "nginx.ingress.kubernetes.io/enable-cors",
-            "1728000",
-            "nginx-ingress/cors") }}
+    template: |-
+      {{- render "nginx-ingress-cors-publications" -}}
+      {%- for _, fileAny := range incremental_values("nginx-ingress-cors", "files") -%}
+        {%- var file = fileAny.(map[string]any) -%}
+        {%- var _, err = fileRegistry.Register("file", tostring(file["filename"]), tostring(file["content"])) -%}
+        {%- if err != nil -%}{{ fail("Failed to register host match file '" + tostring(file["filename"]) + "': " + err.Error()) }}{%- end -%}
+      {%- end -%}
+      {%- var fragments = incremental_values("nginx-ingress-cors", "fragments") -%}
+      {%- for _, fragment := range fragments -%}
+        {{- "\n  " + tostring(fragment) -}}
+      {%- end -%}
+      {%- if len(fragments) > 0 -%}{{ "\n        " }}{%- end -%}
+
+  nginx-ingress-cors-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var fileDir, err = pathResolver.GetPath("", "file") -%}
+        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{"fileDir": fileDir}}) -}}
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/enable-cors']"]
+      group: nginx-ingress-cors
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-ingress-host-match-publication" for IngressHostMatchPublication -%}
+      {%- import "util-ingress-annotation-cors-fragment" for IngressAnnotationCORSFragment -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var hosts = []string{} -%}
+        {%- for _, rule := range ingress.Spec.Rules -%}
+          {%- if rule.Host != "" -%}{%- hosts = append(hosts, rule.Host) -%}{%- end -%}
+        {%- end -%}
+        {%- if len(hosts) > 0 -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- var match = IngressHostMatchPublication(hosts, tostring(props["fileDir"])) -%}
+          {%- var fragment = IngressAnnotationCORSFragment(ingress,
+            "nginx.ingress.kubernetes.io", "nginx.ingress.kubernetes.io/enable-cors",
+            "1728000", "nginx-ingress/cors", tostring(match["condition"])) -%}
+          {%- if fragment != "" -%}
+            {{- shared.Publish("fragments", key, fragment) -}}
+            {%- if match["file"] != nil -%}{{- shared.Publish("files", key, match["file"]) -}}{%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   # Reload-free: custom-request/response-headers become entries in
@@ -42,34 +85,44 @@ templateSnippets:
   # scopes the header to the ingress's own backends rather than every request
   # for the host — the wildcard/host-less HostMatchCondition gap goes with it.
   features-740-nginx-ingress-custom-headers:
-    template: |
-      {%- import "util-ingress-header-contribute" for IngressHeaderContribute -%}
-      {{- IngressHeaderContribute("nginx.ingress.kubernetes.io/custom-request-headers", "nginx.ingress.kubernetes.io/custom-response-headers", "|", ":") -}}
+    template: '{{- "" -}}'
+
+  ingress-header-mods-0740-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/custom-request-headers']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/custom-response-headers']"
+      group: ingress-header-mods
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-ingress-header-publish" for PublishIngressHeaderContributions -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {{- PublishIngressHeaderContributions(ingress,
+          "nginx.ingress.kubernetes.io/custom-request-headers",
+          "nginx.ingress.kubernetes.io/custom-response-headers", "|", ":", "0740-nginx-ingress") -}}
+      {%- end -%}
 
   # app-root and permanent/temporal-redirect live in features-145/-140: they register
   # hosts into gf maps that base.yaml emits one shared map-driven rule from — don't
   # move them back to per-ingress inline ACLs here, that costs a reload per change.
 
   frontend-filters-775-nginx-ingress-from-to-www-redirect:
-    template: |
+    requires: [ingresses]
+    template: |-
       {# `redirect prefix` only sets Location; never rewrite the Host header instead,
           that corrupts routing. Map indirection keeps host changes reload-free. #}
+      {{- render "nginx-ingress-from-to-www-publications" -}}
       {%- var pairByHost = map[string]string{} -%}
-      {%- var seen = map[string]bool{} -%}
       {%- var hostKeys = []any{} -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/from-to-www-redirect"] == "true" %}
-          {%- for _, rule := range ingress.Spec.Rules %}
-            {%- var srcHost = toLower(rule.Host) %}
-            {%- if srcHost != "" && !seen[srcHost] %}
-              {%- seen[srcHost] = true %}
-              {%- var targetHost = "" %}
-              {%- if hasPrefix(srcHost, "www.") %}{%- targetHost = srcHost[4:] %}{%- else %}{%- targetHost = "www." + srcHost %}{%- end %}
-              {%- pairByHost[srcHost] = targetHost %}
-              {%- hostKeys = append(hostKeys, srcHost) %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
+      {%- for _, entryAny := range incremental_values("nginx-ingress-from-to-www-hosts", "hosts") -%}
+        {%- var entry = entryAny.(map[string]any) -%}
+        {%- var srcHost = tostring(entry["host"]) -%}
+        {%- pairByHost[srcHost] = tostring(entry["target"]) -%}
+        {%- hostKeys = append(hostKeys, srcHost) -%}
       {%- end %}
       {%- if len(hostKeys) > 0 %}
         {%- var sortedHosts = sort_strings(hostKeys) %}
@@ -84,15 +137,61 @@ templateSnippets:
       http-request redirect prefix http://%[var(txn.host),map({{ m }})] code 301 if !{ ssl_fc } { var(txn.host),map({{ m }}) -m found }
       {%- end %}
 
+  nginx-ingress-from-to-www-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/from-to-www-redirect']"]
+      group: nginx-ingress-from-to-www-hosts
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/from-to-www-redirect"] == "true" -%}
+        {%- var seen = map[string]bool{} -%}
+        {%- for _, rule := range ingress.Spec.Rules -%}
+          {%- var srcHost = toLower(rule.Host) -%}
+          {%- if srcHost != "" && !seen[srcHost] -%}
+            {%- seen[srcHost] = true -%}
+            {%- var targetHost = "" -%}
+            {%- if hasPrefix(srcHost, "www.") -%}{%- targetHost = srcHost[4:] -%}{%- else -%}{%- targetHost = "www." + srcHost -%}{%- end -%}
+            {{- shared.Publish("hosts", srcHost, map[string]any{"host": srcHost, "target": targetHost}) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
   frontend-filters-780-nginx-ingress-canary:
-    template: |
-      {# HAProxy takes the first matching use_backend, so emission order is the
-          documented canary precedence: header > cookie > weight. #}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+    template: |-
+      {{- render "nginx-ingress-canary-publications" -}}
+      {%- for _, fileAny := range incremental_values("nginx-ingress-canary", "files") -%}
+        {%- var file = fileAny.(map[string]any) -%}
+        {%- var _, err = fileRegistry.Register("file", tostring(file["filename"]), tostring(file["content"])) -%}
+        {%- if err != nil -%}{{ fail("Failed to register host match file '" + tostring(file["filename"]) + "': " + err.Error()) }}{%- end -%}
+      {%- end -%}
+      {%- var fragments = incremental_values("nginx-ingress-canary", "fragments") -%}
+      {%- for index, fragment := range fragments -%}
+        {%- if index > 0 -%}{{ "\n        " }}{%- end -%}
+        {{- tostring(fragment) -}}
+      {%- end -%}
+      {{- "\n" -}}
+
+  nginx-ingress-canary-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var fileDir, err = pathResolver.GetPath("", "file") -%}
+        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{"fileDir": fileDir}}) -}}
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/canary']"]
+      group: nginx-ingress-canary
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-ingress-host-match-publication" for IngressHostMatchPublication -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil %}
         {%- var isCanary = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary"] %}
         {%- if isCanary == "true" %}
           {%- var ns = ingress.Metadata.Namespace %}
@@ -112,9 +211,10 @@ templateSnippets:
                 {%- end %}
               {%- end %}
             {%- end %}
-            {%- if len(hosts) > 0 && canaryBackend != "" %}
+            {%- if len(hosts) > 0 && canaryBackend != "" -%}
               {%%
-                var cond = HostMatchCondition(hosts)
+                var match = IngressHostMatchPublication(hosts, tostring(props["fileDir"]))
+                var cond = tostring(match["condition"])
                 var canaryHeader = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header"]
                 var canaryHeaderValue = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-value"]
                 var canaryHeaderPattern = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-pattern"]
@@ -150,55 +250,72 @@ templateSnippets:
                 {%- if canaryInj != "" %}{%- canaryField = "canary-weight" %}{%- end %}
               {%- end %}
               {%- if canaryInj != "" %}
-                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/" + canaryField + "' value contains " + canaryInj + ", which would break out of the canary routing condition; the canary route is not applied. Remove it from the value.") -}}
-                {%- continue %}
-              {%- end %}
-      # nginx-ingress/canary ({{ key }})
+                {%- var message = "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/" + canaryField + "' value contains " + canaryInj + ", which would break out of the canary routing condition; the canary route is not applied. Remove it from the value." -%}
+                {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
+                  {{- fail(message) -}}
+                {%- else -%}
+                  {{- recordEvent(ingress, "InvalidAnnotationValue", message) -}}
+                {%- end -%}
+              {%- else %}
+              {%- var fragment = "\n# nginx-ingress/canary (" + key + ")" -%}
               {%- if canaryHeader != "" %}
                 {%- if canaryHeaderPattern != "" %}
-      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m reg '{{ canaryHeaderPattern }}' } {{ cond }}
+                  {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { req.hdr(" + canaryHeader + ") -m reg '" + canaryHeaderPattern + "' } " + cond -%}
                 {%- else if canaryHeaderValue != "" %}
-      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m str '{{ canaryHeaderValue }}' } {{ cond }}
+                  {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { req.hdr(" + canaryHeader + ") -m str '" + canaryHeaderValue + "' } " + cond -%}
                 {%- else %}
-      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m str always } {{ cond }}
+                  {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { req.hdr(" + canaryHeader + ") -m str always } " + cond -%}
                 {%- end %}
               {%- end %}
               {%- if canaryCookie != "" %}
-      use_backend {{ canaryBackend }} if { req.cook({{ canaryCookie }}) -m str always } {{ cond }}
+                {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { req.cook(" + canaryCookie + ") -m str always } " + cond -%}
               {%- end %}
               {%- if canaryWeight != "" %}
-      use_backend {{ canaryBackend }} if { rand(100) lt {{ canaryWeight }} } {{ cond }}
+                {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { rand(100) lt " + canaryWeight + " } " + cond -%}
+              {%- end %}
+              {%- if canaryHeader != "" || canaryCookie != "" || canaryWeight != "" -%}
+                {{- shared.Publish("fragments", key, fragment) -}}
+                {%- if match["file"] != nil -%}
+                  {{- shared.Publish("files", key, match["file"]) -}}
+                {%- end -%}
+              {%- end %}
               {%- end %}
             {%- end %}
         {%- end %}
       {%- end -%}
 
+  frontend-filters-789-nginx-ingress-mtls-strip:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream']"]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" -%}
+        {{- shared.Unique("fragments", "global", "\n# nginx-ingress/auth-tls-pass-certificate-to-upstream — drop client-supplied copies\nhttp-request del-header ssl-client-cert\nhttp-request del-header ssl-client-subject-dn") -}}
+      {%- end -%}
+
   frontend-filters-790-nginx-ingress-mtls-error:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream']"]
     template: |
       {# auth-tls-error-page lives in features-150 (map-driven, reload-free); only
           cert passthrough belongs here. #}
-      {%- import "util-ingress-helpers" for ResourceMatchCondition -%}
       {#- Strip unconditionally, and never host-scoped: a wildcard or host-less
           rule made the old exact host gate miss entirely, leaving the caller's
           own header to reach an application this annotation tells to trust it.
           A missed set is fail-closed; a missed strip is forgery. -#}
-      {%- var anyPassCert = false %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" %}
-          {%- anyPassCert = true %}{%- break %}
-        {%- end %}
-      {%- end %}
-      {%- if anyPassCert %}
-      # nginx-ingress/auth-tls-pass-certificate-to-upstream — drop client-supplied copies
-      http-request del-header ssl-client-cert
-      http-request del-header ssl-client-subject-dn
-      {%- end %}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
           {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" %}
-            {%- var cond = ResourceMatchCondition([]string{key}) %}
+            {%- var cond = "{ var(txn.resource_id) -m str " + key + " }" %}
       # nginx-ingress/auth-tls-pass-certificate-to-upstream ({{ key }})
       http-request set-header ssl-client-cert %[ssl_c_der,base64] if {{ cond }}
       http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if {{ cond }}
@@ -208,27 +325,40 @@ templateSnippets:
   # The SPOE mirror notification fires before the request body would arrive, so
   # without buffering the plugin mirrors PUT/POST with an empty body.
   frontend-filters-093-nginx-ingress-mirror-buffer:
+    template: |-
+      {{- render "nginx-ingress-mirror-buffer-publications" -}}
+      {%- for _, fragment := range incremental_values("nginx-ingress-mirror-buffer", "fragments") -%}
+        {{- tostring(fragment) -}}
+      {%- end -%}
+
+  nginx-ingress-mirror-buffer-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
+        {%- var mirrorEnabled = false -%}
+        {%- for _, plugin := range plugins -%}
+          {%- if plugin.(map[string]any)["name"].(string) == "mirror" -%}
+            {%- mirrorEnabled = true -%}
+          {%- end -%}
+        {%- end -%}
+        {%- var requestBufferingMap, _ = pathResolver.GetPath("request-buffering.map", "map") -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "mirrorEnabled": mirrorEnabled,
+          "mirrorWait": extraContext | dig_string("10s", "requestBuffering", "waitTimeout"),
+          "requestBufferingMap": requestBufferingMap,
+        }}) -}}
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/mirror-target']"]
+      group: nginx-ingress-mirror-buffer
+      effects: [publishValue]
     template: |
-      {%- var hasMirror = false %}
-      {%- var firstKey = "" %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/mirror-target"] != "" %}
-          {%- hasMirror = true %}
-          {%- if firstKey == "" %}{%- firstKey = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}{%- end %}
-        {%- end %}
-      {%- end %}
-      {%- if hasMirror %}
-        {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() %}
-        {%- var mirrorEnabled = false %}
-        {%- for _, p := range plugins %}
-          {%- if p.(map[string]any)["name"].(string) == "mirror" %}
-            {%- mirrorEnabled = true %}
-          {%- end %}
-        {%- end %}
-        {%- if !mirrorEnabled %}
-          {{- fail("Ingress " + firstKey + " sets 'nginx.ingress.kubernetes.io/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
-        {%- end %}
-        {%- var mirrorWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/mirror-target"] != "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- if !props["mirrorEnabled"].(bool) -%}
+          {{- fail("Ingress " + key + " sets 'nginx.ingress.kubernetes.io/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
+        {%- end -%}
       {# Content-Length-gated, not frontend-wide `option http-buffer-request`: one
           mirrored Ingress would buffer the whole shared frontend and stall every
           gRPC/streaming route on it into a 408. Trade-off: chunked bodies are not
@@ -236,16 +366,44 @@ templateSnippets:
           needs txn.backend_name — set by frontend-routing-logic, which is why this
           is a frontend-filters-* and not the earlier frontend-extra-*. Map default
           `on`, not the fleet setting: mirroring needs the body regardless. #}
-      # nginx-ingress/mirror-buffer: buffer the request body so it reaches the mirror plugin
-        {%- var rbMap, _ = pathResolver.GetPath("request-buffering.map", "map") %}
-      http-request wait-for-body time {{ mirrorWait }} if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map({{ rbMap }},on) -m str off }
-      {%- end %}
+        {%- var fragment = "\n# nginx-ingress/mirror-buffer: buffer the request body so it reaches the mirror plugin\n" +
+          "http-request wait-for-body time " + tostring(props["mirrorWait"]) +
+          " if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map(" +
+          tostring(props["requestBufferingMap"]) + ",on) -m str off }" -%}
+        {{- shared.Publish("fragments", "global", fragment) -}}
+      {%- end -%}
 
   frontend-filters-555-nginx-ingress-mirror:
-    template: |
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+    template: |-
+      {{- render "nginx-ingress-mirror-publications" -}}
+      {%- for _, fileAny := range incremental_values("nginx-ingress-mirror", "files") -%}
+        {%- var file = fileAny.(map[string]any) -%}
+        {%- var _, err = fileRegistry.Register("file", tostring(file["filename"]), tostring(file["content"])) -%}
+        {%- if err != nil -%}{{ fail("Failed to register host match file '" + tostring(file["filename"]) + "': " + err.Error()) }}{%- end -%}
+      {%- end -%}
+      {%- var fragments = incremental_values("nginx-ingress-mirror", "fragments") -%}
+      {%- for _, fragment := range fragments -%}
+        {{- tostring(fragment) -}}
+      {%- end -%}
+      {{- "\n" -}}
+
+  nginx-ingress-mirror-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var fileDir, err = pathResolver.GetPath("", "file") -%}
+        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "fileDir": fileDir,
+          "targetTimeoutMs": extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000),
+          "targetRetries": extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0),
+        }}) -}}
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/mirror-target']"]
+      group: nginx-ingress-mirror
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-ingress-host-match-publication" for IngressHostMatchPublication -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#- Only `mirror-target` is honoured: the plugin forces the mirrored Host to the
           target authority and always forwards the buffered body, so `mirror-host` and
           `mirror-request-body: off` cannot be supported without a plugin change. Only
@@ -253,7 +411,9 @@ templateSnippets:
           Entries accumulate in the per-request txn.gw_mirror_targets list that the
           single NOTIFY in frontend-filters-950-spoa-hub-mirror-fire fans out, so a new
           target touches neither spoe.conf nor the hub TOML. -#}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil %}
         {%- var mt = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/mirror-target"] %}
         {%- if mt != "" %}
           {%- var ns = ingress.Metadata.Namespace %}
@@ -263,9 +423,17 @@ templateSnippets:
           {%- for _, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
           {%- end %}
+          {%- var valid = true -%}
           {%- if len(hosts) == 0 %}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' sets 'nginx.ingress.kubernetes.io/mirror-target' but defines no host; host-less / default-backend mirroring is not supported. Add a host to the Ingress rule.") -}}{%- continue %}
+            {%- var message = "Ingress '" + key + "' sets 'nginx.ingress.kubernetes.io/mirror-target' but defines no host; host-less / default-backend mirroring is not supported. Add a host to the Ingress rule." -%}
+            {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
+              {{- fail(message) -}}
+            {%- else -%}
+              {{- recordEvent(ingress, "InvalidAnnotationValue", message) -}}
+            {%- end -%}
+            {%- valid = false -%}
           {%- end %}
+          {%- if valid -%}
           {#- nginx appends the path/variable (e.g. $request_uri) with no '/' separator,
               so the authority ends at the first '/' or '$'. -#}
           {%- var scheme = "http" %}
@@ -294,12 +462,18 @@ templateSnippets:
             {{- fail("Invalid port '" + tostring(portNum) + "' in 'nginx.ingress.kubernetes.io/mirror-target' on Ingress '" + key + "'. Port must be 1-65535.") -}}
           {%- end %}
           {%- var safeAuthority = ValidateConfigValue(authority, "nginx.ingress.kubernetes.io/mirror-target", key, false) %}
-          {%- var cond = HostMatchCondition(hosts) %}
-          {%- var timeoutMs = toint(extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000)) %}
-          {%- var retriesCount = toint(extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0)) %}
+          {%- var match = IngressHostMatchPublication(hosts, tostring(props["fileDir"])) %}
+          {%- var cond = tostring(match["condition"]) %}
+          {%- var timeoutMs = toint(props["targetTimeoutMs"]) %}
+          {%- var retriesCount = toint(props["targetRetries"]) %}
           {%- var entry = scheme + "|" + safeAuthority + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
-      # nginx-ingress/mirror-target ({{ key }})
-      http-request set-var(txn.gw_mirror_targets) str({{ entry }};),concat(,txn.gw_mirror_targets,) if {{ cond }}
+          {%- var fragment = "\n# nginx-ingress/mirror-target (" + key + ")\n" +
+            "http-request set-var(txn.gw_mirror_targets) str(" + entry + ";),concat(,txn.gw_mirror_targets,) if " + cond -%}
+          {{- shared.Publish("fragments", key, fragment) -}}
+          {%- if match["file"] != nil -%}
+            {{- shared.Publish("files", key, match["file"]) -}}
+          {%- end -%}
+          {%- end -%}
         {%- end %}
       {%- end %}
   log-fields-730-nginx-ingress-mtls:
@@ -307,13 +481,23 @@ templateSnippets:
       {# Byte-identical to the haptic-annotations and haproxy-ingress log-fields
           contributions on purpose: base deduplicates identical items, so several
           annotation libraries can be enabled at once. #}
-      {%- var enabled = false %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] != "" || ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" %}
-          {%- enabled = true %}
-        {%- end %}
-      {%- end %}
-      {%- if enabled %}
-      %(mtls_verify)[ssl_c_verify]
-      %(mtls_cn)[ssl_c_s_dn(CN)]
-      {%- end %}
+      {{- render "nginx-ingress-log-fields-mtls-publications" -}}
+      {%- for _, fragment := range incremental_values("nginx-ingress-log-fields-mtls", "fragments") -%}
+        {{- tostring(fragment) -}}
+      {%- end -%}
+
+  nginx-ingress-log-fields-mtls-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/auth-tls-secret']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream']"
+      group: nginx-ingress-log-fields-mtls
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && (ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] != "" || ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true") -%}
+        {{- shared.Publish("fragments", "global", "\n%(mtls_verify)[ssl_c_verify]\n%(mtls_cn)[ssl_c_s_dn(CN)]") -}}
+      {%- end -%}

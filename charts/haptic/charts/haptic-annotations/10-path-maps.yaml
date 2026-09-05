@@ -19,6 +19,10 @@
 # ingress.yaml (and the standard path-map renderers) byte-for-byte.
 templateSnippets:
   map-path-regex-800-haptic-path-type:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/path-type']"]
     template: |
       {#
         haproxy-haptic.org/path-type: "regex" → path-regex.map entries.
@@ -36,7 +40,8 @@ templateSnippets:
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
       {%- if ingress.Metadata.Annotations["haproxy-haptic.org/path-type"] == "regex" %}
       # haptic/path-type ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
         {%- for _, rule := range ingress.Spec.Rules %}
@@ -50,6 +55,10 @@ templateSnippets:
       {%- end %}
 
   map-path-exact-800-haptic-path-type:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/path-type']"]
     template: |
       {#
         haproxy-haptic.org/path-type: "exact" → path-exact.map entries.
@@ -64,7 +73,8 @@ templateSnippets:
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
       {%- if ingress.Metadata.Annotations["haproxy-haptic.org/path-type"] == "exact" %}
       # haptic/path-type ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
         {%- for _, rule := range ingress.Spec.Rules %}
@@ -78,6 +88,10 @@ templateSnippets:
       {%- end %}
 
   map-path-prefix-800-haptic-path-type:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/path-type']"]
     template: |
       {#
         haproxy-haptic.org/path-type: "prefix" → path-prefix.map entries.
@@ -93,7 +107,8 @@ templateSnippets:
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
       {%- if ingress.Metadata.Annotations["haproxy-haptic.org/path-type"] == "prefix" %}
       # haptic/path-type ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
         {%- for _, rule := range ingress.Spec.Rules %}
@@ -112,6 +127,10 @@ templateSnippets:
       {%- end %}
 
   map-pfxexact-800-haptic-path-type:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/path-type']"]
     template: |
       {#
         haproxy-haptic.org/path-type: "begin" → path-prefix-exact.map entries.
@@ -127,7 +146,8 @@ templateSnippets:
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
       {%- if ingress.Metadata.Annotations["haproxy-haptic.org/path-type"] == "begin" %}
       # haptic/path-type ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
         {%- for _, rule := range ingress.Spec.Rules %}
@@ -141,6 +161,10 @@ templateSnippets:
       {%- end %}
 
   map-host-800-haptic-host-alias:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/host-alias']"]
     template: |
       {#
         haproxy-haptic.org/host-alias → host.map entries.
@@ -161,7 +185,8 @@ templateSnippets:
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
       {%- var aliasAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/host-alias"] %}
       {%- if aliasAnnotation != "" %}
       {%- var rules = ingress.Spec.Rules %}
@@ -183,6 +208,10 @@ templateSnippets:
       {%- end %}
 
   map-hostregex-800-haptic-host-alias-regex:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/host-alias-regex']"]
     template: |
       {#
         haproxy-haptic.org/host-alias-regex → host-regex.map entries.
@@ -202,7 +231,8 @@ templateSnippets:
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
       {%- var regexAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/host-alias-regex"] %}
       {%- if regexAnnotation != "" %}
       {%- var rules = ingress.Spec.Rules %}

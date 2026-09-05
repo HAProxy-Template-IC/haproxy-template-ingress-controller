@@ -17,15 +17,18 @@
 package validators
 
 import (
+	"errors"
+
 	"github.com/haproxytech/client-native/v6/models"
 
 	genvalidators "gitlab.com/haproxy-haptic/haptic/pkg/generated/validators"
 )
 
+var errValidatorUnavailable = errors.New("validator unavailable")
+
 // ValidatorSet provides type-specific validation functions for a HAProxy version.
 // Each method validates a model directly without JSON conversion.
 type ValidatorSet struct {
-	// Validator functions
 	validateServer              func(*models.Server) error
 	validateServerTemplate      func(*models.ServerTemplate) error
 	validateBind                func(*models.Bind) error
@@ -44,26 +47,103 @@ type ValidatorSet struct {
 	validateHTTPCheck           func(*models.HTTPCheck) error
 	validateTCPCheck            func(*models.TCPCheck) error
 	validateCapture             func(*models.Capture) error
+}
 
-	// Hasher functions for caching
-	hashServer              func(*models.Server) uint64
-	hashServerTemplate      func(*models.ServerTemplate) uint64
-	hashBind                func(*models.Bind) uint64
-	hashHTTPRequestRule     func(*models.HTTPRequestRule) uint64
-	hashHTTPResponseRule    func(*models.HTTPResponseRule) uint64
-	hashTCPRequestRule      func(*models.TCPRequestRule) uint64
-	hashTCPResponseRule     func(*models.TCPResponseRule) uint64
-	hashHTTPAfterResponse   func(*models.HTTPAfterResponseRule) uint64
-	hashHTTPErrorRule       func(*models.HTTPErrorRule) uint64
-	hashServerSwitchingRule func(*models.ServerSwitchingRule) uint64
-	hashBackendSwitching    func(*models.BackendSwitchingRule) uint64
-	hashStickRule           func(*models.StickRule) uint64
-	hashACL                 func(*models.ACL) uint64
-	hashFilter              func(*models.Filter) uint64
-	hashLogTarget           func(*models.LogTarget) uint64
-	hashHTTPCheck           func(*models.HTTPCheck) uint64
-	hashTCPCheck            func(*models.TCPCheck) uint64
-	hashCapture             func(*models.Capture) uint64
+func validate[T any](model T, validator func(T) error) error {
+	if validator == nil {
+		return errValidatorUnavailable
+	}
+	return validator(model)
+}
+
+// ValidateServer validates a Server model.
+func (v *ValidatorSet) ValidateServer(model *models.Server) error {
+	return validate(model, v.validateServer)
+}
+
+// ValidateServerTemplate validates a ServerTemplate model.
+func (v *ValidatorSet) ValidateServerTemplate(model *models.ServerTemplate) error {
+	return validate(model, v.validateServerTemplate)
+}
+
+// ValidateBind validates a Bind model.
+func (v *ValidatorSet) ValidateBind(model *models.Bind) error {
+	return validate(model, v.validateBind)
+}
+
+// ValidateHTTPRequestRule validates an HTTPRequestRule model.
+func (v *ValidatorSet) ValidateHTTPRequestRule(model *models.HTTPRequestRule) error {
+	return validate(model, v.validateHTTPRequestRule)
+}
+
+// ValidateHTTPResponseRule validates an HTTPResponseRule model.
+func (v *ValidatorSet) ValidateHTTPResponseRule(model *models.HTTPResponseRule) error {
+	return validate(model, v.validateHTTPResponseRule)
+}
+
+// ValidateTCPRequestRule validates a TCPRequestRule model.
+func (v *ValidatorSet) ValidateTCPRequestRule(model *models.TCPRequestRule) error {
+	return validate(model, v.validateTCPRequestRule)
+}
+
+// ValidateTCPResponseRule validates a TCPResponseRule model.
+func (v *ValidatorSet) ValidateTCPResponseRule(model *models.TCPResponseRule) error {
+	return validate(model, v.validateTCPResponseRule)
+}
+
+// ValidateHTTPAfterResponseRule validates an HTTPAfterResponseRule model.
+func (v *ValidatorSet) ValidateHTTPAfterResponseRule(model *models.HTTPAfterResponseRule) error {
+	return validate(model, v.validateHTTPAfterResponse)
+}
+
+// ValidateHTTPErrorRule validates an HTTPErrorRule model.
+func (v *ValidatorSet) ValidateHTTPErrorRule(model *models.HTTPErrorRule) error {
+	return validate(model, v.validateHTTPErrorRule)
+}
+
+// ValidateServerSwitchingRule validates a ServerSwitchingRule model.
+func (v *ValidatorSet) ValidateServerSwitchingRule(model *models.ServerSwitchingRule) error {
+	return validate(model, v.validateServerSwitchingRule)
+}
+
+// ValidateBackendSwitchingRule validates a BackendSwitchingRule model.
+func (v *ValidatorSet) ValidateBackendSwitchingRule(model *models.BackendSwitchingRule) error {
+	return validate(model, v.validateBackendSwitching)
+}
+
+// ValidateStickRule validates a StickRule model.
+func (v *ValidatorSet) ValidateStickRule(model *models.StickRule) error {
+	return validate(model, v.validateStickRule)
+}
+
+// ValidateACL validates an ACL model.
+func (v *ValidatorSet) ValidateACL(model *models.ACL) error {
+	return validate(model, v.validateACL)
+}
+
+// ValidateFilter validates a Filter model.
+func (v *ValidatorSet) ValidateFilter(model *models.Filter) error {
+	return validate(model, v.validateFilter)
+}
+
+// ValidateLogTarget validates a LogTarget model.
+func (v *ValidatorSet) ValidateLogTarget(model *models.LogTarget) error {
+	return validate(model, v.validateLogTarget)
+}
+
+// ValidateHTTPCheck validates an HTTPCheck model.
+func (v *ValidatorSet) ValidateHTTPCheck(model *models.HTTPCheck) error {
+	return validate(model, v.validateHTTPCheck)
+}
+
+// ValidateTCPCheck validates a TCPCheck model.
+func (v *ValidatorSet) ValidateTCPCheck(model *models.TCPCheck) error {
+	return validate(model, v.validateTCPCheck)
+}
+
+// ValidateCapture validates a Capture model.
+func (v *ValidatorSet) ValidateCapture(model *models.Capture) error {
+	return validate(model, v.validateCapture)
 }
 
 // ForVersion returns the ValidatorSet for a specific HAProxy version.
@@ -117,24 +197,6 @@ func init() {
 		validateHTTPCheck:           genvalidators.ValidateHttpCheckV30,
 		validateTCPCheck:            genvalidators.ValidateTcpCheckV30,
 		validateCapture:             genvalidators.ValidateCaptureV30,
-		hashServer:                  genvalidators.HashServerV30,
-		hashServerTemplate:          genvalidators.HashServerTemplateV30,
-		hashBind:                    genvalidators.HashBindV30,
-		hashHTTPRequestRule:         genvalidators.HashHttpRequestRuleV30,
-		hashHTTPResponseRule:        genvalidators.HashHttpResponseRuleV30,
-		hashTCPRequestRule:          genvalidators.HashTcpRequestRuleV30,
-		hashTCPResponseRule:         genvalidators.HashTcpResponseRuleV30,
-		hashHTTPAfterResponse:       genvalidators.HashHttpAfterResponseRuleV30,
-		hashHTTPErrorRule:           genvalidators.HashHttpErrorRuleV30,
-		hashServerSwitchingRule:     genvalidators.HashServerSwitchingRuleV30,
-		hashBackendSwitching:        genvalidators.HashBackendSwitchingRuleV30,
-		hashStickRule:               genvalidators.HashStickRuleV30,
-		hashACL:                     genvalidators.HashAclV30,
-		hashFilter:                  genvalidators.HashFilterV30,
-		hashLogTarget:               genvalidators.HashLogTargetV30,
-		hashHTTPCheck:               genvalidators.HashHttpCheckV30,
-		hashTCPCheck:                genvalidators.HashTcpCheckV30,
-		hashCapture:                 genvalidators.HashCaptureV30,
 	}
 
 	validatorSetV31 = &ValidatorSet{
@@ -156,24 +218,6 @@ func init() {
 		validateHTTPCheck:           genvalidators.ValidateHttpCheckV31,
 		validateTCPCheck:            genvalidators.ValidateTcpCheckV31,
 		validateCapture:             genvalidators.ValidateCaptureV31,
-		hashServer:                  genvalidators.HashServerV31,
-		hashServerTemplate:          genvalidators.HashServerTemplateV31,
-		hashBind:                    genvalidators.HashBindV31,
-		hashHTTPRequestRule:         genvalidators.HashHttpRequestRuleV31,
-		hashHTTPResponseRule:        genvalidators.HashHttpResponseRuleV31,
-		hashTCPRequestRule:          genvalidators.HashTcpRequestRuleV31,
-		hashTCPResponseRule:         genvalidators.HashTcpResponseRuleV31,
-		hashHTTPAfterResponse:       genvalidators.HashHttpAfterResponseRuleV31,
-		hashHTTPErrorRule:           genvalidators.HashHttpErrorRuleV31,
-		hashServerSwitchingRule:     genvalidators.HashServerSwitchingRuleV31,
-		hashBackendSwitching:        genvalidators.HashBackendSwitchingRuleV31,
-		hashStickRule:               genvalidators.HashStickRuleV31,
-		hashACL:                     genvalidators.HashAclV31,
-		hashFilter:                  genvalidators.HashFilterV31,
-		hashLogTarget:               genvalidators.HashLogTargetV31,
-		hashHTTPCheck:               genvalidators.HashHttpCheckV31,
-		hashTCPCheck:                genvalidators.HashTcpCheckV31,
-		hashCapture:                 genvalidators.HashCaptureV31,
 	}
 
 	validatorSetV32 = &ValidatorSet{
@@ -195,24 +239,6 @@ func init() {
 		validateHTTPCheck:           genvalidators.ValidateHttpCheckV32,
 		validateTCPCheck:            genvalidators.ValidateTcpCheckV32,
 		validateCapture:             genvalidators.ValidateCaptureV32,
-		hashServer:                  genvalidators.HashServerV32,
-		hashServerTemplate:          genvalidators.HashServerTemplateV32,
-		hashBind:                    genvalidators.HashBindV32,
-		hashHTTPRequestRule:         genvalidators.HashHttpRequestRuleV32,
-		hashHTTPResponseRule:        genvalidators.HashHttpResponseRuleV32,
-		hashTCPRequestRule:          genvalidators.HashTcpRequestRuleV32,
-		hashTCPResponseRule:         genvalidators.HashTcpResponseRuleV32,
-		hashHTTPAfterResponse:       genvalidators.HashHttpAfterResponseRuleV32,
-		hashHTTPErrorRule:           genvalidators.HashHttpErrorRuleV32,
-		hashServerSwitchingRule:     genvalidators.HashServerSwitchingRuleV32,
-		hashBackendSwitching:        genvalidators.HashBackendSwitchingRuleV32,
-		hashStickRule:               genvalidators.HashStickRuleV32,
-		hashACL:                     genvalidators.HashAclV32,
-		hashFilter:                  genvalidators.HashFilterV32,
-		hashLogTarget:               genvalidators.HashLogTargetV32,
-		hashHTTPCheck:               genvalidators.HashHttpCheckV32,
-		hashTCPCheck:                genvalidators.HashTcpCheckV32,
-		hashCapture:                 genvalidators.HashCaptureV32,
 	}
 
 	validatorSetV33 = &ValidatorSet{
@@ -234,23 +260,5 @@ func init() {
 		validateHTTPCheck:           genvalidators.ValidateHttpCheckV33,
 		validateTCPCheck:            genvalidators.ValidateTcpCheckV33,
 		validateCapture:             genvalidators.ValidateCaptureV33,
-		hashServer:                  genvalidators.HashServerV33,
-		hashServerTemplate:          genvalidators.HashServerTemplateV33,
-		hashBind:                    genvalidators.HashBindV33,
-		hashHTTPRequestRule:         genvalidators.HashHttpRequestRuleV33,
-		hashHTTPResponseRule:        genvalidators.HashHttpResponseRuleV33,
-		hashTCPRequestRule:          genvalidators.HashTcpRequestRuleV33,
-		hashTCPResponseRule:         genvalidators.HashTcpResponseRuleV33,
-		hashHTTPAfterResponse:       genvalidators.HashHttpAfterResponseRuleV33,
-		hashHTTPErrorRule:           genvalidators.HashHttpErrorRuleV33,
-		hashServerSwitchingRule:     genvalidators.HashServerSwitchingRuleV33,
-		hashBackendSwitching:        genvalidators.HashBackendSwitchingRuleV33,
-		hashStickRule:               genvalidators.HashStickRuleV33,
-		hashACL:                     genvalidators.HashAclV33,
-		hashFilter:                  genvalidators.HashFilterV33,
-		hashLogTarget:               genvalidators.HashLogTargetV33,
-		hashHTTPCheck:               genvalidators.HashHttpCheckV33,
-		hashTCPCheck:                genvalidators.HashTcpCheckV33,
-		hashCapture:                 genvalidators.HashCaptureV33,
 	}
 }

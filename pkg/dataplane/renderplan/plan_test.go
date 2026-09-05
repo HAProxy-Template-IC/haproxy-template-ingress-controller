@@ -49,6 +49,77 @@ func samplePlan() *renderplan.Plan {
 	}
 }
 
+func TestPlanCloneOwnsNestedState(t *testing.T) {
+	weight := 10
+	original := &renderplan.Plan{
+		SchemaVersion: renderplan.SchemaVersion,
+		ID:            "plan",
+		Sections:      []renderplan.Section{{Name: "section"}},
+		Backends: map[string]renderplan.Backend{
+			"backend": {
+				Name: "backend",
+				Servers: []renderplan.Server{{
+					Name: "server", Weight: &weight,
+					Extra: []renderplan.KeywordArg{{Name: "check", Args: []string{"one"}}},
+				}},
+				DefaultServer: []renderplan.KeywordArg{{Name: "inter", Args: []string{"1s"}}},
+			},
+		},
+		Profiles: map[string]renderplan.Profile{"profile": {Name: "profile"}},
+		Maps: map[string]renderplan.Map{
+			"map": {Path: "map", Entries: []renderplan.Entry{{Key: "key", Value: "value"}}},
+		},
+		CRTLists: map[string]renderplan.CRTList{
+			"list": {
+				Path: "list",
+				Entries: []renderplan.CRTListEntry{{
+					Cert:       "cert",
+					Options:    []renderplan.KeywordArg{{Name: "alpn", Args: []string{"h2"}}},
+					SNIFilters: []string{"example.test"},
+				}},
+			},
+		},
+		Files: []renderplan.File{{Path: "file"}},
+	}
+	cloned := original.Clone()
+	require.Equal(t, original, cloned)
+
+	original.Sections[0].Name = "poison"
+	backend := original.Backends["backend"]
+	backend.Servers[0].Name = "poison"
+	*backend.Servers[0].Weight = 99
+	backend.Servers[0].Extra[0].Args[0] = "poison"
+	backend.DefaultServer[0].Args[0] = "poison"
+	original.Backends["backend"] = backend
+	original.Profiles["profile"] = renderplan.Profile{Name: "poison"}
+	sourceMap := original.Maps["map"]
+	sourceMap.Entries[0].Value = "poison"
+	original.Maps["map"] = sourceMap
+	crtList := original.CRTLists["list"]
+	crtList.Entries[0].Options[0].Args[0] = "poison"
+	crtList.Entries[0].SNIFilters[0] = "poison"
+	original.CRTLists["list"] = crtList
+	original.Files[0].Path = "poison"
+
+	assert.Equal(t, "section", cloned.Sections[0].Name)
+	assert.Equal(t, "server", cloned.Backends["backend"].Servers[0].Name)
+	assert.Equal(t, 10, *cloned.Backends["backend"].Servers[0].Weight)
+	assert.Equal(t, "one", cloned.Backends["backend"].Servers[0].Extra[0].Args[0])
+	assert.Equal(t, "1s", cloned.Backends["backend"].DefaultServer[0].Args[0])
+	assert.Equal(t, "profile", cloned.Profiles["profile"].Name)
+	assert.Equal(t, "value", cloned.Maps["map"].Entries[0].Value)
+	assert.Equal(t, "h2", cloned.CRTLists["list"].Entries[0].Options[0].Args[0])
+	assert.Equal(t, "example.test", cloned.CRTLists["list"].Entries[0].SNIFilters[0])
+	assert.Equal(t, "file", cloned.Files[0].Path)
+	cloned.Backends["backend"].Servers[0].Extra[0].Args[0] = "clone-only"
+	assert.Equal(t, "poison", original.Backends["backend"].Servers[0].Extra[0].Args[0])
+	emptyClone := (&renderplan.Plan{}).Clone()
+	assert.Nil(t, emptyClone.Backends)
+	assert.Nil(t, emptyClone.Maps)
+	assert.Nil(t, emptyClone.CRTLists)
+	assert.Nil(t, (*renderplan.Plan)(nil).Clone())
+}
+
 func TestPlanCanonicalIsDeterministic(t *testing.T) {
 	first := samplePlan()
 	second := samplePlan()

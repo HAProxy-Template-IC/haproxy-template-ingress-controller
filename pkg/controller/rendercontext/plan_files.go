@@ -31,6 +31,8 @@ func (r *PlanRegistry) planFiles(config string, aux *dataplane.AuxiliaryFiles) (
 		ReloadOnChange: true,
 		Digest:         renderplan.DigestString(config),
 		Size:           int64(len(config)),
+		Content:        config,
+		ContentKnown:   true,
 	}}
 	if aux == nil {
 		return files, nil, nil
@@ -82,5 +84,7 @@ func planFile(path, kind string, reloadOnChange bool, content string) renderplan
 		ReloadOnChange: reloadOnChange,
 		Digest:         renderplan.DigestString(content),
 		Size:           int64(len(content)),
+		Content:        content,
+		ContentKnown:   true,
 	}
 }

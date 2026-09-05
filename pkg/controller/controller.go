@@ -277,11 +277,11 @@ func (e *persistentWebhookServerError) Unwrap() error {
 }
 
 // ReinitGraceWindow is how long after a voluntary iteration restart /healthz
-// keeps reporting healthy while components re-initialize. Sized to cover a
-// slow reinit (embedded validationTests + watcher re-sync + leader
-// re-acquisition) while staying well below the fresh-pod startup budget the
-// liveness restart would fall back to.
-const ReinitGraceWindow = 90 * time.Second
+// keeps reporting healthy while components re-initialize. A reinit re-runs the
+// load gate, so this MUST exceed initialValidationTestsRunTimeout: below it a
+// gate that legitimately uses its budget trips liveness and restarts an
+// advancing controller, costing the fleet another full rebuild.
+const ReinitGraceWindow = initialValidationTestsRunTimeout + 45*time.Second
 
 // EnsureWebhookServer returns the process-lifetime admission listener, creating
 // and starting it on the first call and returning the same server afterwards.

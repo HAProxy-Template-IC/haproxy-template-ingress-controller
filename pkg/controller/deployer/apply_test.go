@@ -16,6 +16,7 @@ package deployer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -37,45 +38,63 @@ import (
 // one map file. The plan describes exactly the bytes the deployment carries, so
 // the digests the manifest declares are the digests of the parts it sends.
 func renderFor(id, address, mapContent string) (*renderplan.Plan, string, *dataplane.AuxiliaryFiles) {
-	config := "backend be_app\n  server srv1 " + address + ":8080\n"
+	_ = id
+	profileText := "defaults\n  mode http\n"
+	backendText := "backend be_app\n  server srv1 " + address + ":8080\n"
+	config := profileText + backendText
 	backend := renderplan.Backend{
 		Name:           "be_app",
 		Profile:        "http",
 		Mode:           "http",
 		Shape:          renderplan.ShapeDynamic,
 		Servers:        []renderplan.Server{{Name: "srv1", Address: address, Port: 8080}},
-		BodyDigest:     "body",
-		CommentsDigest: "comments",
-		RecordDigest:   "record-" + address,
-		TextDigest:     "text-" + address,
+		BodyDigest:     renderplan.DigestString("body"),
+		CommentsDigest: renderplan.DigestString("comments"),
+		TextDigest:     renderplan.DigestString(backendText),
+		Body:           []string{"body"},
+		Comments:       []string{"comments"},
+		ContentKnown:   true,
 	}
+	backend.RecordDigest = testBackendRecordDigest(&backend)
 	plan := &renderplan.Plan{
 		SchemaVersion: renderplan.SchemaVersion,
-		ID:            id,
 		Sections: []renderplan.Section{
-			{Kind: renderplan.SectionKindBackend, Name: "be_app", TextDigest: backend.TextDigest},
+			{Kind: renderplan.SectionKindProfile, Name: "http", TextDigest: renderplan.DigestString(profileText), Length: len(profileText), Text: profileText, TextKnown: true},
+			{Kind: renderplan.SectionKindBackend, Name: "be_app", TextDigest: backend.TextDigest, Length: len(backendText), Text: backendText, TextKnown: true},
 		},
 		Backends: map[string]renderplan.Backend{"be_app": backend},
-		Profiles: map[string]renderplan.Profile{"http": {Name: "http", BodyDigest: "profile"}},
+		Profiles: map[string]renderplan.Profile{"http": {Name: "http", BodyDigest: renderplan.DigestString("  mode http\n")}},
 		Maps: map[string]renderplan.Map{"maps/host.map": {
 			Path:    "maps/host.map",
-			Entries: []renderplan.Entry{{Key: "example.com", Value: "be_app"}},
+			Entries: renderplan.ParseMapEntries(mapContent),
 		}},
 		Files: []renderplan.File{
 			{
 				Path: "haproxy.cfg", Kind: renderplan.FileKindConfig, ReloadOnChange: true,
-				Digest: renderplan.DigestString(config), Size: int64(len(config)),
+				Digest: renderplan.DigestString(config), Size: int64(len(config)), Content: config, ContentKnown: true,
 			},
 			{
 				Path: "maps/host.map", Kind: renderplan.FileKindMap,
-				Digest: renderplan.DigestString(mapContent), Size: int64(len(mapContent)),
+				Digest: renderplan.DigestString(mapContent), Size: int64(len(mapContent)), Content: mapContent, ContentKnown: true,
 			},
 		},
 	}
 	aux := &dataplane.AuxiliaryFiles{
 		MapFiles: []auxiliaryfiles.MapFile{{Path: "maps/host.map", Content: mapContent}},
 	}
+	plan.ComputeID()
 	return plan, config, aux
+}
+
+func testBackendRecordDigest(backend *renderplan.Backend) string {
+	record := *backend
+	record.RecordDigest = ""
+	record.TextDigest = ""
+	encoded, err := json.Marshal(&record)
+	if err != nil {
+		panic(err)
+	}
+	return renderplan.Digest(encoded)
 }
 
 const mapEntry = "example.com be_app\n"
@@ -84,65 +103,85 @@ const mapEntry = "example.com be_app\n"
 // the diff past one apply's op cap. addressOffset moves every server, so the
 // diff between two of these is one op per server.
 func renderWithServers(id string, addressOffset int) (*renderplan.Plan, string, *dataplane.AuxiliaryFiles) {
+	_ = id
 	const servers = api.MaxOpsPerApply + 1
-	config := "backend be_app\n"
+	profileText := "defaults\n  mode http\n"
+	backendText := "backend be_app\n"
 	list := make([]renderplan.Server, 0, servers)
 	for i := range servers {
 		name := fmt.Sprintf("srv%d", i)
 		address := fmt.Sprintf("10.%d.%d.%d", addressOffset, i/250, i%250)
 		list = append(list, renderplan.Server{Name: name, Address: address, Port: 8080})
-		config += "  server " + name + " " + address + ":8080\n"
+		backendText += "  server " + name + " " + address + ":8080\n"
 	}
+	config := profileText + backendText
 	backend := renderplan.Backend{
 		Name: "be_app", Profile: "http", Mode: "http", Shape: renderplan.ShapeDynamic,
 		Servers:      list,
-		BodyDigest:   "body",
-		RecordDigest: fmt.Sprintf("record-%d", addressOffset),
-		TextDigest:   fmt.Sprintf("text-%d", addressOffset),
+		BodyDigest:   renderplan.DigestString("body"),
+		RecordDigest: "",
+		TextDigest:   renderplan.DigestString(backendText),
+		Body:         []string{"body"},
+		ContentKnown: true,
 	}
+	backend.CommentsDigest = renderplan.DigestString("")
+	backend.RecordDigest = testBackendRecordDigest(&backend)
 	plan := &renderplan.Plan{
 		SchemaVersion: renderplan.SchemaVersion,
-		ID:            id,
 		Sections: []renderplan.Section{
-			{Kind: renderplan.SectionKindBackend, Name: "be_app", TextDigest: backend.TextDigest},
+			{Kind: renderplan.SectionKindProfile, Name: "http", TextDigest: renderplan.DigestString(profileText), Length: len(profileText), Text: profileText, TextKnown: true},
+			{Kind: renderplan.SectionKindBackend, Name: "be_app", TextDigest: backend.TextDigest, Length: len(backendText), Text: backendText, TextKnown: true},
 		},
 		Backends: map[string]renderplan.Backend{"be_app": backend},
-		Profiles: map[string]renderplan.Profile{"http": {Name: "http", BodyDigest: "profile"}},
+		Profiles: map[string]renderplan.Profile{"http": {Name: "http", BodyDigest: renderplan.DigestString("  mode http\n")}},
 		Files: []renderplan.File{{
 			Path: "haproxy.cfg", Kind: renderplan.FileKindConfig, ReloadOnChange: true,
-			Digest: renderplan.DigestString(config), Size: int64(len(config)),
+			Digest: renderplan.DigestString(config), Size: int64(len(config)), Content: config, ContentKnown: true,
 		}},
 	}
+	plan.ComputeID()
 	return plan, config, &dataplane.AuxiliaryFiles{}
 }
 
 // renderWithBackends builds a render carrying one dynamic backend per name, so
 // the diff between two of them composes a backend removal.
 func renderWithBackends(id string, names ...string) (*renderplan.Plan, string, *dataplane.AuxiliaryFiles) {
-	config := ""
+	_ = id
+	profileText := "defaults\n  mode http\n"
+	config := profileText
 	plan := &renderplan.Plan{
 		SchemaVersion: renderplan.SchemaVersion,
-		ID:            id,
-		Backends:      map[string]renderplan.Backend{},
-		Profiles:      map[string]renderplan.Profile{"http": {Name: "http", BodyDigest: "profile"}},
+		Sections: []renderplan.Section{{
+			Kind: renderplan.SectionKindProfile, Name: "http", TextDigest: renderplan.DigestString(profileText),
+			Length: len(profileText), Text: profileText, TextKnown: true,
+		}},
+		Backends: map[string]renderplan.Backend{},
+		Profiles: map[string]renderplan.Profile{"http": {Name: "http", BodyDigest: renderplan.DigestString("  mode http\n")}},
 	}
 	for _, name := range names {
-		config += "backend " + name + "\n  server srv1 10.0.0.1:8080\n"
-		plan.Backends[name] = renderplan.Backend{
+		sectionText := "backend " + name + "\n  server srv1 10.0.0.1:8080\n"
+		config += sectionText
+		backend := renderplan.Backend{
 			Name: name, Profile: "http", Mode: "http", Shape: renderplan.ShapeDynamic,
 			Servers:      []renderplan.Server{{Name: "srv1", Address: "10.0.0.1", Port: 8080}},
-			BodyDigest:   "body-" + name,
-			RecordDigest: "record-" + name,
-			TextDigest:   "text-" + name,
+			BodyDigest:   renderplan.DigestString("body-" + name),
+			TextDigest:   renderplan.DigestString(sectionText),
+			Body:         []string{"body-" + name},
+			ContentKnown: true,
 		}
+		backend.CommentsDigest = renderplan.DigestString("")
+		backend.RecordDigest = testBackendRecordDigest(&backend)
+		plan.Backends[name] = backend
 		plan.Sections = append(plan.Sections, renderplan.Section{
-			Kind: renderplan.SectionKindBackend, Name: name, TextDigest: "text-" + name,
+			Kind: renderplan.SectionKindBackend, Name: name, TextDigest: backend.TextDigest,
+			Length: len(sectionText), Text: sectionText, TextKnown: true,
 		})
 	}
 	plan.Files = []renderplan.File{{
 		Path: "haproxy.cfg", Kind: renderplan.FileKindConfig, ReloadOnChange: true,
-		Digest: renderplan.DigestString(config), Size: int64(len(config)),
+		Digest: renderplan.DigestString(config), Size: int64(len(config)), Content: config, ContentKnown: true,
 	}}
+	plan.ComputeID()
 	return plan, config, &dataplane.AuxiliaryFiles{}
 }
 
@@ -152,8 +191,11 @@ func deployTo(t *testing.T, component *Component, bus *deployerBus, plan *render
 	config string, aux *dataplane.AuxiliaryFiles, reason string, endpoints ...dataplane.Endpoint,
 ) *events.DeploymentCompletedEvent {
 	t.Helper()
-	event := events.NewDeploymentScheduledEvent(config, aux, endpoints,
-		"rt-cfg-1", "haptic", reason, "checksum-"+plan.ID, plan, plan.ID, nil, true)
+	occurrence := mustOccurrenceFor(plan, config, aux, nil)
+	event, err := events.NewDeploymentScheduledEventWithCycle(
+		occurrence, endpoints, "rt-cfg-1", "haptic", reason, true,
+	)
+	require.NoError(t, err)
 	component.deployToEndpoints(context.Background(), func() {}, event, "deployment-"+plan.ID)
 	return testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, bus.Events, testutil.LongTimeout)
 }
@@ -272,8 +314,10 @@ func TestApply_DriftPassVerifiesTheTree(t *testing.T) {
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	plan, config, aux := renderFor("plan-1", "10.0.0.1", mapEntry)
-	deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
-	component.SetValidatedPlan(plan.ID)
+	initial := deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
+	occurrence, err := initial.RenderOccurrence()
+	require.NoError(t, err)
+	component.SetValidatedOccurrence(occurrence)
 
 	completed := deployTo(t, component, bus, plan, config, aux, events.TriggerReasonDriftPrevention, endpoint)
 
@@ -555,7 +599,7 @@ func TestApply_AckedPlanReachesTheRenderer(t *testing.T) {
 	deployTo(t, component, bus, plan, config, aux, "config_validation", agentEndpoint(agent, "haproxy-0"))
 
 	require.Len(t, sink.plans, 1)
-	assert.Same(t, plan, sink.plans[0])
+	assert.True(t, exactPlan(plan, sink.plans[0]))
 }
 
 // Every pod gets the render, and the fleet's answer is the completion.
@@ -634,9 +678,7 @@ func TestApply_ManifestCarriesTheFencingToken(t *testing.T) {
 	assert.Equal(t, applies[0].Manifest.Token, applies[1].Manifest.ExpectedPrevToken)
 }
 
-// A render without a plan cannot be turned into a manifest at all. It must
-// report as a failed deployment rather than silently reaching no pod.
-func TestApply_RenderWithoutAPlanFailsLoudly(t *testing.T) {
+func TestApplyLegacyScheduledEventIsIgnored(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
 	component := createTestDeployer(bus.EventBus)
@@ -646,15 +688,13 @@ func TestApply_RenderWithoutAPlanFailsLoudly(t *testing.T) {
 		"rt-cfg-1", "haptic", "config_validation", "checksum", nil, "", nil, true)
 	component.deployToEndpoints(context.Background(), func() {}, event, "deployment-1")
 
-	completed := testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, bus.Events, testutil.LongTimeout)
-	assert.Equal(t, 1, completed.Failed)
+	testutil.AssertNoEvent[*events.DeploymentCompletedEvent](t, bus.Events, testutil.NoEventTimeout)
 	assert.Empty(t, agent.Applies())
 }
 
-// A new leader starts with a cold plan cache. It must recover every pod's
-// baseline from the blob the pod stored — otherwise its first deployment
-// reloads the whole fleet for a change HAProxy could have taken at runtime.
-func TestApply_LeaderChangeReloadsNothing(t *testing.T) {
+// A new leader starts without controller-local proof bindings. It sends the
+// complete exact file set once instead of trusting an opaque persisted blob.
+func TestApply_LeaderChangeForcesOneExactReload(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
 	endpoint := agentEndpoint(agent, "haproxy-0")
@@ -678,11 +718,11 @@ func TestApply_LeaderChangeReloadsNothing(t *testing.T) {
 	require.Equal(t, 1, completed.Succeeded)
 	applies := agent.Applies()
 	require.Len(t, applies, 3)
-	assert.Equal(t, api.ResultRuntime, applies[2].Result.Mode,
-		"a leader change must cost no reload: the pod's own blob is the baseline")
+	assert.Equal(t, api.ResultReload, applies[2].Result.Mode,
+		"a controller restart must not infer exact equality from an opaque persisted blob")
 	assert.Equal(t, uint64(2), applies[2].Manifest.Token.LeaderEpoch)
 	assert.NotEmpty(t, applies[2].Plan, "the new leader restamps the blob with its own epoch")
-	assert.Equal(t, 0, completed.ReloadsTriggered)
+	assert.Equal(t, 1, completed.ReloadsTriggered)
 }
 
 // A pod already on this render holds the blob that describes it, so the apply
@@ -719,8 +759,8 @@ func TestApply_ChunkedApplyCarriesThePlanBlobOnce(t *testing.T) {
 
 	applies := agent.Applies()
 	require.Len(t, applies, 3)
-	assert.NotEmpty(t, applies[1].Plan)
-	assert.Empty(t, applies[2].Plan)
+	assert.Empty(t, applies[1].Plan)
+	assert.NotEmpty(t, applies[2].Plan)
 	assert.NotEmpty(t, agent.State().AppliedPlan, "the pod must still answer with a baseline")
 }
 
@@ -832,11 +872,14 @@ func TestApply_PlanCacheRetainsWhatTheFleetRuns(t *testing.T) {
 		deployTo(t, component, bus, plan, config, aux, "config_validation", endpoint)
 	}
 
-	assert.Nil(t, component.plans.Plan("plan-2"),
-		"no pod applies, runs or has worker ops from the middle render any more")
-	assert.NotNil(t, component.plans.Plan("plan-1"),
+	state := agent.State()
+	authority := podKey(&endpoint)
+	assert.NotNil(t, component.plans.Plan(authority, state.RunningPlanID, state.RunningPlanProof),
 		"the runtime applies never reloaded, so the worker still runs the first render")
-	assert.NotNil(t, component.plans.Plan("plan-3"))
+	assert.NotNil(t, component.plans.Plan(authority, state.AppliedPlanID, state.AppliedPlanProof))
+	component.plans.mu.Lock()
+	assert.Len(t, component.plans.plans, 2, "the unreferenced middle render was retired")
+	component.plans.mu.Unlock()
 }
 
 // A pod that failed still holds the plans it reported, so they are not the
@@ -863,9 +906,10 @@ func TestApply_PlanCacheKeepsTheBaselineOfAFailedPod(t *testing.T) {
 		healthyEndpoint, sickEndpoint)
 	require.Equal(t, 1, completed.Failed)
 
-	assert.NotNil(t, component.plans.Plan("plan-2"),
+	sickState := sick.State()
+	assert.NotNil(t, component.plans.Plan(podKey(&sickEndpoint), sickState.AppliedPlanID, sickState.AppliedPlanProof),
 		"the pod whose apply failed still applies the render before it")
-	assert.NotNil(t, component.plans.Plan("plan-1"),
+	assert.NotNil(t, component.plans.Plan(podKey(&sickEndpoint), sickState.RunningPlanID, sickState.RunningPlanProof),
 		"the worker of both pods still runs the first render")
 }
 
@@ -888,7 +932,9 @@ func TestApply_PlanCacheSurvivesARoundEveryPodFails(t *testing.T) {
 	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoints...)
 	require.Equal(t, 2, completed.Failed)
 
-	assert.NotNil(t, component.plans.Plan("plan-1"), "both pods still hold the first render")
+	state := first.State()
+	assert.NotNil(t, component.plans.Plan(podKey(&endpoints[0]), state.AppliedPlanID, state.AppliedPlanProof),
+		"both pods still hold the first render")
 }
 
 // While a reload is pending, an in-place batch moves the worker to a plan that
@@ -966,6 +1012,8 @@ func TestApply_ObservedReloadPublishesTheEarlierRendersStatus(t *testing.T) {
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
 	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
 	require.Equal(t, 1, completed.PendingReloads)
+	secondOccurrence, err := completed.RenderOccurrence()
+	require.NoError(t, err)
 	testutil.AssertNoEvent[*events.DeploymentSkippedEvent](t, bus.Events, testutil.NoEventTimeout)
 
 	// The reload fires and the next render arrives inside the next window.
@@ -978,7 +1026,9 @@ func TestApply_ObservedReloadPublishesTheEarlierRendersStatus(t *testing.T) {
 
 	observed := testutil.WaitForEvent[*events.DeploymentSkippedEvent](t, bus.Events, testutil.LongTimeout)
 	assert.Equal(t, events.SkipReasonReloadObserved, observed.Reason)
-	assert.Equal(t, "checksum-"+plan2.ID, observed.ConfigHash, "the render the fleet was observed running")
+	observedOccurrence, err := observed.RenderOccurrence()
+	require.NoError(t, err)
+	assert.True(t, sameOccurrence(secondOccurrence, observedOccurrence))
 	assert.Equal(t, 1, observed.Total)
 
 	// Once the fleet converges on the newest render its own completion

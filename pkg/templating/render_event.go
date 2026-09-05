@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"cmp"
 	"errors"
 	"sort"
 	"sync"
@@ -49,25 +50,19 @@ const (
 	EventTypeNormal  = "Normal"
 )
 
-// renderedEventKey deduplicates identical events. The full tuple is the key:
-// the same (resource, type, reason, message) emitted many times during a render
-// — e.g. once per shard, or once per map file the losing path renders into —
-// collapses to a single event.
-func renderedEventKey(e *RenderedEvent) string {
-	return e.Namespace + "/" + e.Name + "/" + e.APIVersion + "/" + e.Kind + "/" + e.Type + "/" + e.Reason + "/" + e.Message
-}
-
 // EventCollector collects Events registered by templates during rendering.
 // It is thread-safe for concurrent writes from parallel template goroutines and
 // created per render cycle (same lifecycle as StatusPatchCollector).
 type EventCollector struct {
-	mu     sync.Mutex
-	events map[string]RenderedEvent // keyed by renderedEventKey
+	mu       sync.Mutex
+	events   map[RenderedEvent]struct{}
+	frozen   bool
+	snapshot *RenderedEventSnapshot
 }
 
 // NewEventCollector creates a new thread-safe collector.
 func NewEventCollector() *EventCollector {
-	return &EventCollector{events: make(map[string]RenderedEvent)}
+	return &EventCollector{events: make(map[RenderedEvent]struct{})}
 }
 
 // Register records an Event to emit. Duplicate (resource, type, reason, message)
@@ -96,7 +91,10 @@ func (c *EventCollector) Register(namespace, name, apiVersion, kind, eventType, 
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.events[renderedEventKey(&e)] = e
+	if c.frozen {
+		return errors.New("recordEvent: collector is sealed")
+	}
+	c.events[e] = struct{}{}
 	return nil
 }
 
@@ -106,16 +104,37 @@ func (c *EventCollector) Register(namespace, name, apiVersion, kind, eventType, 
 func (c *EventCollector) Events() []RenderedEvent {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	keys := make([]string, 0, len(c.events))
-	for k := range c.events {
-		keys = append(keys, k)
+	if c.snapshot != nil {
+		return cloneRenderedEvents(c.snapshot.storage.events)
 	}
-	sort.Strings(keys)
 
-	result := make([]RenderedEvent, 0, len(keys))
-	for _, k := range keys {
-		result = append(result, c.events[k])
+	result := make([]RenderedEvent, 0, len(c.events))
+	for event := range c.events {
+		result = append(result, cloneRenderedEvent(&event))
 	}
+	sortRenderedEvents(result)
 	return result
+}
+
+func sortRenderedEvents(events []RenderedEvent) {
+	sort.Slice(events, func(left, right int) bool {
+		return compareRenderedEvents(&events[left], &events[right]) < 0
+	})
+}
+
+func compareRenderedEvents(left, right *RenderedEvent) int {
+	for _, values := range [][2]string{
+		{left.Namespace, right.Namespace},
+		{left.Name, right.Name},
+		{left.APIVersion, right.APIVersion},
+		{left.Kind, right.Kind},
+		{left.Type, right.Type},
+		{left.Reason, right.Reason},
+		{left.Message, right.Message},
+	} {
+		if compared := cmp.Compare(values[0], values[1]); compared != 0 {
+			return compared
+		}
+	}
+	return 0
 }

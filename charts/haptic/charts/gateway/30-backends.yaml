@@ -2,20 +2,30 @@ templateSnippets:
   util-generate-httproute-backends-gateway:
     requires: [gateways, httproutes, referencegrants]
     template: |
-      {%- import "util-backend" for Backend, FlagsToKeywordArgs -%}
-      {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-backend" for FlagsToKeywordArgs, PrepareBackend -%}
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {%- macro GenerateHTTPRouteBackends(routes []*resources.httproutes.T, dedupCategory string) -%}
-        {%- _ = render "util-backendtlspolicies-contrib" default "" -%}
+      {%- macro GenerateHTTPRouteBackends(routes []any, dedupCategory string) -%}
       {%- for _, route := range routes -%}
-      {%- var routeNs = route.Metadata.Namespace -%}
-      {%- var routeName = route.Metadata.Name -%}
-      {%- for _, rule := range route.Spec.Rules -%}
-      {%- var backendRefs = rule.BackendRefs -%}
+      {%- var routeNs = dig_string(route, "", "metadata", "namespace") -%}
+      {%- var routeName = dig_string(route, "", "metadata", "name") -%}
+      {%- var backendFiles = []any{} -%}
+      {%- var seenBackends = map[string]bool{} -%}
+      {%- var FilePath = func(fileType string, filename string) string {
+        var base = tostring(props["fileDir"])
+        if fileType == "map" { base = tostring(props["mapDir"]) }
+        if base == "" { return filename }
+        return base + "/" + filename
+      } -%}
+      {%- var RegisterBackendFile = func(fileType string, filename string, content string) (string, error) {
+        backendFiles = append(backendFiles, map[string]any{
+          "type": fileType, "filename": filename, "content": content,
+        })
+        return FilePath(fileType, filename), nil
+      } -%}
+      {%- for _, rule := range toSlice(dig(route, "spec", "rules")) -%}
+      {%- var backendRefs = toSlice(dig(rule, "backendRefs")) -%}
       {%- if len(backendRefs) > 0 %}
       {%- for _, backendRef := range backendRefs -%}
       {#- Only a valid ref (core/v1 Service that exists, ReferenceGrant-covered)
@@ -25,16 +35,17 @@ templateSnippets:
       {%- if BackendRefValid("HTTPRoute", routeNs, backendRef) != "true" -%}
         {%- continue -%}
       {%- end -%}
-      {%- var backendName = backendRef.Name -%}
-      {%- var backendPort = toint(backendRef.Port) -%}
+      {%- var backendName = dig_string(backendRef, "", "name") -%}
+      {%- var backendPort = toint(dig(backendRef, "port") | fallback(0)) -%}
       {%- if backendPort == 0 %}{%- backendPort = 80 %}{%- end -%}
       {#- Cross-namespace ref: the Service and its EndpointSlices live in
           backendNs, so endpoint resolution below must use it, not routeNs. -#}
-      {%- var backendNs = backendRef.Namespace -%}
+      {%- var backendNs = dig_string(backendRef, "", "namespace") -%}
       {%- if backendNs == "" %}{%- backendNs = routeNs %}{%- end -%}
       {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
       {%- var backendKey = backendNs + "_" + routeNs + "_" + routeName + "_" + backendName + "_" + tostring(backendPort) -%}
-      {%- if first_seen(dedupCategory, backendKey) -%}
+      {%- if !seenBackends[backendKey] -%}
+      {%- seenBackends[backendKey] = true -%}
       {%- var protoFlag = "" -%}
       {%- var routeTypeLabel = "HTTPRoute" -%}
       {%- var beKey = BackendNameGateway(route, backend) -%}
@@ -70,57 +81,10 @@ templateSnippets:
             }
           }
         }
-        // Untyped: typed access would strip ALL gateway backends on clusters
-        // without the BackendTLSPolicy CRD (Gateway API < v1.4 standard).
-        var btpSeamRaw = shared.Get("backendtlspoliciesUntyped")
-        var btpAll = []any{}
-        if btpSeamRaw != nil {
-          var btpSeamAll, btpSeamOk = btpSeamRaw.(map[string]any)["all"].([]any)
-          if btpSeamOk { btpAll = btpSeamAll }
-        }
-        var winningPolicy any = nil
-        var winningPolicyTs = ""
-        var winningPolicyKey = ""
-        for _, pol := range btpAll {
-          var polNs = dig_string(pol, "", "metadata", "namespace")
-          if polNs != tostring(backendNs) {
-            continue
-          }
-          for _, tr := range dig(pol, "spec", "targetRefs") | toSlice() {
-            var trGroup = dig_string(tr, "", "group")
-            var trKind = dig_string(tr, "", "kind")
-            var trName = dig_string(tr, "", "name")
-            var trSec = dig_string(tr, "", "sectionName")
-            if (trGroup != "" && trGroup != "core") || trKind != "Service" {
-              continue
-            }
-            if trName != tostring(backendName) {
-              continue
-            }
-            if trSec != "" && trSec != portNameForBackend {
-              continue
-            }
-            // Tiebreak: earliest creationTimestamp, then namespace/name.
-            var polTs = dig_string(pol, "", "metadata", "creationTimestamp")
-            var polKey = polNs + "/" + dig_string(pol, "", "metadata", "name")
-            if winningPolicy == nil {
-              winningPolicy = pol
-              winningPolicyTs = polTs
-              winningPolicyKey = polKey
-            } else if polTs != "" && (winningPolicyTs == "" || polTs < winningPolicyTs) {
-              winningPolicy = pol
-              winningPolicyTs = polTs
-              winningPolicyKey = polKey
-            } else if polTs == winningPolicyTs && polKey < winningPolicyKey {
-              winningPolicy = pol
-              winningPolicyTs = polTs
-              winningPolicyKey = polKey
-            }
-            break
-          }
-        }
+        var policyTarget = tostring(backendNs) + "\x00" + tostring(backendName) + "\x00" + portNameForBackend
+        var winningPolicy, _ = shared.Select("gateway-backend-tls-policies", "targets", policyTarget)
         if winningPolicy != nil {
-          var validation any = dig(winningPolicy, "spec", "validation")
+          var validation any = dig(winningPolicy, "validation")
           btlsHostname = dig_string(validation, "", "hostname")
           // verifyhost takes the FIRST Hostname SAN if any, else hostname
           // (HAProxy verifyhost is single-valued; SAN OR-lists / URI SANs
@@ -173,11 +137,11 @@ templateSnippets:
           var wkca = dig_string(validation, "", "wellKnownCACertificates")
           if len(caBundleParts) > 0 {
             var caBundle = join(caBundleParts, "\n")
-            var policyName = dig_string(winningPolicy, "", "metadata", "name")
+            var policyName = dig_string(winningPolicy, "", "name")
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
             // Type "ca-file" (not "file"): same path, but a content-only
             // rotation then applies via the runtime API, no reload on 3.2+.
-            var resolvedPath, fileErr = fileRegistry.Register("ca-file", caFilename, caBundle)
+            var resolvedPath, fileErr = RegisterBackendFile("ca-file", caFilename, caBundle)
             if fileErr == nil {
               btlsCaPath = resolvedPath
             }
@@ -190,20 +154,20 @@ templateSnippets:
             btlsBroken = true
           }
         }
-        for _, parentRef := range route.Spec.ParentRefs {
+        for _, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
           if gwClientCertPath != "" {
             break
           }
-          var prGroup = parentRef.Group
+          var prGroup = dig_string(parentRef, "", "group")
           if prGroup == "" { prGroup = "gateway.networking.k8s.io" }
-          var prKind = parentRef.Kind
+          var prKind = dig_string(parentRef, "", "kind")
           if prKind == "" { prKind = "Gateway" }
           if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
             continue
           }
-          var gwNs = parentRef.Namespace
+          var gwNs = dig_string(parentRef, "", "namespace")
           if gwNs == "" { gwNs = routeNs }
-          var gwName = parentRef.Name
+          var gwName = dig_string(parentRef, "", "name")
           var gw = resources.gateways.GetSingle(gwNs, gwName)
           if gw == nil {
             continue
@@ -242,7 +206,7 @@ templateSnippets:
           // Type "cert" lands the file under ssl/, and HAProxy's
           // `crt-base ssl` prepends ssl/ again — so emit the bare filename,
           // not the path fileRegistry returns.
-          var _, fErr = fileRegistry.Register("cert", fname, combined)
+          var _, fErr = RegisterBackendFile("cert", fname, combined)
           if fErr == nil {
             gwClientCertPath = fname
           }
@@ -305,13 +269,14 @@ templateSnippets:
         // wins. retry.backoff has no HAProxy equivalent and is dropped.
         if protoFlag == "" {
           var retryFound = false
-          for _, rl := range route.Spec.Rules {
+          for _, rl := range toSlice(dig(route, "spec", "rules")) {
             if retryFound {
               continue
             }
             var rlReferencesBackend = false
-            for _, bRef := range rl.BackendRefs {
-              if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) {
+            for _, bRef := range toSlice(dig(rl, "backendRefs")) {
+              if dig_string(bRef, "", "name") == backendName &&
+                toint(dig(bRef, "port") | fallback(0)) == toint(backendPort) {
                 rlReferencesBackend = true
               }
             }
@@ -343,7 +308,7 @@ templateSnippets:
         // for this backend wins. type: Header is not implemented (no stick-table
         // key for a dynamically-named header).
         var spCookieEmitted = false
-        for _, rl := range route.Spec.Rules {
+        for _, rl := range toSlice(dig(route, "spec", "rules")) {
           if spCookieEmitted {
             continue
           }
@@ -352,8 +317,9 @@ templateSnippets:
             continue
           }
           var refsThis = false
-          for _, bRef := range rl.BackendRefs {
-            if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) {
+          for _, bRef := range toSlice(dig(rl, "backendRefs")) {
+            if dig_string(bRef, "", "name") == backendName &&
+              toint(dig(bRef, "port") | fallback(0)) == toint(backendPort) {
               refsThis = true
             }
           }
@@ -373,7 +339,7 @@ templateSnippets:
           profile = append(profile,
             "# GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity",
             cookieDir,
-            "dynamic-cookie-key " + tostring(extraContext | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
+            "dynamic-cookie-key " + tostring(props | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
           spCookieEmitted = true
         }
 
@@ -381,14 +347,13 @@ templateSnippets:
         // set: one line for every rule this backend serves, its value from a
         // map. `set-timeout server` is backend-only, which is why it is here
         // and not with the other map-driven filters.
-        var toMap, toErr = pathResolver.GetPath("gw-timeout.map", "map")
-        if toErr != nil {
-          fail("failed to resolve gw-timeout.map: " + tostring(toErr))
-        }
+        var toMap = FilePath("map", "gw-timeout.map")
         profile = append(profile, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
           tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
       %%}
-      {{ Backend(map[string]any{
+      {%- var serverResult = BackendServersResult(backendName, 0, backendPort, nil, nil, beKey, backendNs) -%}
+      {{- shared.Publish("owners", beKey, map[string]any{"backend": beKey}) -}}
+      {%- var record, text = PrepareBackend(map[string]any{
            "name": beKey,
            "guid": make_guid("be", beKey),
            "comments": []any{"# Backend for: " + routeTypeLabel + " " + tostring(routeNs) + "/" + tostring(routeName) +
@@ -397,11 +362,18 @@ templateSnippets:
            "defaultServer": defaultServer,
            "profile": profile,
            "body": body,
-           "servers": BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs),
-         }) }}
+           "servers": serverResult["servers"],
+         }) -%}
+      {%- var token, planErr = planRegistry.BackendWhenAny(record, text, "owners", []string{beKey}) -%}
+      {%- if planErr != nil -%}{{ fail(planErr.Error()) }}{%- end -%}
+      {{ token }}
       {%- end -%}
       {%- end -%}
       {%- end -%}
+      {%- end -%}
+      {%- if len(backendFiles) > 0 -%}
+        {{- shared.Publish("effects", dedupCategory + "/" + routeNs + "/" + routeName,
+          map[string]any{"files": backendFiles}) -}}
       {%- end -%}
       {%- end -%}
       {%- end macro -%}
@@ -409,15 +381,28 @@ templateSnippets:
   util-generate-grpcroute-backends-gateway:
     requires: [gateways, grpcroutes, referencegrants]
     template: |
-      {%- import "util-backend" for Backend, FlagsToKeywordArgs -%}
-      {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-backend" for FlagsToKeywordArgs, PrepareBackend -%}
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- macro GenerateGRPCRouteBackends(routes []*resources.grpcroutes.T, dedupCategory string) -%}
-        {%- _ = render "util-backendtlspolicies-contrib" default "" -%}
       {%- for _, route := range routes -%}
       {%- var routeNs = route.Metadata.Namespace -%}
       {%- var routeName = route.Metadata.Name -%}
+      {%- var backendFiles = []any{} -%}
+      {%- var seenBackends = map[string]bool{} -%}
+      {%- var FilePath = func(fileType string, filename string) string {
+        var base = tostring(props["fileDir"])
+        if fileType == "map" { base = tostring(props["mapDir"]) }
+        if base == "" { return filename }
+        return base + "/" + filename
+      } -%}
+      {%- var RegisterBackendFile = func(fileType string, filename string, content string) (string, error) {
+        backendFiles = append(backendFiles, map[string]any{
+          "type": fileType, "filename": filename, "content": content,
+        })
+        return FilePath(fileType, filename), nil
+      } -%}
       {%- for _, rule := range route.Spec.Rules -%}
       {%- var backendRefs = rule.BackendRefs -%}
       {%- if len(backendRefs) > 0 %}
@@ -438,7 +423,8 @@ templateSnippets:
       {%- if backendNs == "" %}{%- backendNs = routeNs %}{%- end -%}
       {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
       {%- var backendKey = backendNs + "_" + routeNs + "_" + routeName + "_" + backendName + "_" + tostring(backendPort) -%}
-      {%- if first_seen(dedupCategory, backendKey) -%}
+      {%- if !seenBackends[backendKey] -%}
+      {%- seenBackends[backendKey] = true -%}
       {%%
         var protoFlag = "h2"
         var routeTypeLabel = "GRPCRoute"
@@ -452,57 +438,10 @@ templateSnippets:
       %%}
       {%%
         var portNameForBackend = ""
-        // Untyped: typed access would strip ALL gateway backends on clusters
-        // without the BackendTLSPolicy CRD (Gateway API < v1.4 standard).
-        var btpSeamRaw = shared.Get("backendtlspoliciesUntyped")
-        var btpAll = []any{}
-        if btpSeamRaw != nil {
-          var btpSeamAll, btpSeamOk = btpSeamRaw.(map[string]any)["all"].([]any)
-          if btpSeamOk { btpAll = btpSeamAll }
-        }
-        var winningPolicy any = nil
-        var winningPolicyTs = ""
-        var winningPolicyKey = ""
-        for _, pol := range btpAll {
-          var polNs = dig_string(pol, "", "metadata", "namespace")
-          if polNs != tostring(backendNs) {
-            continue
-          }
-          for _, tr := range dig(pol, "spec", "targetRefs") | toSlice() {
-            var trGroup = dig_string(tr, "", "group")
-            var trKind = dig_string(tr, "", "kind")
-            var trName = dig_string(tr, "", "name")
-            var trSec = dig_string(tr, "", "sectionName")
-            if (trGroup != "" && trGroup != "core") || trKind != "Service" {
-              continue
-            }
-            if trName != tostring(backendName) {
-              continue
-            }
-            if trSec != "" && trSec != portNameForBackend {
-              continue
-            }
-            // Tiebreak: earliest creationTimestamp, then namespace/name.
-            var polTs = dig_string(pol, "", "metadata", "creationTimestamp")
-            var polKey = polNs + "/" + dig_string(pol, "", "metadata", "name")
-            if winningPolicy == nil {
-              winningPolicy = pol
-              winningPolicyTs = polTs
-              winningPolicyKey = polKey
-            } else if polTs != "" && (winningPolicyTs == "" || polTs < winningPolicyTs) {
-              winningPolicy = pol
-              winningPolicyTs = polTs
-              winningPolicyKey = polKey
-            } else if polTs == winningPolicyTs && polKey < winningPolicyKey {
-              winningPolicy = pol
-              winningPolicyTs = polTs
-              winningPolicyKey = polKey
-            }
-            break
-          }
-        }
+        var policyTarget = tostring(backendNs) + "\x00" + tostring(backendName) + "\x00" + portNameForBackend
+        var winningPolicy, _ = shared.Select("gateway-backend-tls-policies", "targets", policyTarget)
         if winningPolicy != nil {
-          var validation any = dig(winningPolicy, "spec", "validation")
+          var validation any = dig(winningPolicy, "validation")
           btlsHostname = dig_string(validation, "", "hostname")
           // verifyhost takes the FIRST Hostname SAN if any, else hostname
           // (HAProxy verifyhost is single-valued; SAN OR-lists / URI SANs
@@ -555,11 +494,11 @@ templateSnippets:
           var wkca = dig_string(validation, "", "wellKnownCACertificates")
           if len(caBundleParts) > 0 {
             var caBundle = join(caBundleParts, "\n")
-            var policyName = dig_string(winningPolicy, "", "metadata", "name")
+            var policyName = dig_string(winningPolicy, "", "name")
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
             // Type "ca-file" (not "file"): same path, but a content-only
             // rotation then applies via the runtime API, no reload on 3.2+.
-            var resolvedPath, fileErr = fileRegistry.Register("ca-file", caFilename, caBundle)
+            var resolvedPath, fileErr = RegisterBackendFile("ca-file", caFilename, caBundle)
             if fileErr == nil {
               btlsCaPath = resolvedPath
             }
@@ -624,7 +563,7 @@ templateSnippets:
           // Type "cert" lands the file under ssl/, and HAProxy's
           // `crt-base ssl` prepends ssl/ again — so emit the bare filename,
           // not the path fileRegistry returns.
-          var _, fErr = fileRegistry.Register("cert", fname, combined)
+          var _, fErr = RegisterBackendFile("cert", fname, combined)
           if fErr == nil {
             gwClientCertPath = fname
           }
@@ -714,19 +653,18 @@ templateSnippets:
           profile = append(profile,
             "# GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity",
             cookieDir,
-            "dynamic-cookie-key " + tostring(extraContext | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
+            "dynamic-cookie-key " + tostring(props | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
           spCookieEmitted = true
         }
 
         // GEP-1742 timeouts, same map and gate as the HTTPRoute backend above.
-        var toMap, toErr = pathResolver.GetPath("gw-timeout.map", "map")
-        if toErr != nil {
-          fail("failed to resolve gw-timeout.map: " + tostring(toErr))
-        }
+        var toMap = FilePath("map", "gw-timeout.map")
         profile = append(profile, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
           tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
       %%}
-      {{ Backend(map[string]any{
+      {%- var serverResult = BackendServersResult(backendName, 0, backendPort, nil, nil, beKey, backendNs) -%}
+      {{- shared.Publish("owners", beKey, map[string]any{"backend": beKey}) -}}
+      {%- var record, text = PrepareBackend(map[string]any{
            "name": beKey,
            "guid": make_guid("be", beKey),
            "comments": []any{"# Backend for: " + routeTypeLabel + " " + tostring(routeNs) + "/" + tostring(routeName) +
@@ -735,118 +673,204 @@ templateSnippets:
            "defaultServer": defaultServer,
            "profile": profile,
            "body": body,
-           "servers": BackendServers(backendName, 0, backendPort, nil, nil, beKey, backendNs),
-         }) }}
+           "servers": serverResult["servers"],
+         }) -%}
+      {%- var token, planErr = planRegistry.BackendWhenAny(record, text, "owners", []string{beKey}) -%}
+      {%- if planErr != nil -%}{{ fail(planErr.Error()) }}{%- end -%}
+      {{ token }}
       {%- end -%}
       {%- end -%}
       {%- end -%}
+      {%- end -%}
+      {%- if len(backendFiles) > 0 -%}
+        {{- shared.Publish("effects", dedupCategory + "/" + routeNs + "/" + routeName,
+          map[string]any{"files": backendFiles}) -}}
       {%- end -%}
       {%- end -%}
       {%- end macro -%}
 
-  util-sharded-gateway-backends:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
-    template: |
-      {# first_seen() dedup is thread-safe, so shards render in parallel. #}
+  backendtlsvalues-490-gateway:
+    requires: [backendtlspolicies, services]
+    incremental:
+      source: backendtlspolicies
+      group: gateway-backend-tls-policies
+      effects: [publishValue]
+    template: |-
+      {%%
+        var policy = item
+        var policyNs = dig_string(policy, "", "metadata", "namespace")
+        var policyName = dig_string(policy, "", "metadata", "name")
+        var policyKey = policyNs + "/" + policyName
+        var policyTs = dig_string(policy, "", "metadata", "creationTimestamp")
+        var rank = "1/" + policyKey
+        if policyTs != "" { rank = "0/" + policyTs + "/" + policyKey }
+        var validation = dig(policy, "spec", "validation")
+        var publishedValue = map[string]any{"validation": validation}
+        if len(dig(validation, "caCertificateRefs") | toSlice()) > 0 {
+          publishedValue["name"] = policyName
+        }
+        var published = map[string]bool{}
+        for _, targetRef := range dig(policy, "spec", "targetRefs") | toSlice() {
+          var targetGroup = dig_string(targetRef, "", "group")
+          var targetKind = dig_string(targetRef, "", "kind")
+          var targetName = dig_string(targetRef, "", "name")
+          if (targetGroup != "" && targetGroup != "core") || targetKind != "Service" || targetName == "" {
+            continue
+          }
+          var sections = map[string]bool{}
+          var sectionName = dig_string(targetRef, "", "sectionName")
+          if sectionName != "" {
+            sections[sectionName] = true
+          } else {
+            sections[""] = true
+            var service = resources.services.GetSingle(policyNs, targetName)
+            if service != nil {
+              for _, servicePort := range service.Spec.Ports {
+                sections[servicePort.Name] = true
+              }
+            }
+          }
+          for _, section := range keys(sections) {
+            var target = policyNs + "\x00" + targetName + "\x00" + section
+            if published[target] { continue }
+            published[target] = true
+            show shared.PublishRanked("targets", target, rank, publishedValue)
+          }
+        }
+      %%}
+
+  util-gateway-backend-bindings:
+    template: |-
+      {%- var GatewayBackendProps = func() map[string]any {
+        var mapDir, mapErr = pathResolver.GetPath("", "map")
+        if mapErr != nil { fail(tostring(mapErr)) }
+        var fileDir, fileErr = pathResolver.GetPath("", "file")
+        if fileErr != nil { fail(tostring(fileErr)) }
+        return map[string]any{
+          "mapDir": mapDir,
+          "fileDir": fileDir,
+          "dynamicCookieKey": extraContext | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie"),
+        }
+      } -%}
+
+  util-gateway-http-backend-bindings:
+    template: |-
+      {%- import "util-gateway-backend-bindings" for GatewayBackendProps -%}
+      {{- toJSON(map[string]any{"httproutes": GatewayBackendProps()}) -}}
+
+  util-gateway-grpc-backend-bindings:
+    template: |-
+      {%- import "util-gateway-backend-bindings" for GatewayBackendProps -%}
+      {{- toJSON(map[string]any{"grpcroutes": GatewayBackendProps()}) -}}
+
+  util-replay-gateway-backend-effects:
+    template: |-
+      {% macro ReplayGatewayBackendEffects() %}
+      {%- for _, effect := range incremental_values("gateway-backends", "effects") -%}
+        {%- for _, file := range toSlice(effect | dig("files")) -%}
+          {%- var record = file.(map[string]any) -%}
+          {%- var _, registerErr = fileRegistry.Register(
+            tostring(record["type"]), tostring(record["filename"]), tostring(record["content"])) -%}
+          {%- if registerErr != nil -%}{{ fail(tostring(registerErr)) }}{%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {% end %}
+
+  backenditems-500-gateway-http:
+    requires: [gateways, httproutes, referencegrants, services, endpoints, secrets, configmaps]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-http-backend-bindings" -}}'
+      root: gateway-http-route-pre-analysis
+      group: gateway-backends
+      optionalConsumes: [gateway-backend-tls-policies]
+      effects: [publishValue, backendPlan]
+    template: |-
       {%- import "util-generate-httproute-backends-gateway" for GenerateHTTPRouteBackends -%}
+      {%- var route = item -%}
+      {%- if route != nil -%}
+      {{- GenerateHTTPRouteBackends([]any{route}, "http") -}}
+      {%- end -%}
+
+  backenditems-510-gateway-grpc:
+    requires: [gateways, grpcroutes, referencegrants, services, endpoints, secrets, configmaps]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-grpc-backend-bindings" -}}'
+      group: gateway-backends
+      optionalConsumes: [gateway-backend-tls-policies]
+      effects: [publishValue, backendPlan]
+    template: |-
       {%- import "util-generate-grpcroute-backends-gateway" for GenerateGRPCRouteBackends -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-
-      {%- macro ShardedHTTPRouteBackends(routes []*resources.httproutes.T, dedupCategory string) -%}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateHTTPRouteBackends(routes, dedupCategory) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateHTTPRouteBackends(shard_slice(routes, i, n), dedupCategory) }}
-          {%- end -%}
-        {%- end -%}
-      {%- end macro -%}
-
-      {%- macro ShardedGRPCRouteBackends(routes []*resources.grpcroutes.T, dedupCategory string) -%}
-        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-        {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateGRPCRouteBackends(routes, dedupCategory) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateGRPCRouteBackends(shard_slice(routes, i, n), dedupCategory) }}
-          {%- end -%}
-        {%- end -%}
-      {%- end macro -%}
+      {%- var route = resources.grpcroutes.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if route != nil -%}
+      {{- GenerateGRPCRouteBackends([]*resources.grpcroutes.T{route}, "grpc") -}}
+      {%- end -%}
 
   backends-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {%- import "util-sharded-gateway-backends" for ShardedHTTPRouteBackends, ShardedGRPCRouteBackends -%}
-      {# Populate the analysis cache here (sequential) before the map files
-          render in parallel and race on it. #}
-      {{- render "util-gateway-analysis" -}}
+      {%- import "util-replay-gateway-backend-effects" for ReplayGatewayBackendEffects -%}
+      {{- render "backendtlsvalues-490-gateway" default "" -}}
+      {{- ReplayGatewayBackendEffects() -}}
       # gateway/backends-gateway
-      {{ ShardedHTTPRouteBackends(resources.httproutes.List(), "gatewayBackends_http") }}
-      {{- ShardedGRPCRouteBackends(resources.grpcroutes.List(), "gatewayBackends_grpc") -}}
+      {{ render "backenditems-500-gateway-http" }}
+      {{- render "backenditems-510-gateway-grpc" -}}
 
   # Feed backend-service.map (<backend> -> <ns>/<svc>) for the namespace/service
   # log fields, so the gateway backend needs no per-backend set-var lines and its
   # section stays empty (dynamic). Mirrors the generators' backend naming + dedup.
   map-backend-service-200-gateway-http:
-    requires: [gateways, httproutes, referencegrants]
+    requires: [gateways, httproutes, referencegrants, services]
+    incremental:
+      source: httproutes
+      root: gateway-http-route-pre-analysis
+      group: map-backend-service-gateway
     template: |-
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%%
-        var lines = []string{}
-        for _, route := range resources.httproutes.List() {
-          var routeNs = route.Metadata.Namespace
-          for _, rule := range route.Spec.Rules {
-            for _, backendRef := range rule.BackendRefs {
-              if BackendRefValid("HTTPRoute", routeNs, backendRef) != "true" {
-                continue
-              }
-              var backendName = backendRef.Name
-              var backendPort = toint(backendRef.Port)
-              if backendPort == 0 { backendPort = 80 }
-              var backendNs = backendRef.Namespace
-              if backendNs == "" { backendNs = routeNs }
-              var beKey = BackendNameGateway(route, map[string]any{"name": backendName, "port": backendPort})
-              if first_seen("map-backend-service-gw", beKey) {
-                lines = append(lines, beKey + " " + backendNs + "/" + backendName)
-              }
+        var route = item
+        var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+        for _, rule := range toSlice(dig(route, "spec", "rules")) {
+          for _, backendRef := range toSlice(dig(rule, "backendRefs")) {
+            if BackendRefValid("HTTPRoute", routeNs, backendRef) != "true" {
+              continue
             }
+            var backendName = tostring(dig(backendRef, "name") | fallback(""))
+            var backendPort = toint(dig(backendRef, "port"))
+            if backendPort == 0 { backendPort = 80 }
+            var backendNs = tostring(dig(backendRef, "namespace") | fallback(routeNs))
+            if backendNs == "" { backendNs = routeNs }
+            var beKey = BackendNameGateway(route, map[string]any{"name": backendName, "port": backendPort})
+            show shared.Unique("map-backend-service-gw", beKey, "\n" + beKey + " " + backendNs + "/" + backendName)
           }
-        }
-        if len(lines) > 0 {
-          show "\n" + join(lines, "\n")
         }
       %%}
 
   map-backend-service-210-gateway-grpc:
-    requires: [gateways, grpcroutes, referencegrants]
+    requires: [gateways, grpcroutes, referencegrants, services]
+    incremental:
+      source: grpcroutes
+      group: map-backend-service-gateway
     template: |-
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%%
-        var lines = []string{}
-        for _, route := range resources.grpcroutes.List() {
-          var routeNs = route.Metadata.Namespace
-          for _, rule := range route.Spec.Rules {
-            for _, backendRef := range rule.BackendRefs {
-              if BackendRefValid("GRPCRoute", routeNs, backendRef) != "true" {
-                continue
-              }
-              var backendName = backendRef.Name
-              var backendPort = toint(backendRef.Port)
-              if backendPort == 0 { backendPort = 80 }
-              var backendNs = backendRef.Namespace
-              if backendNs == "" { backendNs = routeNs }
-              var beKey = BackendNameGateway(route, map[string]any{"name": backendName, "port": backendPort})
-              if first_seen("map-backend-service-gw", beKey) {
-                lines = append(lines, beKey + " " + backendNs + "/" + backendName)
-              }
+        var route = item
+        var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+        for _, rule := range toSlice(dig(route, "spec", "rules")) {
+          for _, backendRef := range toSlice(dig(rule, "backendRefs")) {
+            if BackendRefValid("GRPCRoute", routeNs, backendRef) != "true" {
+              continue
             }
+            var backendName = tostring(dig(backendRef, "name") | fallback(""))
+            var backendPort = toint(dig(backendRef, "port"))
+            if backendPort == 0 { backendPort = 80 }
+            var backendNs = tostring(dig(backendRef, "namespace") | fallback(routeNs))
+            if backendNs == "" { backendNs = routeNs }
+            var beKey = BackendNameGateway(route, map[string]any{"name": backendName, "port": backendPort})
+            show shared.Unique("map-backend-service-gw", beKey, "\n" + beKey + " " + backendNs + "/" + backendName)
           }
-        }
-        if len(lines) > 0 {
-          show "\n" + join(lines, "\n")
         }
       %%}
 
@@ -864,75 +888,149 @@ templateSnippets:
            "body": []any{"http-request return status 500"},
          }) }}
 
+  backenditems-501-gateway-ssl-passthrough-http:
+    requires: [endpoints, httproutes, services]
+    incremental:
+      source: httproutes
+      whenAnyPathExists: ["spec.rules[*].filters"]
+      group: gateway-ssl-passthrough-backend-specs
+      consumes: [gateway-ssl-passthrough]
+      effects: [publishValue]
+    template: |-
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
+      {%%
+        var route = item
+        var namespace = dig_string(route, "", "metadata", "namespace")
+        var routeName = dig_string(route, "", "metadata", "name")
+        var backendName = ""
+        var rank = ""
+        var hasPassthrough = false
+        for _, rule := range toSlice(dig(route, "spec", "rules")) {
+          for _, filter := range toSlice(dig(rule, "filters")) {
+            if dig_string(filter, "", "type") != "ExtensionRef" { continue }
+            var extensionRef = dig(filter, "extensionRef")
+            var kind = dig_string(extensionRef, "", "kind")
+            var name = dig_string(extensionRef, "", "name")
+            if kind == "SSLPassthrough" ||
+              (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
+              hasPassthrough = true
+            }
+          }
+        }
+        for _, hostname := range toSlice(dig(route, "spec", "hostnames")) {
+          var candidateRank = "0/http/" + tostring(hostname)
+          var candidate, found = shared.Select(
+            "gateway-ssl-passthrough", "backends", candidateRank)
+          if !found || dig_string(candidate, "", "route_type") != "httproute" ||
+            dig_string(candidate, "", "namespace") != namespace ||
+            dig_string(candidate, "", "route") != routeName {
+            continue
+          }
+          if rank == "" || candidateRank < rank {
+            rank = candidateRank
+            backendName = dig_string(candidate, "", "name")
+          }
+        }
+        var backendRef any
+        for _, rule := range toSlice(dig(route, "spec", "rules")) {
+          var refs = toSlice(dig(rule, "backendRefs"))
+          if len(refs) > 0 {
+            backendRef = refs[0]
+            break
+          }
+        }
+        if hasPassthrough && backendName != "" && backendRef != nil {
+          var refName = dig_string(backendRef, "", "name")
+          var refPort = toint(dig(backendRef, "port") | fallback(0))
+          if refPort == 0 { refPort = 80 }
+          var servers = BackendServersResult(
+            refName, 0, refPort, nil, nil, backendName, namespace)
+          show shared.Publish("specs", rank, map[string]any{
+            "backend": map[string]any{
+              "name": backendName,
+              "guid": make_guid("be", backendName),
+              "mode": "tcp",
+              "comments": []any{"# gateway/backends-gateway-ssl-passthrough"},
+              "servers": servers["servers"],
+            },
+            "degraded": map[string]any{
+              "active": servers["degradedByName"],
+              "namespace": namespace,
+              "service": refName,
+              "portName": servers["portName"],
+            },
+          })
+        }
+      %%}
+
+  backenditems-501-gateway-ssl-passthrough-tls:
+    requires: [endpoints, services, tlsroutes]
+    incremental:
+      source: tlsroutes
+      group: gateway-ssl-passthrough-backend-specs
+      consumes: [gateway-ssl-passthrough]
+      effects: [publishValue]
+    template: |-
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
+      {%%
+        var route = item
+        var namespace = dig_string(route, "", "metadata", "namespace")
+        var routeName = dig_string(route, "", "metadata", "name")
+        var fixed = func(value int) string {
+          var encoded = tostring(value)
+          var zeroes = "0000000000"
+          if len(encoded) >= len(zeroes) { return encoded }
+          return zeroes[:len(zeroes)-len(encoded)] + encoded
+        }
+        for ruleIndex, rule := range toSlice(dig(route, "spec", "rules")) {
+          var definitionKey = "1/tls/" + namespace + "/" + routeName + "/" + fixed(ruleIndex)
+          var definition, found = shared.Select(
+            "gateway-ssl-passthrough", "definitions", definitionKey)
+          if !found || dig(definition, "invalid") == true { continue }
+          var refs = toSlice(dig(rule, "backendRefs"))
+          if len(refs) == 0 { continue }
+          var backendRef = refs[0]
+          var refName = dig_string(backendRef, "", "name")
+          var refPort = toint(dig(backendRef, "port") | fallback(0))
+          if refPort == 0 { refPort = 443 }
+          var refNamespace = dig_string(backendRef, namespace, "namespace")
+          if refNamespace == "" { refNamespace = namespace }
+          var backendName = dig_string(definition, "", "name")
+          var rank = dig_string(definition, definitionKey, "rank")
+          var servers = BackendServersResult(
+            refName, 0, refPort, nil, nil, backendName, refNamespace)
+          show shared.Publish("specs", rank, map[string]any{
+            "backend": map[string]any{
+              "name": backendName,
+              "guid": make_guid("be", backendName),
+              "mode": "tcp",
+              "comments": []any{"# gateway/backends-gateway-ssl-passthrough (tlsroute)"},
+              "servers": servers["servers"],
+            },
+            "degraded": map[string]any{
+              "active": servers["degradedByName"],
+              "namespace": refNamespace,
+              "service": refName,
+              "portName": servers["portName"],
+            },
+          })
+        }
+      %%}
+
   backends-501-gateway-ssl-passthrough:
-    requires: [gateways, httproutes, referencegrants, tlsroutes]
+    requires: [endpoints, gateways, namespaces, referencegrants, services]
     template: |
       {%- import "util-backend" for Backend -%}
-      {%- import "util-backend-servers" for BackendServers -%}
-      {{ render "util-gateway-ssl-passthrough" }}
-
-      {%- var sslPassthroughData = shared.Get("gateway_ssl_passthrough").(map[string]any) %}
-      {%- var sslBackends []any = sslPassthroughData["backends"] %}
-      {%- for _, backendInfo := range sslBackends %}
-        {#- Invalid entries keep their slot so the SNI consumers can claim the
-            SNI as unrouteable; a backend here would point at a missing Service. -#}
-        {%- if tostring(backendInfo | dig("invalid") | fallback("false")) == "true" %}
-          {%- continue %}
-        {%- end %}
-        {%- var biNamespace = backendInfo["namespace"] %}
-        {%- var biRoute = backendInfo["route"] %}
-        {%- var biName = backendInfo["name"] %}
-        {%- var biRouteType = backendInfo["route_type"] %}
-        {#- One list entry per intersected SNI, so dedup to emit one backend
-            per (route, ruleIdx). -#}
-        {%- if first_seen("gateway_ssl_passthrough_backends", tostring(biName)) %}
-          {%- if biRouteType == "httproute" %}
-            {%- var route = resources.httproutes.GetSingle(biNamespace, biRoute) %}
-            {%- var generated = false %}
-            {%- if route != nil %}
-              {%- for _, backendRef := range route.Spec.Rules[*].BackendRefs %}
-                {%- if !generated %}
-                  {%- var refName = backendRef.Name %}
-                  {%- var refPort = toint(backendRef.Port) %}
-                  {%- if refPort == 0 %}{%- refPort = 80 %}{%- end %}
-      {{ Backend(map[string]any{
-           "name": tostring(biName),
-           "guid": make_guid("be", biName),
-           "mode": "tcp",
-           "comments": []any{"# gateway/backends-gateway-ssl-passthrough"},
-           "servers": BackendServers(refName, 0, refPort, nil, nil, biName, tostring(biNamespace)),
-         }) }}
-                  {%- generated = true %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- else if biRouteType == "tlsroute" %}
-            {%- var route = resources.tlsroutes.GetSingle(biNamespace, biRoute) %}
-            {%- if route != nil %}
-              {%- var ruleIdx = toint(backendInfo["rule_idx"]) %}
-              {%- var rules = route.Spec.Rules %}
-              {%- if ruleIdx < len(rules) %}
-                {%- var rule = rules[ruleIdx] %}
-                {%- var generated = false %}
-                {%- for _, backendRef := range rule.BackendRefs %}
-                  {%- if !generated %}
-                    {%- var refName = backendRef.Name %}
-                    {%- var refPort = toint(backendRef.Port) %}
-                    {%- if refPort == 0 %}{%- refPort = 443 %}{%- end %}
-                    {%- var refNs = backendRef.Namespace %}
-                    {%- if refNs == "" %}{%- refNs = tostring(biNamespace) %}{%- end %}
-      {{ Backend(map[string]any{
-           "name": tostring(biName),
-           "guid": make_guid("be", biName),
-           "mode": "tcp",
-           "comments": []any{"# gateway/backends-gateway-ssl-passthrough (tlsroute)"},
-           "servers": BackendServers(refName, 0, refPort, nil, nil, biName, refNs),
-         }) }}
-                    {%- generated = true %}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
+      {{ render_glob "gateway-ssl-passthrough-*" }}
+      {{- render_glob "backenditems-501-gateway-ssl-passthrough-*" -}}
+      {%- for _, publicationAny := range incremental_values("gateway-ssl-passthrough-backend-specs", "specs") %}
+      {%- var publication = publicationAny.(map[string]any) -%}
+      {%- var degraded = publication["degraded"].(map[string]any) -%}
+      {%- if degraded["active"] == true -%}
+        {%- var _, _ = shared.ComputeIfAbsent(
+          "degradedBackendRef:" + tostring(degraded["namespace"]) + "/" +
+            tostring(degraded["service"]) + "/" + tostring(degraded["portName"]),
+          func() any { return true }) -%}
+      {%- end %}
+      {{ Backend(namespace(publication["backend"].(map[string]any))) }}
       {%- end %}

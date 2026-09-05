@@ -172,10 +172,12 @@ func TestPipeline_Execute_CarriesTheRenderPlan(t *testing.T) {
 	result, err := pipeline.Execute(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err)
-	require.NotNil(t, result.Plan,
-		"the deployer diffs this plan against what each pod applied; a pipeline "+
-			"that drops it degrades every deploy to a full push")
-	assert.Equal(t, result.Plan.ID, result.PlanID)
+	require.NotNil(t, result.CycleSnapshot)
+	require.NotNil(t, result.OutputSnapshot,
+		"the deployer reads the authenticated plan from this output root")
+	planID, err := result.OutputSnapshot.PlanID()
+	require.NoError(t, err)
+	assert.Equal(t, planID, result.PlanID)
 	assert.NotEmpty(t, result.PlanID)
 }
 

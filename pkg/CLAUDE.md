@@ -38,9 +38,12 @@ pkg/
 ├── events/            # Generic event bus (domain-agnostic)
 ├── generated/         # Code-generation output (clientset, DataPlane API clients, validators)
 ├── httpstore/         # Pure HTTP resource cache (two-version pending/accepted)
+├── incremental/       # Generic incremental computation graph (exact deps, revisions)
 ├── introspection/     # Generic /debug/vars HTTP server
 ├── lifecycle/         # Component registry, dependency ordering, leader-only gating
 ├── metrics/           # Prometheus registry/server primitives
+├── persistenttree/    # Immutable ordered map (domain-free container)
+├── rendercontent/     # Rendered-output value types (Output, TextFragment, Document)
 ├── stores/            # Store overlay/provider used for webhook dry-run
 ├── templating/        # Pure template engine library (Scriggo)
 ├── k8s/               # Kubernetes integration library
@@ -64,6 +67,12 @@ For the canonical layout (with sub-packages), see [`docs/site/docs/development/d
 **pkg/lifecycle/** — Component registry, dependency ordering, leader-only gating, health tracking.
 
 **pkg/compression/** — zstd + base64 helper used by output-CRD content.
+
+**pkg/persistenttree/** — Immutable ordered map with structural sharing. Domain-free container; stdlib only.
+
+**pkg/rendercontent/** — Value types for rendered output (`Output`, `TextFragment`, `Document`) and their deltas. Shared by the renderer and the dataplane; no HAProxy vocabulary.
+
+**pkg/incremental/** — Generic incremental computation graph: opaque input/query keys, revisions, exact dependency journals, transactional commit. Knows nothing about templating or Kubernetes; depends only on `pkg/persistenttree`. See [ADR-0023](../docs/adr/0023-incremental-render-graph.md).
 
 **pkg/apis/** and **pkg/generated/** — CRD type definitions and code-generation output (clientset, informers, listers, DataPlane API clients per HAProxy version, OpenAPI validators). Authored by `controller-gen` / `oapi-codegen`; treated as pure data shapes.
 

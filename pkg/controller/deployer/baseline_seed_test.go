@@ -33,22 +33,31 @@ func unreachable(podName string) dataplane.Endpoint {
 
 // runningPlan returns a fresh fake agent already running plan, so its /v1/state
 // reports that applied plan and the blob a cold-start read decodes.
-func runningPlan(t *testing.T, bus *deployerBus) (agent *agenttest.Agent, planID string) {
+func runningPlan(t *testing.T, bus *deployerBus) *agenttest.Agent {
 	t.Helper()
-	agent = agenttest.New(t)
+	agent := agenttest.New(t)
 	warm := createTestDeployer(bus.EventBus)
 	plan, config, aux := renderFor("plan-1", "10.0.0.1", mapEntry)
 	deployTo(t, warm, bus, plan, config, aux, "config_validation", agentEndpoint(agent, "haproxy-0"))
-	return agent, plan.ID
+	return agent
+}
+
+// runningPlanNamed is runningPlan for a fleet whose pods are on different plans.
+func runningPlanNamed(t *testing.T, bus *deployerBus, id, address, pod string) *agenttest.Agent {
+	t.Helper()
+	agent := agenttest.New(t)
+	warm := createTestDeployer(bus.EventBus)
+	plan, config, aux := renderFor(id, address, mapEntry)
+	deployTo(t, warm, bus, plan, config, aux, "config_validation", agentEndpoint(agent, pod))
+	return agent
 }
 
 // A first discovery that cannot reach any pod must not consume the per-term
-// one-shot: the fleet's running plan is still adopted on a later discovery.
-// Otherwise the first render describes servers no pod holds and the next apply
-// moves every server — the churn seedBaseline exists to prevent.
+// one-shot. The later reachable read adopts, because the pod's measured tree
+// accounts for every file in the plan it reports.
 func TestSeedBaseline_AllErroredDiscoveryDoesNotForfeitTheTerm(t *testing.T) {
 	bus := newTestBus(t)
-	good, planID := runningPlan(t, bus)
+	good := runningPlan(t, bus)
 
 	c := createTestDeployer(bus.EventBus)
 	sink := &recordingPlanSink{}
@@ -60,16 +69,15 @@ func TestSeedBaseline_AllErroredDiscoveryDoesNotForfeitTheTerm(t *testing.T) {
 		"an all-errored discovery must leave the one-shot unspent so a later one retries")
 
 	c.seedBaseline(context.Background(), []dataplane.Endpoint{agentEndpoint(good, "haproxy-0")})
-	require.Len(t, sink.plans, 1, "the next reachable discovery adopts the fleet's running plan")
-	assert.Equal(t, planID, sink.plans[0].ID)
-	require.True(t, c.baselineSeeded.Load(), "adopting a plan spends the one-shot")
+	require.NotEmpty(t, sink.plans, "a measured tree that accounts for the plan is a baseline")
+	require.True(t, c.baselineSeeded.Load())
 }
 
 // An empty pod set is not a fresh fleet — the store simply had not synced. It
 // must not consume the one-shot either.
 func TestSeedBaseline_EmptyDiscoveryDoesNotForfeitTheTerm(t *testing.T) {
 	bus := newTestBus(t)
-	good, planID := runningPlan(t, bus)
+	good := runningPlan(t, bus)
 
 	c := createTestDeployer(bus.EventBus)
 	sink := &recordingPlanSink{}
@@ -80,8 +88,8 @@ func TestSeedBaseline_EmptyDiscoveryDoesNotForfeitTheTerm(t *testing.T) {
 	require.False(t, c.baselineSeeded.Load(), "an empty discovery must not spend the one-shot")
 
 	c.seedBaseline(context.Background(), []dataplane.Endpoint{agentEndpoint(good, "haproxy-0")})
-	require.Len(t, sink.plans, 1)
-	assert.Equal(t, planID, sink.plans[0].ID)
+	require.NotEmpty(t, sink.plans)
+	require.True(t, c.baselineSeeded.Load())
 }
 
 // A reachable fleet where every pod reports no applied plan is genuinely fresh:
@@ -89,7 +97,7 @@ func TestSeedBaseline_EmptyDiscoveryDoesNotForfeitTheTerm(t *testing.T) {
 // — even one carrying a plan — does not re-seed.
 func TestSeedBaseline_ConfirmedFreshFleetLatchesAndDoesNotReseed(t *testing.T) {
 	bus := newTestBus(t)
-	good, _ := runningPlan(t, bus)
+	good := runningPlan(t, bus)
 	fresh := agenttest.New(t) // never deployed to: reports no applied plan
 
 	c := createTestDeployer(bus.EventBus)
@@ -110,7 +118,7 @@ func TestSeedBaseline_ConfirmedFreshFleetLatchesAndDoesNotReseed(t *testing.T) {
 // the one-shot stays unspent and a later full discovery adopts it.
 func TestSeedBaseline_PartialReachabilityRetries(t *testing.T) {
 	bus := newTestBus(t)
-	good, planID := runningPlan(t, bus)
+	good := runningPlan(t, bus)
 	fresh := agenttest.New(t)
 
 	c := createTestDeployer(bus.EventBus)
@@ -126,6 +134,31 @@ func TestSeedBaseline_PartialReachabilityRetries(t *testing.T) {
 		"a set with an unreachable pod is not confirmed fresh — retry")
 
 	c.seedBaseline(context.Background(), []dataplane.Endpoint{agentEndpoint(good, "haproxy-0")})
-	require.Len(t, sink.plans, 1)
-	assert.Equal(t, planID, sink.plans[0].ID)
+	require.NotEmpty(t, sink.plans)
+	require.True(t, c.baselineSeeded.Load())
+}
+
+// The render baseline is one plan for the whole fleet, so a fleet that does not
+// agree on one has none to give. Mid-rollout the pods genuinely differ, and
+// seeding from whichever answered first would build the slot table from an
+// arbitrary pod. The per-pod bindings are still taken -- those are what keep a
+// handover from reloading -- and the latch stays unset so a later discovery
+// seeds once the rollout settles.
+func TestSeedBaseline_DisagreeingFleetSeedsNoRenderBaseline(t *testing.T) {
+	bus := newTestBus(t)
+	first := runningPlanNamed(t, bus, "plan-1", "10.0.0.1", "haproxy-0")
+	second := runningPlanNamed(t, bus, "plan-2", "10.0.0.2", "haproxy-1")
+
+	c := createTestDeployer(bus.EventBus)
+	sink := &recordingPlanSink{}
+	c.ackedPlans = sink
+
+	c.seedBaseline(context.Background(), []dataplane.Endpoint{
+		agentEndpoint(first, "haproxy-0"),
+		agentEndpoint(second, "haproxy-1"),
+	})
+
+	require.Empty(t, sink.plans, "no single plan represents a fleet mid-rollout")
+	require.False(t, c.baselineSeeded.Load(),
+		"a disagreeing fleet must not spend the one-shot -- retry once it settles")
 }

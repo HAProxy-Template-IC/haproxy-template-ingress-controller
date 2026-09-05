@@ -111,6 +111,21 @@ func diffPlan(mutate func(*renderplan.Plan)) *renderplan.Plan {
 	if mutate != nil {
 		mutate(plan)
 	}
+	for i := range plan.Sections {
+		plan.Sections[i].Text = plan.Sections[i].TextDigest
+		plan.Sections[i].TextKnown = true
+	}
+	for name := range plan.Backends {
+		backend := plan.Backends[name]
+		backend.Body = []string{backend.BodyDigest}
+		backend.Comments = []string{backend.CommentsDigest}
+		backend.ContentKnown = true
+		plan.Backends[name] = backend
+	}
+	for i := range plan.Files {
+		plan.Files[i].Content = plan.Files[i].Digest
+		plan.Files[i].ContentKnown = true
+	}
 	plan.ComputeID()
 	return plan
 }

@@ -14,10 +14,9 @@
 
 // Package statusapplier applies template-driven status patches to Kubernetes resources.
 //
-// The StatusApplier is a stateless consumer: each event carries the patches it
-// needs to apply. There is no side-channel cache. The patches travelling on a
-// deploy event are tautologically the patches for the configuration that
-// deploy carried — no LATEST-vs-deployed race is possible.
+// The StatusApplier is a stateless consumer: successful lifecycle events carry
+// a sealed render occurrence, and the applier reads its authenticated status
+// snapshot. There is no side-channel cache or mutable-shadow fallback.
 //
 // Status patches are fully defined by templates — the controller never hardcodes
 // knowledge of specific resource types or condition names. Templates register patches
@@ -26,20 +25,17 @@
 //
 // Event mapping:
 //
-//   - ResourcesAppliedEvent: apply the "rendered" variant directly from
-//     event.StatusPatches (forwarded by the ResourceApplier after the same
-//     render's resources were applied). Ordering matters: conditions like
+//   - ResourcesAppliedEvent: apply the "rendered" variant from the sealed
+//     occurrence after the same render's resources were applied. Ordering matters: conditions like
 //     Accepted=True must not precede the infrastructure resources they
 //     describe, so the rendered variant rides the post-apply event rather
 //     than TemplateRenderedEvent.
-//   - DeploymentCompletedEvent: apply the "deployed" variant from
-//     event.StatusPatches. The Deployer forwards the patches from the
-//     DeploymentScheduledEvent that triggered the deploy, so the patches
-//     describe exactly the config the deploy shipped. Programmed=True
+//   - DeploymentCompletedEvent: apply the "deployed" variant from the sealed
+//     occurrence that deployment carried. Programmed=True
 //     genuinely means "HAProxy is serving this config" because reload
 //     verification gates DeploymentCompletedEvent.
-//   - DeploymentSkippedEvent: apply the "deployed" variant from
-//     event.StatusPatches. Same data-plane-is-converged semantics as
+//   - DeploymentSkippedEvent: apply the "deployed" variant from the sealed
+//     occurrence. Same data-plane-is-converged semantics as
 //     DeploymentCompletedEvent, reached by the scheduler determining the
 //     data plane is already at this config. Without this branch, any
 //     resource whose addition or update produces no config change (a
@@ -58,8 +54,8 @@
 package statusapplier
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,6 +75,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	k8stypes "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -112,12 +109,13 @@ const (
 
 	statusKey = "status"
 
-	// checksumCacheMaxEntries bounds the SSA-skip checksum cache. Sized for
-	// ~64k live resource×phase combinations — far above any realistic
+	// statusCacheMaxEntries bounds the SSA-skip cache. Sized for
+	// ~64k live resources — far above any realistic
 	// steady state (the gateway-api conformance suite peaks below 500) —
 	// so only pathological create/delete churn over a long leader tenure
 	// ever triggers the wholesale reset.
-	checksumCacheMaxEntries = 65536
+	statusCacheMaxEntries = 65536
+	statusApplyLockCount  = 256
 )
 
 // GVRResolver resolves apiVersion + kind to a GroupVersionResource.
@@ -133,7 +131,7 @@ type GVRResolver interface {
 // applies the appropriate variant based on pipeline lifecycle events. Only the
 // leader applies patches to avoid conflicts.
 //
-// Event flow (every applied phase reads patches directly from event.StatusPatches):
+// Event flow (success phases read the authenticated occurrence snapshot):
 //
 //	ResourcesAppliedEvent → apply "rendered" variant (if leader)
 //	DeploymentCompletedEvent → apply "deployed" variant (if leader)
@@ -141,7 +139,7 @@ type GVRResolver interface {
 //	    plane is already at the rendered config so Programmed conditions
 //	    should reflect the current generation
 //	ReconciliationFailedEvent → apply "renderFailed" or "deployFailed" variant (if leader)
-//	BecameLeaderEvent → clear checksum cache; rely on Reconciler to fire a fresh reconcile
+//	BecameLeaderEvent → clear status cache; rely on Reconciler to fire a fresh reconcile
 //	LostLeadershipEvent → flip the leader flag off
 type Component struct {
 	*component.Base
@@ -159,9 +157,8 @@ type Component struct {
 	mu       sync.RWMutex
 	isLeader bool
 
-	// checksumCache maps "namespace/name/gvr" to the SHA-256 of the last
-	// successfully applied patch payload. Used to skip redundant SSA calls.
-	checksumCache map[string]string
+	statusCache map[string]statusCacheEntry
+	applyLocks  [statusApplyLockCount]sync.Mutex
 
 	// selfWrites receives the resourceVersion of every applied patch (nil-safe).
 	selfWrites *k8stypes.SelfWriteRegistry
@@ -201,7 +198,7 @@ func New(cfg *Config) *Component {
 		dynamicClient: cfg.DynamicClient,
 		gvrResolver:   cfg.GVRResolver,
 		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
-		checksumCache: make(map[string]string),
+		statusCache:   make(map[string]statusCacheEntry),
 		selfWrites:    cfg.SelfWrites,
 	}
 	// Typed subscription (EventTypes, not a catch-all) — the bus prefilters
@@ -301,10 +298,10 @@ func (c *Component) HandleEvent(event busevents.Event) {
 // data-plane gate is needed, but the ResourceApplier publishing this event
 // guarantees the same render's k8sResources already exist.
 func (c *Component) handleResourcesApplied(ctx context.Context, event *events.ResourcesAppliedEvent) {
-	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
+	if !c.leaderRLocked() {
 		return
 	}
-	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseRendered)
+	c.applyOccurrenceStatusPatchSet(ctx, event, events.StatusPatchPhaseRendered)
 }
 
 // handleDeploymentCompleted applies the status variant that matches the deploy
@@ -332,17 +329,17 @@ func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events
 	if event.Total == 0 {
 		return
 	}
-	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
+	if !c.leaderRLocked() {
 		return
 	}
 	switch {
 	case event.Succeeded == event.Total:
-		c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployed)
+		c.applyOccurrenceStatusPatchSet(ctx, event, events.StatusPatchPhaseDeployed)
 	case event.Failed > 0:
 		// Anything short of the whole fleet is not Programmed. Reporting it as
 		// deployed advertises an address the fleet does not uniformly serve,
 		// which external-dns and cert-manager then act on.
-		c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployFailed)
+		c.applyOccurrenceStatusPatchSet(ctx, event, events.StatusPatchPhaseDeployFailed)
 	}
 }
 
@@ -360,10 +357,10 @@ func (c *Component) handleDeploymentSkipped(ctx context.Context, event *events.D
 	if event.Total == 0 {
 		return
 	}
-	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
+	if !c.leaderRLocked() {
 		return
 	}
-	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployed)
+	c.applyOccurrenceStatusPatchSet(ctx, event, events.StatusPatchPhaseDeployed)
 }
 
 // handleReconciliationFailed applies the failure variant based on which phase
@@ -384,7 +381,7 @@ func (c *Component) handleDeploymentSkipped(ctx context.Context, event *events.D
 // motivates differentiation, but the phase label downstream stays accurate.
 // See issue #44.
 func (c *Component) handleReconciliationFailed(ctx context.Context, event *events.ReconciliationFailedEvent) {
-	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
+	if !c.leaderRLocked() {
 		return
 	}
 	var phase events.StatusPatchPhase
@@ -396,20 +393,85 @@ func (c *Component) handleReconciliationFailed(ctx context.Context, event *event
 	default:
 		phase = events.StatusPatchPhaseDeployFailed
 	}
-	c.applyVariant(ctx, event.StatusPatches, phase)
+	c.applyStatusPatchSet(ctx, event.StatusPatches, event.StatusPatchSnapshot, phase)
 }
 
-// handleBecameLeader flips the leader flag and clears the SSA checksum cache.
+func (c *Component) applyStatusPatchSet(
+	ctx context.Context,
+	patches []templating.StatusPatch,
+	snapshot *templating.StatusPatchSnapshot,
+	phase events.StatusPatchPhase,
+) {
+	if snapshot == nil {
+		if len(patches) > 0 {
+			c.applyVariant(ctx, patches, phase)
+		}
+		return
+	}
+	if len(patches) > 0 {
+		c.rejectStatusPatchSnapshot(errors.New("event carries both mutable and immutable status patches"))
+		return
+	}
+	count, err := snapshot.Len()
+	if err != nil {
+		c.rejectStatusPatchSnapshot(err)
+		return
+	}
+	if count == 0 {
+		return
+	}
+	phasePatches, err := snapshot.PatchesForPhase(string(phase))
+	if err != nil {
+		c.rejectStatusPatchSnapshot(err)
+		return
+	}
+	c.applyVariant(ctx, phasePatches, phase)
+}
+
+type renderOccurrenceEvent interface {
+	RenderOccurrence() (*rendercycle.Occurrence, error)
+}
+
+func (c *Component) applyOccurrenceStatusPatchSet(
+	ctx context.Context,
+	event renderOccurrenceEvent,
+	phase events.StatusPatchPhase,
+) {
+	occurrence, err := event.RenderOccurrence()
+	if err != nil {
+		c.rejectStatusPatchSnapshot(err)
+		return
+	}
+	cycle, err := occurrence.Snapshot()
+	if err != nil {
+		c.rejectStatusPatchSnapshot(err)
+		return
+	}
+	cycleSnapshot, err := cycle.StatusPatchSnapshot()
+	if err != nil {
+		c.rejectStatusPatchSnapshot(err)
+		return
+	}
+	c.applyStatusPatchSet(ctx, nil, cycleSnapshot, phase)
+}
+
+func (c *Component) rejectStatusPatchSnapshot(err error) {
+	c.Logger().Error("Status patch snapshot is invalid; no status was applied", "error", err)
+	c.EventBus().Publish(events.NewStatusUpdateFailedEvent(
+		"", "", "status-patch-snapshot", err.Error(), false,
+	))
+}
+
+// handleBecameLeader flips the leader flag and clears the status apply cache.
 // No patches replay — the Reconciler fires an immediate reconciliation on
 // BecameLeaderEvent (see pkg/controller/reconciler/CLAUDE.md), which produces
 // a fresh TemplateRenderedEvent carrying the patches the new leader needs.
 func (c *Component) handleBecameLeader(_ context.Context) {
 	c.mu.Lock()
 	c.isLeader = true
-	// Clear checksum cache — the previous leader may have applied different checksums.
-	c.checksumCache = make(map[string]string)
+	c.statusCache = make(map[string]statusCacheEntry)
 	c.mu.Unlock()
-	c.Logger().Info("Became leader, clearing status checksum cache")
+	c.Logger().Info("Became leader, clearing status apply cache")
 }
 
 // leaderRLocked returns the current leader flag under a read lock.
@@ -449,7 +511,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	// resources, pushing the resource count past what a serial applier keeps up
 	// with). Each patch targets a distinct resource, so the SSA calls are
 	// independent; running them in parallel cuts wall-clock to ~one round-trip.
-	// checksumCache is guarded by c.mu; counters are atomic. errgroup never
+	// statusCache is guarded by c.mu; counters are atomic. errgroup never
 	// returns an error here (per-patch failures are logged + published, not
 	// propagated) so Wait's return is ignored.
 	// 64 (not 16): under conformance-grade churn every deployed-variant
@@ -509,8 +571,15 @@ const (
 	patchSkipped
 )
 
-// applyOnePatch applies a single phase-variant status payload to its target
-// resource via SSA, going through the phase-scoped checksum cache first.
+type statusCacheEntry struct {
+	uid                   string
+	baseResourceVersion   string
+	latestResourceVersion string
+	lastPhase             string
+	lastPayload           []byte
+}
+
+// applyOnePatch applies one phase variant, using exact lineage to skip when available.
 func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusPatch, statusPayload map[string]any, phaseKey string) patchOutcome {
 	gvr, err := c.gvrResolver.Resolve(patch.APIVersion, patch.Kind)
 	if err != nil {
@@ -528,7 +597,6 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 
 	gvrStr := gvr.String()
 
-	// Compute checksum of the status payload.
 	payloadBytes, err := json.Marshal(statusPayload)
 	if err != nil {
 		c.Logger().Error("Failed to marshal status payload",
@@ -537,45 +605,20 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 			"error", err)
 		return patchFailed
 	}
-	checksum := fmt.Sprintf("%x", sha256.Sum256(payloadBytes))
 
-	// Check checksum cache — skip if already applied.
-	// Cache key includes the phase so rendered and deployed track
-	// separate "last applied checksum"s. Without that, rendered's
-	// apply (content A) updates the cache, deployed's apply (content
-	// B) updates the cache again, and the next rendered apply
-	// (content A) sees mismatch and re-writes — overwriting the
-	// deployed state in K8s. With phase-scoped keys: rendered cache
-	// hits on the second pass, K8s keeps deployed's content. SSA
-	// behaviour with field manager "haptic" still owns every field
-	// each phase touches, so the LAST write wins and we let that
-	// last write be deployed.
-	cacheKey := fmt.Sprintf("%s/%s/%s/%s", phaseKey, patch.Namespace, patch.Name, gvrStr)
-	c.mu.RLock()
-	lastChecksum := c.checksumCache[cacheKey]
-	c.mu.RUnlock()
+	cacheKey := fmt.Sprintf("%s/%s/%s", patch.Namespace, patch.Name, gvrStr)
+	applyLock := &c.applyLocks[statusApplyLockIndex(cacheKey)]
+	applyLock.Lock()
+	defer applyLock.Unlock()
 
-	if lastChecksum == checksum {
+	exactLineage, expectedResourceVersion, skip := c.prepareStatusApply(
+		cacheKey, patch, phaseKey, payloadBytes,
+	)
+	if skip {
 		return patchSkipped
 	}
 
-	// Build the SSA patch payload: wrap status content under .status.
-	// For cluster-scoped resources (e.g. GatewayClass) the namespace is
-	// empty; omit the field rather than serialising "namespace": "" so
-	// the API server's SSA codec doesn't claim ownership of an empty
-	// namespace string we'd then have to track.
-	metadata := map[string]any{"name": patch.Name}
-	if patch.Namespace != "" {
-		metadata["namespace"] = patch.Namespace
-	}
-	ssaPayload := map[string]any{
-		"apiVersion": patch.APIVersion,
-		"kind":       patch.Kind,
-		"metadata":   metadata,
-		statusKey:    statusPayload,
-	}
-
-	ssaBytes, err := json.Marshal(ssaPayload)
+	ssaBytes, err := encodeStatusApplyPayload(patch, statusPayload, exactLineage, expectedResourceVersion)
 	if err != nil {
 		c.Logger().Error("Failed to marshal SSA payload",
 			"namespace", patch.Namespace,
@@ -607,7 +650,7 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 		// would flood the event bus and the commentator/metrics
 		// subscribers, degrading the very pipeline whose status we are
 		// applying. The next render (with the delete propagated) drops
-		// the patch. Do NOT cache the checksum — a same-name resource
+		// the patch. Do NOT cache the result — a same-name resource
 		// recreated with identical status content must still be applied.
 		if apierrors.IsNotFound(err) {
 			return patchSkipped
@@ -625,30 +668,123 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 		return patchFailed
 	}
 
-	if applied != nil {
-		c.selfWrites.Record(gvr.GroupResource(), patch.Namespace, patch.Name, applied.GetResourceVersion())
+	if applied == nil || applied.GetResourceVersion() == "" ||
+		(exactLineage && string(applied.GetUID()) != patch.UID) {
+		err := errors.New("status patch response has different or missing object lineage")
+		c.Logger().Error("Status patch response has invalid object lineage",
+			"namespace", patch.Namespace,
+			"name", patch.Name,
+			"gvr", gvrStr,
+			"phase", phaseKey)
+		c.EventBus().Publish(events.NewStatusUpdateFailedEvent(
+			patch.Namespace, patch.Name, gvrStr, err.Error(), false,
+		))
+		return patchFailed
 	}
+	c.selfWrites.Record(gvr.GroupResource(), patch.Namespace, patch.Name, applied.GetResourceVersion())
 
-	// Update checksum cache on success. The cache has no per-key eviction —
-	// the applier is deliberately stateless about which resources still
-	// exist (patches travel on events; deletions are invisible here), so
-	// under sustained create/delete churn keys for vanished resources
-	// accumulate. Bound it by wholesale reset: entries are pure SSA-skip
-	// hints, so the cost of a reset is one redundant apply per live
-	// resource+phase on the next pass, and the ceiling is generous enough
-	// that steady-state deployments never hit it.
-	// ponytail: wholesale reset; per-key eviction needs a deletion signal
-	// this component intentionally doesn't have.
-	c.mu.Lock()
-	if len(c.checksumCache) >= checksumCacheMaxEntries {
-		c.Logger().Info("Status checksum cache reset after reaching size bound",
-			"entries", len(c.checksumCache))
-		c.checksumCache = make(map[string]string, checksumCacheMaxEntries/4)
+	if exactLineage {
+		c.cacheStatusApplySuccess(cacheKey, patch, phaseKey, payloadBytes, applied.GetResourceVersion())
 	}
-	c.checksumCache[cacheKey] = checksum
-	c.mu.Unlock()
 
 	return patchApplied
+}
+
+func (c *Component) prepareStatusApply(
+	cacheKey string,
+	patch *templating.StatusPatch,
+	phase string,
+	payload []byte,
+) (exactLineage bool, expectedResourceVersion string, skip bool) {
+	exactLineage = patch.UID != "" && patch.ResourceVersion != ""
+	if exactLineage {
+		expectedResourceVersion, skip = c.statusApplyDecision(
+			cacheKey, patch.UID, patch.ResourceVersion, phase, payload,
+		)
+		return true, expectedResourceVersion, skip
+	}
+	c.mu.Lock()
+	delete(c.statusCache, cacheKey)
+	c.mu.Unlock()
+	return false, "", false
+}
+
+func encodeStatusApplyPayload(
+	patch *templating.StatusPatch,
+	statusPayload map[string]any,
+	exactLineage bool,
+	expectedResourceVersion string,
+) ([]byte, error) {
+	metadata := map[string]any{"name": patch.Name}
+	if patch.Namespace != "" {
+		metadata["namespace"] = patch.Namespace
+	}
+	if exactLineage {
+		metadata["uid"] = patch.UID
+		metadata["resourceVersion"] = expectedResourceVersion
+	}
+	return json.Marshal(map[string]any{
+		"apiVersion": patch.APIVersion,
+		"kind":       patch.Kind,
+		"metadata":   metadata,
+		statusKey:    statusPayload,
+	})
+}
+
+func (c *Component) cacheStatusApplySuccess(
+	cacheKey string,
+	patch *templating.StatusPatch,
+	phase string,
+	payload []byte,
+	appliedResourceVersion string,
+) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.statusCache) >= statusCacheMaxEntries {
+		c.Logger().Info("Status apply cache reset after reaching size bound",
+			"entries", len(c.statusCache))
+		c.statusCache = make(map[string]statusCacheEntry, statusCacheMaxEntries/4)
+	}
+	c.statusCache[cacheKey] = statusCacheEntry{
+		uid:                   patch.UID,
+		baseResourceVersion:   patch.ResourceVersion,
+		latestResourceVersion: appliedResourceVersion,
+		lastPhase:             phase,
+		lastPayload:           bytes.Clone(payload),
+	}
+}
+
+func (c *Component) statusApplyDecision(
+	cacheKey, uid, sourceResourceVersion, phase string,
+	payload []byte,
+) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, exists := c.statusCache[cacheKey]
+	if !exists || entry.uid != uid {
+		delete(c.statusCache, cacheKey)
+		return sourceResourceVersion, false
+	}
+	switch sourceResourceVersion {
+	case entry.latestResourceVersion:
+		entry.baseResourceVersion = sourceResourceVersion
+		c.statusCache[cacheKey] = entry
+		return sourceResourceVersion, entry.lastPhase == phase && bytes.Equal(entry.lastPayload, payload)
+	case entry.baseResourceVersion:
+		return entry.latestResourceVersion, false
+	default:
+		delete(c.statusCache, cacheKey)
+		return sourceResourceVersion, false
+	}
+}
+
+func statusApplyLockIndex(key string) int {
+	var hash uint32 = 2166136261
+	for index := range len(key) {
+		hash ^= uint32(key[index])
+		hash *= 16777619
+	}
+	return int(hash % statusApplyLockCount)
 }
 
 // IsRetriable returns true if the error is likely transient and the operation

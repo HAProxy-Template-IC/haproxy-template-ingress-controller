@@ -104,6 +104,44 @@ haproxy_config:
 	assert.Contains(t, cfg.HAProxyConfig.Template, "global")
 }
 
+func TestConfig_MarshalYAMLTemplateInputs(t *testing.T) {
+	cfg := Config{
+		Maps: map[string]MapFile{
+			"host.map": {Template: "example.test backend"},
+		},
+		Files: map[string]GeneralFile{
+			"400.http": {Template: "HTTP/1.0 400 Bad Request"},
+		},
+		SSLCertificates: map[string]SSLCertificate{
+			"example.pem": {Template: "certificate"},
+		},
+		K8sResources: map[string]K8sResource{
+			"service": {Template: "apiVersion: v1\nkind: Service"},
+		},
+		HAProxyConfig: HAProxyConfig{Template: "global"},
+	}
+
+	encoded, err := yaml.Marshal(cfg)
+	require.NoError(t, err)
+
+	var serialized map[string]any
+	require.NoError(t, yaml.Unmarshal(encoded, &serialized))
+	assert.Contains(t, serialized, "maps")
+	assert.Contains(t, serialized, "files")
+	assert.Contains(t, serialized, "ssl_certificates")
+	assert.Contains(t, serialized, "k8s_resources")
+	assert.Contains(t, serialized, "haproxy_config")
+	assert.NotContains(t, serialized, "crt_lists")
+
+	var roundTrip Config
+	require.NoError(t, yaml.Unmarshal(encoded, &roundTrip))
+	assert.Equal(t, cfg.Maps, roundTrip.Maps)
+	assert.Equal(t, cfg.Files, roundTrip.Files)
+	assert.Equal(t, cfg.SSLCertificates, roundTrip.SSLCertificates)
+	assert.Equal(t, cfg.K8sResources, roundTrip.K8sResources)
+	assert.Equal(t, cfg.HAProxyConfig, roundTrip.HAProxyConfig)
+}
+
 func TestPodSelector_UnmarshalYAML(t *testing.T) {
 	yamlConfig := `
 match_labels:

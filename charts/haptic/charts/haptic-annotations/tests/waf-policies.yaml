@@ -1133,6 +1133,7 @@ validationTests:
       # would warn via a Kubernetes Event instead — see the reconcile-mode tests
       # in ingress-annotations-compat.yaml.)
       renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: mixed-waf }
       # Pin nginx as an enabled family so the cross-family guard evaluates the
       # nginx annotation regardless of the deployment's library set (the e2e
       # profile, for instance, leaves nginx-ingress off).
@@ -1770,6 +1771,55 @@ validationTests:
       - { type: contains, target: "map:coraza-app.map", pattern: "team-a/first policy:team-a/p-alpha" }
       - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-a/waf-policies:.*more than the per-namespace self-service limit 2.*'p-gamma'" }
       - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-a/over \\}" }
+
+  test-haptic-waf-selfservice-cluster-budget:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: the cluster budget admits valid policies in sorted namespace order and fails later namespaces closed
+    extraContext:
+      renderMode: reconcile
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: { __replace__: true }
+          selfService: {enabled: true, limits: {maxTotalPolicies: 1}}
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-b, name: waf-policies }
+          data:
+            policies.yaml: |
+              beta:
+                requestBody:
+                  mode: none
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              alpha:
+                requestBody:
+                  mode: none
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: admitted, annotations: { haproxy-haptic.org/waf-policy: alpha } }
+          spec: *specRulesHost
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-b, name: over, annotations: { haproxy-haptic.org/waf-policy: beta } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: over.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-app.map", pattern: "team-a/admitted policy:team-a/alpha" }
+      - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-b/waf-policies:.*cluster-wide self-service WAF policy budget 1 is exhausted.*'beta'" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-b/over \\}" }
 
   test-haptic-waf-selfservice-default-on-weakening-rejected:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'

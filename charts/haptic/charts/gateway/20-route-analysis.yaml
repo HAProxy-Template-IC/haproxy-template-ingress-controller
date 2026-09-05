@@ -1,417 +1,455 @@
 templateSnippets:
-  util-gateway-analysis:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
+  util-gateway-route-effective-hosts-incremental:
+    requires: [gateways, namespaces, configmaps, secrets]
     template: |
-      {%- import "util-analyze-routes" for AnalyzeRoutes %}
+      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
+      {%- import "util-listenerset-routing-gate" for IsRouteAllowedOnListener -%}
+      {%- import "util-resource-helpers" for ListenerProtocolOr, ListenerHostname -%}
+      {%- import "util-gw-mtls-blocked-value" for ComputeGwMtlsBlockedValue -%}
+      {%- macro GatewayRouteEffectiveHosts(route any, effectiveHosts map[string]bool) -%}
       {%%
-        var _, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any {
-          var analysis = map[string]any{"pathGroups": map[string]any{}, "sortedRoutes": []any{}, "allRoutes": []any{}}
-          AnalyzeRoutes(analysis)
-          return analysis
-        })
-      %%}
-
-  # The ONLY site allowed to touch `resources.listenersets`. Consumers render it
-  # with `default ""` and read shared "listenersetsUntyped", so a missing
-  # ListenerSet CRD (Gateway API < v1.5) strips this snippet alone, not the pipeline.
-  util-listenersets-contrib:
-    requires: [listenersets]
-    template: |
-      {%%
-        var _, _ = shared.ComputeIfAbsent("listenersetsUntyped", func() any {
-          var all = []any{}
-          var byKey = map[string]any{}
-          for _, ls := range resources.listenersets.List() {
-            all = append(all, ls)
-            byKey[ls.Metadata.Namespace + "/" + ls.Metadata.Name] = ls
+        var routeNs = dig_string(route, "", "metadata", "namespace")
+        var routeHostnames = toSlice(dig(route, "spec", "hostnames"))
+        var resolvedParentCount = 0
+        for _, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
+          var parentGroup = dig_string(parentRef, "", "group")
+          if parentGroup == "" { parentGroup = "gateway.networking.k8s.io" }
+          var parentKind = dig_string(parentRef, "", "kind")
+          if parentKind == "" { parentKind = "Gateway" }
+          if parentGroup != "gateway.networking.k8s.io" {
+            continue
           }
-          return map[string]any{"all": all, "byKey": byKey}
-        })
-      %%}
-
-  # ListenerSet contributions to each Gateway's listener set: which ListenerSets
-  # attach, in what order, whether the Gateway admits them, and their listeners
-  # normalised to the same candidate shape util-effective-listeners builds for a
-  # Gateway's own listeners.
-  #
-  # `requires: [listenersets]` is what lets this read the resource typed. The
-  # snippet is stripped whole on a cluster without the CRD, so naming
-  # `resources.listenersets` here cannot break that cluster's render — which is
-  # exactly why the logic could not stay in util-effective-listeners, a snippet
-  # that has to compile everywhere.
-  util-listenerset-candidates:
-    requires: [gateways, listenersets, namespaces]
-    template: |
-      {%%
-        // An absent creationTimestamp must sort last, not first.
-        var tsOr = func(ts string) string {
-          if ts == "" {
-            return "9999-12-31T23:59:59Z"
+          var section = dig_string(parentRef, "", "sectionName")
+          var parentPort = toint(dig(parentRef, "port") | fallback(0))
+          if parentKind == "Gateway" {
+            var gatewayNs = dig_string(parentRef, routeNs, "namespace")
+            if gatewayNs == "" { gatewayNs = routeNs }
+            var gatewayName = dig_string(parentRef, "", "name")
+            var gateway = resources.gateways.GetSingle(gatewayNs, gatewayName)
+            if gateway == nil {
+              continue
+            }
+            resolvedParentCount++
+            var mtlsBlocked = map[string]bool{}
+            ComputeGwMtlsBlockedValue(gateway, mtlsBlocked)
+            for _, listener := range gateway.Spec.Listeners {
+              var listenerName = listener.Name
+              var listenerPort = toint(listener.Port)
+              if (section != "" && section != listenerName) ||
+                mtlsBlocked[listenerName] ||
+                (parentPort != 0 && parentPort != listenerPort) ||
+                !hasPrefix(IsRouteAllowedOnListener(routeNs, listener, gatewayNs), "true") {
+                continue
+              }
+              var listenerProtocol = ListenerProtocolOr(listener, "HTTP")
+              var listenerHostname = ListenerHostname(listener)
+              var portSuffix = ""
+              if listenerPort > 0 {
+                var scopePort = listenerPort
+                var selectedPort, foundPort = shared.Select(
+                  "gateway-host-port-scopes", "ports",
+                  gatewayNs + "/" + gatewayName + ":" + tostring(listenerPort))
+                if foundPort {
+                  scopePort = toint(selectedPort)
+                }
+                var nonDefault = (listenerProtocol == "HTTP" && listenerPort != 80) ||
+                  ((listenerProtocol == "HTTPS" || listenerProtocol == "TLS") && listenerPort != 443)
+                if listenerHostname == "" || nonDefault {
+                  portSuffix = ":" + tostring(scopePort)
+                }
+              }
+              var currentRank = toint(HostnameRank(listenerHostname))
+              if len(routeHostnames) == 0 {
+                effectiveHosts[listenerHostname + portSuffix] = true
+              } else if listenerHostname == "" {
+                for _, hostnameAny := range routeHostnames {
+                  var hostname = tostring(hostnameAny)
+                  var ownedBySibling = false
+                  for _, sibling := range gateway.Spec.Listeners {
+                    if sibling.Name != listenerName && sibling.Hostname != "" &&
+                      HostnameSinglePairMatch(sibling.Hostname, hostname) == "true" &&
+                      toint(HostnameRank(sibling.Hostname)) > currentRank {
+                      ownedBySibling = true
+                    }
+                  }
+                  if !ownedBySibling {
+                    effectiveHosts[hostname + portSuffix] = true
+                  }
+                }
+              } else {
+                for _, hostnameAny := range routeHostnames {
+                  var intersection = HostnameSinglePairIntersection(listenerHostname, tostring(hostnameAny))
+                  if intersection == "" {
+                    continue
+                  }
+                  var ownedBySibling = false
+                  for _, sibling := range gateway.Spec.Listeners {
+                    if sibling.Name != listenerName && sibling.Hostname != "" &&
+                      HostnameSinglePairIntersection(sibling.Hostname, intersection) == intersection &&
+                      toint(HostnameRank(sibling.Hostname)) > currentRank {
+                      ownedBySibling = true
+                    }
+                  }
+                  if !ownedBySibling {
+                    effectiveHosts[intersection + portSuffix] = true
+                  }
+                }
+              }
+            }
+          } else if parentKind == "ListenerSet" {
+            var listenerSetNs = dig_string(parentRef, routeNs, "namespace")
+            if listenerSetNs == "" { listenerSetNs = routeNs }
+            var listenerSetName = dig_string(parentRef, "", "name")
+            var selected, found = shared.Select(
+              "gateway-host-listenersets", "listenersets", listenerSetNs + "/" + listenerSetName)
+            if !found || tostring(dig(selected, "accepted") | fallback(false)) != "true" {
+              continue
+            }
+            resolvedParentCount++
+            var listeners = toSlice(dig(selected, "candidates"))
+            for _, listener := range listeners {
+              var listenerName = dig_string(listener, "", "name")
+              var listenerPort = toint(dig(listener, "port") | fallback(0))
+              var ownerNs = dig_string(listener, listenerSetNs, "ownerNamespace")
+              if (section != "" && section != listenerName) ||
+                (parentPort != 0 && parentPort != listenerPort) ||
+                !hasPrefix(IsRouteAllowedOnListener(routeNs, listener, ownerNs), "true") {
+                continue
+              }
+              var listenerProtocol = ListenerProtocolOr(listener, "HTTP")
+              var portSuffix = ""
+              if listenerPort > 0 &&
+                ((listenerProtocol == "HTTP" && listenerPort != 80) ||
+                  (listenerProtocol == "HTTPS" && listenerPort != 443) ||
+                  (listenerProtocol == "TLS" && listenerPort != 443)) {
+                portSuffix = ":" + tostring(listenerPort)
+              }
+              var listenerHostname = ListenerHostname(listener)
+              var currentRank = toint(HostnameRank(listenerHostname))
+              if len(routeHostnames) == 0 {
+                effectiveHosts[listenerHostname + portSuffix] = true
+              } else if listenerHostname == "" {
+                for _, hostnameAny := range routeHostnames {
+                  effectiveHosts[tostring(hostnameAny) + portSuffix] = true
+                }
+              } else {
+                for _, hostnameAny := range routeHostnames {
+                  var intersection = HostnameSinglePairIntersection(listenerHostname, tostring(hostnameAny))
+                  if intersection == "" {
+                    continue
+                  }
+                  var ownedBySibling = false
+                  for _, sibling := range listeners {
+                    var siblingName = dig_string(sibling, "", "name")
+                    var siblingHostname = dig_string(sibling, "", "hostname")
+                    if siblingName != listenerName && siblingHostname != "" &&
+                      HostnameSinglePairIntersection(siblingHostname, intersection) == intersection &&
+                      toint(HostnameRank(siblingHostname)) > currentRank {
+                      ownedBySibling = true
+                    }
+                  }
+                  if !ownedBySibling {
+                    effectiveHosts[intersection + portSuffix] = true
+                  }
+                }
+              }
+            }
           }
-          return ts
         }
-        // A route's parentRef names a ListenerSet, not the Gateway it hangs off,
-        // so consumers resolving such a ref need the reverse index. Both are
-        // filled in the same pass, from the same decision, so they cannot
-        // disagree — and byListenerSet records an attached ListenerSet even when
-        // it declares no listeners, which still resolves a route's parent.
-        var byListenerSet = map[string]any{}
-        var _, _ = shared.ComputeIfAbsent("listenerSetCandidatesByLS", func() any { return byListenerSet })
-        var _, _ = shared.ComputeIfAbsent("listenerSetCandidates", func() any {
-          var byGateway = map[string]any{}
-
-          for _, gw := range resources.gateways.List() {
-            var gwNs = gw.Metadata.Namespace
-            var gwName = gw.Metadata.Name
-            var gwKey = gwNs + "/" + gwName
-
-            // No allowedListeners = default-deny (Gateway API SupportListenerSet).
-            // dig, not typed access: allowedListeners is newer than the oldest
-            // Gateway schema generation this can run against, and the ListenerSet
-            // CRD's presence does not promise the Gateway CRD ships it.
-            var allowed = dig(gw, "spec", "allowedListeners")
-            var allowedFrom = "None"
-            var allowedSelector any = nil
-            if allowed != nil {
-              allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None"))
-              allowedSelector = dig(allowed, "namespaces", "selector", "matchLabels")
+        if resolvedParentCount == 0 {
+          if len(routeHostnames) == 0 {
+            effectiveHosts[""] = true
+          } else {
+            for _, hostname := range routeHostnames {
+              effectiveHosts[tostring(hostname)] = true
             }
-            // Scriggo quirk: without this capture the LS-acceptance switch below
-            // reads listener-field strings ("protocol"/"hostname") as allowedFrom.
-            var _, _ = shared.ComputeIfAbsent("__captureAllowedFrom_"+gwKey, func() any {
-              return map[string]any{"allowedFrom": allowedFrom, "allowed": allowed}
-            })
-
-            // Attached by parentRef, then ordered oldest-first. Never hand-roll a
-            // nested-loop sort here: Scriggo mis-lowers them and silently drops
-            // elements. Empty creationTimestamp sorts last via the sentinel.
-            // parentRef.namespace defaults to the ListenerSet's own namespace.
-            var lsSortItems = resources.listenersets.List() |
-              filter(ls => ls.Spec.ParentRef.Name == gwName) |
-              filter(ls => (ls.Spec.ParentRef.Namespace == "" && ls.Metadata.Namespace == gwNs) ||
-                ls.Spec.ParentRef.Namespace == gwNs) |
-              map(ls => map[string]any{
-                "ts":  tsOr(ls.Metadata.CreationTimestamp),
-                "key": ls.Metadata.Namespace + "/" + ls.Metadata.Name,
-                "ls":  ls,
-              })
-            var lsSorted, sortErr = sort_by(lsSortItems, []string{"$.ts", "$.key"})
-            if sortErr != nil {
-              fail("failed to order ListenerSets for " + gwKey + ": " + tostring(sortErr))
-            }
-
-            var candidates = []any{}
-            var statuses = map[string]any{}
-            for _, lsItem := range lsSorted {
-              var ls = lsItem["ls"].(*resources.listenersets.T)
-              var lsNs = ls.Metadata.Namespace
-              var lsName = ls.Metadata.Name
-              var lsKey = lsNs + "/" + lsName
-
-              var permitted = false
-              var rejectionReason = "NotAllowed"
-              var rejectionMessage = "Parent Gateway does not allow ListenerSets from this namespace"
-              switch allowedFrom {
-              case "All":
-                permitted = true
-              case "Same":
-                permitted = (lsNs == gwNs)
-              case "Selector":
-                if allowedSelector == nil {
-                  permitted = false
-                } else {
-                  var nsObj = resources.namespaces.GetSingle(lsNs)
-                  if nsObj == nil {
-                    permitted = false
-                  } else {
-                    // to_str_map, not .(map[string]any): typegen labels are
-                    // map[string]string, which that assertion panics on.
-                    var selMap = to_str_map(allowedSelector)
-                    var allMatch = true
-                    for k, v := range selMap {
-                      var actual, ok = nsObj.Metadata.Labels[k]
-                      if !ok || actual != v {
-                        allMatch = false
-                        break
-                      }
-                    }
-                    permitted = allMatch
-                  }
-                }
-              default:
-                permitted = false
-              }
-
-              // Cross-namespace ListenerSet parentRefs need NO ReferenceGrant:
-              // allowedListeners is the policy (Gateway API conformance). RG
-              // only gates Secret/ConfigMap references made by listeners.
-
-              // listenerConflicts is filled in after conflict detection, by the
-              // consumer that merges these candidates.
-              statuses[lsKey] = map[string]any{
-                "permitted":         permitted,
-                "rejectionReason":   rejectionReason,
-                "rejectionMessage":  rejectionMessage,
-                "listenerConflicts": []any{},
-              }
-
-              var lsCandidates = []any{}
-              byListenerSet[lsKey] = map[string]any{
-                "gwKey":      gwKey,
-                "accepted":   permitted,
-                "candidates": lsCandidates,
-              }
-
-              // Non-permitted listeners are still emitted (_accepted=false) so
-              // status can report Programmed=False; routing loops skip them.
-              for li, l := range ls.Spec.Listeners {
-                var lc = map[string]any{
-                  "name":          l.Name,
-                  "hostname":      l.Hostname,
-                  "port":          l.Port,
-                  "protocol":      l.Protocol,
-                  "tls":           l.Tls,
-                  "allowedRoutes": l.AllowedRoutes,
-                }
-                lc["__sourceKind"] = "ListenerSet"
-                lc["__sourceNs"] = lsNs
-                lc["__sourceName"] = lsName
-                lc["_index"] = li
-                lc["_accepted"] = permitted
-                candidates = append(candidates, lc)
-                lsCandidates = append(lsCandidates, lc)
-              }
-              byListenerSet[lsKey].(map[string]any)["candidates"] = lsCandidates
-            }
-
-            byGateway[gwKey] = map[string]any{"candidates": candidates, "statuses": statuses}
           }
-          return byGateway
-        })
-
+        }
       %%}
-
-  util-effective-listeners:
-    requires: [gateways, referencegrants]
-    template: |
-      {#
-        Provenance lives in flat `__source*` keys, not a nested `_source` map:
-        Scriggo rebinds literal map keys "kind"/"namespace"/"name" to
-        listener-field values ("protocol", "hostname") under this loop shape.
-      #}
-      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- _ = render "util-listenerset-candidates" default "" -%}
-      {%%
-        var _, _ = shared.ComputeIfAbsent("effectiveListeners", func() any {
-          // Statuses share this one cache value so "effectiveListeners populated"
-          // implies "statuses populated"; the F3 status patch reads both from here.
-          var statuses = map[string]any{}
-
-          var out = map[string][]any{}
-
-          var lsCandidates = map[string]any{}
-          var lsCandRaw = shared.Get("listenerSetCandidates")
-          if lsCandRaw != nil {
-            lsCandidates = lsCandRaw.(map[string]any)
-          }
-
-          for _, gw := range resources.gateways.List() {
-            var gwNs = gw.Metadata.Namespace
-            var gwName = gw.Metadata.Name
-            var gwKey = gwNs + "/" + gwName
-
-            var candidates = []any{}
-
-            // Gateway's own listeners go first: they win every precedence conflict.
-            for li, l := range gw.Spec.Listeners {
-              var lc = map[string]any{
-                "name":          l.Name,
-                "hostname":      l.Hostname,
-                "port":          l.Port,
-                "protocol":      l.Protocol,
-                "tls":           l.Tls,
-                "allowedRoutes": l.AllowedRoutes,
-              }
-              lc["__sourceKind"] = "Gateway"
-              lc["__sourceNs"] = gwNs
-              lc["__sourceName"] = gwName
-              lc["_index"] = li
-              lc["_accepted"] = true
-              candidates = append(candidates, lc)
-            }
-
-            // ListenerSet contributions for this Gateway, already admitted,
-            // ordered and normalised to the same candidate shape. Computed by
-            // util-listenerset-candidates, which is gated on the ListenerSet
-            // CRD — absent here means the cluster has no ListenerSets, or no
-            // ListenerSet API at all.
-            var lsPart = lsCandidates[gwKey]
-            if lsPart != nil {
-              var part = lsPart.(map[string]any)
-              for _, c := range part["candidates"].([]any) {
-                candidates = append(candidates, c)
-              }
-              for lsKey, st := range part["statuses"].(map[string]any) {
-                statuses[lsKey] = st
-              }
-            }
-
-            // No `continue` in this loop: Scriggo's continue inside these nested
-            // ifs terminates the outer for-loop. Skip flags instead.
-            var winningProtoByPort = map[int]string{}
-            var claimedHostByPort = map[string]bool{}
-            for ci := 0; ci < len(candidates); ci++ {
-              var lc = candidates[ci].(map[string]any)
-              var skip = !lc["_accepted"].(bool)
-              if !skip {
-                var port = toint(lc["port"] | fallback(0))
-                if port <= 0 {
-                  skip = true
-                }
-                if !skip {
-                  var protocol = tostring(lc["protocol"] | fallback("HTTP"))
-                  var winner, hasWinner = winningProtoByPort[port]
-                  if !hasWinner {
-                    winningProtoByPort[port] = protocol
-                  } else if winner != protocol {
-                    lc["_conflicted"] = "ProtocolConflict"
-                    skip = true
-                  }
-                  if !skip {
-                    var hostname = tostring(lc["hostname"] | fallback(""))
-                    var hostKey = tostring(port) + "|" + hostname
-                    if claimedHostByPort[hostKey] {
-                      lc["_conflicted"] = "HostnameConflict"
-                    } else {
-                      claimedHostByPort[hostKey] = true
-                    }
-                  }
-                }
-              }
-            }
-
-            // No `continue` here either (see the loop above).
-            for ci := 0; ci < len(candidates); ci++ {
-              var lc = candidates[ci].(map[string]any)
-              var srcKind = tostring(lc["__sourceKind"])
-              var srcNs = tostring(lc["__sourceNs"])
-              var srcName = tostring(lc["__sourceName"])
-              if srcKind == "ListenerSet" {
-                var lsKey = srcNs + "/" + srcName
-                var entryAny = statuses[lsKey]
-                if entryAny != nil {
-                  var entry = entryAny.(map[string]any)
-                  var conflicts = entry["listenerConflicts"].([]any)
-                  var conflictReason = ""
-                  c, hasC := lc["_conflicted"]
-                  if hasC {
-                    conflictReason = tostring(c)
-                  }
-                  conflicts = append(conflicts, map[string]any{
-                    "name":           tostring(lc["name"] | fallback("")),
-                    "index":          lc["_index"],
-                    "conflicted":     conflictReason,
-                    "accepted":       lc["_accepted"],
-                  })
-                  entry["listenerConflicts"] = conflicts
-                  statuses[lsKey] = entry
-                }
-              }
-            }
-
-            var listeners = []any{}
-            for _, c := range candidates {
-              var lc = c.(map[string]any)
-              var keep = lc["_accepted"].(bool)
-              if keep {
-                _, conflicted := lc["_conflicted"]
-                if conflicted {
-                  keep = false
-                }
-              }
-              if keep {
-                listeners = append(listeners, lc)
-              }
-            }
-            out[gwKey] = listeners
-          }
-
-          return map[string]any{
-            "listeners": out,
-            "statuses":  statuses,
-          }
-        })
-      %%}
-
-  util-listenerset-routing-gate:
-    requires: [gateways, referencegrants]
-    template: |
-      {#
-        Returns "true" / "false" — Scriggo macros can only return text.
-        Duplicates the acceptance gate util-effective-listeners applies;
-        change both together or routing and status disagree.
-      #}
-      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- macro IsListenerSetAdmitted(gw *resources.gateways.T, ls any) -%}
-        {#- `ls any`, not *resources.listenersets.T: a typed parameter would make
-            every importer require the ListenerSet CRD. dig() handles both. -#}
-        {%- var gwNs = gw.Metadata.Namespace -%}
-        {%- var gwName = gw.Metadata.Name -%}
-        {%- var result = "false" -%}
-        {%- if dig_string(ls, "", "spec", "parentRef", "name") == gwName -%}
-          {%- var lsNs = dig_string(ls, "", "metadata", "namespace") -%}
-          {%- var pNs = dig_string(ls, "", "spec", "parentRef", "namespace") -%}
-          {%- if pNs == "" %}{%- pNs = lsNs %}{%- end -%}
-          {%- if pNs == gwNs -%}
-            {#- dig, never typed: `allowedListeners` arrived in Gateway API v1.5
-                and typed access fails to COMPILE against older Gateway schemas.
-                Absent block = default-deny. -#}
-            {%- var allowedFrom = dig_string(gw, "None", "spec", "allowedListeners", "namespaces", "from") -%}
-            {%- if allowedFrom == "" %}{%- allowedFrom = "None" %}{%- end -%}
-            {%- var allowedSelector = dig(gw, "spec", "allowedListeners", "namespaces", "selector", "matchLabels") -%}
-            {%- var permitted = "false" -%}
-            {%- if allowedFrom == "All" -%}
-              {%- permitted = "true" -%}
-            {%- else if allowedFrom == "Same" -%}
-              {%- if lsNs == gwNs -%}
-                {%- permitted = "true" -%}
-              {%- end -%}
-            {%- else if allowedFrom == "Selector" -%}
-              {%- var selMap = to_str_map(allowedSelector) -%}
-              {%- if len(selMap) > 0 -%}
-                {%- var nsObj = resources.namespaces.GetSingle(lsNs) -%}
-                {%- if nsObj != nil -%}
-                  {#- to_str_map, not .(map[string]any): typegen labels are
-                      map[string]string, which that assertion panics on. -#}
-                  {%- var allMatch = "true" -%}
-                  {%- for k, v := range selMap -%}
-                    {%- var actual, ok = nsObj.Metadata.Labels[k] -%}
-                    {%- if !ok -%}
-                      {%- allMatch = "false" -%}
-                    {%- else if actual != v -%}
-                      {%- allMatch = "false" -%}
-                    {%- end -%}
-                  {%- end -%}
-                  {%- permitted = allMatch -%}
-                {%- end -%}
-              {%- end -%}
-            {%- end -%}
-            {%- if permitted == "true" -%}
-              {#- Cross-namespace ListenerSet parentRefs need NO ReferenceGrant:
-                  allowedListeners is the policy (Gateway API conformance). -#}
-              {%- result = "true" -%}
-            {%- end -%}
-          {%- end -%}
-        {%- end -%}
-        {{ result -}}
       {%- end macro -%}
 
-      {#-
-        Returns "true" / "false" — Scriggo macros can only return text.
-        Not foldable into IsListenerSetAdmitted: that gates a ListenerSet on the
-        Gateway's allowedListeners, this gates a route on the listener's
-        allowedRoutes. An admitted LS can still reject a route's namespace.
-      -#}
+  util-publish-gateway-route-candidates:
+    requires: [gateways, namespaces, configmaps, secrets]
+    template: |
+      {%- import "util-gateway-route-effective-hosts-incremental" for GatewayRouteEffectiveHosts -%}
+      {%- macro PublishGatewayRouteCandidates(route any, routeKind string) -%}
+      {%%
+        var namespace = dig_string(route, "", "metadata", "namespace")
+        var name = dig_string(route, "", "metadata", "name")
+        var routeKey = routeKind + "/" + namespace + "/" + name
+        var presenceCell = "presence-http"
+        if routeKind == "GRPCRoute" { presenceCell = "presence-grpc" }
+        show shared.Publish(presenceCell, namespace + "/" + name, true)
+        var rawKindRank = "0"
+        if routeKind == "GRPCRoute" { rawKindRank = "1" }
+        var fixed = func(value int) string {
+          var encoded = tostring(value)
+          var zeroes = "0000000000"
+          if len(encoded) >= len(zeroes) { return encoded }
+          return zeroes[:len(zeroes)-len(encoded)] + encoded
+        }
+        var descending = func(value int) string { return fixed(999999999 - value) }
+        var effectiveHosts = map[string]bool{}
+        GatewayRouteEffectiveHosts(route, effectiveHosts)
+        var entries = []any{}
+        var routeAdvanced = routeKind == "GRPCRoute"
+        for _, hostname := range keys(effectiveHosts) {
+          for ruleIndex, rule := range toSlice(dig(route, "spec", "rules")) {
+            var matches = toSlice(dig(rule, "matches"))
+            var matchCount = len(matches)
+            var iterationCount = matchCount
+            if iterationCount == 0 { iterationCount = 1 }
+            for matchIndex := 0; matchIndex < iterationCount; matchIndex++ {
+              var pathType = "PathPrefix"
+              var pathValue = "/"
+              var hasMethod = false
+              var headerCount = 0
+              var queryParamCount = 0
+              if matchCount > 0 {
+                var match = matches[matchIndex]
+                if routeKind == "HTTPRoute" {
+                  var configuredType = dig_string(match, "", "path", "type")
+                  var configuredValue = dig_string(match, "", "path", "value")
+                  if configuredType != "" { pathType = configuredType }
+                  if configuredValue != "" { pathValue = configuredValue }
+                  hasMethod = dig_string(match, "", "method") != ""
+                  headerCount = len(toSlice(dig(match, "headers")))
+                  queryParamCount = len(toSlice(dig(match, "queryParams")))
+                } else {
+                  hasMethod = dig_string(match, "", "method", "service") != "" ||
+                    dig_string(match, "", "method", "method") != ""
+                  headerCount = len(toSlice(dig(match, "headers")))
+                }
+              }
+              if hasMethod || headerCount > 0 || queryParamCount > 0 {
+                routeAdvanced = true
+              }
+              var pathKey = hostname + "|" + pathType + "|" + pathValue
+              var entryID = routeKey + "/" + fixed(ruleIndex) + "/" + fixed(matchIndex) + "/" + hostname
+              var rawRank = rawKindRank + "\x00" + namespace + "/" + name + "\x00" +
+                hostname + "\x00" + fixed(ruleIndex) + "\x00" + fixed(matchIndex)
+              var methodRank = "1"
+              if hasMethod { methodRank = "0" }
+              var creationTimestamp = dig_string(route, "", "metadata", "creationTimestamp")
+              var sortRank = pathType + "\x00" + descending(len(pathValue)) + "\x00" + methodRank + "\x00" +
+                descending(headerCount) + "\x00" + descending(queryParamCount) + "\x00" +
+                creationTimestamp + "\x00" + namespace + "/" + name + "\x00" + fixed(ruleIndex) + "\x00" +
+                pathKey + "\x00" + rawRank
+              var routeInfo = map[string]any{
+                "entryID": entryID,
+                "kind": routeKind,
+                "routeNamespace": namespace,
+                "routeName": name,
+                "hostname": hostname,
+                "ruleIdx": ruleIndex,
+                "matchIdx": matchIndex,
+                "pathKey": pathKey,
+                "pathType": pathType,
+                "pathValue": pathValue,
+                "pathValueLen": len(pathValue),
+                "hasMethod": hasMethod,
+                "headerCount": headerCount,
+                "queryParamCount": queryParamCount,
+                "rawRank": rawRank,
+                "allRank": pathKey + "\x00" + rawRank,
+                "sortRank": sortRank,
+              }
+              entries = append(entries, map[string]any{"id": entryID, "pathKey": pathKey})
+              show shared.Publish("path:" + pathKey, entryID, routeInfo)
+            }
+          }
+        }
+        show shared.Publish("routes", routeKey, map[string]any{
+          "entries": entries,
+          "advanced": routeAdvanced,
+        })
+      %%}
+      {%- end macro -%}
+
+  gateway-route-candidates-100-http:
+    requires: [gateways, httproutes, namespaces, configmaps, secrets]
+    incremental:
+      source: httproutes
+      root: gateway-http-route-pre-analysis
+      group: gateway-route-candidates
+      consumes: [gateway-host-port-scopes]
+      optionalConsumes: [gateway-host-listenersets]
+      effects: [publishValue]
+    template: |
+      {%- import "util-publish-gateway-route-candidates" for PublishGatewayRouteCandidates -%}
+      {%- var route = item -%}
+      {%- if route != nil -%}{{- PublishGatewayRouteCandidates(route, "HTTPRoute") -}}{%- end -%}
+
+  gateway-route-candidates-200-grpc:
+    requires: [gateways, grpcroutes, namespaces, configmaps, secrets]
+    incremental:
+      source: grpcroutes
+      group: gateway-route-candidates
+      consumes: [gateway-host-port-scopes]
+      optionalConsumes: [gateway-host-listenersets]
+      effects: [publishValue]
+    template: |
+      {%- import "util-publish-gateway-route-candidates" for PublishGatewayRouteCandidates -%}
+      {%- var route = resources.grpcroutes.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if route != nil -%}{{- PublishGatewayRouteCandidates(route, "GRPCRoute") -}}{%- end -%}
+
+  util-analyze-gateway-route-incremental:
+    requires: [grpcroutes, httproutes]
+    template: |
+      {%- macro AnalyzeGatewayRouteIncremental(route any, routeKind string) -%}
+      {%%
+        var namespace = dig_string(route, "", "metadata", "namespace")
+        var name = dig_string(route, "", "metadata", "name")
+        var routeKey = routeKind + "/" + namespace + "/" + name
+        var routeIndex, foundRoute = shared.Select("gateway-route-candidates", "routes", routeKey)
+        if !foundRoute {
+          return
+        }
+        var finalizedEntryIDs = []any{}
+        for _, entryRef := range toSlice(dig(routeIndex, "entries")) {
+          var entryID = dig_string(entryRef, "", "id")
+          var pathKey = dig_string(entryRef, "", "pathKey")
+          var pathCandidates = shared.SelectValues("gateway-route-candidates", "path:" + pathKey)
+          if len(pathCandidates) == 0 {
+            continue
+          }
+          pathCandidates = sort_by(pathCandidates, []string{"$.rawRank"})
+          var resolveRoute = func(candidate any) any {
+            var candidateNamespace = dig_string(candidate, "", "routeNamespace")
+            var candidateName = dig_string(candidate, "", "routeName")
+            if dig_string(candidate, "", "kind") == "HTTPRoute" {
+              return resources.httproutes.GetSingle(candidateNamespace, candidateName)
+            }
+            return resources.grpcroutes.GetSingle(candidateNamespace, candidateName)
+          }
+          var buildConditions = func(candidate any) string {
+            var candidateRoute = resolveRoute(candidate)
+            if candidateRoute == nil {
+              return ""
+            }
+            var ruleIndex = toint(dig(candidate, "ruleIdx") | fallback(0))
+            var matchIndex = toint(dig(candidate, "matchIdx") | fallback(0))
+            var rules = toSlice(dig(candidateRoute, "spec", "rules"))
+            if ruleIndex < 0 || ruleIndex >= len(rules) {
+              return ""
+            }
+            var matches = toSlice(dig(rules[ruleIndex], "matches"))
+            if matchIndex < 0 || matchIndex >= len(matches) {
+              return ""
+            }
+            var match = matches[matchIndex]
+            var conditions = ""
+            if dig_string(candidate, "", "kind") == "HTTPRoute" {
+              var method = dig_string(match, "", "method")
+              if method != "" { conditions = conditions + "method:" + method }
+              for _, header := range toSlice(dig(match, "headers")) {
+                conditions = conditions + ";header:" + dig_string(header, "", "name") + "=" +
+                  dig_string(header, "", "value")
+              }
+              for _, parameter := range toSlice(dig(match, "queryParams")) {
+                conditions = conditions + ";param:" + dig_string(parameter, "", "name") + "=" +
+                  dig_string(parameter, "", "value")
+              }
+            } else {
+              var service = dig_string(match, "", "method", "service")
+              var method = dig_string(match, "", "method", "method")
+              if service != "" || method != "" {
+                conditions = conditions + "method:" + dig_string(match, "", "method", "type") + "/" +
+                  service + "/" + method
+              }
+              for _, header := range toSlice(dig(match, "headers")) {
+                conditions = conditions + ";header:" + dig_string(header, "", "name") + "=" +
+                  dig_string(header, "", "value")
+              }
+            }
+            return conditions
+          }
+          var firstConditions = buildConditions(pathCandidates[0])
+          var hasConflicts = false
+          var routeIDs = []string{}
+          var groupRank = ""
+          var winnerEntryID = ""
+          for _, candidate := range pathCandidates {
+            if buildConditions(candidate) != firstConditions {
+              hasConflicts = true
+            }
+            routeIDs = append(routeIDs,
+              dig_string(candidate, "", "routeNamespace") + "_" +
+              dig_string(candidate, "", "routeName") + "_" +
+              tostring(dig(candidate, "ruleIdx") | fallback(0)))
+            var candidateRank = dig_string(candidate, "", "sortRank")
+            if groupRank == "" || candidateRank < groupRank {
+              groupRank = candidateRank
+              winnerEntryID = dig_string(candidate, "", "entryID")
+            }
+          }
+          var conflictGroup = join(routeIDs, "__")
+          for _, candidate := range pathCandidates {
+            if dig_string(candidate, "", "entryID") != entryID {
+              continue
+            }
+            var routeID = namespace + "_" + name + "_" +
+              tostring(dig(candidate, "ruleIdx") | fallback(0))
+            var finalized = merge(candidate, map[string]any{
+              "hasConflicts": hasConflicts,
+              "routeId": routeID,
+              "conflictGroup": conflictGroup,
+              "groupRank": groupRank,
+              "groupWinner": entryID == winnerEntryID,
+              "rawRepresentative": entryID == dig_string(pathCandidates[0], "", "entryID"),
+              "groupKind": dig_string(pathCandidates[0], "", "kind"),
+              "groupRouteNamespace": dig_string(pathCandidates[0], "", "routeNamespace"),
+              "groupRouteName": dig_string(pathCandidates[0], "", "routeName"),
+              "advancedScope": tostring(dig(routeIndex, "advanced") | fallback(false)) == "true",
+            })
+            show shared.Publish("entries", entryID, finalized)
+            finalizedEntryIDs = append(finalizedEntryIDs, entryID)
+          }
+        }
+        show shared.Publish("routes", routeKey, map[string]any{"entries": finalizedEntryIDs})
+      %%}
+      {%- end macro -%}
+
+  gateway-route-analysis-100-http:
+    requires: [grpcroutes, httproutes]
+    incremental:
+      source: httproutes
+      group: gateway-route-analysis
+      consumes: [gateway-route-candidates]
+      effects: [publishValue]
+    template: |
+      {%- import "util-analyze-gateway-route-incremental" for AnalyzeGatewayRouteIncremental -%}
+      {{- AnalyzeGatewayRouteIncremental(item, "HTTPRoute") -}}
+
+  gateway-route-analysis-200-grpc:
+    requires: [grpcroutes, httproutes]
+    incremental:
+      source: grpcroutes
+      group: gateway-route-analysis
+      consumes: [gateway-route-candidates]
+      effects: [publishValue]
+    template: |
+      {%- import "util-analyze-gateway-route-incremental" for AnalyzeGatewayRouteIncremental -%}
+      {{- AnalyzeGatewayRouteIncremental(item, "GRPCRoute") -}}
+
+  features-004-gateway-route-analysis-publications:
+    requires: [gateways, grpcroutes, httproutes]
+    template: |-
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "map-hostvalues-490-gateway-port-scopes" -}}
+      {{- render "gateway-route-candidates-100-http" -}}
+      {{- render "gateway-route-candidates-200-grpc" -}}
+      {{- render "gateway-route-analysis-100-http" -}}
+      {{- render "gateway-route-analysis-200-grpc" -}}
+      {{- render "gateway-route-paths-100-http" -}}
+      {{- render "gateway-route-paths-200-grpc" -}}
+
+  util-listenerset-routing-gate:
+    requires: [namespaces]
+    template: |
+      {#- Returns text because Scriggo macros have text results. -#}
       {%- macro IsRouteAllowedOnListener(routeNs string, listener any, listenerOwnerNs string) -%}
         {%- var allowedFrom = "Same" -%}
         {%- var allowedSelector any = nil -%}
@@ -449,439 +487,3 @@ templateSnippets:
         {%- end -%}
         {{ result -}}
       {%- end macro -%}
-
-  util-route-effective-hosts:
-    requires: [gateways, referencegrants]
-    template: |
-      {# Which hostnames a route actually serves, per resolved parentRef.
-
-          Identical for the HTTPRoute and GRPCRoute passes — it reads only the
-          namespace, the hostnames and the parentRefs — so both callers pass
-          those three and share this body instead of forking it.
-
-          effectiveHosts is filled IN PLACE (Scriggo maps are references).
-          The caller keeps the `len(effectiveHosts) == 0` check: a macro
-          cannot `continue` its caller's loop.
-
-          Precondition: the caller has rendered util-gateway-port-scope. Every
-          call site is inside AnalyzeRoutes, which renders it once up front;
-          rendering it here instead would emit its output once per route. #}
-      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener %}
-      {%- import "util-resource-helpers" for ListenerProtocolOr, ListenerHostname %}
-      {%- import "util-gw-mtls-blocked" for ComputeGwMtlsBlocked %}
-      {%- macro RouteEffectiveHosts(routeNs string, routeHostnames []any, parentRefs []any, effectiveHosts map[string]bool) %}
-        {%- var resolvedGwCount = 0 %}
-          {%- for _, parentRef := range parentRefs %}
-            {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
-            {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
-            {%- if prGroup == "gateway.networking.k8s.io" && prKind == "Gateway" %}
-              {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
-              {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
-              {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
-              {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
-              {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
-              {%- if gw != nil %}
-                {%- resolvedGwCount = resolvedGwCount + 1 %}
-                {# Computed here, not read back from
-                    features-110-gateway-frontend-mtls: map files render in their
-                    own context, where that snippet has not run. A listener whose
-                    mTLS validation ref is unresolvable can't terminate TLS, and
-                    its routes must not serve via a sibling Gateway's bind. #}
-                {{ ComputeGwMtlsBlocked(gw) }}
-                {%- var gwMtlsBlockedAny, _ = shared.ComputeIfAbsent(
-                      "gwMtlsBlocked:"+gwNs+"/"+gwName,
-                      func() any { return map[string]bool{} }) -%}
-                {%- var gwMtlsBlocked = gwMtlsBlockedAny.(map[string]bool) %}
-                {%- for _, listener := range gw.Spec.Listeners %}
-                  {%- var listenerName = listener.Name %}
-                  {%- if section == "" || section == listenerName %}
-                    {%- var listenerPort = toint(listener.Port) %}
-                    {%- if !gwMtlsBlocked[listenerName] && (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, gwNs), "true") %}
-                      {#- The Host header carries `:port` verbatim on non-default
-                          ports, so the host-map key must carry it too. -#}
-                      {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
-                      {%- var listenerHostname = ListenerHostname(listener) %}
-                      {#- Keys must match 40-maps-host exactly. Default-port
-                          hostname'd listeners keep the bare host key — base's
-                          wildcard cascade carries no port. -#}
-                      {%- var portSuffix = "" %}
-                      {%- if listenerPort > 0 %}
-                        {%- var portScope = shared.Get("gatewayPortScope").(map[string]any) %}
-                        {%- var scopePort = listenerPort %}
-                        {%- if val, ok := portScope[gwNs + "/" + gwName + ":" + tostring(listenerPort)]; ok %}
-                          {%- scopePort = toint(val) %}
-                        {%- end %}
-                        {%- var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443) %}
-                        {%- if listenerHostname == "" || isNonDefault %}
-                          {%- portSuffix = ":" + tostring(scopePort) %}
-                        {%- end %}
-                      {%- end %}
-                      {#- Listener isolation (Gateway API): a more-specific
-                          sibling listener owns the host, so a catch-all
-                          listener must not claim it. -#}
-                      {%- var currentRank = toint(HostnameRank(listenerHostname)) %}
-                      {%- if len(routeHostnames) == 0 %}
-                        {%- effectiveHosts[listenerHostname + portSuffix] = true %}
-                      {%- else if listenerHostname == "" %}
-                        {%- for _, rh := range routeHostnames %}
-                          {%- var rhStr = tostring(rh) %}
-                          {%- var ownedBySibling = false %}
-                          {%- for _, sibling := range gw.Spec.Listeners %}
-                            {%- if !ownedBySibling %}
-                              {%- var sibName = sibling.Name %}
-                              {%- if sibName != listenerName %}
-                                {%- var sibHost = sibling.Hostname %}
-                                {%- if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank %}
-                                  {%- ownedBySibling = true %}
-                                {%- end %}
-                              {%- end %}
-                            {%- end %}
-                          {%- end %}
-                          {%- if !ownedBySibling %}
-                            {%- effectiveHosts[rhStr + portSuffix] = true %}
-                          {%- end %}
-                        {%- end %}
-                      {%- else %}
-                        {%- for _, rh := range routeHostnames %}
-                          {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
-                          {%- if inter != "" %}
-                            {#- A sibling only "covers" inter when
-                                intersect(sibling, inter) == inter exactly.
-                                HostnameSinglePairMatch is true on ANY overlap and
-                                wrongly drops the listener's own pattern. -#}
-                            {%- var ownedBySibling = false %}
-                            {%- for _, sibling := range gw.Spec.Listeners %}
-                              {%- if !ownedBySibling %}
-                                {%- var sibName = sibling.Name %}
-                                {%- if sibName != listenerName %}
-                                  {%- var sibHost = sibling.Hostname %}
-                                  {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > currentRank %}
-                                    {%- ownedBySibling = true %}
-                                  {%- end %}
-                                {%- end %}
-                              {%- end %}
-                            {%- end %}
-                            {%- if !ownedBySibling %}
-                              {%- effectiveHosts[inter + portSuffix] = true %}
-                            {%- end %}
-                          {%- end %}
-                        {%- end %}
-                      {%- end %}
-                    {%- end %}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- else if prGroup == "gateway.networking.k8s.io" && prKind == "ListenerSet" %}
-              {#- The admission gate is applied inline so route resolution doesn't
-                  depend on the status patch's side-effect ordering. -#}
-              {%- var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
-              {%- var lsName = tostring(dig(parentRef, "name") | fallback("")) %}
-              {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
-              {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
-              {%- _ = render "util-listenersets-contrib" default "" -%}
-              {%- var lsData, _ = shared.Get("listenersetsUntyped").(map[string]any) %}
-              {%- var ls = lsData["byKey"] | dig(lsNs + "/" + lsName) %}
-              {%- if ls != nil %}
-                {%- var gwName = dig_string(ls, "", "spec", "parentRef", "name") %}
-                {%- var gwNs = dig_string(ls, "", "spec", "parentRef", "namespace") %}
-                {%- if gwNs == "" %}{%- gwNs = lsNs %}{%- end %}
-                {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
-                {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
-                  {%- resolvedGwCount = resolvedGwCount + 1 %}
-                  {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
-                    {%- var listenerName = dig_string(listener, "", "name") %}
-                    {%- if section == "" || section == listenerName %}
-                      {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
-                      {#- The listener's owner is the LS, so listenerOwnerNs is
-                          lsNs — NOT the parent Gateway's namespace. -#}
-                      {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, lsNs), "true") %}
-                        {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
-                        {%- var portSuffix = "" %}
-                        {%- if listenerPort > 0 %}
-                          {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
-                            {%- portSuffix = ":" + tostring(listenerPort) %}
-                          {%- end %}
-                        {%- end %}
-                        {%- var listenerHostname = ListenerHostname(listener) %}
-                        {%- if len(routeHostnames) == 0 %}
-                          {%- effectiveHosts[listenerHostname + portSuffix] = true %}
-                        {%- else if listenerHostname == "" %}
-                          {%- for _, rh := range routeHostnames %}
-                            {%- effectiveHosts[tostring(rh) + portSuffix] = true %}
-                          {%- end %}
-                        {%- else %}
-                          {%- for _, rh := range routeHostnames %}
-                            {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
-                            {%- if inter != "" %}
-                              {#- Siblings come from the LS's own spec.listeners,
-                                  not the parent Gateway's. -#}
-                              {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
-                              {%- var lsOwnedBySibling = false %}
-                              {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
-                                {%- if !lsOwnedBySibling %}
-                                  {%- var sibName = dig_string(sibling, "", "name") %}
-                                  {%- if sibName != listenerName %}
-                                    {%- var sibHost = dig_string(sibling, "", "hostname") %}
-                                    {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > lsCurrentRank %}
-                                      {%- lsOwnedBySibling = true %}
-                                    {%- end %}
-                                  {%- end %}
-                                {%- end %}
-                              {%- end %}
-                              {%- if !lsOwnedBySibling %}
-                                {%- effectiveHosts[inter + portSuffix] = true %}
-                              {%- end %}
-                            {%- end %}
-                          {%- end %}
-                        {%- end %}
-                      {%- end %}
-                    {%- end %}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-          {#- Gated on resolvedGwCount, not on an empty effectiveHosts: once any
-              parentRef resolves, empty is the spec-correct "no listener
-              intersects" and the route must produce no entries. -#}
-          {%- if resolvedGwCount == 0 %}
-            {%- if len(routeHostnames) == 0 %}
-              {%- effectiveHosts[""] = true %}
-            {%- else %}
-              {%- for _, rh := range routeHostnames %}
-                {%- effectiveHosts[tostring(rh)] = true %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-      {%- end %}
-  util-analyze-routes:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
-    template: |
-      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener %}
-      {%- import "util-resource-helpers" for ListenerProtocolOr, ListenerHostname %}
-      {%- import "util-route-effective-hosts" for RouteEffectiveHosts %}
-      {%- import "util-gw-mtls-blocked" for ComputeGwMtlsBlocked %}
-      {%- macro AnalyzeRoutes(result map[string]any) %}
-        {{ render "util-gateway-port-scope" -}}
-        {%- var allRoutes = []any{} %}
-
-        {%- for _, route := range resources.httproutes.List() %}
-          {#- Non-intersecting hostnames fall away by design: `wildcard.io` must
-              NOT route to a `*.wildcard.io` listener, so a route can legitimately
-              end up with no entries at all. -#}
-          {%- var routeHostnames = route.Spec.Hostnames %}
-          {%- var parentRefs = route.Spec.ParentRefs %}
-          {%- var effectiveHosts = map[string]bool{} %}
-          {%- var routeNs = route.Metadata.Namespace %}
-          {{- RouteEffectiveHosts(routeNs, routeHostnames | toSlice(), parentRefs | toSlice(), effectiveHosts) -}}
-          {%- if len(effectiveHosts) == 0 %}
-            {%- continue %}
-          {%- end %}
-          {#- keys(): map order is random and this drives emitted output. -#}
-          {%- var hostnames = keys(effectiveHosts) %}
-          {%- for _, hostname := range hostnames %}
-            {%- for ruleIdx, rule := range route.Spec.Rules %}
-              {%- var matchCount = len(rule.Matches) %}
-              {%- var iterCount = matchCount %}
-              {%- if iterCount == 0 %}{%- iterCount = 1 %}{%- end %}
-              {%- for matchIdx := 0; matchIdx < iterCount; matchIdx++ %}
-                {%- var pathType = "PathPrefix" %}
-                {%- var pathValue = "/" %}
-                {%- var hasMethod = false %}
-                {%- var headerCount = 0 %}
-                {%- var queryParamCount = 0 %}
-                {%- if matchCount > 0 %}
-                  {%- var match = rule.Matches[matchIdx] %}
-                  {%- if match.Path.Type != "" %}{%- pathType = match.Path.Type %}{%- end %}
-                  {%- if match.Path.Value != "" %}{%- pathValue = match.Path.Value %}{%- end %}
-                  {%- hasMethod = match.Method != "" %}
-                  {%- headerCount = len(match.Headers) %}
-                  {%- queryParamCount = len(match.QueryParams) %}
-                {%- end %}
-                {%- var pathKey = hostname + "|" + pathType + "|" + pathValue %}
-                {#- Sort scalars are precomputed here so sort_by needn't dig into
-                    typed sub-structs. -#}
-                {%- var routeInfo = map[string]any{
-                  "route": route,
-                  "hostname": hostname,
-                  "ruleIdx": ruleIdx,
-                  "matchIdx": matchIdx,
-                  "pathKey": pathKey,
-                  "pathType": pathType,
-                  "pathValue": pathValue,
-                  "pathValueLen": len(pathValue),
-                  "hasMethod": hasMethod,
-                  "headerCount": headerCount,
-                  "queryParamCount": queryParamCount,
-                } %}
-                {%- allRoutes = append(allRoutes, routeInfo) %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-
-        {#- Mirrors the HTTPRoute branch above; keep the two in sync. -#}
-        {%- for _, route := range resources.grpcroutes.List() %}
-          {%- var routeHostnames = route.Spec.Hostnames %}
-          {%- var parentRefs = route.Spec.ParentRefs %}
-          {%- var effectiveHosts = map[string]bool{} %}
-          {%- var routeNs = route.Metadata.Namespace %}
-          {{- RouteEffectiveHosts(routeNs, routeHostnames | toSlice(), parentRefs | toSlice(), effectiveHosts) -}}
-          {%- if len(effectiveHosts) == 0 %}
-            {%- continue %}
-          {%- end %}
-          {#- keys(): map order is random and this drives emitted output. -#}
-          {%- var hostnames = keys(effectiveHosts) %}
-          {%- for _, hostname := range hostnames %}
-            {%- for ruleIdx, rule := range route.Spec.Rules %}
-              {%- var matchCount = len(rule.Matches) %}
-              {%- var iterCount = matchCount %}
-              {%- if iterCount == 0 %}{%- iterCount = 1 %}{%- end %}
-              {%- for matchIdx := 0; matchIdx < iterCount; matchIdx++ %}
-                {#- GRPCRoute has no path matcher: the synthetic PathPrefix "/"
-                    must stay, or gw_routeId never fires for the request URL and
-                    every gRPC request falls through to default_backend (404). -#}
-                {%- var hasMethod = false %}
-                {%- var headerCount = 0 %}
-                {%- if matchCount > 0 %}
-                  {%- var match = rule.Matches[matchIdx] %}
-                  {%- hasMethod = (match.Method.Service != "" || match.Method.Method != "") %}
-                  {%- headerCount = len(match.Headers) %}
-                {%- end %}
-                {%- var grpcPath = map[string]any{"type": "PathPrefix", "value": "/"} %}
-                {%- var pathKey = hostname + "|PathPrefix|/" %}
-                {%- var routeInfo = map[string]any{
-                  "route": route,
-                  "hostname": hostname,
-                  "ruleIdx": ruleIdx,
-                  "matchIdx": matchIdx,
-                  "pathKey": pathKey,
-                  "pathType": "PathPrefix",
-                  "pathValue": "/",
-                  "pathValueLen": 1,
-                  "hasMethod": hasMethod,
-                  "headerCount": headerCount,
-                  "queryParamCount": 0,
-                } %}
-                {%- allRoutes = append(allRoutes, routeInfo) %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-
-        {%- var pathGroups = group_by(allRoutes, "pathKey") %}
-
-        {#- "Conflict" = same pathKey, different matcher set; downstream emits a
-            per-route VAR qualifier for those. -#}
-        {%%
-          var buildConditions = func(ri any) string {
-            var rm = ri.(map[string]any)
-            var ruleIdx = toint(rm["ruleIdx"])
-            var matchIdx = toint(rm["matchIdx"])
-            var conditions = ""
-            switch r := rm["route"].(type) {
-            case *resources.httproutes.T:
-              if ruleIdx < 0 || ruleIdx >= len(r.Spec.Rules) {
-                return conditions
-              }
-              var rule = r.Spec.Rules[ruleIdx]
-              if matchIdx < 0 || matchIdx >= len(rule.Matches) {
-                return conditions
-              }
-              var match = rule.Matches[matchIdx]
-              if match.Method != "" {
-                conditions = conditions + "method:" + match.Method
-              }
-              for _, h := range match.Headers {
-                conditions = conditions + ";header:" + h.Name + "=" + h.Value
-              }
-              for _, p := range match.QueryParams {
-                conditions = conditions + ";param:" + p.Name + "=" + p.Value
-              }
-            case *resources.grpcroutes.T:
-              if ruleIdx < 0 || ruleIdx >= len(r.Spec.Rules) {
-                return conditions
-              }
-              var rule = r.Spec.Rules[ruleIdx]
-              if matchIdx < 0 || matchIdx >= len(rule.Matches) {
-                return conditions
-              }
-              var match = rule.Matches[matchIdx]
-              if match.Method.Service != "" || match.Method.Method != "" {
-                conditions = conditions + "method:" + match.Method.Type + "/" + match.Method.Service + "/" + match.Method.Method
-              }
-              for _, h := range match.Headers {
-                conditions = conditions + ";header:" + h.Name + "=" + h.Value
-              }
-              // GRPCRoute has no QueryParams.
-            }
-            return conditions
-          }
-        %%}
-        {%- for _, pathKey := range keys(pathGroups) %}
-          {%- var routes []any = pathGroups[pathKey] %}
-          {%- var hasConflicts = false %}
-          {%- if len(routes) > 1 %}
-            {%- var firstConditions = buildConditions(routes[0]) %}
-            {%- for i := 1; i < len(routes); i++ %}
-              {%- if buildConditions(routes[i]) != firstConditions %}
-                {%- hasConflicts = true %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-
-          {%- var updatedRoutes = []any{} %}
-          {%- for _, route := range routes %}
-            {%- var routeObj = route["route"] %}
-            {%- var routeNs = routeObj | dig("metadata", "namespace") | fallback("") %}
-            {%- var routeName = routeObj | dig("metadata", "name") | fallback("") %}
-            {%- var ruleIdxVal = route["ruleIdx"] %}
-            {%- var routeId = routeNs + "_" + routeName + "_" + (ruleIdxVal) %}
-            {%- var updatedRoute = merge(route, map[string]any{
-              "hasConflicts": hasConflicts,
-              "pathKey": pathKey,
-              "routeId": routeId,
-            }) %}
-            {%- updatedRoutes = append(updatedRoutes, updatedRoute) %}
-          {%- end %}
-
-          {%- var routeIds = map_extract(updatedRoutes, "routeId") %}
-          {#- Group order, NOT sorted: this string is compared against the candidate set the
-              path map emits (41-maps-path.yaml), which joins the same list in this order. -#}
-          {%- var conflictGroup = join(routeIds, "__") %}
-
-          {%- var finalRoutes = []any{} %}
-          {%- for _, route := range updatedRoutes %}
-            {%- var routeWithGroup = merge(route, map[string]any{"conflictGroup": conflictGroup}) %}
-            {%- finalRoutes = append(finalRoutes, routeWithGroup) %}
-          {%- end %}
-
-          {%- pathGroups[pathKey] = finalRoutes %}
-        {%- end %}
-
-        {%- var finalAllRoutes = []any{} %}
-        {%- for _, pathKey := range keys(pathGroups) %}
-          {%- var pathRoutes []any = pathGroups[pathKey] %}
-          {%- for _, route := range pathRoutes %}
-            {%- finalAllRoutes = append(finalAllRoutes, route) %}
-          {%- end %}
-        {%- end %}
-
-        {#- Most-specific-first ordering; route emission downstream depends on it. -#}
-        {%- var sortedRoutes = finalAllRoutes | sort_by([]string{
-          "$.pathType",
-          "$.pathValueLen:desc",
-          "$.hasMethod:desc",
-          "$.headerCount:desc",
-          "$.queryParamCount:desc",
-          "$.route.metadata.creationTimestamp",
-          "$.route.metadata.namespace ~ '/' ~ $.route.metadata.name",
-          "$.ruleIdx",
-        }) %}
-
-        {%- result["pathGroups"] = pathGroups %}
-        {%- result["sortedRoutes"] = sortedRoutes %}
-        {%- result["allRoutes"] = finalAllRoutes %}
-      {%- end macro %}

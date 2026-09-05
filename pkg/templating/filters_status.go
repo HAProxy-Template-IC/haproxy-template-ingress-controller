@@ -70,20 +70,15 @@ func scriggoRecordEvent(env native.Env, resource any, reason, message string) st
 }
 
 // scriggoStatusPatch registers a status patch during template rendering.
-// The function is resource-agnostic: apiVersion/kind/namespace/name and the
-// variant payload are all supplied by the template, so it works identically for
-// any watched resource or CRD.
 //
-// Usage in Scriggo templates (apiVersion/kind are placeholders — substitute
-// whatever resource the chart is patching):
+// Usage in Scriggo templates:
 //
-//	{% statusPatch("default", "my-object", "example.com/v1", "Widget",
-//	    map[string]any{
+//	{% statusPatch(resource, map[string]any{
 //	        "deployed": map[string]any{
 //	            "conditions": conditions,
 //	        },
 //	    }) %}
-func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string, variants map[string]any) string {
+func scriggoStatusPatch(env native.Env, resource any, variants map[string]any) string {
 	collector := getStatusPatchCollector(env)
 	if collector == nil {
 		env.Stop(errors.New("statusPatch: statusPatchCollector not available in render context"))
@@ -101,7 +96,15 @@ func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string
 		typedVariants[phase] = statusMap
 	}
 
-	if err := collector.Register(namespace, name, apiVersion, kind, typedVariants); err != nil {
+	namespace := scriggoDigString(resource, "", "metadata", "namespace")
+	name := scriggoDigString(resource, "", "metadata", "name")
+	apiVersion := scriggoDigString(resource, "", "apiVersion")
+	kind := scriggoDigString(resource, "", "kind")
+	uid := scriggoDigString(resource, "", "metadata", "uid")
+	resourceVersion := scriggoDigString(resource, "", "metadata", "resourceVersion")
+	if err := collector.RegisterWithLineage(
+		namespace, name, apiVersion, kind, uid, resourceVersion, typedVariants,
+	); err != nil {
 		env.Stop(fmt.Errorf("statusPatch: %w", err))
 		return ""
 	}
@@ -195,7 +198,10 @@ func scriggoCondition(condType, status, reason, message string, observedGenerati
 //	                           "Programmed", "True") %%}
 func scriggoTransitionTime(existingConditions any, conditionType, newStatus string) string {
 	now := time.Now().UTC().Format(time.RFC3339)
+	return transitionTimeAt(existingConditions, conditionType, newStatus, now)
+}
 
+func transitionTimeAt(existingConditions any, conditionType, newStatus, now string) string {
 	condSlice, ok := toSlice(existingConditions)
 	if !ok {
 		return now
@@ -232,7 +238,7 @@ func scriggoToJSON(value any) string {
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Sprint(value)
+		panic(fmt.Errorf("toJSON: %w", err))
 	}
 	return string(data)
 }

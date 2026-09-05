@@ -4,7 +4,7 @@ Run multiple controller replicas so a leader crash, node drain, or upgrade never
 
 ## Overview
 
-The controller supports running multiple replicas for high availability using leader election based on Kubernetes Leases. Only the elected leader performs the render-validate-deploy work; all replicas keep their Kubernetes-resource caches warm and serve admission webhook requests so failover is instant.
+The controller supports running multiple replicas for high availability using leader election based on Kubernetes Leases. Only the elected leader deploys; all replicas keep their Kubernetes-resource caches and their incremental render graph warm and serve admission webhook requests so failover is instant.
 
 **Benefits of HA deployment:**
 
@@ -15,9 +15,9 @@ The controller supports running multiple replicas for high availability using le
 
 **How it works:**
 
-1. All replicas watch Kubernetes resources, run the admission webhook, and discover HAProxy pods. Only the elected leader runs the render-validate-deploy pipeline. See [Leader Election](../development/design/leader-election.md) for the full all-replica vs leader-only component split.
+1. All replicas watch Kubernetes resources, run the admission webhook, discover HAProxy pods, and render every change to keep their incremental render graph warm. Only the elected leader validates and deploys what it renders. See [Leader Election](../development/design/leader-election.md) for the full all-replica vs leader-only component split.
 2. Leader election determines which replica drives the pipeline and applies configs to the fleet.
-3. When the leader fails, followers automatically elect a new one. Cached state from all-replica components (validated config, discovered HAProxy pods) is replayed on `BecameLeaderEvent` so the new leader starts with current state; the reconciler also fires immediately so the new leader produces a fresh render.
+3. When the leader fails, followers automatically elect a new one. Cached state from all-replica components (validated config, discovered HAProxy pods) is replayed on `BecameLeaderEvent` so the new leader starts with current state; the reconciler also fires immediately so the new leader produces a fresh render, from the graph it kept warm as a follower.
 4. Leadership transitions are logged and tracked via Prometheus metrics.
 
 ## Configuration
@@ -360,9 +360,9 @@ controller:
   resources:
     requests:
       cpu: 100m
-      memory: 512Mi    # memory request = limit (pod stays Burstable — no CPU limit)
+      memory: 1Gi      # memory request = limit (pod stays Burstable — no CPU limit)
     limits:
-      memory: 512Mi    # CPU limit deliberately omitted to avoid GOMAXPROCS throttling
+      memory: 1Gi      # CPU limit deliberately omitted to avoid GOMAXPROCS throttling
 ```
 
 For larger or smaller workloads see the sizing table in [Performance — Controller Resource Sizing](./performance.md#controller-resource-sizing). Don't shrink memory below what the watch-set needs (rule of thumb: ~1KB per Ingress + EndpointSlice churn) or the leader gets OOMKilled mid-deploy and the lease flaps.

@@ -46,8 +46,8 @@ func TestInitialCandidatesCommitAtomically(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/a", aContent)
 	assert.Equal(t, "/b", bContent)
-	_, aAccepted := store.GetSource(aURL, aSource.State.Identity)
-	_, bAccepted := store.GetSource(bURL, bSource.State.Identity)
+	_, aAccepted := store.GetSource(aURL, aSource.State.Descriptor)
+	_, bAccepted := store.GetSource(bURL, bSource.State.Descriptor)
 	assert.False(t, aAccepted)
 	assert.False(t, bAccepted)
 
@@ -57,8 +57,8 @@ func TestInitialCandidatesCommitAtomically(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Error(t, store.CommitInitialCandidates(t.Context(), []*InitialCandidate{aCandidate, bCandidate}))
-	_, aAccepted = store.GetSource(aURL, aSource.State.Identity)
-	_, bAccepted = store.GetSource(bURL, bSource.State.Identity)
+	_, aAccepted = store.GetSource(aURL, aSource.State.Descriptor)
+	_, bAccepted = store.GetSource(bURL, bSource.State.Descriptor)
 	assert.False(t, aAccepted)
 	assert.False(t, bAccepted)
 }
@@ -74,12 +74,12 @@ func TestInitialCandidateBecomesVisibleOnlyAfterCommit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, content)
 	require.NotNil(t, candidate)
-	_, accepted := store.GetSource(server.URL, reconciled.State.Identity)
+	_, accepted := store.GetSource(server.URL, reconciled.State.Descriptor)
 	assert.False(t, accepted)
 	assert.Empty(t, store.GetPendingURLs())
 
 	require.NoError(t, store.CommitInitialCandidates(t.Context(), []*InitialCandidate{candidate}))
-	acceptedContent, accepted := store.GetSource(server.URL, reconciled.State.Identity)
+	acceptedContent, accepted := store.GetSource(server.URL, reconciled.State.Descriptor)
 	require.True(t, accepted)
 	assert.Empty(t, acceptedContent)
 }
@@ -109,6 +109,6 @@ func TestInitialCandidateDoesNotCommitAfterCancellationWhileWaitingForStore(t *t
 	store.mu.Unlock()
 
 	require.ErrorIs(t, <-result, context.Canceled)
-	_, accepted := store.GetSource(server.URL, reconciled.State.Identity)
+	_, accepted := store.GetSource(server.URL, reconciled.State.Descriptor)
 	assert.False(t, accepted)
 }

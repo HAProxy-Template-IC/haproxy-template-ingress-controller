@@ -310,12 +310,12 @@ func TestScriggoNamespace(t *testing.T) {
 		assert.Equal(t, 1, ns["k"])
 	})
 
-	t.Run("non-nil returns same map (mutable)", func(t *testing.T) {
+	t.Run("non-nil returns detached mutable map", func(t *testing.T) {
 		init := map[string]any{"count": 0}
 		ns := scriggoNamespace(init)
-		// Mutate via returned reference — must affect caller's map.
 		ns["count"] = 5
-		assert.Equal(t, 5, init["count"])
+		assert.Equal(t, 0, init["count"])
+		assert.Equal(t, 5, ns["count"])
 	})
 }
 

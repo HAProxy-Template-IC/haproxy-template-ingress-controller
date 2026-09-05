@@ -26,7 +26,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -44,6 +43,20 @@ func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	return New(eventBus, logger, 0, metrics.NewMetrics(prometheus.NewRegistry()))
 }
 
+func componentScheduledEvent(
+	tb testing.TB,
+	config string,
+	reason string,
+) *events.DeploymentScheduledEvent {
+	tb.Helper()
+	event, err := events.NewDeploymentScheduledEventWithCycle(
+		mustTestOccurrence(config, "test-plan", nil), nil,
+		"test-runtime-config", "test-namespace", reason, true,
+	)
+	require.NoError(tb, err)
+	return event
+}
+
 func TestHandleDeploymentScheduled(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	bus.Start()
@@ -56,19 +69,7 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Create deployment scheduled event (with no endpoints, just to test event handling)
-	event := events.NewDeploymentScheduledEvent(
-		"test config",
-		nil,
-		[]dataplane.Endpoint{},
-		"test-runtime-config",
-		"test-namespace",
-		"test",
-		"",   // contentChecksum
-		nil,  // plan
-		"",   // planID
-		nil,  // statusPatches
-		true, // coalescible
-	)
+	event := componentScheduledEvent(t, "test config", "test")
 
 	bus.Publish(event)
 
@@ -125,19 +126,7 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 	eventChan := bus.Subscribe("test-sub", 10)
 
 	// Simulate deployment scheduled event (with no endpoints)
-	bus.Publish(events.NewDeploymentScheduledEvent(
-		"global\n  daemon\n",
-		&dataplane.AuxiliaryFiles{},
-		[]dataplane.Endpoint{}, // no endpoints
-		"test-runtime-config",
-		"test-namespace",
-		"test",
-		"",   // contentChecksum
-		nil,  // plan
-		"",   // planID
-		nil,  // statusPatches
-		true, // coalescible
-	))
+	bus.Publish(componentScheduledEvent(t, "global\n  daemon\n", "test"))
 
 	// Wait for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -238,19 +227,7 @@ func TestComponent_HandleEvent(t *testing.T) {
 	})
 
 	t.Run("handles DeploymentScheduledEvent", func(t *testing.T) {
-		event := events.NewDeploymentScheduledEvent(
-			"test config",
-			nil,
-			[]dataplane.Endpoint{},
-			"test-runtime-config",
-			"test-namespace",
-			"test",
-			"",   // contentChecksum
-			nil,  // plan
-			"",   // planID
-			nil,  // statusPatches
-			true, // coalescible
-		)
+		event := componentScheduledEvent(t, "test config", "test")
 		// Should not panic when receiving valid event with no endpoints
 		deployer.HandleEvent(event)
 	})
@@ -264,19 +241,7 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 	ctx := context.Background()
 
 	// First deployment should succeed
-	event := events.NewDeploymentScheduledEvent(
-		"test config",
-		nil,
-		[]dataplane.Endpoint{},
-		"test-runtime-config",
-		"test-namespace",
-		"test",
-		"",   // contentChecksum
-		nil,  // plan
-		"",   // planID
-		nil,  // statusPatches
-		true, // coalescible
-	)
+	event := componentScheduledEvent(t, "test config", "test")
 
 	// Process first event - should set flag
 	deployer.performDeployment(ctx, event)
@@ -303,19 +268,7 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 	deployer.deploymentInProgress.Store(true)
 
 	// Second deployment should be rejected
-	event := events.NewDeploymentScheduledEvent(
-		"test config",
-		nil,
-		[]dataplane.Endpoint{},
-		"test-runtime-config",
-		"test-namespace",
-		"duplicate",
-		"",   // contentChecksum
-		nil,  // plan
-		"",   // planID
-		nil,  // statusPatches
-		true, // coalescible
-	)
+	event := componentScheduledEvent(t, "test config", "duplicate")
 
 	// This should be rejected (flag was already set)
 	deployer.performDeployment(ctx, event)

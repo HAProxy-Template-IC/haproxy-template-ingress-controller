@@ -66,6 +66,9 @@ while IFS= read -r f; do
       case "$tag" in
         ""|'!'*)
           continue ;;
+        race)
+          # Toolchain-set tag: every -race run (make test) compiles it.
+          continue ;;
         *)
           echo "UNWIRED: $f (tag: '$tag') — positive build tag outside tests/{e2e,integration,acceptance,conformance}; no Make target / CI job runs it. Wire a runner and extend scripts/check-test-inventory.sh."
           fail=1; continue ;;

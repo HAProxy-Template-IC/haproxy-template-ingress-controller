@@ -8,6 +8,36 @@ templateSnippets:
   # ============================================================================
 
   global-top-600-haproxy-ingress-auth:
+    requires: [ingresses, secrets]
+    incremental:
+      bindingsTemplate: |-
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "hashRegex": extraContext | dig_string("^.*$", "annotationCompatibility", "basicAuth", "passwordHashValidation", "regex"),
+          "hashError": extraContext | dig_string("Invalid password hash", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage"),
+        }}) -}}
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-secret']"]
+      group: haproxy-ingress-auth-userlists
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var authSecret = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-secret"] -%}
+        {%- if authSecret != "" -%}
+          {%- var secretNs = ingress.Metadata.Namespace -%}
+          {%- var secretName = authSecret -%}
+          {%- if strings_contains(authSecret, "/") -%}
+            {%- var parts = split(authSecret, "/") -%}
+            {%- secretNs = parts[0] -%}
+            {%- secretName = parts[1] -%}
+          {%- end -%}
+          {%- var fragment = render "util-haproxy-ingress-auth-userlist" -%}
+          {%- if fragment != "" -%}
+            {{- shared.Unique("haproxy-ingress-auth-userlists", secretNs + "/" + secretName, fragment) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  util-haproxy-ingress-auth-userlist:
     template: |
       {#
         HAProxy-Ingress Basic Auth Userlist Generation
@@ -26,7 +56,8 @@ templateSnippets:
           Example: admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei4...
       #}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -41,7 +72,6 @@ templateSnippets:
             {%- secretName = parts[1] %}
           {%- end %}
           {%- var userlistName = "hi_auth_" + secretNs + "_" + secretName %}
-          {%- if first_seen("hi_userlist", userlistName) %}
             {#-
               Skip both the userlist and the matching backend ACL ref when the
               referenced Secret isn't in the controller's cache (informer not
@@ -49,27 +79,16 @@ templateSnippets:
               Ingress still lingers). The next render — once the cache catches
               up — will produce the full auth setup.
 
-              Goes through shared.ComputeIfAbsent so the matching http_auth
-              snippet sees the same Secret presence/absence; stores are live
-              during render and two direct GetSingle calls can observe
-              different states.
+              Both this component and the matching http_auth snippet read the
+              render transaction's immutable store snapshot.
             -#}
-            {%- var secretAny, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
-              return resources.secrets.GetSingle(secretNs, secretName)
-            }) %}
-            {#- Assert to the typed pointer BEFORE the nil check. GetSingle returns a
-                typed *resources.secrets.T — a typed-nil when the Secret is absent —
-                and boxing that through the closure's `any` yields a NON-nil interface,
-                so `secretAny != nil` would pass for an absent Secret and the `.Data`
-                access below would dereference a nil pointer. Nil-checking the asserted
-                pointer is correct: a boxed typed-nil asserts to a nil *T. -#}
-            {%- var secret, _ = secretAny.(*resources.secrets.T) %}
+            {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
             {%- if secret != nil %}
       # haproxy-ingress/global-top-auth ({{ key }})
       userlist {{ userlistName }}
               {% var secretData = secret.Data -%}
-              {%- var hashRegex = extraContext | dig_string("^.*$", "annotationCompatibility", "basicAuth", "passwordHashValidation", "regex") %}
-              {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage") %}
+              {%- var hashRegex = tostring(props["hashRegex"]) %}
+              {%- var hashErrMsg = tostring(props["hashError"]) %}
               {#- haproxy-ingress (and ingress-nginx) store credentials as an
                   htpasswd file under a single `auth` Secret key — one
                   "user:hash" (or "user::plaintext") line each. Parse that when
@@ -108,7 +127,6 @@ templateSnippets:
                 {%- end %}
               {%- end %}
             {%- end %}
-          {%- end %}
         {%- end %}
       {%- end -%}
 
@@ -124,32 +142,41 @@ templateSnippets:
   #   haproxy-ingress.github.io/auth-url: "https://auth-svc.example/check"
   #
   map-auth-url-500-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-url']"]
+      group: map-auth-url-ingress
+      effects: [recordEvent]
     template: |-
       {# Keyed by <ns>/<name> (resource identity). The frontend looks up
           via var(txn.resource_id),map(...) — see spoa-hub.yaml's
           frontend-spoe-filters-100-external-auth and base.yaml's
           resource_id extraction at the end of frontend-routing-logic. #}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
-        {%- if authUrl != "" -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {%- var authUrlInj = ConfigInjectionKind(authUrl, "line") -%}
-          {%- if authUrlInj != "" -%}{{- WebhookRejectOrWarn(ingress, "InvalidAuthURL", "Ingress " + ns + "/" + name + " annotation 'haproxy-ingress.github.io/auth-url' contains " + authUrlInj + ", which would inject an entry into the auth-url map; external auth is not applied. Remove control characters from the value.") -}}{%- continue -%}{%- end -%}
-          {#- SSL passthrough is L4 (never decrypted), so an L7 external-auth
-              subrequest can't run on it — auth-url is a silent no-op here. Warn
-              on the Ingress rather than fail(): the config is valid (passthrough
-              still works), and a hard render failure would block every config
-              update cluster-wide over one misconfigured Ingress. -#}
-          {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-passthrough"] == "true" -%}
-            {{- recordEvent(ingress, "AuthIgnored",
-                  "haproxy-ingress.github.io/auth-url is set together with ssl-passthrough; external auth cannot run on SSL-passthrough (L4) traffic and is ignored for this Ingress") -}}
-          {%- end -%}
-      {{ "\n" }}{{ ns }}/{{ name }} {{ authUrl }}
-        {%- end -%}
-      {%- end -%}
+      {%%
+        var ingress = item
+        var authUrl = dig_string(ingress, "", "metadata", "annotations", "haproxy-ingress.github.io/auth-url")
+        if authUrl != "" {
+          var ns = dig_string(ingress, "", "metadata", "namespace")
+          var name = dig_string(ingress, "", "metadata", "name")
+          var authUrlInj = ConfigInjectionKind(authUrl, "line")
+          if authUrlInj != "" {
+            var message = "Ingress " + ns + "/" + name + " annotation 'haproxy-ingress.github.io/auth-url' contains " + authUrlInj + ", which would inject an entry into the auth-url map; external auth is not applied. Remove control characters from the value."
+            if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" {
+              fail(message)
+            } else {
+              recordEvent(ingress, "InvalidAuthURL", message)
+            }
+          } else {
+            if dig_string(ingress, "", "metadata", "annotations", "haproxy-ingress.github.io/ssl-passthrough") == "true" {
+              recordEvent(ingress, "AuthIgnored", "haproxy-ingress.github.io/auth-url is set together with ssl-passthrough; external auth cannot run on SSL-passthrough (L4) traffic and is ignored for this Ingress")
+            }
+            var key = ns + "/" + name
+            show shared.Unique("map-auth-url-ingress", key, "\n" + key + " " + authUrl)
+          }
+        }
+      %%}
 
   # External-auth sign-in URL: when the auth service returns 401, redirect
   # the browser to this URL instead of denying. Mirrors nginx-ingress's
@@ -161,19 +188,34 @@ templateSnippets:
   # Annotation:
   #   haproxy-ingress.github.io/auth-signin: "https://login.example/oauth2/start"
   map-auth-signin-500-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-signin']"]
+      group: map-auth-signin-ingress
+      effects: [recordEvent]
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authSignin = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-signin"] -%}
-        {%- if authSignin != "" -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {%- var authSigninInj = ConfigInjectionKind(authSignin, "line") -%}
-          {%- if authSigninInj != "" -%}{{- WebhookRejectOrWarn(ingress, "InvalidAuthSignin", "Ingress " + ns + "/" + name + " annotation 'haproxy-ingress.github.io/auth-signin' contains " + authSigninInj + ", which would inject an entry into the auth-signin map; the sign-in redirect is not applied. Remove control characters from the value.") -}}{%- continue -%}{%- end -%}
-      {{ "\n" }}{{ ns }}/{{ name }} {{ authSignin }}
-        {%- end -%}
-      {%- end -%}
+      {%%
+        var ingress = item
+        var authSignin = dig_string(ingress, "", "metadata", "annotations", "haproxy-ingress.github.io/auth-signin")
+        if authSignin != "" {
+          var ns = dig_string(ingress, "", "metadata", "namespace")
+          var name = dig_string(ingress, "", "metadata", "name")
+          var authSigninInj = ConfigInjectionKind(authSignin, "line")
+          if authSigninInj != "" {
+            var message = "Ingress " + ns + "/" + name + " annotation 'haproxy-ingress.github.io/auth-signin' contains " + authSigninInj + ", which would inject an entry into the auth-signin map; the sign-in redirect is not applied. Remove control characters from the value."
+            if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" {
+              fail(message)
+            } else {
+              recordEvent(ingress, "InvalidAuthSignin", message)
+            }
+          } else {
+            var key = ns + "/" + name
+            show shared.Unique("map-auth-signin-ingress", key, "\n" + key + " " + authSignin)
+          }
+        }
+      %%}
 
   # External-auth HTTP method override. Mirrors the nginx-ingress
   # variant; both feed the spoa-hub library's auth-method.map and
@@ -189,19 +231,34 @@ templateSnippets:
   # Body-having methods (POST/PUT/PATCH) go out with an empty body —
   # the plugin does not forward the original request payload.
   map-auth-method-500-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-method']"]
+      group: map-auth-method-ingress
+      effects: [recordEvent]
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authMethod = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-method"] -%}
-        {%- if authMethod != "" -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {%- var authMethodInj = ConfigInjectionKind(authMethod, "line") -%}
-          {%- if authMethodInj != "" -%}{{- WebhookRejectOrWarn(ingress, "InvalidAuthMethod", "Ingress " + ns + "/" + name + " annotation 'haproxy-ingress.github.io/auth-method' contains " + authMethodInj + ", which would inject an entry into the auth-method map; the method override is not applied. Remove control characters from the value.") -}}{%- continue -%}{%- end -%}
-      {{ "\n" }}{{ ns }}/{{ name }} {{ authMethod }}
-        {%- end -%}
-      {%- end -%}
+      {%%
+        var ingress = item
+        var authMethod = dig_string(ingress, "", "metadata", "annotations", "haproxy-ingress.github.io/auth-method")
+        if authMethod != "" {
+          var ns = dig_string(ingress, "", "metadata", "namespace")
+          var name = dig_string(ingress, "", "metadata", "name")
+          var authMethodInj = ConfigInjectionKind(authMethod, "line")
+          if authMethodInj != "" {
+            var message = "Ingress " + ns + "/" + name + " annotation 'haproxy-ingress.github.io/auth-method' contains " + authMethodInj + ", which would inject an entry into the auth-method map; the method override is not applied. Remove control characters from the value."
+            if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" {
+              fail(message)
+            } else {
+              recordEvent(ingress, "InvalidAuthMethod", message)
+            }
+          } else {
+            var key = ns + "/" + name
+            show shared.Unique("map-auth-method-ingress", key, "\n" + key + " " + authMethod)
+          }
+        }
+      %%}
 
   # oauth: oauth2_proxy — a convenience that desugars onto the external-auth
   # machinery (the auth-url / auth-signin / auth-method / auth-extract-headers
@@ -220,11 +277,18 @@ templateSnippets:
   # Service — the spoa-hub external-auth plugin must run with allow_plaintext
   # for a plain-HTTP oauth2-proxy.
   map-auth-url-510-haproxy-ingress-oauth:
+    requires: [ingresses, services]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/oauth']"]
+      group: map-auth-url-ingress
+      effects: [recordEvent]
     template: |-
       {%- import "util-service-port-resolution" for ResolveServicePort -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
         {%- if oauth != "" && authUrl == "" -%}
@@ -253,10 +317,17 @@ templateSnippets:
       {%- end -%}
 
   map-auth-signin-510-haproxy-ingress-oauth:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/oauth']"]
+      group: map-auth-signin-ingress
+      effects: [recordEvent]
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
         {#- An explicit auth-signin takes precedence over the oauth desugaring (its
@@ -275,8 +346,14 @@ templateSnippets:
       {%- end -%}
 
   map-auth-method-510-haproxy-ingress-oauth:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/oauth']"]
+      group: map-auth-method-ingress
     template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
         {#- Explicit auth-method takes precedence over the oauth desugaring. -#}
@@ -287,10 +364,17 @@ templateSnippets:
       {%- end -%}
 
   map-auth-extract-headers-510-haproxy-ingress-oauth:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/oauth']"]
+      group: map-auth-extract-headers-ingress
+      effects: [recordEvent]
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
         {#- Explicit auth-headers-succeed owns the extract-headers channel. -#}
@@ -308,15 +392,19 @@ templateSnippets:
       {%- end -%}
 
   frontend-spoe-set-pass-headers-510-haproxy-ingress-oauth:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/oauth']"]
+      group: frontend-spoe-pass-headers-ingress
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
       {#- Forward the oauth-headers (default X-Auth-Request-Email) from the
           oauth2-proxy auth reply to the backend on success — mirrors the
           auth-headers-succeed handler (frontend-spoe-set-pass-headers-500).
           Only active for the oauth desugaring (auth-url absent). -#}
-      {%- var pairs []any = []any{} -%}
-      {%- var seen = map[string]bool{} -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
         {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
         {#- Explicit auth-headers-succeed owns the set-header channel (its -500-
@@ -335,23 +423,12 @@ templateSnippets:
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/oauth-headers", ns, ingressName) -}}
               {%- var varName = replace(toLower(name), "-", "_") -%}
-              {%- if !seen[varName] -%}
-                {%- seen[varName] = true -%}
-                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
-              {%- end -%}
+              {{- shared.Unique("frontend-spoe-pass-headers-ingress", varName,
+                "\n      http-request del-header " + name + " if { var(txn.auth_url) -m found }" +
+                "\n      http-request set-header " + name + " %[var(txn.hub.external_auth." + varName + ")] if { var(txn.hub.external_auth." + varName + ") -m found } { var(txn.hub.external_auth.allowed) -m bool }") -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
-      {%- end -%}
-      {%- for _, pair := range pairs -%}
-        {%- var pName = pair.(map[string]any)["name"].(string) -%}
-        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {# Strip any client-supplied copy of this trusted header on auth-protected
-          routes BEFORE re-adding the plugin value, so a forged inbound header
-          can't survive to the backend when the auth reply omits it (the
-          set-header below is skipped when its var isn't found). #}
-      {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
-      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
 
   # External-auth request-headers allowlist. Per-ingress comma-separated
@@ -375,9 +452,15 @@ templateSnippets:
   # don't have to edit `spoe-message-check-auth-body` themselves to
   # forward custom headers.
   map-auth-forward-headers-500-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-headers-request']"]
+      group: map-auth-forward-headers-ingress
     template: |-
       {#- Header names are fail-closed by ValidateAuthHeaderName in the co-rendered spoe-message-check-auth-extra-args-500 snippet (rejects whitespace/control/fetch syntax). -#}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var authHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-request"] -%}
         {%- if authHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -403,32 +486,16 @@ templateSnippets:
   # ensures no newlines leak in (a stray newline would terminate the
   # SPOE `args` directive at parse time).
   spoe-message-check-auth-extra-args-500-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-headers-request']"]
+      group: spoe-auth-extra-args-ingress
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
-      {#- Pre-seed `seen` with the six headers spoa-hub.yaml already
-          captures, so we don't emit a duplicate `hdr_*` arg for one
-          of them. The dedup check below normalises to underscore-form
-          (`replace(toLower(name), "-", "_")`), so the pre-seed keys
-          MUST also use underscore-form — otherwise an Ingress
-          annotation `auth-headers-request: X-Forwarded-Uri` produces
-          argName `x_forwarded_uri`, the lookup misses the
-          `x-forwarded-uri` pre-seed entry, and the chart emits a
-          duplicate `hdr_x_forwarded_uri` arg.
-
-          HAProxy 3.0 rejects SPOE notify frames with duplicate arg
-          names ("Failed to parse frame: Tag" from the spoa-hub spop
-          parser); HAProxy 3.1+ tolerates them. That asymmetry was the
-          root cause of pipeline 2549047264's test-e2e [3.0]
-          TestIngressAuthHeadersFail failure (3.1/3.2/3.3 all passed
-          the same fixture). -#}
-      {%- var seen = map[string]bool{} -%}
-      {%- seen["authorization"] = true -%}
-      {%- seen["cookie"] = true -%}
-      {%- seen["x_forwarded_for"] = true -%}
-      {%- seen["x_forwarded_proto"] = true -%}
-      {%- seen["x_forwarded_host"] = true -%}
-      {%- seen["x_forwarded_uri"] = true -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {#- Exclude the six args spoa-hub already emits; HAProxy 3.0 rejects duplicates. -#}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var authHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-request"] -%}
         {%- if authHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -446,9 +513,10 @@ templateSnippets:
                   the same args= line, which SPOE parses as malformed
                   / undefined-order. #}
               {%- var argName = replace(toLower(name), "-", "_") -%}
-              {%- if !seen[argName] -%}
-                {%- seen[argName] = true -%}
-                {{- " hdr_" + argName + "=req.hdr(" + name + ")" -}}
+              {%- if argName != "authorization" && argName != "cookie" &&
+                argName != "x_forwarded_for" && argName != "x_forwarded_proto" &&
+                argName != "x_forwarded_host" && argName != "x_forwarded_uri" -%}
+                {{- shared.Unique("spoe-auth-extra-args-ingress", argName, " hdr_" + argName + "=req.hdr(" + name + ")") -}}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -470,9 +538,17 @@ templateSnippets:
   # the same auth-extract-headers.map — the plugin extracts the union
   # so each var is available for whichever path runs.
   map-auth-extract-headers-500-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-ingress.github.io/auth-headers-succeed']"
+        - "metadata.annotations['haproxy-ingress.github.io/auth-headers-fail']"
+      group: map-auth-extract-headers-ingress
     template: |-
       {#- Header names are fail-closed by ValidateAuthHeaderName in the co-rendered frontend-spoe-set-pass-headers-500 / -fail-headers snippets (rejects whitespace/control/fetch syntax). -#}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var passHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-succeed"] -%}
         {%- var failHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-fail"] -%}
         {%- var union = passHeaders -%}
@@ -494,27 +570,16 @@ templateSnippets:
   # routes that didn't ask for a header have its txn var unset, so
   # the `var ... -m found` gate skips them.
   frontend-spoe-set-pass-headers-500-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-headers-succeed']"]
+      group: frontend-spoe-pass-headers-ingress
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
-      {#- Collect the unique (name, varName) pairs across all
-          ingresses ONCE per render, cached via shared.ComputeIfAbsent.
-          The chart renders this snippet inside `frontend-filters-*` for
-          both http_frontend AND http_frontend_h2c — those two
-          render_glob calls live in the same template execution, so a
-          `first_seen` dedup would silently emit the directive only in
-          the first frontend (issue #49). The cached pair list lets
-          each frontend's render iterate the same set without sharing
-          first_seen state.
-
-          ValidateAuthHeaderName fail()s at template compile time on a
-          malformed header — we keep the validation pass inside the
-          ingress loop below so the existing CR-rejection contract is
-          preserved (each malformed value still produces a clear
-          render error pointing at the ingress + annotation).
-      -#}
-      {%- var pairs []any = []any{} -%}
-      {%- var seen = map[string]bool{} -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {#- The incremental result replays the same deduplicated directives in both frontends. -#}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var passHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-succeed"] -%}
         {%- if passHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -530,23 +595,12 @@ templateSnippets:
                   for both, so the second directive would just
                   duplicate the first. #}
               {%- var varName = replace(toLower(name), "-", "_") -%}
-              {%- if !seen[varName] -%}
-                {%- seen[varName] = true -%}
-                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
-              {%- end -%}
+              {{- shared.Unique("frontend-spoe-pass-headers-ingress", varName,
+                "\n      http-request del-header " + name + " if { var(txn.auth_url) -m found }" +
+                "\n      http-request set-header " + name + " %[var(txn.hub.external_auth." + varName + ")] if { var(txn.hub.external_auth." + varName + ") -m found } { var(txn.hub.external_auth.allowed) -m bool }") -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
-      {%- end -%}
-      {%- for _, pair := range pairs -%}
-        {%- var pName = pair.(map[string]any)["name"].(string) -%}
-        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {# Strip any client-supplied copy of this trusted header on auth-protected
-          routes BEFORE re-adding the plugin value, so a forged inbound header
-          can't survive to the backend when the auth reply omits it (the
-          set-header below is skipped when its var isn't found). #}
-      {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
-      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
 
   # External-auth fail-headers allowlist. Per-ingress comma-list of
@@ -577,21 +631,16 @@ templateSnippets:
   # deny / errorfile / redirect, which is exactly what we need for
   # auth-headers-fail to surface in the 401 sent back to the client.
   frontend-spoe-set-fail-headers-500-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-headers-fail']"]
+      group: frontend-spoe-fail-headers-ingress
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
-      {#- Same render-shared dedup pattern as
-          frontend-spoe-set-pass-headers-500-haproxy-ingress — see
-          issue #49. The chart renders this snippet inside
-          `frontend-filters-*` for both http_frontend AND
-          http_frontend_h2c; a `first_seen` dedup would silently emit
-          the directive only in whichever frontend renders first. The
-          local map-based dedup below keeps the dedup confined to the
-          ingress loop, so both frontend renders emit the same set
-          of directives.
-      -#}
-      {%- var pairs []any = []any{} -%}
-      {%- var seen = map[string]bool{} -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {#- The incremental result replays the same deduplicated directives in both frontends. -#}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var failHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-fail"] -%}
         {%- if failHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -604,18 +653,11 @@ templateSnippets:
                   spellings that collapse to the same plugin txn var
                   produce one set-header directive, not two. #}
               {%- var varName = replace(toLower(name), "-", "_") -%}
-              {%- if !seen[varName] -%}
-                {%- seen[varName] = true -%}
-                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
-              {%- end -%}
+              {{- shared.Unique("frontend-spoe-fail-headers-ingress", varName,
+                "\n      http-after-response set-header " + name + " %[var(txn.hub.external_auth." + varName + ")] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth." + varName + ") -m found }") -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
-      {%- end -%}
-      {%- for _, pair := range pairs -%}
-        {%- var pName = pair.(map[string]any)["name"].(string) -%}
-        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {{ "\n" }}      http-after-response set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ pVarName }}) -m found }
       {%- end -%}
 
   # WAF (Coraza, via SPOA hub): per-Ingress opt-in path-scoped WAF.
@@ -647,7 +689,27 @@ templateSnippets:
   # map's mode lookup still gates the deny rule per-path, so a
   # `waf-mode: detect` path remains in shadow mode under nginx-driven
   # dispatch. See ADR-0007.
+  util-haproxy-ingress-waf-bindings:
+    template: |-
+      {%- import "util-waf-governance" for WafGovernance -%}
+      {%- var corazaEnabled = false -%}
+      {%- for _, plugin := range extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
+        {%- if tostring(plugin | dig("name")) == "coraza" -%}{%- corazaEnabled = true -%}{%- end -%}
+      {%- end -%}
+      {%- var governance = map[string]any{} -%}
+      {%- var _ = WafGovernance(governance) -%}
+      {{- toJSON(map[string]any{"ingresses": map[string]any{
+        "corazaEnabled": corazaEnabled,
+        "allowEnforcementOverride": governance["allowEnforcementOverride"],
+      }}) -}}
+
   map-haproxy-ingress-waf-500-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: '{{- render "util-haproxy-ingress-waf-bindings" -}}'
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-ingress.github.io/waf']"
+        - "metadata.annotations['haproxy-ingress.github.io/waf-mode']"
     template: |-
       {# Keyed by <ns>/<name>. The validation guards (unsupported waf
           value, waf-mode without waf, invalid mode) still apply because
@@ -655,17 +717,10 @@ templateSnippets:
           coraza-plugin-enabled check fails loud at the first offending
           Ingress when the operator wires the annotation without enabling
           the plugin — silent ignore would hide a real misconfiguration. #}
-      {%- import "util-waf-governance" for WafGovernance -%}
-      {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
-      {%- var corazaEnabled = false -%}
-      {%- for _, p := range plugins -%}
-        {%- var pName = p.(map[string]any)["name"].(string) -%}
-        {%- if pName == "coraza" -%}{%- corazaEnabled = true -%}{%- end -%}
-      {%- end -%}
-      {%- var gov = map[string]any{} -%}
-      {%- var _ = WafGovernance(gov) -%}
-      {%- var hapticAllowEnforcementOverride = gov["allowEnforcementOverride"].(bool) -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var corazaEnabled = props["corazaEnabled"].(bool) -%}
+      {%- var hapticAllowEnforcementOverride = props["allowEnforcementOverride"].(bool) -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var ns = ingress.Metadata.Namespace -%}
         {%- var name = ingress.Metadata.Name -%}
         {%- var key = ns + "/" + name -%}
@@ -736,19 +791,15 @@ templateSnippets:
             Skip the http_auth ACL ref when the referenced Secret isn't in
             the controller's cache; the matching userlist snippet skips its
             userlist on the same condition so the rendered config stays
-            self-consistent. Routed through shared.ComputeIfAbsent so the two
-            snippets see the same store state (live stores can mutate
-            between two direct GetSingle calls in one render).
+            self-consistent. Both reads use the render transaction's immutable
+            store snapshot, so they cannot observe different states.
           -#}
-          {%- var hiAuthSecretAny, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
-            return resources.secrets.GetSingle(secretNs, secretName)
-          }) %}
+          {%- var hiAuthSecret = resources.secrets.GetSingle(secretNs, secretName) %}
           {#- Assert to the typed pointer before the nil check (see the userlist
               snippet above): a boxed typed-nil *resources.secrets.T passes `!= nil`,
               which would emit an http_auth ref to a userlist the (correctly-skipping)
               userlist snippet never produced — `haproxy -c` then fails with
               "unable to find userlist". -#}
-          {%- var hiAuthSecret, _ = hiAuthSecretAny.(*resources.secrets.T) %}
           {%- if hiAuthSecret != nil %}
           {%- var realmInj = ConfigInjectionKind(authRealm, "line") %}
           {%- if realmInj != "" %}

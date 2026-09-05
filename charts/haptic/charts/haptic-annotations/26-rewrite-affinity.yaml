@@ -57,6 +57,11 @@ templateSnippets:
   # ============================================================================
 
   map-body-size-830-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/max-request-body-size']"]
+      group: map-body-size
     template: |
       {#
         HAPTIC Request Body Size Limit (Strategy 1: relocated to a map)
@@ -74,7 +79,9 @@ templateSnippets:
         "map-body-size" first_seen namespace with the vendor emitters.
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var bodySize = ingress.Metadata.Annotations["haproxy-haptic.org/max-request-body-size"] -%}
         {%- if bodySize != "" -%}
           {%%
@@ -95,9 +102,7 @@ templateSnippets:
             {%- for _, rule := range ingress.Spec.Rules -%}
               {%- for _, path := range rule.Http.Paths -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}
-                {%- if first_seen("map-body-size", be) -%}
-      {{ "\n" }}{{ be }} {{ bytes }}
-                {%- end -%}
+                {{- shared.Unique("map-body-size", be, "\n" + be + " " + tostring(bytes)) -}}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -109,6 +114,12 @@ templateSnippets:
   # ============================================================================
 
   map-request-buffering-830-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/request-buffering']"]
+      group: map-request-buffering
+      effects: [recordEvent]
     template: |
       {#
         HAPTIC Request Buffering Override
@@ -131,18 +142,18 @@ templateSnippets:
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var buffering = ingress.Metadata.Annotations["haproxy-haptic.org/request-buffering"] -%}
         {%- if buffering != "" -%}
           {%- if buffering != "on" && buffering != "off" -%}
             {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + buffering + "' for annotation 'haproxy-haptic.org/request-buffering' on Ingress '" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + "'. Valid: on, off.") -}}
-            {%- continue -%}
-          {%- end -%}
-          {%- for _, rule := range ingress.Spec.Rules -%}
-            {%- for _, path := range rule.Http.Paths -%}
-              {%- var be = BackendNameIngress(ingress, path) -%}
-              {%- if first_seen("map-request-buffering", be) -%}
-      {{ "\n" }}{{ be }} {{ buffering }}
+          {%- else -%}
+            {%- for _, rule := range ingress.Spec.Rules -%}
+              {%- for _, path := range rule.Http.Paths -%}
+                {%- var be = BackendNameIngress(ingress, path) -%}
+                {{- shared.Unique("map-request-buffering", be, "\n" + be + " " + buffering) -}}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -241,6 +252,11 @@ templateSnippets:
   # ============================================================================
 
   map-reqhdr-host-850-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/set-host']"]
+      group: map-reqhdr-host
     template: |
       {# HAPTIC set-host → reqhdr-host.map (Strategy 1): emits
           `<backend_name> <host>` consumed by base.yaml's resource-agnostic
@@ -250,58 +266,68 @@ templateSnippets:
           first_seen namespace with the vendor emitters. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var host = ingress.Metadata.Annotations["haproxy-haptic.org/set-host"] -%}
         {%- if host != "" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
-              {%- if first_seen("map-reqhdr-host", be) -%}
-      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(host, "haproxy-haptic.org/set-host", key, true)) }}
-              {%- end -%}
+              {{- shared.Unique("map-reqhdr-host", be, "\n" + be + " " + queryEscape(ValidateConfigValue(host, "haproxy-haptic.org/set-host", key, true))) -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
       {%- end -%}
 
   map-reqhdr-xfwd-prefix-850-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/x-forwarded-prefix']"]
+      group: map-reqhdr-xfwd-prefix
     template: |
       {# HAPTIC x-forwarded-prefix → reqhdr-xfwd-prefix.map, applied reload-free
           by base.yaml frontend-filters-261-request-set-xfwd-prefix. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var v = ingress.Metadata.Annotations["haproxy-haptic.org/x-forwarded-prefix"] -%}
         {%- if v != "" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
-              {%- if first_seen("map-reqhdr-xfwd-prefix", be) -%}
-      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "haproxy-haptic.org/x-forwarded-prefix", key, true)) }}
-              {%- end -%}
+              {{- shared.Unique("map-reqhdr-xfwd-prefix", be, "\n" + be + " " + queryEscape(ValidateConfigValue(v, "haproxy-haptic.org/x-forwarded-prefix", key, true))) -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
       {%- end -%}
 
   map-reqhdr-connection-850-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/backend-connection-header']"]
+      group: map-reqhdr-connection
     template: |
       {# HAPTIC backend-connection-header → reqhdr-connection.map, applied
           reload-free by base.yaml frontend-filters-262-request-set-connection. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var v = ingress.Metadata.Annotations["haproxy-haptic.org/backend-connection-header"] -%}
         {%- if v != "" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
-              {%- if first_seen("map-reqhdr-connection", be) -%}
-      {{ "\n" }}{{ be }} {{ queryEscape(ValidateConfigValue(v, "haproxy-haptic.org/backend-connection-header", key, true)) }}
-              {%- end -%}
+              {{- shared.Unique("map-reqhdr-connection", be, "\n" + be + " " + queryEscape(ValidateConfigValue(v, "haproxy-haptic.org/backend-connection-header", key, true))) -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}

@@ -121,6 +121,123 @@ func TestParseConcreteJSONPath(t *testing.T) {
 	}
 }
 
+func TestConcreteJSONPathEqualMatchesDeepEqual(t *testing.T) {
+	paths := []ConcreteJSONPath{
+		{},
+		{segments: []pathSeg{}},
+		{segments: []pathSeg{{}}},
+		{segments: []pathSeg{{key: "metadata"}}},
+		{segments: []pathSeg{{key: "metadata"}, {key: "name"}}},
+		{segments: []pathSeg{{index: 0, isIndex: true}}},
+		{segments: []pathSeg{{index: 1, isIndex: true}}},
+		{segments: []pathSeg{{key: "0", index: 0, isIndex: true}}},
+	}
+	for leftIndex, left := range paths {
+		for rightIndex, right := range paths {
+			require.Equal(
+				t,
+				reflect.DeepEqual(left, right),
+				left.Equal(right),
+				"paths %d and %d",
+				leftIndex,
+				rightIndex,
+			)
+		}
+	}
+}
+
+func TestConcreteJSONPathExists(t *testing.T) {
+	item := map[string]any{
+		"metadata": map[string]any{
+			"annotations": map[string]any{
+				"present": nil,
+			},
+		},
+		"spec": map[string]any{
+			"rules": []any{map[string]any{"host": "example.test"}},
+		},
+	}
+	tests := map[string]struct {
+		path string
+		want bool
+	}{
+		"null final value exists": {path: `metadata.annotations['present']`, want: true},
+		"missing final key":       {path: `metadata.annotations['missing']`, want: false},
+		"array element exists":    {path: "spec.rules[0].host", want: true},
+		"array element missing":   {path: "spec.rules[1].host", want: false},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			path, err := CompileConcreteJSONPath(test.path)
+			require.NoError(t, err)
+			exists, err := path.Exists(item)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, exists)
+		})
+	}
+
+	_, err := CompileConcreteJSONPath("spec.rules[*]")
+	require.Error(t, err)
+	_, err = (ConcreteJSONPath{}).Exists(item)
+	require.Error(t, err)
+}
+
+func TestExistenceJSONPathExists(t *testing.T) {
+	item := map[string]any{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{"backendRefs": []any{}},
+				map[string]any{"filters": []any{
+					map[string]any{"extensionRef": map[string]any{"kind": nil}},
+				}},
+			},
+		},
+	}
+	tests := map[string]struct {
+		path string
+		want bool
+	}{
+		"any branch contains field": {
+			path: "spec.rules[*].filters",
+			want: true,
+		},
+		"nested wildcards retain null presence": {
+			path: "spec.rules[*].filters[*].extensionRef.kind",
+			want: true,
+		},
+		"no branch contains field": {
+			path: "spec.rules[*].matches",
+			want: false,
+		},
+		"empty selected list": {
+			path: "spec.rules[0].backendRefs[*]",
+			want: false,
+		},
+		"fixed index remains supported": {
+			path: "spec.rules[1].filters",
+			want: true,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			path, err := CompileExistenceJSONPath(test.path)
+			require.NoError(t, err)
+			exists, err := path.Exists(item)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, exists)
+		})
+	}
+
+	_, err := CompileExistenceJSONPath("spec.rules[?(@.filters)].filters")
+	require.Error(t, err)
+	_, err = CompileExistenceJSONPath("spec.rules.*.filters")
+	require.Error(t, err)
+	_, err = CompileExistenceJSONPath("spec.rules.foo*bar.filters")
+	require.Error(t, err)
+	_, err = (ExistenceJSONPath{}).Exists(item)
+	require.Error(t, err)
+}
+
 func TestGetSetAtPath(t *testing.T) {
 	m := map[string]any{
 		"metadata": map[string]any{"name": "x", "annotations": map[string]any{"a": "1"}},
@@ -164,28 +281,69 @@ func TestJSONPathGet(t *testing.T) {
 func TestJSONPathSet(t *testing.T) {
 	t.Run("annotation fast path sets in place", func(t *testing.T) {
 		res := &govTestRes{Metadata: govTestMeta{Annotations: map[string]string{"a": "1"}}}
-		require.True(t, scriggoJSONPathSet(res, "metadata.annotations['b']", "2"))
+		require.True(t, setJSONPath(res, "metadata.annotations['b']", "2"))
 		assert.Equal(t, "2", res.Metadata.Annotations["b"])
 		assert.Equal(t, "1", res.Metadata.Annotations["a"], "existing annotations preserved")
 	})
 	t.Run("annotation fast path allocates nil map", func(t *testing.T) {
 		res := &govTestRes{Metadata: govTestMeta{Name: "x"}} // Annotations nil
-		require.True(t, scriggoJSONPathSet(res, "metadata.annotations['k']", "v"))
+		require.True(t, setJSONPath(res, "metadata.annotations['k']", "v"))
 		assert.Equal(t, "v", res.Metadata.Annotations["k"])
 	})
 	t.Run("spec field via json round-trip persists in place", func(t *testing.T) {
 		res := &govTestRes{Spec: map[string]any{"existing": "keep"}}
-		require.True(t, scriggoJSONPathSet(res, "spec.injected", "yes"))
+		require.True(t, setJSONPath(res, "spec.injected", "yes"))
 		assert.Equal(t, "yes", res.Spec["injected"])
 		assert.Equal(t, "keep", res.Spec["existing"])
 	})
 	t.Run("filtered path rejected", func(t *testing.T) {
 		res := &govTestRes{}
-		assert.False(t, scriggoJSONPathSet(res, "spec.rules[?(@.host=='x')]", "v"))
+		assert.False(t, setJSONPath(res, "spec.rules[?(@.host=='x')]", "v"))
 	})
 	t.Run("numeric value coerced to string for annotation", func(t *testing.T) {
 		res := &govTestRes{}
-		require.True(t, scriggoJSONPathSet(res, "metadata.annotations['n']", 1000))
+		require.True(t, setJSONPath(res, "metadata.annotations['n']", 1000))
 		assert.Equal(t, "1000", res.Metadata.Annotations["n"])
+	})
+}
+
+func TestNativeMutatorsKeepTemplateLocalValuesMutable(t *testing.T) {
+	env := &fakeEnv{ctx: WithImmutableResourceInputs(t.Context())}
+	resource := &govTestRes{Metadata: govTestMeta{Name: "before"}}
+	require.True(t, scriggoJSONPathSet(env, resource, "metadata.name", "jsonpath"))
+	assert.Equal(t, "jsonpath", resource.Metadata.Name)
+
+	values := []string{"first", "second"}
+	scriggoReverse(env, values)
+	assert.Equal(t, []string{"second", "first"}, values)
+
+	require.NoError(t, scriggoUnmarshalJSON(env, `{"metadata":{"name":"json"}}`, resource))
+	assert.Equal(t, "json", resource.Metadata.Name)
+	require.NoError(t, scriggoUnmarshalYAML(env, "metadata:\n  name: yaml\n", resource))
+	assert.Equal(t, "yaml", resource.Metadata.Name)
+}
+
+func TestDeriveResourceJSONPath(t *testing.T) {
+	t.Run("typed resource is detached", func(t *testing.T) {
+		source := &govTestRes{
+			Metadata: govTestMeta{Namespace: "default", Name: "typed", Annotations: map[string]string{"a": "1"}},
+			Spec:     map[string]any{"replicas": int64(3)},
+		}
+		derived, err := DeriveResourceJSONPath(source, "metadata.annotations['b']", 2)
+		require.NoError(t, err)
+		assert.Equal(t, "2", scriggoJSONPathGet(derived, "metadata.annotations['b']"))
+		assert.Nil(t, scriggoJSONPathGet(source, "metadata.annotations['b']"))
+		assert.IsType(t, int64(0), scriggoJSONPathGet(derived, "spec.replicas"))
+	})
+
+	t.Run("untyped resource is detached", func(t *testing.T) {
+		source := map[string]any{
+			"metadata": map[string]any{"namespace": "default", "name": "untyped"},
+			"spec":     map[string]any{"nested": map[string]any{"old": "kept"}},
+		}
+		derived, err := DeriveResourceJSONPath(source, "spec.nested.added", "yes")
+		require.NoError(t, err)
+		assert.Equal(t, "yes", scriggoJSONPathGet(derived, "spec.nested.added"))
+		assert.Nil(t, scriggoJSONPathGet(source, "spec.nested.added"))
 	})
 }

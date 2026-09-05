@@ -76,6 +76,19 @@ absent from the bundle.
 {{- end -}}
 
 {{/*
+Returns "true" unless every Ingress vendor annotation library is in the bundle
+(empty string when all are). A validationTest that pins which family wins when
+several annotate one host needs all of them loaded: with a family absent its
+producer never runs, the remaining one wins by default, and the test passes
+while asserting nothing. Use it in `_helm_skip_test` for cross-family
+precedence tests.
+*/}}
+{{- define "haptic.vendorAnnotationLibraries.incomplete" -}}
+{{- $libs := .Values.controller.templateLibraries -}}
+{{- if not (and $libs.haproxyIngress.enabled $libs.nginxIngress.enabled $libs.haproxytech.enabled) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 Returns "true" when the Gateway API *experimental* channel is NOT in use (empty
 string otherwise), driven by the explicit `templateLibraries.gateway.experimentalChannel`
 value. Experimental-only HTTPRoute fields (sessionPersistence / GEP-1619, retry /
@@ -184,6 +197,18 @@ the cost of its source being stored in the release Secret.
 {{- $prepared := list }}
 {{- $declared := dict }}
 {{- $context := . }}
+{{- $templateLibraries := .Values.controller.templateLibraries }}
+{{- if not $templateLibraries.kubernetesBackends.enabled }}
+  {{- $consumers := list }}
+  {{- range $name := list "ingress" "gateway" "ingressAnnotationsCompat" "hapticAnnotations" "haproxyIngress" "nginxIngress" }}
+    {{- if (dig $name "enabled" false $templateLibraries) }}
+      {{- $consumers = append $consumers $name }}
+    {{- end }}
+  {{- end }}
+  {{- if gt (len $consumers) 0 }}
+    {{- fail (printf "controller.templateLibraries.kubernetesBackends.enabled=false leaves enabled consumers without Service/EndpointSlice helpers: %s. Enable kubernetesBackends or disable those libraries." (join ", " $consumers)) }}
+  {{- end }}
+{{- end }}
 {{- /* Each entry is "subchart:<name>" — a subchart whose library YAML the
        parent reads via .Subcharts.<name>.Files. A subchart disabled by its
        `condition:` is pruned from the release Secret, so .Subcharts.<name> is
@@ -192,6 +217,7 @@ the cost of its source being stored in the release Secret.
        merged in lexicographic order). The order below IS the merge order. */ -}}
 {{- $libraryFiles := list
     "subchart:base"
+    "subchart:kubernetes-backends"
     "subchart:ssl"
     "subchart:ingress"
     "subchart:gateway"

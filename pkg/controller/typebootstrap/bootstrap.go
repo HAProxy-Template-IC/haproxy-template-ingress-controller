@@ -225,7 +225,7 @@ func bootstrapOne(ctx context.Context, cfg *Config, res *Resource) (reflect.Type
 	// access to <resource>.Metadata.{Name,Namespace,...} on every
 	// CRD-backed resource — which is most of what watchedResources
 	// typically contains.
-	sch = injectObjectMetaIfMissing(sch)
+	sch = injectObjectMetaFields(sch)
 
 	// Components nil for CRD-backed schemas (they inline every
 	// shape); non-nil for OpenAPI v3-backed schemas where K8s wraps
@@ -251,40 +251,26 @@ const (
 	nameFieldKey     = "name"
 )
 
-// injectObjectMetaIfMissing inlines a typed metadata sub-schema
-// into the resource schema when the upstream source declares
-// metadata as an empty-properties object — the K8s CRD convention
-// where the apiserver supplies ObjectMeta validation after the
-// fact. The inlined sub-schema matches the fields chart templates
-// commonly touch (name, namespace, labels, annotations,
-// generation, creationTimestamp) — the broader K8s ObjectMeta
-// surface charts already rely on.
+// injectObjectMetaFields adds the ObjectMeta fields supplied by the apiserver
+// when a resource schema omits all or part of them.
 //
 // Returns a shallow copy of the original schema with the metadata
 // property replaced; the original is not mutated (other watched
 // resources might share the same schema instance via $ref
 // caching in upstream OpenAPI sources).
-//
-// No-op if the resource already declares metadata with concrete
-// properties — the OpenAPI v3 path returns this shape, and the
-// allOf-with-ref handler (added in Phase 11) resolves it.
-func injectObjectMetaIfMissing(sch *spec.Schema) *spec.Schema {
+func injectObjectMetaFields(sch *spec.Schema) *spec.Schema {
 	if sch == nil || sch.Properties == nil {
 		return sch
 	}
 	meta, ok := sch.Properties[metadataFieldKey]
 	if !ok {
-		// metadata absent entirely (very unusual; chart code that
-		// accesses gw.Metadata would have nothing to bind against).
-		// Leave the absence so the converter omits the field and
-		// the template-side compile failure surfaces clearly.
-		return sch
-	}
-	// metadata has a non-empty Properties map (OpenAPI v3 path) OR
-	// is a $ref / allOf wrapper that the converter handles
-	// elsewhere. Either way, we don't need to inject.
-	if len(meta.Properties) > 0 || meta.Ref.String() != "" || len(meta.AllOf) > 0 {
-		return sch
+		meta = syntheticObjectMetaSchema()
+	} else {
+		enriched, complete := enrichObjectMetaSchema(&meta)
+		if complete {
+			return sch
+		}
+		meta = enriched
 	}
 	// Shallow-copy so we don't mutate upstream's cached schema.
 	// Range by key + map index (not by value) to avoid copying
@@ -294,8 +280,38 @@ func injectObjectMetaIfMissing(sch *spec.Schema) *spec.Schema {
 	for k := range sch.Properties {
 		out.Properties[k] = sch.Properties[k]
 	}
-	out.Properties[metadataFieldKey] = syntheticObjectMetaSchema()
+	out.Properties[metadataFieldKey] = meta
 	return &out
+}
+
+// enrichObjectMetaSchema fills in the missing apiserver-supplied metadata
+// fields. complete means the schema already carries them (or delegates via
+// $ref/allOf) and must be kept as is.
+func enrichObjectMetaSchema(meta *spec.Schema) (enriched spec.Schema, complete bool) {
+	if meta.Ref.String() != "" || len(meta.AllOf) > 0 {
+		return spec.Schema{}, true
+	}
+	synthetic := syntheticObjectMetaSchema()
+	if len(meta.Properties) == 0 {
+		return synthetic, false
+	}
+	_, hasUID := meta.Properties["uid"]
+	_, hasResourceVersion := meta.Properties["resourceVersion"]
+	if hasUID && hasResourceVersion {
+		return spec.Schema{}, true
+	}
+	metadataCopy := *meta
+	metadataCopy.Properties = make(map[string]spec.Schema, len(meta.Properties)+2)
+	for name := range meta.Properties {
+		metadataCopy.Properties[name] = meta.Properties[name]
+	}
+	if !hasUID {
+		metadataCopy.Properties["uid"] = synthetic.Properties["uid"]
+	}
+	if !hasResourceVersion {
+		metadataCopy.Properties["resourceVersion"] = synthetic.Properties["resourceVersion"]
+	}
+	return metadataCopy, false
 }
 
 // syntheticObjectMetaSchema returns a spec.Schema with the
@@ -322,6 +338,8 @@ func syntheticObjectMetaSchema() spec.Schema {
 		Properties: map[string]spec.Schema{
 			nameFieldKey:        stringSchema,
 			"namespace":         stringSchema,
+			"uid":               stringSchema,
+			"resourceVersion":   stringSchema,
 			"generation":        {SchemaProps: spec.SchemaProps{Type: spec.StringOrArray{"integer"}, Format: "int64"}},
 			"creationTimestamp": stringSchema,
 			"labels":            stringMapSchema,

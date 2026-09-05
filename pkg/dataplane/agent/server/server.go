@@ -304,6 +304,18 @@ func (s *Server) adoptDisk() error {
 		s.state.RunningPlanID = ""
 		s.state.WorkerOpsPlanID = ""
 	}
+	// Proofs attest observations made by this agent process. The state file's
+	// digest is only an integrity hint, so a restart cannot carry those proofs
+	// across the exact-observation boundary.
+	s.state.AppliedPlanProof = ""
+	s.state.RunningPlanProof = ""
+	s.state.WorkerOpsPlanProof = ""
+	s.state.LKGPlanProof = ""
+	s.state.PendingReloadPlanID = ""
+	s.state.PendingReloadPlanProof = ""
+	s.state.ReloadPendingAt = time.Time{}
+	s.state.PlanBlobPlanProof = ""
+	s.state.NACK = nil
 	s.tree = tree
 	s.state.TreeDigest = digest
 	s.state.ExpectedWorker = s.worker

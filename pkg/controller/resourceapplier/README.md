@@ -9,10 +9,10 @@ Templates declare desired Kubernetes resources via the
 renders to one or more YAML documents (`---`-separated) describing full
 Kubernetes resources. The renderer parses each document, validates
 required fields (`apiVersion`, `kind`, `metadata.{name,namespace}`),
-and hands the resulting set to this component, which reconciles it to
-the cluster via Server-Side Apply (SSA), with checksum dedup so
-unchanged resources don't hammer the API server, and orphan pruning so
-resources removed from later renders are deleted.
+and seals the resulting set into a render occurrence. This component reads the
+authenticated snapshot, reconciles it through Server-Side Apply (SSA), and
+prunes resources removed from later renders with exact UID and resourceVersion
+preconditions.
 
 For full-ownership resources in the controller's own namespace the
 applier injects a controller `OwnerReference` (controller=true,
@@ -37,12 +37,12 @@ this package or any caller.
 
 **Subscribed events** (the only inputs that lead to API calls):
 
-- `ReconciliationCompletedEvent` — applies the resources carried ON the
-  event (stateless: no side-channel cache), then publishes
-  `ResourcesAppliedEvent` forwarding the cycle's status patches so the
-  StatusApplier writes the `rendered` variant only after the resources exist
-- `BecameLeaderEvent` — clears checksum cache, rebuilds owned-set from
-  cluster state
+- `ReconciliationCompletedEvent` — authenticates `RenderOccurrence()`, applies
+  the resources from its sealed cycle, then publishes `ResourcesAppliedEvent`
+  with that same occurrence
+- `RenderGateCompletedEvent` — authenticates the same occurrence before holding,
+  releasing, or reverting resources
+- `BecameLeaderEvent` — rebuilds the owned set from cluster state
 - `LostLeadershipEvent` — pauses applies
 
 **Publishers of those events:**
@@ -93,29 +93,17 @@ behaviour is intended. A wire-up that publishes `TemplateRenderedEvent`
 from a webhook handler with rendered resources attached would be a
 regression in this contract; reviewers should reject it.
 
-## Checksum dedup
+## Exact convergence
 
-Each applied resource's full payload (after the `managed-by` label
-injection) is hashed with SHA-256, and the hash is cached per
-`namespace/name/gvr` key. The next reconciliation hashes the new
-payload and compares against the cache; if they match, no SSA call
-goes out — the resource counts as `skipped` in the per-pass log line.
+Every authenticated cycle reaches the API server. A local payload digest can't
+prove that an unwatched target wasn't mutated or recreated after the previous
+apply. The SSA response supplies the exact UID and resourceVersion later used as
+delete preconditions. Missing or mismatched lineage fails closed; a replacement
+resource with the same name is never deleted as an orphan.
 
-A render where the chart re-emits 100 unchanged Services costs:
-
-- 100 `json.Marshal` + `sha256.Sum256` calls (in-memory)
-- 0 API calls
-
-A render where 1 Service changed costs:
-
-- 100 hashes
-- 1 SSA call
-
-The cache is cleared on `BecameLeaderEvent` because a previous leader's
-checksums aren't trustworthy for the new one — the API server's
-last-applied managed fields reflect their applies, not ours. First
-reconciliation after a leader change re-applies everything once;
-subsequent reconciliations dedupe normally.
+Render-gate state is keyed by the opaque occurrence, not by public
+`CycleSnapshot`, `RenderProof`, or plan fields. A verdict for another occurrence,
+including one with identical output, can't release or revert the held cycle.
 
 ## Orphan pruning
 
@@ -234,14 +222,14 @@ namespace.
 
 - New() initialization and field defaults
 - Leader / non-leader gating (non-leader does not apply)
-- Checksum dedup (unchanged resources skip the API call)
-- Re-apply on payload change (different port → new checksum → new SSA)
-- Orphan deletion (resource removed from rendered set is deleted)
+- Every cycle verifies live state through SSA
+- Authenticated occurrence propagation, shadow poisoning, and A-B-A cycles
+- Exact-UID/resourceVersion orphan deletion and replacement protection
 - Namespace restriction (foreign + cluster-scoped resources are refused)
-- BecameLeaderEvent clears cache and re-applies
+- BecameLeaderEvent rebuilds deletion lineage and re-applies
 - LostLeadershipEvent pauses applies
 - Label injection preserves caller's labels and is non-mutating
 - Start() returns cleanly on context cancellation
-- ReconciliationCompletedEvent carries the resources it applies (stateless)
+- ReconciliationCompletedEvent authenticates the resources it applies
 
 Total coverage: 79.3% of statements.

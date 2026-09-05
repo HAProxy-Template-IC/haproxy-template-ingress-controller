@@ -950,6 +950,7 @@ validationTests:
 
   test-nginx-ingress-config-snippet:
     description: Nginx Ingress configuration-snippet injects raw directives
+    extraContext: {waf: {ingressPermissions: {allowRawHAProxyConfig: true}}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1218,7 +1219,7 @@ validationTests:
         pattern: "use_backend ssl-passthrough-ni-default-passthrough-ingress if { req_ssl_sni -m str passthrough.example.com }"
 
   test-nginx-ingress-ssl-passthrough-skips-ingress-without-paths:
-    description: "Regression test for the dry-run race that flaked TestIngressAnnotations/nginx-ssl-passthrough on !893. Pre-fix shape: BuildAnnotationSSLPassthrough added an entry to gf[\"sslPassthroughBackends\"] for any (host, ingress) pair where the annotation was truthy. The use_backend in ssl-tcp was emitted from that list. The corresponding `backend X` block came from a separate `resources.ingresses.GetSingle` lookup that walked spec.rules to find a service. If the ingress had a host but no spec.rules[*].http.paths (or those paths had no backend.service), the use_backend was emitted without a matching backend block — `haproxy -c` rejected the config and the webhook denied the unrelated dry-run as collateral damage. Post-fix: the macro itself extracts svcName/svcPort up front and refuses to add an entry without them. This fixture's ingress has the annotation + a host but no http.paths, so neither use_backend nor backend should appear in the rendered config."
+    description: "Regression test for the dry-run race that flaked TestIngressAnnotations/nginx-ssl-passthrough on !893. The passthrough component resolves a usable service before publishing an SNI, so an Ingress without http.paths emits neither use_backend nor backend."
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1239,7 +1240,7 @@ validationTests:
         target: haproxy.cfg
         pattern: "ssl-passthrough-ni-default-passthrough-ingress-no-paths"
   test-nginx-ingress-ssl-passthrough-named-port:
-    description: nginx-ingress SSL passthrough annotation must resolve a backend referenced by port.name to the correct numeric pod port (regression guard for the silent fallback-to-not-rendered bug in BuildAnnotationSSLPassthrough)
+    description: nginx-ingress SSL passthrough must resolve a port.name backend to the numeric pod port.
     fixtures:
       services:
         - apiVersion: v1

@@ -72,9 +72,12 @@ extract_read() {
   # upstream producer to signal.
   {
     grep -oE "\"${prefix//./\\.}/[a-z0-9][a-z0-9.-]*\"" <<<"$body" | tr -d '"' || true
-    if grep -ql 'import "util-emit-annotation-cors"' <<<"$body"; then
+    if grep -qlE 'import "util-(emit|ingress)-annotation-cors[a-z-]*"' <<<"$body"; then
       cors_suffixes | sed "s|^|${prefix}/|"
     fi
+    # A library's own dynamic reads count the same as the shared macro's.
+    perl -ne 'print "$1\n" if /Annotations\[prefix \+ "\/([a-z0-9-]+)"\]/' <<<"$body" |
+      sed "s|^|${prefix}/|" || true
   } | sort -u
 }
 

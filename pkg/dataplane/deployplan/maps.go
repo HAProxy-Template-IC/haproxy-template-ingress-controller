@@ -31,13 +31,13 @@ type mapOps struct {
 	whole   bool
 }
 
-// diffMaps applies rule 5, short-circuiting on the file digest before any
+// diffMaps applies rule 5, short-circuiting on exact file content before any
 // entry is compared — at 3000 routes the map diff is the larger term.
 func (b *builder) diffMaps() {
 	for _, name := range sortedMapNames(b.next.Maps) {
 		next := b.next.Maps[name]
 		prev, existed := b.prev.Maps[name]
-		if existed && sameDigest(b.prevFiles[name], b.nextFiles[name]) {
+		if existed && sameFileContent(b.prevFiles[name], b.nextFiles[name]) {
 			continue
 		}
 		b.diffMap(&prev, &next, name)
@@ -234,8 +234,4 @@ func sameValues(prev, next []string) bool {
 	slices.Sort(a)
 	slices.Sort(b)
 	return slices.Equal(a, b)
-}
-
-func sameDigest(prev, next *renderplan.File) bool {
-	return prev != nil && next != nil && prev.Digest == next.Digest
 }

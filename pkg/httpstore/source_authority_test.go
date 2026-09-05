@@ -54,9 +54,9 @@ func TestFetchRefetchesWhenBearerTokenRotates(t *testing.T) {
 	assert.Equal(t, "new-content", newContent)
 	assert.Equal(t, int32(2), requests.Load())
 
-	identity, err := SourceIdentity(FetchOptions{Critical: true}, newAuth)
+	descriptor, err := DescribeSource(FetchOptions{Critical: true}, newAuth)
 	require.NoError(t, err)
-	cached, ok := store.GetSource(server.URL, identity)
+	cached, ok := store.GetSource(server.URL, descriptor)
 	require.True(t, ok)
 	assert.Equal(t, "new-content", cached)
 }

@@ -20,12 +20,42 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 type sourceSpec struct {
-	options  FetchOptions
-	auth     *AuthConfig
-	identity string
+	options    FetchOptions
+	auth       *AuthConfig
+	descriptor SourceDescriptor
+}
+
+// SourceDescriptor is an opaque, exactly comparable fetch declaration.
+type SourceDescriptor struct {
+	identity  string
+	canonical string
+}
+
+// Identity returns the non-secret diagnostic identity of this declaration.
+func (d SourceDescriptor) Identity() string {
+	return d.identity
+}
+
+// Compare orders descriptors by diagnostic identity and exact canonical declaration.
+func (d SourceDescriptor) Compare(other SourceDescriptor) int {
+	if compared := strings.Compare(d.identity, other.identity); compared != 0 {
+		return compared
+	}
+	return strings.Compare(d.canonical, other.canonical)
+}
+
+// String returns the non-secret identity.
+func (d SourceDescriptor) String() string {
+	return d.identity
+}
+
+// Format prevents diagnostic formatting from exposing the canonical declaration.
+func (d SourceDescriptor) Format(state fmt.State, _ rune) {
+	_, _ = state.Write([]byte(d.identity))
 }
 
 type identityInput struct {
@@ -35,11 +65,20 @@ type identityInput struct {
 
 // SourceIdentity returns an opaque identity for the effective fetch policy.
 func SourceIdentity(opts FetchOptions, auth *AuthConfig) (string, error) {
-	spec, err := normalizeSource(opts, auth)
+	descriptor, err := DescribeSource(opts, auth)
 	if err != nil {
 		return "", err
 	}
-	return spec.identity, nil
+	return descriptor.Identity(), nil
+}
+
+// DescribeSource returns an opaque declaration with exact structural equality.
+func DescribeSource(opts FetchOptions, auth *AuthConfig) (SourceDescriptor, error) {
+	spec, err := normalizeSource(opts, auth)
+	if err != nil {
+		return SourceDescriptor{}, err
+	}
+	return spec.descriptor, nil
 }
 
 func normalizeSource(opts FetchOptions, auth *AuthConfig) (sourceSpec, error) {
@@ -54,14 +93,14 @@ func normalizeSource(opts FetchOptions, auth *AuthConfig) (sourceSpec, error) {
 	}
 	identityAuth := canonicalIdentityAuth(normalizedAuth)
 
-	identity, err := hashIdentity(identityInput{Options: options, Auth: identityAuth})
+	descriptor, err := describeIdentity(identityInput{Options: options, Auth: identityAuth})
 	if err != nil {
 		return sourceSpec{}, err
 	}
 	return sourceSpec{
-		options:  options,
-		auth:     normalizedAuth,
-		identity: identity,
+		options:    options,
+		auth:       normalizedAuth,
+		descriptor: descriptor,
 	}, nil
 }
 
@@ -116,11 +155,14 @@ func canonicalIdentityAuth(auth *AuthConfig) *AuthConfig {
 	return &canonical
 }
 
-func hashIdentity(value any) (string, error) {
+func describeIdentity(value any) (SourceDescriptor, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return "", fmt.Errorf("encoding HTTP source identity: %w", err)
+		return SourceDescriptor{}, fmt.Errorf("encoding HTTP source identity: %w", err)
 	}
 	digest := sha256.Sum256(encoded)
-	return hex.EncodeToString(digest[:]), nil
+	return SourceDescriptor{
+		identity:  hex.EncodeToString(digest[:]),
+		canonical: string(encoded),
+	}, nil
 }

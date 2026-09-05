@@ -93,7 +93,11 @@ type HAProxyTemplateLibrarySpec struct {
 	// +optional
 	TemplatingSettings TemplatingSettings `json:"templatingSettings,omitempty"`
 
+	// MaxProperties bounds the CEL cost estimator; see the same field on
+	// HAProxyTemplateConfig.
+
 	// TemplateSnippets maps snippet names to reusable template fragments.
+	// +kubebuilder:validation:MaxProperties=4096
 	// +optional
 	TemplateSnippets map[string]TemplateSnippet `json:"templateSnippets,omitempty"`
 

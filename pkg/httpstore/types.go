@@ -158,7 +158,10 @@ func (s ValidationState) String() string {
 // where we must not discard the old blocklist before knowing the new one is valid.
 type CacheEntry struct {
 	mutationRevision uint64
+	replayRevision   uint64
+	acceptedRevision Revision
 	sourceIdentity   string
+	sourceDescriptor SourceDescriptor
 	sourceGeneration uint64
 	fixture          bool
 
@@ -199,6 +202,7 @@ type CacheEntry struct {
 // SourceState identifies the current authority and refresh policy for a URL.
 type SourceState struct {
 	Identity    string
+	Descriptor  SourceDescriptor
 	Generation  uint64
 	Delay       time.Duration
 	HasAccepted bool

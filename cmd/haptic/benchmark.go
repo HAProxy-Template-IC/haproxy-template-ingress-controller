@@ -306,7 +306,7 @@ func runSingleTestBenchmark(
 	// first_seen() dedup cache and PlanRegistry start empty, as a production
 	// reconcile does.
 	warmupCtx := freshBenchmarkContext(cfg, test.ExtraContext, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
-	_, err = renderAllFiles(engine, cfg, warmupCtx)
+	_, err = renderAllFiles(engine, cfg, warmupCtx, storeMap, typedResourceTypes, logger)
 	if resourceErr := warmupCtx.Err(context.Background()); resourceErr != nil {
 		return nil, resourceErr
 	}
@@ -322,7 +322,7 @@ func runSingleTestBenchmark(
 
 	for i := 0; i < benchmarkIterations; i++ {
 		iterCtx := freshBenchmarkContext(cfg, test.ExtraContext, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
-		iterResult, err := renderAllFiles(engine, cfg, iterCtx)
+		iterResult, err := renderAllFiles(engine, cfg, iterCtx, storeMap, typedResourceTypes, logger)
 		if resourceErr := iterCtx.Err(context.Background()); resourceErr != nil {
 			return nil, resourceErr
 		}

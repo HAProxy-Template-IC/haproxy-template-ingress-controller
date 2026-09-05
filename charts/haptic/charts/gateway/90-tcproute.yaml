@@ -70,59 +70,28 @@ _fx:
           - {name: tcp-backend, port: 9100}
 
 templateSnippets:
-  # util-gateway-tcproute-analysis
-  #
-  # Caches the per-port TCP routing plan in
-  # shared["gateway_tcproute"].byPort. Race-free via ComputeIfAbsent so
-  # the parallel backends-/frontends- renderers see a consistent view.
-  #
-  # Schema (shared["gateway_tcproute"]):
-  #   {
-  #     "byPort": map[int]any{                 # keyed by listener port
-  #        <port>: map[string]any{
-  #          "backendName": "gtw_tcp_<ns>_<name>_<ruleIdx>",
-  #          "routeNs":     <route namespace>,
-  #          "routeName":   <route name>,
-  #          "ruleIdx":     <int>,
-  #          "refName":     <first Service name>,
-  #          "refPort":     <first Service port int>,
-  #          "refNs":       <first Service namespace>,
-  #          "refs":        [ {name, port, ns, weight}, … ],  # all valid refs
-  #        }
-  #     }
-  #   }
-  #
-  # A port is claimed by the FIRST attached (TCPRoute, rule, valid
-  # backendRef) tuple encountered (TCP can't multiplex a single port by
-  # any L7 selector). Routes are walked in resources.tcproutes.List()
-  # order, which the store keeps stable.
-  util-gateway-tcproute-analysis:
-    requires: [gateways, referencegrants, tcproutes]
+  util-publish-gateway-tcproute-claims:
+    requires: [gateways, namespaces, referencegrants, services, endpoints, tcproutes]
     template: |
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocol %}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted %}
+      {%- import "util-backend-servers-result" for BackendServersResult %}
+      {%- macro PublishGatewayTCPRouteClaims(route *resources.tcproutes.T) -%}
       {%%
-        var _, _ = shared.ComputeIfAbsent("gateway_tcproute", func() any {
-          var byPort = map[int]any{}
+        var nsStr = route.Metadata.Namespace
+        var nameStr = route.Metadata.Name
+        var routeTs = route.Metadata.CreationTimestamp
+        var routeKey = nsStr + "/" + nameStr
+        var routeRank = "1/" + routeKey
+        if routeTs != "" { routeRank = "0/" + routeTs + "/" + routeKey }
+        var fixed = func(value int) string {
+          var encoded = tostring(value)
+          var zeroes = "0000000000"
+          if len(encoded) >= len(zeroes) { return encoded }
+          return zeroes[:len(zeroes)-len(encoded)] + encoded
+        }
 
-          // Gateway API conflict resolution: when several TCPRoutes claim
-          // the same listener port, the OLDEST (earliest creationTimestamp,
-          // then namespace/name) is bound; the port can't be multiplexed by
-          // any L7 key. Rather than pre-sort the routes (a hand-rolled
-          // bubble-sort over the typed slice mis-lowered under Scriggo and
-          // silently dropped later routes when an orphaned route sorted
-          // first), we walk List() in store order and resolve the winner AT
-          // CLAIM TIME: a contested port keeps whichever claimant is older
-          // (ts asc, empty ts last, then namespace/name asc). Each byPort
-          // entry carries "ts"/"key" so a later claimant can compare.
-
-          for _, route := range resources.tcproutes.List() {
-            var nsStr = route.Metadata.Namespace
-            var nameStr = route.Metadata.Name
-            var routeTs = route.Metadata.CreationTimestamp
-            var routeKey = nsStr + "/" + nameStr
-
-            for ruleIdx, rule := range route.Spec.Rules {
+        for ruleIdx, rule := range route.Spec.Rules {
               // First valid backendRef of the rule wins. Per Gateway API
               // spec only core/v1 Service refs are routable; anything
               // else is skipped (an all-invalid rule simply contributes
@@ -134,8 +103,8 @@ templateSnippets:
               // become a `balance roundrobin` mode-tcp backend (weighted
               // TCPRoute). Weight defaults to 1 (Gateway API); weight 0 stays
               // in the backend but is emitted with `weight 0` so it takes no
-              // traffic. refName/refPort/refNs keep the FIRST ref for the
-              // existing byPort fields.
+              // traffic. refName/refPort/refNs keep the first ref for the
+              // single-backend server resolution.
               var refName = ""
               var refPort = 0
               var refNs = ""
@@ -172,6 +141,28 @@ templateSnippets:
               }
               if refName == "" {
                 continue
+              }
+
+              var backendName = "gtw_tcp_" + nsStr + "_" + nameStr + "_" + tostring(ruleIdx)
+              var balance = ""
+              var servers = []any{}
+              if len(refs) <= 1 {
+                var serverResult = BackendServersResult(refName, 0, refPort, nil, nil, backendName, refNs)
+                servers = serverResult["servers"].([]any)
+              } else {
+                balance = "roundrobin"
+                for _, r := range refs {
+                  var rm = r.(map[string]any)
+                  var opts = map[string]any{
+                    "namePrefix": tostring(rm["name"]) + "-",
+                    "weight":     toint(rm["weight"]),
+                  }
+                  var serverResult = BackendServersResult(tostring(rm["name"]), 0, toint(rm["port"]),
+                    opts, nil, backendName, tostring(rm["ns"]))
+                  for _, server := range serverResult["servers"].([]any) {
+                    servers = append(servers, server)
+                  }
+                }
               }
 
               // Walk parentRefs and find every accepted TCP listener.
@@ -261,48 +252,34 @@ templateSnippets:
                     continue
                   }
 
-                  // Oldest-wins at claim time: TCP forwards a whole port to
-                  // one backend, so a contested port keeps the older route
-                  // (ts asc, empty-ts last, then namespace/name asc). No
-                  // `continue` here — a skipped claim must not disturb the
-                  // outer route walk.
-                  var winThisPort = true
-                  var existing, taken = byPort[lPort]
-                  if taken {
-                    var em = existing.(map[string]any)
-                    var eTs = tostring(em["ts"])
-                    var eKey = tostring(em["key"])
-                    if eTs == routeTs {
-                      winThisPort = routeKey < eKey
-                    } else if routeTs == "" {
-                      winThisPort = false
-                    } else if eTs != "" && routeTs > eTs {
-                      winThisPort = false
-                    }
-                  }
-                  if winThisPort {
-                    byPort[lPort] = map[string]any{
-                      "backendName": "gtw_tcp_" + nsStr + "_" + nameStr + "_" + sprintf("%d", ruleIdx),
+                  show shared.PublishRanked("ports", fixed(lPort),
+                    routeRank + "/" + fixed(ruleIdx), map[string]any{
+                      "port":        lPort,
+                      "backendName": backendName,
                       "routeNs":     nsStr,
                       "routeName":   nameStr,
                       "ruleIdx":     ruleIdx,
-                      "refName":     refName,
-                      "refPort":     refPort,
-                      "refNs":       refNs,
-                      "refs":        refs,
-                      "ts":          routeTs,
-                      "key":         routeKey,
-                    }
-                  }
+                      "balance":     balance,
+                      "servers":     servers,
+                    })
                 }
                 }
               }
-            }
-          }
-
-          return map[string]any{"byPort": byPort}
-        })
+        }
       %%}
+      {%- end macro -%}
+
+  gateway-tcproute-claims-100-route:
+    requires: [gateways, namespaces, referencegrants, services, endpoints, tcproutes]
+    incremental:
+      source: tcproutes
+      group: gateway-tcproute-claims
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-tcproute-claims" for PublishGatewayTCPRouteClaims -%}
+      {%- var route = resources.tcproutes.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if route != nil -%}{{- PublishGatewayTCPRouteClaims(route) -}}{%- end -%}
 
   # backends-502-gateway-tcproute
   #
@@ -311,20 +288,11 @@ templateSnippets:
   # `502` ordinal keeps it after the ssl-passthrough TCP backends (501)
   # for stable output ordering.
   backends-502-gateway-tcproute:
-    requires: [gateways, referencegrants, tcproutes]
+    requires: [gateways, namespaces, referencegrants, services, endpoints, tcproutes]
     template: |
       {%- import "util-backend" for Backend %}
-      {%- import "util-backend-servers" for BackendServers %}
-      {{ render "util-gateway-tcproute-analysis" }}
-      {%- var dataRaw = shared.Get("gateway_tcproute") %}
-      {%- if dataRaw != nil %}
-        {%- var byPort = dataRaw.(map[string]any)["byPort"].(map[int]any) %}
-        {#- Deterministic output: sort the claimed ports numerically. -#}
-        {%- var portKeysRaw = []any{} %}
-        {%- for k, _ := range byPort %}
-          {%- portKeysRaw = append(portKeysRaw, k) %}
-        {%- end %}
-        {%- var portKeys = sort_ints(portKeysRaw) %}
+      {{ render "gateway-tcproute-claims-100-route" }}
+        {%- var claims = incremental_values("gateway-tcproute-claims", "ports") %}
         {#- A TCPRoute attaching to multiple listener ports (e.g. one that
             attaches to every listener on a Gateway) claims several ports
             that all resolve to the SAME (route, rule) backend name
@@ -336,51 +304,23 @@ templateSnippets:
             to the shared backend, which is correct — the same Service:port
             is simply reachable on multiple listener ports. -#}
         {%- var seenBackends = map[string]bool{} %}
-        {%- for _, port := range portKeys %}
-          {%- var info = byPort[port].(map[string]any) %}
+        {%- for _, claim := range claims %}
+          {%- var info = claim.(map[string]any) %}
+          {%- var port = toint(info["port"]) %}
           {%- var beName = tostring(info["backendName"]) %}
           {%- if !seenBackends[beName] %}
             {%- seenBackends[beName] = true %}
-          {%- var refName = tostring(info["refName"]) %}
-          {%- var refPort = toint(info["refPort"]) %}
-          {%- var refNs = tostring(info["refNs"]) %}
-          {%- var refs = info["refs"].([]any) %}
-          {%%
-            var balance = ""
-            var servers = []any{}
-            if len(refs) <= 1 {
-              servers = BackendServers(refName, 0, refPort, nil, nil, beName, refNs)
-            } else {
-              // Weighted TCPRoute: several routable backendRefs. `balance
-              // roundrobin` honours per-server weights; each Service's servers
-              // are named `<service>-<pod>` so pods from different Services in
-              // this one backend never collide. A weight-0 ref stays in the
-              // config (emitted `weight 0`) so it takes no traffic.
-              balance = "roundrobin"
-              for _, r := range refs {
-                var rm = r.(map[string]any)
-                var opts = map[string]any{
-                  "namePrefix": tostring(rm["name"]) + "-",
-                  "weight":     toint(rm["weight"]),
-                }
-                for _, server := range BackendServers(tostring(rm["name"]), 0, toint(rm["port"]), opts, nil, beName, tostring(rm["ns"])) {
-                  servers = append(servers, server)
-                }
-              }
-            }
-          %%}
       {{ Backend(map[string]any{
            "name": beName,
            "guid": make_guid("be", beName),
            "mode": "tcp",
-           "balance": balance,
+           "balance": tostring(info["balance"]),
            "comments": []any{"# gateway/backends-502-gateway-tcproute: " + tostring(info["routeNs"]) + "/" +
              tostring(info["routeName"]) + " rule " + tostring(info["ruleIdx"]) + " (port " + tostring(port) + ")"},
-           "servers": servers,
+           "servers": info["servers"].([]any),
          }) }}
           {%- end %}
         {%- end %}
-      {%- end %}
 
   # frontends-700-gateway-tcp-listener
   #
@@ -398,22 +338,16 @@ templateSnippets:
   # (frontends-600) cannot collide because a port is single-protocol in
   # a Gateway, so a TCP listener and a TLS listener never share a port.
   frontends-700-gateway-tcp-listener:
-    requires: [gateways, referencegrants, tcproutes]
+    requires: [gateways, namespaces, referencegrants, services, endpoints, tcproutes]
     template: |
-      {{ render "util-gateway-tcproute-analysis" }}
-      {%- var dataRaw = shared.Get("gateway_tcproute") %}
-      {%- if dataRaw != nil %}
-        {%- var byPort = dataRaw.(map[string]any)["byPort"].(map[int]any) %}
+      {{ render "gateway-tcproute-claims-100-route" }}
+        {%- var claims = incremental_values("gateway-tcproute-claims", "ports") %}
         {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
         {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
-        {%- var portKeysRaw = []any{} %}
-        {%- for k, _ := range byPort %}
-          {%- portKeysRaw = append(portKeysRaw, k) %}
-        {%- end %}
-        {%- var portKeys = sort_ints(portKeysRaw) %}
-        {%- for _, port := range portKeys %}
+        {%- for _, claim := range claims %}
+          {%- var info = claim.(map[string]any) %}
+          {%- var port = toint(info["port"]) %}
           {%- if port != httpPort && port != httpsPort %}
-            {%- var info = byPort[port].(map[string]any) %}
             {%- var beName = tostring(info["backendName"]) %}
 
       # gateway/frontends-700-gateway-tcp-listener: port {{ port }}
@@ -425,60 +359,34 @@ templateSnippets:
           default_backend {{ beName }}
           {%- end %}
         {%- end %}
-      {%- end %}
 
-  # util-gateway-tcproute-count-contrib
-  #
-  # TCPRoute contribution to the Gateway listener attachedRoutes count.
-  #
-  # Compile-safe seam: util-generate-gateway-status-patches (a snippet that
-  # SURVIVES when the TCPRoute feature is stripped) renders this snippet
-  # with `default ""` and reads the entries back from the shared key below.
-  # The typed resources.tcproutes access must live HERE — in a snippet
-  # stripped together with the tcproutes watch — because on a cluster where
-  # the TCPRoute CRD is not served the resources struct has no tcproutes
-  # field and a direct reference fails to COMPILE (crash-looping the
-  # controller), regardless of any runtime `if`.
-  #
-  # needsTCPProtocol tags the entries so the listener loop counts them only
-  # toward `protocol: TCP` listeners.
-  util-gateway-tcproute-count-contrib:
-    requires: [tcproutes]
-    template: |
-      {%%
-        var _, _ = shared.ComputeIfAbsent("tcprouteCountEntries", func() any {
-          var entries = []any{}
-          for _, r := range resources.tcproutes.List() {
-            entries = append(entries, map[string]any{
-              "kind":  "TCPRoute",
-              "route": r,
-              "needsTLSProtocol": false,
-              "needsTCPProtocol": true,
-            })
-          }
-          return entries
-        })
-      %%}
+  gateway-route-attachments-400-tcp:
+    requires: [gateways, namespaces, tcproutes]
+    incremental:
+      source: tcproutes
+      group: gateway-route-attachments
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-route-attachments" for PublishGatewayRouteAttachments -%}
+      {{- PublishGatewayRouteAttachments(item, "TCPRoute", false, true) -}}
 
-  # status-patches-210-gateway-tcproute
-  #
-  # TCPRoute status patch registration. Hooks into base.yaml's
-  # `render_glob "status-patches-*"` extension point (same point
-  # status-patches-200-gateway uses).
-  #
-  # Lives apart from status-patches-200-gateway ONLY because the import of
-  # the typed TCPRoute macros must not appear in a snippet that survives
-  # when the TCPRoute feature is stripped — `import` has no `default`
-  # clause, so the whole registration sits in this strippable snippet.
-  # render_glob tolerates its absence.
+  util-gateway-tcproute-status-bindings:
+    template: |-
+      {{- toJSON(map[string]any{"tcproutes": map[string]any{
+        "controllerName": extraContext | dig_string("", "controllerName"),
+      }}) -}}
+
   status-patches-210-gateway-tcproute:
-    requires: [gateways, referencegrants, tcproutes]
-    template: |
-      {%- import "util-sharded-tcproute-status-patches" for ShardedTCPRouteStatusPatches -%}
-      {%- var allTCPRoutes = resources.tcproutes.List() -%}
-      {%- if len(allTCPRoutes) > 0 -%}
-        {{- ShardedTCPRouteStatusPatches(allTCPRoutes) -}}
-      {%- end -%}
+    requires: [gateways, namespaces, referencegrants, services, tcproutes]
+    incremental:
+      bindingsTemplate: '{{- render "util-gateway-tcproute-status-bindings" -}}'
+      group: gateway-tcproute-status
+      effects: [statusPatch]
+    template: |-
+      {%- import "util-generate-tcproute-status-patches" for GenerateTCPRouteStatusPatch -%}
+      {%- var route = resources.tcproutes.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if route != nil -%}{{- GenerateTCPRouteStatusPatch(route) -}}{%- end -%}
 
 validationTests:
   test-tcproute-basic-l4-forward:

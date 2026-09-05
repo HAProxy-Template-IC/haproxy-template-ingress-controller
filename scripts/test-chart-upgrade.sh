@@ -478,8 +478,26 @@ case "$LIVE_CFG" in
 esac
 restarts=$(k get pods -l app.kubernetes.io/component=controller \
   -o jsonpath='{range .items[*]}{.status.containerStatuses[*].restartCount}{"\n"}{end}' | tr -s ' \n' '+' | sed 's/+$//')
-[ "$(( ${restarts:-0} ))" -eq 0 ] \
-  || fail "controller restarted during a hook-aborted upgrade; the abort was not pre-apply"
+if [ "$(( ${restarts:-0} ))" -ne 0 ]; then
+  # A restart here has two very different causes and the message alone cannot
+  # tell them apart: the upgrade touched the Deployment (the guarantee this
+  # asserts), or the controller died on its own (OOMKilled is the one to
+  # expect — it renders the whole config in-process). Print the reason.
+  echo "--- why the controller restarted ---"
+  k get pods -l app.kubernetes.io/component=controller -o json 2>/dev/null | python3 -c '
+import json, sys
+for pod in json.load(sys.stdin).get("items", []):
+    for cs in pod.get("status", {}).get("containerStatuses", []):
+        last = cs.get("lastState", {}).get("terminated", {})
+        lim = next((c.get("resources", {}).get("limits", {}).get("memory", "unset")
+                    for c in pod["spec"]["containers"] if c["name"] == cs["name"]), "?")
+        print("  {}/{} restarts={} lastReason={} lastExit={} memLimit={}".format(
+            pod["metadata"]["name"], cs["name"], cs.get("restartCount", 0),
+            last.get("reason", "-"), last.get("exitCode", "-"), lim))' || true
+  k logs -l app.kubernetes.io/component=controller --previous --tail=40 2>&1 | sed 's/^/  /' || true
+  dump_pod_diagnostics
+  fail "controller restarted during a hook-aborted upgrade; the abort was not pre-apply"
+fi
 
 wait_controller_ready 180 || fail "controller unhealthy after the rejected upgrade"
 

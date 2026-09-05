@@ -19,9 +19,54 @@ templateSnippets:
   # API-key map generation (global side-effect: build one map per Secret)
   # ==========================================================================
   features-862-haptic-api-key:
-    template: |
-      {# HAPTIC API-key map generation: builds a reload-free apikey to consumer map per Secret. #}
-      {%- for _, ingress := range resources.ingresses.List() %}
+    requires: [ingresses]
+    template: |-
+      {%- for _, entry := range incremental_values("haptic-api-key-maps", "maps") -%}
+        {%- var record = entry.(map[string]any) -%}
+        {%- if !record["found"].(bool) -%}
+      {{ "\n" }}# WARNING haproxy-haptic.org/api-key-secret: Secret '{{ tostring(record["secret"]) }}' referenced on Ingress {{ tostring(record["ingress"]) }} not found at render time; failing closed (503) for this route until it is present.
+        {%- else -%}
+          {%- var mapName = tostring(record["filename"]) -%}
+          {%- var secretRef = tostring(record["secret"]) -%}
+          {%- var ingressKey = tostring(record["ingress"]) -%}
+          {%- var keysData = tostring(record["keys"]) | b64decode() | tostring() -%}
+          {%- if keysData == "" -%}
+            {{- fail("Secret '" + secretRef + "' referenced by annotation 'haproxy-haptic.org/api-key-secret' on Ingress '" + ingressKey + "' has an empty or missing 'keys' data key.") -}}
+          {%- end -%}
+          {%- var lines = []string{} -%}
+          {%- for _, rawLine := range split(keysData, "\n") -%}
+            {%- var l = strip(rawLine) -%}
+            {%- if l == "" %}{%- continue %}{%- end -%}
+            {%- var apikey = l -%}
+            {%- var consumer = l -%}
+            {%- if strings_contains(l, ":") -%}
+              {%- var kp = strings_splitn(l, ":", 2) -%}
+              {%- apikey = kp[0] -%}
+              {%- consumer = kp[1] -%}
+            {%- end -%}
+            {%- if !regex_search(apikey, "^[!-~]+$") || !regex_search(consumer, "^[!-~]+$") -%}
+              {{- fail("Secret '" + secretRef + "' referenced on Ingress '" + ingressKey + "' has an invalid API key or consumer id (whitespace / control characters are not permitted).") -}}
+            {%- end -%}
+            {%- lines = append(lines, apikey + " " + consumer) -%}
+          {%- end -%}
+          {%- var mapContent = join(lines, "\n") + "\n" -%}
+          {%- var _, regErr = fileRegistry.Register("map", mapName, mapContent) -%}
+          {%- if regErr != nil -%}{{ fail("failed to register API-key map " + mapName + ": " + tostring(regErr)) }}{%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {{- render "haptic-api-key-map-publications" -}}
+
+  haptic-api-key-map-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/api-key-secret']"]
+      group: haptic-api-key-maps
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -35,39 +80,17 @@ templateSnippets:
             {%- secretName = parts[1] %}
           {%- end %}
           {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
-          {%- if first_seen("haptic_apikey_map", mapName) %}
-            {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_apikey_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
-            {%- var secret, _ = secretAny.(*resources.secrets.T) %}
-            {%- if secret == nil %}
-      # WARNING haproxy-haptic.org/api-key-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ key }} not found at render time; failing closed (503) for this route until it is present.
-            {%- else %}
-              {%- var keysData = secret.Data["keys"] | b64decode() | tostring() %}
-              {%- if keysData == "" %}
-                {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy-haptic.org/api-key-secret' on Ingress '" + key + "' has an empty or missing 'keys' data key.") -}}
-              {%- end %}
-              {%- var lines = []string{} %}
-              {%- for _, rawLine := range split(keysData, "\n") %}
-                {%- var l = strip(rawLine) %}
-                {%- if l == "" %}{%- continue %}{%- end %}
-                {%- var apikey = l %}
-                {%- var consumer = l %}
-                {%- if strings_contains(l, ":") %}
-                  {%- var kp = strings_splitn(l, ":", 2) %}
-                  {%- apikey = kp[0] %}
-                  {%- consumer = kp[1] %}
-                {%- end %}
-                {#- Config-injection guard: the key is a map key and the consumer a
-                    map value — both must be printable, whitespace-free tokens. -#}
-                {%- if !regex_search(apikey, "^[!-~]+$") || !regex_search(consumer, "^[!-~]+$") %}
-                  {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' has an invalid API key or consumer id (whitespace / control characters are not permitted).") -}}
-                {%- end %}
-                {%- lines = append(lines, apikey + " " + consumer) %}
-              {%- end %}
-              {%- var mapContent = join(lines, "\n") + "\n" %}
-              {%- var _, regErr = fileRegistry.Register("map", mapName, mapContent) %}
-              {%- if regErr != nil %}{{ fail("failed to register API-key map " + mapName + ": " + tostring(regErr)) }}{%- end %}
-            {%- end %}
-          {%- end %}
+          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+          {%- var keysEncoded = "" %}
+          {%- if secret != nil %}{%- keysEncoded = secret.Data["keys"] %}{%- end %}
+          {{- shared.Publish("availability", key, map[string]any{"found": secret != nil}) -}}
+          {{- shared.Publish("maps", mapName, map[string]any{
+            "filename": mapName,
+            "found": secret != nil,
+            "keys": keysEncoded,
+            "secret": secretNs + "/" + secretName,
+            "ingress": key,
+          }) -}}
         {%- end %}
       {%- end -%}
 
@@ -90,10 +113,37 @@ templateSnippets:
   # cache-miss origin leg, and its `unless { var(txn.haptic_consumer) -m found }`
   # guard makes the second execution idempotent.
   # ==========================================================================
+  features-900-haptic-fragment-860-api-key-cache-routes:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var mapDir, err = pathResolver.GetPath("", "map") -%}
+        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{"mapDir": mapDir}}) -}}
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/api-key-secret']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-header']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-query']"
+        - "metadata.annotations['haproxy-haptic.org/cache-enable']"
+      consumes: [haptic-api-key-maps]
+      effects: [publishValue]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-860-api-key-cache-routes" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-860-haptic-api-key-cache-routes:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-860-api-key-cache-routes", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-860-api-key-cache-routes:
     template: |
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil %}
         {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
@@ -118,14 +168,14 @@ templateSnippets:
               {%- fetch = "req.hdr(" + ValidateConfigValue(h, "haproxy-haptic.org/api-key-header", key, false) + ")" %}
             {%- end %}
             {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
-            {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_apikey_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
-            {%- var secret, _ = secretAny.(*resources.secrets.T) %}
+            {%- var availability, found = shared.Select("haptic-api-key-maps", "availability", key) %}
+            {%- var secretFound = found && availability.(map[string]any)["found"].(bool) %}
       {{ "\n" }}# haptic/api-key on the client leg — cache-enabled route ({{ key }})
-            {%- if secret == nil %}
+            {%- if !secretFound %}
       http-request set-var(txn.denied_by) str(api_key_unavailable) if { var(txn.resource_id) -m str {{ key }} }
       http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ key }} }
             {%- else %}
-              {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
+              {%- var mapPath = tostring(props["mapDir"]) + "/" + mapName %}
       http-request set-var(txn.haptic_apikey) {{ fetch }} if { var(txn.resource_id) -m str {{ key }} }
       http-request set-var(txn.denied_by) str(api_key) if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_apikey),map({{ mapPath }}) -m found }
       http-request deny deny_status 401 if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_apikey),map({{ mapPath }}) -m found }
@@ -185,15 +235,14 @@ templateSnippets:
             {%- fetch = "req.hdr(" + h + ")" %}
           {%- end %}
           {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
-          {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_apikey_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
-          {%- var secret, _ = secretAny.(*resources.secrets.T) %}
+          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
       # haptic/api-key ({{ key }})
           {%- if secret == nil %}
       # WARNING haproxy-haptic.org/api-key-secret: referenced Secret not found at render time; failing closed (503) for this route until it is present.
       http-request set-var(txn.denied_by) str(api_key_unavailable)
       http-request deny deny_status 503
           {%- else %}
-            {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
+            {%- var mapPath = FilePath("map", mapName) %}
       http-request set-var(txn.haptic_apikey) {{ fetch }}
       http-request set-var(txn.denied_by) str(api_key) unless { var(txn.haptic_apikey),map({{ mapPath }}) -m found }
       http-request deny deny_status 401 unless { var(txn.haptic_apikey),map({{ mapPath }}) -m found }

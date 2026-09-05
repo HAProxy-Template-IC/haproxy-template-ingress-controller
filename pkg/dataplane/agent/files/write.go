@@ -41,6 +41,11 @@ type Staged struct {
 // Size is the verified byte count of the staged content.
 func (s *Staged) Size() int64 { return s.size }
 
+// Read returns the verified bytes while the part is still staged.
+func (s *Staged) Read() ([]byte, error) {
+	return os.ReadFile(filepath.Clean(s.tmp))
+}
+
 // Stage streams a received part into the temp directory of the mount that will
 // hold it and verifies it against the manifest digest and size before the
 // content can ever reach the tree.

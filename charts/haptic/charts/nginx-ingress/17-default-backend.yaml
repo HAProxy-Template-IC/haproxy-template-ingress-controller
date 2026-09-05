@@ -54,20 +54,25 @@ templateSnippets:
       {%- end macro -%}
 
   backends-510-nginx-ingress-default-backend:
-    template: |
-      {#
-        Nginx Ingress default-backend pools.
+    requires: [ingresses, services, endpoints, secrets]
+    template: |-
+      {%- import "util-replay-ingress-backend-effects" for ReplayIngressBackendEffects -%}
+      {{- ReplayIngressBackendEffects("510") -}}
+      {%- var block = render "backenditems-510-nginx-ingress-default-backend" -%}
+      {%- if block != "" -%}{{ block }}{{ "\n" }}{%- end -%}
 
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#default-backend
-
-        Emits one backend pool per Ingress carrying the default-backend
-        annotation. The map-path-prefix-510 sibling adds the catch-all path
-        entries that route unmatched requests here.
-      #}
+  backenditems-510-nginx-ingress-default-backend:
+    requires: [ingresses, services, endpoints, secrets]
+    incremental:
+      bindingsTemplate: '{{- render "util-ingress-backend-bindings" -}}'
+      group: ingress-backends
+      effects: [publishValue, backendPlan, recordEvent]
+    template: |-
       {%- import "util-nginx-ingress-default-backend" for ResolveDefaultBackend -%}
-      {%- import "util-backend" for Backend, AppendLines, DefaultServerArgs -%}
-      {%- import "util-backend-servers" for BackendServers -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- import "util-generate-annotation-default-backend" for GenerateAnnotationDefaultBackend -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var info = map[string]any{} -%}
         {{- ResolveDefaultBackend(ingress, info) -}}
         {%- if info["ok"] == true -%}
@@ -76,38 +81,17 @@ templateSnippets:
           {%- var port = toint(info["port"]) -%}
           {%- var portName = tostring(info["portName"]) -%}
           {%- var backendName = tostring(info["backendName"]) -%}
-          {%- if first_seen("nginx_default_backend", backendName) -%}
-          {%- var serverOpts = map[string]any{"flags": []any{}, "profile": []any{}, "body": []any{}} -%}
-          {%- var directives = AppendLines([]any{}, render_glob "backend-directives-*" inherit_context) -%}
-          {#- The per-server keywords (check + snippet flags) go in the structured
-              defaultServer so they sit on the profile's default-server line AND in
-              the plan record — the deploy side composes `add server` from the
-              record. A snippet's profile lines join the profile; its structural
-              directives stay in the body, so a plain default-backend's body is
-              empty (dynamic-eligible). -#}
-          {%- var profile = []any{} -%}
-          {%- for _, l := range toSlice(serverOpts["profile"]) -%}{%- profile = append(profile, l) -%}{%- end -%}
-          {%- var body = []any{} -%}
-          {%- for _, l := range toSlice(serverOpts["body"]) -%}{%- body = append(body, l) -%}{%- end -%}
-          {%- for _, l := range directives -%}{%- body = append(body, l) -%}{%- end -%}
-      {{ "\n" }}{{ Backend(map[string]any{
-           "name": backendName,
-           "guid": make_guid("be", backendName),
-           "comments": []any{"# nginx-ingress/default-backend: Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name +
-             " → Service " + svcNs + "/" + svcName + ":" + tostring(port)},
-           "balance": serverOpts | dig("balance") | fallback(nil),
-           "hashType": serverOpts | dig("hashType") | fallback(nil),
-           "shape": serverOpts | dig("shape") | fallback(nil),
-           "defaultServer": DefaultServerArgs(serverOpts),
-           "profile": profile,
-           "body": body,
-           "servers": BackendServers(svcName, 0, port, serverOpts, portName, backendName, svcNs),
-         }) }}
-          {%- end -%}
+          {{- GenerateAnnotationDefaultBackend(ingress, svcNs, svcName, port, portName, backendName, "510",
+            "# nginx-ingress/default-backend: Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name +
+            " → Service " + svcNs + "/" + svcName + ":" + tostring(port)) -}}
         {%- end -%}
       {%- end -%}
 
   map-path-prefix-510-nginx-ingress-default-backend:
+    requires: [ingresses, services]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/default-backend']"]
     template: |
       {#
         Nginx Ingress default-backend catch-all path entries.
@@ -121,7 +105,9 @@ templateSnippets:
       #}
       {%- import "util-nginx-ingress-default-backend" for ResolveDefaultBackend -%}
       {%- import "util-host-key" for MapKeyForHost -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var info = map[string]any{} -%}
         {{- ResolveDefaultBackend(ingress, info) -}}
         {%- if info["ok"] == true -%}

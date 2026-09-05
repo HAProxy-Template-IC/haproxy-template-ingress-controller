@@ -15,9 +15,13 @@
 package events
 
 import (
+	"fmt"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // ConfigPublishedEvent is published after runtime configuration resources are created/updated.
@@ -83,11 +87,14 @@ type SyncMetadata struct {
 	OperationCounts OperationCounts
 
 	// AppliedPlanID is the render plan the pod accepted in this sync.
-	AppliedPlanID string
+	AppliedPlanID      string
+	AppliedPlanProof   string
+	AppliedRenderProof string
 
 	// RunningPlanID is the render plan the pod's running HAProxy serves after
 	// this sync. It trails AppliedPlanID while a reload is still pending.
-	RunningPlanID string
+	RunningPlanID    string
+	RunningPlanProof string
 
 	// Mode is how the plan was applied: runtime, file_only, reload, scheduled,
 	// noop or rejected. Empty until the agent reports it.
@@ -145,20 +152,12 @@ func NewConfigAppliedToPodEvent(runtimeConfigName, runtimeConfigNamespace, podNa
 
 func (e *ConfigAppliedToPodEvent) EventType() string { return EventTypeConfigAppliedToPod }
 
-// DeployedConfigPublishRequest asks the config-publisher to publish, as the
-// HAProxyCfg spec, the exact config bytes the deployer just applied to the
-// pods. It closes a CR self-consistency gap: the deployer stamps
-// status.deployedToPods[].Checksum from these bytes (via
-// dataplane.ComputeContentChecksum), but the validation-driven spec publish for
-// that same render can be throttled/coalesced away under churn — leaving a
-// pod's recorded checksum that never appears in any published spec.Checksum.
-// Emitting this on every successful, non-drift deploy guarantees the deployed
-// checksum becomes an observable published spec.
-//
-// Config/AuxiliaryFiles are the deployer's immutable post-render bytes; like
-// DeploymentScheduledEvent, AuxiliaryFiles is carried by pointer (never mutated
-// after rendering).
+// DeployedConfigPublishRequest publishes the exact render occurrence acknowledged by a pod.
 type DeployedConfigPublishRequest struct {
+	renderOccurrenceCarrier
+
+	CycleSnapshot          *rendercycle.Snapshot
+	OutputSnapshot         *renderoutput.Snapshot
 	RuntimeConfigName      string
 	RuntimeConfigNamespace string
 	Config                 string
@@ -168,18 +167,51 @@ type DeployedConfigPublishRequest struct {
 	timestamped
 }
 
-// NewDeployedConfigPublishRequest creates a new DeployedConfigPublishRequest.
-func NewDeployedConfigPublishRequest(runtimeConfigName, runtimeConfigNamespace, config string, auxFiles *dataplane.AuxiliaryFiles, contentChecksum string) *DeployedConfigPublishRequest {
-	return &DeployedConfigPublishRequest{
-		RuntimeConfigName:      runtimeConfigName,
-		RuntimeConfigNamespace: runtimeConfigNamespace,
-		Config:                 config,
-		AuxiliaryFiles:         auxFiles,
-		ContentChecksum:        contentChecksum,
-		timestamped:            newTimestamped(),
+// NewDeployedConfigPublishRequestWithCycle publishes one exact deployed occurrence.
+func NewDeployedConfigPublishRequestWithCycle(
+	runtimeConfigName, runtimeConfigNamespace string,
+	occurrence *rendercycle.Occurrence,
+) (*DeployedConfigPublishRequest, error) {
+	carrier, identity, err := inspectRenderOccurrence(occurrence)
+	if err != nil {
+		return nil, fmt.Errorf("deployed config publish request: %w", err)
 	}
+	event := &DeployedConfigPublishRequest{
+		renderOccurrenceCarrier: carrier,
+		RuntimeConfigName:       runtimeConfigName,
+		RuntimeConfigNamespace:  runtimeConfigNamespace,
+		timestamped:             newTimestamped(),
+	}
+	owned := withDeployedConfigPublishIdentity(event, identity)
+	return &owned, nil
 }
 
 func (e *DeployedConfigPublishRequest) EventType() string {
 	return EventTypeDeployedConfigPublishRequest
+}
+
+// CloneForSubscriber restores authenticated shadows and isolates legacy files.
+func (e *DeployedConfigPublishRequest) CloneForSubscriber() busevents.Event {
+	if e == nil {
+		panic("cannot clone nil deployed config publish request")
+	}
+	clone := *e
+	clone.AuxiliaryFiles = dataplane.CloneAuxiliaryFiles(e.AuxiliaryFiles)
+	if e.occurrence != nil {
+		clone = withDeployedConfigPublishIdentity(&clone, mustInspectRenderOccurrence(e.renderOccurrenceCarrier))
+	}
+	return &clone
+}
+
+func withDeployedConfigPublishIdentity(
+	source *DeployedConfigPublishRequest,
+	identity *renderOccurrenceIdentity,
+) DeployedConfigPublishRequest {
+	event := *source
+	event.CycleSnapshot = identity.cycle
+	event.OutputSnapshot = identity.output
+	event.Config = ""
+	event.AuxiliaryFiles = nil
+	event.ContentChecksum = identity.contentChecksum
+	return event
 }

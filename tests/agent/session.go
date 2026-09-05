@@ -36,14 +36,16 @@ import (
 // baseline the last ACK reported, so every manifest is fenced the way the
 // deployer fences it.
 type session struct {
-	env       *env
-	epoch     uint64
-	seq       uint64
-	applied   string
-	token     api.Token
-	workerOps string
-	lkg       string
-	files     map[string]string
+	env            *env
+	epoch          uint64
+	seq            uint64
+	applied        string
+	appliedProof   string
+	token          api.Token
+	workerOps      string
+	workerOpsProof string
+	lkg            string
+	files          map[string]string
 }
 
 // newSession starts from the full rendered set: config, both maps, the default
@@ -73,20 +75,32 @@ func (s *session) remove(path string) { delete(s.files, path) }
 // render seq, fenced against the baseline the last ACK reported.
 func (s *session) next(mode string) *api.Manifest {
 	s.seq++
+	// IdentityVersion and the plan proofs are what the deployer sends; without
+	// them the agent normalises the manifest as legacy, forcing a reload and
+	// dropping every op.
 	m := &api.Manifest{
-		PlanID:                  planID(s.seq),
-		PlanSchemaVersion:       1,
-		Token:                   api.Token{LeaderEpoch: s.epoch, RenderSeq: s.seq},
-		ExpectedPrevPlanID:      s.applied,
-		ExpectedPrevToken:       s.token,
-		ExpectedWorkerOpsPlanID: s.workerOps,
-		Mode:                    mode,
+		IdentityVersion:            api.ExactIdentityVersion,
+		PlanID:                     planID(s.seq),
+		PlanSchemaVersion:          1,
+		Token:                      api.Token{LeaderEpoch: s.epoch, RenderSeq: s.seq},
+		ExpectedPrevPlanID:         s.applied,
+		ExpectedPrevPlanProof:      s.appliedProof,
+		ExpectedPrevToken:          s.token,
+		ExpectedWorkerOpsPlanID:    s.workerOps,
+		ExpectedWorkerOpsPlanProof: s.workerOpsProof,
+		Mode:                       mode,
+	}
+	if mode == api.ModeRevertLKG {
+		// A revert names the plan being reverted FROM, which the agent checks
+		// is one it holds and is not already running.
+		m.PlanID, m.PlanProof = s.applied, s.appliedProof
 	}
 	for _, path := range slices.Sorted(maps.Keys(s.files)) {
 		content := s.files[path]
 		m.Files = append(m.Files, api.File{
 			Path:           path,
 			Digest:         renderplan.DigestString(content),
+			Proof:          renderplan.DigestString(content),
 			Size:           int64(len(content)),
 			Kind:           fileKind(path),
 			ReloadOnChange: reloadOnChange(path),
@@ -170,8 +184,10 @@ func (s *session) absorb(result *api.ApplyResult) {
 		return
 	}
 	s.applied = result.AppliedPlanID
+	s.appliedProof = result.AppliedPlanProof
 	s.token = result.AppliedToken
 	s.workerOps = result.WorkerOpsPlanID
+	s.workerOpsProof = result.WorkerOpsPlanProof
 	s.lkg = result.LKGPlanID
 }
 

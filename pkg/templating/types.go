@@ -54,6 +54,13 @@ type PlanRegistrar interface {
 	// (kind, name) twice is fine while the text is identical.
 	Section(kind, name, text string) (string, error)
 
+	// Fragment registers text to splice in at the placeholder it returns,
+	// without the text passing through the template writer. Unlike Section it
+	// does not partition the config — the fragment lands inside the
+	// surrounding core section, so the rendered bytes are identical to
+	// emitting the text inline.
+	Fragment(name string, fragment TextFragment) (string, error)
+
 	// Profile content-addresses a named `defaults` section from the shape
 	// values a backend shares with every backend of the same shape (mode,
 	// balance, hash-type, default-server keywords and the profile directive
@@ -75,6 +82,13 @@ type PlanRegistrar interface {
 	// MapMeta declares whether entry order matters for a map file. Maps are
 	// ordered unless declared otherwise.
 	MapMeta(path string, ordered bool) error
+}
+
+// IncrementalBackendPlanRegistrar records deterministic backend declarations.
+type IncrementalBackendPlanRegistrar interface {
+	Profile(record map[string]any) (string, error)
+	Backend(record map[string]any, text string) (string, error)
+	BackendWhenAny(record map[string]any, text, cell string, keys []string) (string, error)
 }
 
 // ResourceStore defines the interface for resource stores accessible from templates.

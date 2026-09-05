@@ -16,8 +16,8 @@
 // speaks pkg/dataplane/agent/api well enough to drive the controller's
 // deployer without a container.
 //
-// It models what the deployer reasons about — the file set at digest
-// granularity, the four plan ids, the fencing token, the runtime inventory —
+// It models what the deployer reasons about — the path-keyed proved file set,
+// the four plan ids, the fencing token, the runtime inventory —
 // and records every apply for assertions. It executes no HAProxy commands and
 // writes no files; the real agent's disk transaction is covered by the docker
 // suite in tests/agent.
@@ -66,18 +66,20 @@ type Agent struct {
 	mu sync.Mutex
 	// state carries no AppliedPlan: the stored blob is handed back only while
 	// it describes the applied plan, which snapshot decides.
-	state          api.State
-	appliedPlan    []byte
-	planBlobPlanID string
-	kinds          map[string]string
-	lkgFiles       map[string]api.FileAt
-	reloadPending  bool
-	rejectedOps    map[string]struct{}
-	conflictOnce   string
-	failOnce       bool
-	missingOnce    []string
-	applies        []RecordedApply
-	stateReads     int
+	state             api.State
+	appliedPlan       []byte
+	planBlobPlanID    string
+	planBlobPlanProof string
+	proofGeneration   uint64
+	kinds             map[string]string
+	lkgFiles          map[string]api.FileAt
+	reloadPending     bool
+	rejectedOps       map[string]struct{}
+	conflictOnce      string
+	failOnce          bool
+	missingOnce       []string
+	applies           []RecordedApply
+	stateReads        int
 }
 
 // Option customises the fake before it starts serving.
@@ -190,8 +192,11 @@ func (a *Agent) FirePendingReload() {
 	}
 	a.performReload()
 	a.state.RunningPlanID = a.state.AppliedPlanID
+	a.state.RunningPlanProof = a.state.AppliedPlanProof
 	a.state.WorkerOpsPlanID = a.state.AppliedPlanID
+	a.state.WorkerOpsPlanProof = a.state.AppliedPlanProof
 	a.state.LKGPlanID = a.state.AppliedPlanID
+	a.state.LKGPlanProof = a.state.AppliedPlanProof
 	a.lkgFiles = maps.Clone(a.state.Files)
 }
 
@@ -302,7 +307,8 @@ func (a *Agent) snapshot() api.State {
 	for path, at := range a.state.Files {
 		state.Files[path] = at
 	}
-	if a.planBlobPlanID != "" && a.planBlobPlanID == a.state.AppliedPlanID {
+	if a.planBlobPlanID != "" && a.planBlobPlanProof != "" &&
+		a.planBlobPlanID == a.state.AppliedPlanID && a.planBlobPlanProof == a.state.AppliedPlanProof {
 		state.AppliedPlan = a.appliedPlan
 	}
 	return state

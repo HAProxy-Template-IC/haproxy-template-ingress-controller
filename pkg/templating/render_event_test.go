@@ -56,6 +56,13 @@ func TestEventCollector_Register(t *testing.T) {
 		assert.Len(t, c.Events(), 2)
 	})
 
+	t.Run("tuple boundaries cannot collide", func(t *testing.T) {
+		c := NewEventCollector()
+		require.NoError(t, c.Register("ns", "n", "v1", "Ingress", EventTypeWarning, "Reason/a", "b"))
+		require.NoError(t, c.Register("ns", "n", "v1", "Ingress", EventTypeWarning, "Reason", "a/b"))
+		assert.Len(t, c.Events(), 2)
+	})
+
 	t.Run("deterministic sorted output", func(t *testing.T) {
 		c := NewEventCollector()
 		require.NoError(t, c.Register("ns", "zzz", "networking.k8s.io/v1", "Ingress", EventTypeWarning, "RouteConflict", "m"))

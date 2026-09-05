@@ -30,78 +30,172 @@ func planFor(id string) *renderplan.Plan {
 	return plan
 }
 
-func TestPlanCache_ResolvesAPlanItHolds(t *testing.T) {
+func TestPlanCache_ResolvesOnlyAnAckedPodScopedProof(t *testing.T) {
 	cache := newPlanCache()
 	plan := planFor("plan-1")
-	cache.Put(plan)
+	state := &api.State{AppliedPlanID: plan.ID, AppliedPlanProof: "a:1"}
 
-	assert.Same(t, plan, cache.Baseline(&api.State{AppliedPlanID: "plan-1"}))
-	assert.Nil(t, cache.Baseline(&api.State{AppliedPlanID: ""}), "a pod with no applied plan has no baseline")
+	assert.Nil(t, cache.Baseline("pod-a", state))
+	require.True(t, cache.Bind("pod-a", plan.ID, "a:1", plan))
+	assert.True(t, exactPlan(plan, cache.Baseline("pod-a", state)))
+	assert.Nil(t, cache.Baseline("pod-b", state))
 }
 
-// A controller that did not send the plan — a new leader, a restarted process —
-// gets the baseline back from the blob the pod stored. Without this every
-// leader change would reload the whole fleet.
-func TestPlanCache_DecodesTheBlobThePodReports(t *testing.T) {
+func TestPlanCache_ControllerRestartRejectsOpaqueBlob(t *testing.T) {
+	plan := planFor("plan-1")
+	blob, err := planblob.Encode(plan)
+	require.NoError(t, err)
+	state := &api.State{AppliedPlanID: plan.ID, AppliedPlanProof: "a:1", AppliedPlan: blob}
+
+	assert.Nil(t, newPlanCache().Baseline("pod-a", state))
+}
+
+func TestPlanCache_SameIDDifferentExactPlansDoNotAlias(t *testing.T) {
+	cache := newPlanCache()
+	first := planFor("collision")
+	second, _, _ := renderFor("collision", "10.0.0.2", mapEntry)
+	require.True(t, cache.Bind("pod-a", first.ID, "a:1", first))
+	require.True(t, cache.Bind("pod-b", second.ID, "a:1", second))
+
+	assert.True(t, exactPlan(first, cache.Plan("pod-a", first.ID, "a:1")))
+	assert.True(t, exactPlan(second, cache.Plan("pod-b", second.ID, "a:1")))
+	assert.False(t, exactPlan(first, cache.Plan("pod-b", second.ID, "a:1")))
+}
+
+func TestPlanCache_ReusedAgentGenerationIsPoisoned(t *testing.T) {
+	cache := newPlanCache()
+	first := planFor("collision")
+	second, _, _ := renderFor("collision", "10.0.0.2", mapEntry)
+	require.True(t, cache.Bind("pod-a", first.ID, "a:1", first))
+
+	assert.False(t, cache.Bind("pod-a", second.ID, "a:1", second))
+	assert.Nil(t, cache.Plan("pod-a", second.ID, "a:1"))
+	assert.Nil(t, cache.Plan("pod-a", first.ID, "a:1"))
+}
+
+func TestPlanCache_RetainsOnlyLiveRoleProofs(t *testing.T) {
+	cache := newPlanCache()
+	first := planFor("plan-1")
+	second := planFor("plan-2")
+	require.True(t, cache.Bind("pod-a", first.ID, "a:1", first))
+	require.True(t, cache.Bind("pod-a", second.ID, "a:2", second))
+	require.True(t, cache.Bind("pod-b", second.ID, "a:1", second))
+
+	cache.Retain([]planCacheKey{{authority: "pod-a", proof: "a:1"}})
+
+	assert.NotNil(t, cache.Plan("pod-a", first.ID, "a:1"))
+	assert.Nil(t, cache.Plan("pod-a", second.ID, "a:2"))
+	assert.Nil(t, cache.Plan("pod-b", second.ID, "a:1"))
+}
+
+// measuredState reports a pod holding exactly what the plan declares.
+func measuredState(plan *renderplan.Plan, blob []byte) *api.State {
+	files := make(map[string]api.FileAt, len(plan.Files))
+	for i := range plan.Files {
+		file := &plan.Files[i]
+		files[file.Path] = api.FileAt{Digest: file.Digest, Size: file.Size}
+	}
+	return &api.State{
+		AppliedPlanID:    plan.ID,
+		AppliedPlanProof: "a:1",
+		AppliedPlan:      blob,
+		Files:            files,
+	}
+}
+
+// A leader that never sent the plan adopts it once the pod's measured tree
+// accounts for every file, which is what keeps a handover from reloading.
+func TestPlanCache_AdoptsAPlanTheMeasuredTreeAccountsFor(t *testing.T) {
 	plan := planFor("plan-1")
 	blob, err := planblob.Encode(plan)
 	require.NoError(t, err)
 
-	cache := newPlanCache()
-	decoded := cache.Baseline(&api.State{AppliedPlanID: "plan-1", AppliedPlan: blob})
+	adopted := newPlanCache().AdoptMeasured("pod-a", measuredState(plan, blob))
 
-	require.NotNil(t, decoded)
-	assert.Equal(t, "plan-1", decoded.ID)
-	assert.Equal(t, plan.Backends, decoded.Backends)
-	assert.Same(t, decoded, cache.Plan("plan-1"), "a decoded plan is worth keeping")
+	require.NotNil(t, adopted)
+	assert.Equal(t, plan.ID, adopted.ID)
 }
 
-// Anything the decode cannot vouch for is no baseline at all: a partial plan
-// would diff into ops for a pod that runs something else.
-func TestPlanCache_RefusesABlobItCannotVouchFor(t *testing.T) {
-	foreign := planFor("plan-1")
-	foreign.SchemaVersion = renderplan.SchemaVersion + 1
-	foreignBlob, err := planblob.Encode(foreign)
-	require.NoError(t, err)
-	mislabelled, err := planblob.Encode(planFor("plan-other"))
-	require.NoError(t, err)
-
-	tests := map[string]api.State{
-		"foreign schema":     {AppliedPlanID: "plan-1", AppliedPlan: foreignBlob},
-		"another plan's id":  {AppliedPlanID: "plan-1", AppliedPlan: mislabelled},
-		"not a plan at all":  {AppliedPlanID: "plan-1", AppliedPlan: []byte("not zstd")},
-		"no blob to fall on": {AppliedPlanID: "plan-1"},
-	}
-	for name, state := range tests {
-		t.Run(name, func(t *testing.T) {
-			assert.Nil(t, newPlanCache().Baseline(&state))
-		})
-	}
-}
-
-// Retain keeps what the fleet refers to plus the newest render, which bounds
-// the cache at three ids per pod plus one.
-func TestPlanCache_RetainsOnlyWhatIsReferenced(t *testing.T) {
-	cache := newPlanCache()
-	cache.Put(planFor("plan-1"))
-	cache.Put(planFor("plan-2"))
-	cache.Put(planFor("plan-3"))
-
-	cache.Retain([]string{"plan-1"})
-
-	assert.NotNil(t, cache.Plan("plan-1"), "a pod still refers to it")
-	assert.Nil(t, cache.Plan("plan-2"))
-	assert.NotNil(t, cache.Plan("plan-3"), "the newest render is always kept")
-}
-
-func TestPlanCache_EncodeDecodeRoundTrip(t *testing.T) {
+// One file the measurement cannot account for is enough to refuse: ops composed
+// against a guess would be applied to a pod running something else.
+func TestPlanCache_MeasuredTreeThatMissesAFileIsNoBaseline(t *testing.T) {
 	plan := planFor("plan-1")
-
 	blob, err := planblob.Encode(plan)
 	require.NoError(t, err)
-	decoded, err := planblob.Decode(blob)
+	require.NotEmpty(t, plan.Files)
 
+	state := measuredState(plan, blob)
+	delete(state.Files, plan.Files[0].Path)
+
+	assert.Nil(t, newPlanCache().AdoptMeasured("pod-a", state))
+}
+
+// A digest that disagrees is the pod holding different bytes under the same
+// path, which is what the measurement exists to catch.
+func TestPlanCache_MeasuredDigestMismatchIsNoBaseline(t *testing.T) {
+	plan := planFor("plan-1")
+	blob, err := planblob.Encode(plan)
 	require.NoError(t, err)
-	assert.Equal(t, plan, decoded)
-	assert.Less(t, len(blob), api.MaxPlanBlobBytes)
+	require.NotEmpty(t, plan.Files)
+
+	state := measuredState(plan, blob)
+	at := state.Files[plan.Files[0].Path]
+	at.Digest = "sha256:something-else"
+	state.Files[plan.Files[0].Path] = at
+
+	assert.Nil(t, newPlanCache().AdoptMeasured("pod-a", state))
+}
+
+// Without the blob there is nothing to adopt, however well measured the tree is.
+func TestPlanCache_MeasuredTreeWithoutABlobIsNoBaseline(t *testing.T) {
+	assert.Nil(t, newPlanCache().AdoptMeasured("pod-a", measuredState(planFor("plan-1"), nil)))
+}
+
+// A refusal is remembered, so the same measurement is not decoded again on every
+// discovery. The second call sees a state that would now adopt cleanly and must
+// still refuse it.
+func TestPlanCache_RefusedMeasurementIsNotReconsidered(t *testing.T) {
+	plan := planFor("plan-1")
+	blob, err := planblob.Encode(plan)
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Files)
+
+	cache := newPlanCache()
+	refused := measuredState(plan, blob)
+	delete(refused.Files, plan.Files[0].Path)
+	require.Nil(t, cache.AdoptMeasured("pod-a", refused))
+
+	assert.Nil(t, cache.AdoptMeasured("pod-a", measuredState(plan, blob)))
+}
+
+// Two measurements race to adopt under one proof. The second finds the key taken
+// and returns nil rather than replacing a plan an apply may already be composing
+// against.
+func TestPlanCache_MeasurementForATakenKeyIsNoBaseline(t *testing.T) {
+	first, _, _ := renderFor("plan-1", "10.0.0.1", mapEntry)
+	firstBlob, err := planblob.Encode(first)
+	require.NoError(t, err)
+	// A different address, so a different plan: the ID is derived from content.
+	second, _, _ := renderFor("plan-2", "10.0.0.2", mapEntry)
+	secondBlob, err := planblob.Encode(second)
+	require.NoError(t, err)
+	require.NotEqual(t, first.ID, second.ID)
+
+	cache := newPlanCache()
+	require.NotNil(t, cache.AdoptMeasured("pod-a", measuredState(first, firstBlob)))
+
+	// Same authority and proof, so the same key, but a plan the cache never saw:
+	// the ID lookup misses and the adopt falls through to the taken guard.
+	assert.Nil(t, cache.AdoptMeasured("pod-a", measuredState(second, secondBlob)))
+}
+
+// A blob from a controller that wrote a different schema cannot be reasoned
+// about, however well the tree measures.
+func TestPlanCache_MeasuredPlanFromAnotherSchemaIsNoBaseline(t *testing.T) {
+	plan := planFor("plan-1")
+	plan.SchemaVersion = renderplan.SchemaVersion + 1
+	blob, err := planblob.Encode(plan)
+	require.NoError(t, err)
+
+	assert.Nil(t, newPlanCache().AdoptMeasured("pod-a", measuredState(plan, blob)))
 }

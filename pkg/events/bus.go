@@ -122,7 +122,7 @@ func (b *EventBus) fanOut(event Event) (sent int, criticalDrops []DropInfo) {
 
 	for _, sub := range b.subscribers {
 		select {
-		case sub.ch <- event:
+		case sub.ch <- cloneForSubscriber(event):
 			sent++
 		default:
 			// Channel full, subscriber is lagging - drop event
@@ -144,7 +144,7 @@ func (b *EventBus) fanOut(event Event) (sent int, criticalDrops []DropInfo) {
 			continue
 		}
 		select {
-		case sub.outputChan <- event:
+		case sub.outputChan <- cloneForSubscriber(event):
 			sent++
 		default:
 			// Typed subscriptions are always critical; SubscribeLossy is
@@ -180,7 +180,7 @@ func (b *EventBus) Publish(event Event) int {
 		// Buffer event for replay after Start(), with capacity limit
 		overflowed := len(b.preStartBuffer) >= MaxPreStartBufferSize
 		if !overflowed {
-			b.preStartBuffer = append(b.preStartBuffer, event)
+			b.preStartBuffer = append(b.preStartBuffer, cloneForSubscriber(event))
 		}
 		b.startMu.Unlock()
 
@@ -202,6 +202,21 @@ func (b *EventBus) Publish(event Event) int {
 	sent, drops := b.fanOut(event)
 	b.reportDrops(drops)
 	return sent
+}
+
+func cloneForSubscriber(event Event) Event {
+	isolated, ok := event.(FanoutIsolatedEvent)
+	if !ok {
+		return event
+	}
+	clone := isolated.CloneForSubscriber()
+	if clone == nil {
+		panic("fanout-isolated event returned a nil clone")
+	}
+	if clone.EventType() != event.EventType() {
+		panic("fanout-isolated event clone changed event type")
+	}
+	return clone
 }
 
 // Start releases all buffered events and switches the bus to normal operation mode.

@@ -22,11 +22,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 )
 
 // Default directory paths for HAProxy validation.
@@ -91,11 +92,6 @@ func (r *ValidationResult) ErrorMessage() string {
 // HAProxy's own verdict is the whole check: it is a strict superset of any
 // parse HAPTIC could run over the same bytes (ADR-0022).
 //
-// The service caches the last successful verdict keyed by a content checksum of
-// the config and auxiliary files. When called with unchanged content, it returns
-// the cached verdict immediately. Only successful validations are cached;
-// failures always trigger a full retry.
-//
 // The service can be called concurrently from multiple goroutines.
 type ValidationService struct {
 	logger *slog.Logger
@@ -117,11 +113,6 @@ type ValidationService struct {
 	mapsDir     string
 	sslCertsDir string
 	generalDir  string
-
-	// Validation result cache - skips the check when content is unchanged.
-	// Per-instance cache prevents webhook validation from evicting main pipeline cache.
-	cacheMu        sync.RWMutex
-	cachedChecksum string
 }
 
 // ValidationServiceConfig contains configuration for creating a ValidationService.
@@ -193,8 +184,8 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 	}
 }
 
-// ValidateWithChecksum validates HAProxy configuration using a pre-computed content checksum.
-// This avoids redundant hashing when the caller (e.g., Pipeline) has already computed the checksum.
+// ValidateWithChecksum validates HAProxy configuration. The checksum never
+// authorizes skipping HAProxy's runtime verdict.
 //
 // This method:
 // 1. Creates an isolated temp directory
@@ -207,8 +198,8 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 //   - ctx: Context for cancellation
 //   - config: The rendered HAProxy configuration content
 //   - auxFiles: Auxiliary files (maps, certificates, general files)
-//   - checksum: Pre-computed content checksum (see dataplane.ComputeContentChecksum)
-func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles, checksum string) *ValidationResult {
+//   - checksum: Caller-provided content identity; it never authorizes verdict reuse
+func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles, _ string) *ValidationResult {
 	startTime := time.Now()
 
 	// Check for context cancellation before starting
@@ -216,14 +207,76 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 		return failedResult(err, "setup", startTime)
 	}
 
-	// Check validation cache - skip the check entirely if content unchanged
-	if s.cached(checksum) {
-		if err := validationCancellationError(ctx); err != nil {
-			return failedResult(err, "setup", startTime)
-		}
-		return &ValidationResult{Valid: true, DurationMs: time.Since(startTime).Milliseconds()}
-	}
+	ownedAuxFiles := dataplane.CloneAuxiliaryFiles(auxFiles)
+	return s.validateHAProxy(ctx, startTime, config, ownedAuxFiles)
+}
 
+// ValidateSnapshotWithChecksum validates an authenticated immutable auxiliary-file set.
+func (s *ValidationService) ValidateSnapshotWithChecksum(
+	ctx context.Context,
+	config string,
+	snapshot *renderartifact.Snapshot,
+	_ string,
+) *ValidationResult {
+	startTime := time.Now()
+	if err := validationCancellationError(ctx); err != nil {
+		return failedResult(err, "setup", startTime)
+	}
+	if err := snapshot.ValidateAuthentication(); err != nil {
+		return failedResult(fmt.Errorf("validating auxiliary-file snapshot: %w", err), "setup", startTime)
+	}
+	if err := validationCancellationError(ctx); err != nil {
+		return failedResult(err, "setup", startTime)
+	}
+	auxFiles, err := dataplane.MaterializeAuxiliaryFileSnapshot(snapshot)
+	if err != nil {
+		return failedResult(fmt.Errorf("materializing auxiliary-file snapshot: %w", err), "setup", startTime)
+	}
+	return s.validateHAProxy(ctx, startTime, config, auxFiles)
+}
+
+// ValidateOutputSnapshotWithChecksum validates one authenticated complete render output.
+func (s *ValidationService) ValidateOutputSnapshotWithChecksum(
+	ctx context.Context,
+	snapshot *renderoutput.Snapshot,
+	_ string,
+) *ValidationResult {
+	startTime := time.Now()
+	if err := validationCancellationError(ctx); err != nil {
+		return failedResult(err, "setup", startTime)
+	}
+	if err := snapshot.ValidateAuthentication(); err != nil {
+		return failedResult(fmt.Errorf("validating render output snapshot: %w", err), "setup", startTime)
+	}
+	authenticatedChecksum, err := snapshot.ContentChecksum()
+	if err != nil {
+		return failedResult(fmt.Errorf("reading render output checksum: %w", err), "setup", startTime)
+	}
+	config, err := snapshot.Config()
+	if err != nil {
+		return failedResult(fmt.Errorf("reading render output config: %w", err), "setup", startTime)
+	}
+	artifacts, err := snapshot.ArtifactSnapshot()
+	if err != nil {
+		return failedResult(fmt.Errorf("reading render output artifacts: %w", err), "setup", startTime)
+	}
+	result := s.ValidateSnapshotWithChecksum(ctx, config, artifacts, authenticatedChecksum)
+	if !result.Valid {
+		return result
+	}
+	if err := validationCancellationError(ctx); err != nil {
+		return failedResult(err, "setup", startTime)
+	}
+	result.DurationMs = time.Since(startTime).Milliseconds()
+	return result
+}
+
+func (s *ValidationService) validateHAProxy(
+	ctx context.Context,
+	startTime time.Time,
+	config string,
+	auxFiles *dataplane.AuxiliaryFiles,
+) *ValidationResult {
 	// Step 1: Create isolated temp directory for semantic validation
 	tempDir, err := os.MkdirTemp("", "haproxy-validation-*")
 	if err != nil {
@@ -271,8 +324,7 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 		return failedResult(err, validationPhase(err), startTime)
 	}
 
-	// Step 4: Cache the successful verdict.
-	if err := s.cacheResult(ctx, checksum); err != nil {
+	if err := validationCancellationError(ctx); err != nil {
 		return failedResult(err, "setup", startTime)
 	}
 
@@ -305,21 +357,5 @@ func validationCancellationError(ctx context.Context) error {
 	if cause := context.Cause(ctx); cause != nil {
 		return fmt.Errorf("validation cancelled: %w", cause)
 	}
-	return nil
-}
-
-func (s *ValidationService) cached(checksum string) bool {
-	s.cacheMu.RLock()
-	defer s.cacheMu.RUnlock()
-	return s.cachedChecksum != "" && s.cachedChecksum == checksum
-}
-
-func (s *ValidationService) cacheResult(ctx context.Context, checksum string) error {
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
-	if err := validationCancellationError(ctx); err != nil {
-		return err
-	}
-	s.cachedChecksum = checksum
 	return nil
 }

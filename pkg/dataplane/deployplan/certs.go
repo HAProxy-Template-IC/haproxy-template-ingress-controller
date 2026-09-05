@@ -28,7 +28,7 @@ func (b *builder) diffCerts() {
 	for i := range b.next.Files {
 		f := &b.next.Files[i]
 		old, existed := b.prevFiles[f.Path]
-		if existed && old.Digest == f.Digest {
+		if existed && sameFileContent(old, f) {
 			continue
 		}
 		switch f.Kind {

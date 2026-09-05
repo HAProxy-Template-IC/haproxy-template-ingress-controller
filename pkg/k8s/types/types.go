@@ -335,8 +335,8 @@ type WatcherConfig struct {
 	OnSyncComplete OnSyncCompleteCallback
 
 	// SelfWrites, when set, identifies watch events that echo this controller's
-	// own writes (by resourceVersion). Such an event still refreshes the store
-	// but does not count as a change, so OnChange is not invoked for it.
+	// own writes by resourceVersion. Echoed events still refresh the store; an
+	// exact unchanged identity revision suppresses OnChange.
 	//
 	// Optional: nil treats every event as a change.
 	SelfWrites SelfWriteFilter

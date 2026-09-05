@@ -36,12 +36,15 @@ const planBlobName = ".haptic-agent-plan.bin"
 // staged → verified → backed_up → written → applied | reloaded | scheduled →
 // committed | aborted.
 type applyRun struct {
-	server   *Server
-	manifest *api.Manifest
-	staged   map[string]*files.Staged
-	planBlob []byte
-	digest   string
-	result   api.ApplyResult
+	server       *Server
+	manifest     *api.Manifest
+	staged       map[string]*files.Staged
+	planBlob     []byte
+	digest       string
+	work         []byte
+	appliedProof string
+	workerProof  string
+	result       api.ApplyResult
 
 	tx     *files.Transaction
 	opsRan bool
@@ -65,13 +68,23 @@ type applyRun struct {
 	createdCAs   []string
 }
 
-func (s *Server) runApply(m *api.Manifest, got *received, digest string) api.ApplyResult {
+func (s *Server) runApply(
+	m *api.Manifest,
+	got *received,
+	digest string,
+	work []byte,
+	appliedProof string,
+	workerProof string,
+) api.ApplyResult {
 	run := &applyRun{
 		server:        s,
 		manifest:      m,
 		staged:        got.files,
 		planBlob:      got.plan,
 		digest:        digest,
+		work:          work,
+		appliedProof:  appliedProof,
+		workerProof:   workerProof,
 		invalidations: s.invalidationCount(),
 		result:        api.ApplyResult{PlanID: m.PlanID, OK: true, At: time.Now().UTC().Format(time.RFC3339)},
 	}
@@ -249,8 +262,8 @@ func (r *applyRun) settle() error {
 // in-place ops against the worker that keeps serving until it fires.
 func (r *applyRun) inPlace() error {
 	r.result.Mode = api.ResultScheduled
-	r.server.coalesceIntoPendingReload(r.manifest.PlanID)
-	_, due := r.server.pendingReload()
+	r.server.coalesceIntoPendingReload(r.manifest.PlanID, r.appliedProof)
+	_, _, due := r.server.pendingReload()
 	r.result.Reload = &api.ReloadInfo{ScheduledAt: due.UTC().Format(time.RFC3339Nano)}
 	return r.runInPlace()
 }
@@ -262,7 +275,10 @@ func (r *applyRun) runInPlace() error {
 	if len(r.manifest.InPlaceOps) == 0 {
 		return nil
 	}
-	if !r.server.workerOpsBaselineMatches(r.manifest.ExpectedWorkerOpsPlanID) {
+	if !r.server.workerOpsBaselineMatches(
+		r.manifest.ExpectedWorkerOpsPlanID,
+		r.manifest.ExpectedWorkerOpsPlanProof,
+	) {
 		r.result.Error = &api.ApplyError{
 			Stage:   "in_place",
 			Message: "in-place ops were composed against a different worker baseline",
@@ -284,7 +300,7 @@ func (r *applyRun) runInPlace() error {
 	}
 	r.server.foldCreated(r)
 	r.server.deferrals.Wake()
-	r.server.recordWorkerOps(r.manifest.WorkerOpsPlanID)
+	r.server.recordWorkerOps(r.manifest.WorkerOpsPlanID, r.workerProof)
 	return nil
 }
 
@@ -297,7 +313,8 @@ func (r *applyRun) revertLKG() error {
 	}
 	r.server.metrics.rollbacks.Inc()
 	r.result.Rollback = &api.RollbackInfo{Performed: true}
-	if err := r.performReload(r.server.lkgPlanID()); err != nil {
+	lkgID, lkgProof := r.server.lkgPlan()
+	if err := r.performReload(lkgID, lkgProof); err != nil {
 		return r.abort("revert_reload", err)
 	}
 	r.result.Rollback.Reloaded = true
@@ -325,7 +342,8 @@ func (r *applyRun) abort(stage string, cause error) error {
 	}
 	r.result.Rollback.Performed = true
 	if r.opsRan {
-		if err := r.performReload(r.server.lkgPlanID()); err != nil {
+		lkgID, lkgProof := r.server.lkgPlan()
+		if err := r.performReload(lkgID, lkgProof); err != nil {
 			r.server.metrics.invariant(false, "recovery_reload")
 			r.server.logger.Error("the recovery reload failed; the worker is running an unknown set", "error", err)
 		} else {
@@ -333,7 +351,7 @@ func (r *applyRun) abort(stage string, cause error) error {
 		}
 	}
 	if r.deterministic {
-		r.server.rememberNACK(r.digest, stage, &r.result)
+		r.server.rememberNACK(r.digest, r.work, stage, &r.result)
 	}
 	return cause
 }
@@ -358,6 +376,7 @@ func (s *Server) finish(run *applyRun) {
 		s.commitLocked(run)
 	} else {
 		s.state.AppliedPlanID = ""
+		s.state.AppliedPlanProof = ""
 	}
 	s.state.Phase = phaseIdle
 	s.state.InFlightPlanID = ""
@@ -376,8 +395,10 @@ func (s *Server) finish(run *applyRun) {
 // already recorded, not the set the manifest names.
 func (s *Server) commitLocked(run *applyRun) {
 	applied := run.manifest.PlanID
+	appliedProof := run.appliedProof
 	if run.manifest.Mode == api.ModeRevertLKG {
 		applied = s.state.LKGPlanID
+		appliedProof = s.state.LKGPlanProof
 	} else {
 		s.state.PlanSchemaVersion = run.manifest.PlanSchemaVersion
 		s.state.ManifestPaths = manifestPaths(run.manifest)
@@ -385,24 +406,30 @@ func (s *Server) commitLocked(run *applyRun) {
 	}
 	if s.baselineInvalidations != run.invalidations {
 		s.state.AppliedPlanID = ""
+		s.state.AppliedPlanProof = ""
 		return
 	}
-	s.state.AppliedPlanID, s.state.AppliedToken = applied, run.manifest.Token
+	s.state.AppliedPlanID, s.state.AppliedPlanProof, s.state.AppliedToken = applied, appliedProof, run.manifest.Token
 	// With no reload pending, every op of the apply ran on the worker the
 	// controller composed against, so the worker holds the applied plan. While
 	// one is pending only the in-place batch advances the worker.
 	if s.state.ReloadPendingAt.IsZero() {
 		s.state.WorkerOpsPlanID = applied
+		s.state.WorkerOpsPlanProof = appliedProof
 	}
 }
 
 // applyResultLocked fills the fields every response reports from the state.
 func (s *Server) applyResultLocked(result *api.ApplyResult) {
 	result.AppliedPlanID = s.state.AppliedPlanID
+	result.AppliedPlanProof = s.state.AppliedPlanProof
 	result.RunningPlanID = s.state.RunningPlanID
+	result.RunningPlanProof = s.state.RunningPlanProof
 	result.WorkerOpsPlanID = s.state.WorkerOpsPlanID
+	result.WorkerOpsPlanProof = s.state.WorkerOpsPlanProof
 	result.AppliedToken = s.state.AppliedToken
 	result.LKGPlanID = s.state.LKGPlanID
+	result.LKGPlanProof = s.state.LKGPlanProof
 	result.HAProxy = s.worker
 	if s.inventory.Generation > s.reportedInventory {
 		inventory := s.inventory
@@ -444,7 +471,12 @@ func (s *Server) checkInvariantsLocked(run *applyRun, generationBefore uint64) {
 	// Only this direction holds: a plan id can advance without changing a file
 	// (the drift-prevention noop apply), and then there is nothing to back up.
 	journalled := !s.state.Journal.Empty()
-	diverged := s.state.AppliedPlanID != s.state.LKGPlanID
+	diverged := !samePlanRef(
+		s.state.AppliedPlanID,
+		s.state.AppliedPlanProof,
+		s.state.LKGPlanID,
+		s.state.LKGPlanProof,
+	)
 	m.invariant(!journalled || diverged, "journal_only_while_diverged")
 	m.invariant(s.store.CrossDeviceCopies() == 0, "mount_probe_found_every_mount")
 }
@@ -457,7 +489,7 @@ func (s *Server) treeMatchesLocked(m *api.Manifest) bool {
 	}
 	for _, f := range m.Files {
 		at, present := s.tree[f.Path]
-		if !present || at.Digest != f.Digest {
+		if !present || at.Digest != f.Digest || at.Proof != f.Proof || at.Size != f.Size {
 			return false
 		}
 	}
@@ -482,11 +514,17 @@ func readPlanBlob(part io.Reader) ([]byte, error) {
 // pod is not on, and the controller reads it back as a baseline.
 func (s *Server) commitPlanBlob(run *applyRun) {
 	if run.planBlob == nil {
+		s.rebindPlanBlobProof(run)
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state.AppliedPlanID != run.manifest.PlanID {
+	if !samePlanRef(
+		s.state.AppliedPlanID,
+		s.state.AppliedPlanProof,
+		run.manifest.PlanID,
+		run.appliedProof,
+	) {
 		return
 	}
 	if err := os.WriteFile(s.planBlobPath(), run.planBlob, 0o600); err != nil {
@@ -495,6 +533,28 @@ func (s *Server) commitPlanBlob(run *applyRun) {
 	}
 	s.appliedPlan = run.planBlob
 	s.state.PlanBlobPlanID = run.manifest.PlanID
+	s.state.PlanBlobPlanProof = run.appliedProof
+	if err := s.states.save(s.state); err != nil {
+		s.logger.Error("could not persist the agent state", "error", err)
+	}
+}
+
+// rebindPlanBlobProof re-binds the stored blob to the proof of an apply that did
+// not carry one. The controller sends the blob only when the plan changes, so
+// without this the first unchanged apply strands it: the bytes still describe
+// the applied plan, but the proof no longer matches, the pod stops handing it
+// back, and the next leader has no baseline to diff against -- it reloads the
+// fleet instead. Only the proof moves; a different plan id still drops it.
+func (s *Server) rebindPlanBlobProof(run *applyRun) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.PlanBlobPlanID == "" || s.state.PlanBlobPlanID != s.state.AppliedPlanID ||
+		s.state.AppliedPlanID != run.manifest.PlanID ||
+		s.state.AppliedPlanProof != run.appliedProof ||
+		s.state.PlanBlobPlanProof == run.appliedProof {
+		return
+	}
+	s.state.PlanBlobPlanProof = run.appliedProof
 	if err := s.states.save(s.state); err != nil {
 		s.logger.Error("could not persist the agent state", "error", err)
 	}
@@ -503,13 +563,14 @@ func (s *Server) commitPlanBlob(run *applyRun) {
 // loadPlanBlob reads back the plan blob a previous run stored, so a restarted
 // agent still answers the baseline question.
 func (s *Server) loadPlanBlob() {
-	if s.state.PlanBlobPlanID == "" {
+	if s.state.PlanBlobPlanID == "" || s.state.PlanBlobPlanProof == "" {
 		return
 	}
 	blob, err := os.ReadFile(s.planBlobPath())
 	if err != nil {
 		s.logger.Warn("could not read back the applied plan", "error", err)
 		s.state.PlanBlobPlanID = ""
+		s.state.PlanBlobPlanProof = ""
 		return
 	}
 	s.appliedPlan = blob

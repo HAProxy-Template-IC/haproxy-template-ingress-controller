@@ -32,12 +32,182 @@
 #   -> policy exclusions (rule/target removals) + policy secLang
 #   -> HAPTIC body-safety directives (not overridable)
 templateSnippets:
+  haptic-waf-trusted-catalog-publications:
+    requires: [configmaps]
+    incremental:
+      bindingsTemplate: |-
+        {%- var refsAny = extraContext | dig("waf", "policies", "configMapRefs") -%}
+        {%- var refs, refsOK = refsAny.(map[string]any) -%}
+        {%- if refsAny != nil && refsOK && len(refs) > 0 -%}
+          {{- toJSON(map[string]any{"configmaps": map[string]any{
+            "controllerNamespace": extraContext | dig("controllerNamespace") | fallback("") | tostring(),
+            "refs": refs,
+          }}) -}}
+        {%- else -%}
+          {}
+        {%- end -%}
+      group: haptic-waf-trusted-catalogs
+      effects: [publishValue]
+    template: |-
+      {%- var namespace = dig_string(item, "", "metadata", "namespace") -%}
+      {%- var name = dig_string(item, "", "metadata", "name") -%}
+      {%- var cm = resources.configmaps.GetSingle(namespace, name) -%}
+      {%- if cm != nil -%}
+        {%- var refs = props["refs"].(map[string]any) -%}
+        {%- for _, refName := range keys(refs) -%}
+          {%- var ref, refOK = refs[refName].(map[string]any) -%}
+          {%- if !refOK -%}{%- continue -%}{%- end -%}
+          {%- var sourceNamespace = tostring(props["controllerNamespace"]) -%}
+          {%- var sourceName = "" -%}
+          {%- var sourceKey = "policies.yaml" -%}
+          {%- var usable = true -%}
+          {%- if ref["namespace"] != nil -%}
+            {%- var value, valueOK = ref["namespace"].(string) -%}
+            {%- if valueOK -%}{%- sourceNamespace = value -%}{%- else -%}{%- usable = false -%}{%- end -%}
+          {%- end -%}
+          {%- if ref["name"] != nil -%}
+            {%- var value, valueOK = ref["name"].(string) -%}
+            {%- if valueOK -%}{%- sourceName = value -%}{%- else -%}{%- usable = false -%}{%- end -%}
+          {%- end -%}
+          {%- if ref["key"] != nil -%}
+            {%- var value, valueOK = ref["key"].(string) -%}
+            {%- if valueOK -%}{%- sourceKey = value -%}{%- else -%}{%- usable = false -%}{%- end -%}
+          {%- end -%}
+          {%- if usable && sourceNamespace == namespace && sourceName == name -%}
+            {{- shared.Publish("catalogs", refName, map[string]any{
+              "refName": refName,
+              "namespace": namespace,
+              "name": name,
+              "key": sourceKey,
+              "policyYAML": cm.Data[sourceKey],
+            }) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  haptic-waf-selfservice-catalog-publications:
+    requires: [waf_selfservice_catalogs]
+    incremental:
+      bindingsTemplate: |-
+        {%- import "util-waf-governance" for WafGovernance -%}
+        {%- var gov = map[string]any{} -%}
+        {%- var _ = WafGovernance(gov) -%}
+        {%- if gov["selfServiceEnabled"].(bool) -%}
+          {{- toJSON(map[string]any{"waf_selfservice_catalogs": map[string]any{
+            "configMapName": gov["selfServiceConfigMapName"],
+            "dataKey": gov["selfServiceKey"],
+          }}) -}}
+        {%- else -%}
+          {}
+        {%- end -%}
+      group: haptic-waf-selfservice-catalogs
+      effects: [publishValue]
+    template: |-
+      {%- var namespace = dig_string(item, "", "metadata", "namespace") -%}
+      {%- var name = dig_string(item, "", "metadata", "name") -%}
+      {%- var cm = resources.waf_selfservice_catalogs.GetSingle(namespace, name) -%}
+      {%- if cm != nil && name == tostring(props["configMapName"]) -%}
+        {{- shared.Publish("catalogs", namespace, map[string]any{
+          "namespace": namespace,
+          "name": name,
+          "policyYAML": cm.Data[tostring(props["dataKey"])],
+          "resource": map[string]any{
+            "apiVersion": resources.waf_selfservice_catalogs.APIVersion(),
+            "kind": "ConfigMap",
+            "metadata": map[string]any{"namespace": namespace, "name": name},
+          },
+        }) -}}
+      {%- end -%}
+
+  haptic-waf-ingress-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- import "util-waf-governance" for WafGovernance -%}
+        {%- var gov = map[string]any{} -%}
+        {%- var _ = WafGovernance(gov) -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "allIngresses": gov["dispatchMode"] == "default-on" || tostring(gov["defaultPolicy"]) != "",
+          "checkRawConfig": gov["governanceEnabled"].(bool) && !gov["allowRawHAProxyConfig"].(bool),
+        }}) -}}
+      group: haptic-waf-ingresses
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var namespace = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
+        {%- var annotations = map[string]any{} -%}
+        {%- var nativeWAF = false -%}
+        {%- for _, key := range []string{
+          "haproxy-haptic.org/waf-mode",
+          "haproxy-haptic.org/waf-policy",
+        } -%}
+          {%- var value = ingress.Metadata.Annotations[key] -%}
+          {%- if strip(value) != "" -%}
+            {%- annotations[key] = value -%}
+            {%- nativeWAF = true -%}
+          {%- end -%}
+        {%- end -%}
+        {%- var checkRawConfig = props["checkRawConfig"].(bool) -%}
+        {%- var rawConfig = false -%}
+        {%- if checkRawConfig -%}
+          {%- for _, key := range []string{
+            "haproxy-haptic.org/config-global",
+            "haproxy-haptic.org/config-defaults",
+            "haproxy-haptic.org/config-frontend",
+            "haproxy-haptic.org/config-backend",
+            "haproxy-ingress.github.io/config-global",
+            "haproxy-ingress.github.io/config-defaults",
+            "haproxy-ingress.github.io/config-frontend",
+            "haproxy-ingress.github.io/config-backend",
+            "haproxy.org/backend-config-snippet",
+            "nginx.ingress.kubernetes.io/configuration-snippet",
+          } -%}
+            {%- var value = ingress.Metadata.Annotations[key] -%}
+            {%- if strip(value) != "" -%}
+              {%- annotations[key] = value -%}
+              {%- rawConfig = true -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+        {%- if props["allIngresses"].(bool) || nativeWAF || rawConfig -%}
+          {%- for _, key := range []string{
+            "haproxy-haptic.org/backend-protocol",
+            "nginx.ingress.kubernetes.io/backend-protocol",
+          } -%}
+            {%- var value = ingress.Metadata.Annotations[key] -%}
+            {%- if value != "" %}{%- annotations[key] = value %}{%- end -%}
+          {%- end -%}
+          {{- shared.Publish("resources", namespace + "/" + name, map[string]any{
+            "namespace": namespace,
+            "name": name,
+            "annotations": annotations,
+            "resource": map[string]any{
+              "apiVersion": resources.ingresses.APIVersion(),
+              "kind": "Ingress",
+              "metadata": map[string]any{"namespace": namespace, "name": name},
+            },
+          }) -}}
+        {%- end -%}
+      {%- end -%}
+
   # Central scan/validation pass. Its name sorts after the nginx-ingress vendor
   # scan in spoa-hub's util-*-coraza-scan glob, so it preserves vendor apps and
   # appends HAPTIC apps instead of clobbering them.
   util-waf-haptic-coraza-scan:
     template: |-
       {%- import "util-waf-governance" for WafGovernance -%}
+      {%- var _, _ = shared.ComputeIfAbsent("hapticWafIngressPublications", func() any {
+        return render "haptic-waf-ingress-publications"
+      }) -%}
+      {%- var _, _ = shared.ComputeIfAbsent("hapticWafSelfServiceCatalogPublications", func() any {
+        return render "haptic-waf-selfservice-catalog-publications"
+      }) -%}
+      {%- var _, _ = shared.ComputeIfAbsent("hapticWafTrustedCatalogPublications", func() any {
+        return render "haptic-waf-trusted-catalog-publications"
+      }) -%}
       {%%
         var _, _ = shared.ComputeIfAbsent("sphCorazaScanHaptic", func() any {
           var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} })
@@ -148,6 +318,11 @@ templateSnippets:
           if policyConfigMapRefsAny == nil { policyConfigMapRefsAny = map[string]any{} }
           var policyConfigMapRefs, policyConfigMapRefsOK = policyConfigMapRefsAny.(map[string]any)
           if !policyConfigMapRefsOK { fail("extraContext.waf.policies.configMapRefs must be a map of catalog name to a source with namespace, name, and key fields.") }
+          var trustedCatalogs = map[string]any{}
+          for _, catalogAny := range incremental_values("haptic-waf-trusted-catalogs", "catalogs") {
+            var catalog = catalogAny.(map[string]any)
+            trustedCatalogs[tostring(catalog["refName"])] = catalog
+          }
           var policyCatalogConfigured = len(inlinePolicies) > 0 || len(policyConfigMapRefs) > 0 || configuredDefaultPolicy != ""
           var defaultPolicy = configuredDefaultPolicy
           // Governance and Ingress-permission resolution — including
@@ -676,11 +851,12 @@ templateSnippets:
               fail(refWhere + ".key '" + sourceKey + "' is not a valid ConfigMap data key.")
             }
             var sourceID = "ConfigMap " + sourceNamespace + "/" + sourceName + " key " + sourceKey
-            var cm = resources.configmaps.GetSingle(sourceNamespace, sourceName)
-            if cm == nil {
+            var catalogAny = trustedCatalogs[refName]
+            if catalogAny == nil {
               fail("WAF policy " + sourceID + " was not found.")
             }
-            var policyYAML = cm.Data[sourceKey]
+            var catalog = catalogAny.(map[string]any)
+            var policyYAML = tostring(catalog["policyYAML"])
             if strip(policyYAML) == "" {
               fail("WAF policy " + sourceID + " is empty or missing.")
             }
@@ -724,29 +900,13 @@ templateSnippets:
               var ssAllowSecLang = gov["selfServiceAllowSecLang"].(bool)
               var ssMaxPerNamespace = gov["selfServiceMaxPoliciesPerNamespace"].(int)
               var ssMaxTotal = gov["selfServiceMaxTotalPolicies"].(int)
-              // Discovery iterates the dedicated waf_selfservice_catalogs
-              // watch (full bodies, fieldSelector-scoped to the well-known
-              // name) — NOT the on-demand configmaps store, whose List()
-              // deliberately returns only entries the render already touched.
-              var ssNamespaces = []any{}
-              var ssByNamespace = map[string]*resources.waf_selfservice_catalogs.T{}
-              for _, catalogCM := range resources.waf_selfservice_catalogs.List() {
-                // The injected fieldSelector already scopes the watch; re-check
-                // the name as defense-in-depth (fixtures and offline validate
-                // runs bypass watch selectors).
-                if catalogCM.Metadata.Name != ssConfigMapName { continue }
-                if ssByNamespace[catalogCM.Metadata.Namespace] == nil {
-                  ssByNamespace[catalogCM.Metadata.Namespace] = catalogCM
-                  ssNamespaces = append(ssNamespaces, catalogCM.Metadata.Namespace)
-                }
-              }
               var ssTotal = 0
-              for _, nsAny := range sort_strings(ssNamespaces) {
-                var ns = tostring(nsAny)
-                var cm = ssByNamespace[ns]
-                if cm == nil { continue }
+              for _, catalogAny := range incremental_values("haptic-waf-selfservice-catalogs", "catalogs") {
+                var catalog = catalogAny.(map[string]any)
+                var ns = tostring(catalog["namespace"])
+                var cm = catalog["resource"]
                 var sourceID = "self-service WAF ConfigMap " + ns + "/" + ssConfigMapName + " key " + ssDataKey
-                var policyYAML = cm.Data[ssDataKey]
+                var policyYAML = tostring(catalog["policyYAML"])
                 var catalogError = ""
                 var parsedPolicies = map[string]any{}
                 if strip(policyYAML) == "" {
@@ -820,11 +980,13 @@ templateSnippets:
           var brokenRoutes = []any{}
           // Vendor and native per-Ingress applications consume the same Coraza
           // application map and therefore share one admission bound.
-          for _, ingress := range resources.ingresses.List() {
-            var ns = ingress.Metadata.Namespace
-            var name = ingress.Metadata.Name
+          for _, ingressAny := range incremental_values("haptic-waf-ingresses", "resources") {
+            var ingressRecord = ingressAny.(map[string]any)
+            var ns = tostring(ingressRecord["namespace"])
+            var name = tostring(ingressRecord["name"])
             var resourceID = ns + "/" + name
-            var annotations = ingress.Metadata.Annotations
+            var annotations = to_str_map(ingressRecord["annotations"])
+            var ingress = ingressRecord["resource"]
             if governanceEnabled && !allowRawHAProxyConfig {
               var rawConfigAnnotation = ""
               for _, annotationName := range []string{

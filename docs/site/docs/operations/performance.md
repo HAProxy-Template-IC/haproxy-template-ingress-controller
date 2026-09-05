@@ -10,7 +10,9 @@ Tune HAPTIC in three areas:
 
 ## Measured render cost by object count
 
-Every render walks the whole watched-object store, so render time scales with cluster size. These numbers come from `scripts/test-benchmark.sh` against the bundled chart's default libraries, with a realistic mix of one Ingress, one Service, and two EndpointSlices per step:
+A full render walks the whole watched-object store, so its cost scales with cluster size. This is what you pay on startup, on a configuration change, and on every admission review. For the cost of a steady-state render after a single object changes, see [Incremental render cost](#incremental-render-cost).
+
+These numbers come from `scripts/test-benchmark.sh` against the bundled chart's default libraries, with a realistic mix of one Ingress, one Service, and two EndpointSlices per step:
 
 | Ingresses | Total render | Per Ingress | `haproxy.cfg` | Path maps |
 |---|---|---|---|---|
@@ -27,6 +29,32 @@ Reproduce them with:
 Two things to read off this table. The overall cost is close to linear at roughly 0.11–0.15 ms per Ingress, so a 5,000-Ingress cluster spends under a second per render. But the **path maps grow faster than the object count** — `path-prefix-exact` alone goes from 6 ms at N=1,000 to 94 ms at N=5,000, a 15× rise for 5× the objects — and by N=5,000 the three path maps are about 40% of the render.
 
 The admission webhook renders the entire configuration once per admitted object, so this is also the per-admission cost. On a cluster where a single render approaches `controller.webhook.timeoutSeconds` (10 seconds by default), a burst of `kubectl apply`s starts failing admission under `failurePolicy: Fail`. Measure your own cluster with the command above before assuming headroom.
+
+## Incremental render cost
+
+When template snippets declare `incremental`, a reconcile render re-executes only the components whose recorded inputs changed. The numbers below come from `cmd/haptic`'s incremental render-service benchmark against the bundled chart's Gateway API libraries on an 8-core x86-64 desktop CPU, one HTTPRoute changed per render:
+
+| HTTPRoutes | First render (cold) | Nothing changed | One route changed | Components re-executed |
+|---|---|---|---|---|
+| 300 | 292 ms | 5.4 ms | 21 ms | 13 |
+| 1,000 | 648 ms | 5.4 ms | 32 ms | 13 |
+| 3,000 | 1,889 ms | 5.5 ms | 67 ms | 13 |
+
+Reproduce them with:
+
+```bash
+BENCH='^BenchmarkBundledChartHTTPRouteIncrementalRenderService$' PKG=./cmd/haptic make bench
+```
+
+Read four things off this table.
+
+**The cold column is what a controller pays with an empty cache**, and it's linear in the object count. You pay it on startup and on a configuration or chart change. You don't pay it on a steady-state reconcile, and you don't pay it on a leader failover: a follower renders every change too, without deploying anything, so its graph is warm when it takes over. That costs each follower the same render CPU and graph memory as the leader; `haptic_render_total{cache_state}` on every replica shows what each one pays.
+
+**A render with no relevant change is flat and cheap.** It costs about 5.4 ms whether you run 300 routes or 3,000, and executes zero components. That 5.4 ms is the cost of proving nothing changed and re-publishing the existing output, not of rendering it.
+
+**The work that's incremental is exactly incremental.** Thirteen components re-execute for one changed route, and that count doesn't move as the fleet grows tenfold. This is the guarantee the dependency journal buys: component re-execution tracks what changed, not how much exists.
+
+**One changed route still costs more on a bigger cluster** — about 17 µs per route. The root document template runs once per render, and while the per-route rules it used to re-emit are now declared as plan fragments and spliced from text the engine already caches, the template still executes and the 4.8 MB `haproxy.cfg` still has to be produced. Component execution is flat; whole-document production isn't.
 
 ## Gateway API implementation benchmark
 
@@ -143,12 +171,18 @@ Part 2's `Agentgateway` result uses `kgateway` as its control plane, so it's the
 
 | Deployment Size | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |-----------------|-------------|-----------|----------------|--------------|
-| Small (<50 Ingresses) | 50m | 200m | 64Mi | 256Mi |
-| Medium (50-200 Ingresses) | 100m | 500m | 128Mi | 512Mi |
-| Large (200+ Ingresses) | 200m | 1000m | 256Mi | 1Gi |
-| Very large (thousands of Ingresses) | 500m | 2000m | 512Mi | 2Gi |
+| Small (<50 Ingresses) | 50m | 200m | 1Gi | 1Gi |
+| Medium (50-200 Ingresses) | 100m | 500m | 1Gi | 1Gi |
+| Large (200+ Ingresses) | 200m | 1000m | 1Gi | 2Gi |
+| Very large (thousands of Ingresses) | 500m | 2000m | 2Gi | 4Gi |
 
-These recommendations are based on the controller's primary memory consumers (watched resource caches, template rendering buffers, event history) and CPU consumers (template rendering, API server watch streams). Adjust based on your actual resource counts and template complexity.
+Memory has a floor that no amount of shrinking the workload gets under: on every
+config load the controller runs the bundled `validationTests`, which peaks at
+514 MiB on chart defaults and 605 MiB with every template library enabled. That
+is why the small and medium rows don't drop below 1Gi — the number is set by the
+configuration being validated, not by how many Ingresses you serve. Above the
+floor, the consumers that scale with your workload are the watched-resource
+caches and render buffers (memory) and rendering plus watch streams (CPU).
 
 !!! tip "Scaling past a few thousand Ingresses"
     At the very-large scale, the resource numbers above are a starting point, not the main lever — the controller holds every watched resource in memory and re-renders the whole config on change, so what keeps that bounded is *watching less*, not sizing bigger. Reach for these first:
@@ -179,7 +213,7 @@ controller:
 
 The controller automatically detects and respects the limits you set above — no tuning env vars are needed:
 
-- **CPU limits (GOMAXPROCS):** native cgroup-aware GOMAXPROCS (added upstream in Go 1.25; the controller currently builds with Go 1.26). The Go runtime detects cgroup CPU limits (v1 and v2), sets GOMAXPROCS to match the container's CPU limit rather than the host's core count, and adjusts dynamically if the limit changes at runtime. Proper GOMAXPROCS prevents over-scheduling goroutines and the CPU throttling that comes with it.
+- **CPU limits (GOMAXPROCS):** native cgroup-aware GOMAXPROCS (added upstream in Go 1.25; the controller currently builds with Go 1.27). The Go runtime detects cgroup CPU limits (v1 and v2), sets GOMAXPROCS to match the container's CPU limit rather than the host's core count, and adjusts dynamically if the limit changes at runtime. Proper GOMAXPROCS prevents over-scheduling goroutines and the CPU throttling that comes with it.
 - **Memory limits (GOMEMLIMIT):** the controller uses the `automemlimit` library to set GOMEMLIMIT to 90% of the container memory limit (10% headroom for non-heap memory), with both cgroups v1 and v2. GOMEMLIMIT helps the Go GC keep heap memory under control and prevents out-of-memory kills.
 
 At startup the controller logs the detected limits, for example:

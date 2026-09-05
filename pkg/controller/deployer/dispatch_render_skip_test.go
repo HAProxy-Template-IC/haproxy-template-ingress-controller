@@ -21,65 +21,32 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-// dispatchRender has a load-bearing optimization branch that the existing
-// TestDeploymentScheduler_DispatchRender does NOT cover: the canSkip path that
-// suppresses redundant deployments when the rendered config and pod set both
-// match the last successfully-deployed state.
-//
-// Two contracts pinned:
-//
-//  1. Skip when both content checksum AND pod-set hash match the
-//     last successful deploy → NO DeploymentScheduledEvent
-//     published. Without this branch every reconciliation that
-//     produced unchanged output (extremely common during steady
-//     state with endpoint churn that doesn't change membership)
-//     would re-deploy the same config to every pod, defeating
-//     the whole content-deduplication system.
-//
-//  2. Drift prevention bypasses the skip → DeploymentScheduledEvent
-//     IS published even when the hashes match. Drift prevention
-//     is the recovery path for HAProxy pods that may have drifted
-//     OUT of sync with the cached state; if we skipped on hash
-//     match here, drift recovery would silently never deploy and
-//     the system could never self-heal from out-of-band changes.
-
-func TestDispatchRender_SkipsWhenConfigAndPodSetUnchanged(t *testing.T) {
+func TestDispatchRenderSkipsOnlyTheAuthenticatedDeployedOutput(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe("test-sub", 50)
+	eventChan := bus.Subscribe("skip", 10)
 	bus.Start()
-
 	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	ctx := context.Background()
-	scheduler.ctx = ctx
+	endpoints := []dataplane.Endpoint{{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodUID: "uid-A"}}
+	occurrence := mustTestOccurrence("global\n  daemon\n", "plan-stable", nil)
 
-	const checksum = "stable-content-checksum"
-	endpoints := []dataplane.Endpoint{
-		{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodNamespace: "haptic"},
-		{URL: "http://10.0.0.2:5555", PodName: "pod-B", PodNamespace: "haptic"},
-	}
-	podSetHash := computePodSetHash(endpoints)
-
-	// Set up state: prior deployment succeeded with the SAME
-	// checksum and pod set, so the cache-hit branch must skip the
-	// new deploy.
 	scheduler.mu.Lock()
-	scheduler.lastRenderedConfig = "global\n  daemon\n"
-	scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
-	scheduler.lastContentChecksum = checksum
+	scheduler.lastRenderedOccurrence = occurrence
 	scheduler.currentEndpoints = endpoints
-	scheduler.lastDeployedConfigHash = checksum   // ← match
-	scheduler.lastDispatchedConfigHash = checksum // ← fleet settled on it (no paced deploy since)
-	scheduler.lastDeployedPodSetHash = podSetHash // ← match
-	scheduler.lastDeployedTime = time.Now()       // ← non-zero (deployment really happened)
+	scheduler.lastDeployedOccurrence = occurrence
+	scheduler.lastDispatchedOccurrence = occurrence
+	scheduler.lastDeployedPodSetHash = computePodSetHash(endpoints)
+	scheduler.lastDeployedTime = time.Now()
 	scheduler.mu.Unlock()
 
-	// Use a non-drift reason so the bypass doesn't fire.
-	scheduler.dispatchRender(ctx, "corr-skip", true, "config_validation")
+	scheduler.dispatchRender(t.Context(), "corr-skip", true, "config_validation")
 
-	// The skip branch MUST NOT publish a DeploymentScheduledEvent.
-	// AssertNoEvent waits its full timeout and fails if one shows up.
-	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](
-		t, eventChan, testutil.NoEventTimeout)
+	skipped := testutil.WaitForEvent[*events.DeploymentSkippedEvent](t, eventChan, testutil.EventTimeout)
+	require.Equal(t, "config_unchanged", skipped.Reason)
+	require.Equal(t, computePodSetHash(endpoints), skipped.PodSetHash)
+	carried, err := skipped.RenderOccurrence()
+	require.NoError(t, err)
+	require.True(t, sameOccurrence(occurrence, carried))
+	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
 func TestComputePodSetHashIncludesCompleteEndpointAuthority(t *testing.T) {
@@ -124,7 +91,7 @@ func TestEndpointAuthorityHashIsKeyed(t *testing.T) {
 	)
 }
 
-func TestDispatchRender_DoesNotSkipSameURLReplacement(t *testing.T) {
+func TestDispatchRenderDoesNotSkipSameURLReplacement(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("replacement", 10)
 	bus.Start()
@@ -133,20 +100,15 @@ func TestDispatchRender_DoesNotSkipSameURLReplacement(t *testing.T) {
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)
 
-	oldEndpoint := dataplane.Endpoint{
-		URL: "http://10.0.0.1:5555", Username: "admin", Password: "secret",
-		PodName: "pod-A", PodNamespace: "haptic", PodUID: "uid-old",
-		DetectedMajorVersion: 3, DetectedMinorVersion: 2, DetectedFullVersion: "3.2.1",
-	}
+	oldEndpoint := dataplane.Endpoint{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodUID: "uid-old"}
 	replacement := oldEndpoint
 	replacement.PodUID = "uid-new"
-	const checksum = "stable-content-checksum"
+	occurrence := mustTestOccurrence("global\n  daemon\n", "plan-replacement", nil)
 	scheduler.mu.Lock()
-	scheduler.lastRenderedConfig = "global\n  daemon\n"
-	scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
-	scheduler.lastContentChecksum = checksum
+	scheduler.lastRenderedOccurrence = occurrence
 	scheduler.currentEndpoints = []dataplane.Endpoint{replacement}
-	scheduler.lastDeployedConfigHash = checksum
+	scheduler.lastDeployedOccurrence = occurrence
+	scheduler.lastDispatchedOccurrence = occurrence
 	scheduler.lastDeployedPodSetHash = computePodSetHash([]dataplane.Endpoint{oldEndpoint})
 	scheduler.lastDeployedTime = time.Now()
 	scheduler.mu.Unlock()
@@ -157,176 +119,64 @@ func TestDispatchRender_DoesNotSkipSameURLReplacement(t *testing.T) {
 	require.Equal(t, "uid-new", scheduled.Endpoints[0].PodUID)
 }
 
-// TestDispatchRender_PublishesDeploymentSkippedOnCacheHit pins the
-// contract that the skip branch ALSO publishes a DeploymentSkippedEvent so
-// the status-applier can write the "deployed" status variant. Without this,
-// resources whose addition produces no config change (Gateway with no
-// routes attached, status-only deltas) would stay at the CRD-default
-// condition state indefinitely (e.g. Programmed=Unknown / obsGen=missing,
-// which the Gateway-API conformance helper reports as "generation 0").
-func TestDispatchRender_PublishesDeploymentSkippedOnCacheHit(t *testing.T) {
+func TestDispatchRenderDriftPreventionBypassesSkip(t *testing.T) {
 	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe("test-sub", 50)
+	eventChan := bus.Subscribe("drift", 10)
 	bus.Start()
-
 	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	ctx := context.Background()
-	scheduler.ctx = ctx
-
-	const checksum = "stable-content-checksum"
-	endpoints := []dataplane.Endpoint{
-		{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodNamespace: "haptic"},
-		{URL: "http://10.0.0.2:5555", PodName: "pod-B", PodNamespace: "haptic"},
-	}
-	podSetHash := computePodSetHash(endpoints)
-
-	scheduler.mu.Lock()
-	scheduler.lastRenderedConfig = "global\n  daemon\n"
-	scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
-	scheduler.lastContentChecksum = checksum
-	scheduler.currentEndpoints = endpoints
-	scheduler.lastDeployedConfigHash = checksum
-	// The fleet is settled on this config: the last render dispatched IS the last
-	// one deployed, which is what lets the skip fire (a paced deploy would leave
-	// these two apart).
-	scheduler.lastDispatchedConfigHash = checksum
-	scheduler.lastDeployedPodSetHash = podSetHash
-	scheduler.lastDeployedTime = time.Now()
-	scheduler.mu.Unlock()
-
-	scheduler.dispatchRender(ctx, "corr-cache-hit", true, "config_validation")
-
-	skipped := testutil.WaitForEvent[*events.DeploymentSkippedEvent](
-		t, eventChan, testutil.EventTimeout)
-	require.NotNil(t, skipped, "skip branch must publish DeploymentSkippedEvent")
-	require.Equal(t, len(endpoints), skipped.Total,
-		"Total should reflect the endpoint count, mirroring DeploymentCompletedEvent.Total")
-	require.Equal(t, "config_unchanged", skipped.Reason)
-	require.Equal(t, checksum, skipped.ConfigHash)
-	require.Equal(t, podSetHash, skipped.PodSetHash)
-}
-
-func TestDispatchRender_DriftPreventionBypassesSkip(t *testing.T) {
-	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe("test-sub", 50)
-	bus.Start()
-
-	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	// Drive the deploy loop: scheduleOrQueue now only sets pending + signals the
-	// loop, which is the goroutine that publishes DeploymentScheduledEvent.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)
 
-	const checksum = "stable-content-checksum"
-	endpoints := []dataplane.Endpoint{
-		{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodNamespace: "haptic"},
-	}
-	podSetHash := computePodSetHash(endpoints)
-
-	// Same setup as the skip test — hashes deliberately match.
+	endpoints := []dataplane.Endpoint{{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodUID: "uid-A"}}
+	occurrence := mustTestOccurrence("global\n  daemon\n", "plan-drift", nil)
 	scheduler.mu.Lock()
-	scheduler.lastRenderedConfig = "global\n  daemon\n"
-	scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
-	scheduler.lastContentChecksum = checksum
+	scheduler.lastRenderedOccurrence = occurrence
 	scheduler.currentEndpoints = endpoints
-	scheduler.lastDeployedConfigHash = checksum
-	scheduler.lastDeployedPodSetHash = podSetHash
+	scheduler.lastDeployedOccurrence = occurrence
+	scheduler.lastDispatchedOccurrence = occurrence
+	scheduler.lastDeployedPodSetHash = computePodSetHash(endpoints)
 	scheduler.lastDeployedTime = time.Now()
 	scheduler.mu.Unlock()
 
-	// CRITICAL difference: the reason is drift_prevention. The skip branch
-	// MUST be bypassed even though hashes match. Drift is non-coalescible.
 	scheduler.dispatchRender(ctx, "corr-drift", false, events.TriggerReasonDriftPrevention)
 
-	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](
-		t, eventChan, testutil.LongTimeout)
-	require.NotNil(t, scheduled,
-		"drift prevention MUST bypass the canSkip cache hit — the recovery "+
-			"path needs to actually deploy in case HAProxy pods have drifted "+
-			"OUT of sync with the cached state. A regression that respected "+
-			"the cache here would silently break drift recovery and the "+
-			"system could never self-heal from out-of-band changes")
+	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
+	carried, err := scheduled.RenderOccurrence()
+	require.NoError(t, err)
+	require.True(t, sameOccurrence(occurrence, carried))
 }
 
-// TestHandleTemplateRendered_CachesStatusPatches pins the cache step that
-// the rest of this file's skip-branch test, the pod-discovery path, and
-// the validation-fallback path all rely on: TemplateRenderedEvent's
-// StatusPatches must be stored on the scheduler so a later
-// scheduleOrQueue / DeploymentSkippedEvent can carry them. Regression
-// fuse for the "patches travel on deploy events" architecture — if this
-// caching breaks, every downstream deploy/skip event emits zero patches
-// and the StatusApplier silently stops writing the "deployed" variant.
-func TestHandleTemplateRendered_CachesStatusPatches(t *testing.T) {
+func TestTemplateAndScheduledEventsKeepStatusSnapshotInOccurrence(t *testing.T) {
 	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe("status", 10)
 	bus.Start()
-
 	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-
-	patches := []templating.StatusPatch{
-		{Name: "gw", Kind: "Gateway"},
-		{Name: "route", Kind: "HTTPRoute"},
-	}
-	event := events.NewTemplateRenderedEvent(
-		"haproxy config",
-		&dataplane.AuxiliaryFiles{},
-		patches,
-		nil, 0, 50, "test", "checksum", nil, "", true,
-	)
-
-	scheduler.handleTemplateRendered(t.Context(), event)
-
-	scheduler.mu.RLock()
-	defer scheduler.mu.RUnlock()
-	require.Equal(t, 2, len(scheduler.lastValidatedStatusPatches))
-	require.Equal(t, "gw", scheduler.lastValidatedStatusPatches[0].Name)
-}
-
-// TestDispatchRender_DeploymentScheduledCarriesStatusPatches pins
-// the end-to-end carry from TemplateRenderedEvent → cached lastValidatedStatusPatches
-// → DeploymentScheduledEvent on the happy path (config changed, no skip).
-// Companion to the skip-path test above; together they cover both event
-// types the scheduler emits.
-func TestDispatchRender_DeploymentScheduledCarriesStatusPatches(t *testing.T) {
-	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe("test-sub", 50)
-	bus.Start()
-
-	scheduler := newDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	// Drive the deploy loop: scheduleOrQueue now only sets pending + signals the
-	// loop, which is the goroutine that publishes DeploymentScheduledEvent.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)
 
-	patches := []templating.StatusPatch{
-		{Name: "gw", Kind: "Gateway"},
-	}
-	endpoints := []dataplane.Endpoint{
-		{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodNamespace: "haptic"},
-	}
-
+	collector := templating.NewStatusPatchCollector()
+	require.NoError(t, collector.Register(
+		"default", "gw", "gateway.networking.k8s.io/v1", "Gateway",
+		map[string]map[string]any{"deployed": {"owner": "stable"}},
+	))
+	snapshot, err := collector.Snapshot()
+	require.NoError(t, err)
+	occurrence := mustTestOccurrence("global\n  daemon\n", "plan-status", snapshot)
+	rendered, err := events.NewTemplateRenderedEventWithOccurrence(occurrence, 0, "test", true)
+	require.NoError(t, err)
 	scheduler.mu.Lock()
-	scheduler.lastRenderedConfig = "global\n  daemon\n"
-	scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
-	scheduler.lastContentChecksum = "new-checksum" // differs from lastDeployedConfigHash
-	scheduler.lastRenderedStatusPatches = patches
-	scheduler.currentEndpoints = endpoints
-	// lastDeployedTime zero → canSkip predicate is false → real deploy path.
+	scheduler.currentEndpoints = []dataplane.Endpoint{{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodUID: "uid-A"}}
 	scheduler.mu.Unlock()
 
-	scheduler.dispatchRender(ctx, "corr-patches", true, "config_validation")
+	scheduler.handleTemplateRendered(ctx, rendered)
 
-	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](
-		t, eventChan, testutil.EventTimeout)
-	require.NotNil(t, scheduled, "deploy path must publish DeploymentScheduledEvent")
-	require.Equal(t, 1, len(scheduled.StatusPatches),
-		"DeploymentScheduledEvent must carry the cached StatusPatches so "+
-			"the Deployer can forward them into DeploymentCompletedEvent")
-	require.Equal(t, "gw", scheduled.StatusPatches[0].Name)
-
-	scheduler.mu.RLock()
-	defer scheduler.mu.RUnlock()
-	require.Equal(t, patches, scheduler.lastValidatedStatusPatches,
-		"dispatch promotes the render's patches with the config they belong to")
+	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.EventTimeout)
+	carried, err := scheduled.RenderOccurrence()
+	require.NoError(t, err)
+	require.True(t, sameOccurrence(occurrence, carried))
+	identity, err := inspectOccurrence(carried)
+	require.NoError(t, err)
+	require.Same(t, snapshot, identity.statusPatches)
 }

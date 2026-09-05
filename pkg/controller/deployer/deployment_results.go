@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 )
@@ -33,6 +34,7 @@ func (c *Component) handleEndpointFailure(
 	durationMs int64,
 	event *events.DeploymentScheduledEvent,
 	state *deploymentState,
+	requests ...*deployRequest,
 ) {
 	c.Logger().Error("Deployment failed for endpoint",
 		"pod", endpoint.PodName,
@@ -45,7 +47,7 @@ func (c *Component) handleEndpointFailure(
 		endpoint, err.Error(), true,
 		events.WithCorrelation(event.CorrelationID(), event.CorrelationID()),
 	))
-	c.publishPodStatus(endpoint, event, &events.SyncMetadata{Error: err.Error()})
+	c.publishPodStatus(endpoint, event, &events.SyncMetadata{Error: err.Error()}, deploymentRequestChecksum(event, requests))
 	atomic.AddInt32(&state.failureCount, 1)
 }
 
@@ -58,6 +60,7 @@ func (c *Component) handleEndpointRejection(
 	outcome *podOutcome,
 	event *events.DeploymentScheduledEvent,
 	state *deploymentState,
+	requests ...*deployRequest,
 ) {
 	message := "the agent rejected the apply"
 	if outcome.result.Error != nil {
@@ -80,7 +83,7 @@ func (c *Component) handleEndpointRejection(
 
 	metadata := applyResultToMetadata(outcome)
 	metadata.Error = message
-	c.publishPodStatus(endpoint, event, metadata)
+	c.publishPodStatus(endpoint, event, metadata, deploymentRequestChecksum(event, requests))
 	atomic.AddInt32(&state.failureCount, 1)
 }
 
@@ -92,6 +95,7 @@ func (c *Component) handleEndpointSuccess(
 	durationMs int64,
 	event *events.DeploymentScheduledEvent,
 	state *deploymentState,
+	requests ...*deployRequest,
 ) {
 	result := outcome.result
 	c.Logger().Debug("Deployment succeeded for endpoint",
@@ -105,9 +109,18 @@ func (c *Component) handleEndpointSuccess(
 	c.clearBaselineInvalidation(endpoint)
 	c.recordAppliedOps(endpoint, result.Mode, outcome.sent)
 	c.recordRuntimeFallback(result.OpResults)
-	state.noteRunning(endpoint, result.RunningPlanID)
+	authority := podKey(endpoint)
+	state.noteRunning(endpoint, runningRender{
+		plan:       c.plans.Plan(authority, result.RunningPlanID, result.RunningPlanProof),
+		occurrence: c.planOccurrence(authority, result.RunningPlanID, result.RunningPlanProof),
+	})
 
-	c.publishPodStatus(endpoint, event, applyResultToMetadata(outcome))
+	metadata := applyResultToMetadata(outcome)
+	planID, renderProof := deploymentRequestPlanIdentity(event, requests)
+	if result.AppliedPlanID == planID && result.AppliedPlanProof != "" {
+		metadata.AppliedRenderProof = renderProof
+	}
+	c.publishPodStatus(endpoint, event, metadata, deploymentRequestChecksum(event, requests))
 
 	atomic.AddInt32(&state.ackCount, 1)
 	if outcome.converged {
@@ -123,7 +136,7 @@ func (c *Component) handleEndpointSuccess(
 	if result.Reload != nil && result.Reload.Performed {
 		atomic.AddInt32(&state.reloadsTriggered, 1)
 	}
-	c.notePodPlans(endpoint, result.AppliedPlanID, result.RunningPlanID, result.WorkerOpsPlanID)
+	c.notePodPlans(endpoint, result.AppliedPlanProof, result.RunningPlanProof, result.WorkerOpsPlanProof)
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -190,9 +203,14 @@ func (c *Component) publishPodStatus(
 	endpoint *dataplane.Endpoint,
 	event *events.DeploymentScheduledEvent,
 	metadata *events.SyncMetadata,
+	contentChecksums ...string,
 ) {
 	if event.RuntimeConfigName == "" || event.RuntimeConfigNamespace == "" {
 		return
+	}
+	contentChecksum := deploymentContentChecksum(event)
+	if len(contentChecksums) > 0 {
+		contentChecksum = contentChecksums[0]
 	}
 	c.EventBus().Publish(events.NewConfigAppliedToPodEvent(
 		event.RuntimeConfigName,
@@ -201,7 +219,7 @@ func (c *Component) publishPodStatus(
 		endpoint.PodNamespace,
 		endpoint.PodUID,
 		endpoint.PodRuntimeID,
-		event.ContentChecksum,
+		contentChecksum,
 		event.Reason == events.TriggerReasonDriftPrevention,
 		metadata,
 	))
@@ -216,6 +234,7 @@ func (c *Component) publishCompleted(
 	podSetHash string,
 	state *deploymentState,
 	durationMs int64,
+	occurrence *rendercycle.Occurrence,
 ) {
 	state.mu.Lock()
 	breakdown := make(map[string]int, len(state.operationBreakdown))
@@ -226,39 +245,85 @@ func (c *Component) publishCompleted(
 	pendingUntil := state.pendingReloadUntil
 	state.mu.Unlock()
 
-	c.EventBus().Publish(events.NewDeploymentCompletedEvent(
-		&events.DeploymentResult{
-			DeploymentID:       deploymentID,
-			Total:              len(event.Endpoints),
-			Succeeded:          int(atomic.LoadInt32(&state.convergedCount)),
-			Failed:             int(atomic.LoadInt32(&state.failureCount)),
-			PendingReloads:     int(atomic.LoadInt32(&state.pendingReloads)),
-			PendingReloadUntil: pendingUntil,
-			DurationMs:         durationMs,
-			ReloadsTriggered:   int(atomic.LoadInt32(&state.reloadsTriggered)),
-			TotalAPIOperations: operations,
-			StatusPatches:      event.StatusPatches,
-			ContentChecksum:    event.ContentChecksum,
-			PodSetHash:         podSetHash,
-			OperationBreakdown: breakdown,
-		},
-		events.WithCorrelation(event.CorrelationID(), deploymentID),
-	))
+	result, err := events.NewDeploymentResultWithOccurrence(occurrence)
+	if err != nil {
+		c.Logger().Error("Refusing to publish an unauthenticated deployment completion", "error", err)
+		return
+	}
+	result.DeploymentID = deploymentID
+	result.Total = len(event.Endpoints)
+	result.Succeeded = int(atomic.LoadInt32(&state.convergedCount))
+	result.Failed = int(atomic.LoadInt32(&state.failureCount))
+	result.PendingReloads = int(atomic.LoadInt32(&state.pendingReloads))
+	result.PendingReloadUntil = pendingUntil
+	result.DurationMs = durationMs
+	result.ReloadsTriggered = int(atomic.LoadInt32(&state.reloadsTriggered))
+	result.TotalAPIOperations = operations
+	result.PodSetHash = podSetHash
+	result.OperationBreakdown = breakdown
+	completed, err := events.NewDeploymentCompletedEventWithCycle(
+		result, events.WithCorrelation(event.CorrelationID(), deploymentID),
+	)
+	if err != nil {
+		c.Logger().Error("Refusing to publish an unauthenticated deployment completion", "error", err)
+		return
+	}
+	c.EventBus().Publish(completed)
 }
 
 // publishDeployedConfig republishes the just-deployed config as the HAProxyCfg
 // spec, so the checksum stamped on every pod is always observable as a
 // published spec.Checksum. The drift pass carries an already-published
 // checksum and is skipped.
-func (c *Component) publishDeployedConfig(event *events.DeploymentScheduledEvent, acked int) {
-	if acked == 0 || event.RuntimeConfigName == "" || event.ContentChecksum == "" ||
+func (c *Component) publishDeployedConfig(
+	event *events.DeploymentScheduledEvent,
+	occurrence *rendercycle.Occurrence,
+	acked int,
+) {
+	identity, err := inspectOccurrence(occurrence)
+	if err != nil {
+		return
+	}
+	if acked == 0 || event.RuntimeConfigName == "" || identity.checksum == "" ||
 		event.Reason == events.TriggerReasonDriftPrevention {
 		return
 	}
-	c.EventBus().Publish(events.NewDeployedConfigPublishRequest(
-		event.RuntimeConfigName, event.RuntimeConfigNamespace,
-		event.Config, event.AuxiliaryFiles, event.ContentChecksum,
-	))
+	request, err := events.NewDeployedConfigPublishRequestWithCycle(
+		event.RuntimeConfigName, event.RuntimeConfigNamespace, occurrence,
+	)
+	if err != nil {
+		c.Logger().Error("Refusing to publish unauthenticated deployed config", "error", err)
+		return
+	}
+	c.EventBus().Publish(request)
+}
+
+func deploymentRequestChecksum(
+	event *events.DeploymentScheduledEvent,
+	requests []*deployRequest,
+) string {
+	if len(requests) > 0 && requests[0] != nil {
+		return requests[0].checksum
+	}
+	return deploymentContentChecksum(event)
+}
+
+func deploymentRequestPlanIdentity(
+	event *events.DeploymentScheduledEvent,
+	requests []*deployRequest,
+) (planID, renderProof string) {
+	if len(requests) > 0 && requests[0] != nil {
+		return requests[0].planID, requests[0].occurrenceProof
+	}
+	occurrence, err := scheduledEventOccurrence(event)
+	if err != nil {
+		return "", ""
+	}
+	identity, err := inspectOccurrence(occurrence)
+	if err != nil {
+		return "", ""
+	}
+	return identity.planID, identity.proof
 }
 
 // applyResultToMetadata projects one pod's ACK onto the status the publisher
@@ -266,12 +331,14 @@ func (c *Component) publishDeployedConfig(event *events.DeploymentScheduledEvent
 func applyResultToMetadata(outcome *podOutcome) *events.SyncMetadata {
 	result := outcome.result
 	metadata := &events.SyncMetadata{
-		ReloadTriggered: result.Reload != nil && result.Reload.Performed,
-		AppliedPlanID:   result.AppliedPlanID,
-		RunningPlanID:   result.RunningPlanID,
-		Mode:            result.Mode,
-		Reasons:         cappedReasons(outcome.reasons()),
-		OperationCounts: operationCounts(outcome.sent),
+		ReloadTriggered:  result.Reload != nil && result.Reload.Performed,
+		AppliedPlanID:    result.AppliedPlanID,
+		AppliedPlanProof: result.AppliedPlanProof,
+		RunningPlanID:    result.RunningPlanID,
+		RunningPlanProof: result.RunningPlanProof,
+		Mode:             result.Mode,
+		Reasons:          cappedReasons(outcome.reasons()),
+		OperationCounts:  operationCounts(outcome.sent),
 	}
 	if result.Reload != nil && result.Reload.TookMs > 0 {
 		metadata.SyncDuration = time.Duration(result.Reload.TookMs) * time.Millisecond

@@ -16,6 +16,7 @@ package rendercontext
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -24,6 +25,8 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -61,6 +64,22 @@ func TestPlanRegistrySection(t *testing.T) {
 			assert.Equal(t, "# @haptic:"+registry.nonce+":section:"+tc.kind+":"+tc.section+"@\n", token)
 		})
 	}
+}
+
+func TestPlanTokenAuthorityRejectsCopiesAndMutation(t *testing.T) {
+	authority := NewPlanTokenAuthority()
+	registry, err := NewPlanRegistryWithAuthority(nil, authority)
+	require.NoError(t, err)
+	token, err := registry.Section("backend", "be", "backend be\n")
+	require.NoError(t, err)
+
+	copied := *authority
+	_, err = NewPlanRegistryWithAuthority(nil, &copied)
+	require.ErrorContains(t, err, "authentication seal")
+
+	authority.nonce = "poisoned"
+	_, _, err = registry.Assemble(t.Context(), token, nil)
+	require.ErrorContains(t, err, "does not match its namespace")
 }
 
 func TestPlanRegistrySectionIdempotent(t *testing.T) {
@@ -261,6 +280,46 @@ func TestPlanRegistryBackendConflict(t *testing.T) {
 	assert.Contains(t, err.Error(), "registered twice with different text")
 }
 
+func TestPlanRegistryBackendCollisionCannotHideConflict(t *testing.T) {
+	firstValue := "maps/11c714b2cc3f873f.map"
+	secondValue := "maps/71b06949baa8f2ff.map"
+	firstDigest := renderplan.DigestString(firstValue)
+	secondDigest := renderplan.DigestString(secondValue)
+	require.Equal(t, firstDigest, secondDigest)
+
+	first := renderplan.Backend{
+		Name: "be_collision", Shape: renderplan.ShapeStructural, RecordDigest: firstDigest,
+	}
+	second := renderplan.Backend{
+		Name: "be_collision", Mode: "tcp", Shape: renderplan.ShapeStructural, RecordDigest: secondDigest,
+	}
+	require.False(t, sameBackendRecordExact(&first, &second))
+
+	registry := NewPlanRegistry(nil)
+	_, err := registry.registerPreparedBackend(&PreparedPlanBackend{Backend: first, Text: "backend collision\n"})
+	require.NoError(t, err)
+	_, err = registry.registerPreparedBackend(&PreparedPlanBackend{Backend: second, Text: "backend collision\n"})
+	require.ErrorContains(t, err, "declared twice with different values")
+
+	snapshot := NewPreparedPlanSnapshot()
+	snapshot.sections, _, _ = snapshot.sections.Insert(
+		preparedSectionKey(renderplan.SectionKindBackend, first.Name), "backend collision\n",
+	)
+	snapshot.backends, _, _ = snapshot.backends.Insert([]byte(first.Name), PreparedPlanBackend{
+		Backend: second,
+		Text:    "backend collision\n",
+	})
+	snapshot.authenticate()
+
+	require.ErrorContains(t, registry.AttachPreparedPlan(snapshot), "declared twice with different values")
+
+	registry = NewPlanRegistry(nil)
+	registry.backends[first.Name] = first
+	registry.prepared = snapshot
+	_, err = registry.planBackends()
+	require.ErrorContains(t, err, "declared twice with different values")
+}
+
 func TestPlanRegistryMapMeta(t *testing.T) {
 	registry := NewPlanRegistry(nil)
 
@@ -314,6 +373,33 @@ func TestPlanRegistryPlan(t *testing.T) {
 	assert.Empty(t, plan.Maps["other.map"].Entries)
 
 	assert.Equal(t, "global\n    daemon\ndefaults haptic-be-1\n    mode http\nbackend be_app\n    server SRV_1 10.0.0.1:8080\n", config)
+}
+
+func TestPlanRegistryPreparedProfileSealsPostProcessedOutput(t *testing.T) {
+	profile, err := PreparePlanProfile(map[string]any{"mode": "http"})
+	require.NoError(t, err)
+	prepared, err := NewPreparedPlanSnapshot().WithProfile(profile)
+	require.NoError(t, err)
+	registry := NewPlanRegistry(nil)
+	require.NoError(t, registry.AttachPreparedPlan(prepared))
+
+	post := func(_ context.Context, text string) (string, error) {
+		return strings.ReplaceAll(text, "    ", "  "), nil
+	}
+	config, _, err := registry.Assemble(context.Background(), registry.ProfileGroup(), post)
+	require.NoError(t, err)
+	plan, err := registry.Plan(config, &dataplane.AuxiliaryFiles{})
+	require.NoError(t, err)
+
+	artifactAuthority := renderartifact.NewAuthority()
+	builder, err := renderartifact.NewBuilder(artifactAuthority, nil)
+	require.NoError(t, err)
+	artifacts, err := builder.Build()
+	require.NoError(t, err)
+	outputAuthority, err := renderoutput.NewAuthority(renderplan.NewAuthority(), artifactAuthority)
+	require.NoError(t, err)
+	_, err = renderoutput.NewSnapshot(outputAuthority, config, plan, artifacts, nil)
+	require.NoError(t, err)
 }
 
 // Every plan path is the base-relative string the config references the file

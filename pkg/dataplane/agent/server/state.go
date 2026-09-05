@@ -50,31 +50,39 @@ const (
 // persistentState is `.haptic-agent.json`. It carries no per-file digests:
 // disk is the authority and the tree digest is a single observation of it.
 type persistentState struct {
-	Generation          uint64             `json:"generation"`
-	PlanSchemaVersion   int                `json:"plan_schema_version"`
-	AppliedPlanID       string             `json:"applied_plan_id"`
-	RunningPlanID       string             `json:"running_plan_id"`
-	WorkerOpsPlanID     string             `json:"worker_ops_plan_id"`
-	LKGPlanID           string             `json:"lkg_plan_id"`
-	AppliedToken        api.Token          `json:"applied_token"`
-	ManifestPaths       []string           `json:"manifest_paths,omitempty"`
-	TreeDigest          string             `json:"tree_digest,omitempty"`
-	ExpectedWorker      api.HAProxyInfo    `json:"expected_worker"`
-	Journal             files.Journal      `json:"journal"`
-	Phase               phase              `json:"phase,omitempty"`
-	InFlightPlanID      string             `json:"in_flight_plan_id,omitempty"`
-	PendingReloadPlanID string             `json:"pending_reload_plan_id,omitempty"`
-	PlanBlobPlanID      string             `json:"plan_blob_plan_id,omitempty"`
-	NACK                *nackRecord        `json:"nack,omitempty"`
-	LastApply           *api.ApplyResult   `json:"last_apply,omitempty"`
-	ReloadPendingAt     time.Time          `json:"reload_pending_at,omitzero"`
-	PendingDeletes      api.PendingDeletes `json:"pending_deletes"`
+	Generation             uint64             `json:"generation"`
+	ProofGeneration        uint64             `json:"proof_generation"`
+	PlanSchemaVersion      int                `json:"plan_schema_version"`
+	AppliedPlanID          string             `json:"applied_plan_id"`
+	AppliedPlanProof       string             `json:"applied_plan_proof,omitempty"`
+	RunningPlanID          string             `json:"running_plan_id"`
+	RunningPlanProof       string             `json:"running_plan_proof,omitempty"`
+	WorkerOpsPlanID        string             `json:"worker_ops_plan_id"`
+	WorkerOpsPlanProof     string             `json:"worker_ops_plan_proof,omitempty"`
+	LKGPlanID              string             `json:"lkg_plan_id"`
+	LKGPlanProof           string             `json:"lkg_plan_proof,omitempty"`
+	AppliedToken           api.Token          `json:"applied_token"`
+	ManifestPaths          []string           `json:"manifest_paths,omitempty"`
+	TreeDigest             string             `json:"tree_digest,omitempty"`
+	ExpectedWorker         api.HAProxyInfo    `json:"expected_worker"`
+	Journal                files.Journal      `json:"journal"`
+	Phase                  phase              `json:"phase,omitempty"`
+	InFlightPlanID         string             `json:"in_flight_plan_id,omitempty"`
+	PendingReloadPlanID    string             `json:"pending_reload_plan_id,omitempty"`
+	PendingReloadPlanProof string             `json:"pending_reload_plan_proof,omitempty"`
+	PlanBlobPlanID         string             `json:"plan_blob_plan_id,omitempty"`
+	PlanBlobPlanProof      string             `json:"plan_blob_plan_proof,omitempty"`
+	NACK                   *nackRecord        `json:"nack,omitempty"`
+	LastApply              *api.ApplyResult   `json:"last_apply,omitempty"`
+	ReloadPendingAt        time.Time          `json:"reload_pending_at,omitzero"`
+	PendingDeletes         api.PendingDeletes `json:"pending_deletes"`
 }
 
 // nackRecord remembers a manifest HAProxy itself rejected, so re-sending the
 // same bytes inside the cooldown does no work at all.
 type nackRecord struct {
 	ManifestDigest string           `json:"manifest_digest"`
+	ManifestWork   []byte           `json:"-"`
 	Reason         string           `json:"reason"`
 	Until          time.Time        `json:"until"`
 	Result         *api.ApplyResult `json:"result,omitempty"`

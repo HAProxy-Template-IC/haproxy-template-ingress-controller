@@ -49,12 +49,7 @@ templateSnippets:
             secretNs = parts[0]
             secretName = parts[1]
           }
-          // Reuse the same cached lookup the auth snippets use so all three
-          // snippets agree on whether the userlist exists.
-          var secAny, _ = shared.ComputeIfAbsent("nginx_auth_secret:" + secretNs + "/" + secretName, func() any {
-            return resources.secrets.GetSingle(secretNs, secretName)
-          })
-          var sec, _ = secAny.(*resources.secrets.T)
+          var sec = resources.secrets.GetSingle(secretNs, secretName)
           if sec == nil {
             show ""
             return

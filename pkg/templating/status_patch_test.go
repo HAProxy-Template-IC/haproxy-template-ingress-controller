@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -32,7 +33,8 @@ func TestStatusPatchCollector_Register(t *testing.T) {
 			})
 		require.NoError(t, err)
 
-		patches := c.Patches()
+		patches, err := c.Patches()
+		require.NoError(t, err)
 		require.Len(t, patches, 1)
 		assert.Equal(t, "default", patches[0].Namespace)
 		assert.Equal(t, "my-ingress", patches[0].Name)
@@ -51,7 +53,8 @@ func TestStatusPatchCollector_Register(t *testing.T) {
 		require.NoError(t, c.Register("other", "gw-1", "gateway.networking.k8s.io/v1", "Gateway",
 			map[string]map[string]any{"deployed": {"c": 3}}))
 
-		patches := c.Patches()
+		patches, err := c.Patches()
+		require.NoError(t, err)
 		assert.Len(t, patches, 3)
 	})
 
@@ -67,7 +70,8 @@ func TestStatusPatchCollector_Register(t *testing.T) {
 				"deployed": {"conditions": []any{"Accepted", "Programmed"}},
 			}))
 
-		patches := c.Patches()
+		patches, err := c.Patches()
+		require.NoError(t, err)
 		require.Len(t, patches, 1)
 		assert.Contains(t, patches[0].Variants, "rendered")
 		assert.Contains(t, patches[0].Variants, "deployed")
@@ -85,10 +89,100 @@ func TestStatusPatchCollector_Register(t *testing.T) {
 				"deployed": {"version": "new"},
 			}))
 
-		patches := c.Patches()
+		patches, err := c.Patches()
+		require.NoError(t, err)
 		require.Len(t, patches, 1)
 		assert.Equal(t, "new", patches[0].Variants["deployed"]["version"])
 	})
+}
+
+func TestStatusPatchCollectorPreservesSourceLineage(t *testing.T) {
+	collector := NewStatusPatchCollector()
+	require.NoError(t, collector.RegisterWithLineage(
+		"default", "route", "example.test/v1", "Route", "uid-route", "rv-17",
+		map[string]map[string]any{"rendered": {"owner": "first"}},
+	))
+	require.NoError(t, collector.RegisterWithLineage(
+		"default", "route", "example.test/v1", "Route", "uid-route", "rv-17",
+		map[string]map[string]any{"deployed": {"owner": "second"}},
+	))
+
+	patches, err := collector.Patches()
+	require.NoError(t, err)
+	require.Len(t, patches, 1)
+	assert.Equal(t, "uid-route", patches[0].UID)
+	assert.Equal(t, "rv-17", patches[0].ResourceVersion)
+	assert.Equal(t, "first", patches[0].Variants["rendered"]["owner"])
+	assert.Equal(t, "second", patches[0].Variants["deployed"]["owner"])
+}
+
+func TestStatusPatchCollectorRejectsConflictingSourceLineageAtomically(t *testing.T) {
+	tests := map[string]struct {
+		firstUID             string
+		firstResourceVersion string
+		nextUID              string
+		nextResourceVersion  string
+	}{
+		"uid changed":              {"uid-a", "rv-1", "uid-b", "rv-1"},
+		"resource version changed": {"uid-a", "rv-1", "uid-a", "rv-2"},
+		"lineage removed":          {"uid-a", "rv-1", "", ""},
+		"lineage appeared":         {"", "", "uid-a", "rv-1"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			collector := NewStatusPatchCollector()
+			require.NoError(t, collector.RegisterWithLineage(
+				"default", "route", "example.test/v1", "Route",
+				test.firstUID, test.firstResourceVersion,
+				map[string]map[string]any{"rendered": {"owner": "stable"}},
+			))
+
+			err := collector.RegisterWithLineage(
+				"default", "route", "example.test/v1", "Route",
+				test.nextUID, test.nextResourceVersion,
+				map[string]map[string]any{"deployed": {"owner": "poison"}},
+			)
+			require.ErrorContains(t, err, "conflicting source lineage")
+
+			patches, snapshotErr := collector.Patches()
+			require.NoError(t, snapshotErr)
+			require.Len(t, patches, 1)
+			assert.Equal(t, test.firstUID, patches[0].UID)
+			assert.Equal(t, test.firstResourceVersion, patches[0].ResourceVersion)
+			assert.Equal(t, "stable", patches[0].Variants["rendered"]["owner"])
+			assert.NotContains(t, patches[0].Variants, "deployed")
+		})
+	}
+}
+
+func TestScriggoStatusPatchExtractsGenericResourceLineage(t *testing.T) {
+	engine, err := New(map[string]string{
+		"main": `{%%
+var resource = map[string]any{
+  "apiVersion": "example.test/v1", "kind": "Route",
+  "metadata": map[string]any{
+    "namespace": "default", "name": "route", "uid": "uid-route", "resourceVersion": "rv-29",
+  },
+}
+statusPatch(resource, map[string]any{"rendered": map[string]any{"accepted": true}})
+%%}`,
+	}, nil)
+	require.NoError(t, err)
+	collector := NewStatusPatchCollector()
+	output, err := engine.Render(t.Context(), "main", map[string]any{"statusPatchCollector": collector})
+	require.NoError(t, err)
+	assert.Empty(t, strings.TrimSpace(output))
+
+	patches, err := collector.Patches()
+	require.NoError(t, err)
+	require.Len(t, patches, 1)
+	assert.Equal(t, StatusPatch{
+		Namespace: "default", Name: "route", APIVersion: "example.test/v1", Kind: "Route",
+		UID: "uid-route", ResourceVersion: "rv-29",
+		Variants:       map[string]map[string]any{"rendered": {"accepted": true}},
+		SourceTemplate: "main", SourceLine: 8,
+	}, patches[0])
 }
 
 func TestStatusPatchCollector_Register_Validation(t *testing.T) {
@@ -170,7 +264,8 @@ func TestStatusPatchCollector_ConcurrentWrites(t *testing.T) {
 
 	wg.Wait()
 
-	patches := c.Patches()
+	patches, err := c.Patches()
+	require.NoError(t, err)
 	// At least 1 patch (up to 26 unique names), all should be present
 	assert.NotEmpty(t, patches)
 }
@@ -195,7 +290,8 @@ func TestStatusPatchCollector_ConcurrentWritesSameResource(t *testing.T) {
 
 	wg.Wait()
 
-	patches := c.Patches()
+	patches, err := c.Patches()
+	require.NoError(t, err)
 	require.Len(t, patches, 1)
 	// All four phases should be present after concurrent merging
 	assert.Len(t, patches[0].Variants, 4)
@@ -207,7 +303,8 @@ func TestStatusPatchCollector_PatchesReturnsSnapshot(t *testing.T) {
 	require.NoError(t, c.Register("ns", "a", "v1", "Pod",
 		map[string]map[string]any{"deployed": {"x": 1}}))
 
-	snapshot := c.Patches()
+	snapshot, err := c.Patches()
+	require.NoError(t, err)
 	require.Len(t, snapshot, 1)
 
 	// Adding more patches after snapshot shouldn't affect the snapshot
@@ -215,5 +312,61 @@ func TestStatusPatchCollector_PatchesReturnsSnapshot(t *testing.T) {
 		map[string]map[string]any{"deployed": {"y": 2}}))
 
 	assert.Len(t, snapshot, 1, "snapshot should not be affected by later Register calls")
-	assert.Len(t, c.Patches(), 2, "new Patches() call should include new registrations")
+	current, err := c.Patches()
+	require.NoError(t, err)
+	assert.Len(t, current, 2, "new Patches() call should include new registrations")
+}
+
+func TestStatusPatchCollector_DetachesRegisteredAndReturnedVariants(t *testing.T) {
+	c := NewStatusPatchCollector()
+	nested := map[string]any{"value": "stable"}
+	variants := map[string]map[string]any{
+		"rendered": {"nested": nested},
+	}
+	require.NoError(t, c.Register("ns", "name", "v1", "Route", variants))
+
+	nested["value"] = "input-poison"
+	variants["rendered"]["added"] = true
+	first, err := c.Patches()
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	assert.Equal(t, "stable", first[0].Variants["rendered"]["nested"].(map[string]any)["value"])
+	assert.NotContains(t, first[0].Variants["rendered"], "added")
+
+	first[0].Variants["rendered"]["nested"].(map[string]any)["value"] = "output-poison"
+	first[0].Variants["rendered"]["added"] = true
+	second, err := c.Patches()
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.Equal(t, "stable", second[0].Variants["rendered"]["nested"].(map[string]any)["value"])
+	assert.NotContains(t, second[0].Variants["rendered"], "added")
+}
+
+func TestStatusPatchCollector_RejectsUndetachableVariantsAtomically(t *testing.T) {
+	c := NewStatusPatchCollector()
+	require.NoError(t, c.Register("ns", "name", "v1", "Route", map[string]map[string]any{
+		"rendered": {"value": "stable"},
+	}))
+
+	err := c.Register("ns", "name", "v1", "Route", map[string]map[string]any{
+		"deployed": {"value": func() {}},
+	})
+	require.ErrorContains(t, err, "cannot be detached")
+	patches, snapshotErr := c.Patches()
+	require.NoError(t, snapshotErr)
+	require.Len(t, patches, 1)
+	assert.Equal(t, map[string]map[string]any{"rendered": {"value": "stable"}}, patches[0].Variants)
+}
+
+func TestStatusPatchCollector_PatchesFailsClosedOnCorruptStoredVariant(t *testing.T) {
+	c := NewStatusPatchCollector()
+	c.patches[newStatusPatchIdentity("ns", "name", "v1", "Route")] = &collectedStatusPatch{
+		Namespace: "ns", Name: "name", APIVersion: "v1", Kind: "Route",
+		Variants: map[string]collectedStatusPatchVariant{
+			"rendered": {detached: map[string]any{"value": func() {}}, hasDetached: true},
+		},
+	}
+
+	_, err := c.Patches()
+	require.ErrorContains(t, err, "snapshotting ns/name")
 }

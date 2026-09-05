@@ -17,21 +17,16 @@ package renderer
 import (
 	"fmt"
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
-// mapStrRefRE captures map filenames referenced by HAProxy converters. We only
-// match converter forms that take a map path as the first argument
-// (`map_str(...)`, `map_beg(...)`, `map_dir(...)`, etc.). We deliberately do
-// not parse the full HAProxy grammar — the goal is a defensive sanity check
-// that catches the obvious case where a rendered config references a map file
-// that the renderer forgot to register, not full validation. False positives
-// here would block valid configs, so the regex is intentionally narrow.
-var mapStrRefRE = regexp.MustCompile(`\bmap(?:_str|_beg|_dir|_dom|_end|_int|_ip|_reg|_sub)?\(([^)]+)\)`)
+var mapConverterPrefixes = [...]string{
+	"(", "_str(", "_beg(", "_dir(", "_dom(", "_end(",
+	"_int(", "_ip(", "_reg(", "_sub(",
+}
 
 // auxiliaryFilesConsistencyError describes a render output where the rendered
 // HAProxy config references one or more map files the renderer did not
@@ -93,9 +88,30 @@ func validateAuxiliaryFilesConsistency(haproxyConfig string, auxFiles *dataplane
 // returned (e.g., `ssl-redirect-301.map`) so it can be compared against
 // the auxiliary file set, which keys map files by basename.
 func extractMapReferences(haproxyConfig string) map[string]struct{} {
-	out := make(map[string]struct{})
-	for _, m := range mapStrRefRE.FindAllStringSubmatch(haproxyConfig, -1) {
-		arg := strings.TrimSpace(m[1])
+	var out map[string]struct{}
+	for offset := 0; offset < len(haproxyConfig); {
+		relative := strings.Index(haproxyConfig[offset:], "map")
+		if relative < 0 {
+			break
+		}
+		start := offset + relative
+		offset = start + len("map")
+		if start > 0 && isRegexpWordByte(haproxyConfig[start-1]) {
+			continue
+		}
+		argumentStart, found := mapConverterArgumentStart(haproxyConfig, offset)
+		if !found {
+			continue
+		}
+		relativeEnd := strings.IndexByte(haproxyConfig[argumentStart:], ')')
+		if relativeEnd < 0 {
+			break
+		}
+		offset = argumentStart + relativeEnd + 1
+		if relativeEnd == 0 {
+			continue
+		}
+		arg := strings.TrimSpace(haproxyConfig[argumentStart : argumentStart+relativeEnd])
 		// The argument may be a path (`maps/foo.map`), an absolute path
 		// (`/etc/haproxy/maps/foo.map`), or a comma-separated list when the
 		// converter accepts a default value (`maps/foo.map,default`). Take
@@ -111,7 +127,24 @@ func extractMapReferences(haproxyConfig string) map[string]struct{} {
 		if !strings.HasSuffix(base, ".map") {
 			continue
 		}
+		if out == nil {
+			out = make(map[string]struct{})
+		}
 		out[base] = struct{}{}
 	}
 	return out
+}
+
+func mapConverterArgumentStart(config string, afterMap int) (int, bool) {
+	for _, prefix := range mapConverterPrefixes {
+		if strings.HasPrefix(config[afterMap:], prefix) {
+			return afterMap + len(prefix), true
+		}
+	}
+	return 0, false
+}
+
+func isRegexpWordByte(value byte) bool {
+	return value == '_' || value >= '0' && value <= '9' ||
+		value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
 }

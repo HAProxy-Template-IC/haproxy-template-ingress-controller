@@ -30,7 +30,13 @@ templateSnippets:
   # ----------------------------------------------------------------------------
   global-settings-001-typed-access-smoke:
     requires: [gateways]
+    incremental:
+      source: gateways
+      group: gateway-typed-access-smoke
     template: |
-      {%- for _, gw := range resources.gateways.List() %}
+      {%- var gw = resources.gateways.GetSingle(
+        dig_string(item, "", "metadata", "namespace"),
+        dig_string(item, "", "metadata", "name")) -%}
+      {%- if gw != nil %}
       # typed-access-smoke: ns={{ gw.Metadata.Namespace }} name={{ gw.Metadata.Name }}
-      {% end %}
+      {%- end %}

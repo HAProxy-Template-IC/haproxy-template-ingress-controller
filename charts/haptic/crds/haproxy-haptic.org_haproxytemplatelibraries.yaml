@@ -190,6 +190,24 @@ spec:
                       - The internal config type: pkg/core/config/types.go (K8sResource)
                       - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - k8sResources section)
                   properties:
+                    createOnlyFields:
+                      description: |-
+                        CreateOnlyFields are dotted field paths this template sets when the
+                        object is created and never again, so whoever runs the object owns them
+                        afterwards.
+
+                        `spec.replicas` on a workload is the case this exists for: HAProxy
+                        routes to whatever pods are there, so the count belongs to an operator
+                        draining it or to an autoscaler. Without this the field is re-applied
+                        every reconcile, and a deliberate `kubectl scale` is overwritten seconds
+                        after it is made. The template's value is the size the object starts at,
+                        not the size it keeps.
+
+                        Paths are dotted (`spec.replicas`) and must name a field the template
+                        itself sets. A path absent from the rendered object is ignored.
+                      items:
+                        type: string
+                      type: array
                     postProcessing:
                       description: |-
                         PostProcessing defines optional post-processors to apply after rendering.
@@ -378,6 +396,106 @@ spec:
                 additionalProperties:
                   description: TemplateSnippet defines a reusable template fragment.
                   properties:
+                    incremental:
+                      description: Incremental configures authenticated incremental
+                        evaluation for this snippet.
+                      properties:
+                        bindingsTemplate:
+                          description: |-
+                            BindingsTemplate emits a JSON object mapping watched-resource aliases to
+                            immutable component props.
+                          minLength: 1
+                          type: string
+                        consumes:
+                          description: |-
+                            Consumes lists publication groups that must complete before this component
+                            can select their exact keyed values.
+                          items:
+                            minLength: 1
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: set
+                        effects:
+                          description: Effects declares the query-local side effects
+                            this component may emit.
+                          items:
+                            description: IncrementalEffect identifies a declared query-local
+                              side effect.
+                            enum:
+                            - deriveResource
+                            - recordEvent
+                            - backendPlan
+                            - publishValue
+                            - statusPatch
+                            maxLength: 32
+                            type: string
+                          maxItems: 5
+                          type: array
+                          x-kubernetes-list-type: set
+                        group:
+                          description: Group evaluates all members before resolving
+                            shared contributions.
+                          type: string
+                        mode:
+                          description: |-
+                            Mode selects Scriggo execution when empty or exact resource publication
+                            when set to resourceProjection. Resource projections emit no rendered text.
+                          enum:
+                          - ""
+                          - resourceProjection
+                          maxLength: 32
+                          type: string
+                        optionalConsumes:
+                          description: |-
+                            OptionalConsumes lists publication groups that may be absent only when
+                            effective-config resolution stripped their optional-resource snippets.
+                          items:
+                            minLength: 1
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: set
+                        root:
+                          description: |-
+                            Root groups compatible components into one authenticated Scriggo runner.
+                            Each member keeps its own bindings, dependencies, effects, and result.
+                          minLength: 1
+                          type: string
+                        source:
+                          description: Source names one watchedResources entry.
+                          minLength: 1
+                          type: string
+                        whenAnyPathExists:
+                          description: |-
+                            WhenAnyPathExists makes the component empty unless at least one JSONPath
+                            exists on its post-derivation source item. [*] selects any array element.
+                          items:
+                            minLength: 1
+                            pattern: ^\$?\.?([^.\[\]?*@()]+|\[([0-9]+|\*|'[^']+'|"[^"]+")\])(\.?([^.\[\]?*@()]+|\[([0-9]+|\*|'[^']+'|"[^"]+")\]))*$
+                            type: string
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                      type: object
+                      x-kubernetes-validations:
+                      - message: exactly one of source or bindingsTemplate is required
+                        rule: has(self.source) != has(self.bindingsTemplate)
+                      - message: whenAnyPathExists cannot be combined with deriveResource
+                        rule: '!has(self.whenAnyPathExists) || !has(self.effects)
+                          || !self.effects.exists(effect, effect == ''deriveResource'')'
+                      - message: resourceProjection requires bindingsTemplate and
+                          forbids source
+                        rule: '!has(self.mode) || self.mode != ''resourceProjection''
+                          || (has(self.bindingsTemplate) && !has(self.source))'
+                      - message: resourceProjection requires exactly the publishValue
+                          effect
+                        rule: '!has(self.mode) || self.mode != ''resourceProjection''
+                          || (has(self.effects) && self.effects.size() == 1 && self.effects[0]
+                          == ''publishValue'')'
+                      - message: resourceProjection forbids whenAnyPathExists, root,
+                          consumes, and optionalConsumes
+                        rule: '!has(self.mode) || self.mode != ''resourceProjection''
+                          || (!has(self.whenAnyPathExists) && !has(self.root) && !has(self.consumes)
+                          && !has(self.optionalConsumes))'
                     requires:
                       description: |-
                         Requires lists watched-resource names this snippet depends on. When an
@@ -399,6 +517,7 @@ spec:
                   type: object
                 description: TemplateSnippets maps snippet names to reusable template
                   fragments.
+                maxProperties: 4096
                 type: object
               templatingSettings:
                 description: |-

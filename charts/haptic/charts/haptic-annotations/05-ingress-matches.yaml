@@ -1,0 +1,52 @@
+templateSnippets:
+  features-001-haptic-ingress-match-files:
+    template: |-
+      {%- for _, file := range incremental_values("haptic-ingress-match-publications", "files") -%}
+        {%- var record = file.(map[string]any) -%}
+        {%- var _, err = fileRegistry.Register("file", tostring(record["filename"]), tostring(record["content"])) -%}
+        {%- if err != nil -%}{{ fail("Failed to register host match file '" + tostring(record["filename"]) + "': " + err.Error()) }}{%- end -%}
+      {%- end -%}
+      {{- render "haptic-ingress-match-publications" -}}
+
+  haptic-ingress-match-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var fileDir, err = pathResolver.GetPath("", "file") -%}
+        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{"fileDir": fileDir}}) -}}
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var hosts = []string{} -%}
+        {%- for _, rule := range ingress.Spec.Rules -%}
+          {%- if rule.Host != "" -%}{%- hosts = append(hosts, rule.Host) -%}{%- end -%}
+        {%- end -%}
+        {%- if len(hosts) > 0 -%}
+          {%- var condition = "{ var(txn.host) -m str " + join(hosts, " ") + " }" -%}
+          {%- if len(hosts) > 30 -%}
+            {%- var content = join(hosts, "\n") + "\n" -%}
+            {%- var filename = "host-match-" + md5(content) + ".lst" -%}
+            {%- var path = tostring(props["fileDir"]) + "/" + filename -%}
+            {%- condition = "{ var(txn.host) -m str -f " + path + " }" -%}
+            {{- shared.Publish("files", filename, map[string]any{"filename": filename, "content": content}) -}}
+          {%- end -%}
+          {{- shared.Publish("hosts", key, condition) -}}
+        {%- end -%}
+      {%- end -%}
+
+  util-haptic-ingress-match:
+    template: |-
+      {%- var HapticResourceMatchCondition = func(key string) string {
+        return "{ var(txn.resource_id) -m str " + key + " }"
+      } -%}
+      {%- var HapticHostMatchCondition = func(key string) string {
+        var condition, found = shared.Select("haptic-ingress-match-publications", "hosts", key)
+        if !found {
+          return ""
+        }
+        return tostring(condition)
+      } -%}

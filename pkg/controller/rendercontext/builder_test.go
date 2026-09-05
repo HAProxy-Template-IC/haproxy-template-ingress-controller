@@ -24,6 +24,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -276,6 +277,43 @@ func TestWithCurrentAuxFilesIsolatesEachRenderingContext(t *testing.T) {
 	assert.Equal(t, "published", (*secondFiles)["gate"])
 }
 
+func TestWithDetachedExtraContextIsolatesEachRenderingContext(t *testing.T) {
+	extraContext, err := DetachExtraContext(map[string]any{
+		"nested": map[string]any{"gate": "published"},
+	})
+	require.NoError(t, err)
+	option := WithDetachedExtraContext(extraContext)
+
+	first := NewBuilder(t.Context(), &config.Config{}, &templating.PathResolver{}, testutil.NewTestLogger(), option).Build().Context
+	firstExtra := first["extraContext"].(map[string]any)
+	firstExtra["nested"].(map[string]any)["gate"] = "template-mutated"
+
+	second := NewBuilder(t.Context(), &config.Config{}, &templating.PathResolver{}, testutil.NewTestLogger(), option).Build().Context
+	secondExtra := second["extraContext"].(map[string]any)
+	assert.Equal(t, "published", secondExtra["nested"].(map[string]any)["gate"])
+}
+
+func TestWithCurrentConfigIsolatesEachRenderingContext(t *testing.T) {
+	port := int64(8080)
+	current := &renderplan.CurrentConfig{ServerIndex: map[string]map[string]renderplan.ServerAddr{
+		"backend": {"server": {Address: "192.0.2.1", Port: &port}},
+	}}
+	option := WithCurrentConfig(current)
+	current.ServerIndex["backend"]["server"] = renderplan.ServerAddr{Address: "caller-mutated"}
+
+	first := NewBuilder(t.Context(), &config.Config{}, &templating.PathResolver{}, testutil.NewTestLogger(), option).Build().Context
+	firstCurrent := first["currentConfig"].(*renderplan.CurrentConfig)
+	server := firstCurrent.ServerIndex["backend"]["server"]
+	assert.Equal(t, "192.0.2.1", server.Address)
+	*server.Port = 9000
+	firstCurrent.ServerIndex["backend"]["server"] = renderplan.ServerAddr{Address: "template-mutated"}
+
+	second := NewBuilder(t.Context(), &config.Config{}, &templating.PathResolver{}, testutil.NewTestLogger(), option).Build().Context
+	secondServer := second["currentConfig"].(*renderplan.CurrentConfig).ServerIndex["backend"]["server"]
+	assert.Equal(t, "192.0.2.1", secondServer.Address)
+	assert.Equal(t, int64(8080), *secondServer.Port)
+}
+
 func TestBuilder_Build_CurrentFilesCannotBeOverriddenByExtraContext(t *testing.T) {
 	cfg := &config.Config{TemplatingSettings: config.TemplatingSettings{
 		ExtraContext: map[string]any{
@@ -460,7 +498,10 @@ func TestBuildResourcesValue_MemoizedTypedPointers(t *testing.T) {
 	newRender := func() reflect.Value {
 		storeMap := map[string]stores.Store{"ingresses": &storetest.MockStore{Items: []any{item}}}
 		typedTypes := map[string]reflect.Type{"ingresses": elemType}
-		res := BuildResourcesValue(t.Context(), storeMap, typedTypes, []string{"ingresses"}, indexBy, nil, nil, logger)
+		res := BuildResourcesValue(
+			templating.WithImmutableResourceInputs(t.Context()),
+			storeMap, typedTypes, []string{"ingresses"}, indexBy, nil, nil, logger,
+		)
 		return reflect.ValueOf(res).Elem().Field(0).Elem()
 	}
 	list := func(inner reflect.Value) reflect.Value { return inner.FieldByName("List").Call(nil)[0] }

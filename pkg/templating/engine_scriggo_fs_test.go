@@ -75,6 +75,34 @@ func TestScriggoTemplateFS_ReadDirReturnsSortedTemplateList(t *testing.T) {
 	}
 }
 
+func TestScriggoTemplateFSExposesPrivateTemplatesWithoutListingThem(t *testing.T) {
+	tfs := &scriggoTemplateFS{
+		templates: map[string]string{
+			"component-a": "a",
+			"component-b": "b",
+			"library":     "library",
+		},
+		hiddenTemplates: map[string]struct{}{
+			"component-a": {},
+			"component-b": {},
+		},
+		exposedTemplates: map[string]struct{}{
+			"component-a": {},
+			"component-b": {},
+		},
+	}
+
+	for _, name := range []string{"component-a", "component-b"} {
+		file, err := tfs.Open(name)
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+	}
+	entries, err := tfs.ReadDir(".")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "library", entries[0].Name())
+}
+
 func TestScriggoTemplateFS_ReadDirOnNonRootReturnsNotExist(t *testing.T) {
 	// Scriggo's fs.WalkDir would otherwise descend into phantom
 	// subdirectories. Returning fs.ErrNotExist matches the standard

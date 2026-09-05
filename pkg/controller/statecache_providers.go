@@ -76,14 +76,28 @@ func (sc *StateCache) GetRenderedConfig() (string, time.Time, error) {
 // GetAuxiliaryFiles implements debug.StateProvider.
 func (sc *StateCache) GetAuxiliaryFiles() (*dataplane.AuxiliaryFiles, time.Time, error) {
 	sc.mu.RLock()
-	defer sc.mu.RUnlock()
+	outputSnapshot := sc.lastOutputSnapshot
+	auxFiles := dataplane.CloneAuxiliaryFiles(sc.lastAuxFiles)
+	timestamp := sc.lastAuxFilesTime
+	sc.mu.RUnlock()
 
-	if sc.lastAuxFiles == nil {
+	if outputSnapshot != nil {
+		artifactSnapshot, err := outputSnapshot.ArtifactSnapshot()
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("reading rendered output artifacts: %w", err)
+		}
+		materialized, err := dataplane.MaterializeAuxiliaryFileSnapshot(artifactSnapshot)
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("materializing rendered output artifacts: %w", err)
+		}
+		return materialized, timestamp, nil
+	}
+	if auxFiles == nil {
 		// Return empty but valid structure
 		return &dataplane.AuxiliaryFiles{}, time.Time{}, nil
 	}
 
-	return sc.lastAuxFiles, sc.lastAuxFilesTime, nil
+	return auxFiles, timestamp, nil
 }
 
 // GetResourceCounts implements debug.StateProvider.

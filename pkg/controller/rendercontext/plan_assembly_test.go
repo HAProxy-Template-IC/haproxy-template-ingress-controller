@@ -16,6 +16,7 @@ package rendercontext
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -54,6 +55,8 @@ func TestAssembleWithoutTokens(t *testing.T) {
 				Name:       "core#0",
 				TextDigest: renderplan.DigestString("global\n    daemon\n\ndefaults\n    mode http\n"),
 				Length:     len("global\n    daemon\n\ndefaults\n    mode http\n"),
+				Text:       "global\n    daemon\n\ndefaults\n    mode http\n",
+				TextKnown:  true,
 			}},
 		},
 	}
@@ -132,6 +135,149 @@ func TestAssemblePostProcessesEachSection(t *testing.T) {
 	assert.Equal(t, renderplan.DigestString("backend be_a\n    server s1 10.0.0.1:80\n"), sections[1].TextDigest,
 		"the section digest covers the post-processed bytes")
 	assertPartitions(t, config, sections)
+}
+
+func TestAssembleBatchPostProcessesInEmissionOrder(t *testing.T) {
+	registry := NewPlanRegistry(nil)
+	_, err := registry.Section("profile", "zeta", "defaults zeta\n")
+	require.NoError(t, err)
+	_, err = registry.Section("profile", "alpha", "defaults alpha\n")
+	require.NoError(t, err)
+	first, err := registry.Section("backend", "first", "backend first\n\tserver first 127.0.0.1:80")
+	require.NoError(t, err)
+	last, err := registry.Section("backend", "last", "backend last\n\tserver last 127.0.0.1:80")
+	require.NoError(t, err)
+
+	var inputs []string
+	batch := func(_ context.Context, texts []string) ([]string, error) {
+		inputs = append(inputs, texts...)
+		outputs := make([]string, len(texts))
+		for index, text := range texts {
+			outputs[index] = strings.ReplaceAll(text, "\t", "  ")
+		}
+		return outputs, nil
+	}
+	config, sections, err := registry.AssembleWithBatch(
+		context.Background(), first+registry.ProfileGroup()+last, failingPost(t), batch,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"backend first\n\tserver first 127.0.0.1:80",
+		"defaults alpha\n",
+		"defaults zeta\n",
+		"backend last\n\tserver last 127.0.0.1:80",
+	}, inputs)
+	assert.Equal(t,
+		"backend first\n  server first 127.0.0.1:80\n"+
+			"defaults alpha\ndefaults zeta\n"+
+			"backend last\n  server last 127.0.0.1:80\n",
+		config,
+	)
+	assertPartitions(t, config, sections)
+}
+
+func TestAssembleBatchSkipsEmptySectionsLikeSequential(t *testing.T) {
+	registry := NewPlanRegistry(nil)
+	emptyBackend, err := registry.Section("backend", "empty", "")
+	require.NoError(t, err)
+	_, err = registry.Section("profile", "empty", "")
+	require.NoError(t, err)
+	fullBackend, err := registry.Section("backend", "full", "backend full\n")
+	require.NoError(t, err)
+
+	var inputs []string
+	batch := func(_ context.Context, texts []string) ([]string, error) {
+		inputs = append(inputs, texts...)
+		outputs := make([]string, len(texts))
+		for index, text := range texts {
+			outputs[index] = "prefix:" + text
+		}
+		return outputs, nil
+	}
+	config, sections, err := registry.AssembleWithBatch(
+		context.Background(), emptyBackend+registry.ProfileGroup()+fullBackend, failingPost(t), batch,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"backend full\n"}, inputs)
+	assert.Equal(t, "\n\nprefix:backend full\n", config)
+	assertPartitions(t, config, sections)
+}
+
+func TestAssembleBatchDoesNotCallProcessorForOnlyEmptySections(t *testing.T) {
+	registry := NewPlanRegistry(nil)
+	empty, err := registry.Section("backend", "empty", "")
+	require.NoError(t, err)
+
+	config, sections, err := registry.AssembleWithBatch(
+		context.Background(), empty, failingPost(t), func(context.Context, []string) ([]string, error) {
+			t.Fatal("batch post-processing must not run for empty sections")
+			return nil, nil
+		},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "\n", config)
+	assertPartitions(t, config, sections)
+}
+
+func TestAssembleBatchRejectsInvalidResults(t *testing.T) {
+	registry := NewPlanRegistry(nil)
+	first, err := registry.Section("backend", "first", "backend first\n")
+	require.NoError(t, err)
+	last, err := registry.Section("backend", "last", "backend last\n")
+	require.NoError(t, err)
+	rendered := first + last
+
+	_, _, err = registry.AssembleWithBatch(context.Background(), rendered, nil,
+		func(context.Context, []string) ([]string, error) {
+			return []string{"only one"}, nil
+		},
+	)
+	require.ErrorContains(t, err, "returned 1 of 2 sections")
+
+	_, _, err = registry.AssembleWithBatch(context.Background(), rendered, nil,
+		func(context.Context, []string) ([]string, error) {
+			return nil, indexedBatchTestError{index: 1}
+		},
+	)
+	require.ErrorContains(t, err, `post-processing backend "last"`)
+	require.ErrorIs(t, err, errBatchTest)
+}
+
+func TestAssembleBatchValidatesTokensBeforeProcessing(t *testing.T) {
+	registry := NewPlanRegistry(nil)
+	token, err := registry.Section("backend", "first", "backend first\n")
+	require.NoError(t, err)
+
+	called := false
+	_, _, err = registry.AssembleWithBatch(context.Background(), token+token, nil,
+		func(context.Context, []string) ([]string, error) {
+			called = true
+			return nil, nil
+		},
+	)
+	require.ErrorContains(t, err, `backend "first" spliced more than once`)
+	assert.False(t, called)
+}
+
+var errBatchTest = errors.New("batch failed")
+
+type indexedBatchTestError struct {
+	index int
+}
+
+func (e indexedBatchTestError) Error() string {
+	return errBatchTest.Error()
+}
+
+func (e indexedBatchTestError) Unwrap() error {
+	return errBatchTest
+}
+
+func (e indexedBatchTestError) BatchIndex() int {
+	return e.index
 }
 
 func TestAssembleIndentedToken(t *testing.T) {
@@ -255,6 +401,29 @@ func TestAssembleForeignNonceIsNotSpliced(t *testing.T) {
 	require.NoError(t, err, "another render's token is text, not ours to splice")
 	assert.Equal(t, rendered, config)
 	assertPartitions(t, config, sections)
+}
+
+func TestAssembleSharedAuthorityRevalidatesCurrentSections(t *testing.T) {
+	authority := NewPlanTokenAuthority()
+	first, err := NewPlanRegistryWithAuthority(nil, authority)
+	require.NoError(t, err)
+	second, err := NewPlanRegistryWithAuthority(nil, authority)
+	require.NoError(t, err)
+	firstToken, err := first.Section("backend", "be_a", "backend be_a\n  old\n")
+	require.NoError(t, err)
+	secondToken, err := second.Section("backend", "be_a", "backend be_a\n  current\n")
+	require.NoError(t, err)
+	assert.Equal(t, firstToken, secondToken)
+
+	config, sections, err := second.Assemble(t.Context(), "global\n"+firstToken, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "global\nbackend be_a\n  current\n", config)
+	assertPartitions(t, config, sections)
+
+	unregistered, err := NewPlanRegistryWithAuthority(nil, authority)
+	require.NoError(t, err)
+	_, _, err = unregistered.Assemble(t.Context(), firstToken, nil)
+	require.ErrorContains(t, err, `token for unregistered backend "be_a"`)
 }
 
 func failingPost(t *testing.T) PostProcessFunc {

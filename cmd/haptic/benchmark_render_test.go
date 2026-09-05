@@ -17,13 +17,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -42,7 +46,7 @@ const objectsPerApp = 4
 var benchObjectCounts = []int{100, 1000, 5000, 20000}
 
 // BenchmarkRender measures a full reconcile-path render of the bundled chart
-// (haproxy.cfg plus every auxiliary file) against a synthetic store of N watched
+// (haproxy.cfg plus every configured render root) against a synthetic store of N watched
 // objects, at the issue #145 mix and sizes. Each render gets a fresh context so
 // first_seen() never suppresses a subtree a prior render already emitted (#165),
 // matching production, which builds one context per reconcile. ns/op is the
@@ -67,8 +71,8 @@ func BenchmarkRender(b *testing.B) {
 	}
 }
 
-// benchFullRender renders haproxy.cfg plus every auxiliary file (maps, general
-// files, certs) — the full set a reconcile and a webhook admission both pay —
+// benchFullRender renders every configured root — the full set a reconcile and
+// a webhook admission both pay —
 // against a fresh per-render context. It fatals on any render or resource error
 // so a broken render can never masquerade as a fast one.
 func benchFullRender(
@@ -81,12 +85,83 @@ func benchFullRender(
 ) {
 	b.Helper()
 	bctx := freshBenchmarkContext(cfg, nil, storeMap, setup.ValidationPaths, httpStore, setup.TypedResourceTypes, logger)
-	if _, err := renderAllFiles(setup.Engine, cfg, bctx); err != nil {
+	if _, err := renderAllFiles(
+		setup.Engine,
+		cfg,
+		bctx,
+		storeMap,
+		setup.TypedResourceTypes,
+		logger,
+	); err != nil {
 		b.Fatalf("render failed: %v", err)
 	}
 	if err := bctx.Err(context.Background()); err != nil {
 		b.Fatalf("render resource error: %v", err)
 	}
+}
+
+func TestRenderAllFilesIncludesK8sResourceRoots(t *testing.T) {
+	cfg := &config.Config{
+		WatchedResources: map[string]config.WatchedResource{
+			"routes": {
+				APIVersion: "example.test/v1",
+				Resources:  "routes",
+				IndexBy:    []string{"metadata.namespace", "metadata.name"},
+			},
+		},
+		TemplateSnippets: map[string]config.TemplateSnippet{
+			"route-lines": {
+				Requires:    []string{"routes"},
+				Incremental: &config.IncrementalTemplate{Source: "routes"},
+				Template:    `# {{ item | dig_string("", "metadata", "name") }}`,
+			},
+		},
+		HAProxyConfig: config.HAProxyConfig{Template: "global\n"},
+		K8sResources: map[string]config.K8sResource{
+			"objects": {Template: `{{ render "route-lines" }}`},
+		},
+	}
+	typedResult := &typebootstrap.Result{
+		Types:  map[string]reflect.Type{},
+		Kinds:  map[string]string{},
+		Errors: map[string]error{},
+	}
+	engine, err := compileTemplatesForBenchmark(cfg, typedResult)
+	require.NoError(t, err)
+	storeMap, err := createStoresForBenchmark(cfg, engine, map[string][]any{
+		"routes": {
+			map[string]any{
+				"apiVersion": "example.test/v1",
+				"kind":       "Route",
+				"metadata": map[string]any{
+					"namespace": "default",
+					"name":      "route",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	httpStore := createHTTPStoreForBenchmark(nil, logger)
+	bctx := freshBenchmarkContext(
+		cfg,
+		nil,
+		storeMap,
+		&dataplane.ValidationPaths{},
+		httpStore,
+		typedResult.Types,
+		logger,
+	)
+
+	result, err := renderAllFiles(engine, cfg, bctx, storeMap, typedResult.Types, logger)
+
+	require.NoError(t, err)
+	require.NoError(t, bctx.Err(t.Context()))
+	names := make([]string, len(result.FileResults))
+	for index := range result.FileResults {
+		names[index] = result.FileResults[index].Name
+	}
+	require.Equal(t, []string{"haproxy.cfg", "k8s:objects"}, names)
 }
 
 // benchScaleFixtures builds a self-consistent corpus of `apps` routing units,

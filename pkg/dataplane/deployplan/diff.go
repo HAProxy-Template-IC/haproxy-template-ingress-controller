@@ -45,6 +45,8 @@ type builder struct {
 	baseline      *Baseline
 	nextFiles     map[string]*renderplan.File
 	prevFiles     map[string]*renderplan.File
+	nextSections  map[sectionKey]*renderplan.Section
+	prevSections  map[sectionKey]*renderplan.Section
 	groups        [groupCount][]api.Op
 	reasons       []string
 	reload        bool
@@ -75,6 +77,7 @@ func Diff(next *renderplan.Plan, base *Baseline) Decision {
 	}
 	if b.baselineUsable() {
 		b.nextFiles, b.prevFiles = fileIndex(next.Files), fileIndex(b.prev.Files)
+		b.nextSections, b.prevSections = sectionIndex(next.Sections), sectionIndex(b.prev.Sections)
 		// Ordered: a server keyword may name a certificate this diff creates, a
 		// removed profile is judged by the backend deletes this diff composes,
 		// and the config guard by whether any section changed.
@@ -180,18 +183,16 @@ type sectionKey struct{ kind, name string }
 // diffSections applies the section guard (rule 1) to core and profile
 // sections; backend sections are guarded by their record in diffBackends.
 func (b *builder) diffSections() {
-	prev := sectionIndex(b.prev.Sections)
-	next := sectionIndex(b.next.Sections)
 	for i := range b.next.Sections {
 		sec := &b.next.Sections[i]
 		if sec.Kind == renderplan.SectionKindBackend {
 			continue
 		}
-		old, existed := prev[sectionKey{sec.Kind, sec.Name}]
+		old, existed := b.prevSections[sectionKey{sec.Kind, sec.Name}]
 		switch {
 		case !existed:
 			b.sectionAdded(sec)
-		case old.TextDigest != sec.TextDigest:
+		case !sameSectionText(old, sec):
 			b.sectionChanged(sec)
 		}
 	}
@@ -200,7 +201,7 @@ func (b *builder) diffSections() {
 		if sec.Kind == renderplan.SectionKindBackend {
 			continue
 		}
-		if _, kept := next[sectionKey{sec.Kind, sec.Name}]; !kept {
+		if _, kept := b.nextSections[sectionKey{sec.Kind, sec.Name}]; !kept {
 			b.sectionRemoved(sec)
 		}
 	}
@@ -258,7 +259,7 @@ func (b *builder) profileRemoved(name string) {
 func (b *builder) diffFiles() {
 	for i := range b.next.Files {
 		f := &b.next.Files[i]
-		if old, existed := b.prevFiles[f.Path]; existed && old.Digest == f.Digest {
+		if old, existed := b.prevFiles[f.Path]; existed && sameFileContent(old, f) {
 			continue
 		}
 		if f.Kind == renderplan.FileKindConfig {

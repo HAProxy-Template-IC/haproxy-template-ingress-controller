@@ -14,7 +14,28 @@ templateSnippets:
   # ==========================================================================
   # Per-Ingress set-header (host-scoped). frontend-filters-* inherit no locals.
   # ==========================================================================
+  features-900-haptic-fragment-880-request-id:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/request-id']"
+        - "metadata.annotations['haproxy-haptic.org/request-id-accept-inbound']"
+        - "metadata.annotations['haproxy-haptic.org/request-id-header']"
+      consumes: [haptic-ingress-match-publications]
+      effects: [publishValue]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-880-request-id" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
   frontend-filters-880-haptic-request-id:
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-880-request-id", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  util-haptic-fragment-body-880-request-id:
     template: |
       {#
         HAPTIC request-id — forward a correlation ID upstream.
@@ -47,9 +68,10 @@ templateSnippets:
         upstream therefore sees the client's id while the log line carries
         HAPTIC's — join them on the backend side if you enable it.
       #}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -65,9 +87,9 @@ templateSnippets:
             {%- if len(hosts) > 0 %}
       # haptic/request-id ({{ key }})
               {%- if acceptInbound %}
-      http-request set-header {{ h }} %[unique-id] if {{ HostMatchCondition(hosts) }} !{ req.hdr({{ h }}) -m reg ^[A-Za-z0-9._:-]{1,128}$ }
+      http-request set-header {{ h }} %[unique-id] if {{ HapticHostMatchCondition(key) }} !{ req.hdr({{ h }}) -m reg ^[A-Za-z0-9._:-]{1,128}$ }
               {%- else %}
-      http-request set-header {{ h }} %[unique-id] if {{ HostMatchCondition(hosts) }}
+      http-request set-header {{ h }} %[unique-id] if {{ HapticHostMatchCondition(key) }}
               {%- end %}
             {%- end %}
           {%- end %}

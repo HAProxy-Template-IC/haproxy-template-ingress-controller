@@ -22,13 +22,15 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
 
-// CurrentFiles must expose the three CRD-backed aux kinds (map, general,
-// crt-list) keyed by base filename, and must NOT expose SSL certificate or CA
-// content — their private keys must never enter the render context.
+// CurrentFiles must expose map, non-CA general, and crt-list output keyed by
+// base filename. Certificate and CA content must not enter the render context.
 func TestAuxiliaryFiles_CurrentFiles(t *testing.T) {
 	af := &AuxiliaryFiles{
-		MapFiles:        []auxiliaryfiles.MapFile{{Path: "maps/host.map", Content: "m"}},
-		GeneralFiles:    []auxiliaryfiles.GeneralFile{{Filename: "tls-ticket-keys", Path: "general/tls-ticket-keys", Content: "g"}},
+		MapFiles: []auxiliaryfiles.MapFile{{Path: "maps/host.map", Content: "m"}},
+		GeneralFiles: []auxiliaryfiles.GeneralFile{
+			{Filename: "tls-ticket-keys", Path: "general/tls-ticket-keys", Content: "g"},
+			{Filename: "dynamic-ca.pem", Path: "general/dynamic-ca.pem", Content: "general-ca", IsCaFile: true},
+		},
 		CRTListFiles:    []auxiliaryfiles.CRTListFile{{Path: "ssl/https.crtlist", Content: "c"}},
 		SSLCertificates: []auxiliaryfiles.SSLCertificate{{Path: "ssl/cert.pem", Content: "-----BEGIN PRIVATE KEY-----"}},
 		SSLCaFiles:      []auxiliaryfiles.SSLCaFile{{Path: "ssl/ca.pem", Content: "-----BEGIN CERTIFICATE-----"}},
@@ -40,6 +42,7 @@ func TestAuxiliaryFiles_CurrentFiles(t *testing.T) {
 	assert.Equal(t, "c", got["https.crtlist"])
 	assert.NotContains(t, got, "cert.pem", "SSL certificate content must be excluded")
 	assert.NotContains(t, got, "ca.pem", "CA file content must be excluded")
+	assert.NotContains(t, got, "dynamic-ca.pem", "general CA content must be excluded")
 	assert.Len(t, got, 3)
 }
 

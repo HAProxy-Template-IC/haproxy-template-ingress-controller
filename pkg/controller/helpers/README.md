@@ -38,6 +38,8 @@ Used when a caller needs the list of templates without instantiating an engine �
 extraction := helpers.ExtractTemplatesFromConfig(cfg)
 // extraction.AllTemplates → map[string]string for the engine's filesystem
 // extraction.EntryPoints  → []string of explicitly-compiled templates
+// extraction.IncrementalEntryPoints → []string of restricted component entry points
+// extraction.IncrementalBindingEntryPoints → []string of restricted binding planners
 ```
 
 For Scriggo with `inherit_context`, only entry points are compiled explicitly; snippets are compiled on demand when referenced via `render` / `render_glob`.

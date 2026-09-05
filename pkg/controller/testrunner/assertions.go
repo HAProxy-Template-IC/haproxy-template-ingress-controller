@@ -280,7 +280,60 @@ func (r *Runner) executeAssertions(
 			return true
 		}
 	}
+	if fused := checkFusedDirectives(test, haproxyConfig, result); fused != nil {
+		if appendAssertionResult(ctx, result, fused) {
+			return true
+		}
+	}
 	return false
+}
+
+// fusedDirectiveNames are directives distinctive enough that finding one glued
+// to the end of a comment is a rendering defect, not prose. Short, common words
+// (acl, bind, server) are deliberately absent: they appear inside comment text.
+var fusedDirectiveNames = []string{
+	"http-request ",
+	"http-response ",
+	"http-after-response ",
+	"tcp-request ",
+	"tcp-response ",
+	"use_backend ",
+	"default_backend ",
+	"use-server ",
+}
+
+// checkFusedDirectives fails a test whose config has a directive swallowed by a
+// comment. A template that strips the newline between a section-marker comment
+// and the directive behind it renders valid config that silently does nothing --
+// `haproxy -c` accepts it, and a `contains` assertion still matches the fused
+// line. Every such site so far cost a whole feature: Gateway routes answering
+// 404, fixed-response and consumer-group denial never applying.
+func checkFusedDirectives(test *config.ValidationTest, haproxyConfig string, result *TestResult) *AssertionResult {
+	if result.RenderError != "" || hasRenderingErrorAssertions(test.Assertions) {
+		return nil
+	}
+	check := AssertionResult{
+		Type:        "no_fused_directive",
+		Description: "No HAProxy directive may be swallowed by a comment",
+		Passed:      true,
+	}
+	for line := range strings.SplitSeq(haproxyConfig, "\n") {
+		if !strings.HasPrefix(strings.TrimLeft(line, " \t"), "#") {
+			continue
+		}
+		for _, directive := range fusedDirectiveNames {
+			at := strings.Index(line, directive)
+			if at <= 0 || line[at-1] == ' ' || line[at-1] == '\t' {
+				continue
+			}
+			check.Passed = false
+			check.Error = fmt.Sprintf(
+				"comment swallowed a %sdirective, which HAProxy then ignores: %s",
+				directive, strings.TrimSpace(line))
+			return &check
+		}
+	}
+	return &check
 }
 
 func appendAssertionResult(ctx context.Context, result *TestResult, assertion *AssertionResult) bool {

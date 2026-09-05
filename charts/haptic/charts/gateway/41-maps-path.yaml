@@ -1,95 +1,113 @@
 templateSnippets:
-  util-path-map-entry-gateway-shard:
-    requires: [grpcroutes]
+  util-publish-gateway-route-paths:
+    requires: [grpcroutes, httproutes]
     template: |
-      {#
-        Gateway Path Map Entry Shard Processor
-
-        Generates map file entries for a slice of sorted routes
-        (pre-grouped by pathKey in AnalyzeRoutes). Reads the
-        precomputed scalars routeInfo emits — pathKey / pathType /
-        pathValue / hostname — and derives the route Kind via
-        type-switch on routeInfo["route"].
-      #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups any, pathType string, suffix string) string %}
-      {%- for _, routeInfo := range sortedRoutes %}
-        {%- var pathKey = tostring(routeInfo["pathKey"]) %}
-        {%- if first_seen("gateway_pathMap_" + pathType + suffix, pathKey) %}
-          {%- var routes []any = pathGroups | dig(pathKey) | toSlice() %}
-          {%- var firstRoute = routes[0].(map[string]any) %}
-          {%- var frPath_type = tostring(firstRoute["pathType"]) %}
-        {%- if frPath_type == pathType %}
-          {#- The group's conflictGroup IS this join, computed once in AnalyzeRoutes. Rebuilding
-              it here let the two drift: route-winner.map and the advanced chain key on the
-              analysis string, and a group of 2+ routes then never matched at runtime. -#}
-          {%- var routeIds_str = tostring(firstRoute["conflictGroup"]) -%}
-          {%- var frHostname = tostring(firstRoute["hostname"]) %}
-          {%- var frPath_val = tostring(firstRoute["pathValue"]) %}
-          {#- Map keys are whitespace-delimited: a space/tab/newline in a path
-              splits the line and smuggles a second entry (#153). Reject the route. -#}
-          {%- if regex_search(frPath_val, "[[:cntrl:]]") || strings_contains(frPath_val, " ") %}
-            {{- WebhookRejectOrWarn(firstRoute["route"], "InvalidPath", "Route path '" + frPath_val + "' (host '" + frHostname + "') contains whitespace or control characters, which cannot be written to the routing map; the route is not applied. Remove spaces, tabs and newlines from the HTTPRoute path value.") -}}
-            {%- continue %}
-          {%- end %}
-          {#- Skip the catch-all `/` entry only for PathPrefix routes —
-              an Exact `/` route must still emit, otherwise requests
-              to the bare root are unroutable. PathPrefix `/` matches
-              everything so its entry would otherwise pin every
-              non-matched request to that route's backend; the chart
-              relies on the path-prefix-exact / path-prefix maps for
-              specific paths, with a default fall-through to 404. The
-              GatewayBackendClientCertificateFeature fixture pins this
-              with `path: {type: Exact, value: /}`. -#}
-          {%- if suffix == "" && frPath_val == "/" && pathType == "PathPrefix" %}
-            {%- continue %}
-          {%- end %}
-          {#- Route Kind discriminator. HTTPRoute is the default;
-              GRPCRoute is the only non-default branch. -#}
-          {%- var routeTypeShort = "http" %}
-          {%- switch firstRoute["route"].(type) %}
-          {%- case *resources.grpcroutes.T %}
-            {%- routeTypeShort = "grpc" %}
-          {%- end %}
-          {%- var pathSuffix = suffix %}
-          {%- if suffix == "/" && hasSuffix(frPath_val, "/") %}
-            {%- pathSuffix = "" %}
-          {%- end %}
-          {%- if suffix == "" && pathType != "RegularExpression" && len(frPath_val) > 1 && hasSuffix(frPath_val, "/") %}
-            {%- frPath_val = frPath_val[:len(frPath_val)-1] %}
-          {%- end %}
-      {{ "\n" }}{{ MapKeyForHost(frHostname) }}{{ frPath_val }}{{ pathSuffix }} GW_ROUTE_ID:{{ routeTypeShort }}:{{ routeIds_str }}
-        {%- end %}
-        {%- end %}
-      {%- end %}
-      {% end %}
+      {%- macro PublishGatewayRoutePaths(route any, routeKind string) -%}
+      {%%
+        var namespace = dig_string(route, "", "metadata", "namespace")
+        var name = dig_string(route, "", "metadata", "name")
+        var routeKey = routeKind + "/" + namespace + "/" + name
+        var routeIndex, foundRoute = shared.Select("gateway-route-analysis", "routes", routeKey)
+        if !foundRoute {
+          return
+        }
+        for _, entryIDAny := range toSlice(dig(routeIndex, "entries")) {
+          var entryID = tostring(entryIDAny)
+          var entry, foundEntry = shared.Select("gateway-route-analysis", "entries", entryID)
+          if !foundEntry || tostring(dig(entry, "rawRepresentative") | fallback(false)) != "true" {
+            continue
+          }
+          var pathType = dig_string(entry, "PathPrefix", "pathType")
+          var pathValue = dig_string(entry, "/", "pathValue")
+          var hostname = dig_string(entry, "", "hostname")
+          var groupKind = dig_string(entry, "HTTPRoute", "groupKind")
+          var groupNamespace = dig_string(entry, "", "groupRouteNamespace")
+          var groupName = dig_string(entry, "", "groupRouteName")
+          var groupRoute any = nil
+          if groupKind == "GRPCRoute" {
+            groupRoute = resources.grpcroutes.GetSingle(groupNamespace, groupName)
+          } else {
+            groupRoute = resources.httproutes.GetSingle(groupNamespace, groupName)
+          }
+          if groupRoute == nil {
+            continue
+          }
+          if regex_search(pathValue, "[[:cntrl:]]") || strings_contains(pathValue, " ") {
+            show WebhookRejectOrWarn(groupRoute, "InvalidPath", "Route path '" + pathValue + "' (host '" + hostname + "') contains whitespace or control characters, which cannot be written to the routing map; the route is not applied. Remove spaces, tabs and newlines from the HTTPRoute path value.")
+            continue
+          }
+          var routeTypeShort = "http"
+          if groupKind == "GRPCRoute" { routeTypeShort = "grpc" }
+          var line = func(suffix string) string {
+            var emittedPath = pathValue
+            var pathSuffix = suffix
+            if suffix == "/" && hasSuffix(emittedPath, "/") { pathSuffix = "" }
+            if suffix == "" && pathType != "RegularExpression" && len(emittedPath) > 1 && hasSuffix(emittedPath, "/") {
+              emittedPath = emittedPath[:len(emittedPath)-1]
+            }
+            return "\n\n" + MapKeyForHost(hostname) + emittedPath + pathSuffix +
+              " GW_ROUTE_ID:" + routeTypeShort + ":" + dig_string(entry, "", "conflictGroup")
+          }
+          var rank = dig_string(entry, "", "groupRank")
+          var pathKey = dig_string(entry, "", "pathKey")
+          if pathType == "Exact" {
+            show shared.PublishRanked("exact", pathKey, rank, line(""))
+          } else if pathType == "PathPrefix" {
+            if pathValue != "/" {
+              show shared.PublishRanked("pfxexact", pathKey, rank, line(""))
+            }
+            show shared.PublishRanked("prefix", pathKey, rank, line("/"))
+          } else if pathType == "RegularExpression" {
+            show shared.PublishRanked("regex", pathKey, rank, line(""))
+          }
+        }
+      %%}
+      {%- end macro -%}
+
+  gateway-route-paths-100-http:
+    requires: [grpcroutes, httproutes]
+    incremental:
+      source: httproutes
+      root: gateway-http-route-post-analysis
+      group: gateway-route-paths
+      consumes: [gateway-route-analysis]
+      effects: [publishValue, recordEvent]
+    template: |
+      {%- import "util-publish-gateway-route-paths" for PublishGatewayRoutePaths -%}
+      {{- PublishGatewayRoutePaths(item, "HTTPRoute") -}}
+
+  gateway-route-paths-200-grpc:
+    requires: [grpcroutes, httproutes]
+    incremental:
+      source: grpcroutes
+      group: gateway-route-paths
+      consumes: [gateway-route-analysis]
+      effects: [publishValue, recordEvent]
+    template: |
+      {%- import "util-publish-gateway-route-paths" for PublishGatewayRoutePaths -%}
+      {{- PublishGatewayRoutePaths(item, "GRPCRoute") -}}
+
+  util-gateway-route-path-publications:
+    requires: [gateways, grpcroutes, httproutes]
+    template: |-
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "map-hostvalues-490-gateway-port-scopes" -}}
+      {{- render "gateway-route-candidates-100-http" -}}
+      {{- render "gateway-route-candidates-200-grpc" -}}
+      {{- render "gateway-route-analysis-100-http" -}}
+      {{- render "gateway-route-analysis-200-grpc" -}}
+      {{- render "gateway-route-paths-100-http" -}}
+      {{- render "gateway-route-paths-200-grpc" -}}
 
   util-path-map-entry-gateway:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {# Sharded Gateway Path Map Entry Generator #}
-      {%- import "util-path-map-entry-gateway-shard" for PathMapEntryGatewayShard -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-
-      {%- macro GeneratePathMapEntries(pathType string, suffix string) %}
+      {%- macro GeneratePathMapEntries(pathType string, cell string) %}
       # gateway/util-path-map-entry-gateway ({{ pathType }})
 
-      {# Get cached route analysis (runs once, shared across all renders) #}
-      {{ render "util-gateway-analysis" }}
-
-      {%- var gatewayAnalysis = shared.Get("gatewayAnalysis").(map[string]any) %}
-      {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
-      {%- var pathGroups any = gatewayAnalysis["pathGroups"] %}
-
-      {%- var n = toint(CalculateShardCount(len(sortedRoutes), 100)) -%}
-      {%- if n <= 1 || len(sortedRoutes) < 100 -%}
-      {{ PathMapEntryGatewayShard(sortedRoutes, pathGroups, pathType, suffix) }}
-      {%- else -%}
-      {%- for i := 0; i < n; i++ -%}
-      {{ go PathMapEntryGatewayShard(shard_slice(sortedRoutes, i, n), pathGroups, pathType, suffix) }}
-      {%- end -%}
-      {%- end -%}
+      {{ incremental_ranked_fragments("gateway-route-paths", cell) }}
       {%- end macro %}
 
   map-path-exact-500-gateway:
@@ -98,7 +116,8 @@ templateSnippets:
       {# Generate exact path map entries for HTTPRoute #}
       {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
       # gateway/map-path-exact-gateway
-      {{ GeneratePathMapEntries("Exact", "") }}
+      {{ render "util-gateway-route-path-publications" }}{{ "\n" -}}
+      {{ GeneratePathMapEntries("Exact", "exact") }}{{ "\n" }}
 
   map-pfxexact-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
@@ -106,7 +125,8 @@ templateSnippets:
       {# Generate prefix-exact path map entries for HTTPRoute #}
       {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
       # gateway/map-pfxexact-gateway
-      {{ GeneratePathMapEntries("PathPrefix", "") }}
+      {{ render "util-gateway-route-path-publications" }}{{ "\n" -}}
+      {{ GeneratePathMapEntries("PathPrefix", "pfxexact") }}{{ "\n" }}
 
   map-path-prefix-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
@@ -114,7 +134,8 @@ templateSnippets:
       {# Generate prefix path map entries with trailing slash for HTTPRoute #}
       {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
       # gateway/map-path-prefix-gateway
-      {{ GeneratePathMapEntries("PathPrefix", "/") }}
+      {{ render "util-gateway-route-path-publications" }}{{ "\n" -}}
+      {{ GeneratePathMapEntries("PathPrefix", "prefix") }}{{ "\n" }}
 
   map-path-regex-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
@@ -125,4 +146,5 @@ templateSnippets:
          filters, no timeouts and no resource fields in the access log. #}
       {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
       # gateway/map-path-regex-gateway
-      {{ GeneratePathMapEntries("RegularExpression", "") }}
+      {{ render "util-gateway-route-path-publications" }}{{ "\n" -}}
+      {{ GeneratePathMapEntries("RegularExpression", "regex") }}{{ "\n" }}

@@ -36,19 +36,33 @@ templateSnippets:
   # hub-less install (fail-open on a rate limit). features-* always renders, so
   # the guard lives here; the producer assumes the opt-in once it runs.
   features-806-haptic-shared-rate-limit-optin:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: '{{- toJSON(map[string]any{"ingresses": map[string]any{"enabled": extraContext | dig("rateLimit", "shared", "enabled") | fallback("false")}}) -}}'
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/rate-limit-requests']"]
     template: |-
-      {%- var sharedEnabled = extraContext | dig("rateLimit", "shared", "enabled") | fallback("false") | tostring() -%}
+      {%- var sharedEnabled = tostring(props["enabled"]) -%}
       {%- if sharedEnabled != "true" -%}
-        {%- for _, ingress := range resources.ingresses.List() -%}
-          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] != "" -%}
-            {{- fail("Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " sets annotation 'haproxy-haptic.org/rate-limit-requests' but shared rate limiting is not enabled. Set rateLimit.shared.enabled=true, or remove the annotation.") -}}
-          {%- end -%}
+        {%- var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+        {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] != "" -%}
+          {{- fail("Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " sets annotation 'haproxy-haptic.org/rate-limit-requests' but shared rate limiting is not enabled. Set rateLimit.shared.enabled=true, or remove the annotation.") -}}
         {%- end -%}
       {%- end -%}
 
   map-rate-limit-820-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/rate-limit-requests']"
+        - "metadata.annotations['haproxy-haptic.org/rate-limit-period']"
+        - "metadata.annotations['haproxy-haptic.org/rate-limit-burst']"
+        - "metadata.annotations['haproxy-haptic.org/rate-limit-key']"
+        - "metadata.annotations['haproxy-haptic.org/rate-limit-algorithm']"
     template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var requests = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] -%}
         {%- if requests != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -124,14 +138,14 @@ templateSnippets:
         {#- A cache-enabled route never enters this backend on the client leg and
             the origin leg carries no txn.rl_* vars, so this copy would be inert
             there — frontend-filters-863 dispatches on the client leg instead. -#}
-        {%- var cacheClientLeg = tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" -%}
+        {%- var cacheClientLeg = tostring(props["cacheVarnishEnabled"] | fallback("false")) == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" -%}
         {%- if requests != "" && keySpec == "consumer" && !cacheClientLeg -%}
-          {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) -%}
+          {%- var messagesAny = props["spoaMessages"] | fallback([]any{}) -%}
           {%- var messages = toStringSlice(messagesAny) -%}
           {%- if messages contains "check-ratelimit" %}
       # haptic/shared-rate-limit consumer ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
-      filter spoe engine spoa-hub-check-ratelimit config {{ pathResolver.GetPath("spoe.conf", "file") }}
-      {{ DispatchSharedRateLimit("consumer", "") }}
+      filter spoe engine spoa-hub-check-ratelimit config {{ FilePath("file", "spoe.conf") }}
+      {{ DispatchSharedRateLimit("consumer", "", tostring(props["rateLimitSharedFailClosed"] | fallback(false)) == "true") }}
           {%- end -%}
         {%- end -%}
       {%- end -%}
@@ -151,34 +165,85 @@ templateSnippets:
   # refusal 862 uses for consumer groups.
   # ==========================================================================
   frontend-filters-863-haptic-shared-rate-limit-consumer-cache-routes:
-    template: |
-      {%- import "util-spoa-rate-limit-dispatch" for DispatchSharedRateLimit %}
+    requires: [ingresses]
+    template: |-
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-863-shared-rate-limit-invalid", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-863-shared-rate-limit-dispatch", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  features-900-haptic-fragment-863-shared-rate-limit-invalid:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var cacheOn = tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" -%}
+        {%- var messages = toStringSlice(extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{})) -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{"active": cacheOn && messages contains "check-ratelimit"}}) -}}
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/cache-enable']"
+        - "metadata.annotations['haproxy-haptic.org/rate-limit-requests']"
+        - "metadata.annotations['haproxy-haptic.org/rate-limit-key']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-secret']"
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-863-shared-rate-limit-invalid" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
+  util-haptic-fragment-body-863-shared-rate-limit-invalid:
+    template: |-
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- var cacheOn = tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" %}
-      {%- var messages = toStringSlice(extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{})) %}
-      {%- if cacheOn && messages contains "check-ratelimit" %}
-        {%- var dispatch = false %}
-        {%- for _, ingress := range resources.ingresses.List() %}
-          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] != "" && ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-key"] == "consumer" %}
-            {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-            {%- if ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] == "" %}
-              {{- WebhookRejectOrWarn(ingress, "ConsumerRateLimitCacheNeedsApiKey", "Ingress " + key + " combines 'haproxy-haptic.org/cache-enable' with 'haproxy-haptic.org/rate-limit-key: consumer' but no 'haproxy-haptic.org/api-key-secret'. A cached route never enters the backend that resolves the consumer identity, so the limit cannot be enforced and this route fails closed with 503. Add api-key-secret, set rate-limit-key to ip, or remove cache-enable.") -}}
+      {%- if props["active"].(bool) -%}
+        {%- var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+        {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] != "" && ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-key"] == "consumer" && ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] == "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {{- WebhookRejectOrWarn(ingress, "ConsumerRateLimitCacheNeedsApiKey", "Ingress " + key + " combines 'haproxy-haptic.org/cache-enable' with 'haproxy-haptic.org/rate-limit-key: consumer' but no 'haproxy-haptic.org/api-key-secret'. A cached route never enters the backend that resolves the consumer identity, so the limit cannot be enforced and this route fails closed with 503. Add api-key-secret, set rate-limit-key to ip, or remove cache-enable.") -}}
       http-request set-var(txn.denied_by) str(rate_limit_consumer_unavailable) if { var(txn.resource_id) -m str {{ key }} }
       http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ key }} }
-            {%- else %}
-              {%- dispatch = true %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-        {%- if dispatch %}
-          {%- var enMap, _ = pathResolver.GetPath("haptic-cache-enable.map", "map") %}
-      # haptic/shared-rate-limit consumer on the client leg — cache-enabled routes
-      {{ DispatchSharedRateLimit("consumer", "{ var(txn.resource_id),map(" + enMap + ") -m found }") }}
-        {%- end %}
-      {%- end %}
+        {%- end -%}
+      {%- end -%}
+
+  features-900-haptic-fragment-863-shared-rate-limit-dispatch:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: |-
+        {%- var cacheOn = tostring(extraContext | dig("cache", "varnish", "enabled") | fallback("false")) == "true" -%}
+        {%- var messages = toStringSlice(extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{})) -%}
+        {%- var active = cacheOn && messages contains "check-ratelimit" -%}
+        {%- var enMap = "" -%}
+        {%- if active -%}
+          {%- var mapDir, mapErr = pathResolver.GetPath("", "map") -%}
+          {%- if mapErr != nil -%}{{ fail(tostring(mapErr)) }}{%- end -%}
+          {%- enMap = mapDir + "/haptic-cache-enable.map" -%}
+        {%- end -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "active": active,
+          "enableMap": enMap,
+          "failClosed": extraContext | dig("rateLimit", "shared", "failClosed") | fallback(false),
+        }}) -}}
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/cache-enable']"
+        - "metadata.annotations['haproxy-haptic.org/rate-limit-requests']"
+        - "metadata.annotations['haproxy-haptic.org/rate-limit-key']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-secret']"
+      effects: [publishValue]
+    template: |-
+      {%- import "util-spoa-rate-limit-dispatch" for DispatchSharedRateLimit %}
+      {%- if props["active"].(bool) -%}
+        {%- var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+        {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" && ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] != "" && ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-key"] == "consumer" && ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] != "" -%}
+          {%- var dispatch = DispatchSharedRateLimit("consumer", "{ var(txn.resource_id),map(" + tostring(props["enableMap"]) + ") -m found }", tostring(props["failClosed"]) == "true") -%}
+          {{- shared.Publish("fragments", "global", "\n# haptic/shared-rate-limit consumer on the client leg — cache-enabled routes" + dispatch) -}}
+        {%- end -%}
+      {%- end -%}
 
 k8sResources:
   rate-limit-store:
+    # The replica count is the size this starts at, not the size it keeps:
+    # HAProxy routes to whatever pods exist, so an operator draining it or an
+    # autoscaler owns the count from creation onward.
+    createOnlyFields: ["spec.replicas"]
     template: |
       {#- managedStore is a SUB-option of rateLimit.shared: "when shared rate limiting
           is on, deploy the store for you" — which is why it defaults to true. So it

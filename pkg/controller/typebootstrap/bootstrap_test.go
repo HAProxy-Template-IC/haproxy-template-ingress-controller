@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,8 @@ import (
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // silentLogger returns a discarding *slog.Logger. Bootstrap requires
@@ -44,6 +47,8 @@ func gatewaySchemaSeed() *spec.Schema {
 		SchemaProps: spec.SchemaProps{
 			Type: spec.StringOrArray{"object"},
 			Properties: map[string]spec.Schema{
+				"apiVersion": {SchemaProps: spec.SchemaProps{Type: spec.StringOrArray{"string"}}},
+				"kind":       {SchemaProps: spec.SchemaProps{Type: spec.StringOrArray{"string"}}},
 				"metadata": {SchemaProps: spec.SchemaProps{
 					Type: spec.StringOrArray{"object"},
 					Properties: map[string]spec.Schema{
@@ -130,6 +135,8 @@ func TestBootstrap_InjectsObjectMetaWhenCRDLeavesItEmpty(t *testing.T) {
 		SchemaProps: spec.SchemaProps{
 			Type: spec.StringOrArray{"object"},
 			Properties: map[string]spec.Schema{
+				"apiVersion": {SchemaProps: spec.SchemaProps{Type: spec.StringOrArray{"string"}}},
+				"kind":       {SchemaProps: spec.SchemaProps{Type: spec.StringOrArray{"string"}}},
 				"metadata": {SchemaProps: spec.SchemaProps{
 					Type: spec.StringOrArray{"object"},
 				}},
@@ -163,10 +170,53 @@ func TestBootstrap_InjectsObjectMetaWhenCRDLeavesItEmpty(t *testing.T) {
 		"Metadata MUST be a typed struct, NOT interface{} — the chart's gw.Metadata.Name access pattern depends on it")
 
 	// The universal ObjectMeta fields chart libraries touch.
-	for _, want := range []string{"Name", "Namespace", "Labels", "Annotations"} {
+	for _, want := range []string{"Name", "Namespace", "Uid", "ResourceVersion", "Labels", "Annotations"} {
 		_, ok := meta.Type.FieldByName(want)
 		assert.True(t, ok, "synthetic ObjectMeta must include %s", want)
 	}
+
+	wrapped, err := typegen.WrapInto(map[string]any{
+		"apiVersion": "example.com/v1",
+		"kind":       "Widget",
+		"metadata": map[string]any{
+			"name":            "source",
+			"namespace":       "default",
+			"uid":             "f6baf710-c079-437f-9cca-259b058e0944",
+			"resourceVersion": "27",
+		},
+	}, widgetType)
+	require.NoError(t, err)
+	wrappedMetadata := wrapped.FieldByName("Metadata")
+	assert.Equal(t, "f6baf710-c079-437f-9cca-259b058e0944", wrappedMetadata.FieldByName("Uid").String())
+	assert.Equal(t, "27", wrappedMetadata.FieldByName("ResourceVersion").String())
+
+	resourcePointer := reflect.New(widgetType)
+	resourcePointer.Elem().Set(wrapped)
+	engine, err := templating.New(map[string]string{
+		"main": `{% statusPatch(resource, map[string]any{"rendered": map[string]any{"accepted": true}}) %}`,
+	}, &templating.Options{
+		EntryPoints: []string{"main"},
+		Declarations: map[string]any{
+			"resource": reflect.Zero(reflect.PointerTo(widgetType)).Interface(),
+		},
+	})
+	require.NoError(t, err)
+	collector := templating.NewStatusPatchCollector()
+	output, err := engine.Render(t.Context(), "main", map[string]any{
+		"resource":             resourcePointer.Interface(),
+		"statusPatchCollector": collector,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, strings.TrimSpace(output))
+	patches, err := collector.Patches()
+	require.NoError(t, err)
+	require.Len(t, patches, 1)
+	assert.Equal(t, "default", patches[0].Namespace)
+	assert.Equal(t, "source", patches[0].Name)
+	assert.Equal(t, "example.com/v1", patches[0].APIVersion)
+	assert.Equal(t, "Widget", patches[0].Kind)
+	assert.Equal(t, "f6baf710-c079-437f-9cca-259b058e0944", patches[0].UID)
+	assert.Equal(t, "27", patches[0].ResourceVersion)
 
 	// Spec stays as the CRD declared it — the pre-process only
 	// touches metadata.
@@ -174,6 +224,68 @@ func TestBootstrap_InjectsObjectMetaWhenCRDLeavesItEmpty(t *testing.T) {
 	require.True(t, ok)
 	_, ok = specType.Type.FieldByName("Size")
 	assert.True(t, ok, "CRD-declared spec fields must survive the pre-process untouched")
+}
+
+func TestBootstrap_AddsLineageToPartialObjectMeta(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+	partialMetadataSchema := &spec.Schema{SchemaProps: spec.SchemaProps{
+		Type: spec.StringOrArray{"object"},
+		Properties: map[string]spec.Schema{
+			"metadata": {SchemaProps: spec.SchemaProps{
+				Type: spec.StringOrArray{"object"},
+				Properties: map[string]spec.Schema{
+					"name": {SchemaProps: spec.SchemaProps{Type: spec.StringOrArray{"string"}}},
+				},
+			}},
+		},
+	}}
+	fetcher := schemafetcher.NewMapFetcher(map[schema.GroupVersionKind]*spec.Schema{gvk: partialMetadataSchema})
+
+	result, err := Bootstrap(t.Context(), Config{
+		Resources: []Resource{{Name: "widgets", GVK: gvk}},
+		Fetcher:   fetcher,
+		Logger:    silentLogger(),
+	})
+	require.NoError(t, err)
+	widgetType := result.Types["widgets"]
+	metadataType, ok := widgetType.FieldByName("Metadata")
+	require.True(t, ok)
+	_, hasName := metadataType.Type.FieldByName("Name")
+	_, hasUID := metadataType.Type.FieldByName("Uid")
+	_, hasResourceVersion := metadataType.Type.FieldByName("ResourceVersion")
+	assert.True(t, hasName)
+	assert.True(t, hasUID)
+	assert.True(t, hasResourceVersion)
+	originalMetadata := partialMetadataSchema.Properties["metadata"]
+	assert.NotContains(t, originalMetadata.Properties, "uid")
+	assert.NotContains(t, originalMetadata.Properties, "resourceVersion")
+}
+
+func TestBootstrap_AddsObjectMetaWhenSchemaOmitsIt(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+	schemaWithoutMetadata := &spec.Schema{SchemaProps: spec.SchemaProps{
+		Type: spec.StringOrArray{"object"},
+		Properties: map[string]spec.Schema{
+			"spec": {SchemaProps: spec.SchemaProps{Type: spec.StringOrArray{"object"}}},
+		},
+	}}
+	fetcher := schemafetcher.NewMapFetcher(map[schema.GroupVersionKind]*spec.Schema{gvk: schemaWithoutMetadata})
+
+	result, err := Bootstrap(t.Context(), Config{
+		Resources: []Resource{{Name: "widgets", GVK: gvk}},
+		Fetcher:   fetcher,
+		Logger:    silentLogger(),
+	})
+	require.NoError(t, err)
+	metadataType, ok := result.Types["widgets"].FieldByName("Metadata")
+	require.True(t, ok)
+	_, hasName := metadataType.Type.FieldByName("Name")
+	_, hasUID := metadataType.Type.FieldByName("Uid")
+	_, hasResourceVersion := metadataType.Type.FieldByName("ResourceVersion")
+	assert.True(t, hasName)
+	assert.True(t, hasUID)
+	assert.True(t, hasResourceVersion)
+	assert.NotContains(t, schemaWithoutMetadata.Properties, "metadata")
 }
 
 func TestBootstrap_FailClosedOnFetcherError(t *testing.T) {

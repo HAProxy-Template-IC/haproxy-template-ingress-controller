@@ -79,7 +79,7 @@ files:
          which YAML 1.1 reads as a STRING and vector rejects. -#}
       {%- var fmtBucket = func(v any) string {
             var fv, _ = tofloat(v)
-            var s = sprintf("%.9f", fv)
+            var s = formatFloat(fv, "f", 9)
             for hasSuffix(s, "0") { s = s[0:len(s)-1] }
             if hasSuffix(s, ".") { s = s[0:len(s)-1] }
             return s

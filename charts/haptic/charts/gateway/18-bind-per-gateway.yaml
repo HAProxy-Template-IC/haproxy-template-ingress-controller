@@ -86,9 +86,14 @@ templateSnippets:
           the status patches for every Gateway in the cluster down
           with it. -#}
       {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
-        {%- for _, gw := range resources.gateways.List() %}
-          {%- var gwNs = gw.Metadata.Namespace %}
-          {%- var gwName = gw.Metadata.Name %}
+      {%- var gatewayResources = map[string]any{} -%}
+      {%- for _, gatewayResource := range incremental_values("gateway-listener-state", "resources") -%}
+        {%- gatewayResources[dig_string(gatewayResource, "", "metadata", "namespace") + "/" +
+          dig_string(gatewayResource, "", "metadata", "name")] = gatewayResource -%}
+      {%- end -%}
+        {%- for _, listener := range incremental_values("gateway-listener-state", "listeners") %}
+          {%- var gwNs = dig_string(listener, "", "gatewayNamespace") %}
+          {%- var gwName = dig_string(listener, "", "gatewayName") %}
           {#- Pinned-IP Gateways (spec.addresses set) take the
               gateway-static-addresses path, NOT phase-3's
               per-Gateway Service. Phase 1's allocator skips them
@@ -99,11 +104,11 @@ templateSnippets:
               ports for pinned Gateways. Skip the whole Gateway
               here, mirroring phase 3's gate at
               17-per-gateway-services.yaml. -#}
-          {%- if gwNs != "" && gwName != "" && len(gw.Spec.Addresses) == 0 %}
-            {%- for _, listener := range gw.Spec.Listeners %}
-              {%- if listener.Protocol == "HTTPS" %}
-                {%- var lName = listener.Name %}
-                {%- var lPort = toint(listener.Port) %}
+          {%- if gwNs != "" && gwName != "" &&
+            tostring(dig(listener, "gatewayHasAddresses") | fallback(false)) != "true" %}
+              {%- if dig_string(listener, "", "protocol") == "HTTPS" %}
+                {%- var lName = dig_string(listener, "", "name") %}
+                {%- var lPort = toint(dig(listener, "port") | fallback(0)) %}
                 {%- var isBlocked = mtlsBlocked[ListenerKey(gwNs, gwName, lName)] != nil %}
                 {#- Does the listener's cert ref resolve? Same path
                     phase 2 walks: take the FIRST entry of
@@ -140,13 +145,13 @@ templateSnippets:
                   {%- end %}
                   {%- var tlsInj = TLSOptionsInjection(listener) %}
                   {%- if tlsInj != "" %}
+                    {%- var gw = gatewayResources[gwNs + "/" + gwName] %}
                     {{- WebhookRejectOrWarn(gw, "InvalidTLSOptions", "Gateway " + gwNs + "/" + gwName + " listener " + lName + " has a tls.options value containing " + tlsInj + ", which would break out of the bind directive; the listener is not applied. Remove whitespace, quotes and control characters from the TLS min/max-version and cipher-suites values.") -}}
                     {%- continue %}
                   {%- end %}
       bind *:{{ podPort }}{{ SSLBindOptionsForCrtlist(crtlist) }}{{ ignoreErrSuffix }}{{ TLSOptionsSuffix(listener) }}
                 {%- end %}
               {%- end %}
-            {%- end %}
           {%- end %}
         {%- end %}
 
@@ -190,15 +195,21 @@ templateSnippets:
     template: |
       {{ render "util-gateway-pod-port-allocator" -}}
       {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
-        {%- for _, gw := range resources.gateways.List() %}
-          {%- var gwNs = gw.Metadata.Namespace %}
-          {%- var gwName = gw.Metadata.Name %}
-          {%- if gwNs != "" && gwName != "" && len(gw.Spec.Addresses) == 0 %}
-            {%- var seenPort = map[int]bool{} %}
-            {%- for _, listener := range gw.Spec.Listeners %}
-              {%- if listener.Protocol == "HTTP" %}
-                {%- var lName = listener.Name %}
-                {%- var lPort = toint(listener.Port) %}
+      {%- var seenPortsByGateway = map[string]map[int]bool{} %}
+        {%- for _, listener := range incremental_values("gateway-listener-state", "listeners") %}
+          {%- var gwNs = dig_string(listener, "", "gatewayNamespace") %}
+          {%- var gwName = dig_string(listener, "", "gatewayName") %}
+          {%- if gwNs != "" && gwName != "" &&
+            tostring(dig(listener, "gatewayHasAddresses") | fallback(false)) != "true" %}
+              {%- if dig_string(listener, "", "protocol") == "HTTP" %}
+                {%- var lName = dig_string(listener, "", "name") %}
+                {%- var lPort = toint(dig(listener, "port") | fallback(0)) %}
+                {%- var gatewayKey = gwNs + "/" + gwName %}
+                {%- var seenPort = seenPortsByGateway[gatewayKey] %}
+                {%- if seenPort == nil %}
+                  {%- seenPort = map[int]bool{} %}
+                  {%- seenPortsByGateway[gatewayKey] = seenPort %}
+                {%- end %}
                 {%- if lName != "" && lPort > 0 && !seenPort[lPort] %}
                   {%- seenPort[lPort] = true %}
                   {%- var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort) %}
@@ -209,6 +220,5 @@ templateSnippets:
       bind *:{{ podPort }}
                 {%- end %}
               {%- end %}
-            {%- end %}
           {%- end %}
         {%- end %}

@@ -135,14 +135,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	}
 
 	// Convert template snippets
-	templateSnippets := make(map[string]config.TemplateSnippet)
-	for name, crdSnippet := range spec.TemplateSnippets {
-		templateSnippets[name] = config.TemplateSnippet{
-			Name:     name, // Name comes from map key
-			Template: crdSnippet.Template,
-			Requires: crdSnippet.Requires,
-		}
-	}
+	templateSnippets := convertTemplateSnippets(spec.TemplateSnippets)
 
 	// Convert maps
 	mapFiles := make(map[string]config.MapFile)
@@ -177,8 +170,9 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	k8sResources := make(map[string]config.K8sResource)
 	for name, crdRes := range spec.K8sResources {
 		k8sResources[name] = config.K8sResource{
-			Template:       crdRes.Template,
-			PostProcessing: convertPostProcessors(crdRes.PostProcessing),
+			Template:         crdRes.Template,
+			PostProcessing:   convertPostProcessors(crdRes.PostProcessing),
+			CreateOnlyFields: slices.Clone(crdRes.CreateOnlyFields),
 		}
 	}
 
@@ -220,6 +214,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		WatchedResources:             watchedResources,
 		Validators:                   convertValidators(spec.Validators),
 		TemplateSnippets:             templateSnippets,
+		AbsentIncrementalGroups:      stringSet(spec.AbsentIncrementalGroups),
 		Maps:                         mapFiles,
 		Files:                        files,
 		SSLCertificates:              sslCertificates,
@@ -229,6 +224,51 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	}
 
 	return cfg, nil
+}
+
+func stringSet(values []string) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	return set
+}
+
+func convertTemplateSnippets(snippets map[string]v1alpha1.TemplateSnippet) map[string]config.TemplateSnippet {
+	converted := make(map[string]config.TemplateSnippet, len(snippets))
+	for name, crdSnippet := range snippets {
+		var incremental *config.IncrementalTemplate
+		if crdSnippet.Incremental != nil {
+			var effects []config.IncrementalEffect
+			if crdSnippet.Incremental.Effects != nil {
+				effects = make([]config.IncrementalEffect, len(crdSnippet.Incremental.Effects))
+				for index, effect := range crdSnippet.Incremental.Effects {
+					effects[index] = config.IncrementalEffect(effect)
+				}
+			}
+			incremental = &config.IncrementalTemplate{
+				Mode:              config.IncrementalMode(crdSnippet.Incremental.Mode),
+				Source:            crdSnippet.Incremental.Source,
+				BindingsTemplate:  crdSnippet.Incremental.BindingsTemplate,
+				WhenAnyPathExists: slices.Clone(crdSnippet.Incremental.WhenAnyPathExists),
+				Root:              crdSnippet.Incremental.Root,
+				Group:             crdSnippet.Incremental.Group,
+				Consumes:          slices.Clone(crdSnippet.Incremental.Consumes),
+				OptionalConsumes:  slices.Clone(crdSnippet.Incremental.OptionalConsumes),
+				Effects:           effects,
+			}
+		}
+		converted[name] = config.TemplateSnippet{
+			Name:        name, // Name comes from map key
+			Template:    crdSnippet.Template,
+			Requires:    crdSnippet.Requires,
+			Incremental: incremental,
+		}
+	}
+	return converted
 }
 
 // convertValidators copies the CRD validators array into the

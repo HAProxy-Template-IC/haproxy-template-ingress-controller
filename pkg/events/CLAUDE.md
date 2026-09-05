@@ -44,6 +44,8 @@ Thread-safe pub/sub coordinator with startup synchronization.
    subscriber's buffer is full, the event is dropped — there is no per-subscriber
    replay log.
 5. **Minimal API**: Publish, Subscribe (+ typed/lossy variants), Pause, Start, Request
+6. **Opt-in fan-out isolation**: `FanoutIsolatedEvent` snapshots an event before
+   buffering and clones its container for each subscriber.
 
 **Implementation Notes:**
 

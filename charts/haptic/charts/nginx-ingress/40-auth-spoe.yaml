@@ -28,22 +28,34 @@ templateSnippets:
   #     header allowlist; haproxy-ingress flavour wires this via
   #     auth-headers-request)
   map-auth-url-500-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-url']"]
+      group: map-auth-url-ingress
+      effects: [recordEvent]
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-url"] -%}
-        {%- if authUrl != "" -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {%- var inj = ConfigInjectionKind(authUrl, "line") -%}
-          {%- if inj != "" -%}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/auth-url' value contains " + inj + ", which would inject an entry into the auth routing map; external auth is not applied. Remove control characters from the value.") -}}
-            {%- continue -%}
-          {%- end -%}
-      {{ "\n" }}{{ ns }}/{{ name }} {{ authUrl }}
-        {%- end -%}
-      {%- end -%}
+      {%%
+        var ingress = item
+        var authUrl = dig_string(ingress, "", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-url")
+        if authUrl != "" {
+          var ns = dig_string(ingress, "", "metadata", "namespace")
+          var name = dig_string(ingress, "", "metadata", "name")
+          var inj = ConfigInjectionKind(authUrl, "line")
+          if inj != "" {
+            var message = "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/auth-url' value contains " + inj + ", which would inject an entry into the auth routing map; external auth is not applied. Remove control characters from the value."
+            if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" {
+              fail(message)
+            } else {
+              recordEvent(ingress, "InvalidAnnotationValue", message)
+            }
+          } else {
+            var key = ns + "/" + name
+            show shared.Unique("map-auth-url-ingress", key, "\n" + key + " " + authUrl)
+          }
+        }
+      %%}
 
   # External-auth sign-in URL: when the auth service returns 401, redirect
   # the browser to this URL instead of denying. Standard pattern for
@@ -60,22 +72,34 @@ templateSnippets:
   # the SPOA hub plugin (or use a redirect-aware auth service like
   # oauth2-proxy that handles it server-side).
   map-auth-signin-500-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-signin']"]
+      group: map-auth-signin-ingress
+      effects: [recordEvent]
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authSignin = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-signin"] -%}
-        {%- if authSignin != "" -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {%- var inj = ConfigInjectionKind(authSignin, "line") -%}
-          {%- if inj != "" -%}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/auth-signin' value contains " + inj + ", which would inject an entry into the auth sign-in map; the sign-in redirect is not applied. Remove control characters from the value.") -}}
-            {%- continue -%}
-          {%- end -%}
-      {{ "\n" }}{{ ns }}/{{ name }} {{ authSignin }}
-        {%- end -%}
-      {%- end -%}
+      {%%
+        var ingress = item
+        var authSignin = dig_string(ingress, "", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-signin")
+        if authSignin != "" {
+          var ns = dig_string(ingress, "", "metadata", "namespace")
+          var name = dig_string(ingress, "", "metadata", "name")
+          var inj = ConfigInjectionKind(authSignin, "line")
+          if inj != "" {
+            var message = "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/auth-signin' value contains " + inj + ", which would inject an entry into the auth sign-in map; the sign-in redirect is not applied. Remove control characters from the value."
+            if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" {
+              fail(message)
+            } else {
+              recordEvent(ingress, "InvalidAnnotationValue", message)
+            }
+          } else {
+            var key = ns + "/" + name
+            show shared.Unique("map-auth-signin-ingress", key, "\n" + key + " " + authSignin)
+          }
+        }
+      %%}
 
   # External-auth HTTP method override. Picked up by the spoa-hub
   # library's auth-method.map and threaded into the SPOE check-auth
@@ -92,22 +116,34 @@ templateSnippets:
   # error. Body-having methods (POST/PUT/PATCH) go out with an empty
   # body — the plugin does not forward the original request payload.
   map-auth-method-500-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-method']"]
+      group: map-auth-method-ingress
+      effects: [recordEvent]
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authMethod = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-method"] -%}
-        {%- if authMethod != "" -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {%- var inj = ConfigInjectionKind(authMethod, "line") -%}
-          {%- if inj != "" -%}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/auth-method' value contains " + inj + ", which would inject an entry into the auth method map; the method override is not applied. Remove control characters from the value.") -}}
-            {%- continue -%}
-          {%- end -%}
-      {{ "\n" }}{{ ns }}/{{ name }} {{ authMethod }}
-        {%- end -%}
-      {%- end -%}
+      {%%
+        var ingress = item
+        var authMethod = dig_string(ingress, "", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-method")
+        if authMethod != "" {
+          var ns = dig_string(ingress, "", "metadata", "namespace")
+          var name = dig_string(ingress, "", "metadata", "name")
+          var inj = ConfigInjectionKind(authMethod, "line")
+          if inj != "" {
+            var message = "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/auth-method' value contains " + inj + ", which would inject an entry into the auth method map; the method override is not applied. Remove control characters from the value."
+            if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" {
+              fail(message)
+            } else {
+              recordEvent(ingress, "InvalidAnnotationValue", message)
+            }
+          } else {
+            var key = ns + "/" + name
+            show shared.Unique("map-auth-method-ingress", key, "\n" + key + " " + authMethod)
+          }
+        }
+      %%}
 
   # External-auth response-headers allowlist. Per-ingress comma-list of
   # response header names the SPOA hub should extract from the auth
@@ -132,9 +168,15 @@ templateSnippets:
   # legitimate, and a control character is the real injection (a newline would
   # start a second map entry). Auth = security, so fail closed.
   map-auth-extract-headers-500-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-response-headers']"]
+      group: map-auth-extract-headers-ingress
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var passHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-response-headers"] -%}
         {%- if passHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -157,18 +199,15 @@ templateSnippets:
   # it. Routes that didn't ask for the header just see the
   # set-header skipped via `var ... -m found`.
   frontend-spoe-set-pass-headers-500-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-response-headers']"]
+      group: frontend-spoe-pass-headers-ingress
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
-      {#- Same render-shared dedup pattern as haproxy-ingress.yaml's
-          equivalent snippet (see issue #49). The chart renders this
-          snippet inside `frontend-filters-*` for both http_frontend
-          AND http_frontend_h2c — `first_seen` would silently dedup
-          across the two frontend renders, leaving the second
-          frontend without the set-header directives.
-      -#}
-      {%- var pairs []any = []any{} -%}
-      {%- var seen = map[string]bool{} -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
         {%- var passHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-response-headers"] -%}
         {%- if passHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
@@ -177,28 +216,13 @@ templateSnippets:
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "nginx.ingress.kubernetes.io/auth-response-headers", ns, ingressName) -}}
-              {# Dedupe on varName (after dash→underscore) so
-                  spellings that collapse to the same plugin txn var
-                  produce one set-header directive, not two. #}
               {%- var varName = replace(toLower(name), "-", "_") -%}
-              {%- if !seen[varName] -%}
-                {%- seen[varName] = true -%}
-                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
-              {%- end -%}
+              {{- shared.Unique("frontend-spoe-pass-headers-ingress", varName,
+                "\n      http-request del-header " + name + " if { var(txn.auth_url) -m found }" +
+                "\n      http-request set-header " + name + " %[var(txn.hub.external_auth." + varName + ")] if { var(txn.hub.external_auth." + varName + ") -m found } { var(txn.hub.external_auth.allowed) -m bool }") -}}
             {%- end -%}
           {%- end -%}
         {%- end -%}
-      {%- end -%}
-      {%- for _, pair := range pairs -%}
-        {%- var pName = pair.(map[string]any)["name"].(string) -%}
-        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
-      {# Strip any client-supplied copy of this trusted header on auth-protected
-          routes BEFORE re-adding the plugin value, so a forged inbound header
-          can't survive to the backend when the auth reply omits it (the
-          set-header below is skipped when its var isn't found). Mirrors
-          ingress-nginx's always-overwrite semantics. #}
-      {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
-      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
 
   backend-directives-760-nginx-ingress-auth:
@@ -253,23 +277,15 @@ templateSnippets:
               userlist on the same condition so the rendered config stays
               self-consistent.
 
-              The Secret lookup goes through shared.ComputeIfAbsent so both
-              this snippet and the userlist snippet (which runs in a separate
-              section earlier in the render) see the same answer. Stores are
-              live during render, so a direct GetSingle in each snippet can
-              observe different states if the informer lands an update
-              between the two reads — that's the race commit 60e867fd
-              guarded against at the call sites but didn't make coherent.
+              The component and userlist reads share the render transaction's
+              immutable store snapshot, so they cannot observe different states.
             -#}
-            {%- var nginxAuthSecretAny, _ = shared.ComputeIfAbsent("nginx_auth_secret:" + secretNs + "/" + secretName, func() any {
-              return resources.secrets.GetSingle(secretNs, secretName)
-            }) %}
+            {%- var nginxAuthSecret = resources.secrets.GetSingle(secretNs, secretName) %}
             {#- Assert to the typed pointer before the nil check (see the userlist
                 snippet below): a boxed typed-nil *resources.secrets.T passes `!= nil`,
                 which would emit an http_auth ref to a userlist the (correctly-skipping)
                 userlist snippet never produced — `haproxy -c` then fails with
                 "unable to find userlist". -#}
-            {%- var nginxAuthSecret, _ = nginxAuthSecretAny.(*resources.secrets.T) %}
             {#- Under satisfy=any the auth challenge is folded into the combined
                 IP-or-auth gate emitted by backend-directives-765, so suppress
                 the unconditional challenge here (an allow-listed IP must pass
@@ -295,6 +311,32 @@ templateSnippets:
   # ============================================================================
 
   global-top-700-nginx-ingress-auth:
+    requires: [ingresses, secrets]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-secret']"]
+      group: nginx-ingress-auth-userlists
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-type"] == "basic" -%}
+        {%- var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"] -%}
+        {%- if authSecret != "" -%}
+          {%- var secretNs = ingress.Metadata.Namespace -%}
+          {%- var secretName = authSecret -%}
+          {%- if strings_contains(authSecret, "/") -%}
+            {%- var parts = split(authSecret, "/") -%}
+            {%- secretNs = parts[0] -%}
+            {%- secretName = parts[1] -%}
+          {%- end -%}
+          {%- var fragment = render "util-nginx-ingress-auth-userlist" -%}
+          {%- if fragment != "" -%}
+            {{- shared.Unique("nginx-ingress-auth-userlists", secretNs + "/" + secretName, fragment) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  util-nginx-ingress-auth-userlist:
     template: |
       {#
         Nginx Ingress Basic Auth Userlist Generation
@@ -316,7 +358,8 @@ templateSnippets:
           userlist ni_auth_<ns>_<name>
             user <username> password '<hash>'
       #}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
@@ -341,28 +384,7 @@ templateSnippets:
               {{- fail("Invalid value '" + secretType + "' for annotation 'nginx.ingress.kubernetes.io/auth-secret-type' on Ingress '" + key + "'. Valid values: 'auth-file', 'auth-map'.") -}}
             {%- end %}
             {%- var userlistName = "ni_auth_" + secretNs + "_" + secretName %}
-            {%- if first_seen("ni_userlist", userlistName) %}
-              {#-
-                Skip both the userlist and the matching backend ACL ref when the
-                referenced Secret isn't in the controller's cache (informer not
-                yet caught up, or the Secret was just cascade-deleted while the
-                Ingress still lingers). The next render — once the cache catches
-                up — will produce the full auth setup.
-
-                Goes through shared.ComputeIfAbsent so the matching http_auth
-                snippet sees the same Secret presence/absence; stores are live
-                during render and two direct GetSingle calls can observe
-                different states.
-              -#}
-              {%- var secretAny, _ = shared.ComputeIfAbsent("nginx_auth_secret:" + secretNs + "/" + secretName, func() any {
-                return resources.secrets.GetSingle(secretNs, secretName)
-              }) %}
-              {#- Assert to the typed pointer BEFORE the nil check. GetSingle returns a
-                  typed *resources.secrets.T — a typed-nil when the Secret is absent —
-                  and boxing that through the closure's `any` yields a NON-nil interface,
-                  so `secretAny != nil` would pass for an absent Secret and the `.Data`
-                  access below would dereference a nil pointer. -#}
-              {%- var secret, _ = secretAny.(*resources.secrets.T) %}
+              {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
               {%- if secret != nil %}
                 {%- if secretType == "auth-file" %}
                 {%- var authData = secret.Data["auth"] | b64decode() | tostring() %}
@@ -409,7 +431,6 @@ templateSnippets:
         user {{ username }} password '{{ passwordHash }}'
                   {%- end %}
                 {%- end %}
-              {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -423,8 +444,7 @@ templateSnippets:
   # — annotations specific to nginx-ingress belong with the rest of the
   # nginx-ingress annotation surface.
   #
-  # Cached via shared.ComputeIfAbsent so the scan runs at most once per
-  # render. Consumers re-fetch through `render "util-nginx-ingress-coraza-scan"`:
+  # Consumers re-fetch through `render "util-nginx-ingress-coraza-scan"`:
   #   - spoa-hub.yaml's spoa-hub-config-content reads gf["sphCorazaApps"]
   #     to emit per-app `[plugins.params.applications."<ns>/<name>"]` blocks.
   #   - map-coraza-app-500-nginx-ingress emits coraza-app.map entries.
@@ -458,9 +478,43 @@ templateSnippets:
   #   the coraza plugin enabled in spoaHub.plugins — the 503 fail-closed
   #   machinery itself needs the plugin, and silent ignore would hide a real
   #   misconfiguration where nothing enforces the declared WAF intent.
+  nginx-ingress-waf-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/modsecurity-snippet']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/enable-modsecurity']"
+      group: nginx-ingress-waf-ingresses
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var namespace = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
+        {%- var annotations = map[string]any{} -%}
+        {%- for key, value := range ingress.Metadata.Annotations -%}
+          {%- annotations[key] = value -%}
+        {%- end -%}
+        {{- shared.Publish("resources", namespace + "/" + name, map[string]any{
+          "namespace": namespace,
+          "name": name,
+          "annotations": annotations,
+          "resource": map[string]any{
+            "apiVersion": resources.ingresses.APIVersion(),
+            "kind": "Ingress",
+            "metadata": map[string]any{"namespace": namespace, "name": name},
+          },
+        }) -}}
+      {%- end -%}
+
   util-nginx-ingress-coraza-scan:
     template: |-
       {%- import "util-waf-governance" for WafGovernance -%}
+      {%- var _, _ = shared.ComputeIfAbsent("nginxWafIngressPublications", func() any {
+        return render "nginx-ingress-waf-publications"
+      }) -%}
       {%%
         var _, _ = shared.ComputeIfAbsent("sphCorazaScanNginx", func() any {
           var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} })
@@ -499,10 +553,13 @@ templateSnippets:
           var firstAnnotationName = ""
           var anyAnnotation = false
 
-          for _, ingress := range resources.ingresses.List() {
-            var ns = ingress.Metadata.Namespace
-            var name = ingress.Metadata.Name
+          for _, ingressAny := range incremental_values("nginx-ingress-waf-ingresses", "resources") {
+            var ingressRecord = ingressAny.(map[string]any)
+            var ns = tostring(ingressRecord["namespace"])
+            var name = tostring(ingressRecord["name"])
             var key = ns + "/" + name
+            var annotations = to_str_map(ingressRecord["annotations"])
+            var ingress = ingressRecord["resource"]
             // Route-scoped rejection, mirroring the native library's
             // rejectRoute: hard-fail ONLY when this Ingress is the resource
             // under admission review; otherwise record a Warning Event and
@@ -520,7 +577,7 @@ templateSnippets:
               brokenRoutes = append(brokenRoutes, map[string]any{"resourceID": key, "reason": message})
             }
 
-            var snippet = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/modsecurity-snippet"]
+            var snippet = annotations["nginx.ingress.kubernetes.io/modsecurity-snippet"]
             if snippet != "" {
               if !hapticAllowCustomRules {
                 rejectIngress("WafPermissionDenied", "Ingress " + key + " sets 'nginx.ingress.kubernetes.io/modsecurity-snippet', but the HAPTIC administrator disabled Ingress-authored custom WAF rules with extraContext.waf.ingressPermissions.allowCustomRules=false.")
@@ -552,7 +609,7 @@ templateSnippets:
               }
             }
 
-            var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/enable-modsecurity"]
+            var v = annotations["nginx.ingress.kubernetes.io/enable-modsecurity"]
             if v == "false" {
               if !hapticAllowWafDisable {
                 rejectIngress("WafPermissionDenied", "Ingress " + key + " disables WAF with 'nginx.ingress.kubernetes.io/enable-modsecurity: false', but the HAPTIC administrator disabled Ingress WAF opt-outs with extraContext.waf.ingressPermissions.allowWafDisable=false.")

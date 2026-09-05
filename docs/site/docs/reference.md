@@ -105,6 +105,7 @@ A `pre-install`/`pre-upgrade` hook Job renders the chart embedded in the control
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `controller.templateLibraries.base.enabled` | bool | `true` | Core HAProxy configuration. Disabling drops the `haproxyConfig` template the other libraries plug into; leave on unless you supply a complete replacement |
+| `controller.templateLibraries.kubernetesBackends.enabled` | bool | `true` | Shared Kubernetes Service port and EndpointSlice backend resolution used by the bundled routing libraries |
 | `controller.templateLibraries.ssl.enabled` | bool | `true` | SSL/TLS and HTTPS frontend support |
 | `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
 | `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTP, gRPC, TLS and TCP routes) |
@@ -567,8 +568,8 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `controller.resources.requests.cpu` | string | `100m` | CPU request |
-| `controller.resources.requests.memory` | string | `512Mi` | Memory request (Guaranteed QoS — matches `limits.memory`) |
-| `controller.resources.limits.memory` | string | `512Mi` | Memory limit |
+| `controller.resources.requests.memory` | string | `1Gi` | Memory request (matches `limits.memory`) |
+| `controller.resources.limits.memory` | string | `1Gi` | Memory limit. The floor is the load gate, which runs the bundled `validationTests` on every config load and peaks above 512Mi — see [Controller resource sizing](./operations/performance.md#controller-resource-sizing) |
 
 Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) live under `controller.podSpec.*` — see [Pod configuration (controller)](#pod-configuration-controller).
 

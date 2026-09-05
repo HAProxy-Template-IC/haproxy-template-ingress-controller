@@ -106,6 +106,7 @@ func TestPublishWorker_QueuedDeployWorkStillFlushesWhenGateReopens(t *testing.T)
 		// after "Processing publish work" is logged and the nil publisher is
 		// never reached.
 		lastPublishedChecksum: published,
+		lastPublishedEntry:    &renderedConfigEntry{config: published, contentChecksum: published},
 		publishThrottle:       throttle.New(50 * time.Millisecond),
 	}
 
@@ -115,7 +116,7 @@ func TestPublishWorker_QueuedDeployWorkStillFlushesWhenGateReopens(t *testing.T)
 	c.enqueueDeployed(&publishWorkItem{
 		correlationID:  "deployed:abc",
 		templateConfig: &v1alpha1.HAProxyTemplateConfig{},
-		entry:          &renderedConfigEntry{contentChecksum: published},
+		entry:          &renderedConfigEntry{config: published, contentChecksum: published},
 		deployDriven:   true,
 	})
 

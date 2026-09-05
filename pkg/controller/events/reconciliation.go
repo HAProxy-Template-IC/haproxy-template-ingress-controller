@@ -15,8 +15,11 @@
 package events
 
 import (
+	"fmt"
 	"slices"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -104,7 +107,15 @@ func (e *ReconciliationStartedEvent) EventType() string { return EventTypeReconc
 //
 // This event propagates the correlation ID from the reconciliation chain.
 type ReconciliationCompletedEvent struct {
+	renderOccurrenceCarrier
+
 	DurationMs int64
+
+	// CycleSnapshot binds the complete output and effects of this reconciliation.
+	CycleSnapshot *rendercycle.Snapshot
+
+	// RenderProof identifies this occurrence of the authenticated cycle.
+	RenderProof string
 
 	// RenderedResources are the Kubernetes resources the templates declared
 	// under spec.k8sResources in this cycle. The
@@ -114,6 +125,9 @@ type ReconciliationCompletedEvent struct {
 	// be nil when the render didn't emit any K8s resources.
 	RenderedResources []templating.RenderedResource
 
+	// RenderedResourceSnapshot is the authenticated immutable production representation.
+	RenderedResourceSnapshot *templating.RenderedResourceSnapshot
+
 	// StatusPatches are the chart-rendered status patches of this cycle.
 	// The ResourceApplier forwards them on ResourcesAppliedEvent after its
 	// apply pass so the StatusApplier writes the "rendered" variant only
@@ -122,6 +136,9 @@ type ReconciliationCompletedEvent struct {
 	// lists labeled resources the moment Accepted turns True).
 	StatusPatches []templating.StatusPatch
 
+	// StatusPatchSnapshot is the authenticated immutable production representation.
+	StatusPatchSnapshot *templating.StatusPatchSnapshot
+
 	// Events are the Kubernetes Events templates asked to emit this cycle via
 	// recordEvent() (e.g. a RouteConflict Warning on an Ingress). The
 	// EventEmitter (leader-only) reads them directly off this event and emits
@@ -129,6 +146,9 @@ type ReconciliationCompletedEvent struct {
 	// The publisher sets this from a cloned slice before Publish; treat as
 	// read-only like every other event field.
 	Events []templating.RenderedEvent
+
+	// EventSnapshot is the authenticated immutable production representation.
+	EventSnapshot *templating.RenderedEventSnapshot
 
 	// PlanID is the render this cycle produced, so a consumer can pair the
 	// cycle with the render gate's later verdict on it.
@@ -143,6 +163,24 @@ type ReconciliationCompletedEvent struct {
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
+}
+
+// NewReconciliationCompletedEventWithCycle creates a production completion.
+func NewReconciliationCompletedEventWithCycle(
+	durationMs int64,
+	occurrence *rendercycle.Occurrence,
+	opts ...CorrelationOption,
+) (*ReconciliationCompletedEvent, error) {
+	carrier, identity, err := inspectRenderOccurrence(occurrence)
+	if err != nil {
+		return nil, fmt.Errorf("reconciliation completed event: %w", err)
+	}
+	event := newReconciliationCompletedEvent(
+		durationMs, "", nil, nil, nil, nil, nil, opts...,
+	)
+	event.renderOccurrenceCarrier = carrier
+	owned := withReconciliationCompletedIdentity(event, identity)
+	return &owned, nil
 }
 
 // NewReconciliationCompletedEvent creates a new ReconciliationCompletedEvent.
@@ -163,17 +201,78 @@ func NewReconciliationCompletedEvent(
 	statusPatches []templating.StatusPatch,
 	opts ...CorrelationOption,
 ) *ReconciliationCompletedEvent {
+	return newReconciliationCompletedEvent(
+		durationMs, planID, renderedResources, nil, statusPatches, nil, nil, opts...,
+	)
+}
+
+// NewReconciliationCompletedEventWithStatusSnapshot avoids detaching status payloads.
+func NewReconciliationCompletedEventWithStatusSnapshot(
+	durationMs int64,
+	planID string,
+	renderedResources []templating.RenderedResource,
+	statusPatchSnapshot *templating.StatusPatchSnapshot,
+	opts ...CorrelationOption,
+) *ReconciliationCompletedEvent {
+	return newReconciliationCompletedEvent(
+		durationMs, planID, renderedResources, nil, nil, statusPatchSnapshot, nil, opts...,
+	)
+}
+
+func newReconciliationCompletedEvent(
+	durationMs int64,
+	planID string,
+	renderedResources []templating.RenderedResource,
+	renderedResourceSnapshot *templating.RenderedResourceSnapshot,
+	statusPatches []templating.StatusPatch,
+	statusPatchSnapshot *templating.StatusPatchSnapshot,
+	eventSnapshot *templating.RenderedEventSnapshot,
+	opts ...CorrelationOption,
+) *ReconciliationCompletedEvent {
 	return &ReconciliationCompletedEvent{
-		DurationMs:        durationMs,
-		PlanID:            planID,
-		RenderedResources: slices.Clone(renderedResources),
-		StatusPatches:     slices.Clone(statusPatches),
-		timestamped:       newTimestamped(),
-		Correlation:       newCorrelation(opts...),
+		DurationMs:               durationMs,
+		PlanID:                   planID,
+		RenderedResources:        cloneRenderedResources(renderedResources),
+		RenderedResourceSnapshot: renderedResourceSnapshot,
+		StatusPatches:            cloneStatusPatches(statusPatches),
+		StatusPatchSnapshot:      statusPatchSnapshot,
+		EventSnapshot:            eventSnapshot,
+		timestamped:              newTimestamped(),
+		Correlation:              newCorrelation(opts...),
 	}
 }
 
 func (e *ReconciliationCompletedEvent) EventType() string { return EventTypeReconciliationCompleted }
+
+// CloneForSubscriber restores authenticated shadows and isolates legacy payloads.
+func (e *ReconciliationCompletedEvent) CloneForSubscriber() busevents.Event {
+	if e == nil {
+		panic("cannot clone nil reconciliation completed event")
+	}
+	clone := *e
+	clone.RenderedResources = cloneRenderedResources(e.RenderedResources)
+	clone.StatusPatches = cloneStatusPatches(e.StatusPatches)
+	clone.Events = slices.Clone(e.Events)
+	if e.occurrence != nil {
+		clone = withReconciliationCompletedIdentity(&clone, mustInspectRenderOccurrence(e.renderOccurrenceCarrier))
+	}
+	return &clone
+}
+
+func withReconciliationCompletedIdentity(source *ReconciliationCompletedEvent, identity *renderOccurrenceIdentity) ReconciliationCompletedEvent {
+	event := *source
+	event.CycleSnapshot = identity.cycle
+	event.RenderProof = identity.proof
+	event.RenderedResources = nil
+	event.RenderedResourceSnapshot = identity.renderedResources
+	event.StatusPatches = nil
+	event.StatusPatchSnapshot = identity.statusPatches
+	event.Events = nil
+	event.EventSnapshot = identity.renderedEvents
+	event.PlanID = identity.planID
+	event.ProfileCount = identity.counts.Profiles
+	return event
+}
 
 // Coalescible implements busevents.CoalescibleEvent. A completed cycle is a
 // full-state notification — RenderedResources and StatusPatches are the
@@ -191,9 +290,20 @@ func (e *ReconciliationCompletedEvent) Coalescible() bool { return true }
 // test) that list infrastructure the moment Accepted turns True find
 // nothing.
 type ResourcesAppliedEvent struct {
+	renderOccurrenceCarrier
+
+	// CycleSnapshot is the exact cycle whose resources now exist.
+	CycleSnapshot *rendercycle.Snapshot
+
+	// RenderProof identifies this occurrence of the authenticated cycle.
+	RenderProof string
+
 	// StatusPatches forwarded from the ReconciliationCompletedEvent that
 	// triggered the apply pass.
 	StatusPatches []templating.StatusPatch
+
+	// StatusPatchSnapshot forwards the immutable patch set from the same cycle.
+	StatusPatchSnapshot *templating.StatusPatchSnapshot
 
 	timestamped
 
@@ -201,18 +311,62 @@ type ResourcesAppliedEvent struct {
 	Correlation
 }
 
-// NewResourcesAppliedEvent creates a new ResourcesAppliedEvent. The patches
-// slice is NOT cloned: the publisher forwards the (already defensively
-// cloned) slice from the ReconciliationCompletedEvent it consumed.
+// NewResourcesAppliedEventWithCycle forwards one exact cycle after its resources exist.
+func NewResourcesAppliedEventWithCycle(
+	occurrence *rendercycle.Occurrence,
+	opts ...CorrelationOption,
+) (*ResourcesAppliedEvent, error) {
+	carrier, identity, err := inspectRenderOccurrence(occurrence)
+	if err != nil {
+		return nil, fmt.Errorf("resources applied event: %w", err)
+	}
+	event := NewResourcesAppliedEventWithStatusSnapshot(nil, opts...)
+	event.renderOccurrenceCarrier = carrier
+	owned := withResourcesAppliedIdentity(event, identity)
+	return &owned, nil
+}
+
+// NewResourcesAppliedEvent creates a legacy ResourcesAppliedEvent.
 func NewResourcesAppliedEvent(statusPatches []templating.StatusPatch, opts ...CorrelationOption) *ResourcesAppliedEvent {
 	return &ResourcesAppliedEvent{
-		StatusPatches: statusPatches,
+		StatusPatches: cloneStatusPatches(statusPatches),
 		timestamped:   newTimestamped(),
 		Correlation:   newCorrelation(opts...),
 	}
 }
 
+// NewResourcesAppliedEventWithStatusSnapshot forwards an immutable patch set.
+func NewResourcesAppliedEventWithStatusSnapshot(statusPatchSnapshot *templating.StatusPatchSnapshot, opts ...CorrelationOption) *ResourcesAppliedEvent {
+	return &ResourcesAppliedEvent{
+		StatusPatchSnapshot: statusPatchSnapshot,
+		timestamped:         newTimestamped(),
+		Correlation:         newCorrelation(opts...),
+	}
+}
+
 func (e *ResourcesAppliedEvent) EventType() string { return EventTypeResourcesApplied }
+
+// CloneForSubscriber restores authenticated shadows and isolates legacy payloads.
+func (e *ResourcesAppliedEvent) CloneForSubscriber() busevents.Event {
+	if e == nil {
+		panic("cannot clone nil resources applied event")
+	}
+	clone := *e
+	clone.StatusPatches = cloneStatusPatches(e.StatusPatches)
+	if e.occurrence != nil {
+		clone = withResourcesAppliedIdentity(&clone, mustInspectRenderOccurrence(e.renderOccurrenceCarrier))
+	}
+	return &clone
+}
+
+func withResourcesAppliedIdentity(source *ResourcesAppliedEvent, identity *renderOccurrenceIdentity) ResourcesAppliedEvent {
+	event := *source
+	event.CycleSnapshot = identity.cycle
+	event.RenderProof = identity.proof
+	event.StatusPatches = nil
+	event.StatusPatchSnapshot = identity.statusPatches
+	return event
+}
 
 // Coalescible implements busevents.CoalescibleEvent — full-state semantics,
 // same rationale as ReconciliationCompletedEvent.Coalescible.
@@ -233,6 +387,9 @@ type ReconciliationFailedEvent struct {
 	// successful render has happened yet (early bootstrap failures); the
 	// applier handles nil gracefully by skipping the apply.
 	StatusPatches []templating.StatusPatch
+
+	// StatusPatchSnapshot is the most recent successful immutable patch set.
+	StatusPatchSnapshot *templating.StatusPatchSnapshot
 
 	timestamped
 
@@ -256,6 +413,17 @@ func NewReconciliationFailedEvent(err, phase string, statusPatches []templating.
 		StatusPatches: slices.Clone(statusPatches),
 		timestamped:   newTimestamped(),
 		Correlation:   newCorrelation(opts...),
+	}
+}
+
+// NewReconciliationFailedEventWithStatusSnapshot carries the last successful patch set.
+func NewReconciliationFailedEventWithStatusSnapshot(err, phase string, statusPatchSnapshot *templating.StatusPatchSnapshot, opts ...CorrelationOption) *ReconciliationFailedEvent {
+	return &ReconciliationFailedEvent{
+		Error:               err,
+		Phase:               phase,
+		StatusPatchSnapshot: statusPatchSnapshot,
+		timestamped:         newTimestamped(),
+		Correlation:         newCorrelation(opts...),
 	}
 }
 

@@ -14,14 +14,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -113,18 +114,19 @@ func TestCoordinator_HandleReconciliationTriggered_NonPipelineErrorDefaultsToRen
 	assert.Contains(t, failed.Error, "unexpected non-pipeline crash")
 }
 
-func TestCoordinator_HandlePipelineSuccess_PublishesTheRenderPlan(t *testing.T) {
-	// The deployer diffs the plan against what each pod applied, so a render
-	// whose plan is dropped here degrades every deploy to a full push.
-	plan := &renderplan.Plan{ID: "plan-abc"}
+func TestCoordinator_HandlePipelineSuccess_PublishesTheAuthenticatedRenderPlan(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
+	cycle := testutil.NewRenderCycleFixture(t).Snapshot(t, "cfg", nil, nil)
+	wantOutput, err := cycle.OutputSnapshot()
+	require.NoError(t, err)
+	wantPlan, err := wantOutput.PlanSnapshot()
+	require.NoError(t, err)
+	wantPlanID, err := wantOutput.PlanID()
+	require.NoError(t, err)
 
 	mp := &mockPipeline{
 		result: &pipeline.PipelineResult{
-			HAProxyConfig:  "cfg",
-			AuxiliaryFiles: &dataplane.AuxiliaryFiles{},
-			Plan:           plan,
-			PlanID:         plan.ID,
+			CycleSnapshot: cycle,
 		},
 	}
 
@@ -146,8 +148,12 @@ func TestCoordinator_HandlePipelineSuccess_PublishesTheRenderPlan(t *testing.T) 
 	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
 	rendered := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.EventTimeout)
-	assert.Same(t, plan, rendered.Plan)
-	assert.Equal(t, "plan-abc", rendered.PlanID)
+	require.Same(t, wantOutput, rendered.OutputSnapshot)
+	gotPlan, err := rendered.OutputSnapshot.PlanSnapshot()
+	require.NoError(t, err)
+	require.Same(t, wantPlan, gotPlan)
+	assert.Equal(t, wantPlanID, rendered.PlanID)
+	assert.Nil(t, rendered.Plan)
 }
 
 func TestCoordinator_HandlePipelineSuccess_PropagatesCoalescibleFlagToRender(t *testing.T) {
@@ -167,11 +173,11 @@ func TestCoordinator_HandlePipelineSuccess_PropagatesCoalescibleFlagToRender(t *
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bus, logger := testutil.NewTestBusAndLogger()
+			cycle := testutil.NewRenderCycleFixture(t).Snapshot(t, "cfg", nil, nil)
 
 			mp := &mockPipeline{
 				result: &pipeline.PipelineResult{
-					HAProxyConfig:      "cfg",
-					AuxiliaryFiles:     &dataplane.AuxiliaryFiles{},
+					CycleSnapshot:      cycle,
 					RenderDurationMs:   1,
 					ValidateDurationMs: 1,
 				},
@@ -204,4 +210,31 @@ func TestCoordinator_HandlePipelineSuccess_PropagatesCoalescibleFlagToRender(t *
 					"intent and would over- or under-coalesce")
 		})
 	}
+}
+
+func TestCoordinator_HandlePipelineSuccess_CountsTheRenderByCacheState(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	cycle := testutil.NewRenderCycleFixture(t).Snapshot(t, "cfg", nil, nil)
+	recorded := metrics.NewMetrics(prometheus.NewRegistry())
+
+	c := NewCoordinator(&CoordinatorConfig{
+		EventBus:      bus,
+		Pipeline:      &mockPipeline{result: &pipeline.PipelineResult{CycleSnapshot: cycle, CacheState: "replay"}},
+		StoreProvider: stores.NewRealStoreProvider(nil),
+		Metrics:       recorded,
+		Logger:        logger,
+	})
+
+	eventChan := bus.Subscribe("test-render-metric", 100)
+	bus.Start()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _ = c.Start(ctx) }()
+	time.Sleep(testutil.StartupDelay)
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
+	_ = testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(recorded.RenderTotal.WithLabelValues("replay")))
 }

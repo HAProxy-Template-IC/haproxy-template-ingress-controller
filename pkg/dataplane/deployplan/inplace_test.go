@@ -99,13 +99,13 @@ func TestInPlaceMapAndCertOps(t *testing.T) {
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{
 			entry("a.example.com", "be-a"), entry("gone.example.com", "be-gone"), entry("multi", "one"),
 		}}),
-		withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "before"}),
+		withFile(&renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "before"}),
 	)
 	next := basePlan(
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{
 			entry("a.example.com", "be-z"), entry("multi", "one"), entry("multi", "two"),
 		}}),
-		withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
+		withFile(&renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
 	)
 	base := withMapsLoaded(on34(worker), routeMap)
 	base.WorkerOps = worker
@@ -138,7 +138,7 @@ func TestInPlaceMapAndCertOps(t *testing.T) {
 	// delete for it either.
 	later := basePlan(
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a.example.com", "be-z")}}),
-		withFile(renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
+		withFile(&renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
 	)
 	third := deployplan.Diff(later, base)
 	assert.Equal(t, []string{api.OpMapDel}, kinds(third.InPlace))

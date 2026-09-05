@@ -30,6 +30,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -222,8 +223,101 @@ func TestRenderService_Render_SimpleConfig(t *testing.T) {
 	assert.Contains(t, result.HAProxyConfig, "global")
 	assert.Contains(t, result.HAProxyConfig, "daemon")
 	assert.Contains(t, result.HAProxyConfig, "defaults")
-	assert.NotNil(t, result.AuxiliaryFiles)
+	assert.NotNil(t, result.AuxiliaryFileSnapshot)
+	assert.NotNil(t, requireAuxiliaryFiles(t, result))
 	assert.GreaterOrEqual(t, result.DurationMs, int64(0))
+}
+
+func TestRenderService_RenderReusesOnlyExactCommittedOutput(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: "global\n    daemon\n"},
+		Dataplane:     testDataplaneConfig(),
+	}
+	engine, err := templating.New(map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template}, nil)
+	require.NoError(t, err)
+	service := NewRenderService(&RenderServiceConfig{
+		Engine: engine, Config: cfg, Logger: slog.Default(), Capabilities: defaultCapabilities(),
+	})
+	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
+
+	first, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.NoError(t, first.InputTransaction.Commit(t.Context()))
+	service.planMu.Lock()
+	firstStoredPlan := service.lastPlan
+	firstStoredOutput := service.lastOutputSnapshot
+	service.planMu.Unlock()
+	assert.Nil(t, firstStoredPlan)
+	require.Same(t, first.OutputSnapshot, firstStoredOutput)
+	unchanged, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	assert.Same(t, first.OutputSnapshot, unchanged.OutputSnapshot)
+
+	require.NoError(t, unchanged.InputTransaction.Commit(t.Context()))
+	service.planMu.Lock()
+	unchangedStoredPlan := service.lastPlan
+	unchangedStoredOutput := service.lastOutputSnapshot
+	service.planMu.Unlock()
+	assert.Nil(t, unchangedStoredPlan)
+	assert.Same(t, firstStoredOutput, unchangedStoredOutput)
+}
+
+func TestRenderService_RenderNeverReusesUncommittedOutput(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: "global\n    daemon\n"},
+		Dataplane:     testDataplaneConfig(),
+	}
+	engine, err := templating.New(map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template}, nil)
+	require.NoError(t, err)
+	service := NewRenderService(&RenderServiceConfig{
+		Engine: engine, Config: cfg, Logger: slog.Default(), Capabilities: defaultCapabilities(),
+	})
+	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
+
+	aborted, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	aborted.InputTransaction.Abort()
+
+	retried, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	assert.NotSame(t, aborted.OutputSnapshot, retried.OutputSnapshot)
+	require.NoError(t, retried.InputTransaction.Commit(t.Context()))
+
+	committed, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	assert.Same(t, retried.OutputSnapshot, committed.OutputSnapshot)
+	committed.InputTransaction.Abort()
+}
+
+func TestRenderService_RenderStagesCurrentConfigUntilCommit(t *testing.T) {
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: `{% _ = len(currentConfig.ServerIndex) %}{% var token, backendErr = planRegistry.Backend(map[string]any{"name": "be_app", "servers": []any{map[string]any{"name": "srv1", "address": "10.0.0.2", "port": 8080}}}, "backend be_app\n    server srv1 10.0.0.2:8080\n") %}{% if backendErr != nil %}{{ fail(tostring(backendErr)) }}{% end %}global
+{{ token }}`},
+		Dataplane: testDataplaneConfig(),
+	}
+	engine, err := templating.New(
+		map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template},
+		&templating.Options{Declarations: map[string]any{
+			"currentConfig": (*renderplan.CurrentConfig)(nil),
+		}},
+	)
+	require.NoError(t, err)
+	service := NewRenderService(&RenderServiceConfig{
+		Engine: engine, Config: cfg, Logger: slog.Default(), Capabilities: defaultCapabilities(),
+	})
+	service.rememberPlan(rendercontext.RenderModeReconcile, planWithServer("old", "10.0.0.1"))
+	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
+
+	aborted, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.1", serverAddress(t, service.currentConfig()))
+	aborted.InputTransaction.Abort()
+	assert.Equal(t, "10.0.0.1", serverAddress(t, service.currentConfig()))
+
+	committed, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.NoError(t, committed.InputTransaction.Commit(t.Context()))
+	assert.Equal(t, "10.0.0.2", serverAddress(t, service.currentConfig()))
 }
 
 func TestRenderService_Render_CallCurrentFilesOverridesDefault(t *testing.T) {
@@ -390,9 +484,10 @@ func TestRenderService_Render_WithMapFiles(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Len(t, result.AuxiliaryFiles.MapFiles, 1)
-	assert.Equal(t, "domains.map", result.AuxiliaryFiles.MapFiles[0].Path)
-	assert.Contains(t, result.AuxiliaryFiles.MapFiles[0].Content, "example.com backend1")
+	files := requireAuxiliaryFiles(t, result)
+	assert.Len(t, files.MapFiles, 1)
+	assert.Equal(t, "domains.map", files.MapFiles[0].Path)
+	assert.Contains(t, files.MapFiles[0].Content, "example.com backend1")
 	assert.Equal(t, 1, result.AuxFileCount)
 }
 
@@ -430,11 +525,12 @@ func TestRenderService_Render_WithGeneralFiles(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Len(t, result.AuxiliaryFiles.GeneralFiles, 1)
-	assert.Equal(t, "errors/503.http", result.AuxiliaryFiles.GeneralFiles[0].Filename)
-	assert.Equal(t, "files/errors/503.http", result.AuxiliaryFiles.GeneralFiles[0].Path)
-	assert.Contains(t, result.AuxiliaryFiles.GeneralFiles[0].Content, "503 Service Unavailable")
-	assert.True(t, result.AuxiliaryFiles.GeneralFiles[0].ReloadsOnPush(), "an entry that omits reloadOnPush must keep reloading")
+	files := requireAuxiliaryFiles(t, result)
+	assert.Len(t, files.GeneralFiles, 1)
+	assert.Equal(t, "errors/503.http", files.GeneralFiles[0].Filename)
+	assert.Equal(t, "files/errors/503.http", files.GeneralFiles[0].Path)
+	assert.Contains(t, files.GeneralFiles[0].Content, "503 Service Unavailable")
+	assert.True(t, files.GeneralFiles[0].ReloadsOnPush(), "an entry that omits reloadOnPush must keep reloading")
 }
 
 // A `files:` entry carrying reloadOnPush: false has to reach the deployer as
@@ -468,8 +564,9 @@ func TestRenderService_Render_GeneralFileReloadOnPushFalse(t *testing.T) {
 	result, err := svc.Render(context.Background(), &mockStoreProvider{storeMap: map[string]stores.Store{}}, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err)
-	require.Len(t, result.AuxiliaryFiles.GeneralFiles, 1)
-	assert.False(t, result.AuxiliaryFiles.GeneralFiles[0].ReloadsOnPush())
+	files := requireAuxiliaryFiles(t, result)
+	require.Len(t, files.GeneralFiles, 1)
+	assert.False(t, files.GeneralFiles[0].ReloadsOnPush())
 }
 
 func TestRenderService_Render_Error(t *testing.T) {
@@ -576,7 +673,8 @@ func TestRenderService_buildRenderingContext_PropagatesIndexBy(t *testing.T) {
 		},
 	}
 
-	bctx := svc.buildRenderingContext(context.Background(), provider, rendercontext.RenderModeReconcile)
+	bctx, err := svc.buildRenderingContext(context.Background(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
 	renderCtx := bctx.Context
 	require.NotNil(t, bctx.FileRegistry, "fileRegistry collector must be wired so templates can register dynamic aux files")
 	require.NotNil(t, bctx.StatusPatchCollector, "statusPatchCollector must be wired so filters_status.go can capture mutations")

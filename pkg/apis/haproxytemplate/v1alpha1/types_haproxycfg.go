@@ -170,7 +170,7 @@ type PodDeploymentStatus struct {
 	ConsecutiveErrors int `json:"consecutiveErrors,omitempty"`
 }
 
-// AuxiliaryFileReferences references the associated map files, certificates, general files, and crt-lists.
+// AuxiliaryFileReferences references the associated maps, certificates, CA files, general files, and crt-lists.
 type AuxiliaryFileReferences struct {
 	// SetID identifies the auxiliary publication committed with these references.
 	// +optional
@@ -183,6 +183,10 @@ type AuxiliaryFileReferences struct {
 	// SSLCertificates lists the Secret resources containing SSL certificates.
 	// +optional
 	SSLCertificates []ResourceReference `json:"sslCertificates,omitempty"`
+
+	// SSLCaFiles lists the Secret resources containing SSL CA files.
+	// +optional
+	SSLCaFiles []ResourceReference `json:"sslCaFiles,omitempty"`
 
 	// GeneralFiles lists the HAProxyGeneralFile resources associated with this config.
 	// +optional

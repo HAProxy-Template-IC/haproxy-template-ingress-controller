@@ -112,7 +112,7 @@ This package implements a pure test runner component that executes embedded vali
 
 Implements 8 assertion types (see the dispatch switch in `assertions.go`):
 
-1. **haproxy_valid** - Three-phase validation (syntax + schema + `haproxy -c`) on the rendered config
+1. **haproxy_valid** - `haproxy -c` validation of the rendered config
 2. **contains** - Regex must match the target at least once
 3. **not_contains** - Regex must not match anywhere
 4. **match_count** - Regex must match exactly `count` times
@@ -573,7 +573,7 @@ HAProxy validation errors are simplified using `dataplane.SimplifyValidationErro
 
 ```go
 // Real signature: ValidateConfigurationContext(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate)
-// returns error (nil / ErrValidationCacheHit / a ValidationError). The gate is a
+// returns nil or a ValidationError. Every call executes HAProxy. The gate is a
 // *dataplane.CheckGate; the runner passes its own multi-slot r.checkGate so the
 // worker pool's `haproxy -c` runs go wide instead of serializing on the default
 // single-slot gate. nil uses that shared default gate.
@@ -844,14 +844,14 @@ func TestRunner_RegexMatch(t *testing.T) {
 
 ### What's Already Optimized
 
-- **Parallel test execution**: A worker pool (`testWorker` in `runner.go`, sized to `Options.Workers` or `runtime.NumCPU()`) processes tests concurrently. Each worker gets its own `ValidationPaths` temp directory so `haproxy -c` runs don't collide.
+- **Parallel test execution**: A worker pool (`testWorker` in `runner.go`, sized to `Options.Workers` or `runtime.GOMAXPROCS(0)`) processes tests concurrently. Each worker gets its own `ValidationPaths` temp directory so `haproxy -c` runs don't collide.
 - **Concurrent `haproxy -c`**: `RunTests` builds a multi-slot `dataplane.CheckGate` (`r.checkGate`, sized to the worker count but capped at `GOMAXPROCS`) and passes it to every `haproxy_valid` assertion. Without it the workers serialize behind dataplane's single-slot *default* gate, so the pool gains nothing on `haproxy_valid`-heavy suites — measured 12.8s → 2.3s on a 529-test / 411-`haproxy_valid` corpus (16 cores). This path is the startup and reinit config-load gate, so the win is also faster startup and shorter leaderless windows on a config-change reinit.
 - **Template engine reuse**: The pre-compiled `templating.Engine` is shared across workers. Per-render state (filter context, current config) is passed in `additionalDeclarations`, not stored on the engine.
+- **Fresh HAProxy verdicts**: repeated `haproxy_valid` assertions invoke HAProxy again. A content-only cache can't observe a changed executable or runtime environment.
 
 ### Remaining Opportunities
 
 - **Store reuse across tests with identical fixtures** — currently each test rebuilds its `stores.Store`s from scratch, even when fixtures match the previous test verbatim.
-- **Validation cache hits** — the dataplane validator has its own three-tuple cache (`configHash`, `auxHash`, `versionHash`), so repeated `haproxy_valid` assertions on identical configs are already cheap; tests that *vary* configs do not benefit.
 
 ## Resources
 

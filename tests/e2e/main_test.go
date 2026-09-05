@@ -851,6 +851,7 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		return ctx, fmt.Errorf("gateway API Helm channel: %w", err)
 	}
 	args = append(args, gatewayAPIArgs...)
+	args = append(args, extraHelmSetArgs()...)
 	identity, err := expectedControllerIdentity()
 	if err != nil {
 		return ctx, err
@@ -1395,4 +1396,28 @@ func repoRoot() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// extraHelmSetArgs turns HAPTIC_E2E_EXTRA_SET into --set flags, so a local run
+// can match the shape CI installs. The one that matters is CPU: with no CPU
+// limit, GOMAXPROCS follows the node, and it sizes the validationTests gate's
+// worker pool — a 16-core box finishes the gate ~4x faster than CI's 4-core
+// runner, which is long enough to hide propagation gaps that fail there.
+//
+//	HAPTIC_E2E_EXTRA_SET='controller.resources.limits.cpu=4'
+//
+// Separate several with ';'.
+func extraHelmSetArgs() []string {
+	raw := strings.TrimSpace(os.Getenv("HAPTIC_E2E_EXTRA_SET"))
+	if raw == "" {
+		return nil
+	}
+	var args []string
+	for _, pair := range strings.Split(raw, ";") {
+		if pair = strings.TrimSpace(pair); pair != "" {
+			args = append(args, "--set", pair)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "e2e: HAPTIC_E2E_EXTRA_SET applied: %v\n", args)
+	return args
 }

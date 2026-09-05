@@ -516,7 +516,7 @@ THEN errors.As with *ConnectionError SHALL return true when applied to the SyncE
 
 ### Requirement: Extended Error Taxonomy
 
-Beyond the four structured error types, the package SHALL define: a sentinel error ErrValidationCacheHit, returned when validation is skipped because the identical configuration already validated successfully (callers obtain the parsed config from the parser cache); a third ValidationError.Phase value `schema` (OpenAPI schema constraint violation) alongside `syntax` and `semantic`; and boundary-simplification helpers. SimplifyValidationError SHALL extract the user-facing detail from semantic validation errors (the text after the HAProxy-validation marker) and from schema validation errors (field, constraint, and offending value), returning the original string when neither pattern matches. SimplifyRenderingError SHALL extract the operator-authored message following the template engine's fail-function marker, returning the original string for other rendering errors.
+Beyond the four structured error types, the package SHALL define a third ValidationError.Phase value `schema` (OpenAPI schema constraint violation) alongside `syntax` and `semantic`, plus boundary-simplification helpers. SimplifyValidationError SHALL extract the user-facing detail from semantic validation errors (the text after the HAProxy-validation marker) and from schema validation errors (field, constraint, and offending value), returning the original string when neither pattern matches. SimplifyRenderingError SHALL extract the operator-authored message following the template engine's fail-function marker, returning the original string for other rendering errors.
 
 SyncError.Stage values SHALL identify the failing step, including at least: `connect`, `parse-current`, `parse-desired`, `compare`, the per-type auxiliary comparison stages (`compare_files`, `compare_ssl`, `compare_ssl_ca`, `compare_maps`, `compare_crtlists`), the pre-config sync stages (`sync_ssl_pre`, `sync_ssl_ca_pre`, `sync_files_pre`, `sync_maps_pre`), `apply`, `version_resolve`, `version_refetch`, `reload_verification`, and `auxiliary_reload_verification`.
 
@@ -532,10 +532,10 @@ Schema-phase validation SHALL run through a zero-allocation validator layer: gen
 - **WHEN** SimplifyRenderingError receives a rendering error produced by a template's fail("Service not found") call
 - **THEN** it SHALL return exactly "Service not found".
 
-#### Scenario: Validation cache hit surfaces the sentinel
+#### Scenario: Repeated validation executes HAProxy again
 
 - **WHEN** validation is requested for a configuration that already validated successfully
-- **THEN** the call SHALL return ErrValidationCacheHit instead of re-running validation.
+- **THEN** the call SHALL execute HAProxy again and return the current invocation's verdict.
 
 #### Scenario: Non-matching error passes through unchanged
 

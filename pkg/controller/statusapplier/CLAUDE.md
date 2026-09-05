@@ -12,7 +12,7 @@ Work in this package when:
 - Changing how status patches are dispatched (which event triggers which variant)
 - Adjusting the SSA field-manager scheme (the `haptic-rendered` /
   `haptic-deployed` / `haptic-deployFailed` / `haptic-renderFailed` split)
-- Adjusting the checksum cache that deduplicates redundant SSA calls
+- Adjusting the exact-lineage cache that deduplicates redundant SSA calls
 
 **DO NOT** work here for:
 
@@ -22,26 +22,27 @@ Work in this package when:
 - Deciding when to emit a patch's "rendered" vs "deployed" variant →
   that's the chart's job too (per-variant payload keys in `statusPatch()`
   template-function calls)
-- Adding a new event type the applier should consume → first add it to
-  `pkg/controller/events` with `StatusPatches []templating.StatusPatch`
-  on the payload, then wire the consumer here
+- Adding a success event type the applier should consume → propagate the same
+  sealed `*rendercycle.Occurrence`, then wire the consumer here
 
 ## Architectural Contract
 
-The applier is **stateless on the success path**. Patches travel on the
-event that triggers each apply:
+The applier is **stateless on the success path**. Each success event propagates
+the same sealed render occurrence, and the applier authenticates it before
+reading its status snapshot:
 
-- `ResourcesAppliedEvent.StatusPatches` → `rendered` variant (published by
+- `ResourcesAppliedEvent.RenderOccurrence()` → `rendered` variant (published by
   the ResourceApplier AFTER the same render's `spec.k8sResources` were
   applied, so conditions never precede the infrastructure they describe)
-- `DeploymentCompletedEvent.StatusPatches` → `deployed` variant
-- `DeploymentSkippedEvent.StatusPatches` → `deployed` variant
-- `ReconciliationFailedEvent.StatusPatches` → `renderFailed` or
+- `DeploymentCompletedEvent.RenderOccurrence()` → `deployed` variant
+- `DeploymentSkippedEvent.RenderOccurrence()` → `deployed` variant
+- `ReconciliationFailedEvent.StatusPatchSnapshot` → `renderFailed` or
   `deployFailed` variant (chosen by `event.Phase`)
 
-There is no `cachedPatches` field or any other side-channel cache. Patches
-on a deploy event are tautologically the patches for the configuration that
-deploy carried — no LATEST-vs-deployed race is possible.
+There is no `cachedPatches` field or any other side-channel cache. Public
+`CycleSnapshot`, `RenderProof`, `StatusPatchSnapshot`, and `StatusPatches`
+fields on success events are compatibility or diagnostic shadows. Mutating
+them cannot change the authenticated occurrence the applier consumes.
 
 ### Why this matters
 
@@ -57,10 +58,10 @@ CI: tests dialled after seeing `Programmed=True`, hit a stale `*:443` bind
 without per-listener `verify required`, and accepted the wrong client cert.
 
 The fix moved patches onto the events themselves. The
-`DeploymentScheduler` caches `lastValidatedStatusPatches` symmetric with
+`DeploymentScheduler` caches `lastValidatedStatusPatchSnapshot` symmetric with
 its existing `lastRenderedConfig` / `lastAuxiliaryFiles` cache and
 forwards it onto every `DeploymentScheduledEvent` / `DeploymentSkippedEvent`.
-The `Deployer` forwards `DeploymentScheduledEvent.StatusPatches` unchanged
+The `Deployer` forwards `DeploymentScheduledEvent.StatusPatchSnapshot` unchanged
 onto `DeploymentCompletedEvent`. The `Coordinator` forwards
 `lastSuccessfulPatches` onto `ReconciliationFailedEvent`. The applier
 reads from each event and applies — no state, no race.
@@ -68,7 +69,7 @@ reads from each event and applies — no state, no race.
 ### Leader-only / leader-election
 
 Only the leader applies patches (`c.isLeader` gate inside
-`leaderRLocked()`). `handleBecameLeader` clears the SSA checksum cache so
+`leaderRLocked()`). `handleBecameLeader` clears the status apply cache so
 the new leader writes at least once for every active resource on the next
 reconciliation, but **does not replay anything**: the `Reconciler` triggers
 an immediate reconciliation on `BecameLeaderEvent` (see
@@ -101,17 +102,17 @@ field manager across phases breaks this — the
 `fieldManagerPrefix` constant doc-comment in `component.go` has the long
 explanation.
 
-## Checksum Cache
+## Exact-lineage Cache
 
-`Component.checksumCache` maps `"namespace/name/gvr"` to the SHA-256 of
-the last successfully-applied patch payload. Before each SSA call, the
-applier computes the payload checksum and skips if it matches; this
-avoids cluster-amplification when the same patches are re-emitted on
-every reconcile.
+`Component.statusCache` maps `"namespace/name/gvr"` to the exact UID,
+source and applied resource versions, phase, and last payload. A patch skips
+only when its source observes the applied resource version and its phase and
+payload match. An incomplete UID/resourceVersion pair invalidates that target's
+entry and applies without either metadata precondition; it never reads or
+populates the cache.
 
-The cache is cleared on `BecameLeaderEvent` (the previous leader may have
-applied different checksums under its own field manager), and on apply
-failures (so the next reconcile retries instead of silently skipping).
+The cache is cleared on `BecameLeaderEvent`; a failed exact-lineage apply never
+advances its entry, so the same source revision retries instead of skipping.
 
 ## Tests
 

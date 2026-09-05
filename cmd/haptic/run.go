@@ -202,7 +202,7 @@ func runController(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Log detected resource limits for observability.
-	// GOGC: report the env override if set, otherwise "default" (Go 1.26's Green Tea
+	// GOGC: report the env override if set, otherwise "default" (Go's Green Tea
 	// GC reduces per-cycle overhead, making manual GOGC tuning unnecessary;
 	// automemlimit's GOMEMLIMIT provides the OOM safety net).
 	gomaxprocs := runtime.GOMAXPROCS(0)

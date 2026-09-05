@@ -58,6 +58,24 @@ templatingSettings:
       minVersion: "TLSv1.2"
 
 templateSnippets:
+  util-ssl-passthrough-backends:
+    template: |-
+      {%- var SSLPassthroughBackends = func() []any {
+        var cached, _ = shared.ComputeIfAbsent("sslPassthroughBackendsCombined", func() any {
+          var encoded = render "util-annotation-ssl-passthrough-values" default ""
+          if encoded != "" {
+            var decoded = []any{}
+            if err := unmarshalJSON(encoded, &decoded); err != nil {
+              fail(err.Error())
+            }
+            return decoded
+          }
+          var gf = shared.Get("globalFeatures").(map[string]any)
+          return toSlice(gf["sslPassthroughBackends"])
+        })
+        return cached.([]any)
+      } -%}
+
   util-ssl-bind-options:
     template: >-
       {{- " " -}}ssl crt-list {{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} alpn h2,http/1.1{% if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %} tls-ticket-keys {{ pathResolver.GetPath("tls-ticket-keys", "file") }}{% end %}
@@ -76,7 +94,7 @@ templateSnippets:
   util-ticket-key:
     template: |
       {%- macro NewTicketKey(dateStr string) string -%}
-        {{- base64(dateStr + randBytes(72)) -}}
+        {{- base64(dateStr + cycleRandomBytes(72)) -}}
       {%- end -%}
 
   global-settings-410-ssl-ciphers:
@@ -221,12 +239,13 @@ templateSnippets:
       {%- import "util-ticket-key" for NewTicketKey -%}
       {#- One shared key file per fleet, so a ticket sealed by any pod resumes on any
           other. Rotation reads the deployed file back from currentFiles and keys off
-          the newest key's date marker; randBytes must stay on the seed/rotate paths
+          the newest key's date marker; cycleRandomBytes must stay on the seed/rotate paths
           only, or every render differs and reloads HAProxy. The 3-key window keeps
           yesterday's tickets resumable. -#}
       {%- if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) -%}
         {#- sessionTicketsToday pins the marker for tests; production uses the clock. -#}
-        {%- var today = tostring(extraContext | dig("tls", "sessionTicketsToday") | fallback(now().UTC().Format("20060102"))) -%}
+        {%- var today = tostring(extraContext | dig("tls", "sessionTicketsToday") | fallback("")) -%}
+        {%- if today == "" -%}{%- today = cycleTimeBucket(86400, "20060102") -%}{%- end -%}
         {%- var cur = tostring(currentFiles["tls-ticket-keys"] | fallback("")) -%}
         {%- var lines = []string{} -%}
         {%- if cur != "" -%}
@@ -262,15 +281,56 @@ templateSnippets:
           Passthrough deliberately does NOT set needHTTPSTermination — a port with only
           TLS listeners must RST unclaimed SNIs, not serve the 404 the ssl-loopback
           fall-through would give. #}
+      {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var passthroughBackends = SSLPassthroughBackends() %}
       {%%
-        if len(gf["sslPassthroughBackends"].([]any)) > 0 {
+        if len(passthroughBackends) > 0 {
           gf["bindHTTPSDefault"] = true
           gf["needHTTPSFrontend"] = true
         }
       %%}
 
+  util-ssl-default-certificate-bindings:
+    template: |-
+      {%- var namespace = extraContext | dig_string("haptic", "tls", "defaultCertificate", "namespace") -%}
+      {%- var name = extraContext | dig_string("default-ssl-cert", "tls", "defaultCertificate", "name") -%}
+      {{- toJSON(map[string]any{"secrets": map[string]any{
+        "keys": []any{namespace, name}, "cell": "default", "key": namespace + "/" + name,
+      }}) -}}
+
+  util-ssl-default-ecdsa-certificate-bindings:
+    template: |-
+      {%- var namespace = extraContext | dig_string("haptic", "tls", "defaultCertificate", "namespace") -%}
+      {%- var name = extraContext | dig_string("", "tls", "defaultCertificate", "ecdsaName") -%}
+      {%- if name == "" -%}
+        {{- toJSON(map[string]any{}) -}}
+      {%- else -%}
+        {{- toJSON(map[string]any{"secrets": map[string]any{
+          "keys": []any{namespace, name}, "cell": "ecdsa", "key": namespace + "/" + name,
+        }}) -}}
+      {%- end -%}
+
+  ssl-default-certificates-100-secret:
+    requires: [secrets]
+    incremental:
+      mode: resourceProjection
+      bindingsTemplate: '{{- render "util-ssl-default-certificate-bindings" -}}'
+      group: ssl-default-certificates
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  ssl-default-ecdsa-certificates-100-secret:
+    requires: [secrets]
+    incremental:
+      mode: resourceProjection
+      bindingsTemplate: '{{- render "util-ssl-default-ecdsa-certificate-bindings" -}}'
+      group: ssl-default-ecdsa-certificates
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
   features-150-ssl-crtlist:
+    requires: [secrets]
     template: |
       {%- import "util-crtlist-line" for CrtListLine -%}
       {%- var gf = shared.Get("globalFeatures") -%}
@@ -282,6 +342,24 @@ templateSnippets:
           client may trust only that cert's CA); ties sort by ns/name because map
           iteration order would otherwise change the choice between renders. -#}
       {%- var clientCertVerifyHosts = coalesce(gf["clientCertVerifyHosts"], map[string]any{}).(map[string]any) -%}
+      {%- var clientCAPaths = map[string]string{} -%}
+      {%- for _, fileAny := range incremental_values("mtls-host-policies", "files") -%}
+        {%- var file = fileAny.(map[string]any) -%}
+        {%- var filename = tostring(file["filename"]) -%}
+        {%- var path, regErr = fileRegistry.Register("file", filename, tostring(file["content"])) -%}
+        {%- if regErr != nil -%}
+          {{- fail("failed to register client CA " + filename + ": " + tostring(regErr)) -}}
+        {%- end -%}
+        {%- clientCAPaths[filename] = path -%}
+      {%- end -%}
+      {%- for _, policyAny := range incremental_values("mtls-host-policies", "verifyHosts") -%}
+        {%- var policy = policyAny.(map[string]any) -%}
+        {%- var filename = tostring(policy["filename"]) -%}
+        {%- clientCertVerifyHosts[tostring(policy["host"])] = map[string]any{
+          "ca_path": clientCAPaths[filename],
+          "verify_mode": tostring(policy["verifyMode"]),
+        } -%}
+      {%- end -%}
       {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) -%}
 
       {%- var defaultCertFilename = "default.pem" -%}
@@ -317,17 +395,21 @@ templateSnippets:
       {%- var ecdsaDefaultFilename = "" -%}
       {%- if ecdsaDefaultName != "" && len(gatewayDefaultCandidates) == 0 -%}
         {%- var ecdsaDefaultNs = tostring(extraContext | dig("tls", "defaultCertificate", "namespace") | fallback("haptic")) -%}
-        {%- var ecdsaSecret = resources.secrets.GetSingle(ecdsaDefaultNs, ecdsaDefaultName) -%}
-        {%- if ecdsaSecret == nil -%}
+        {{- render "ssl-default-ecdsa-certificates-100-secret" -}}
+        {%- var ecdsaCertificates = incremental_values("ssl-default-ecdsa-certificates", "ecdsa") -%}
+        {%- if len(ecdsaCertificates) == 0 -%}
         {{ fail("Default ECDSA TLS Secret not found: " + ecdsaDefaultNs + "/" + ecdsaDefaultName + ". Ensure the Secret exists and is watched.") }}
         {%- end -%}
-        {%- var eCrtB64, eHasCrt = ecdsaSecret.Data["tls.crt"] -%}
-        {%- var eKeyB64, eHasKey = ecdsaSecret.Data["tls.key"] -%}
-        {%- if !eHasCrt || !eHasKey -%}
+        {%- var ecdsaCertificate = ecdsaCertificates[0].(map[string]any) -%}
+        {%- var ecdsaCertificateData = dig(ecdsaCertificate, "data", "tls.crt") -%}
+        {%- var ecdsaKeyData = dig(ecdsaCertificate, "data", "tls.key") -%}
+        {%- if ecdsaCertificateData == nil || ecdsaKeyData == nil -%}
         {{ fail("Invalid default ECDSA TLS Secret " + ecdsaDefaultNs + "/" + ecdsaDefaultName + ": missing tls.crt or tls.key fields.") }}
         {%- end -%}
-        {%- var ecdsaPem = (eCrtB64 | b64decode()) + "\n" + (eKeyB64 | b64decode()) -%}
-        {%- var ecdsaPath, ecdsaRegErr = fileRegistry.Register("cert", ecdsaDefaultNs + "_" + ecdsaDefaultName + ".pem", ecdsaPem) -%}
+        {%- var ecdsaPem = (tostring(ecdsaCertificateData) | b64decode()) +
+          "\n" + (tostring(ecdsaKeyData) | b64decode()) -%}
+        {%- var ecdsaPath, ecdsaRegErr = fileRegistry.Register(
+          "cert", ecdsaDefaultNs + "_" + ecdsaDefaultName + ".pem", ecdsaPem) -%}
         {%- if ecdsaRegErr != nil -%}{{ fail("failed to register default ECDSA certificate: " + tostring(ecdsaRegErr)) }}{%- end -%}
         {%- ecdsaDefaultFilename = basename(ecdsaPath) -%}
       {%- end -%}
@@ -447,8 +529,9 @@ templateSnippets:
   # passthrough hosts out of SNI routing.
   https-bind-extra-010-proxy-protocol:
     template: |
+      {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
       {%- var gfMap = shared.Get("globalFeatures").(map[string]any) -%}
-      {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
+      {%- var passthroughBackends = SSLPassthroughBackends() -%}
       {%- var sslTCPOwnsPort = len(passthroughBackends) > 0 && tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
       {%- if !sslTCPOwnsPort && tostring(extraContext | dig("proxyProtocol", "enabled") | fallback(false)) == "true" %}
       bind *:{{ toint(extraContext | dig("proxyProtocol", "httpsPort") | fallback(8444)) }} accept-proxy{{ render "util-ssl-bind-options" }}
@@ -464,9 +547,10 @@ templateSnippets:
 
   frontends-500-ssl-tcp:
     template: |
+      {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var gfMap = gf.(map[string]any) -%}
-      {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
+      {%- var passthroughBackends = SSLPassthroughBackends() -%}
       {%- var bindHTTPSDefault = tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
       {%- if len(passthroughBackends) > 0 && bindHTTPSDefault -%}
       # ssl/frontends-ssl-tcp
@@ -648,8 +732,8 @@ templateSnippets:
   backends-500-ssl-loopback:
     template: |
       {%- import "util-backend" for Backend -%}
-      {%- var gf = shared.Get("globalFeatures") -%}
-      {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
+      {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
+      {%- var passthroughBackends = SSLPassthroughBackends() -%}
       {%- if len(passthroughBackends) > 0 -%}
       {{ Backend(map[string]any{
            "name": "ssl-loopback",
@@ -664,9 +748,10 @@ templateSnippets:
 
   frontends-500-https:
     template: |
+      {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var gfMap = gf.(map[string]any) -%}
-      {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
+      {%- var passthroughBackends = SSLPassthroughBackends() -%}
       {%- var needHTTPSFrontend = tostring(gfMap | dig("needHTTPSFrontend")) == "true" -%}
       {%- var bindHTTPSDefault = tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
       {#- Gated because a frontend with no bind is an HAProxy validation error: render
@@ -707,17 +792,19 @@ sslCertificates:
     template: |
       {%- var certNamespace = extraContext | dig("tls", "defaultCertificate", "namespace") | fallback("haptic") -%}
       {%- var certName = extraContext | dig("tls", "defaultCertificate", "name") | fallback("default-ssl-cert") -%}
-      {%- var secret = resources.secrets.GetSingle(certNamespace, certName) -%}
-      {%- if secret == nil -%}
+      {{- render "ssl-default-certificates-100-secret" -}}
+      {%- var defaultCertificates = incremental_values("ssl-default-certificates", "default") -%}
+      {%- if len(defaultCertificates) == 0 -%}
       {{ fail("TLS Secret not found: " + certNamespace + "/" + certName + ". Ensure the Secret exists and is watched.") }}
       {%- end -%}
-      {%- var crtB64, hasCrt = secret.Data["tls.crt"] -%}
-      {%- var keyB64, hasKey = secret.Data["tls.key"] -%}
-      {%- if !hasCrt || !hasKey -%}
+      {%- var defaultCertificate = defaultCertificates[0].(map[string]any) -%}
+      {%- var certificate = dig(defaultCertificate, "data", "tls.crt") -%}
+      {%- var key = dig(defaultCertificate, "data", "tls.key") -%}
+      {%- if certificate == nil || key == nil -%}
       {{ fail("Invalid TLS Secret " + certNamespace + "/" + certName + ": missing tls.crt or tls.key fields. Ensure the Secret is of type kubernetes.io/tls.") }}
       {%- end -%}
-      {{- b64decode(crtB64) -}}
-      {{- b64decode(keyB64) -}}
+      {{- b64decode(tostring(certificate)) -}}
+      {{- b64decode(tostring(key)) -}}
 
 validationTests:
   _global:

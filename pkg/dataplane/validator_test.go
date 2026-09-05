@@ -15,6 +15,7 @@
 package dataplane
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -25,6 +26,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
@@ -148,7 +152,6 @@ func TestValidateConfiguration_SyntaxError(t *testing.T) {
 	// shell out; the real binary's verdict is integration-test territory).
 	installRejectingHAProxy(t, "parsing [haproxy.cfg:9] : 'backend' section requires a name")
 
-	// Config with completely invalid structure that parser will reject
 	config := `
 global
     daemon
@@ -158,7 +161,6 @@ defaults
 
 frontend http-in
     bind :80
-    # Missing closing brace - parser may catch this
 backend
 `
 
@@ -175,10 +177,8 @@ backend
 		t.Fatalf("Expected *ValidationError, got %T", err)
 	}
 
-	// Parser might catch it (syntax) or haproxy might catch it (semantic)
-	// Either way is acceptable for this malformed config
-	if valErr.Phase != "syntax" && valErr.Phase != "semantic" {
-		t.Errorf("Expected phase to be 'syntax' or 'semantic', got: %q", valErr.Phase)
+	if valErr.Phase != phaseNameSemantic {
+		t.Errorf("Expected phase to be %q, got: %q", phaseNameSemantic, valErr.Phase)
 	}
 
 	// Verify error message contains useful info
@@ -398,7 +398,7 @@ backend servers
 	auxFiles := &AuxiliaryFiles{}
 
 	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
-	// This may or may not fail depending on HAProxy version and parser strictness
+	// This may or may not fail depending on the HAProxy version.
 	// Just verify the function doesn't panic
 	_ = err
 }
@@ -532,85 +532,33 @@ func TestValidationError_Error(t *testing.T) {
 	}
 }
 
-func TestValidationCacheHelpers(t *testing.T) {
-	t.Run("hashValidationInput", func(t *testing.T) {
-		hash1 := hashValidationInput("config1")
-		hash2 := hashValidationInput("config1")
-		hash3 := hashValidationInput("config2")
+func TestValidateConfiguration_RevalidatesIdenticalBytesAfterExecutorSwap(t *testing.T) {
+	const config = "global\n    daemon\n"
+	paths := testValidationPaths(t)
+	auxFiles := &AuxiliaryFiles{}
 
-		// Same input should produce same hash
-		if hash1 != hash2 {
-			t.Error("hashValidationInput() should produce same hash for same input")
-		}
+	acceptChecks := 0
+	restoreAccepting := SetHAProxyExecutor(contextExecutor{check: func(context.Context, string, ...string) ([]byte, error) {
+		acceptChecks++
+		return nil, nil
+	}})
+	err := ValidateConfiguration(config, auxFiles, paths, false)
+	restoreAccepting()
+	require.NoError(t, err)
+	require.Equal(t, 1, acceptChecks)
 
-		// Different input should produce different hash
-		if hash1 == hash3 {
-			t.Error("hashValidationInput() should produce different hash for different input")
-		}
-	})
+	rejectChecks := 0
+	restoreRejecting := SetHAProxyExecutor(contextExecutor{check: func(context.Context, string, ...string) ([]byte, error) {
+		rejectChecks++
+		return []byte("[ALERT] config : runtime policy now refuses this config\n"), fmt.Errorf("exit status 1")
+	}})
+	t.Cleanup(restoreRejecting)
 
-	t.Run("hashAuxFiles", func(t *testing.T) {
-		// nil aux files should return empty string
-		if hashAuxFiles(nil) != "" {
-			t.Error("hashAuxFiles(nil) should return empty string")
-		}
-
-		aux1 := &AuxiliaryFiles{
-			MapFiles: []auxiliaryfiles.MapFile{{Path: "test.map", Content: "content1"}},
-		}
-		aux2 := &AuxiliaryFiles{
-			MapFiles: []auxiliaryfiles.MapFile{{Path: "test.map", Content: "content1"}},
-		}
-		aux3 := &AuxiliaryFiles{
-			MapFiles: []auxiliaryfiles.MapFile{{Path: "test.map", Content: "content2"}},
-		}
-
-		hash1 := hashAuxFiles(aux1)
-		hash2 := hashAuxFiles(aux2)
-		hash3 := hashAuxFiles(aux3)
-
-		// Same input should produce same hash
-		if hash1 != hash2 {
-			t.Error("hashAuxFiles() should produce same hash for same input")
-		}
-
-		// Different input should produce different hash
-		if hash1 == hash3 {
-			t.Error("hashAuxFiles() should produce different hash for different input")
-		}
-	})
-}
-
-func TestValidationCacheMechanism(t *testing.T) {
-	// Clear cache state before test
-	validationCache.mu.Lock()
-	validationCache.lastConfigHash = ""
-	validationCache.lastAuxHash = ""
-	validationCache.mu.Unlock()
-
-	configHash := "config123"
-	auxHash := "aux456"
-
-	// Initially should not be cached
-	if isValidationCached(configHash, auxHash) {
-		t.Error("isValidationCached() should return false for uncached config")
-	}
-
-	if err := cacheValidationResult(t.Context(), configHash, auxHash); err != nil {
-		t.Fatalf("cacheValidationResult: %v", err)
-	}
-
-	if !isValidationCached(configHash, auxHash) {
-		t.Error("isValidationCached() should return true for cached config")
-	}
-
-	// Different config should not hit cache
-	if isValidationCached("different", auxHash) {
-		t.Error("isValidationCached() should return false for different config")
-	}
-
-	// Different aux should not hit cache
-	if isValidationCached(configHash, "different") {
-		t.Error("isValidationCached() should return false for different aux")
-	}
+	err = ValidateConfiguration(config, auxFiles, paths, false)
+	require.Error(t, err)
+	assert.Equal(t, 1, rejectChecks, "identical bytes must reach the replacement executor")
+	var validationErr *ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	assert.Equal(t, phaseNameSemantic, validationErr.Phase)
+	assert.ErrorContains(t, err, "runtime policy now refuses this config")
 }

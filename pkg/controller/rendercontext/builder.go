@@ -33,6 +33,7 @@ package rendercontext
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -51,6 +52,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"gitlab.com/haproxy-haptic/scriggo/native"
 )
 
 // Builder constructs template rendering contexts with consistent structure.
@@ -63,15 +65,22 @@ type Builder struct {
 	logger       *slog.Logger
 
 	// Optional dependencies (set via options)
-	stores             map[string]stores.Store
-	haproxyPodStore    stores.Store
-	httpFetcher        templating.HTTPFetcher
-	currentConfig      *renderplan.CurrentConfig
-	currentAuxFiles    map[string]string
-	typedResourceTypes map[string]reflect.Type
-	capabilities       dataplane.Capabilities
-	renderMode         RenderMode
-	admissionSubject   map[string]any
+	stores                map[string]stores.Store
+	haproxyPodStore       stores.Store
+	httpFetcher           templating.HTTPFetcher
+	currentConfig         *renderplan.CurrentConfig
+	currentConfigSource   CurrentConfigSource
+	currentAuxFiles       map[string]string
+	currentAuxFilesSource CurrentAuxFilesSource
+	typedResourceTypes    map[string]reflect.Type
+	capabilities          dataplane.Capabilities
+	renderMode            RenderMode
+	admissionSubject      map[string]any
+	extraContext          map[string]any
+	extraContextSet       bool
+	runtimeEnvironment    templating.RuntimeEnvironment
+	runtimeEnvironmentSet bool
+	planTokenAuthority    *PlanTokenAuthority
 }
 
 // admissionSubjectOrEmpty returns the subject map for the template context.
@@ -132,16 +141,54 @@ func WithHTTPFetcher(fetcher templating.HTTPFetcher) Option {
 // This enables slot-aware server assignment and other config-aware features.
 // If nil, templates receive nil currentConfig (first deployment case).
 func WithCurrentConfig(cfg *renderplan.CurrentConfig) Option {
+	snapshot := cloneCurrentConfig(cfg)
 	return func(b *Builder) {
-		b.currentConfig = cfg
+		b.currentConfigSource = nil
+		b.currentConfig = cloneCurrentConfig(snapshot)
 	}
+}
+
+// WithCurrentConfigSource defers projection until a template must execute.
+func WithCurrentConfigSource(source CurrentConfigSource) Option {
+	return func(b *Builder) {
+		b.currentConfig = nil
+		b.currentConfigSource = source
+	}
+}
+
+func cloneCurrentConfig(cfg *renderplan.CurrentConfig) *renderplan.CurrentConfig {
+	if cfg == nil {
+		return nil
+	}
+	result := &renderplan.CurrentConfig{ServerIndex: make(map[string]map[string]renderplan.ServerAddr, len(cfg.ServerIndex))}
+	for backend, servers := range cfg.ServerIndex {
+		cloned := make(map[string]renderplan.ServerAddr, len(servers))
+		for name, server := range servers {
+			if server.Port != nil {
+				port := *server.Port
+				server.Port = &port
+			}
+			cloned[name] = server
+		}
+		result.ServerIndex[backend] = cloned
+	}
+	return result
 }
 
 // WithCurrentAuxFiles sets the authoritative auxiliary baseline exposed as currentFiles.
 func WithCurrentAuxFiles(files map[string]string) Option {
 	snapshot := maps.Clone(files)
 	return func(b *Builder) {
+		b.currentAuxFilesSource = nil
 		b.currentAuxFiles = maps.Clone(snapshot)
+	}
+}
+
+// WithCurrentAuxFilesSource defers projection until a template must execute.
+func WithCurrentAuxFilesSource(source CurrentAuxFilesSource) Option {
+	return func(b *Builder) {
+		b.currentAuxFiles = nil
+		b.currentAuxFilesSource = source
 	}
 }
 
@@ -206,6 +253,22 @@ func WithAdmissionSubjectStores(aliases []string, namespace, name string) Option
 	}
 }
 
+// WithDetachedExtraContext supplies a stable, caller-owned extra-context snapshot.
+func WithDetachedExtraContext(extraContext map[string]any) Option {
+	return func(b *Builder) {
+		b.extraContext = cloneDetachedExtraContext(extraContext)
+		b.extraContextSet = true
+	}
+}
+
+// WithRuntimeEnvironment supplies the runtime values exposed to templates.
+func WithRuntimeEnvironment(environment templating.RuntimeEnvironment) Option {
+	return func(b *Builder) {
+		b.runtimeEnvironment = environment
+		b.runtimeEnvironmentSet = true
+	}
+}
+
 // WithTypedResources supplies the per-resource generated Go types
 // produced by typebootstrap (pkg/controller/typebootstrap). When set,
 // Build emits one *additional* top-level context entry per supplied
@@ -232,6 +295,13 @@ func WithTypedResources(types map[string]reflect.Type) Option {
 	}
 }
 
+// WithPlanTokenAuthority retains authenticated plan placeholders across renders.
+func WithPlanTokenAuthority(authority *PlanTokenAuthority) Option {
+	return func(b *Builder) {
+		b.planTokenAuthority = authority
+	}
+}
+
 // NewBuilder creates a new context builder with required dependencies.
 //
 // Parameters:
@@ -242,7 +312,7 @@ func WithTypedResources(types map[string]reflect.Type) Option {
 //   - opts: Optional configuration via functional options
 func NewBuilder(ctx context.Context, cfg *config.Config, pathResolver *templating.PathResolver, logger *slog.Logger, opts ...Option) *Builder {
 	b := &Builder{
-		readContext:  ctx,
+		readContext:  templating.WithImmutableResourceInputs(ctx),
 		config:       cfg,
 		pathResolver: pathResolver,
 		logger:       logger,
@@ -264,6 +334,23 @@ type BuildResult struct {
 	RenderedResourceCollector *templating.RenderedResourceCollector
 	EventCollector            *templating.EventCollector
 	ResourceErrors            *ResourceErrorCollector
+	DerivedResources          *DerivedResourceView
+	previousOutputMu          sync.Mutex
+	currentConfigSource       CurrentConfigSource
+	currentAuxFilesSource     CurrentAuxFilesSource
+	currentConfigReady        bool
+	currentAuxFilesReady      bool
+	previousOutputsErr        error
+}
+
+// PreviousOutputSources returns the attempt-owned immutable source roots.
+func (r *BuildResult) PreviousOutputSources() (CurrentConfigSource, CurrentAuxFilesSource) {
+	if r == nil {
+		return nil, nil
+	}
+	r.previousOutputMu.Lock()
+	defer r.previousOutputMu.Unlock()
+	return r.currentConfigSource, r.currentAuxFilesSource
 }
 
 // Build creates the template rendering context, file registry, status patch
@@ -288,8 +375,26 @@ type BuildResult struct {
 //	  "http": HTTPFetcher (if set),
 //	  "extraContext": map from config,
 //	}
+func (b *Builder) controllerStores(resourceErrors *ResourceErrorCollector) map[string]templating.ResourceStore {
+	controller := make(map[string]templating.ResourceStore)
+	if b.haproxyPodStore == nil {
+		return controller
+	}
+	b.logger.Debug("Wrapping HAProxy pods store for rendering context")
+	controller["haproxy_pods"] = &StoreWrapper{
+		Store:          b.haproxyPodStore,
+		ResourceType:   names.HAProxyPodsResourceType,
+		Logger:         b.logger,
+		IndexBy:        []string{"metadata.namespace", "metadata.name"},
+		readContext:    b.readContext,
+		resourceErrors: resourceErrors,
+	}
+	return controller
+}
+
 func (b *Builder) Build() *BuildResult {
 	resourceErrors := NewResourceErrorCollector()
+	derivedResources := NewDerivedResourceView()
 
 	// Create controller namespace with typed ResourceStore values. The
 	// haproxy-pods watcher is auto-injected by ResourceWatcherComponent
@@ -301,18 +406,7 @@ func (b *Builder) Build() *BuildResult {
 	// dynamically-built struct value (see addTypedResources below); chart
 	// templates reach it via direct field access (`resources.gateways`)
 	// rather than the previous map+method shape (`resources.gateways.List()`).
-	controller := make(map[string]templating.ResourceStore)
-	if b.haproxyPodStore != nil {
-		b.logger.Debug("Wrapping HAProxy pods store for rendering context")
-		controller["haproxy_pods"] = &StoreWrapper{
-			Store:          b.haproxyPodStore,
-			ResourceType:   names.HAProxyPodsResourceType,
-			Logger:         b.logger,
-			IndexBy:        []string{"metadata.namespace", "metadata.name"},
-			readContext:    b.readContext,
-			resourceErrors: resourceErrors,
-		}
-	}
+	controller := b.controllerStores(resourceErrors)
 
 	// Sort template snippet names alphabetically
 	snippetNames := SortSnippetNames(b.config.TemplateSnippets)
@@ -323,6 +417,13 @@ func (b *Builder) Build() *BuildResult {
 	// Create plan registry so templates can declare the structure of the
 	// config they emit; RenderMain assembles the config from its tokens.
 	planRegistry := NewPlanRegistry(b.pathResolver)
+	if b.planTokenAuthority != nil {
+		var err error
+		planRegistry, err = NewPlanRegistryWithAuthority(b.pathResolver, b.planTokenAuthority)
+		if err != nil {
+			resourceErrors.Record(err)
+		}
+	}
 
 	// spec.maps[].ordered belongs to the plan, and the plan is built from this
 	// registry by every caller — the reconcile renderer and the validation-test
@@ -357,29 +458,32 @@ func (b *Builder) Build() *BuildResult {
 	// addTypedResources — leaving it absent here lets that helper
 	// hand the dynamically-typed struct value into the map without a
 	// throwaway placeholder.
+	runtimeEnvironment := b.runtimeEnvironment
+	if !b.runtimeEnvironmentSet {
+		runtimeEnvironment.GOMAXPROCS = runtime.GOMAXPROCS(0)
+	}
 	templateContext := map[string]any{
-		"controller":                controller,
-		"templateSnippets":          snippetNames,
-		"fileRegistry":              fileRegistry,
-		"planRegistry":              planRegistry,
-		"statusPatchCollector":      statusPatchCollector,
-		"recordEventCollector":      eventCollector,
-		"renderedResourceCollector": renderedResourceCollector,
-		"pathResolver":              b.pathResolver,
-		"dataplane":                 b.config.Dataplane,
-		"capabilities":              CapabilitiesToMap(&b.capabilities),
-		"renderMode":                string(cmp.Or(b.renderMode, RenderModeReconcile)),
-		"admissionSubject":          b.admissionSubjectOrEmpty(),
-		"shared":                    templating.NewSharedContext(),
-		"runtimeEnvironment": &templating.RuntimeEnvironment{
-			GOMAXPROCS: runtime.GOMAXPROCS(0),
-		},
+		"controller":                          controller,
+		"templateSnippets":                    snippetNames,
+		"fileRegistry":                        fileRegistry,
+		"planRegistry":                        planRegistry,
+		"statusPatchCollector":                statusPatchCollector,
+		"recordEventCollector":                eventCollector,
+		"renderedResourceCollector":           renderedResourceCollector,
+		"pathResolver":                        b.pathResolver,
+		"dataplane":                           b.config.Dataplane,
+		"capabilities":                        CapabilitiesToMap(&b.capabilities),
+		"renderMode":                          string(cmp.Or(b.renderMode, RenderModeReconcile)),
+		"admissionSubject":                    b.admissionSubjectOrEmpty(),
+		templating.ResourceDeriverContextName: derivedResources,
+		"shared":                              templating.NewSharedContext(),
+		"runtimeEnvironment":                  &runtimeEnvironment,
 	}
 
 	// Add current config if provided (NOT added when nil - Scriggo panics with nil pointer initializers)
 	// This enables slot-aware server assignment during rolling deployments
 	// Templates should use isNil(currentConfig) to check if it's available
-	if b.currentConfig != nil {
+	if b.currentConfigSource == nil && b.currentConfig != nil {
 		templateContext["currentConfig"] = b.currentConfig
 	}
 
@@ -389,11 +493,14 @@ func (b *Builder) Build() *BuildResult {
 	// pointers, like currentConfig; the engine derefs it so templates index the
 	// map directly). Always non-nil — an empty map on first deployment — so
 	// templates can index it without a nil guard.
-	auxFiles := b.currentAuxFiles
-	if auxFiles == nil {
-		auxFiles = map[string]string{}
+	var auxFiles map[string]string
+	if b.currentAuxFilesSource == nil {
+		auxFiles = b.currentAuxFiles
+		if auxFiles == nil {
+			auxFiles = map[string]string{}
+		}
+		templateContext["currentFiles"] = &auxFiles
 	}
-	templateContext["currentFiles"] = &auxFiles
 
 	// Add HTTP fetcher if provided
 	if b.httpFetcher != nil {
@@ -406,15 +513,25 @@ func (b *Builder) Build() *BuildResult {
 	// BuildEngineDeclarations for the matching declaration shape).
 	// One field per watched resource — typed `[]*GeneratedT` when the
 	// schema resolved, untyped `[]any` when it didn't.
-	b.addTypedResources(templateContext, resourceErrors)
+	b.addTypedResources(templateContext, resourceErrors, derivedResources)
 
 	// Merge extraContext variables into top-level context
-	MergeExtraContextInto(templateContext, b.config)
+	extraContext := b.config.TemplatingSettings.ExtraContext
+	if b.extraContextSet {
+		extraContext = b.extraContext
+	}
+	mergeExtraContextInto(templateContext, extraContext)
 
 	// These values carry controller state and cannot be replaced by extraContext.
-	templateContext["currentFiles"] = &auxFiles
+	if b.currentAuxFilesSource == nil {
+		templateContext["currentFiles"] = &auxFiles
+	}
 	templateContext["renderMode"] = string(cmp.Or(b.renderMode, RenderModeReconcile))
 	templateContext["admissionSubject"] = b.admissionSubjectOrEmpty()
+	templateContext[templating.ResourceDeriverContextName] = derivedResources
+	if err := templating.BindImmutableResourceInputs(templateContext, b.readContext); err != nil {
+		resourceErrors.Record(fmt.Errorf("binding immutable resource inputs: %w", err))
+	}
 
 	if b.config.TemplatingSettings.ExtraContext != nil {
 		b.logger.Debug("Added extra context variables to template context",
@@ -429,7 +546,54 @@ func (b *Builder) Build() *BuildResult {
 		RenderedResourceCollector: renderedResourceCollector,
 		EventCollector:            eventCollector,
 		ResourceErrors:            resourceErrors,
+		DerivedResources:          derivedResources,
+		currentConfigSource:       b.currentConfigSource,
+		currentAuxFilesSource:     b.currentAuxFilesSource,
 	}
+}
+
+// MaterializeUsedPreviousOutputs installs only compiled-used lazy prior outputs.
+func (r *BuildResult) MaterializeUsedPreviousOutputs(useCurrentConfig, useCurrentFiles bool) error {
+	if r == nil {
+		return errors.New("render context is nil")
+	}
+	r.previousOutputMu.Lock()
+	defer r.previousOutputMu.Unlock()
+	if r.previousOutputsErr != nil {
+		return r.previousOutputsErr
+	}
+	if useCurrentConfig && !r.currentConfigReady && r.currentConfigSource != nil {
+		if err := r.currentConfigSource.ValidateAuthentication(); err != nil {
+			r.previousOutputsErr = fmt.Errorf("authenticating currentConfig: %w", err)
+			return r.previousOutputsErr
+		}
+		current, err := r.currentConfigSource.MaterializeCurrentConfig()
+		if err != nil {
+			r.previousOutputsErr = fmt.Errorf("materializing currentConfig: %w", err)
+			return r.previousOutputsErr
+		}
+		if current != nil {
+			r.Context["currentConfig"] = current
+		}
+		r.currentConfigReady = true
+	}
+	if useCurrentFiles && !r.currentAuxFilesReady && r.currentAuxFilesSource != nil {
+		if err := r.currentAuxFilesSource.ValidateAuthentication(); err != nil {
+			r.previousOutputsErr = fmt.Errorf("authenticating currentFiles: %w", err)
+			return r.previousOutputsErr
+		}
+		files, err := r.currentAuxFilesSource.MaterializeCurrentAuxFiles()
+		if err != nil {
+			r.previousOutputsErr = fmt.Errorf("materializing currentFiles: %w", err)
+			return r.previousOutputsErr
+		}
+		if files == nil {
+			files = map[string]string{}
+		}
+		r.Context["currentFiles"] = &files
+		r.currentAuxFilesReady = true
+	}
+	return nil
 }
 
 // addTypedResources populates ctx["resources"] with a single
@@ -457,7 +621,11 @@ func (b *Builder) Build() *BuildResult {
 // Method receiver rather than free function so the closures can
 // capture `b.stores` / `b.config.WatchedResources` / `b.logger`
 // without threading them as arguments.
-func (b *Builder) addTypedResources(ctx map[string]any, resourceErrors *ResourceErrorCollector) {
+func (b *Builder) addTypedResources(
+	ctx map[string]any,
+	resourceErrors *ResourceErrorCollector,
+	derivedResources *DerivedResourceView,
+) {
 	// Single source of truth — delegates to BuildResourcesValue so
 	// production renderer, testrunner, and any other consumer
 	// produce byte-identical struct shapes. No dual-shape: the
@@ -512,6 +680,10 @@ func (b *Builder) addTypedResources(ctx map[string]any, resourceErrors *Resource
 		},
 		b.logger,
 		resourceErrors,
+		nil,
+		derivedResources,
+		false,
+		false,
 	)
 }
 
@@ -584,7 +756,48 @@ func BuildResourcesValue(
 	apiVersionFor func(name string) string,
 	logger *slog.Logger,
 ) any {
-	return buildResourcesValue(ctx, resourceStores, typedTypes, watchedNames, indexByFor, lazyFor, apiVersionFor, logger, nil)
+	return buildResourcesValue(ctx, resourceStores, typedTypes, watchedNames, indexByFor, lazyFor, apiVersionFor, logger, nil, nil, nil, false, false)
+}
+
+// BuildResourcesValueWithViews applies transaction-pinned reads and a shared derived view.
+func BuildResourcesValueWithViews(
+	ctx context.Context,
+	resourceStores map[string]stores.Store,
+	typedTypes map[string]reflect.Type,
+	watchedNames []string,
+	indexByFor func(name string) []string,
+	lazyFor func(name string) bool,
+	apiVersionFor func(name string) string,
+	logger *slog.Logger,
+	resourceErrors *ResourceErrorCollector,
+	snapshotView StoreSnapshotView,
+	derivedResources *DerivedResourceView,
+	memoizeSnapshotView bool,
+) any {
+	return buildResourcesValue(
+		ctx, resourceStores, typedTypes, watchedNames, indexByFor, lazyFor, apiVersionFor, logger,
+		resourceErrors, snapshotView, derivedResources, memoizeSnapshotView, false)
+}
+
+// BuildIncrementalResourcesValueWithViews binds every resource call to the
+// active component execution environment.
+func BuildIncrementalResourcesValueWithViews(
+	ctx context.Context,
+	resourceStores map[string]stores.Store,
+	typedTypes map[string]reflect.Type,
+	watchedNames []string,
+	indexByFor func(name string) []string,
+	lazyFor func(name string) bool,
+	apiVersionFor func(name string) string,
+	logger *slog.Logger,
+	resourceErrors *ResourceErrorCollector,
+	snapshotView StoreSnapshotView,
+	derivedResources *DerivedResourceView,
+	memoizeSnapshotView bool,
+) any {
+	return buildResourcesValue(
+		ctx, resourceStores, typedTypes, watchedNames, indexByFor, lazyFor, apiVersionFor, logger,
+		resourceErrors, snapshotView, derivedResources, memoizeSnapshotView, true)
 }
 
 func buildResourcesValue(
@@ -597,6 +810,10 @@ func buildResourcesValue(
 	apiVersionFor func(name string) string,
 	logger *slog.Logger,
 	resourceErrors *ResourceErrorCollector,
+	snapshotView StoreSnapshotView,
+	derivedResources *DerivedResourceView,
+	memoizeSnapshotView bool,
+	incrementalEnvironment bool,
 ) any {
 	if indexByFor == nil {
 		indexByFor = func(string) []string { return nil }
@@ -629,9 +846,21 @@ func buildResourcesValue(
 		return reflect.New(reflect.StructOf(nil)).Interface()
 	}
 	resourceNames := slices.Sorted(maps.Keys(seen))
+	var sharedItemCache *ResourceItemCache
+	if provider, ok := snapshotView.(interface{ ResourceItemCache() *ResourceItemCache }); ok {
+		if candidate := provider.ResourceItemCache(); candidate.valid() {
+			sharedItemCache = candidate
+		}
+	}
+	bindingOwner := templating.NewIncrementalResourceFunctionBindingOwner()
 
 	fields := make([]reflect.StructField, 0, len(resourceNames))
 	values := make([]reflect.Value, 0, len(resourceNames))
+	nativeFunctionBindings := make(
+		[]templating.IncrementalResourceFunctionBinding,
+		0,
+		len(resourceNames)*4,
+	)
 	var key strings.Builder
 	for _, name := range resourceNames {
 		elemType := typedTypes[name]
@@ -639,17 +868,34 @@ func buildResourcesValue(
 		var wrapper *StoreWrapper
 		if store != nil {
 			wrapper = &StoreWrapper{
-				Store:          store,
-				ResourceType:   name,
-				Logger:         logger,
-				IndexBy:        indexByFor(name),
-				LazySnapshot:   lazyFor(name),
-				readContext:    ctx,
-				resourceErrors: resourceErrors,
+				Store:               store,
+				ResourceType:        name,
+				Logger:              logger,
+				IndexBy:             indexByFor(name),
+				LazySnapshot:        lazyFor(name),
+				readContext:         ctx,
+				resourceErrors:      resourceErrors,
+				SnapshotView:        snapshotView,
+				DerivedView:         derivedResources,
+				MemoizeSnapshotView: memoizeSnapshotView,
 			}
 		}
 		innerType := typebootstrap.BuildPerResourceStoreType(elemType)
-		innerValue := buildPerResourceStoreValue(innerType, wrapper, elemType, name, apiVersionFor(name), logger, resourceErrors)
+		if incrementalEnvironment {
+			innerType = typebootstrap.BuildIncrementalPerResourceStoreType(elemType)
+		}
+		innerValue, innerNativeFunctionBindings := buildPerResourceStoreValue(
+			innerType,
+			wrapper,
+			bindingOwner,
+			elemType,
+			name,
+			apiVersionFor(name),
+			logger,
+			resourceErrors,
+			sharedItemCache,
+		)
+		nativeFunctionBindings = append(nativeFunctionBindings, innerNativeFunctionBindings...)
 		fields = append(fields, reflect.StructField{
 			Name: typegen.GoFieldName(name),
 			Type: reflect.PointerTo(innerType),
@@ -669,7 +915,15 @@ func buildResourcesValue(
 	for i, v := range values {
 		resources.Elem().Field(i).Set(v)
 	}
-	return resources.Interface()
+	result := resources.Interface()
+	if err := templating.RegisterIncrementalResourceFunctionBindings(
+		bindingOwner,
+		result,
+		nativeFunctionBindings...,
+	); err != nil {
+		panic(fmt.Errorf("registering resource function trampolines: %w", err))
+	}
+	return result
 }
 
 // resourcesTypeCache memoises the dynamically-built `resources` struct type.
@@ -707,104 +961,842 @@ func cachedResourcesType(key string, fields []reflect.StructField) reflect.Type 
 func buildPerResourceStoreValue(
 	innerType reflect.Type,
 	wrapper *StoreWrapper,
+	bindingOwner *templating.IncrementalResourceFunctionBindingOwner,
 	elemType reflect.Type,
 	resourceName string,
 	apiVersion string,
 	logger *slog.Logger,
 	resourceErrors *ResourceErrorCollector,
-) reflect.Value {
+	itemCache *ResourceItemCache,
+) (reflect.Value, []templating.IncrementalResourceFunctionBinding) {
+	if !itemCache.valid() {
+		itemCache = NewResourceItemCache()
+	}
 	ptr := reflect.New(innerType)
-	elem := ptr.Elem()
+	adapter := perResourceStoreAdapter{
+		wrapper:        wrapper,
+		bindingOwner:   bindingOwner,
+		elemType:       elemType,
+		resourceName:   resourceName,
+		logger:         logger,
+		resourceErrors: resourceErrors,
+		itemWrapper: resourceItemWrapper{
+			wrapper:      wrapper,
+			elemType:     elemType,
+			resourceName: resourceName,
+			cache:        itemCache,
+		},
+	}
+	nativeFunctions := adapter.bind(ptr.Elem(), apiVersion)
 
-	// Per-render memo of wrapped typed pointers, keyed by the underlying
-	// snapshot item's identity, so List/Fetch/GetSingle return the SAME *T
-	// for the same item within this render. That makes typed resources stable
-	// and mutable within a render — a template write to a field (governance
-	// injection) is observed by every later read — while the store snapshot
-	// stays immutable across renders (fresh memo per render; WrapInto's copy
-	// decouples *T from the snapshot map). It is also a net perf win: without
-	// it, every List()/Fetch() call re-ran WrapInto (json round-trip) on every
-	// item. Mutex-guarded because aux-file targets render in parallel
-	// (renderer.renderAuxiliaryFiles) and shard_slice spawns goroutines that
-	// may call List() concurrently.
-	var memoMu sync.Mutex
-	memo := make(map[uintptr]reflect.Value)
-	wrapItem := func(item any) (reflect.Value, error) {
-		rv := reflect.ValueOf(item)
-		// Only map/pointer items have a stable identity to key on; the store
-		// snapshot exposes each resource as a map[string]any.
-		if rv.Kind() != reflect.Map && rv.Kind() != reflect.Ptr {
-			return wrapItemToPointer(item, elemType)
+	return ptr, nativeFunctions
+}
+
+type perResourceStoreAdapter struct {
+	wrapper        *StoreWrapper
+	bindingOwner   *templating.IncrementalResourceFunctionBindingOwner
+	elemType       reflect.Type
+	resourceName   string
+	logger         *slog.Logger
+	resourceErrors *ResourceErrorCollector
+	itemWrapper    resourceItemWrapper
+	listOnce       sync.Once
+	listResult     reflect.Value
+	listErr        error
+}
+
+func (a *perResourceStoreAdapter) bind(
+	elem reflect.Value,
+	apiVersion string,
+) []templating.IncrementalResourceFunctionBinding {
+	return []templating.IncrementalResourceFunctionBinding{
+		a.bindAPIVersion(elem.FieldByName("APIVersion"), apiVersion),
+		a.bindList(elem.FieldByName("List")),
+		a.bindFetch(elem.FieldByName("Fetch")),
+		a.bindGetSingle(elem.FieldByName("GetSingle")),
+	}
+}
+
+func (a *perResourceStoreAdapter) bindAPIVersion(
+	field reflect.Value,
+	apiVersion string,
+) templating.IncrementalResourceFunctionBinding {
+	trampoline := native.MakeFunctionTrampolineWithFrame(
+		field.Type(),
+		func(_ []reflect.Value) []reflect.Value {
+			runtime.KeepAlive(a.bindingOwner)
+			return []reflect.Value{reflect.ValueOf(apiVersion)}
+		},
+		func(frame native.FunctionCallFrame) {
+			frame.SetResultString(0, apiVersion)
+			runtime.KeepAlive(a.bindingOwner)
+		},
+	)
+	field.Set(trampoline.Value())
+	return templating.IncrementalResourceFunctionBinding{Trampoline: trampoline}
+}
+
+func (a *perResourceStoreAdapter) bindList(
+	field reflect.Value,
+) templating.IncrementalResourceFunctionBinding {
+	returnType := field.Type().Out(0)
+	materialization := newDirectBoundResourceMaterializationRequest(
+		a.itemWrapper.cache,
+		a.resourceName,
+		a.elemType,
+		returnType,
+		DirectBoundResourceList,
+		func(ctx context.Context, items []any) reflect.Value {
+			return a.buildListItemsImmutable(ctx, items, returnType)
+		},
+		a.resourceErrors,
+		a.logger,
+	)
+	trampoline := native.MakeFunctionTrampolineWithFrame(
+		field.Type(),
+		func(args []reflect.Value) []reflect.Value {
+			env, ctx, _ := resourceInvocationEnvironment(field.Type(), args)
+			result, err := a.adaptList(ctx, returnType)
+			if err != nil {
+				return resourceInvocationFailure(env, returnType, err)
+			}
+			return []reflect.Value{result}
+		},
+		func(frame native.FunctionCallFrame) {
+			env, ctx := resourceInvocationFrameEnvironment(field.Type(), frame)
+			result, err := a.adaptList(ctx, returnType)
+			if err != nil {
+				resourceInvocationFrameFailure(frame, env, err)
+				return
+			}
+			frame.SetResultValue(0, result)
+		},
+	)
+	field.Set(trampoline.Value())
+	return templating.IncrementalResourceFunctionBinding{
+		Trampoline: trampoline,
+		BoundFrameFactory: a.boundResourceFrameFactory(
+			field.Type(),
+			returnType,
+			func(ctx context.Context, _ []any) (reflect.Value, error) {
+				return a.adaptListInInvocation(ctx, returnType)
+			},
+			func(
+				ctx context.Context,
+				invocation DirectBoundStoreInvocation,
+				_ resourceInvocationKeys,
+			) (reflect.Value, error) {
+				return a.adaptListDirectBound(ctx, invocation, returnType, materialization)
+			},
+		),
+	}
+}
+
+func (a *perResourceStoreAdapter) adaptList(ctx context.Context, returnType reflect.Type) (reflect.Value, error) {
+	adapt := func() (reflect.Value, error) {
+		if a.wrapper == nil {
+			return reflect.MakeSlice(returnType, 0, 0), nil
 		}
-		key := rv.Pointer()
-		memoMu.Lock()
-		if v, ok := memo[key]; ok {
-			memoMu.Unlock()
-			return v, nil
-		}
-		memoMu.Unlock()
-		wrapped, err := wrapItemToPointer(item, elemType)
+		invocationCtx, release, err := a.wrapper.beginStoreInvocation(ctx)
 		if err != nil {
 			return reflect.Value{}, err
 		}
-		memoMu.Lock()
-		if v, ok := memo[key]; ok { // lost a race with a concurrent wrap; keep the first
-			memoMu.Unlock()
-			return v, nil
+		defer release()
+		return a.adaptListInInvocation(invocationCtx, returnType)
+	}
+	if a.elemType == nil || (a.wrapper != nil && !a.wrapper.memoizeStoreMaterialization()) {
+		return adapt()
+	}
+	a.listOnce.Do(func() {
+		a.listResult, a.listErr = adapt()
+	})
+	return a.listResult, a.listErr
+}
+
+func (a *perResourceStoreAdapter) adaptListInInvocation(
+	ctx context.Context,
+	returnType reflect.Type,
+) (reflect.Value, error) {
+	if a.wrapper == nil {
+		return reflect.MakeSlice(returnType, 0, 0), nil
+	}
+	items, err := a.wrapper.listInInvocation(ctx)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	return a.adaptListItems(ctx, items, returnType)
+}
+
+func (a *perResourceStoreAdapter) adaptListDirectBound(
+	ctx context.Context,
+	invocation DirectBoundStoreInvocation,
+	returnType reflect.Type,
+	materialization *DirectBoundResourceMaterializationRequest,
+) (reflect.Value, error) {
+	if result, supported, err := a.wrapper.materializeDirectBoundResource(
+		ctx, invocation, materialization, nil,
+	); supported {
+		return result, err
+	}
+	items, err := a.wrapper.listDirectBoundStoreInvocation(ctx, invocation)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	return a.adaptListItems(ctx, items, returnType)
+}
+
+func (a *perResourceStoreAdapter) adaptListItems(
+	ctx context.Context,
+	items []any,
+	returnType reflect.Type,
+) (reflect.Value, error) {
+	result := a.buildListItems(ctx, items, returnType)
+	if err := registerIncrementalResourceResult(a.wrapper, ctx, result); err != nil {
+		return reflect.Value{}, err
+	}
+	return result, nil
+}
+
+func (a *perResourceStoreAdapter) buildListItems(
+	ctx context.Context,
+	items []any,
+	returnType reflect.Type,
+) reflect.Value {
+	return adaptSliceForResource(
+		ctx, items, returnType, a.elemType, a.resourceName, "List",
+		a.logger, a.resourceErrors, a.itemWrapper.wrap,
+	)
+}
+
+func (a *perResourceStoreAdapter) buildListItemsImmutable(
+	ctx context.Context,
+	items []any,
+	returnType reflect.Type,
+) reflect.Value {
+	return adaptSliceForResource(
+		ctx, items, returnType, a.elemType, a.resourceName, "List",
+		a.logger, a.resourceErrors, a.itemWrapper.wrapImmutable,
+	)
+}
+
+func (a *perResourceStoreAdapter) bindFetch(
+	field reflect.Value,
+) templating.IncrementalResourceFunctionBinding {
+	returnType := field.Type().Out(0)
+	materialization := newDirectBoundResourceMaterializationRequest(
+		a.itemWrapper.cache,
+		a.resourceName,
+		a.elemType,
+		returnType,
+		DirectBoundResourceFetch,
+		func(ctx context.Context, items []any) reflect.Value {
+			return a.buildFetchItemsImmutable(ctx, items, returnType)
+		},
+		a.resourceErrors,
+		a.logger,
+	)
+	trampoline := native.MakeFunctionTrampolineWithFrame(
+		field.Type(),
+		func(args []reflect.Value) []reflect.Value {
+			env, ctx, offset := resourceInvocationEnvironment(field.Type(), args)
+			if a.wrapper == nil {
+				return []reflect.Value{reflect.MakeSlice(returnType, 0, 0)}
+			}
+			invocationCtx, release, err := a.wrapper.beginStoreInvocation(ctx)
+			if err != nil {
+				return resourceInvocationFailure(env, returnType, err)
+			}
+			defer release()
+			keys := args[offset].Interface().([]any)
+			result, err := a.adaptFetchInInvocation(invocationCtx, keys, returnType)
+			if err != nil {
+				return resourceInvocationFailure(env, returnType, err)
+			}
+			return []reflect.Value{result}
+		},
+		func(frame native.FunctionCallFrame) {
+			env, ctx := resourceInvocationFrameEnvironment(field.Type(), frame)
+			if a.wrapper == nil {
+				frame.SetResultValue(0, reflect.MakeSlice(returnType, 0, 0))
+				return
+			}
+			invocationCtx, release, err := a.wrapper.beginStoreInvocation(ctx)
+			if err != nil {
+				resourceInvocationFrameFailure(frame, env, err)
+				return
+			}
+			defer release()
+			result, err := a.adaptFetchInInvocation(
+				invocationCtx,
+				resourceInvocationFrameVariadic(field.Type(), frame),
+				returnType,
+			)
+			if err != nil {
+				resourceInvocationFrameFailure(frame, env, err)
+				return
+			}
+			frame.SetResultValue(0, result)
+		},
+	)
+	field.Set(trampoline.Value())
+	return templating.IncrementalResourceFunctionBinding{
+		Trampoline: trampoline,
+		BoundFrameFactory: a.boundResourceFrameFactory(
+			field.Type(),
+			returnType,
+			func(ctx context.Context, keys []any) (reflect.Value, error) {
+				return a.adaptFetchInInvocation(ctx, keys, returnType)
+			},
+			func(
+				ctx context.Context,
+				invocation DirectBoundStoreInvocation,
+				keys resourceInvocationKeys,
+			) (reflect.Value, error) {
+				return a.adaptFetchDirectBound(ctx, invocation, keys, returnType, materialization)
+			},
+		),
+	}
+}
+
+func (a *perResourceStoreAdapter) adaptFetchInInvocation(
+	ctx context.Context,
+	keys []any,
+	returnType reflect.Type,
+) (reflect.Value, error) {
+	if a.wrapper == nil {
+		return reflect.MakeSlice(returnType, 0, 0), nil
+	}
+	items, err := a.wrapper.fetchInInvocation(ctx, keys)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	return a.adaptFetchItems(ctx, items, returnType)
+}
+
+func (a *perResourceStoreAdapter) adaptFetchDirectBound(
+	ctx context.Context,
+	invocation DirectBoundStoreInvocation,
+	keys resourceInvocationKeys,
+	returnType reflect.Type,
+	materialization *DirectBoundResourceMaterializationRequest,
+) (reflect.Value, error) {
+	if _, supported := a.wrapper.directBoundResourceMaterializationView(); supported {
+		stringKeys, ok := a.wrapper.lookupKeySource(keys, "Fetch")
+		if !ok {
+			return reflect.MakeSlice(returnType, 0, 0), nil
 		}
-		memo[key] = wrapped
-		memoMu.Unlock()
+		result, _, err := a.wrapper.materializeDirectBoundResource(
+			ctx, invocation, materialization, stringKeys,
+		)
+		return result, err
+	}
+	items, err := a.wrapper.getDirectBoundStoreInvocation(ctx, invocation, keys, "Fetch")
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	return a.adaptFetchItems(ctx, items, returnType)
+}
+
+func (a *perResourceStoreAdapter) adaptFetchItems(
+	ctx context.Context,
+	items []any,
+	returnType reflect.Type,
+) (reflect.Value, error) {
+	result := a.buildFetchItems(ctx, items, returnType)
+	if err := registerIncrementalResourceResult(a.wrapper, ctx, result); err != nil {
+		return reflect.Value{}, err
+	}
+	return result, nil
+}
+
+func (a *perResourceStoreAdapter) buildFetchItems(
+	ctx context.Context,
+	items []any,
+	returnType reflect.Type,
+) reflect.Value {
+	return adaptSliceForResource(
+		ctx, items, returnType, a.elemType, a.resourceName, "Fetch",
+		a.logger, a.resourceErrors, a.itemWrapper.wrap,
+	)
+}
+
+func (a *perResourceStoreAdapter) buildFetchItemsImmutable(
+	ctx context.Context,
+	items []any,
+	returnType reflect.Type,
+) reflect.Value {
+	return adaptSliceForResource(
+		ctx, items, returnType, a.elemType, a.resourceName, "Fetch",
+		a.logger, a.resourceErrors, a.itemWrapper.wrapImmutable,
+	)
+}
+
+func (a *perResourceStoreAdapter) bindGetSingle(
+	field reflect.Value,
+) templating.IncrementalResourceFunctionBinding {
+	returnType := field.Type().Out(0)
+	materialization := newDirectBoundResourceMaterializationRequest(
+		a.itemWrapper.cache,
+		a.resourceName,
+		a.elemType,
+		returnType,
+		DirectBoundResourceGetSingle,
+		func(ctx context.Context, items []any) reflect.Value {
+			return a.buildSingleItemImmutable(ctx, items[0], returnType)
+		},
+		a.resourceErrors,
+		a.logger,
+	)
+	trampoline := native.MakeFunctionTrampolineWithFrame(
+		field.Type(),
+		func(args []reflect.Value) []reflect.Value {
+			env, ctx, offset := resourceInvocationEnvironment(field.Type(), args)
+			if a.wrapper == nil {
+				return []reflect.Value{reflect.Zero(returnType)}
+			}
+			invocationCtx, release, err := a.wrapper.beginStoreInvocation(ctx)
+			if err != nil {
+				return resourceInvocationFailure(env, returnType, err)
+			}
+			defer release()
+			keys := args[offset].Interface().([]any)
+			result, err := a.adaptGetSingleInInvocation(invocationCtx, keys, returnType)
+			if err != nil {
+				return resourceInvocationFailure(env, returnType, err)
+			}
+			return []reflect.Value{result}
+		},
+		func(frame native.FunctionCallFrame) {
+			env, ctx := resourceInvocationFrameEnvironment(field.Type(), frame)
+			if a.wrapper == nil {
+				frame.SetResultZero(0)
+				return
+			}
+			invocationCtx, release, err := a.wrapper.beginStoreInvocation(ctx)
+			if err != nil {
+				resourceInvocationFrameFailure(frame, env, err)
+				return
+			}
+			defer release()
+			result, err := a.adaptGetSingleInInvocation(
+				invocationCtx,
+				resourceInvocationFrameVariadic(field.Type(), frame),
+				returnType,
+			)
+			if err != nil {
+				resourceInvocationFrameFailure(frame, env, err)
+				return
+			}
+			frame.SetResultValue(0, result)
+		},
+	)
+	field.Set(trampoline.Value())
+	return templating.IncrementalResourceFunctionBinding{
+		Trampoline: trampoline,
+		BoundFrameFactory: a.boundResourceFrameFactory(
+			field.Type(),
+			returnType,
+			func(ctx context.Context, keys []any) (reflect.Value, error) {
+				return a.adaptGetSingleInInvocation(ctx, keys, returnType)
+			},
+			func(
+				ctx context.Context,
+				invocation DirectBoundStoreInvocation,
+				keys resourceInvocationKeys,
+			) (reflect.Value, error) {
+				return a.adaptGetSingleDirectBound(ctx, invocation, keys, returnType, materialization)
+			},
+		),
+	}
+}
+
+func (a *perResourceStoreAdapter) adaptGetSingleInInvocation(
+	ctx context.Context,
+	keys []any,
+	returnType reflect.Type,
+) (reflect.Value, error) {
+	if a.wrapper == nil {
+		return reflect.Zero(returnType), nil
+	}
+	item, found, err := a.wrapper.getSingleInInvocation(ctx, keys)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	if !found {
+		return reflect.Zero(returnType), nil
+	}
+	return a.adaptSingleItem(ctx, item, returnType)
+}
+
+func (a *perResourceStoreAdapter) adaptGetSingleDirectBound(
+	ctx context.Context,
+	invocation DirectBoundStoreInvocation,
+	keys resourceInvocationKeys,
+	returnType reflect.Type,
+	materialization *DirectBoundResourceMaterializationRequest,
+) (reflect.Value, error) {
+	if _, supported := a.wrapper.directBoundResourceMaterializationView(); supported {
+		stringKeys, ok := a.wrapper.lookupKeySource(keys, "GetSingle")
+		if !ok {
+			return reflect.Zero(returnType), nil
+		}
+		result, _, err := a.wrapper.materializeDirectBoundResource(
+			ctx, invocation, materialization, stringKeys,
+		)
+		return result, err
+	}
+	item, found, err := a.wrapper.getSingleDirectBoundStoreInvocation(ctx, invocation, keys)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	if !found {
+		return reflect.Zero(returnType), nil
+	}
+	return a.adaptSingleItem(ctx, item, returnType)
+}
+
+func (a *perResourceStoreAdapter) adaptSingleItem(
+	ctx context.Context,
+	item any,
+	returnType reflect.Type,
+) (reflect.Value, error) {
+	result := a.buildSingleItem(ctx, item, returnType)
+	if err := registerIncrementalResourceResult(a.wrapper, ctx, result); err != nil {
+		return reflect.Value{}, err
+	}
+	return result, nil
+}
+
+func (a *perResourceStoreAdapter) buildSingleItem(
+	ctx context.Context,
+	item any,
+	returnType reflect.Type,
+) reflect.Value {
+	return adaptSingleForResource(
+		ctx, item, returnType, a.elemType, a.resourceName,
+		a.logger, a.resourceErrors, a.itemWrapper.wrap,
+	)
+}
+
+func (a *perResourceStoreAdapter) buildSingleItemImmutable(
+	ctx context.Context,
+	item any,
+	returnType reflect.Type,
+) reflect.Value {
+	return adaptSingleForResource(
+		ctx, item, returnType, a.elemType, a.resourceName,
+		a.logger, a.resourceErrors, a.itemWrapper.wrapImmutable,
+	)
+}
+
+type boundResourceInvocation func(context.Context, []any) (reflect.Value, error)
+
+type directBoundResourceInvocation func(
+	context.Context,
+	DirectBoundStoreInvocation,
+	resourceInvocationKeys,
+) (reflect.Value, error)
+
+type resourceInvocationKeys struct {
+	values    []any
+	arguments *native.FunctionCallArguments
+}
+
+func (k resourceInvocationKeys) Len() int {
+	if k.arguments != nil {
+		return k.arguments.Len()
+	}
+	return len(k.values)
+}
+
+func (k resourceInvocationKeys) Value(index int) any {
+	if k.arguments != nil {
+		return native.FunctionCallArgumentAt[any](*k.arguments, index)
+	}
+	return k.values[index]
+}
+
+func (k resourceInvocationKeys) ReflectValue(index int) reflect.Value {
+	if k.arguments != nil {
+		return k.arguments.Value(index)
+	}
+	if k.values[index] == nil {
+		return reflect.Value{}
+	}
+	return reflect.ValueOf(k.values[index])
+}
+
+func (k resourceInvocationKeys) slice() []any {
+	if k.arguments == nil {
+		return k.values
+	}
+	values := make([]any, k.arguments.Len())
+	for index := range values {
+		values[index] = native.FunctionCallArgumentAt[any](*k.arguments, index)
+	}
+	return values
+}
+
+func (a *perResourceStoreAdapter) boundResourceFrameFactory(
+	functionType reflect.Type,
+	returnType reflect.Type,
+	invoke boundResourceInvocation,
+	directInvoke directBoundResourceInvocation,
+) templating.IncrementalResourceBoundFrameFactory {
+	if !a.wrapper.supportsBoundStoreInvocation() || functionType == nil ||
+		functionType.Kind() != reflect.Func || functionType.NumIn() == 0 ||
+		functionType.In(0) != reflect.TypeFor[native.Env]() || functionType.NumOut() != 1 ||
+		functionType.Out(0) != returnType || invoke == nil || directInvoke == nil {
+		return nil
+	}
+	return func(
+		lease templating.IncrementalResourceInvocationLease,
+	) (*native.FunctionTrampoline, error) {
+		if lease == nil {
+			return nil, errors.New("bound resource frame requires an invocation lease")
+		}
+		call := func(args []reflect.Value) []reflect.Value {
+			env, ctx, offset := resourceInvocationEnvironment(functionType, args)
+			var keys resourceInvocationKeys
+			if functionType.IsVariadic() {
+				keys.values = args[offset].Interface().([]any)
+			}
+			result, err := a.invokeBoundResource(ctx, lease, keys, invoke, directInvoke)
+			if err != nil {
+				return resourceInvocationFailure(env, returnType, err)
+			}
+			return []reflect.Value{result}
+		}
+		return native.MakeFunctionTrampolineWithFrame(
+			functionType,
+			call,
+			func(frame native.FunctionCallFrame) {
+				env, ctx := resourceInvocationFrameEnvironment(functionType, frame)
+				var keys resourceInvocationKeys
+				if functionType.IsVariadic() {
+					arguments := frame.VariadicArguments()
+					keys.arguments = &arguments
+				}
+				result, err := a.invokeBoundResource(ctx, lease, keys, invoke, directInvoke)
+				if err != nil {
+					resourceInvocationFrameFailure(frame, env, err)
+					return
+				}
+				frame.SetResultValue(0, result)
+			},
+		), nil
+	}
+}
+
+func (a *perResourceStoreAdapter) invokeBoundResource(
+	ctx context.Context,
+	lease templating.IncrementalResourceInvocationLease,
+	keys resourceInvocationKeys,
+	invoke boundResourceInvocation,
+	directInvoke directBoundResourceInvocation,
+) (reflect.Value, error) {
+	result := a.invokeBoundResourceResult(ctx, lease, keys, invoke, directInvoke)
+	return result.value, result.err
+}
+
+type boundResourceInvocationResult struct {
+	value reflect.Value
+	err   error
+}
+
+func (a *perResourceStoreAdapter) invokeBoundResourceResult(
+	ctx context.Context,
+	lease templating.IncrementalResourceInvocationLease,
+	keys resourceInvocationKeys,
+	invoke boundResourceInvocation,
+	directInvoke directBoundResourceInvocation,
+) (result boundResourceInvocationResult) {
+	if a.wrapper.supportsDirectBoundStoreInvocation() {
+		invocation, beginErr := a.wrapper.beginDirectBoundStoreInvocation(ctx, lease)
+		if beginErr != nil {
+			return boundResourceInvocationResult{err: beginErr}
+		}
+		defer finishDirectBoundStoreInvocation(a.wrapper, invocation, &result)
+		result.value, result.err = directInvoke(ctx, invocation, keys)
+		return result
+	}
+	invocationCtx, release, err := a.wrapper.beginBoundStoreInvocation(ctx, lease)
+	if err != nil {
+		return boundResourceInvocationResult{err: err}
+	}
+	defer release()
+	result.value, result.err = invoke(invocationCtx, keys.slice())
+	return result
+}
+
+func finishDirectBoundStoreInvocation(
+	wrapper *StoreWrapper,
+	invocation DirectBoundStoreInvocation,
+	result *boundResourceInvocationResult,
+) {
+	if endErr := wrapper.endDirectBoundStoreInvocation(invocation); endErr != nil {
+		result.value = reflect.Value{}
+		result.err = errors.Join(result.err, endErr)
+	}
+}
+
+func resourceInvocationEnvironment(
+	functionType reflect.Type,
+	args []reflect.Value,
+) (native.Env, context.Context, int) {
+	if functionType.NumIn() > 0 && functionType.In(0) == reflect.TypeFor[native.Env]() {
+		env := args[0].Interface().(native.Env)
+		return env, env.Context(), 1
+	}
+	return nil, nil, 0
+}
+
+func resourceInvocationFailure(env native.Env, returnType reflect.Type, err error) []reflect.Value {
+	if env != nil {
+		env.Stop(err)
+	}
+	return []reflect.Value{reflect.Zero(returnType)}
+}
+
+func resourceInvocationFrameEnvironment(
+	functionType reflect.Type,
+	frame native.FunctionCallFrame,
+) (native.Env, context.Context) {
+	if functionType.NumIn() > 0 && functionType.In(0) == reflect.TypeFor[native.Env]() {
+		env := frame.ArgEnv(0)
+		return env, env.Context()
+	}
+	return nil, nil
+}
+
+func resourceInvocationFrameVariadic(
+	functionType reflect.Type,
+	frame native.FunctionCallFrame,
+) []any {
+	count := frame.VariadicLen()
+	if count < 0 {
+		values, _ := frame.ArgValue(functionType.NumIn() - 1).Interface().([]any)
+		return values
+	}
+	values := make([]any, count)
+	for index := range count {
+		values[index] = frame.VariadicValue(index).Interface()
+	}
+	return values
+}
+
+func resourceInvocationFrameFailure(
+	frame native.FunctionCallFrame,
+	env native.Env,
+	err error,
+) {
+	if env != nil {
+		env.Stop(err)
+	}
+	for index := range frame.Type().NumOut() {
+		frame.SetResultZero(index)
+	}
+}
+
+type resourceItemWrapper struct {
+	wrapper      *StoreWrapper
+	elemType     reflect.Type
+	resourceName string
+	cache        *ResourceItemCache
+}
+
+func (w *resourceItemWrapper) wrap(ctx context.Context, item any) (reflect.Value, error) {
+	return w.wrapWith(ctx, item, w.wrapAndBind)
+}
+
+func (w *resourceItemWrapper) wrapImmutable(ctx context.Context, item any) (reflect.Value, error) {
+	return w.wrapWith(ctx, item, w.wrapAndBindImmutable)
+}
+
+func (w *resourceItemWrapper) wrapWith(
+	ctx context.Context,
+	item any,
+	build func(any) (reflect.Value, error),
+) (reflect.Value, error) {
+	if w.usesUnmemoizedSnapshotView() {
+		return build(item)
+	}
+	key, cacheable := resourceItemKey(w.resourceName, w.elemType, item)
+	if !cacheable {
+		return build(item)
+	}
+	return w.wrapMemoized(ctx, item, key, build)
+}
+
+func (w *resourceItemWrapper) usesUnmemoizedSnapshotView() bool {
+	return w.wrapper != nil && w.wrapper.usesSnapshotView() && !w.wrapper.memoizeStoreItems()
+}
+
+func (w *resourceItemWrapper) wrapMemoized(
+	ctx context.Context,
+	item any,
+	key resourceItemCacheKey,
+	build func(any) (reflect.Value, error),
+) (reflect.Value, error) {
+	value, found, err := w.cache.load(key, item)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	if found {
+		if err := templating.RegisterIncrementalImmutableCertificate(ctx, value.certificate); err != nil {
+			return reflect.Value{}, err
+		}
+		return value.value, nil
+	}
+	wrapped, err := build(item)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	value, err = w.cache.loadOrStore(
+		key,
+		item,
+		wrapped,
+		templating.CertifyIncrementalImmutableInputs(wrapped.Interface()),
+	)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	if err := templating.RegisterIncrementalImmutableCertificate(ctx, value.certificate); err != nil {
+		return reflect.Value{}, err
+	}
+	return value.value, nil
+}
+
+func (w *resourceItemWrapper) wrapAndBind(item any) (reflect.Value, error) {
+	return w.wrapAndBindWith(item, wrapItemToPointer)
+}
+
+func (w *resourceItemWrapper) wrapAndBindImmutable(item any) (reflect.Value, error) {
+	return w.wrapAndBindWith(item, wrapImmutableItemToPointer)
+}
+
+func (w *resourceItemWrapper) wrapAndBindWith(
+	item any,
+	wrap func(any, reflect.Type) (reflect.Value, error),
+) (reflect.Value, error) {
+	wrapped, err := wrap(item, w.elemType)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	if w.wrapper == nil || w.wrapper.DerivedView == nil {
 		return wrapped, nil
 	}
+	if err := w.wrapper.DerivedView.Bind(w.resourceName, wrapped.Interface(), item); err != nil {
+		return reflect.Value{}, err
+	}
+	return wrapped, nil
+}
 
-	listField := elem.FieldByName("List")
-	fetchField := elem.FieldByName("Fetch")
-	getSingleField := elem.FieldByName("GetSingle")
-
-	// Resolved watch-set metadata (see BuildPerResourceStoreType).
-	apiVersionField := elem.FieldByName("APIVersion")
-	apiVersionField.Set(reflect.MakeFunc(apiVersionField.Type(), func(_ []reflect.Value) []reflect.Value {
-		return []reflect.Value{reflect.ValueOf(apiVersion)}
-	}))
-
-	listReturnType := listField.Type().Out(0)
-	fetchReturnType := fetchField.Type().Out(0)
-	getSingleReturnType := getSingleField.Type().Out(0)
-
-	listField.Set(reflect.MakeFunc(listField.Type(), func(_ []reflect.Value) []reflect.Value {
-		if wrapper == nil {
-			return []reflect.Value{reflect.MakeSlice(listReturnType, 0, 0)}
-		}
-		items := wrapper.List()
-		return []reflect.Value{
-			adaptSliceForResource(items, listReturnType, elemType, resourceName, "List", logger, resourceErrors, wrapItem),
-		}
-	}))
-
-	fetchField.Set(reflect.MakeFunc(fetchField.Type(), func(args []reflect.Value) []reflect.Value {
-		if wrapper == nil {
-			return []reflect.Value{reflect.MakeSlice(fetchReturnType, 0, 0)}
-		}
-		// Variadic Fetch: args[0] is the []any keys slice.
-		keys := args[0].Interface().([]any)
-		items := wrapper.Fetch(keys...)
-		return []reflect.Value{
-			adaptSliceForResource(items, fetchReturnType, elemType, resourceName, "Fetch", logger, resourceErrors, wrapItem),
-		}
-	}))
-
-	getSingleField.Set(reflect.MakeFunc(getSingleField.Type(), func(args []reflect.Value) []reflect.Value {
-		if wrapper == nil {
-			return []reflect.Value{reflect.Zero(getSingleReturnType)}
-		}
-		keys := args[0].Interface().([]any)
-		item := wrapper.GetSingle(keys...)
-		return []reflect.Value{
-			adaptSingleForResource(item, getSingleReturnType, elemType, resourceName, logger, resourceErrors, wrapItem),
-		}
-	}))
-
-	return ptr
+func registerIncrementalResourceResult(wrapper *StoreWrapper, ctx context.Context, result reflect.Value) error {
+	if wrapper == nil || !result.IsValid() {
+		return nil
+	}
+	return templating.RegisterIncrementalImmutableInputs(ctx, result.Interface())
 }
 
 // adaptSliceForResource converts `items []any` to the static return
@@ -813,13 +1805,14 @@ func buildPerResourceStoreValue(
 // pre-pivot direct-WrapSlice approach used, just deferred to call
 // time so per-render List() picks up the freshest store snapshot.
 func adaptSliceForResource(
+	ctx context.Context,
 	items []any,
 	returnType reflect.Type,
 	elemType reflect.Type,
 	resourceName, op string,
 	logger *slog.Logger,
 	resourceErrors *ResourceErrorCollector,
-	wrapItem func(any) (reflect.Value, error),
+	wrapItem func(context.Context, any) (reflect.Value, error),
 ) reflect.Value {
 	if elemType == nil {
 		// Untyped fallback: return type is []any. Direct copy.
@@ -836,7 +1829,7 @@ func adaptSliceForResource(
 	// failed conversion is recorded so the render can't publish partial input.
 	out := reflect.MakeSlice(returnType, 0, len(items))
 	for _, item := range items {
-		ptr, err := wrapItem(item)
+		ptr, err := wrapItem(ctx, item)
 		if err != nil {
 			resourceErrors.Record(fmt.Errorf("resource %q %s could not materialize its typed object: %w", resourceName, op, err))
 			logger.Warn("Typed resource: WrapInto failed; skipping item",
@@ -852,13 +1845,14 @@ func adaptSliceForResource(
 // the static return type (`*T` typed, or `any` untyped). Returns the
 // zero value of the return type for nil input.
 func adaptSingleForResource(
+	ctx context.Context,
 	item any,
 	returnType reflect.Type,
 	elemType reflect.Type,
 	resourceName string,
 	logger *slog.Logger,
 	resourceErrors *ResourceErrorCollector,
-	wrapItem func(any) (reflect.Value, error),
+	wrapItem func(context.Context, any) (reflect.Value, error),
 ) reflect.Value {
 	if item == nil {
 		return reflect.Zero(returnType)
@@ -872,7 +1866,7 @@ func adaptSingleForResource(
 	}
 	// Memoized wrap so GetSingle returns the SAME *T as List/Fetch for the
 	// same snapshot item within this render.
-	ptr, err := wrapItem(item)
+	ptr, err := wrapItem(ctx, item)
 	if err != nil {
 		resourceErrors.Record(fmt.Errorf("resource %q GetSingle could not materialize its typed object: %w", resourceName, err))
 		logger.Warn("Typed resource: WrapInto failed; returning nil",
@@ -887,11 +1881,27 @@ func adaptSingleForResource(
 // via typegen.WrapInto. Returns a reflect.Value wrapping the
 // pointer.
 func wrapItemToPointer(item any, elemType reflect.Type) (reflect.Value, error) {
+	return wrapItemToPointerWith(item, elemType, typegen.WrapInto)
+}
+
+func wrapImmutableItemToPointer(item any, elemType reflect.Type) (reflect.Value, error) {
 	m, ok := item.(map[string]any)
 	if !ok {
 		return reflect.Value{}, fmt.Errorf("expected map[string]any, got %T", item)
 	}
-	v, err := typegen.WrapInto(m, elemType)
+	return typegen.WrapImmutableIntoPointer(m, elemType)
+}
+
+func wrapItemToPointerWith(
+	item any,
+	elemType reflect.Type,
+	wrap func(map[string]any, reflect.Type) (reflect.Value, error),
+) (reflect.Value, error) {
+	m, ok := item.(map[string]any)
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("expected map[string]any, got %T", item)
+	}
+	v, err := wrap(m, elemType)
 	if err != nil {
 		return reflect.Value{}, err
 	}
@@ -923,17 +1933,63 @@ func SortSnippetNames(snippets map[string]config.TemplateSnippet) []string {
 // The extraContext key is always populated (with an empty map if nil) to prevent
 // nil pointer dereferences in templates that use extraContext | dig("key") | fallback(default).
 func MergeExtraContextInto(renderCtx map[string]any, cfg *config.Config) {
-	if cfg.TemplatingSettings.ExtraContext != nil {
+	mergeExtraContextInto(renderCtx, cfg.TemplatingSettings.ExtraContext)
+}
+
+func mergeExtraContextInto(renderCtx, extraContext map[string]any) {
+	if extraContext != nil {
 		// Merge at top level
-		maps.Copy(renderCtx, cfg.TemplatingSettings.ExtraContext)
+		maps.Copy(renderCtx, extraContext)
 		// Also populate the extraContext map for Scriggo templates
 		// Scriggo requires compile-time variable declarations, so templates
 		// access extraContext values via: extraContext | dig("key") | fallback(default)
-		renderCtx["extraContext"] = cfg.TemplatingSettings.ExtraContext
+		renderCtx["extraContext"] = extraContext
 	} else {
 		// Always set extraContext, even if empty, to prevent nil pointer dereferences
 		// when templates use: extraContext | dig("key") | fallback(default)
 		renderCtx["extraContext"] = map[string]any{}
+	}
+}
+
+// DetachExtraContext returns a recursively isolated template value tree.
+func DetachExtraContext(extraContext map[string]any) (map[string]any, error) {
+	if extraContext == nil {
+		return map[string]any{}, nil
+	}
+	cloned, err := cloneTemplateValue(extraContext)
+	if err != nil {
+		return nil, err
+	}
+	result, ok := cloned.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("detached extra context has type %T", cloned)
+	}
+	return result, nil
+}
+
+func cloneDetachedExtraContext(extraContext map[string]any) map[string]any {
+	if extraContext == nil {
+		return nil
+	}
+	result := make(map[string]any, len(extraContext))
+	for key, value := range extraContext {
+		result[key] = cloneDetachedExtraContextValue(value)
+	}
+	return result
+}
+
+func cloneDetachedExtraContextValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneDetachedExtraContext(typed)
+	case []any:
+		result := make([]any, len(typed))
+		for index := range typed {
+			result[index] = cloneDetachedExtraContextValue(typed[index])
+		}
+		return result
+	default:
+		return typed
 	}
 }
 

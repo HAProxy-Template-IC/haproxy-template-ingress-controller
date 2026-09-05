@@ -24,87 +24,123 @@ _helm_load: {enable: '{{ .Values.controller.templateLibraries.ingressAnnotations
 
 templateSnippets:
 
-  util-build-annotation-ssl-passthrough:
-    template: |
-      {#
-        Service info is captured during this scan instead of being re-fetched by
-        the consumer: a second GetSingle() could disagree with the use_backend
-        pass under concurrent Ingress deletion. The backend entry shape must stay
-        identical across the libraries that read sslData["backends"].
-      #}
-      {%- import "util-service-port-resolution" for ResolveServicePort %}
-      {%- macro BuildAnnotationSSLPassthrough(sslData map[string]any, annotationKey string, namePrefix string, firstSeenKey string) %}
-        {%- for _, ingress := range resources.ingresses.List() %}
-          {%- var passthrough = ingress.Metadata.Annotations[annotationKey] %}
-          {%- if passthrough == "true" %}
-            {%- var ns = ingress.Metadata.Namespace %}
-            {%- var name = ingress.Metadata.Name %}
-            {#- Passthrough routes by SNI, not by path, so the first usable
-                path's service serves every host on this ingress. -#}
-            {%- var svcName = "" %}
-            {%- var svcPort = 0 %}
-            {%- var svcPortName = "" %}
-            {%- for _, path := range ingress.Spec.Rules[*].Http.Paths %}
-              {%- var n = path.Backend.Service.Name %}
-              {%- if n != "" %}
-                {%- var resolvedParts = split(ResolveServicePort(tostring(ns), n, path.Backend.Service.Port), " ") %}
-                {%- svcName = n %}
-                {%- svcPort = toint(resolvedParts[0]) %}
-                {%- svcPortName = resolvedParts[1] %}
-                {%- break %}
-              {%- end %}
-            {%- end %}
-            {%- if svcName != "" %}
-              {%- for _, rule := range ingress.Spec.Rules %}
-                {%- if rule.Host != "" && first_seen(firstSeenKey, rule.Host) %}
-                  {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
-                    "name": namePrefix + ns + "-" + name,
-                    "sni": rule.Host, "namespace": ns, "ingress": name,
-                    "svcName": svcName, "svcPort": svcPort, "svcPortName": svcPortName,
-                  }) %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end macro %}
+  util-annotation-ssl-passthrough-component:
+    template: |-
+      {%- import "util-service-port-resolution" for ResolveServicePort -%}
+      {%- import "util-backend" for PrepareBackend -%}
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
+      {% macro RenderAnnotationSSLPassthrough(item any, annotationKey string, namePrefix string, cell string, commentLabel string) %}{%%
+        var ingress = item
+        if dig_string(ingress, "", "metadata", "annotations", annotationKey) != "true" {
+          return
+        }
 
-  util-render-annotation-ssl-passthrough-backends:
-    template: |
-      {%- import "util-backend" for Backend -%}
-      {%- import "util-backend-servers" for BackendServers -%}
-      {%- macro RenderAnnotationSSLPassthroughBackends(cacheKey string, firstSeenKey string, commentLabel string) %}
-        {%- var rawVal, _ = shared.ComputeIfAbsent(cacheKey, func() any { return nil }) %}
-        {%- if rawVal == nil %}{% return %}{% end %}
-        {%- var sslData = rawVal.(map[string]any) %}
-        {%- var backends = sslData["backends"].([]any) %}
-        {%- for _, backendInfo := range backends %}
-          {%- var info = backendInfo.(map[string]any) %}
-          {%- var beNs = info["namespace"] | tostring() %}
-          {%- var beIngress = info["ingress"] | tostring() %}
-          {%- var beName = info["name"] | tostring() %}
-          {%- var svcName = info["svcName"] | tostring() %}
-          {%- var svcPort = info["svcPort"] | toint() %}
-          {%- var svcPortName = info["svcPortName"] | fallback("") | tostring() %}
-          {%- if first_seen(firstSeenKey, beNs + "/" + beIngress) %}
-      {{ Backend(map[string]any{
-           "name": beName,
-           "mode": "tcp",
-           "comments": []any{"# " + commentLabel + "/backends-ssl-passthrough"},
-           "servers": BackendServers(svcName, 0, svcPort, nil, svcPortName, beName, beNs),
-         }) }}
-          {%- end %}
-        {%- end %}
-      {%- end macro %}
+        var namespace = dig_string(ingress, "", "metadata", "namespace")
+        var ingressName = dig_string(ingress, "", "metadata", "name")
+        var serviceName = ""
+        var servicePort = 0
+        var servicePortName = ""
+        for _, rule := range toSlice(dig(ingress, "spec", "rules")) {
+          for _, path := range toSlice(dig(rule, "http", "paths")) {
+            var candidate = dig_string(path, "", "backend", "service", "name")
+            if candidate == "" {
+              continue
+            }
+            var resolved = split(ResolveServicePort(namespace, candidate,
+              dig(path, "backend", "service", "port")), " ")
+            serviceName = candidate
+            servicePort = toint(resolved[0])
+            servicePortName = resolved[1]
+            break
+          }
+          if serviceName != "" {
+            break
+          }
+        }
+        if serviceName == "" {
+          return
+        }
+
+        var backendName = namePrefix + namespace + "-" + ingressName
+        var serverResult = BackendServersResult(
+          serviceName, 0, servicePort, nil, servicePortName, backendName, namespace)
+        var hostKeys = []string{}
+        var seenHosts = map[string]bool{}
+        for _, rule := range toSlice(dig(ingress, "spec", "rules")) {
+          var host = dig_string(rule, "", "host")
+          if host == "" || seenHosts[host] {
+            continue
+          }
+          seenHosts[host] = true
+          hostKeys = append(hostKeys, host)
+          show shared.Publish(cell, host, map[string]any{
+            "name": backendName,
+            "sni": host,
+            "namespace": namespace,
+            "ingress": ingressName,
+            "svcName": serviceName,
+            "svcPort": servicePort,
+            "svcPortName": servicePortName,
+            "degradedByName": serverResult["degradedByName"],
+            "resolvedPortName": serverResult["portName"],
+          })
+        }
+        if len(hostKeys) == 0 {
+          return
+        }
+
+        var record, text = PrepareBackend(map[string]any{
+          "name": backendName,
+          "mode": "tcp",
+          "comments": []any{"# " + commentLabel + "/backends-ssl-passthrough"},
+          "servers": serverResult["servers"],
+        })
+        var token, err = planRegistry.BackendWhenAny(record, text, cell, hostKeys)
+        if err != nil {
+          fail(err.Error())
+        }
+        show token + "\n"
+      %%}{% end %}
+
+  util-annotation-ssl-passthrough-values:
+    template: |-
+      {%- var encoded, _ = shared.ComputeIfAbsent("sslPassthroughBackendsCombinedJSON", func() any {
+          var gf = shared.Get("globalFeatures").(map[string]any)
+          var backends = []any{}
+          for _, backend := range toSlice(gf["sslPassthroughBackends"]) {
+            backends = append(backends, backend)
+          }
+
+          var enabled = extraContext | dig("annotationLibraries") | fallback(map[string]any{})
+          var anyEnabled = false
+          for _, family := range []string{"haptic", "haproxyIngress", "haproxytech", "nginx"} {
+            if tostring(enabled | dig(family) | fallback(false)) == "true" {
+              anyEnabled = true
+            }
+          }
+          if anyEnabled {
+            for _, cell := range []string{
+              "haproxy-ingress", "haproxytech", "haptic", "nginx",
+            } {
+              for _, backend := range incremental_values("ingress-ssl-passthrough", cell) {
+                var info = backend.(map[string]any)
+                backends = append(backends, info)
+                if info["degradedByName"] == true {
+                  var marker = "degradedBackendRef:" +
+                    tostring(info["namespace"]) + "/" +
+                    tostring(info["svcName"]) + "/" +
+                    tostring(info["resolvedPortName"])
+                  shared.ComputeIfAbsent(marker, func() any { return true })
+                }
+              }
+            }
+          }
+          return toJSON(backends)
+      }) -%}
+      {{- tostring(encoded) -}}
 
   util-register-annotation-hsts:
-    template: |
-      {#
-        Registers each host's Strict-Transport-Security value into
-        gf["hstsHosts"]; base.yaml's features-190-hsts-map and
-        frontend-filters-080-hsts turn it into one map-driven response-header
-        rule, so changing a value stays a reload-free map update.
-      #}
+    template: |-
       {%- macro RegisterAnnotationHSTS(ingress *resources.ingresses.T, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string) %}
         {%- if ingress.Metadata.Annotations[enabledAnn] == "true" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
@@ -114,17 +150,15 @@ templateSnippets:
           {%- var hstsValue = "max-age=" + maxAge %}
           {%- if ingress.Metadata.Annotations[subdomainsAnn] == "true" %}{%- hstsValue = hstsValue + "; includeSubDomains" %}{%- end %}
           {%- if ingress.Metadata.Annotations[preloadAnn] == "true" %}{%- hstsValue = hstsValue + "; preload" %}{%- end %}
-          {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
           {%- for _, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}
-              {%- var hh []any = coalesce(gf["hstsHosts"], []any{}) %}
-              {%- gf["hstsHosts"] = append(hh, map[string]any{"host": toLower(rule.Host), "value": hstsValue}) %}
+              {{- shared.Publish("hosts", toLower(rule.Host), map[string]any{"host": toLower(rule.Host), "value": hstsValue}) -}}
             {%- end %}
           {%- end %}
         {%- end %}
       {%- end macro %}
 
-  util-emit-annotation-cors:
+  util-ingress-annotation-cors-fragment:
     template: |
       {#
         Mirrors ingress-nginx: cors-allow-origin is a comma-separated allow-list
@@ -132,11 +166,10 @@ templateSnippets:
         a lone "*" or unset allows any origin. haproxytech CORS is structurally
         different and lives in haproxytech's own library — it does NOT call this.
       #}
-      {%- import "util-ingress-helpers" for HostMatchCondition %}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn %}
       {%- import "util-config-injection-kind" for ConfigInjectionKind %}
       {%- import "util-escape-logformat-value" for EscapeLogFormatValue %}
-      {%- macro EmitAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
+      {%- macro IngressAnnotationCORSFragment(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string, cond string) %}
         {%- var corsEnabled = ingress.Metadata.Annotations[enabledAnn] %}
         {%- if corsEnabled == "true" %}
           {%- var hosts = []string{} %}
@@ -168,7 +201,6 @@ templateSnippets:
               {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " has a CORS annotation value containing " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the cors-allow-methods/-headers/-max-age/-expose-headers values.") -}}
               {%- return %}
             {%- end %}
-            {%- var cond = HostMatchCondition(hosts) %}
             {%- var allowAny = false %}
             {%- var exact = []string{} %}
             {%- var regexes = []string{} %}
@@ -227,11 +259,24 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
+  util-emit-annotation-cors:
+    template: |-
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-ingress-annotation-cors-fragment" for IngressAnnotationCORSFragment -%}
+      {%- macro EmitAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) -%}
+        {%- var hosts = []string{} -%}
+        {%- for _, rule := range ingress.Spec.Rules -%}
+          {%- if rule.Host != "" -%}{%- hosts = append(hosts, rule.Host) -%}{%- end -%}
+        {%- end -%}
+        {%- if len(hosts) > 0 -%}
+          {{- IngressAnnotationCORSFragment(ingress, prefix, enabledAnn, defaultMaxAge, commentLabel, HostMatchCondition(hosts)) -}}
+        {%- end -%}
+      {%- end macro -%}
+
   # aclPrefix must stay distinct per library — validation tests assert on the
   # resulting ACL names.
   util-emit-annotation-access-control:
     template: |
-      {%- import "util-ingress-helpers" for ResourceMatchCondition %}
       {%- import "util-validate-cidr-list" for ValidateCidrList %}
       {#- Scoped by matched route, not by Host header. A wildcard rule host never
           equals a concrete request host and a host-less rule has nothing to
@@ -241,7 +286,7 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var cond = ResourceMatchCondition([]string{key}) %}
+        {%- var cond = "{ var(txn.resource_id) -m str " + key + " }" %}
         {%- var allowlist = ingress.Metadata.Annotations[allowAnnotation] %}
         {%- var denylist = ingress.Metadata.Annotations[denyAnnotation] %}
         {%- if allowlist != "" %}
@@ -287,7 +332,7 @@ templateSnippets:
     template: |
       {%- macro WafGovernance(gov map[string]any) %}
       {%%
-        var resolvedAny, _ = shared.ComputeIfAbsent("wafGovernance", func() any {
+        var resolvedAny = func() any {
           var wafAny = extraContext | dig("waf")
           if wafAny == nil { wafAny = map[string]any{} }
           var waf, wafOK = wafAny.(map[string]any)
@@ -414,7 +459,7 @@ templateSnippets:
             "selfServiceMaxPoliciesPerNamespace": boundedInteger(selfServiceLimits["maxPoliciesPerNamespace"], 4, "extraContext.waf.policies.selfService.limits.maxPoliciesPerNamespace", 1, 64),
             "selfServiceMaxTotalPolicies": boundedInteger(selfServiceLimits["maxTotalPolicies"], 64, "extraContext.waf.policies.selfService.limits.maxTotalPolicies", 1, 1024),
           }
-        })
+        }()
         var resolved = resolvedAny.(map[string]any)
         for _, key := range keys(resolved) {
           gov[key] = resolved[key]
@@ -428,6 +473,28 @@ templateSnippets:
   # families stay legal. extraContext.annotationLibraries is injected by
   # templates/haproxytemplateconfig.yaml from controller.templateLibraries.*.enabled.
   features-950-annotation-family-feature-conflict:
+    requires: [ingresses]
+    incremental:
+      effects: [recordEvent]
+      bindingsTemplate: |-
+        {%%
+          var families = []string{"haptic", "haproxyIngress", "haproxytech", "nginx"}
+          var configured = extraContext | dig("annotationLibraries") | fallback(map[string]any{})
+          var enabled = map[string]any{}
+          var enabledCount = 0
+          for _, family := range families {
+            var isEnabled = tostring(configured | dig(family) | fallback(false)) == "true"
+            enabled[family] = isEnabled
+            if isEnabled {
+              enabledCount++
+            }
+          }
+          var bindings = map[string]any{}
+          if enabledCount >= 2 {
+            bindings["ingresses"] = map[string]any{"enabled": enabled}
+          }
+          show toJSON(bindings)
+        %%}
     template: |-
       {%%
         var familyPrefix = map[string]string{
@@ -561,53 +628,40 @@ templateSnippets:
           // cross-family counterpart yet, so no entry.
         }
 
-        var enabled = extraContext | dig("annotationLibraries") | fallback(map[string]any{})
-        var enabledCount = 0
-        for _, fam := range familyOrder {
-          if en, ok := enabled.(map[string]any)[fam].(bool); ok && en {
-            enabledCount++
-          }
-        }
-        if enabledCount >= 2 {
-          for _, ingress := range resources.ingresses.List() {
-            var anns = ingress.Metadata.Annotations
-            if len(anns) == 0 {
+        var enabled = props | dig("enabled") | fallback(map[string]any{})
+        var ingress = item
+        var anns = to_str_map(dig(ingress, "metadata", "annotations"))
+        for _, entry := range registry {
+          var fams = entry["families"].(map[string][]string)
+          var hitFamilies = []string{}
+          var hitDetail = []string{}
+          for _, fam := range familyOrder {
+            if tostring(enabled | dig(fam) | fallback(false)) != "true" {
               continue
             }
-            for _, entry := range registry {
-              var fams = entry["families"].(map[string][]string)
-              var hitFamilies = []string{}
-              var hitDetail = []string{}
-              for _, fam := range familyOrder {
-                if en, ok := enabled.(map[string]any)[fam].(bool); !ok || !en {
-                  continue
-                }
-                var keys, has = fams[fam]
-                if !has {
-                  continue
-                }
-                var present = []string{}
-                for _, k := range keys {
-                  if _, kp := anns[familyPrefix[fam]+k]; kp {
-                    present = append(present, familyPrefix[fam]+k)
-                  }
-                }
-                if len(present) > 0 {
-                  hitFamilies = append(hitFamilies, fam)
-                  hitDetail = append(hitDetail, join(present, ", "))
-                }
+            var keys, has = fams[fam]
+            if !has {
+              continue
+            }
+            var present = []string{}
+            for _, k := range keys {
+              if _, exists := anns[familyPrefix[fam]+k]; exists {
+                present = append(present, familyPrefix[fam]+k)
               }
-              if len(hitFamilies) >= 2 {
-                var msg = "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " configures the " + entry["name"].(string) + " feature through annotations from multiple families (" + join(hitDetail, "; ") + "). Configure each feature through a single annotation family: mixing families for one feature is rejected even when the values agree, because the effective configuration is order-dependent."
-                // "admission" is a dry-run of a PROPOSED change, so deny it;
-                // other modes render already-present state, where fail() would
-                // abort the whole config and brick the fleet.
-                if renderMode == "admission" {
-                  fail(msg)
-                } else {
-                  recordEvent(ingress, "AnnotationFamilyConflict", msg)
-                }
-              }
+            }
+            if len(present) > 0 {
+              hitFamilies = append(hitFamilies, fam)
+              hitDetail = append(hitDetail, join(present, ", "))
+            }
+          }
+          if len(hitFamilies) >= 2 {
+            var namespace = dig_string(ingress, "", "metadata", "namespace")
+            var name = dig_string(ingress, "", "metadata", "name")
+            var msg = "Ingress " + namespace + "/" + name + " configures the " + entry["name"].(string) + " feature through annotations from multiple families (" + join(hitDetail, "; ") + "). Configure each feature through a single annotation family: mixing families for one feature is rejected even when the values agree, because the effective configuration is order-dependent."
+            if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" {
+              fail(msg)
+            } else {
+              recordEvent(ingress, "AnnotationFamilyConflict", msg)
             }
           }
         }
@@ -627,6 +681,7 @@ validationTests:
       is order-dependent.
     extraContext:
       renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: mixed-cors }
       annotationLibraries: *annotationlibrariesHapticNginx
     fixtures:
       ingresses:
@@ -702,6 +757,7 @@ validationTests:
     description: Under the admission webhook, the SAME timeout parameter (server) from two families collides and is rejected.
     extraContext:
       renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: same-timeout }
       annotationLibraries: *annotationlibrariesHapticNginx2
     fixtures:
       ingresses:
@@ -728,6 +784,7 @@ validationTests:
     description: The queue timeout (not just connect/server) is registered per-parameter, so the same timeout from two families collides and is rejected under the webhook.
     extraContext:
       renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: same-queue-timeout }
       annotationLibraries: *annotationlibrariesHapticNginx2
     fixtures:
       ingresses:
@@ -801,6 +858,7 @@ validationTests:
     description: Under the admission webhook, an Ingress with both haproxy-haptic.org/waf-policy and haproxy-ingress.github.io/waf is rejected — the deny-vs-detect downgrade this guard prevents.
     extraContext:
       renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: mixed-waf }
       annotationLibraries: {haptic: true, nginx: false, haproxyIngress: true, haproxytech: false}
       waf:
         ingressPermissions: {allowPolicySelection: true}

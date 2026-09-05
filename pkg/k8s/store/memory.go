@@ -2,13 +2,17 @@ package store
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 const opGet = "get"
@@ -22,22 +26,15 @@ const opGet = "get"
 //
 // Thread-safe for concurrent access.
 //
-// # Immutability Contract
-//
-// Resources stored in MemoryStore are pre-converted (floats to ints) at storage time
-// and MUST NOT be mutated by callers. The slices returned by Get() are direct
-// references to internal data structures for performance. Callers MUST NOT:
-//   - Modify elements of returned slices
-//   - Append to or reslice returned slices
-//   - Modify fields within returned resources
-//
-// Note: List() returns a fresh slice copy for thread safety, but the resource
-// objects within are still references to internal data and must not be mutated.
+// Resource values are owned by the store and detached before public reads.
 type MemoryStore struct {
-	mu        sync.RWMutex
-	data      map[string][]any            // Flat map: composite key -> slice of resources (pre-sorted)
-	locations map[resourceIdentity]string // Resource identity -> composite key
-	numKeys   int                         // Number of index keys
+	snapshotCommitFence stores.SnapshotCommitMutex
+	mu                  sync.RWMutex
+	data                map[string][]any            // Flat map: composite key -> slice of resources (pre-sorted)
+	locations           map[resourceIdentity]string // Resource identity -> composite key
+	numKeys             int                         // Number of index keys
+	revisions           revisionState
+	readRoot            atomic.Pointer[memoryReadRoot]
 }
 
 // NewMemoryStore creates a new memory-backed store.
@@ -49,24 +46,31 @@ func NewMemoryStore(numKeys int) *MemoryStore {
 		numKeys = 1
 	}
 
-	return &MemoryStore{
+	store := &MemoryStore{
 		data:      make(map[string][]any),
 		locations: make(map[resourceIdentity]string),
 		numKeys:   numKeys,
+		revisions: newRevisionState(defaultRevisionJournalCapacity),
 	}
+	store.readRoot.Store(newMemoryReadRoot(numKeys, &store.revisions))
+	return store
 }
 
 // Get retrieves all resources matching the provided index keys.
 //
-// Returns a direct reference to the internal slice for exact key matches.
-// Callers MUST NOT modify the returned slice or its elements (see Immutability Contract).
-//
-// For partial key matches, a new slice is constructed from matching entries
-// and sorted for deterministic order.
+// Returned resources are detached from store-owned values.
 func (s *MemoryStore) Get(keys ...string) ([]any, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	items, err := s.getLocked(keys)
+	items = slices.Clone(items)
+	s.mu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	return detachMemoryStoreReadItems(items)
+}
 
+func (s *MemoryStore) getLocked(keys []string) ([]any, error) {
 	if len(keys) == 0 {
 		return nil, &StoreError{
 			Operation: opGet,
@@ -115,9 +119,12 @@ func (s *MemoryStore) Get(keys ...string) ([]any, error) {
 // Returns a fresh copy of all resources to avoid race conditions.
 func (s *MemoryStore) List() ([]any, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	items := s.listLocked()
+	s.mu.RUnlock()
+	return detachMemoryStoreReadItems(items)
+}
 
-	// Build fresh slice from data map - eliminates race condition from lock upgrade
+func (s *MemoryStore) listLocked() []any {
 	var items []any
 	for _, resourceSlice := range s.data {
 		items = append(items, resourceSlice...)
@@ -126,22 +133,41 @@ func (s *MemoryStore) List() ([]any, error) {
 	// Sort items by namespace and name for deterministic order
 	slices.SortFunc(items, compareByNamespaceName)
 
-	return items, nil
+	return items
 }
 
 // Add inserts a resource, replacing the same namespace/name if already present.
 // Distinct resources with the same index keys share the bucket.
 // The slice is kept sorted by namespace/name for deterministic Get() results.
 func (s *MemoryStore) Add(resource any, keys []string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if err := validateKeyCount("add", keys, s.numKeys); err != nil {
 		return err
 	}
+	owned, err := ownMemorySnapshotResource(resource)
+	if err != nil {
+		return &StoreError{Operation: "add", Keys: keys, Cause: err}
+	}
+	resource = owned
+
+	s.snapshotCommitFence.Lock()
+	defer s.snapshotCommitFence.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	keyStr := indexer.EncodeKey(keys)
-	if identity, ok := identifyResource(resource); ok {
+	identity, identified := identifyResource(resource)
+	dataKeys := []string{keyStr}
+	var identities []resourceIdentity
+	var oldKeys []string
+	if identified {
+		identities = append(identities, identity)
+		if s.identityUnchangedLocked(identity, keyStr, resource) {
+			return nil
+		}
+		oldKeys = cloneStrings(s.revisions.identityKeys[identity])
+		if oldKey, exists := s.locations[identity]; exists {
+			dataKeys = append(dataKeys, oldKey)
+		}
 		s.removeIdentityLocked(identity)
 		s.locations[identity] = keyStr
 	}
@@ -149,6 +175,8 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
 
 	// Keep slice sorted for deterministic Get() results without runtime sorting
 	sortResourceSlice(s.data[keyStr])
+	s.revisions.recordUpsert(identity, identified, keys)
+	s.publishReadRootLocked(dataKeys, identities, oldKeys, keys)
 
 	return nil
 }
@@ -173,15 +201,34 @@ func compareByNamespaceName(a, b any) int {
 // A changed index key moves the namespace/name identity between buckets.
 // The slice is kept sorted by namespace/name for deterministic Get() results.
 func (s *MemoryStore) Update(resource any, keys []string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if err := validateKeyCount("update", keys, s.numKeys); err != nil {
 		return err
 	}
+	owned, err := ownMemorySnapshotResource(resource)
+	if err != nil {
+		return &StoreError{Operation: "update", Keys: keys, Cause: err}
+	}
+	resource = owned
+
+	s.snapshotCommitFence.Lock()
+	defer s.snapshotCommitFence.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	keyStr := indexer.EncodeKey(keys)
-	if identity, ok := identifyResource(resource); ok {
+	identity, identified := identifyResource(resource)
+	dataKeys := []string{keyStr}
+	var identities []resourceIdentity
+	var oldKeys []string
+	if identified {
+		identities = append(identities, identity)
+		if s.identityUnchangedLocked(identity, keyStr, resource) {
+			return nil
+		}
+		oldKeys = cloneStrings(s.revisions.identityKeys[identity])
+		if oldKey, exists := s.locations[identity]; exists {
+			dataKeys = append(dataKeys, oldKey)
+		}
 		s.removeIdentityLocked(identity)
 		s.locations[identity] = keyStr
 	} else {
@@ -190,6 +237,8 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 
 	s.data[keyStr] = append(s.data[keyStr], resource)
 	sortResourceSlice(s.data[keyStr])
+	s.revisions.recordUpsert(identity, identified, keys)
+	s.publishReadRootLocked(dataKeys, identities, oldKeys, keys)
 	return nil
 }
 
@@ -201,6 +250,8 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 // leaving an empty slice behind would leak a map key per churned bucket and
 // still be walked by the prefix scan in Get.
 func (s *MemoryStore) Delete(namespace, name string, keys []string) error {
+	s.snapshotCommitFence.Lock()
+	defer s.snapshotCommitFence.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -212,7 +263,14 @@ func (s *MemoryStore) Delete(namespace, name string, keys []string) error {
 	}
 
 	identity := resourceIdentity{namespace: namespace, name: name}
+	if _, exists := s.locations[identity]; !exists {
+		return nil
+	}
+	keyStr := s.locations[identity]
+	oldKeys := cloneStrings(s.revisions.identityKeys[identity])
 	s.removeIdentityLocked(identity)
+	s.revisions.recordDelete(identity)
+	s.publishReadRootLocked([]string{keyStr}, []resourceIdentity{identity}, oldKeys)
 
 	return nil
 }
@@ -224,6 +282,20 @@ func (s *MemoryStore) removeIdentityLocked(identity resourceIdentity) {
 	}
 	s.removeIdentityFromBucketLocked(keyStr, identity)
 	delete(s.locations, identity)
+}
+
+func (s *MemoryStore) identityUnchangedLocked(identity resourceIdentity, key string, resource any) bool {
+	currentKey, exists := s.locations[identity]
+	if !exists || currentKey != key {
+		return false
+	}
+	for _, current := range s.data[currentKey] {
+		currentNamespace, currentName := extractNamespaceName(current)
+		if currentNamespace == identity.namespace && currentName == identity.name {
+			return reflect.DeepEqual(current, resource)
+		}
+	}
+	return false
 }
 
 func (s *MemoryStore) removeUntrackedIdentityLocked(keyStr string, resource any) {
@@ -255,11 +327,31 @@ func (s *MemoryStore) removeIdentityFromBucketLocked(keyStr string, identity res
 
 // Clear removes all resources from the store.
 func (s *MemoryStore) Clear() error {
+	s.snapshotCommitFence.Lock()
+	defer s.snapshotCommitFence.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	resourceCount := s.sizeLocked()
+	if resourceCount == 0 {
+		return nil
+	}
+	dataKeys := make([]string, 0, len(s.data))
+	for key := range s.data {
+		dataKeys = append(dataKeys, key)
+	}
+	identities := make([]resourceIdentity, 0, len(s.locations))
+	keySets := make([][]string, 0, len(s.revisions.identityKeys))
+	for identity := range s.locations {
+		identities = append(identities, identity)
+	}
+	for _, keys := range s.revisions.identityKeys {
+		keySets = append(keySets, cloneStrings(keys))
+	}
+	s.revisions.recordClear(resourceCount)
 	s.data = make(map[string][]any)
 	s.locations = make(map[resourceIdentity]string)
+	s.publishReadRootLocked(dataKeys, identities, keySets...)
 
 	return nil
 }
@@ -268,7 +360,10 @@ func (s *MemoryStore) Clear() error {
 func (s *MemoryStore) Size() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.sizeLocked()
+}
 
+func (s *MemoryStore) sizeLocked() int {
 	count := 0
 	for _, resources := range s.data {
 		count += len(resources)
@@ -276,5 +371,131 @@ func (s *MemoryStore) Size() int {
 	return count
 }
 
+// ListRevision returns the revision for List results.
+func (s *MemoryStore) ListRevision() stores.Revision {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.revisions.listRevision()
+}
+
+// GetRevision returns the revision for one exact or prefix Get result.
+func (s *MemoryStore) GetRevision(keys ...string) stores.Revision {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(keys) == 0 || len(keys) > s.numKeys {
+		return ""
+	}
+	if s.revisions.exactUnsupported {
+		return ""
+	}
+	return s.revisions.getRevision(keys)
+}
+
+// IdentityRevision returns the revision for one namespace/name identity.
+func (s *MemoryStore) IdentityRevision(namespace, name string) stores.Revision {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if name == "" || s.revisions.exactUnsupported {
+		return ""
+	}
+	return s.revisions.identityRevision(resourceIdentity{namespace: namespace, name: name})
+}
+
+// ListSnapshot returns a detached List result and its pinned journal sequence.
+func (s *MemoryStore) ListSnapshot() (items []any, sequence uint64, err error) {
+	snapshot, err := s.Pin()
+	if err != nil {
+		return nil, s.memorySnapshotSequence(), err
+	}
+	items, err = snapshot.List()
+	return items, snapshot.Sequence(), err
+}
+
+// ChangesSince returns retained mutations after sequence.
+func (s *MemoryStore) ChangesSince(sequence uint64) (uint64, []stores.RevisionChange, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.revisions.changesSince(sequence)
+}
+
+func (s *MemoryStore) ExactRevisionJournalSource() stores.RevisionSource {
+	return s.RevisionSource()
+}
+
+// GetIdentity returns one resource through the namespace/name location index.
+func (s *MemoryStore) GetIdentity(namespace, name string) (item any, found bool, err error) {
+	s.mu.RLock()
+	item, found = s.getIdentityLocked(namespace, name)
+	s.mu.RUnlock()
+	if !found {
+		return item, found, nil
+	}
+	item, err = detachMemoryStoreReadValue(item)
+	return item, err == nil, err
+}
+
+func (s *MemoryStore) getIdentityLocked(namespace, name string) (item any, found bool) {
+	key, exists := s.locations[resourceIdentity{namespace: namespace, name: name}]
+	if !exists {
+		return nil, false
+	}
+	for _, resource := range s.data[key] {
+		resourceNamespace, resourceName := extractNamespaceName(resource)
+		if resourceNamespace == namespace && resourceName == name {
+			return resource, true
+		}
+	}
+	return nil, false
+}
+
+// RevisionSource returns the store's stable cache identity.
+func (s *MemoryStore) RevisionSource() stores.RevisionSource {
+	return stores.RevisionSource(s.revisions.source)
+}
+
+// GetSnapshot binds a keyed result to its revision and journal sequence.
+func (s *MemoryStore) GetSnapshot(
+	keys ...string,
+) (items []any, revision stores.Revision, sequence uint64, err error) {
+	snapshot, err := s.Pin()
+	if err != nil {
+		return nil, "", s.memorySnapshotSequence(), err
+	}
+	items, err = snapshot.Get(keys...)
+	return items, snapshot.GetRevision(keys...), snapshot.Sequence(), err
+}
+
+// IdentitySnapshot binds an identity result to its revision and journal sequence.
+func (s *MemoryStore) IdentitySnapshot(
+	namespace, name string,
+) (item any, found bool, revision stores.Revision, sequence uint64, err error) {
+	snapshot, err := s.Pin()
+	if err != nil {
+		return nil, false, "", s.memorySnapshotSequence(), err
+	}
+	item, found, err = snapshot.GetIdentity(namespace, name)
+	return item, found, snapshot.IdentityRevision(namespace, name), snapshot.Sequence(), err
+}
+
+func (s *MemoryStore) memorySnapshotSequence() uint64 {
+	root := s.readRoot.Load()
+	if root == nil {
+		return 0
+	}
+	return root.sequence
+}
+
+func (s *MemoryStore) AcquireSnapshotCommitFence(ctx context.Context) (func(), error) {
+	return s.snapshotCommitFence.Acquire(ctx)
+}
+
 // Ensure MemoryStore implements types.Store interface.
-var _ types.Store = (*MemoryStore)(nil)
+var (
+	_ types.Store                 = (*MemoryStore)(nil)
+	_ stores.Revisioned           = (*MemoryStore)(nil)
+	_ stores.RevisionJournal      = (*MemoryStore)(nil)
+	_ stores.ExactRevisionJournal = (*MemoryStore)(nil)
+	_ stores.IdentityGetter       = (*MemoryStore)(nil)
+	_ stores.SnapshotReader       = (*MemoryStore)(nil)
+	_ stores.SnapshotCommitFencer = (*MemoryStore)(nil)
+)

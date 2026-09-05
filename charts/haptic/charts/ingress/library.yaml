@@ -60,134 +60,167 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
     statusPatch: true
-  services:
-    apiVersion: v1
-    resources: services
-    indexBy: ["metadata.namespace", "metadata.name"]
-  endpoints:
-    apiVersion: discovery.k8s.io/v1
-    resources: endpointslices
-    indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
-    # No debounce: a pod-IP rotation must reach HAProxy inside the kubelet Ready→SIGTERM window.
-    debounceInterval: "0"
 
 templateSnippets:
 
+  features-070-ingress-route-colocation:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      group: ingress-route-colocation
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
   features-100-ingress-bind:
-    template: |
-      {# needHTTPSTermination makes the terminating https frontend claim unmatched
-          SNIs instead of the ssl-tcp passthrough frontend rejecting them. #}
+    template: |-
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var tlsDefault bool = extraContext | dig("ingressDefaultHTTPS") | fallback(true) %}
       {%- var haveDefaultCert = tostring(extraContext | dig("tls", "defaultCertificate", "name") | fallback("")) != "" %}
       {%- var httpsByDefault = tlsDefault && haveDefaultCert %}
-      {#- features-105-ingress-ssl-redirect reuses this gate. -#}
       {%- gf["ingressHTTPSByDefault"] = httpsByDefault %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {%%
-        gf["bindHTTPDefault"] = true
-        gf["needHTTPFrontend"] = true
-        if httpsByDefault || len(ingress.Spec.Tls) > 0 {
-          gf["bindHTTPSDefault"] = true
-          gf["needHTTPSFrontend"] = true
-          gf["needHTTPSTermination"] = true
-        }
-      %%}
+      {%- var flags = render "featuresvalues-100-ingress-bind" -%}
+      {%- gf["haveIngresses"] = strings_contains(flags, "H") -%}
+      {%- if strings_contains(flags, "H") -%}
+        {%- gf["bindHTTPDefault"] = true -%}
+        {%- gf["needHTTPFrontend"] = true -%}
+      {%- end -%}
+      {%- if strings_contains(flags, "S") -%}
+        {%- gf["bindHTTPSDefault"] = true -%}
+        {%- gf["needHTTPSFrontend"] = true -%}
+        {%- gf["needHTTPSTermination"] = true -%}
       {%- end %}
+
+  util-ingress-bind-bindings:
+    template: |-
+      {%- var tlsDefault bool = extraContext | dig("ingressDefaultHTTPS") | fallback(true) -%}
+      {%- var haveDefaultCert = tostring(extraContext | dig("tls", "defaultCertificate", "name") | fallback("")) != "" -%}
+      {{- toJSON(map[string]any{"ingresses": map[string]any{"httpsByDefault": tlsDefault && haveDefaultCert}}) -}}
+
+  featuresvalues-100-ingress-bind:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: '{{- render "util-ingress-bind-bindings" -}}'
+    template: |-
+      {{- shared.Unique("flags", "http", "H") -}}
+      {%- if props["httpsByDefault"] == true || len(item | dig("spec", "tls") | toSlice()) > 0 -%}
+        {{- shared.Unique("flags", "https", "S") -}}
+      {%- end -%}
 
   features-100-ingress-tls:
     template: |
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%%
-          var tlsList = ingress.Spec.Tls
-          if len(tlsList) == 0 {
-            continue
-          }
-        %%}
-        {%- for _, tls := range tlsList %}
-          {%%
-            var secretName = tls.SecretName
-            if secretName == "" {
-              continue
-            }
-            var namespace = ingress.Metadata.Namespace
-            if !first_seen("ingress_tls", namespace, secretName) {
-              continue
-            }
-
-            var secret = resources.secrets.GetSingle(namespace, secretName)
-            if secret == nil {
-              continue
-            }
-            var tlsCrt, hasCrt = secret.Data["tls.crt"]
-            var tlsKey, hasKey = secret.Data["tls.key"]
-            if !hasCrt || !hasKey {
-              continue
-            }
-
-            // HAProxy wants cert+key in one PEM; the pipe form drops b64decode's error.
-            var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
-
-            var certFilename = namespace + "_" + secretName + ".pem"
-            var certPath, certRegErr = fileRegistry.Register("cert", certFilename, combinedPem)
-            if certRegErr != nil {
-              fail("failed to register certificate " + certFilename + ": " + tostring(certRegErr))
-            }
-
-            // client-native sanitizes filenames on disk; the crt-list must match the real name.
-            var sanitizedFilename = basename(certPath)
-
-            var tlsCert = map[string]any{
-              "secret_namespace": namespace,
-              "secret_name": secretName,
-              // ssl.yaml asserts .([]any) on tlsCertificates entries, which a typed
-              // []string would panic on. toSlice() returns []any{} for nil.
-              "sni_patterns": tls.Hosts | toSlice(),
-              "sanitized_filename": sanitizedFilename,
-            }
-            gf["tlsCertificates"] = append(gf["tlsCertificates"].([]any), tlsCert)
-          %%}
-        {%- end %}
+      {{- render "ingress-tls-certificate-publications" -}}
+      {%- var seenSecrets = map[string]bool{} -%}
+      {%- for _, occurrenceAny := range incremental_values("ingress-tls-certificates", "occurrences") -%}
+        {%- var occurrence = occurrenceAny.(map[string]any) -%}
+        {%- var namespace = tostring(occurrence["secretNamespace"]) -%}
+        {%- var secretName = tostring(occurrence["secretName"]) -%}
+        {%- var secretKey = namespace + "/" + secretName -%}
+        {%- if seenSecrets[secretKey] -%}{%- continue -%}{%- end -%}
+        {%- seenSecrets[secretKey] = true -%}
+        {%- var certFilename = namespace + "_" + secretName + ".pem" -%}
+        {%- var certPath, certRegErr = fileRegistry.Register("cert", certFilename, tostring(occurrence["pem"])) -%}
+        {%- if certRegErr != nil -%}
+          {{- fail("failed to register certificate " + certFilename + ": " + tostring(certRegErr)) -}}
+        {%- end -%}
+        {%- gf["tlsCertificates"] = append(gf["tlsCertificates"].([]any), map[string]any{
+          "secret_namespace": namespace,
+          "secret_name": secretName,
+          "sni_patterns": occurrence["sniPatterns"],
+          "sanitized_filename": basename(certPath),
+        }) -%}
       {%- end %}
+
+  ingress-tls-certificate-publications:
+    requires: [ingresses, secrets]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["spec.tls"]
+      group: ingress-tls-certificates
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var namespace = ingress.Metadata.Namespace -%}
+        {%- var ingressKey = namespace + "/" + ingress.Metadata.Name -%}
+        {%- for tlsIndex, tls := range ingress.Spec.Tls -%}
+          {%- var secretName = tls.SecretName -%}
+          {%- if secretName == "" -%}{%- continue -%}{%- end -%}
+          {%- var secret = resources.secrets.GetSingle(namespace, secretName) -%}
+          {%- if secret == nil -%}{%- continue -%}{%- end -%}
+          {%- var tlsCrt, hasCrt = secret.Data["tls.crt"] -%}
+          {%- var tlsKey, hasKey = secret.Data["tls.key"] -%}
+          {%- if !hasCrt || !hasKey -%}{%- continue -%}{%- end -%}
+          {%- var indexKey = "000000000" + tostring(tlsIndex) -%}
+          {%- indexKey = indexKey[len(indexKey)-9:] -%}
+          {{- shared.Publish("occurrences", ingressKey + "\x00" + indexKey, map[string]any{
+            "secretNamespace": namespace,
+            "secretName": secretName,
+            "sniPatterns": tls.Hosts | toSlice(),
+            "pem": (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode()),
+          }) -}}
+        {%- end -%}
+      {%- end -%}
+
+  util-ingress-default-ssl-redirect-bindings:
+    template: |-
+      {%- var enabled bool = extraContext | dig("ingressDefaultSSLRedirect") | fallback(false) -%}
+      {%- if !enabled -%}{}{%- else -%}
+        {%- var code = extraContext | dig("ingressDefaultSSLRedirectCode") | fallback("308") | tostring() -%}
+        {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" -%}
+          {{- fail("Invalid extraContext.ingressDefaultSSLRedirectCode '" + code + "': must be one of 301, 302, 303, 307, 308.") -}}
+        {%- end -%}
+        {%- var tlsDefault bool = extraContext | dig("ingressDefaultHTTPS") | fallback(true) -%}
+        {%- var haveDefaultCert = tostring(extraContext | dig("tls", "defaultCertificate", "name") | fallback("")) != "" -%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "code": code, "httpsByDefault": tlsDefault && haveDefaultCert,
+        }}) -}}
+      {%- end -%}
 
   features-105-ingress-ssl-redirect:
     template: |
-      {%- var redirectAll bool = extraContext | dig("ingressDefaultSSLRedirect") | fallback(false) %}
-      {%- if redirectAll %}
-        {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-        {%- var code = extraContext | dig("ingressDefaultSSLRedirectCode") | fallback("308") | tostring() %}
-        {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" %}
-          {{- fail("Invalid extraContext.ingressDefaultSSLRedirectCode '" + code + "': must be one of 301, 302, 303, 307, 308.") -}}
-        {%- end %}
-        {%- var httpsByDefault bool = gf | dig("ingressHTTPSByDefault") | fallback(false) %}
-        {%- for _, ingress := range resources.ingresses.List() %}
-          {#- Gate per host: a bare host on a partly-TLS Ingress must not be
-              redirected to a port it isn't served on. -#}
-          {%- var tlsHosts = map[string]bool{} %}
-          {%- for _, tls := range ingress.Spec.Tls %}
-            {%- for _, h := range tls.Hosts %}
-              {%- tlsHosts[toLower(h)] = true %}
-            {%- end %}
-          {%- end %}
-          {%- for _, rule := range ingress.Spec.Rules %}
-            {%- if rule.Host != "" %}
-              {%- var host = toLower(rule.Host) %}
-              {%- if httpsByDefault || tlsHosts[host] %}
-                {%- var redirectHosts []any = gf["sslRedirectHosts"] %}
-                {%- gf["sslRedirectHosts"] = append(redirectHosts, map[string]any{"host": host, "code": code}) %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
+      {{- render "ingress-default-ssl-redirect-publications" -}}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, entry := range incremental_values("ingress-default-ssl-redirect-hosts", "hosts") -%}
+        {%- var redirectHosts []any = gf["sslRedirectHosts"] -%}
+        {%- gf["sslRedirectHosts"] = append(redirectHosts, entry) -%}
       {%- end %}
+
+  ingress-default-ssl-redirect-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: '{{- render "util-ingress-default-ssl-redirect-bindings" -}}'
+      group: ingress-default-ssl-redirect-hosts
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var tlsHosts = map[string]bool{} -%}
+        {%- for _, tls := range ingress.Spec.Tls -%}
+          {%- for _, host := range tls.Hosts -%}
+            {%- tlsHosts[toLower(host)] = true -%}
+          {%- end -%}
+        {%- end -%}
+        {%- var ingressKey = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- for ruleIndex, rule := range ingress.Spec.Rules -%}
+          {%- var host = toLower(rule.Host) -%}
+          {%- if host != "" && (props["httpsByDefault"] == true || tlsHosts[host]) -%}
+            {%- var indexKey = "000000000" + tostring(ruleIndex) -%}
+            {%- indexKey = indexKey[len(indexKey)-9:] -%}
+            {{- shared.Publish("hosts", ingressKey + "\x00" + indexKey,
+              map[string]any{"host": host, "code": tostring(props["code"])}) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
 
 
   util-backend-name-ingress:
     template: |
-      {% macro BackendNameIngress(ingress *resources.ingresses.T, path any) string %}{%%
-        var namespace = ingress.Metadata.Namespace
-        var name = ingress.Metadata.Name
+      {% macro BackendNameIngress(ingress any, path any) string %}{%%
+        var namespace = dig_string(ingress, "", "metadata", "namespace")
+        var name = dig_string(ingress, "", "metadata", "name")
         var serviceName = tostring(path | dig("backend", "service", "name") | fallback(""))
         var portName = tostring(path | dig("backend", "service", "port", "name") | fallback(""))
         var portNumber = path | dig("backend", "service", "port", "number") | fallback(0)
@@ -212,191 +245,161 @@ templateSnippets:
         show namespace + "_" + name + "_svc_" + serviceName + "_" + portIdentifier
       %%}{% end %}
 
-  util-path-map-entry-ingress-shard:
-    template: |
+  features-900-ingress-path-candidates:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      group: ingress-path-candidates
+      consumes: [ingress-route-colocation]
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%%
+        var ingress = item
+        var id = dig_string(ingress, "", "metadata", "namespace") + "/" +
+          dig_string(ingress, "", "metadata", "name")
+        var _, coLocated = shared.Select("ingress-route-colocation", "identities", id)
+        var rejected = false
+        for _, rule := range toSlice(dig(ingress, "spec", "rules")) {
+          for _, path := range toSlice(dig(rule, "http", "paths")) {
+            var pathValue = dig_string(path, "", "path")
+            if pathValue != "" && !rejected &&
+              (regex_search(pathValue, "[[:cntrl:]]") || strings_contains(pathValue, " ")) {
+              rejected = true
+              _ = WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress '" + id +
+                "' has a path containing whitespace or control characters, which cannot be written to the routing map; the route is not applied. Remove spaces, tabs and newlines from spec.rules[].http.paths[].path.")
+            }
+          }
+        }
+        show shared.Publish("statuses", id, map[string]any{"coLocated": coLocated, "rejected": rejected})
+        if !rejected {
+          var class = "0"
+          if coLocated { class = "1" }
+          var rank = class + "/" + dig_string(ingress, "", "metadata", "creationTimestamp") + "/" + id
+          for _, rule := range toSlice(dig(ingress, "spec", "rules")) {
+            for _, path := range toSlice(dig(rule, "http", "paths")) {
+              var pathValue = dig_string(path, "", "path")
+              if pathValue == "" { continue }
+              var slot = dig_string(path, "", "pathType")
+              if slot == "ImplementationSpecific" { slot = "Prefix" }
+              if slot != "Exact" && len(pathValue) > 1 && hasSuffix(pathValue, "/") {
+                pathValue = pathValue[:len(pathValue)-1]
+              }
+              var key = slot + "|" + MapKeyForHost(dig(rule, "host")) + pathValue
+              show shared.PublishRanked("owners", key, rank, map[string]any{"owner": id})
+            }
+          }
+        }
+      %%}
+
+  features-905-ingress-default-backend-candidates:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      group: ingress-default-backend-candidates
+      effects: [publishValue]
+    template: |-
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%%
+        var ingress = item
+        var defaultBackend = dig(ingress, "spec", "defaultBackend", "service")
+        if defaultBackend != nil {
+          var id = dig_string(ingress, "", "metadata", "namespace") + "/" +
+            dig_string(ingress, "", "metadata", "name")
+          var timestamp = dig_string(ingress, "", "metadata", "creationTimestamp")
+          var reverseTimestamp = "9999999999999999999"
+          if timestamp != "" {
+            reverseTimestamp = formatInt(toint(9223372036854775807 -
+              parseTime("2006-01-02T15:04:05Z07:00", timestamp).UnixNano()), 10)
+          }
+          var rank = reverseTimestamp + "/" + id
+          var rules = toSlice(dig(ingress, "spec", "rules"))
+          if len(rules) == 0 {
+            show shared.PublishRanked("hosts", "\x00", rank, map[string]any{"owner": id})
+          } else {
+            for _, rule := range rules {
+              var hostKey = MapKeyForHost(dig(rule, "host"))
+              show shared.PublishRanked("hosts", hostKey, rank, map[string]any{"owner": id})
+            }
+          }
+        }
+      %%}
+
+  util-path-map-entry-ingress:
+    template: |-
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-
-      {% macro PathMapEntryIngressShard(ingresses []*resources.ingresses.T, pathTypes []string, suffix string) string %}
-        {#- Map keys are whitespace-delimited: a space/tab/newline in a path splits
-            the line and smuggles a second entry (cross-tenant route hijack, #153).
-            Reject the whole Ingress up front and skip it in BOTH the owner dedup
-            and the emit loop, so a hostile value never claims a route nor emits.
-
-            HAProxy maps hold one entry per key, so colliding host+path+slot claims
-            resolve to one owner. Both the rejection scan and the ownership winner
-            are global and identical for all three path maps and every shard, so
-            they are computed once per render via shared.ComputeIfAbsent: three
-            maps × N shards each rebuilding this over every Ingress was ~60% of the
-            Ingress render at 3000 routes. gf["coLocatedIngresses"] is filled by the
-            preceding haproxy.cfg render. -#}
-        {%%
-          var ownVal, _ = shared.ComputeIfAbsent("ingressPathOwnership", func() any {
-            var rejected = map[string]bool{}
-            for _, ring := range resources.ingresses.List() {
-              var rid = ring.Metadata.Namespace + "/" + ring.Metadata.Name
-              for _, rrule := range ring.Spec.Rules {
-                for _, rpath := range rrule.Http.Paths {
-                  if rpath.Path != "" && !rejected[rid] && (regex_search(rpath.Path, "[[:cntrl:]]") || strings_contains(rpath.Path, " ")) {
-                    rejected[rid] = true
-                    _ = WebhookRejectOrWarn(ring, "InvalidPath", "Ingress '" + rid + "' has a path containing whitespace or control characters, which cannot be written to the routing map; the route is not applied. Remove spaces, tabs and newlines from spec.rules[].http.paths[].path.")
-                  }
-                }
-              }
-            }
-            var owner = map[string]string{}
-            var ownerTs = map[string]string{}
-            var ownerIsCanary = map[string]bool{}
-            var gf = shared.Get("globalFeatures").(map[string]any)
-            var coLocated = gf["coLocatedIngresses"]
-            for _, ing := range resources.ingresses.List() {
-              var oid = ing.Metadata.Namespace + "/" + ing.Metadata.Name
-              if rejected[oid] {
-                continue
-              }
-              var isCanary = false
-              if coLocated != nil {
-                var _, present = coLocated.(map[string]any)[oid]
-                isCanary = present
-              }
-              var ts = ing.Metadata.CreationTimestamp
-              for _, rule := range ing.Spec.Rules {
-                for _, path := range rule.Http.Paths {
-                  if path.Path != "" {
-                    var oslot = tostring(path.PathType)
-                    if oslot == "ImplementationSpecific" {
-                      oslot = "Prefix"
-                    }
-                    // The emit stage strips the trailing slash for Prefix, so /foo and
-                    // /foo/ share an owner key. Exact matches character-wise; slash kept.
-                    var opath = path.Path
-                    if oslot != "Exact" && len(opath) > 1 && hasSuffix(opath, "/") {
-                      opath = opath[:len(opath)-1]
-                    }
-                    var okey = oslot + "|" + MapKeyForHost(rule.Host) + opath
-                    var curId, seen = owner[okey]
-                    var take = false
-                    if !seen {
-                      take = true
-                    } else if ownerIsCanary[okey] && !isCanary {
-                      // A canary only overlays a split; the main owns the base route.
-                      take = true
-                    } else if ownerIsCanary[okey] == isCanary {
-                      if ts < ownerTs[okey] || (ts == ownerTs[okey] && oid < curId) {
-                        take = true
-                      }
-                    }
-                    // A canary with no main still owns (and serves) its own route.
-                    if take {
-                      owner[okey] = oid
-                      ownerTs[okey] = ts
-                      ownerIsCanary[okey] = isCanary
-                    }
-                  }
-                }
-              }
-            }
-            return map[string]any{"owner": owner, "rejected": rejected}
-          })
-          var own = ownVal.(map[string]any)
-          var owner = own["owner"].(map[string]string)
-          var rejected = own["rejected"].(map[string]bool)
-          var coLocated = shared.Get("globalFeatures").(map[string]any)["coLocatedIngresses"]
-        %%}
-        {%- for _, ingress := range ingresses -%}
-          {%- var id = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
-          {%- if rejected[id] -%}{%- continue -%}{%- end -%}
-          {%- var matchCount = 0 -%}
+      {% macro PathMapEntryIngress(ingress *resources.ingresses.T, pathTypes []string, suffix string, reportConflicts bool) string %}
+        {%- var id = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var status, _ = shared.Select("ingress-path-candidates", "statuses", id) -%}
+        {%- var rejected bool = status | dig("rejected") | fallback(false) -%}
+        {%- if !rejected -%}
+        {%- var coLocated bool = status | dig("coLocated") | fallback(false) -%}
+        {%- var matchCount = 0 -%}
+        {%- for _, rule := range ingress.Spec.Rules -%}
+          {%- for _, path := range rule.Http.Paths -%}
+            {%- if path.Path == "" -%}{%- continue -%}{%- end -%}
+            {%- for _, checkType := range pathTypes -%}
+              {%- if path.PathType != checkType -%}{%- continue -%}{%- end -%}
+              {%- var slot = tostring(path.PathType) -%}
+              {%- if slot == "ImplementationSpecific" -%}{%- slot = "Prefix" -%}{%- end -%}
+              {%- var normalizedPath = path.Path -%}
+              {%- if slot != "Exact" && len(normalizedPath) > 1 && hasSuffix(normalizedPath, "/") -%}
+                {%- normalizedPath = normalizedPath[:len(normalizedPath)-1] -%}
+              {%- end -%}
+              {%- var winner, found = shared.Select("ingress-path-candidates", "owners",
+                slot + "|" + MapKeyForHost(rule.Host) + normalizedPath) -%}
+              {%- var winnerID = dig_string(winner, "", "owner") -%}
+              {%- if found && winnerID == id -%}
+                {%- matchCount = matchCount + 1 -%}
+              {%- else if reportConflicts && !coLocated -%}
+                {{- recordEvent(ingress, "RouteConflict",
+                  "host \""+rule.Host+"\" path \""+path.Path+"\" ("+
+                    tostring(path.PathType)+") is already served by Ingress "+
+                    winnerID+", which takes precedence; this Ingress's route is not applied") -}}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+        {%- if matchCount > 0 -%}
+      {{ "\n" }}# Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ({{ matchCount }} paths)
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
-              {%- if path.Path != "" -%}
-                {%- for _, checkType := range pathTypes -%}
-                  {%- if path.PathType == checkType -%}
-                    {%- var cslot = tostring(path.PathType) -%}
-                    {%- if cslot == "ImplementationSpecific" -%}{%- cslot = "Prefix" -%}{%- end -%}
-                    {%- var cpath = path.Path -%}
-                    {%- if cslot != "Exact" && len(cpath) > 1 && hasSuffix(cpath, "/") -%}{%- cpath = cpath[:len(cpath)-1] -%}{%- end -%}
-                    {%- var cwinner = owner[cslot + "|" + MapKeyForHost(rule.Host) + cpath] -%}
-                    {%- if cwinner == id -%}
-                      {%- matchCount = matchCount + 1 -%}
-                    {%- else -%}
-                      {#- recordEvent is shard-safe; EventCollector dedups the pfxexact
-                          and prefix passes. Kept in the count loop, before the matchCount
-                          gate, so it fires for an Ingress that owns no route at all. -#}
-                      {%%
-                        var loserCoLocated = false
-                        if coLocated != nil {
-                          var _, lc = coLocated.(map[string]any)[id]
-                          loserCoLocated = lc
-                        }
-                        if !loserCoLocated {
-                          recordEvent(ingress, "RouteConflict",
-                            "host \""+rule.Host+"\" path \""+path.Path+"\" ("+
-                              tostring(path.PathType)+") is already served by Ingress "+
-                              cwinner+", which takes precedence; this Ingress's route is not applied")
-                        }
-                      %%}
-                    {%- end -%}
-                  {%- end -%}
+              {%- if path.Path == "" -%}{%- continue -%}{%- end -%}
+              {%- for _, checkType := range pathTypes -%}
+                {%- if path.PathType != checkType -%}{%- continue -%}{%- end -%}
+                {%- var slot = tostring(path.PathType) -%}
+                {%- if slot == "ImplementationSpecific" -%}{%- slot = "Prefix" -%}{%- end -%}
+                {%- var normalizedPath = path.Path -%}
+                {%- if slot != "Exact" && len(normalizedPath) > 1 && hasSuffix(normalizedPath, "/") -%}
+                  {%- normalizedPath = normalizedPath[:len(normalizedPath)-1] -%}
                 {%- end -%}
-              {%- end -%}
-            {%- end -%}
-          {%- end -%}
-          {%- if matchCount > 0 -%}
-      {{ "\n" }}# Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ({{ matchCount }} paths)
-            {%- for _, rule := range ingress.Spec.Rules -%}
-              {%- for _, path := range rule.Http.Paths -%}
-                {%- if path.Path != "" -%}
-                  {%- for _, checkType := range pathTypes -%}
-                    {%- if path.PathType == checkType -%}
-                      {%- var eslot = tostring(path.PathType) -%}
-                      {%- if eslot == "ImplementationSpecific" -%}{%- eslot = "Prefix" -%}{%- end -%}
-                      {%- var epath = path.Path -%}
-                      {%- if eslot != "Exact" && len(epath) > 1 && hasSuffix(epath, "/") -%}{%- epath = epath[:len(epath)-1] -%}{%- end -%}
-                      {%- if owner[eslot + "|" + MapKeyForHost(rule.Host) + epath] != id -%}{%- continue -%}{%- end -%}
-                      {%- var pathStr = ValidateConfigValue(path.Path, "spec.rules[].http.paths[].path", id, false) -%}
-                      {%- if suffix == "" && pathStr == "/" -%}{%- continue -%}{%- end -%}
-                      {%- var actualSuffix = suffix -%}
-                      {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}{%- actualSuffix = "" -%}{%- end -%}
-                      {#- pfxexact strips the trailing slash so /foo/ Prefix's boundary
-                         entry is /foo. Exact must NOT strip: K8s conformance requires an
-                         Exact /foo/ to reject request /foo. -#}
-                      {%- if path.PathType != "Exact" && suffix == "" && len(pathStr) > 1 && hasSuffix(pathStr, "/") -%}{%- pathStr = pathStr[:len(pathStr)-1] -%}{%- end -%}
+                {%- var winner, _ = shared.Select("ingress-path-candidates", "owners",
+                  slot + "|" + MapKeyForHost(rule.Host) + normalizedPath) -%}
+                {%- if dig_string(winner, "", "owner") != id -%}{%- continue -%}{%- end -%}
+                {%- var pathStr = ValidateConfigValue(path.Path, "spec.rules[].http.paths[].path", id, false) -%}
+                {%- if suffix == "" && pathStr == "/" -%}{%- continue -%}{%- end -%}
+                {%- var actualSuffix = suffix -%}
+                {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}{%- actualSuffix = "" -%}{%- end -%}
+                {%- if path.PathType != "Exact" && suffix == "" && len(pathStr) > 1 && hasSuffix(pathStr, "/") -%}
+                  {%- pathStr = pathStr[:len(pathStr)-1] -%}
+                {%- end -%}
       {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
-                    {%- end -%}
-                  {%- end -%}
-                {%- end -%}
               {%- end -%}
             {%- end -%}
           {%- end -%}
-        {%- end %}
-      {% end %}
-
-
-  util-sharded-path-map-entry-ingress:
-    template: |
-      {%- import "util-path-map-entry-ingress-shard" for PathMapEntryIngressShard -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedPathMapEntryIngress(pathTypes []string, suffix string) string %}
-      {%- var allIngresses = resources.ingresses.List() -%}
-      {%- var n = toint(CalculateShardCount(len(allIngresses), 100)) -%}
-      {%- if n <= 1 || len(allIngresses) < 100 -%}
-      {{ PathMapEntryIngressShard(allIngresses, pathTypes, suffix) }}
-      {%- else -%}
-      {%- for i := 0; i < n; i++ -%}
-      {{ go PathMapEntryIngressShard(shard_slice(allIngresses, i, n), pathTypes, suffix) }}
-      {%- end -%}
-      {%- end -%}
+        {%- end -%}
+        {%- end -%}
       {% end %}
 
 
   util-generate-backends-ingress:
     template: |
-      {%- import "util-backend" for Backend, AppendLines, DefaultServerArgs -%}
+      {%- import "util-backend" for AppendLines, DefaultServerArgs, PrepareBackend -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
       {%- import "util-service-port-resolution" for ResolveServicePort -%}
       {#- The profile carries the two uniform set-timeout rules (identical across
           every ingress backend → one shared profile for the plain case) plus any
@@ -424,351 +427,493 @@ templateSnippets:
         }
         return body
       } -%}
-      {% macro GenerateIngressBackends(ingresses []*resources.ingresses.T) string %}
-        {#- Two uniform, byte-identical set-timeout lines every backend carries:
-            the value is read from backend-timeouts.map keyed on the backend, so a
-            timeout annotation add/edit is a map-only, reload-free change. `server`
-            and `tunnel` are the only settable timeouts; the rest stay per-value. -#}
-        {%- var toMap, _ = pathResolver.GetPath("backend-timeouts.map", "map") -%}
+      {% macro GenerateIngressBackends(ingress *resources.ingresses.T, effectPrefix string) string %}
+        {%- var ns = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
+        {{- shared.Publish("headers", "ingress", true) -}}
+        {%- var backendFiles = []any{} -%}
+        {%- var degradedMarkers = map[string]bool{} -%}
+        {%- var seenBackends = map[string]bool{} -%}
+        {%- var FilePath = func(fileType string, filename string) string {
+          var base = tostring(props["fileDir"])
+          if fileType == "map" {
+            base = tostring(props["mapDir"])
+          } else if fileType == "cert" || fileType == "crt-list" {
+            base = tostring(props["certDir"])
+          }
+          if base == "" {
+            return filename
+          }
+          return base + "/" + filename
+        } -%}
+        {%- var RegisterBackendFile = func(fileType string, filename string, content string) (string, error) {
+          backendFiles = append(backendFiles, map[string]any{
+            "type": fileType, "filename": filename, "content": content,
+          })
+          return FilePath(fileType, filename), nil
+        } -%}
+        {#- Two uniform, byte-identical set-timeout lines every backend carries. -#}
+        {%- var toMap = FilePath("map", "backend-timeouts.map") -%}
         {%- var beTimeoutSrv = "http-request set-timeout server var(txn.backend_name),concat(|server),map_str_int(" + tostring(toMap) + ") if { var(txn.backend_name),concat(|server),map_str_int(" + tostring(toMap) + ") -m found }" -%}
         {%- var beTimeoutTun = "http-request set-timeout tunnel var(txn.backend_name),concat(|tunnel),map_str_int(" + tostring(toMap) + ") if { var(txn.backend_name),concat(|tunnel),map_str_int(" + tostring(toMap) + ") -m found }" -%}
-        {%- for _, ingress := range ingresses -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {%- for _, rule := range ingress.Spec.Rules -%}
-            {%- for _, path := range rule.Http.Paths -%}
-              {%- var svcName = path.Backend.Service.Name -%}
-              {%- if svcName != "" -%}
-                {%- var resolvedParts = split(ResolveServicePort(ns, svcName, path.Backend.Service.Port), " ") -%}
-                {%- var port = toint(resolvedParts[0]) -%}
-                {%- var portName = resolvedParts[1] -%}
-                {%- var portId = portName -%}
-                {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
-                {%- if first_seen("ingress_backend", ns, name, svcName, portId) -%}
-                  {%- var backendKey = BackendNameIngress(ingress, path) -%}
-                  {%- var serverOpts = map[string]any{"flags": []any{}, "profile": []any{}, "body": []any{}} -%}
-                  {%- var directives = AppendLines([]any{}, render_glob "backend-directives-*" inherit_context) -%}
-                  {%- var profile = IngressProfile(serverOpts, beTimeoutSrv, beTimeoutTun) -%}
-                  {%- var body = IngressBody(serverOpts, directives) -%}
-      {{ Backend(map[string]any{
-           "name": backendKey,
-           "guid": make_guid("be", backendKey),
-           "comments": []any{"# Backend for: Ingress " + ns + "/" + name + " → Service " + svcName + ":" + tostring(port)},
-           "balance": serverOpts | dig("balance") | fallback(nil),
-           "hashType": serverOpts | dig("hashType") | fallback(nil),
-           "shape": serverOpts | dig("shape") | fallback(nil),
-           "defaultServer": DefaultServerArgs(serverOpts),
-           "profile": profile,
-           "body": body,
-           "servers": BackendServers(svcName, 0, port, serverOpts, portName, backendKey, ns),
-         }) }}
-                {%- end -%}
-              {%- end -%}
+        {%- var RenderOne = func(path any, svcName string, portRef any, label string) string {
+          var resolvedParts = split(ResolveServicePort(ns, svcName, portRef), " ")
+          var port = toint(resolvedParts[0])
+          var portName = resolvedParts[1]
+          var portId = portName
+          if portId == "" { portId = tostring(port) }
+          var dedupKey = svcName + "\x00" + portId
+          if seenBackends[dedupKey] { return "" }
+          seenBackends[dedupKey] = true
+          var backendKey = BackendNameIngress(ingress, path)
+          var serverOpts = map[string]any{"flags": []any{}, "profile": []any{}, "body": []any{}}
+          var directives = AppendLines([]any{}, render_glob "backend-directives-*" inherit_context)
+          var profile = IngressProfile(serverOpts, beTimeoutSrv, beTimeoutTun)
+          var body = IngressBody(serverOpts, directives)
+          var serverResult = BackendServersResult(svcName, 0, port, serverOpts, portName, backendKey, ns)
+          if serverResult["degradedByName"] == true {
+            degradedMarkers["degradedBackendRef:" + ns + "/" + svcName + "/" + tostring(serverResult["portName"])] = true
+          }
+          _ = shared.Publish("owners", backendKey, map[string]any{"backend": backendKey})
+          var record, text = PrepareBackend(map[string]any{
+            "name": backendKey,
+            "guid": make_guid("be", backendKey),
+            "comments": []any{"# " + label + ": Ingress " + ns + "/" + name + " → Service " + svcName + ":" + tostring(port)},
+            "balance": serverOpts | dig("balance") | fallback(nil),
+            "hashType": serverOpts | dig("hashType") | fallback(nil),
+            "shape": serverOpts | dig("shape") | fallback(nil),
+            "defaultServer": DefaultServerArgs(serverOpts),
+            "profile": profile,
+            "body": body,
+            "servers": serverResult["servers"],
+          })
+          var token, planErr = planRegistry.BackendWhenAny(record, text, "owners", []string{backendKey})
+          if planErr != nil { fail(planErr.Error()) }
+          return token
+        } -%}
+        {%- for _, rule := range ingress.Spec.Rules -%}
+          {%- for _, path := range rule.Http.Paths -%}
+            {%- var svcName = path.Backend.Service.Name -%}
+            {%- if svcName != "" -%}
+      {{ RenderOne(path, svcName, path.Backend.Service.Port, "Backend for") }}
             {%- end -%}
-          {%- end -%}
-          {%- var dbSvcName = ingress.Spec.DefaultBackend.Service.Name -%}
-          {%- if dbSvcName != "" -%}
-            {%- var path = map[string]any{"backend": ingress.Spec.DefaultBackend} -%}
-            {%- var resolvedParts = split(ResolveServicePort(ns, dbSvcName, ingress.Spec.DefaultBackend.Service.Port), " ") -%}
-            {%- var port = toint(resolvedParts[0]) -%}
-            {%- var portName = resolvedParts[1] -%}
-            {%- var portId = portName -%}
-            {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
-            {%- if first_seen("ingress_backend", ns, name, dbSvcName, portId) -%}
-              {%- var backendKey = BackendNameIngress(ingress, path) -%}
-              {%- var serverOpts = map[string]any{"flags": []any{}, "profile": []any{}, "body": []any{}} -%}
-              {%- var directives = AppendLines([]any{}, render_glob "backend-directives-*" inherit_context) -%}
-              {%- var profile = IngressProfile(serverOpts, beTimeoutSrv, beTimeoutTun) -%}
-              {%- var body = IngressBody(serverOpts, directives) -%}
-      {{ Backend(map[string]any{
-           "name": backendKey,
-           "guid": make_guid("be", backendKey),
-           "comments": []any{"# Default backend for: Ingress " + ns + "/" + name + " → Service " + dbSvcName + ":" + tostring(port)},
-           "balance": serverOpts | dig("balance") | fallback(nil),
-           "hashType": serverOpts | dig("hashType") | fallback(nil),
-           "shape": serverOpts | dig("shape") | fallback(nil),
-           "defaultServer": DefaultServerArgs(serverOpts),
-           "profile": profile,
-           "body": body,
-           "servers": BackendServers(dbSvcName, 0, port, serverOpts, portName, backendKey, ns),
-         }) }}
-            {%- end -%}
-          {%- end -%}
-        {%- end %}
-      {% end %}
-
-  util-sharded-backends-ingress:
-    template: |
-      {%- import "util-generate-backends-ingress" for GenerateIngressBackends -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedIngressBackends(ingresses []*resources.ingresses.T) string %}
-        {%- var n = toint(CalculateShardCount(len(ingresses), 100)) -%}
-        {%- if n <= 1 || len(ingresses) < 100 -%}
-      {{ GenerateIngressBackends(ingresses) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateIngressBackends(shard_slice(ingresses, i, n)) }}
           {%- end -%}
         {%- end -%}
+        {%- var dbSvcName = ingress.Spec.DefaultBackend.Service.Name -%}
+        {%- if dbSvcName != "" -%}
+          {%- var path = map[string]any{"backend": ingress.Spec.DefaultBackend} -%}
+      {{ RenderOne(path, dbSvcName, ingress.Spec.DefaultBackend.Service.Port, "Default backend for") }}
+        {%- end -%}
+        {%- var degraded = []any{} -%}
+        {%- for _, marker := range keys(degradedMarkers) -%}
+          {%- degraded = append(degraded, marker) -%}
+          {{- shared.Publish("degraded", marker, true) -}}
+        {%- end -%}
+        {%- if len(backendFiles) > 0 || len(degraded) > 0 -%}
+          {{- shared.Publish("effects", effectPrefix + "/" + ns + "/" + name, map[string]any{
+            "phase": effectPrefix, "files": backendFiles, "degraded": degraded,
+          }) -}}
+        {%- end -%}
+      {% end %}
+
+  util-generate-annotation-default-backend:
+    template: |-
+      {%- import "util-backend" for AppendLines, DefaultServerArgs, PrepareBackend -%}
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
+      {% macro GenerateAnnotationDefaultBackend(ingress *resources.ingresses.T, svcNs string,
+        svcName string, port int, portName string, backendName string, effectPrefix string,
+        comment string) string %}
+        {%- var backendFiles = []any{} -%}
+        {%- var FilePath = func(fileType string, filename string) string {
+          var base = tostring(props["fileDir"])
+          if fileType == "map" {
+            base = tostring(props["mapDir"])
+          } else if fileType == "cert" || fileType == "crt-list" {
+            base = tostring(props["certDir"])
+          }
+          if base == "" { return filename }
+          return base + "/" + filename
+        } -%}
+        {%- var RegisterBackendFile = func(fileType string, filename string, content string) (string, error) {
+          backendFiles = append(backendFiles, map[string]any{
+            "type": fileType, "filename": filename, "content": content,
+          })
+          return FilePath(fileType, filename), nil
+        } -%}
+        {%- var serverOpts = map[string]any{"flags": []any{}, "profile": []any{}, "body": []any{}} -%}
+        {%- var path = map[string]any{"backend": map[string]any{"service": map[string]any{
+          "name": svcName, "port": map[string]any{"number": port},
+        }}} -%}
+        {%- var directives = AppendLines([]any{}, render_glob "backend-directives-*" inherit_context) -%}
+        {%- var profile = []any{} -%}
+        {%- for _, line := range toSlice(serverOpts["profile"]) -%}{%- profile = append(profile, line) -%}{%- end -%}
+        {%- var body = []any{} -%}
+        {%- for _, line := range toSlice(serverOpts["body"]) -%}{%- body = append(body, line) -%}{%- end -%}
+        {%- for _, line := range directives -%}{%- body = append(body, line) -%}{%- end -%}
+        {%- var serverResult = BackendServersResult(svcName, 0, port, serverOpts, portName, backendName, svcNs) -%}
+        {%- var degraded = []any{} -%}
+        {%- if serverResult["degradedByName"] == true -%}
+          {%- degraded = append(degraded, "degradedBackendRef:" + svcNs + "/" + svcName + "/" + tostring(serverResult["portName"])) -%}
+          {{- shared.Publish("degraded", tostring(degraded[0]), true) -}}
+        {%- end -%}
+        {{- shared.Publish("owners", backendName, map[string]any{"backend": backendName}) -}}
+        {%- if len(backendFiles) > 0 || len(degraded) > 0 -%}
+          {{- shared.Publish("effects", effectPrefix + "/" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name,
+            map[string]any{"phase": effectPrefix, "files": backendFiles, "degraded": degraded}) -}}
+        {%- end -%}
+        {%- var record, text = PrepareBackend(map[string]any{
+          "name": backendName,
+          "guid": make_guid("be", backendName),
+          "comments": []any{comment},
+          "balance": serverOpts | dig("balance") | fallback(nil),
+          "hashType": serverOpts | dig("hashType") | fallback(nil),
+          "shape": serverOpts | dig("shape") | fallback(nil),
+          "defaultServer": DefaultServerArgs(serverOpts),
+          "profile": profile,
+          "body": body,
+          "servers": serverResult["servers"],
+        }) -%}
+        {%- var token, planErr = planRegistry.BackendWhenAny(record, text, "owners", []string{backendName}) -%}
+        {%- if planErr != nil -%}{{ fail(planErr.Error()) }}{%- end -%}
+        {{- token -}}
+      {% end %}
+
+  util-ingress-backend-bindings:
+    template: |-
+      {%- var mapDir, mapErr = pathResolver.GetPath("", "map") -%}
+      {%- if mapErr != nil -%}{{ fail(tostring(mapErr)) }}{%- end -%}
+      {%- var fileDir, fileErr = pathResolver.GetPath("", "file") -%}
+      {%- if fileErr != nil -%}{{ fail(tostring(fileErr)) }}{%- end -%}
+      {%- var certDir, certErr = pathResolver.GetPath("", "cert") -%}
+      {%- if certErr != nil -%}{{ fail(tostring(certErr)) }}{%- end -%}
+      {{- toJSON(map[string]any{"ingresses": map[string]any{
+        "mapDir": mapDir,
+        "fileDir": fileDir,
+        "certDir": certDir,
+        "cacheVarnishEnabled": extraContext | dig("cache", "varnish", "enabled") | fallback(false),
+        "rateLimitSharedFailClosed": extraContext | dig("rateLimit", "shared", "failClosed") | fallback(false),
+        "spoaMessages": extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}),
+      }}) -}}
+
+  util-replay-ingress-backend-effects:
+    template: |-
+      {% macro ReplayIngressBackendEffects(phase string) %}
+      {%- var effects = incremental_values("ingress-backends", "effects") -%}
+      {%- for _, effect := range effects -%}
+        {%- if tostring(effect | dig("phase")) != phase -%}{%- continue -%}{%- end -%}
+        {%- for _, marker := range toSlice(effect | dig("degraded")) -%}
+          {%- var _, _ = shared.ComputeIfAbsent(tostring(marker), func() any { return true }) -%}
+        {%- end -%}
+        {%- for _, file := range toSlice(effect | dig("files")) -%}
+          {%- var record = file.(map[string]any) -%}
+          {%- var _, registerErr = fileRegistry.Register(
+            tostring(record["type"]), tostring(record["filename"]), tostring(record["content"])) -%}
+          {%- if registerErr != nil -%}{{ fail(tostring(registerErr)) }}{%- end -%}
+        {%- end -%}
+      {%- end -%}
       {% end %}
 
   backends-500-ingress:
-    template: |
-      {%- import "util-sharded-backends-ingress" for ShardedIngressBackends -%}
-      {%- var allIngresses = resources.ingresses.List() -%}
-      {%- if len(allIngresses) > 0 %}
-      # ingress/backends-ingress
-      {{ ShardedIngressBackends(allIngresses) }}
+    requires: [ingresses, services, endpoints, secrets]
+    template: |-
+      {%- import "util-replay-ingress-backend-effects" for ReplayIngressBackendEffects -%}
+      {{- ReplayIngressBackendEffects("500") -}}
+      {%- var block = render "backenditems-500-ingress" -%}
+      {%- if len(incremental_values("ingress-backends", "headers")) > 0 -%}
+      {{- "\n# ingress/backends-ingress\n" -}}
+      {{- block }}{{ "\n" -}}
       {%- end -%}
-  util-generate-host-map-ingress:
-    template: |
-      {%- import "util-host-key" for MapKeyForHost -%}
-      {%- macro GenerateIngressHostMap(ingresses []*resources.ingresses.T) -%}
-      {%- for _, ingress := range ingresses -%}
-      {%- var rules = ingress.Spec.Rules %}
-      {%- var rulesWithHttp = selectattr(rules, "http") %}
-      {%- if len(rulesWithHttp) > 0 %}
-      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ({{ len(rulesWithHttp) }} hosts)
-      {% for _, rule := range rulesWithHttp %}
-      {%- var hostKey = MapKeyForHost(rule | dig("host")) %}
-      {{ hostKey }} {{ hostKey }}
-      {% end %}
-      {%- end %}
-      {%- end %}
-      {%- end macro -%}
 
-  util-sharded-host-map-ingress:
-    template: |
-      {%- import "util-generate-host-map-ingress" for GenerateIngressHostMap -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {%- macro ShardedIngressHostMap(ingresses []*resources.ingresses.T) -%}
-      {%- var n = toint(CalculateShardCount(len(ingresses), 100)) -%}
-      {%- if n <= 1 || len(ingresses) < 100 -%}
-      {{ GenerateIngressHostMap(ingresses) }}
-      {%- else -%}
-      {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateIngressHostMap(shard_slice(ingresses, i, n)) }}
+  backenditems-500-ingress:
+    requires: [ingresses, services, endpoints, secrets]
+    incremental:
+      bindingsTemplate: '{{- render "util-ingress-backend-bindings" -}}'
+      group: ingress-backends
+      effects: [publishValue, backendPlan, recordEvent]
+    template: |-
+      {%- import "util-generate-backends-ingress" for GenerateIngressBackends -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+      {{- GenerateIngressBackends(ingress, "500") -}}
       {%- end -%}
-      {%- end -%}
-      {%- end macro -%}
-
   map-host-500-ingress:
-    template: |
-      {%- import "util-sharded-host-map-ingress" for ShardedIngressHostMap %}
-      {%- var allIngresses = resources.ingresses.List() %}
-      {%- if len(allIngresses) > 0 %}
-      # ingress/map-host-ingress
-      {{ ShardedIngressHostMap(allIngresses) }}
-      {%- end -%}
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+    template: |-
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%%
+        var ingress = item
+        var namespace = dig_string(ingress, "", "metadata", "namespace")
+        var name = dig_string(ingress, "", "metadata", "name")
+        var rulesWithHTTP = selectattr(toSlice(dig(ingress, "spec", "rules")), "http")
+        show shared.Unique("map-host-ingress", "header", "\n# ingress/map-host-ingress\n")
+        if len(rulesWithHTTP) > 0 {
+          var block = "\n# Ingress: " + namespace + "/" + name + " (" + tostring(len(rulesWithHTTP)) + " hosts)\n"
+          for _, rule := range rulesWithHTTP {
+            var hostKey = tostring(MapKeyForHost(dig(rule, "host")))
+            block += "\n" + hostKey + " " + hostKey + "\n"
+          }
+          show shared.Unique("map-host-ingress", "resource/" + namespace + "/" + name, block)
+        }
+      %%}
 
   map-path-exact-500-ingress:
     template: |
-      {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
       # ingress/map-path-exact-ingress
-      {{ ShardedPathMapEntryIngress([]string{"Exact"}, "") }}
+      {{- render "pathitems-exact-500-ingress" -}}
+
+  pathitems-exact-500-ingress:
+    requires: [ingresses, services]
+    incremental:
+      source: ingresses
+      group: ingress-path-exact
+      consumes: [ingress-path-candidates]
+      effects: [recordEvent]
+    template: |-
+      {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}{{- PathMapEntryIngress(ingress, []string{"Exact"}, "", true) -}}{%- end -%}
 
   map-pfxexact-500-ingress:
     template: |
-      {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
       # ingress/map-pfxexact-ingress
-      {{ ShardedPathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "") }}
+      {{- render "pathitems-pfxexact-500-ingress" -}}
+
+  pathitems-pfxexact-500-ingress:
+    requires: [ingresses, services]
+    incremental:
+      source: ingresses
+      group: ingress-path-pfxexact
+      consumes: [ingress-path-candidates]
+      effects: [recordEvent]
+    template: |-
+      {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}{{- PathMapEntryIngress(ingress, []string{"Prefix", "ImplementationSpecific"}, "", true) -}}{%- end -%}
 
   map-path-prefix-500-ingress:
     template: |
-      {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
       # ingress/map-path-prefix-ingress
-      {{ ShardedPathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "/") }}
+      {{- render "pathitems-prefix-500-ingress" -}}
+
+  pathitems-prefix-500-ingress:
+    requires: [ingresses, services]
+    incremental:
+      source: ingresses
+      group: ingress-path-prefix
+      consumes: [ingress-path-candidates]
+    template: |-
+      {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}{{- PathMapEntryIngress(ingress, []string{"Prefix", "ImplementationSpecific"}, "/", false) -}}{%- end -%}
 
   map-path-prefix-501-ingress-default:
     template: |
-      {# map_beg longest-prefix match picks the most-specific rule entry first, so
-         these catch-alls only fire when no rule path matched. NEWEST wins per host
-         (rule routes are oldest-wins): a being-deleted Ingress would otherwise keep
-         the catch-all and serve 503s. #}
+      {{- render "pathitems-default-501-ingress" -}}
+
+  pathitems-default-501-ingress:
+    requires: [ingresses, services]
+    incremental:
+      source: ingresses
+      group: ingress-default-backends
+      consumes: [ingress-default-backend-candidates]
+    template: |-
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
-      {%- var candidates = []any{} -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- if ingress.Spec.DefaultBackend.Service -%}
-          {%- var ts = ingress.Metadata.CreationTimestamp -%}
-          {%- var rules = ingress.Spec.Rules -%}
-          {%- if len(rules) == 0 -%}
-            {%- candidates = append(candidates, map[string]any{"hostKey": "", "ingress": ingress, "ts": ts}) -%}
-          {%- else -%}
-            {%- for _, rule := range rules -%}
-              {%- var hostKey = MapKeyForHost(rule.Host) -%}
-              {%- candidates = append(candidates, map[string]any{"hostKey": hostKey, "ingress": ingress, "ts": ts}) -%}
-            {%- end -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+      {%- if ingress.Spec.DefaultBackend.Service -%}
+        {%- var id = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var hostKeys = []any{} -%}
+        {%- if len(ingress.Spec.Rules) == 0 -%}
+          {%- hostKeys = append(hostKeys, "") -%}
+        {%- else -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- hostKeys = append(hostKeys, MapKeyForHost(rule.Host)) -%}
           {%- end -%}
         {%- end -%}
-      {%- end -%}
-      {%- if len(candidates) > 0 -%}
-        {%- var sorted = candidates | sort_by([]string{"$.ts:desc"}) -%}
-        {%- for _, cand := range sorted -%}
-          {%- var hostKey = tostring(cand["hostKey"]) -%}
-          {%- if first_seen("ingress_default_host", hostKey) -%}
-            {#- Scriggo miscompiles the implicit any → *T conversion at a typed macro
-                parameter; the explicit assertion takes the standard emit path. -#}
-            {%- var ingress = cand["ingress"].(*resources.ingresses.T) -%}
-            {%- var path = map[string]any{"backend": ingress.Spec.DefaultBackend} %}
+        {%- var seen = map[string]bool{} -%}
+        {%- for _, host := range hostKeys -%}
+          {%- var hostKey = tostring(host) -%}
+          {%- if seen[hostKey] -%}{%- continue -%}{%- end -%}
+          {%- seen[hostKey] = true -%}
+          {%- var publicationKey = hostKey -%}
+          {%- if publicationKey == "" -%}{%- publicationKey = "\x00" -%}{%- end -%}
+          {%- var winner, found = shared.Select("ingress-default-backend-candidates", "hosts", publicationKey) -%}
+          {%- if !found || dig_string(winner, "", "owner") != id -%}{%- continue -%}{%- end -%}
+          {%- var path = map[string]any{"backend": ingress.Spec.DefaultBackend} %}
       # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} (defaultBackend → "{{ hostKey }}/")
       {{ hostKey }}/ BACKEND:{{ BackendNameIngress(ingress, path) }}
-          {%- end -%}
         {%- end -%}
-      {%- end %}
+      {%- end -%}
+      {%- end -%}
 
 
-  # Shared contributor the annotation libraries call from their map-* snippets to
-  # feed backend-timeouts.map (`<backend>|server` / `<backend>|tunnel` -> ms).
-  # The value is parsed to integer ms here — the render-time validator that
-  # replaces the `haproxy -c` parse the timeout loses by moving into the map — so
-  # each library is one call. RULE #1: it sees two annotation names, not a kind.
   # Feeds backend-service.map (<backend> -> <ns>/<svc>) so the namespace/service
   # access-log fields need no per-backend `set-var` lines — which is what lets an
   # ingress backend stay dynamic (empty body). Mirrors the generator's iteration
   # and backend naming, deduped per backend name.
   map-backend-service-100-ingress:
     requires: [ingresses]
+    incremental:
+      source: ingresses
     template: |-
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%%
-        var lines = []string{}
-        for _, ingress := range resources.ingresses.List() {
-          var ns = ingress.Metadata.Namespace
-          for _, rule := range ingress.Spec.Rules {
-            for _, path := range rule.Http.Paths {
-              var svc = path.Backend.Service.Name
-              if svc == "" {
-                continue
-              }
-              var be = BackendNameIngress(ingress, path)
-              if first_seen("map-backend-service", be) {
-                lines = append(lines, be + " " + ns + "/" + svc)
-              }
+        var ingress = item
+        var ns = dig_string(ingress, "", "metadata", "namespace")
+        for _, rule := range toSlice(dig(ingress, "spec", "rules")) {
+          for _, path := range toSlice(dig(rule, "http", "paths")) {
+            var svc = dig_string(path, "", "backend", "service", "name")
+            if svc == "" {
+              continue
             }
-          }
-          var dbSvc = ingress.Spec.DefaultBackend.Service.Name
-          if dbSvc != "" {
-            var dbPath = map[string]any{"backend": ingress.Spec.DefaultBackend}
-            var be = BackendNameIngress(ingress, dbPath)
-            if first_seen("map-backend-service", be) {
-              lines = append(lines, be + " " + ns + "/" + dbSvc)
-            }
+            var be = BackendNameIngress(ingress, path)
+            show shared.Unique("map-backend-service-ingress", be, "\n" + be + " " + ns + "/" + svc)
           }
         }
-        if len(lines) > 0 {
-          show "\n" + join(lines, "\n")
+        var defaultBackend = dig(ingress, "spec", "defaultBackend")
+        var dbSvc = dig_string(defaultBackend, "", "service", "name")
+        if dbSvc != "" {
+          var dbPath = map[string]any{"backend": defaultBackend}
+          var be = BackendNameIngress(ingress, dbPath)
+          show shared.Unique("map-backend-service-ingress", be, "\n" + be + " " + ns + "/" + dbSvc)
         }
       %%}
 
+  # Emits one Ingress's validated timeout map contributions for annotation libraries.
   util-ingress-backend-timeout:
     template: |-
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- import "util-haproxy-duration" for HAProxyDurationMs -%}
-      {% macro IngressBackendTimeoutMapEntries(serverAnn string, tunnelAnn string) %}
+      {% macro IngressBackendTimeoutMapEntries(ingress any, serverAnn string, tunnelAnn string) %}
       {%%
         var anns = []string{serverAnn, tunnelAnn}
         var kinds = []string{"server", "tunnel"}
-        var lines = []string{}
         for i := 0; i < len(anns); i++ {
           var ann = anns[i]
           var kind = kinds[i]
           if ann == "" {
             continue
           }
-          for _, ingress := range resources.ingresses.List() {
-            var v = ingress.Metadata.Annotations[ann]
-            if v == "" {
+          var v = dig_string(ingress, "", "metadata", "annotations", ann)
+          if v == "" {
+            continue
+          }
+          var ms = HAProxyDurationMs(v)
+          if ms == "" {
+            var key = dig_string(ingress, "", "metadata", "namespace") + "/" + dig_string(ingress, "", "metadata", "name")
+            var message = "Annotation '" + ann + "' on Ingress '" + key + "' has value '" + v + "', which is not an HAProxy duration; the timeout is not applied. Use a value like 30s, 1m or 2000ms."
+            if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" {
+              fail(message)
+            } else {
+              recordEvent(ingress, "InvalidTimeout", message)
+            }
+            continue
+          }
+          for _, rule := range toSlice(dig(ingress, "spec", "rules")) {
+            for _, path := range toSlice(dig(rule, "http", "paths")) {
+              var be = BackendNameIngress(ingress, path)
+              show shared.Unique("map-backend-timeout", be + "|" + kind, "\n" + be + "|" + kind + " " + ms)
+            }
+          }
+        }
+      %%}
+      {% end %}
+
+  util-ingress-header-publish:
+    template: |-
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {% macro PublishIngressHeaderContributions(ingress *resources.ingresses.T, reqAnn string, respAnn string, recordSep string, kvSep string, rankPrefix string) %}
+      {%%
+        var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name
+        var seen = map[string]bool{}
+        var contribute = func(ann string, bucket string) {
+          if ann == "" {
+            return
+          }
+          var annVal = ingress.Metadata.Annotations[ann]
+          if annVal == "" {
+            return
+          }
+          for _, rec := range split(annVal, recordSep) {
+            var t = trimSpace(rec)
+            if t == "" || !strings_contains(t, kvSep) {
               continue
             }
-            var ms = HAProxyDurationMs(v)
-            if ms == "" {
-              var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name
-              _ = WebhookRejectOrWarn(ingress, "InvalidTimeout", "Annotation '" + ann + "' on Ingress '" + key + "' has value '" + v + "', which is not an HAProxy duration; the timeout is not applied. Use a value like 30s, 1m or 2000ms.")
+            var parts = split(t, kvSep)
+            var hn = trimSpace(parts[0])
+            var hv = trimSpace(parts[1:] | join(kvSep))
+            if hn == "" {
+              continue
+            }
+            if !regex_search(hn, "^[A-Za-z0-9!$&*+.^_~-]+$") {
+              _ = WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation '" + ann + "' on Ingress '" + key + "' names header '" + hn + "', which is not an HTTP token; the header is skipped. Use letters, digits and -._~!$&*+^.")
+              continue
+            }
+            if ConfigInjectionKind(hv, "line") != "" {
+              _ = WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation '" + ann + "' on Ingress '" + key + "' has a value containing " + ConfigInjectionKind(hv, "line") + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.")
               continue
             }
             for _, rule := range ingress.Spec.Rules {
               for _, path := range rule.Http.Paths {
                 var be = BackendNameIngress(ingress, path)
-                if first_seen("map-backend-timeout", be, kind) {
-                  lines = append(lines, be + "|" + kind + " " + ms)
+                var lower = toLower(hn)
+                var identity = bucket + "\x00" + be + "\x00" + lower
+                if seen[identity] {
+                  continue
                 }
+                seen[identity] = true
+                _ = shared.PublishRanked(bucket, be + "|set|" + lower, rankPrefix + "/" + key,
+                  map[string]any{"backend": be, "op": "set", "name": hn, "value": hv})
               }
             }
           }
         }
-        if len(lines) > 0 {
-          show "\n" + join(lines, "\n")
-        }
+        contribute(reqAnn, "ingReqHeaderMods")
+        contribute(respAnn, "ingRespHeaderMods")
       %%}
       {% end %}
 
-  # Shared contributor the annotation libraries call from their features-*
-  # snippets to feed the ing-reqhdr.map / ing-reshdr.map machinery below. Parses
-  # the `<name><kvSep><value>` records a header annotation carries (records split
-  # on recordSep, name/value on the first kvSep) and appends {backend, op, name,
-  # value} to gf, once per (backend, name) so two paths of one Ingress share the
-  # entry. All parsing lives here so each library is one call — RULE #1: it sees
-  # annotation names and separators, the same shape any resource library needs.
-  util-ingress-header-contribute:
+  util-ingress-host-match-publication:
     template: |-
-      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {% macro IngressHeaderContribute(reqAnn string, respAnn string, recordSep string, kvSep string) %}
-      {%%
-        var gf = shared.Get("globalFeatures").(map[string]any)
-        for _, ingress := range resources.ingresses.List() {
-          var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name
-          var contribute = func(ann string, bucket string) {
-            if ann == "" {
-              return
-            }
-            var annVal = ingress.Metadata.Annotations[ann]
-            if annVal == "" {
-              return
-            }
-            for _, rec := range split(annVal, recordSep) {
-              var t = trimSpace(rec)
-              if t == "" || !strings_contains(t, kvSep) {
-                continue
-              }
-              var parts = split(t, kvSep)
-              var hn = trimSpace(parts[0])
-              var hv = trimSpace(parts[1:] | join(kvSep))
-              if hn == "" {
-                continue
-              }
-              // The name lands in the directive AND inside the map key, where `|`
-              // is the delimiter — validate against the exact charset
-              // HeaderModifierRules emits a line for, so a non-emittable name is
-              // reported here rather than dropped without a line at request time.
-              if !regex_search(hn, "^[A-Za-z0-9!$&*+.^_~-]+$") {
-                _ = WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation '" + ann + "' on Ingress '" + key + "' names header '" + hn + "', which is not an HTTP token; the header is skipped. Use letters, digits and -._~!$&*+^.")
-                continue
-              }
-              if ConfigInjectionKind(hv, "line") != "" {
-                _ = WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation '" + ann + "' on Ingress '" + key + "' has a value containing " + ConfigInjectionKind(hv, "line") + ", which would split the frontend directive; the header is not applied. Remove control characters from the value.")
-                continue
-              }
-              for _, rule := range ingress.Spec.Rules {
-                for _, path := range rule.Http.Paths {
-                  var be = BackendNameIngress(ingress, path)
-                  // Dedup on the lowercased name: the map key is lowercased, so
-                  // `X-Foo` and `x-foo` on one backend are one entry, deterministically.
-                  if first_seen("ing-header-mod", bucket, be, toLower(hn)) {
-                    gf[bucket] = append(toSlice(gf[bucket]), map[string]any{"backend": be, "op": "set", "name": hn, "value": hv})
-                  }
-                }
-              }
-            }
-          }
-          contribute(reqAnn, "ingReqHeaderMods")
-          contribute(respAnn, "ingRespHeaderMods")
+      {%- var IngressHostMatchPublication = func(hosts []string, fileDir string) map[string]any {
+        var condition = "{ var(txn.host) -m str " + join(hosts, " ") + " }"
+        var result = map[string]any{"condition": condition}
+        if len(hosts) > 30 {
+          var content = join(hosts, "\n") + "\n"
+          var filename = "host-match-" + md5(content) + ".lst"
+          result["condition"] = "{ var(txn.host) -m str -f " + fileDir + "/" + filename + " }"
+          result["file"] = map[string]any{"filename": filename, "content": content}
         }
-      %%}
-      {% end %}
+        return result
+      } -%}
+
+  ingress-header-mods-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-header-mods
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  features-301-ingress-header-mods:
+    template: |-
+      {{- render_glob "ingress-header-mods-*" -}}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, entry := range incremental_values("ingress-header-mods", "ingReqHeaderMods") -%}
+        {%- gf["ingReqHeaderMods"] = append(toSlice(gf["ingReqHeaderMods"]), entry) -%}
+      {%- end -%}
+      {%- for _, entry := range incremental_values("ingress-header-mods", "ingRespHeaderMods") -%}
+        {%- gf["ingRespHeaderMods"] = append(toSlice(gf["ingRespHeaderMods"]), entry) -%}
+      {%- end -%}
 
   # Reload-free ingress request/response header modifiers. The annotation
   # libraries append {backend, op, name, value} to gf["ingReqHeaderMods"] /
@@ -784,7 +929,7 @@ templateSnippets:
     template: |
       {%- import "util-register-map" for RegisterMap -%}
       {%- import "util-header-modifier-rules" for HeaderModifierRules -%}
-      {%- if len(resources.ingresses.List()) == 0 %}{% return %}{% end -%}
+      {%- if shared.Get("globalFeatures").(map[string]any)["haveIngresses"] != true %}{% return %}{% end -%}
       {%%
         // Capture the result of the single compute call directly — do not follow
         // it with a `func() any { return nil }` read-back, which would cache nil
@@ -838,141 +983,207 @@ templateSnippets:
       {{- HeaderModifierRules("request", "var(txn.backend_name)", tostring(req["path"]), req["set"].([]string), req["add"].([]string), req["del"].([]string)) -}}
       {{- HeaderModifierRules("response", "var(txn.backend_name)", tostring(res["path"]), res["set"].([]string), res["add"].([]string), res["del"].([]string)) -}}
 
-  util-generate-ingress-status-patches:
-    template: |
-      {# statusPatch is mutex-guarded, so this is safe under the sharded go render. #}
-      {% macro GenerateIngressStatusPatches(ingresses []*resources.ingresses.T) %}
-        {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-        {%- var addresses = gf["addresses"] %}
-        {%- for _, ingress := range ingresses %}
-          {%%
-            var namespace = ingress.Metadata.Namespace
-            var name = ingress.Metadata.Name
-
-            statusPatch(namespace, name,
-              "networking.k8s.io/v1", "Ingress",
-              map[string]interface{}{
-                "deployed": map[string]interface{}{
-                  "loadBalancer": map[string]interface{}{
-                    "ingress": addresses,
-                  },
-                },
-                "deployFailed": map[string]interface{}{
-                  "loadBalancer": map[string]interface{}{
-                    "ingress": []any{},
-                  },
-                },
-              })
-          %%}
-        {%- end %}
-      {% end %}
-
-  util-sharded-ingress-status-patches:
-    template: |
-      {%- import "util-generate-ingress-status-patches" for GenerateIngressStatusPatches -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedIngressStatusPatches(ingresses []*resources.ingresses.T) %}
-        {%- var n = toint(CalculateShardCount(len(ingresses), 100)) -%}
-        {%- if n <= 1 || len(ingresses) < 100 -%}
-      {{ GenerateIngressStatusPatches(ingresses) }}
-        {%- else -%}
-          {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateIngressStatusPatches(shard_slice(ingresses, i, n)) }}
-          {%- end -%}
-        {%- end -%}
-      {% end %}
-
-  status-patches-200-ingress:
-    template: |
-      {# gf["addresses"] comes from features-075-address-discovery. #}
-      {%- import "util-sharded-ingress-status-patches" for ShardedIngressStatusPatches -%}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- if gf["addresses"] != nil %}
-        {%- var allIngresses = resources.ingresses.List() -%}
-        {%- if len(allIngresses) > 0 -%}
-          {{- ShardedIngressStatusPatches(allIngresses) -}}
-        {%- end -%}
-      {%- end %}
-
-k8sResources:
-  # Ingress status has no conditions field, so a Warning Event is the only
-  # operator-visible surface for a by-name backend left empty (no server
-  # lines). Its degradedBackendRef:<ns>/<svc>/<port> keys are written by
-  # BackendServers (base.yaml) during the haproxy.cfg render, which precedes
-  # every k8sResources render.
-  ingress-degraded-backend-events:
-    template: |
+  status-patches-190-ingress-addresses:
+    requires: [controller_services]
+    incremental:
+      bindingsTemplate: '{%- if extraContext | dig("statusPatches", "enabled") | fallback(true) -%}{"controller_services":{}}{%- else -%}{}{%- end -%}'
+      group: ingress-status-addresses
+      effects: [publishValue]
+    template: |-
       {%%
-        var docs = []any{}
-        for _, ingress := range resources.ingresses.List() {
-          var ns = ingress.Metadata.Namespace
-          var name = ingress.Metadata.Name
-          if ns == "" || name == "" {
+        for _, address := range item | dig("status", "loadBalancer", "ingress") | toSlice() {
+          var ip = dig_string(address, "", "ip")
+          var hostname = dig_string(address, "", "hostname")
+          if ip == "" && hostname == "" {
             continue
           }
-
-          // Spec walk must mirror GenerateIngressBackends: rule paths plus defaultBackend.
-          var refs = ingress.Spec.Rules | flat_map(r => r.Http.Paths) | map(p => p.Backend.Service)
-          refs = append(refs, ingress.Spec.DefaultBackend.Service)
-          var degraded = refs |
-            reject(s => s.Name == "" || s.Port.Name == "") |
-            unique_by(s => s.Name + "/" + s.Port.Name) |
-            filter(s => shared.Get("degradedBackendRef:" + ns + "/" + s.Name + "/" + s.Port.Name) != nil) |
-            map(s => "Service '" + ns + "/" + s.Name + "' (port name '" + s.Port.Name + "')")
-          if len(degraded) == 0 {
-            continue
+          var clean = map[string]any{}
+          if ip != "" {
+            clean["ip"] = ip
           }
-
-          // Bounded to 253 chars; an Ingress name alone may already reach it.
-          var evName = name + ".backend-unresolved"
-          if len(evName) > 253 {
-            // Hash-only, not truncated: a byte-truncated prefix can end on '.', making
-            // the next label start with '-' (invalid DNS-1123) and failing every SSA.
-            evName = "backend-unresolved-" + sha256(name)[:32]
+          if hostname != "" {
+            clean["hostname"] = hostname
           }
-
-          // 20-minute bucket: stable within a bucket (no apply churn), changes
-          // across buckets to refresh the apiserver's event TTL (--event-ttl, 1h).
-          var bucket = now().UTC().Unix() / 1200 * 1200
-          var lastSeen = unixTime(bucket, 0).UTC().Format("2006-01-02T15:04:05Z07:00")
-
-          var resource = map[string]any{
-            "apiVersion": "v1",
-            "kind":       "Event",
-            "metadata": map[string]any{
-              "name":      evName,
-              "namespace": ns,
-            },
-            "involvedObject": map[string]any{
-              "apiVersion": "networking.k8s.io/v1",
-              "kind":       "Ingress",
-              "namespace":  ns,
-              "name":       name,
-              "uid":        ingress.Metadata.Uid,
-            },
-            "type":   "Warning",
-            "reason": "BackendUnresolved",
-            "message": "Backend " + join(degraded, ", ") +
-              " not found: a by-name port reference resolves only through the" +
-              " Service, so the backend has no endpoints and serves 503 until" +
-              " the Service appears. If it never appears, check the Ingress" +
-              " backend for a Service-name typo.",
-            "lastTimestamp": lastSeen,
-            "source": map[string]any{
-              "component": "haptic",
-            },
+          shared.Publish("loadBalancer", ip + "/" + hostname, clean)
+        }
+        for _, address := range item | dig("spec", "clusterIPs") | toSlice() {
+          var ip = tostring(address)
+          if ip != "" && ip != "None" {
+            shared.Publish("cluster", ip, map[string]any{"ip": ip})
           }
-          var rendered, _ = marshalYAML(resource)
-          docs = append(docs, rendered)
         }
       %%}
-      {%- for i, doc := range docs -%}
-      {%- if i > 0 %}{{ "---" }}
-      {% end %}
-      {{ doc }}
-      {%- end %}
+
+  status-patches-200-ingress:
+    requires: [ingresses, controller_services]
+    incremental:
+      bindingsTemplate: '{%- if extraContext | dig("statusPatches", "enabled") | fallback(true) -%}{"ingresses":{}}{%- else -%}{}{%- end -%}'
+      group: ingress-status-patches
+      consumes: [ingress-status-addresses]
+      effects: [statusPatch]
+    template: |-
+      {%%
+        var addresses = shared.SelectValues("ingress-status-addresses", "loadBalancer")
+        if len(addresses) == 0 {
+          addresses = shared.SelectValues("ingress-status-addresses", "cluster")
+        }
+        statusPatch(item, map[string]any{
+            "deployed": map[string]any{
+              "loadBalancer": map[string]any{
+                "ingress": addresses,
+              },
+            },
+            "deployFailed": map[string]any{
+              "loadBalancer": map[string]any{
+                "ingress": []any{},
+              },
+            },
+          })
+      %%}
+
+  k8sitems-ingress-degraded-backend-events:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      group: ingress-degraded-backend-events
+      consumes: [ingress-backends]
+    template: |-
+      {%%
+        var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
+        var ns = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        if ingress != nil && ns != "" && name != "" {
+          var refs = ingress.Spec.Rules | flat_map(r => r.Http.Paths) | map(p => p.Backend.Service)
+          refs = append(refs, ingress.Spec.DefaultBackend.Service)
+          refs = refs | reject(s => s.Name == "" || s.Port.Name == "") |
+            unique_by(s => s.Name + "/" + s.Port.Name)
+          var degraded = []string{}
+          for _, ref := range refs {
+            var marker = "degradedBackendRef:" + ns + "/" + ref.Name + "/" + ref.Port.Name
+            var _, found = shared.Select("ingress-backends", "degraded", marker)
+            if found {
+              degraded = append(degraded,
+                "Service '" + ns + "/" + ref.Name + "' (port name '" + ref.Port.Name + "')")
+            }
+          }
+          if len(degraded) > 0 {
+            var evName = name + ".backend-unresolved"
+            if len(evName) > 253 {
+              evName = "backend-unresolved-" + sha256(name)[:32]
+            }
+            var resource = map[string]any{
+              "apiVersion": "v1",
+              "kind":       "Event",
+              "metadata": map[string]any{"name": evName, "namespace": ns},
+              "involvedObject": map[string]any{
+                "apiVersion": "networking.k8s.io/v1",
+                "kind":       "Ingress",
+                "namespace":  ns,
+                "name":       name,
+                "uid":        ingress.Metadata.Uid,
+              },
+              "type":   "Warning",
+              "reason": "BackendUnresolved",
+              "message": "Backend " + join(degraded, ", ") +
+                " not found: a by-name port reference resolves only through the" +
+                " Service, so the backend has no endpoints and serves 503 until" +
+                " the Service appears. If it never appears, check the Ingress" +
+                " backend for a Service-name typo.",
+              "lastTimestamp": "HAPTIC_INCREMENTAL_EVENT_LAST_TIMESTAMP",
+              "source": map[string]any{"component": "haptic"},
+            }
+            var rendered = marshalYAML(resource)
+            show rendered + "\n---\n"
+          }
+        }
+      %%}
+
+k8sResources:
+  ingress-degraded-backend-events:
+    template: |-
+      {%- var docs = render "k8sitems-ingress-degraded-backend-events" default "" -%}
+      {%- if docs != "" -%}
+        {%- var lastSeen = cycleTimeBucket(1200, "2006-01-02T15:04:05Z07:00") -%}
+        {{- replaceAll(trimSuffix(docs, "\n---\n"), "HAPTIC_INCREMENTAL_EVENT_LAST_TIMESTAMP", lastSeen) -}}
+      {%- end -%}
 
 validationTests:
+  test-ingress-host-map-incremental-order-and-duplicates:
+    description: Cold incremental host-map rendering keeps resource and rule order without removing duplicate host lines.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {name: z-last, namespace: default}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: duplicate.example.com
+                http: {paths: []}
+              - host: last.example.com
+                http: {paths: []}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {name: a-first, namespace: default}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: second.example.com
+                http: {paths: []}
+              - host: duplicate.example.com
+                http: {paths: []}
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: map:host.map, pattern: '(?m)^# ingress/map-host-ingress$', expected: "1"}
+      - {type: match_count, target: map:host.map, pattern: '(?m)^duplicate\.example\.com duplicate\.example\.com$', expected: "2"}
+      - type: contains
+        target: map:host.map
+        pattern: '(?m)^# ingress/map-host-ingress$\n\n# Ingress: default/a-first \(2 hosts\)$\n\nsecond\.example\.com second\.example\.com$\n\nduplicate\.example\.com duplicate\.example\.com$\n\n# Ingress: default/z-last \(2 hosts\)$\n\nduplicate\.example\.com duplicate\.example\.com$\n\nlast\.example\.com last\.example\.com$'
+
+  test-ingress-host-map-incremental-empty:
+    description: An empty Ingress store emits no Ingress host-map header.
+    fixtures: {}
+    assertions:
+      - {type: not_contains, target: map:host.map, pattern: '(?m)^# ingress/map-host-ingress$'}
+
+  test-ingress-backend-service-map-incremental-order-and-dedup:
+    description: Incremental backend-service entries retain resource order and deduplicate repeated backends.
+    fixtures:
+      services:
+        - {apiVersion: v1, kind: Service, metadata: {namespace: default, name: alpha}, spec: {ports: [{name: http, port: 80}]}}
+        - {apiVersion: v1, kind: Service, metadata: {namespace: default, name: fallback}, spec: {ports: [{name: alternate, port: 8080}]}}
+        - {apiVersion: v1, kind: Service, metadata: {namespace: default, name: zeta}, spec: {ports: [{name: web, port: 80}]}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: z-last}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: z.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: zeta, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: a-first}
+          spec:
+            ingressClassName: haproxy
+            defaultBackend: {service: {name: fallback, port: {number: 8080}}}
+            rules:
+              - host: a.example.com
+                http:
+                  paths:
+                    - {path: /one, pathType: Prefix, backend: {service: {name: alpha, port: {number: 80}}}}
+                    - {path: /two, pathType: Prefix, backend: {service: {name: alpha, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:backend-service.map
+        pattern: '(?m)^default_a-first_svc_alpha_http default/alpha\ndefault_a-first_svc_fallback_alternate default/fallback\ndefault_z-last_svc_zeta_web default/zeta$'
+      - {type: match_count, target: map:backend-service.map, pattern: '(?m)^default_a-first_svc_alpha_http ', expected: "1"}
+
   test-render-plan-many-backends-leave-no-tokens:
     description: >-
       Every generated backend is registered and spliced back in place: the

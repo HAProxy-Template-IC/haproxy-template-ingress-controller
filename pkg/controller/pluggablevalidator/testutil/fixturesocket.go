@@ -74,6 +74,14 @@ func NewFixtureServer(t *testing.T) *FixtureServer {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	socketPath := filepath.Join(dir, "v.sock")
 
+	return NewFixtureServerAtPath(t, socketPath)
+}
+
+// NewFixtureServerAtPath starts a fixture server at socketPath. It is useful
+// for tests that stop one validator runtime and start another at the same
+// configured path.
+func NewFixtureServerAtPath(t *testing.T, socketPath string) *FixtureServer {
+	t.Helper()
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen unix %s: %v", socketPath, err)

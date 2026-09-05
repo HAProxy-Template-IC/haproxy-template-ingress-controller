@@ -34,15 +34,22 @@ func TestRenderGateRefusal_StaleEpochStandsTheRevertDown(t *testing.T) {
 	endpoint := agentEndpoint(agent, "haproxy-0")
 
 	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
-	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
-	component.SetValidatedPlan(plan1.ID)
+	initial := deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	validated, err := initial.RenderOccurrence()
+	assert.NoError(t, err)
+	component.SetValidatedOccurrence(validated)
 	deployTo(t, component, bus, plan1, config1, aux1, events.TriggerReasonDriftPrevention, endpoint)
 
 	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
-	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	refusedCompletion := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	refusedOccurrence, err := refusedCompletion.RenderOccurrence()
+	assert.NoError(t, err)
 
 	agent.ConflictOnce(conflictStaleEpoch)
-	outcome := component.revertPod(context.Background(), &endpoint, plan2.ID,
+	outcome := component.revertPodRender(context.Background(), &endpoint, refusedRender{
+		occurrence: refusedOccurrence,
+		planID:     plan2.ID,
+	},
 		api.Token{LeaderEpoch: component.leaderEpoch(), RenderSeq: component.nextRenderSeq()})
 
 	assert.Equal(t, revertStoodDown, outcome)

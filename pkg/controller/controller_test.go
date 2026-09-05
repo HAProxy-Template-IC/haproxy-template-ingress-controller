@@ -19,8 +19,11 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -231,4 +234,47 @@ func TestComponentSetup_AddCleanupNilSafe(t *testing.T) {
 	setup := &componentSetup{}
 	setup.AddCleanup(nil)
 	setup.RunCleanups() // must not panic
+}
+
+// A reinit re-runs the load gate under ReinitGraceWindow, not the startup
+// probe: a grace shorter than the gate's budget lets liveness restart an
+// advancing controller.
+func TestReinitGraceWindowCoversLoadGate(t *testing.T) {
+	if ReinitGraceWindow <= initialValidationTestsRunTimeout {
+		t.Fatalf("ReinitGraceWindow (%s) must exceed initialValidationTestsRunTimeout (%s)",
+			ReinitGraceWindow, initialValidationTestsRunTimeout)
+	}
+}
+
+// A reinit swaps the metrics registry, so the counter is born at zero on every
+// rebuild. It must therefore publish the running total: incrementing by one
+// makes every sample read 1, and any two samples differ by nothing.
+func TestRecordReinitializationsSurvivesRegistrySwap(t *testing.T) {
+	read := func(m *metrics.Metrics) float64 {
+		var out dto.Metric
+		if err := m.ControllerReinitializationsTotal.(prometheus.Metric).Write(&out); err != nil {
+			t.Fatalf("read counter: %v", err)
+		}
+		return out.GetCounter().GetValue()
+	}
+
+	// Each iteration gets a fresh registry, exactly as a reinit does.
+	first := metrics.NewMetrics(prometheus.NewRegistry())
+	recordReinitializations(first, 2)
+	if got := read(first); got != 1 {
+		t.Fatalf("after the first rebuild: got %v, want 1", got)
+	}
+
+	second := metrics.NewMetrics(prometheus.NewRegistry())
+	recordReinitializations(second, 4)
+	if got := read(second); got != 3 {
+		t.Fatalf("after the third rebuild: got %v, want 3 (a delta of 2 from the previous sample)", got)
+	}
+
+	// The very first iteration is not a rebuild.
+	initial := metrics.NewMetrics(prometheus.NewRegistry())
+	recordReinitializations(initial, 1)
+	if got := read(initial); got != 0 {
+		t.Fatalf("first iteration: got %v, want 0", got)
+	}
 }

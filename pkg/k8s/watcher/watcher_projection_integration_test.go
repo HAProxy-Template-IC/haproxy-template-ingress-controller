@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 // A CachedStore (on-demand) watcher must install the body-stripping projection
@@ -59,6 +60,48 @@ func TestNew_CachedStore_InformerProjectsButServesFullBody(t *testing.T) {
 	blob, found, _ := unstructured.NestedString(gotMap, "data", "blob")
 	assert.True(t, found, "store read must serve the full body via live GET")
 	assert.Equal(t, "HEAVYVALUE", blob)
+}
+
+func TestNewCachedStoreSnapshotKeepsIgnoredResourceVersionAsInternalProof(t *testing.T) {
+	cm := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"namespace":       "default",
+			"name":            "proof",
+			"resourceVersion": "17",
+		},
+		"data": map[string]any{"blob": "value"},
+	}}
+	cfg := validWatcherConfig()
+	cfg.StoreType = types.StoreTypeCached
+	cfg.CacheTTL = time.Minute
+	cfg.IgnoreFields = []string{"metadata.resourceVersion"}
+	w, err := New(cfg, newTestClient(t, cm), slog.Default())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _ = w.Start(ctx) }()
+	_, err = w.WaitForSync(ctx)
+	require.NoError(t, err)
+
+	provider, ok := w.Store().(stores.SnapshotProvider)
+	require.True(t, ok)
+	snapshot, err := provider.Pin()
+	require.NoError(t, err)
+	items, err := snapshot.Get("default", "proof")
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	resource, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	blob, found, err := unstructured.NestedString(resource, "data", "blob")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "value", blob)
+	_, found, err = unstructured.NestedString(resource, "metadata", "resourceVersion")
+	require.NoError(t, err)
+	require.False(t, found)
 }
 
 // Regression guard for the generic case the bundled chart doesn't exercise: a

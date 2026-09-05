@@ -26,6 +26,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
@@ -127,9 +128,28 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 	renderCtx := bctx.Context
 
 	mergeTestExtraContext(renderCtx, testExtraContext)
+	renderMode := rendercontext.RenderModeReconcile
+	if renderCtx["renderMode"] == string(rendercontext.RenderModeAdmission) {
+		renderMode = rendercontext.RenderModeAdmission
+	}
+	coldRender, err := renderer.NewColdIncrementalRender(ctx, &renderer.ColdIncrementalRenderConfig{
+		Config:             r.config,
+		Engine:             engine,
+		StoreProvider:      stores.NewRealStoreProvider(storeMap),
+		Mode:               renderMode,
+		TemplateContext:    renderCtx,
+		ResourceErrors:     bctx.ResourceErrors,
+		Logger:             r.logger,
+		TypedResourceTypes: r.typedResourceTypes,
+	})
+	if err != nil {
+		return RenderOutput{}, fmt.Errorf("starting cold incremental render: %w", err)
+	}
+	ctx = coldRender.Context(ctx)
 
 	// Render main HAProxy configuration using worker-specific engine
-	mainRender, err := rendercontext.RenderMain(ctx, engine, renderCtx, bctx.PlanRegistry, r.profileIncludes)
+	mainCtx := templating.WithIncrementalScope(ctx, names.MainTemplateName)
+	mainRender, err := rendercontext.RenderMain(mainCtx, engine, renderCtx, bctx.PlanRegistry, r.profileIncludes)
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
 		return RenderOutput{}, resourceErr
 	}
@@ -153,7 +173,8 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 	// them alongside haproxy.cfg / map files.
 	k8sResources := make(map[string]string, len(r.config.K8sResources))
 	for name := range r.config.K8sResources {
-		rendered, err := engine.Render(ctx, name, renderCtx)
+		scopedCtx := templating.WithIncrementalScope(ctx, name)
+		rendered, err := engine.Render(scopedCtx, name, renderCtx)
 		if resourceErr := bctx.Err(ctx); resourceErr != nil {
 			return RenderOutput{}, resourceErr
 		}
@@ -161,6 +182,9 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 			return RenderOutput{}, fmt.Errorf("rendering k8sResources %s: %w", name, err)
 		}
 		k8sResources[name] = rendered
+	}
+	if err := coldRender.ValidateIncrementalCalls(); err != nil {
+		return RenderOutput{}, err
 	}
 
 	statusPatches, err := collectStatusPatches(renderCtx)
@@ -318,7 +342,12 @@ func collectStatusPatches(renderCtx map[string]any) (map[string]string, error) {
 	if !ok || collector == nil {
 		return out, nil
 	}
-	for _, patch := range collector.Patches() {
+	patches, err := collector.Patches()
+	if err != nil {
+		return nil, fmt.Errorf("snapshotting status patches: %w", err)
+	}
+	for index := range patches {
+		patch := &patches[index]
 		keyPrefix := patch.Namespace + "/" + patch.Name
 		for phase, payload := range patch.Variants {
 			bytes, err := json.Marshal(payload)
@@ -400,7 +429,8 @@ func (r *Runner) renderAuxiliaryFiles(ctx context.Context, engine templating.Eng
 
 	// Render map files using worker-specific engine
 	for name := range r.config.Maps {
-		rendered, err := engine.Render(ctx, name, renderCtx)
+		scopedCtx := templating.WithIncrementalScope(ctx, name)
+		rendered, err := engine.Render(scopedCtx, name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("rendering map file %s: %w", name, err)
 		}
@@ -413,7 +443,8 @@ func (r *Runner) renderAuxiliaryFiles(ctx context.Context, engine templating.Eng
 
 	// Render general files using worker-specific engine
 	for name := range r.config.Files {
-		rendered, err := engine.Render(ctx, name, renderCtx)
+		scopedCtx := templating.WithIncrementalScope(ctx, name)
+		rendered, err := engine.Render(scopedCtx, name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("rendering general file %s: %w", name, err)
 		}
@@ -427,7 +458,8 @@ func (r *Runner) renderAuxiliaryFiles(ctx context.Context, engine templating.Eng
 
 	// Render SSL certificates using worker-specific engine
 	for name := range r.config.SSLCertificates {
-		rendered, err := engine.Render(ctx, name, renderCtx)
+		scopedCtx := templating.WithIncrementalScope(ctx, name)
+		rendered, err := engine.Render(scopedCtx, name, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("rendering SSL certificate %s: %w", name, err)
 		}

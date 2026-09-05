@@ -23,26 +23,17 @@
 templateSnippets:
 
   # ==========================================================================
-  # util — resolve + cache the JWT public key per Secret; register the PEM file.
+  # util — resolve the JWT public key per Secret; register the PEM file.
   # ==========================================================================
   util-haptic-jwt-key:
     template: |
       {%- macro ResolveHapticJWTKey(secretNs string, secretName string, ingressKey string, result map[string]any) %}
         {%%
-          var cacheKey = "haptic_jwt_key:" + secretNs + "/" + secretName
-          var cached, _ = shared.ComputeIfAbsent(cacheKey, func() any {
-            var secret = resources.secrets.GetSingle(secretNs, secretName)
-            if secret == nil {
-              return map[string]any{"found": false, "pubkey": ""}
-            }
-            var pubkey = secret.Data["pubkey.pem"] | b64decode() | tostring()
-            return map[string]any{"found": true, "pubkey": pubkey}
-          })
-          var c = cached.(map[string]any)
-          result["found"] = c["found"]
+          var secret = resources.secrets.GetSingle(secretNs, secretName)
+          result["found"] = secret != nil
           result["filename"] = "haptic-jwt-" + secretNs + "-" + secretName + ".pem"
-          if c["found"] == true {
-            var pubkey = tostring(c["pubkey"])
+          if secret != nil {
+            var pubkey = secret.Data["pubkey.pem"] | b64decode() | tostring()
             if strip(pubkey) == "" {
               fail("Secret '" + secretNs + "/" + secretName + "' referenced by 'haproxy-haptic.org/jwt-secret' on Ingress '" + ingressKey + "' has an empty or missing 'pubkey.pem' data key.")
             }
@@ -55,10 +46,28 @@ templateSnippets:
   # Register the public-key PEM file once per Secret (global side-effect).
   # ==========================================================================
   features-860-haptic-jwt:
-    template: |
-      {# HAPTIC JWT — register the verification public key (one PEM per Secret). #}
+    requires: [ingresses]
+    template: |-
+      {%- for _, file := range incremental_values("haptic-jwt-files", "files") -%}
+        {%- var record = file.(map[string]any) -%}
+        {%- var filename = tostring(record["filename"]) -%}
+        {%- var _, regErr = fileRegistry.Register("file", filename, tostring(record["content"])) -%}
+        {%- if regErr != nil -%}{{ fail("failed to register JWT public key " + filename + ": " + tostring(regErr)) }}{%- end -%}
+      {%- end -%}
+      {{- render "haptic-jwt-file-publications" -}}
+
+  haptic-jwt-file-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/jwt-secret']"]
+      group: haptic-jwt-files
+      effects: [publishValue]
+    template: |-
       {%- import "util-haptic-jwt-key" for ResolveHapticJWTKey -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var key = ns + "/" + ingress.Metadata.Name %}
         {%- var jwtSecret = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-secret"] %}
@@ -74,10 +83,7 @@ templateSnippets:
           {{- ResolveHapticJWTKey(secretNs, secretName, key, info) -}}
           {%- if info["found"] == true %}
             {%- var filename = tostring(info["filename"]) %}
-            {%- if first_seen("haptic_jwt_file", filename) %}
-              {%- var _, regErr = fileRegistry.Register("file", filename, tostring(info["pubkey"])) %}
-              {%- if regErr != nil %}{{ fail("failed to register JWT public key " + filename + ": " + tostring(regErr)) }}{%- end %}
-            {%- end %}
+            {{- shared.Publish("files", filename, map[string]any{"filename": filename, "content": tostring(info["pubkey"])}) -}}
           {%- end %}
         {%- end %}
       {%- end -%}
@@ -153,7 +159,7 @@ templateSnippets:
       http-request set-var(txn.denied_by) str(jwt_key_unavailable)
       http-request deny deny_status 503
           {%- else %}
-            {%- var pemPath, _ = pathResolver.GetPath(tostring(info["filename"]), "file") %}
+            {%- var pemPath = FilePath("file", tostring(info["filename"])) %}
             {#- Anti-spoof: strip any client-supplied forward-claim headers first. -#}
             {%- var fwd = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-forward-claims"] %}
             {%- if fwd != "" %}

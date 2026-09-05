@@ -220,7 +220,7 @@ const (
 	// Status patch functions.
 
 	// FuncStatusPatch registers a status patch for a Kubernetes resource during rendering.
-	// Syntax: statusPatch(namespace, name, apiVersion, kind, variants).
+	// Syntax: statusPatch(resource, variants).
 	FuncStatusPatch = "statusPatch"
 
 	// FuncRecordEvent registers a Kubernetes Warning Event to emit against a
@@ -247,6 +247,12 @@ const (
 	//
 	// Syntax: transitionTime(existingConditions, conditionType, newStatus).
 	FuncTransitionTime = "transitionTime"
+
+	// FuncCycleTimeBucket returns the current UTC time bucket in a caller-supplied layout.
+	FuncCycleTimeBucket = "cycleTimeBucket"
+
+	// FuncCycleRandomBytes returns random bytes owned by the current render attempt.
+	FuncCycleRandomBytes = "cycleRandomBytes"
 
 	// FilterToJSON serializes any value to a JSON string.
 	// Syntax: toJSON(value) or value | toJSON().
@@ -281,6 +287,32 @@ const (
 	// FuncJSONPathSet writes a concrete JSONPath into a resource item in place.
 	// Syntax: jsonpathSet(item, path, value) bool.
 	FuncJSONPathSet = "jsonpathSet"
+
+	// FuncDeriveResource publishes an immutable transformed resource value.
+	// Syntax: deriveResource(resource, item, path, value) any.
+	FuncDeriveResource = "deriveResource"
+
+	// FuncIncrementalRender renders a keyed component snippet.
+	FuncIncrementalRender = "incremental_render"
+
+	// FuncIncrementalValues returns winning immutable values for a component group cell.
+	FuncIncrementalValues = "incremental_values"
+
+	// FuncIncrementalRankedFragments joins ranked string publications in rank order.
+	FuncIncrementalRankedFragments = "incremental_ranked_fragments"
+
+	// FuncIncrementalRankedFragmentsJoin joins ranked string publications with a delimiter.
+	FuncIncrementalRankedFragmentsJoin = "incremental_ranked_fragments_join"
+
+	// FuncIncrementalRankedTextFragment retains ranked publications in direct output.
+	FuncIncrementalRankedTextFragment = "incremental_ranked_text_fragment"
+
+	// FuncIncrementalRankedTextFragmentJoin retains delimiter-joined publications in direct output.
+	FuncIncrementalRankedTextFragmentJoin = "incremental_ranked_text_fragment_join"
+
+	// FuncIncrementalRankedFragmentBytes reports a ranked cell's joined length
+	// without materialising it, so a template can test emptiness cheaply.
+	FuncIncrementalRankedFragmentBytes = "incremental_ranked_fragment_bytes"
 
 	// Collection pipeline helpers (ADR-0018). Each preserves its input's
 	// element type, so a chain over a typed watched resource keeps typed

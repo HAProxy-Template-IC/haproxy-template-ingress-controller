@@ -100,21 +100,12 @@ templateSnippets:
       {%- var mtlsBlocked, _ = gf["mtlsBlockedListeners"].(map[string]any) %}
       {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
 
-      {#- Typed iteration via `resources.gateways.List()`: the closure
-          returns a typed `[]*Gateway`, so the loop variable `gw` is
-          `*Gateway`. The existing `any`-typed helper macros
-          (ResourceNamespace, ResourceName, ListenerName, ...) receive
-          it transparently and dig() inside the macros navigates the
-          typed struct the same way it navigates an untyped map.
-          Contract pinned by
-          pkg/templating/scriggo_typed_iteration_test.go. -#}
-        {%- for _, gw := range resources.gateways.List() %}
-          {%- var gwNs = gw.Metadata.Namespace %}
-          {%- var gwName = gw.Metadata.Name %}
-          {%- for _, listener := range gw.Spec.Listeners %}
-            {%- if listener.Protocol == "HTTPS" %}
-              {%- var lName = listener.Name %}
-              {%- var lHostname = listener.Hostname %}
+      {%- for _, listener := range incremental_values("gateway-listener-state", "listeners") %}
+            {%- if dig_string(listener, "", "protocol") == "HTTPS" %}
+              {%- var gwNs = dig_string(listener, "", "gatewayNamespace") %}
+              {%- var gwName = dig_string(listener, "", "gatewayName") %}
+              {%- var lName = dig_string(listener, "", "name") %}
+              {%- var lHostname = dig_string(listener, "", "hostname") %}
               {%- var listenerKey = ListenerKey(gwNs, gwName, lName) %}
               {%- var isBlocked = mtlsBlocked[listenerKey] != nil %}
 
@@ -143,5 +134,4 @@ templateSnippets:
                 {%- end %}
               {%- end %}
             {%- end %}
-          {%- end %}
-        {%- end %}
+      {%- end %}

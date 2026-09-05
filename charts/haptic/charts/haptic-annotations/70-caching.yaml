@@ -60,8 +60,10 @@ templateSnippets:
   # resource_id (ns/name), which base routing sets before frontend-filters.
   # ==========================================================================
   features-870-haptic-cache-maps:
+    requires: [ingresses]
     template: |
       {# HAPTIC shared cache — build the cache-enable / ttl / skip-ct / maxsize maps. #}
+      {{- render "haptic-cache-record-publications" -}}
       {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
         {%- var vSvc = extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring() %}
@@ -79,9 +81,9 @@ templateSnippets:
         {%- var privateLines = []string{} %}
         {%- var negLines = []string{} %}
         {%- var authKeyedLines = []string{} %}
-        {%- for _, ingress := range resources.ingresses.List() %}
-          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
-            {%- var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+        {%- for _, recordAny := range incremental_values("haptic-cache-records", "records") %}
+            {%- var record = recordAny.(map[string]any) %}
+            {%- var rid = tostring(record["id"]) %}
             {#- A cache-enabled route is switched to `backend varnish_cache` in the
                 frontend, so the application backend that holds an auth deny is
                 never entered on the client leg — an uncredentialed caller would
@@ -102,7 +104,7 @@ templateSnippets:
                 cannot see. A fourth credential kind needs its own client-leg
                 snippet only if it is in that second group. -#}
             {%- enLines = append(enLines, rid + " 1") %}
-            {%- var ttl = ingress.Metadata.Annotations["haproxy-haptic.org/cache-ttl"] %}
+            {%- var ttl = tostring(record["ttl"]) %}
             {%- if ttl != "" %}
               {#- Validate the raw string, not toint(ttl): toint uses strconv.Atoi
                   (all-or-nothing), so a unit-suffixed value like "60s" parses to 0,
@@ -113,7 +115,7 @@ templateSnippets:
               {%- if !regex_search(ttl, "^([0-9]+|auto)$") %}{{ fail("Invalid value '" + ttl + "' for annotation 'haproxy-haptic.org/cache-ttl' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"60\" not \"60s\", or \"auto\" to follow the origin's Cache-Control.") }}{%- end %}
               {%- ttlLines = append(ttlLines, rid + " " + ttl) %}
             {%- end %}
-            {%- var skip = ingress.Metadata.Annotations["haproxy-haptic.org/cache-exclude-content-types"] %}
+            {%- var skip = tostring(record["excludeContentTypes"]) %}
             {%- if skip != "" %}
               {%- var toks = []string{} %}
               {%- for _, tok := range split(skip, ",") %}
@@ -125,7 +127,7 @@ templateSnippets:
               {%- end %}
               {%- if len(toks) > 0 %}{%- skipLines = append(skipLines, rid + " |" + join(toks, "|") + "|") %}{%- end %}
             {%- end %}
-            {%- var maxsz = ingress.Metadata.Annotations["haproxy-haptic.org/cache-max-object-size"] %}
+            {%- var maxsz = tostring(record["maxObjectSize"]) %}
             {%- if maxsz != "" %}
               {#- Same footgun as cache-ttl: validate the raw digits-only string
                   rather than leaning on toint()<=0 to reject unit suffixes. -#}
@@ -136,7 +138,7 @@ templateSnippets:
                 a cached 404 during a bad deploy pins the outage for its lifetime,
                 so it must be shortenable independently of the route's ordinary
                 TTL. Same digits-only rule as cache-ttl. -#}
-            {%- var negTtl = ingress.Metadata.Annotations["haproxy-haptic.org/cache-negative-ttl"] %}
+            {%- var negTtl = tostring(record["negativeTTL"]) %}
             {%- if negTtl != "" %}
               {%- if !regex_search(negTtl, "^[0-9]+$") %}{{ fail("Invalid value '" + negTtl + "' for annotation 'haproxy-haptic.org/cache-negative-ttl' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"30\" not \"30s\".") }}{%- end %}
               {%- negLines = append(negLines, rid + " " + negTtl) %}
@@ -144,9 +146,9 @@ templateSnippets:
             {#- Staleness windows. Same digits-only rule as cache-ttl and for the
                 same reason: the VCL builds a duration by appending "s", so a
                 unit-suffixed value yields 0s and silently disables the window. -#}
-            {%- var swr = ingress.Metadata.Annotations["haproxy-haptic.org/cache-stale-while-revalidate"] %}
+            {%- var swr = tostring(record["staleWhileRevalidate"]) %}
             {%- if swr != "" && !regex_search(swr, "^[0-9]+$") %}{{ fail("Invalid value '" + swr + "' for annotation 'haproxy-haptic.org/cache-stale-while-revalidate' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"30\" not \"30s\".") }}{%- end %}
-            {%- var sie = ingress.Metadata.Annotations["haproxy-haptic.org/cache-stale-if-error"] %}
+            {%- var sie = tostring(record["staleIfError"]) %}
             {%- if sie != "" && !regex_search(sie, "^[0-9]+$") %}{{ fail("Invalid value '" + sie + "' for annotation 'haproxy-haptic.org/cache-stale-if-error' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"300\" not \"5m\".") }}{%- end %}
             {#- Grace covers both stale windows; SWR marks the proactive interval. -#}
             {%- if swr != "" || sie != "" %}
@@ -156,7 +158,7 @@ templateSnippets:
               {%- swrLines = append(swrLines, rid + " " + tostring(toint(swr))) %}
             {%- end %}
             {%- if sie != "" %}{%- sieLines = append(sieLines, rid + " 1") %}{%- end %}
-            {%- var keep = ingress.Metadata.Annotations["haproxy-haptic.org/cache-revalidate"] %}
+            {%- var keep = tostring(record["revalidate"]) %}
             {%- if keep != "" %}
               {%- if !regex_search(keep, "^[0-9]+$") %}{{ fail("Invalid value '" + keep + "' for annotation 'haproxy-haptic.org/cache-revalidate' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"600\" not \"10m\".") }}{%- end %}
               {%- keepLines = append(keepLines, rid + " " + keep) %}
@@ -184,10 +186,10 @@ templateSnippets:
             {# A client-certificate DN is per-caller and no downstream cache can key
                 on it, so a route forwarding one is private the same way a
                 consumer-keyed route is. #}
-            {%- if ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true" %}
+            {%- if tostring(record["authTLSCertHeader"]) == "true" %}
               {%- privateLines = append(privateLines, rid + " 1") %}
             {%- end %}
-            {%- var ckeyForVary = ingress.Metadata.Annotations["haproxy-haptic.org/cache-key"] %}
+            {%- var ckeyForVary = tostring(record["cacheKey"]) %}
             {%- if ckeyForVary != "" %}
               {%- var varyHdrs = []any{} %}
               {%- var needPrivate = false %}
@@ -220,12 +222,11 @@ templateSnippets:
                 {%- if strip(comp) == "consumer" %}{%- authKeyedLines = append(authKeyedLines, rid + " 1") %}{%- break %}{%- end %}
               {%- end %}
             {%- end %}
-            {%- var stripCookie = ingress.Metadata.Annotations["haproxy-haptic.org/cache-strip-set-cookie"] %}
+            {%- var stripCookie = tostring(record["stripSetCookie"]) %}
             {%- if stripCookie != "" %}
               {%- if stripCookie != "true" && stripCookie != "false" %}{{ fail("Invalid value '" + stripCookie + "' for annotation 'haproxy-haptic.org/cache-strip-set-cookie' on Ingress '" + rid + "'. Must be \"true\" or \"false\".") }}{%- end %}
               {%- if stripCookie == "true" %}{%- stripLines = append(stripLines, rid + " 1") %}{%- end %}
             {%- end %}
-          {%- end %}
         {%- end %}
         {%- var _, e1 = fileRegistry.Register("map", "haptic-cache-enable.map", join(enLines, "\n") + "\n") %}
         {%- if e1 != nil %}{{ fail("failed to register haptic-cache-enable.map: " + tostring(e1)) }}{%- end %}
@@ -255,6 +256,44 @@ templateSnippets:
         {%- if e12 != nil %}{{ fail("failed to register haptic-cache-authkey.map: " + tostring(e12)) }}{%- end %}
       {%- end %}
 
+  haptic-cache-record-publications:
+    requires: [ingresses]
+    incremental:
+      bindingsTemplate: '{{- toJSON(map[string]any{"ingresses": map[string]any{"enabled": extraContext | dig("cache", "varnish", "enabled") | fallback("false")}}) -}}'
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/cache-enable']"
+        - "metadata.annotations['haproxy-haptic.org/cache-ttl']"
+        - "metadata.annotations['haproxy-haptic.org/cache-exclude-content-types']"
+        - "metadata.annotations['haproxy-haptic.org/cache-max-object-size']"
+        - "metadata.annotations['haproxy-haptic.org/cache-negative-ttl']"
+        - "metadata.annotations['haproxy-haptic.org/cache-stale-while-revalidate']"
+        - "metadata.annotations['haproxy-haptic.org/cache-stale-if-error']"
+        - "metadata.annotations['haproxy-haptic.org/cache-revalidate']"
+        - "metadata.annotations['haproxy-haptic.org/auth-tls-cert-header']"
+        - "metadata.annotations['haproxy-haptic.org/cache-key']"
+        - "metadata.annotations['haproxy-haptic.org/cache-strip-set-cookie']"
+      group: haptic-cache-records
+      effects: [publishValue]
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if tostring(props["enabled"]) == "true" && ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" -%}
+        {%- var id = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {{- shared.Publish("records", id, map[string]any{
+          "id": id,
+          "ttl": ingress.Metadata.Annotations["haproxy-haptic.org/cache-ttl"],
+          "excludeContentTypes": ingress.Metadata.Annotations["haproxy-haptic.org/cache-exclude-content-types"],
+          "maxObjectSize": ingress.Metadata.Annotations["haproxy-haptic.org/cache-max-object-size"],
+          "negativeTTL": ingress.Metadata.Annotations["haproxy-haptic.org/cache-negative-ttl"],
+          "staleWhileRevalidate": ingress.Metadata.Annotations["haproxy-haptic.org/cache-stale-while-revalidate"],
+          "staleIfError": ingress.Metadata.Annotations["haproxy-haptic.org/cache-stale-if-error"],
+          "revalidate": ingress.Metadata.Annotations["haproxy-haptic.org/cache-revalidate"],
+          "authTLSCertHeader": ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"],
+          "cacheKey": ingress.Metadata.Annotations["haproxy-haptic.org/cache-key"],
+          "stripSetCookie": ingress.Metadata.Annotations["haproxy-haptic.org/cache-strip-set-cookie"],
+        }) -}}
+      {%- end -%}
+
   # ==========================================================================
   # Frontend routing: excluded paths go straight to the app; everything else on
   # a cache-enabled route goes to varnish_cache. Runs in every client frontend
@@ -263,10 +302,10 @@ templateSnippets:
   # frontends — Varnish fetches the dedicated backend-fetch port instead.
   # ==========================================================================
   frontend-filters-865-haptic-cache-route:
+    requires: [ingresses]
     template: |
       {# HAPTIC shared cache — route cache-eligible requests to varnish_cache. #}
       {%- import "util-haptic-cache-private-request-header-deletes" for HapticCachePrivateRequestHeaderDeletes -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
         {%- var enMap, _ = pathResolver.GetPath("haptic-cache-enable.map", "map") %}
@@ -279,30 +318,50 @@ templateSnippets:
       http-after-response replace-value Cache-Control (?i)^[[:space:]]*public[[:space:]]*$ private if { var(txn.resource_id),map({{ privateMap }}) -m found }
       http-after-response add-header Cache-Control private if { var(txn.resource_id),map({{ privateMap }}) -m found }
       http-request set-var(txn.cache_eligible) bool(true) if { var(txn.resource_id),map({{ enMap }}) -m found } { method GET HEAD }
-        {%- for _, ingress := range resources.ingresses.List() %}
-          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
-            {%- var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-            {%- var excl = ingress.Metadata.Annotations["haproxy-haptic.org/cache-exclude-paths"] %}
-            {%- if excl != "" %}
-              {%- var paths = []string{} %}
-              {%- for _, tok := range split(excl, ",") %}
-                {%- var p = strip(tok) %}
-                {%- if p != "" %}
-                  {%- if !regex_search(p, "^/[!-~]*$") %}{{ fail("Invalid path '" + p + "' in 'haproxy-haptic.org/cache-exclude-paths' on Ingress '" + rid + "'. Must start with '/' and contain no spaces.") }}{%- end %}
-                  {%- paths = append(paths, p) %}
-                {%- end %}
-              {%- end %}
-              {%- if len(paths) > 0 %}
-      http-request unset-var(txn.cache_eligible) if { var(txn.resource_id) -m str {{ rid }} } { path_beg {{ join(paths, " ") }} }
-      use_backend %[var(txn.backend_name)] if { var(txn.resource_id) -m str {{ rid }} } { path_beg {{ join(paths, " ") }} }
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
+      {%- var routeFragments = incremental_values("features-900-haptic-fragment-865-cache-route-items", "fragments") -%}
+      {%- for _, fragment := range routeFragments -%}{{- tostring(fragment) -}}{{ "\n" }}{%- end -%}
+      {%- if len(routeFragments) == 0 -%}{{ "\n" }}{%- end -%}
       acl haptic_varnish_available srv_is_up(varnish_cache/CACHE_DISPATCH)
       http-request set-var(txn.cache_degraded) str(1) if { var(txn.cache_eligible) -m bool } !haptic_varnish_available
       use_backend varnish_cache if { var(txn.cache_eligible) -m bool } haptic_varnish_available
       {%- end %}
+
+  features-900-haptic-fragment-865-cache-route-items:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/cache-enable']"
+        - "metadata.annotations['haproxy-haptic.org/cache-exclude-paths']"
+      effects: [publishValue]
+    template: |-
+      {%- var fragment = render "util-haptic-fragment-body-865-cache-route-items" -%}
+      {%- if fragment != "" -%}
+        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- end -%}
+
+  util-haptic-fragment-body-865-cache-route-items:
+    template: |-
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" -%}
+        {%- var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var excl = ingress.Metadata.Annotations["haproxy-haptic.org/cache-exclude-paths"] -%}
+        {%- if excl != "" -%}
+          {%- var paths = []string{} -%}
+          {%- for _, tok := range split(excl, ",") -%}
+            {%- var path = strip(tok) -%}
+            {%- if path != "" -%}
+              {%- if !regex_search(path, "^/[!-~]*$") -%}{{ fail("Invalid path '" + path + "' in 'haproxy-haptic.org/cache-exclude-paths' on Ingress '" + rid + "'. Must start with '/' and contain no spaces.") }}{%- end -%}
+              {%- paths = append(paths, path) -%}
+            {%- end -%}
+          {%- end -%}
+          {%- if len(paths) > 0 %}
+      http-request unset-var(txn.cache_eligible) if { var(txn.resource_id) -m str {{ rid }} } { path_beg {{ join(paths, " ") }} }
+      use_backend %[var(txn.backend_name)] if { var(txn.resource_id) -m str {{ rid }} } { path_beg {{ join(paths, " ") }} }
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
 
   # ==========================================================================
   # The shared Varnish backend: consistent-hash sharding (bounded-load) over the
@@ -311,19 +370,60 @@ templateSnippets:
   # then set the per-route TTL / skip-ct / max-size (from maps) and the custom
   # cache key (per-route, dynamic value).
   # ==========================================================================
+  haptic-varnish-backend-publication:
+    requires: [services, endpoints]
+    incremental:
+      bindingsTemplate: |-
+        {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() -%}
+        {%- if enabled == "true" -%}
+          {%- var props = map[string]any{
+            "namespace": extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring(),
+            "serviceName": extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring(),
+            "servicePort": toint(extraContext | dig("cache", "varnish", "servicePort") | fallback("6081") | tostring()),
+          } -%}
+          {%- var serviceProps = map[string]any{} -%}
+          {%- var endpointProps = map[string]any{} -%}
+          {%- for key, value := range props -%}
+            {%- serviceProps[key] = value -%}
+            {%- endpointProps[key] = value -%}
+          {%- end -%}
+          {%- serviceProps["source"] = "services" -%}
+          {%- endpointProps["source"] = "endpoints" -%}
+          {{- toJSON(map[string]any{"services": serviceProps, "endpoints": endpointProps}) -}}
+        {%- else -%}
+          {}
+        {%- end -%}
+      group: haptic-varnish-backend
+      effects: [publishValue]
+    template: |-
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
+      {%- var namespace = tostring(props["namespace"]) -%}
+      {%- var serviceName = tostring(props["serviceName"]) -%}
+      {%- var itemNamespace = dig_string(item, "", "metadata", "namespace") -%}
+      {%- var itemName = dig_string(item, "", "metadata", "name") -%}
+      {%- var source = tostring(props["source"]) -%}
+      {%- var matches = source == "services" && itemNamespace == namespace && itemName == serviceName -%}
+      {%- if source == "endpoints" -%}
+        {%- matches = itemNamespace == namespace &&
+          dig_string(item, "", "metadata", "labels", "kubernetes.io/service-name") == serviceName -%}
+      {%- end -%}
+      {%- if matches -%}
+        {%- var result = BackendServersResult(serviceName, 0, toint(props["servicePort"]),
+          map[string]any{"flags": []any{}}, "", "varnish_cache_shards", namespace) -%}
+        {{- shared.Publish("backends", "varnish_cache_shards", result["servers"]) -}}
+      {%- end -%}
+
   backends-870-haptic-varnish-cache:
+    requires: [services, endpoints]
     template: |
       {# HAPTIC shared cache — the sharded varnish_cache backend + header injection. #}
       {%- import "util-backend" for Backend, AppendLines -%}
-      {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-haptic-cache-private-request-header-deletes" for HapticCachePrivateRequestHeaderDeletes -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
+        {{- render "haptic-varnish-backend-publication" -}}
         {%%
-          var vSvc = extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring()
-          var vNs = extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring()
-          var vPort = toint(extraContext | dig("cache", "varnish", "servicePort") | fallback("6081") | tostring())
           var loopbackPort = extraContext | dig("cache", "varnish", "loopbackPort") | fallback("8090") | tostring()
           var hbf = extraContext | dig("cache", "haproxy", "hashBalanceFactor") | fallback("150") | tostring()
           var responseTimeoutMs = toint(extraContext | dig("cache", "haproxy", "responseTimeoutMs") | fallback("2000"))
@@ -339,6 +439,11 @@ templateSnippets:
           var authMap, _ = pathResolver.GetPath("haptic-cache-authkey.map", "map")
           var initStateDown = ""
           var initStateUp = ""
+          var shardServers = []any{}
+          var shardPublications = incremental_values("haptic-varnish-backend", "backends")
+          if len(shardPublications) > 0 {
+            shardServers = shardPublications[0].([]any)
+          }
           if semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.1") {
             initStateDown = " init-state fully-down"
             initStateUp = " init-state fully-up"
@@ -387,11 +492,9 @@ templateSnippets:
           "http-request set-header X-Haptic-Cache-Auth 1 if { var(txn.resource_id),map(" + authMap +
             ") -m found } { var(txn.haptic_consumer),length gt 0 }")
 
-        for _, ingress := range resources.ingresses.List() {
-          if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] != "true" {
-            continue
-          }
-          var ckey = ingress.Metadata.Annotations["haproxy-haptic.org/cache-key"]
+        for _, recordAny := range incremental_values("haptic-cache-records", "records") {
+          var record = recordAny.(map[string]any)
+          var ckey = tostring(record["cacheKey"])
           // auth-tls-cert-header injects per-CALLER X-SSL-Client-* headers at band
           // 820, before the cache switch at 865. Those are an identity the app
           // personalises on, so they must be in the key — otherwise one
@@ -399,11 +502,11 @@ templateSnippets:
           // served to the next holder, or to an anonymous caller on :80 where
           // no header is injected at all. Folded in automatically rather than
           // left to the operator to remember.
-          var certHdr = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true"
+          var certHdr = tostring(record["authTLSCertHeader"]) == "true"
           if ckey == "" && !certHdr {
             continue
           }
-          var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name
+          var rid = tostring(record["id"])
           var parts = []string{}
           // Only walk the components when there ARE components: split("", ",")
           // yields one empty element, which the else branch below rightly
@@ -499,7 +602,7 @@ templateSnippets:
            "balance": "uri",
            "hashType": "consistent",
            "body": shardBody,
-           "servers": BackendServers(vSvc, 0, vPort, map[string]any{"flags": []any{}}, "", "varnish_cache_shards", vNs),
+           "servers": shardServers,
          }) }}
       {%- end %}
 
@@ -558,6 +661,10 @@ templateSnippets:
 # ============================================================================
 k8sResources:
   varnish-cache:
+    # The replica count is the size this starts at, not the size it keeps:
+    # HAProxy routes to whatever pods exist, so an operator draining it or an
+    # autoscaler owns the count from creation onward.
+    createOnlyFields: ["spec.replicas"]
     template: |
       {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}

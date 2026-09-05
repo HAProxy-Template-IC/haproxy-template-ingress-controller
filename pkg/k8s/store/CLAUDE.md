@@ -117,16 +117,16 @@ type MemoryStore struct {
 
 **Why this structure:**
 
-- `map[string][]any`: handles non-unique keys naturally; per-bucket slice is kept
-  sorted at insert time so reads can return a direct reference (zero-copy).
+- `map[string][]any`: handles non-unique keys naturally; per-bucket slices stay
+  sorted so authenticated pinned snapshots can borrow them without sorting.
 - `locations`: makes namespace/name the owner of exactly one bucket, so an
   `indexBy` change removes the old entry and inserts the new one atomically.
 - `sync.RWMutex`: multiple concurrent readers, single writer.
 
 There is **no** `allItems` cache or `dirty` flag — `List()` walks the data map
-on every call and sorts the aggregated result. The optimization is "buckets
-are pre-sorted, so per-bucket reads are zero-copy", not "the whole list is
-memoized".
+on every call and sorts the aggregated result. The optimization is
+"authenticated pinned reads borrow pre-sorted buckets", not "the whole list is
+memoized". Public reads detach resource graphs.
 
 ### CachedStore Design
 
@@ -284,7 +284,7 @@ func (s *CachedStore) fetchRefs(ctx context.Context, refs []resourceRef) ([]any,
         if err := ctx.Err(); err != nil {
             return nil, err
         }
-        resource, err := s.fetchResourceByRef(ctx, ref)
+        resource, err := s.fetchResourceByRef(ctx, &ref)
         if err != nil {
             if isNotFound(err) {
                 continue
@@ -586,14 +586,13 @@ func (s *CachedStore) Get(keys ...string) ([]any, error) {
 
 ## Performance Optimization
 
-### Zero-copy reads, not memoized List()
+### Authenticated pinned reads, not memoized List()
 
-Per-bucket slices are kept sorted at insert time, so `Get(exactKey)` returns
-the internal slice directly — callers must respect the Immutability Contract
-(no mutation, no append, no aliasing past the call). `List()` does **not**
-memoize across calls; it rebuilds the aggregate slice every time and sorts it
-by namespace/name. That's an explicit choice — the watcher path is the hot
-path, and it almost never calls `List()`.
+Public `Get` and `List` calls detach all supported mutable values. `Pin` returns
+a sealed built-in snapshot. The store package can retain borrowed graphs in an
+opaque projection because writes replace them; its public methods only encode or
+return detached values. Foreign snapshots don't receive this projection.
+`List()` still rebuilds and sorts its top-level slice.
 
 If you ever need a memoized `List()`, add the cache where the expensive
 computation actually lives (the consuming layer that repeatedly calls `List()`),

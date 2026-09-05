@@ -86,7 +86,8 @@ func TestCachedStoreStaleHitCannotRenewAcrossInformerMutation(t *testing.T) {
 				staleRef := store.matchingRefs(keys)[0]
 				applyCacheGenerationMutation(t, store, mutation, keys)
 
-				_, hit := store.loadCachedResource(staleRef)
+				_, hit, err := store.loadCachedResource(&staleRef)
+				require.NoError(t, err)
 				assert.False(t, hit)
 				assertCacheMatchesMutation(t, store, mutation, projected)
 			})
