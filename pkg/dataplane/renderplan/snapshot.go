@@ -16,7 +16,6 @@ package renderplan
 
 import (
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -645,7 +644,7 @@ func (s *Snapshot) deferredID() (string, error) {
 	hasher := xxhash.New()
 	err := writeCanonicalPlan(s.root, hasher)
 	if err == nil {
-		return fmt.Sprintf("%016x", hasher.Sum64()), nil
+		return FormatDigest(hasher.Sum64()), nil
 	}
 	if !errors.Is(err, errCanonicalOrderUnproven) {
 		return "", err

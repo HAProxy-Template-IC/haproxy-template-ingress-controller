@@ -75,6 +75,21 @@ type incrementalGroupMemoState struct {
 	published *iradix.Tree[*incrementalPublishedValuesMemo]
 	ranked    *iradix.Tree[*incrementalRankedFragmentsMemo]
 	status    *incrementalStatusPatchProjectionMemo
+	// decoded keeps each cell's last decoded winners by key. A cell whose
+	// winner set moved loses its published entry, but a winner whose encoded
+	// value did not change decodes to the same value, so the next read
+	// decodes only the winners that changed instead of the whole cell.
+	decoded *iradix.Tree[*incrementalDecodedWinners]
+}
+
+// incrementalDecodedWinners is one cell's decoded winners by winner key.
+type incrementalDecodedWinners struct {
+	values map[string]incrementalDecodedWinner
+}
+
+type incrementalDecodedWinner struct {
+	encoded string
+	value   any
 }
 
 type incrementalGroupMemo struct {
@@ -101,6 +116,7 @@ func newIncrementalGroupMemo() *incrementalGroupMemo {
 		generation: generation,
 		published:  iradix.New[*incrementalPublishedValuesMemo](),
 		ranked:     iradix.New[*incrementalRankedFragmentsMemo](),
+		decoded:    iradix.New[*incrementalDecodedWinners](),
 	}
 	state.seal = state
 	memo := &incrementalGroupMemo{
@@ -142,6 +158,7 @@ func (m *incrementalGroupMemo) fork() (*incrementalGroupMemo, error) {
 		published:  m.state.published,
 		ranked:     m.state.ranked,
 		status:     m.state.status,
+		decoded:    m.state.decoded,
 	}
 	state.seal = state
 	forked := &incrementalGroupMemo{
@@ -171,6 +188,38 @@ func (m *incrementalGroupMemo) invalidateCell(cell string) error {
 	m.state.published = published.Commit()
 	m.state.ranked = ranked.Commit()
 	return nil
+}
+
+// decodedWinners returns the cell's last decoded winners, or nil.
+func (m *incrementalGroupMemo) decodedWinners(cell string) map[string]incrementalDecodedWinner {
+	if !m.valid() || cell == "" {
+		return nil
+	}
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	if m.state.decoded == nil {
+		return nil
+	}
+	entry, exists := m.state.decoded.Root().Get(incrementalOrderedTuple(cell))
+	if !exists || entry == nil {
+		return nil
+	}
+	return entry.values
+}
+
+// storeDecodedWinners replaces the cell's decoded winners with the current set.
+func (m *incrementalGroupMemo) storeDecodedWinners(cell string, values map[string]incrementalDecodedWinner) {
+	if !m.valid() || cell == "" {
+		return
+	}
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	if m.state.decoded == nil {
+		m.state.decoded = iradix.New[*incrementalDecodedWinners]()
+	}
+	txn := m.state.decoded.Txn()
+	txn.Insert(incrementalOrderedTuple(cell), &incrementalDecodedWinners{values: values})
+	m.state.decoded = txn.Commit()
 }
 
 func (m *incrementalGroupMemo) publishedValues(
@@ -311,11 +360,18 @@ func (i *incrementalGroupIndex) certifiedPublishedValues(
 		return cached.values, cached.certificate, nil
 	}
 	values := make([]any, 0, projection.Len())
+	previous := i.memo.decodedWinners(cell)
+	decoded := make(map[string]incrementalDecodedWinner, projection.Len())
 	var decodeErr error
 	projection.Root().Walk(func(_ string, winner incrementalIndexedPublication) bool {
 		if winner.cell != cell {
 			decodeErr = errors.New("incremental publication winner projection has a mismatched cell")
 			return true
+		}
+		if known, exists := previous[winner.key]; exists && known.encoded == winner.value {
+			values = append(values, known.value)
+			decoded[winner.key] = known
+			return false
 		}
 		value, err := decodeResourceValue([]byte(winner.value))
 		if err != nil {
@@ -323,11 +379,13 @@ func (i *incrementalGroupIndex) certifiedPublishedValues(
 			return true
 		}
 		values = append(values, value)
+		decoded[winner.key] = incrementalDecodedWinner{encoded: winner.value, value: value}
 		return false
 	})
 	if decodeErr != nil {
 		return nil, nil, decodeErr
 	}
+	i.memo.storeDecodedWinners(cell, decoded)
 	entry := &incrementalPublishedValuesMemo{
 		authority: i.memo.authority,
 		key:       key,

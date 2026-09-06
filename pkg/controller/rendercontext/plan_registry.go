@@ -59,6 +59,7 @@ type PlanRegistry struct {
 	fragments           map[string]rendercontent.TextFragment
 	backends            map[string]renderplan.Backend
 	mapsMeta            map[string]bool
+	mapEntries          *MapEntriesMemo
 	assembled           []renderplan.Section
 	prepared            *PreparedPlanSnapshot
 	assembly            *renderAssemblyGeneration
@@ -405,6 +406,9 @@ func (r *PlanRegistry) plan(
 	return plan, identity, nil
 }
 
+// planBackends shares the sealed prepared snapshot's slices with the plan:
+// every consumer copies before it mutates (renderplan owns its entries, the
+// deploy side clones), and cloning here priced each render by the fleet size.
 func (r *PlanRegistry) planBackends() (map[string]renderplan.Backend, error) {
 	backends := maps.Clone(r.backends)
 	if r.prepared != nil {
@@ -413,10 +417,9 @@ func (r *PlanRegistry) planBackends() (map[string]renderplan.Backend, error) {
 		}
 		var conflictErr error
 		r.prepared.backends.Root().Walk(func(name []byte, prepared PreparedPlanBackend) bool {
-			detached := prepared.Clone()
-			backend := detached.Backend
-			backend.Body = normalizeStrings(detached.Body)
-			backend.Comments = normalizeStrings(detached.Comments)
+			backend := prepared.Backend
+			backend.Body = sharedStrings(prepared.Body)
+			backend.Comments = sharedStrings(prepared.Comments)
 			backend.ContentKnown = true
 			if existing, exists := backends[string(name)]; exists && !sameBackendRecordExact(&existing, &backend) {
 				conflictErr = fmt.Errorf("planRegistry.Backend: backend %q declared twice with different values", name)
@@ -494,10 +497,52 @@ func (r *PlanRegistry) mapFiles(contents map[string]string) map[string]renderpla
 		files[path] = renderplan.Map{
 			Path:    path,
 			Ordered: !declared || ordered,
-			Entries: renderplan.ParseMapEntries(content),
+			Entries: r.mapEntries.parse(path, content),
 		}
 	}
 	return files
+}
+
+// MapEntriesMemo reuses a map file's parsed entries across renders while its
+// text is unchanged. The entries are shared, never mutated: renderplan copies
+// them into its snapshot and the deploy side clones before editing.
+type MapEntriesMemo struct {
+	mu    sync.Mutex
+	files map[string]memoizedMapEntries
+}
+
+type memoizedMapEntries struct {
+	content string
+	entries []renderplan.Entry
+}
+
+// NewMapEntriesMemo creates an empty memo shared by one render service.
+func NewMapEntriesMemo() *MapEntriesMemo {
+	return &MapEntriesMemo{files: make(map[string]memoizedMapEntries)}
+}
+
+func (m *MapEntriesMemo) parse(path, content string) []renderplan.Entry {
+	if m == nil {
+		return renderplan.ParseMapEntries(content)
+	}
+	m.mu.Lock()
+	known, exists := m.files[path]
+	m.mu.Unlock()
+	if exists && known.content == content {
+		return known.entries
+	}
+	entries := renderplan.ParseMapEntries(content)
+	m.mu.Lock()
+	m.files[path] = memoizedMapEntries{content: content, entries: entries}
+	m.mu.Unlock()
+	return entries
+}
+
+func sharedStrings(source []string) []string {
+	if len(source) == 0 {
+		return nil
+	}
+	return source
 }
 
 func sortedFiles(files []renderplan.File) []renderplan.File {

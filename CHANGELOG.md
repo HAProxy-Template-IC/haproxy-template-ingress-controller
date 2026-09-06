@@ -72,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A warm reconcile render no longer re-parses every map file, clones every backend, walks the extra context for the immutability guard, or deep-compares the component binding plan by reflection on every change. On the bundled Gateway API library one changed HTTPRoute costs 18 ms instead of 23 ms at 300 routes and 34 ms instead of 42 ms at 3,000; an endpoint change costs 4.6 ms instead of 8.9 ms at 3,000 routes.
 - Controller binaries, development builds, and CI images now use Go 1.27.
 - **BREAKING**: Template string coercion accepts only nil, booleans, finite numbers, strings, and pointers to those scalars. Use field access or `toJSON` for composite values; implicit formatting no longer invokes custom Go methods or exposes pointer identity.
 - `statusPatch` now accepts the target resource object and binds cached patches to its UID and resource version; templates no longer restate the resource identity as separate arguments.

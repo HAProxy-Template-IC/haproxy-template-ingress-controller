@@ -65,6 +65,10 @@ type incrementalPublishedWinner struct {
 	instance incrementalGroupInstanceID
 	location []byte
 	value    incrementalPublishedValue
+	// decoded is the value's decoded form from the group memo when an
+	// earlier read decoded these same bytes, so a reader that must resolve
+	// the whole cell decodes only the winners that changed.
+	decoded any
 }
 
 type incrementalIndexedEvent struct {
@@ -1392,8 +1396,13 @@ func (i *incrementalGroupIndex) publishedWinners(cell string) ([]incrementalPubl
 		return nil, errors.New("incremental publication winner projection has an empty cell")
 	}
 	result := make([]incrementalPublishedWinner, 0, projection.Len())
+	decoded := i.memo.decodedWinners(cell)
 	projection.Root().Walk(func(_ string, winner incrementalIndexedPublication) bool {
-		result = append(result, detachIncrementalPublishedWinner(&winner))
+		detached := detachIncrementalPublishedWinner(&winner)
+		if known, exists := decoded[winner.key]; exists && known.encoded == winner.value {
+			detached.decoded = known.value
+		}
+		result = append(result, detached)
 		return false
 	})
 	return result, nil

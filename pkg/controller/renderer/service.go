@@ -304,7 +304,11 @@ type RenderService struct {
 	incremental                 *incrementalRenderState
 	mainDocumentCache           *rendercontext.RenderDocumentCache
 	planTokenAuthority          *rendercontext.PlanTokenAuthority
+	mapEntriesMemo              *rendercontext.MapEntriesMemo
 	exactCycleProgram           *templating.ExactCycleReplayProgram
+	extraContextMu              sync.Mutex
+	extraContext                map[string]any
+	extraContextCertificate     *templating.IncrementalImmutableCertificate
 	exactCycleCandidate         *exactCycleCandidate
 	skipCurrentConfigProjection bool
 	skipCurrentFilesProjection  bool
@@ -458,6 +462,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		logger:                      cfg.Logger,
 		mainDocumentCache:           mainDocumentCache,
 		planTokenAuthority:          planTokenAuthority,
+		mapEntriesMemo:              rendercontext.NewMapEntriesMemo(),
 		planAuthority:               planAuthority,
 		artifactAuthority:           artifactAuthority,
 		outputAuthority:             outputAuthority,
@@ -609,24 +614,28 @@ type renderAttemptInputs struct {
 	currentConfigSource rendercontext.CurrentConfigSource
 	currentAuxFiles     rendercontext.CurrentAuxFilesSource
 	extraContext        map[string]any
-	runtimeEnvironment  templating.RuntimeEnvironment
-	outputGeneration    uint64
-	renderCache         *rendercontext.PreparedRenderCachePublication
-	exactCycle          *exactCycleCandidate
+	// extraContextCertificate guards extraContext when the attempt shares the
+	// service's copy; nil when the attempt owns a fresh copy.
+	extraContextCertificate *templating.IncrementalImmutableCertificate
+	runtimeEnvironment      templating.RuntimeEnvironment
+	outputGeneration        uint64
+	renderCache             *rendercontext.PreparedRenderCachePublication
+	exactCycle              *exactCycleCandidate
 }
 
 func (s *RenderService) captureRenderAttemptInputs(modes ...rendercontext.RenderMode) (*renderAttemptInputs, error) {
 	if len(modes) > 1 {
 		return nil, errors.New("capturing render inputs for more than one mode")
 	}
-	extraContext, err := rendercontext.DetachExtraContext(s.config.TemplatingSettings.ExtraContext)
+	extraContext, certificate, err := s.attemptExtraContext(modes)
 	if err != nil {
 		return nil, fmt.Errorf("detaching render extra context: %w", err)
 	}
 	result := &renderAttemptInputs{
-		capabilities:       s.currentCapabilities(),
-		extraContext:       extraContext,
-		runtimeEnvironment: templating.RuntimeEnvironment{GOMAXPROCS: runtime.GOMAXPROCS(0)},
+		capabilities:            s.currentCapabilities(),
+		extraContext:            extraContext,
+		extraContextCertificate: certificate,
+		runtimeEnvironment:      templating.RuntimeEnvironment{GOMAXPROCS: runtime.GOMAXPROCS(0)},
 	}
 	s.planMu.Lock()
 	if !s.skipCurrentConfigProjection {
@@ -681,6 +690,36 @@ func engineProvesGlobalUnused(engine templating.Engine, name string) bool {
 	return known && !used
 }
 
+// attemptExtraContext returns the extra context an attempt renders with. A
+// reconcile render under the exact cycle program guards its root inputs, so
+// such attempts share one detached copy and its certificate while the
+// configured value still equals it, instead of cloning and walking the tree
+// again; any other render owns a fresh copy because nothing stops its
+// templates from mutating it.
+func (s *RenderService) attemptExtraContext(
+	modes []rendercontext.RenderMode,
+) (map[string]any, *templating.IncrementalImmutableCertificate, error) {
+	source := s.config.TemplatingSettings.ExtraContext
+	guarded := len(modes) == 1 && modes[0] == rendercontext.RenderModeReconcile && s.exactCycleProgram != nil
+	if !guarded {
+		extraContext, err := rendercontext.DetachExtraContext(source)
+		return extraContext, nil, err
+	}
+	s.extraContextMu.Lock()
+	defer s.extraContextMu.Unlock()
+	same := s.extraContext != nil &&
+		(len(source) == 0 && len(s.extraContext) == 0 || reflect.DeepEqual(source, s.extraContext))
+	if !same {
+		extraContext, err := rendercontext.DetachExtraContext(source)
+		if err != nil {
+			return nil, nil, err
+		}
+		s.extraContext = extraContext
+		s.extraContextCertificate = templating.CertifyIncrementalImmutableInputs(extraContext)
+	}
+	return s.extraContext, s.extraContextCertificate, nil
+}
+
 func (i *renderAttemptInputs) options() []rendercontext.Option {
 	opts := []rendercontext.Option{
 		rendercontext.WithCapabilities(i.capabilities),
@@ -694,6 +733,9 @@ func (i *renderAttemptInputs) options() []rendercontext.Option {
 	}
 	if i.currentAuxFiles != nil {
 		opts = append(opts, rendercontext.WithCurrentAuxFilesSource(i.currentAuxFiles))
+	}
+	if i.extraContextCertificate != nil {
+		opts = append(opts, rendercontext.WithImmutableCertificates(i.extraContextCertificate))
 	}
 	return opts
 }
@@ -782,7 +824,6 @@ func (s *RenderService) renderAttempt(
 	if err != nil {
 		return nil, false, err
 	}
-
 	mainRender, staticFiles, restart, err := s.renderDocuments(
 		ctx, bctx, renderContext, forceCold, renderSession, cacheSession, inputTransaction,
 	)
@@ -1712,6 +1753,7 @@ func (s *RenderService) buildRenderingContextFromAttemptInputs(
 		rendercontext.WithTypedResources(s.typedResourceTypes),
 		rendercontext.WithRenderMode(mode),
 		rendercontext.WithPlanTokenAuthority(s.planTokenAuthority),
+		rendercontext.WithMapEntriesMemo(s.mapEntriesMemo),
 	}
 	opts = append(opts, attemptInputs.options()...)
 

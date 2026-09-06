@@ -166,6 +166,104 @@ func cloneIncrementalBindingPlan(plan *incrementalBindingPlan) *incrementalBindi
 	return cloned
 }
 
+// equalIncrementalBindingPlan is reflect.DeepEqual over two binding plans,
+// typed: the commit-time tamper check runs it on every render.
+func equalIncrementalBindingPlan(left, right *incrementalBindingPlan) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return equalIncrementalBindings(left.bindings, right.bindings) &&
+		equalMapsFunc(left.byComponent, right.byComponent, equalIncrementalBindings) &&
+		equalMapsFunc(left.bySource, right.bySource, equalIncrementalComponents) &&
+		equalMapsFunc(left.projectionSources, right.projectionSources, func(struct{}, struct{}) bool { return true }) &&
+		equalMapsFunc(left.props, right.props, equalBytes) &&
+		equalMapsFunc(left.owners, right.owners, func(left, right incrementalComponent) bool {
+			return equalIncrementalComponent(&left, &right)
+		})
+}
+
+func equalMapsFunc[V any](left, right map[string]V, equal func(V, V) bool) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for key, leftValue := range left {
+		rightValue, exists := right[key]
+		if !exists || !equal(leftValue, rightValue) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalIncrementalBindings(left, right []incrementalBinding) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].component != right[index].component || left[index].source != right[index].source ||
+			!equalBytes(left[index].props, right[index].props) ||
+			!equalIncrementalResourceProjection(left[index].projection, right[index].projection) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalIncrementalResourceProjection(left, right *incrementalResourceProjection) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.Cell == right.Cell && left.Key == right.Key && left.Rank == right.Rank &&
+		left.digest == right.digest && left.identity == right.identity &&
+		equalStrings(left.Keys, right.Keys)
+}
+
+func equalIncrementalComponents(left, right []incrementalComponent) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !equalIncrementalComponent(&left[index], &right[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalIncrementalComponent(left, right *incrementalComponent) bool {
+	return left.name == right.name && left.entryPoint == right.entryPoint &&
+		left.source == right.source && left.root == right.root && left.group == right.group &&
+		equalStrings(left.consumes, right.consumes) &&
+		equalStrings(left.optionalConsumes, right.optionalConsumes) &&
+		equalExistenceJSONPaths(left.activationPaths, right.activationPaths) &&
+		left.resourceProjection == right.resourceProjection &&
+		left.deriveResource == right.deriveResource &&
+		left.recordEvent == right.recordEvent &&
+		left.backendPlan == right.backendPlan &&
+		left.publishValue == right.publishValue &&
+		left.statusPatch == right.statusPatch
+}
+
+func equalExistenceJSONPaths(left, right []templating.ExistenceJSONPath) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !left[index].Equal(right[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalStrings(left, right []string) bool {
+	return (left == nil) == (right == nil) && slices.Equal(left, right)
+}
+
+func equalBytes(left, right []byte) bool {
+	return (left == nil) == (right == nil) && bytes.Equal(left, right)
+}
+
 func cloneIncrementalBindings(bindings []incrementalBinding) []incrementalBinding {
 	cloned := make([]incrementalBinding, len(bindings))
 	for index, binding := range bindings {

@@ -22,6 +22,8 @@
 package renderplan
 
 import (
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -333,10 +335,17 @@ func (p *Plan) CurrentConfig() CurrentConfig {
 // Digest returns the xxhash64 of b as fixed-width hex. It is the only hash the
 // plan uses, so digests from different producers are comparable.
 func Digest(b []byte) string {
-	return fmt.Sprintf("%016x", xxhash.Sum64(b))
+	return FormatDigest(xxhash.Sum64(b))
 }
 
 // DigestString is Digest over a string, without copying it to a byte slice.
 func DigestString(s string) string {
-	return fmt.Sprintf("%016x", xxhash.Sum64String(s))
+	return FormatDigest(xxhash.Sum64String(s))
+}
+
+// FormatDigest renders an xxhash64 sum as the plan's 16-character hex digest.
+func FormatDigest(sum uint64) string {
+	var raw [8]byte
+	binary.BigEndian.PutUint64(raw[:], sum)
+	return hex.EncodeToString(raw[:])
 }
