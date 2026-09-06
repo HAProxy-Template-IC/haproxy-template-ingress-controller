@@ -60,6 +60,13 @@ var incrementalBenchmarkSetupOnly = os.Getenv("HAPTIC_BENCHMARK_SETUP_ONLY") != 
 // whole-process CPU or allocation profile. Correctness runs must leave it on;
 // it is only ever set while profiling.
 var incrementalBenchmarkSkipOracle = os.Getenv("HAPTIC_BENCHMARK_SKIP_ORACLE") != ""
+
+// incrementalBenchmarkBareEngine renders on the chart's engine itself instead
+// of the counting wrapper. The document and assembly caches refuse a wrapped
+// engine, because a wrapper could change post-processing, so the wrapper
+// measures a controller without them; the bare engine measures production.
+// The execution counters read zero under it.
+var incrementalBenchmarkBareEngine = os.Getenv("HAPTIC_BENCHMARK_BARE_ENGINE") != ""
 var incrementalBenchmarkDisableCarrier = os.Getenv("HAPTIC_BENCHMARK_DISABLE_CARRIER") != ""
 var incrementalBenchmarkDisableWaves = os.Getenv("HAPTIC_BENCHMARK_DISABLE_WAVES") != ""
 var incrementalBenchmarkDisableSourceTransactions = os.Getenv("HAPTIC_BENCHMARK_DISABLE_SOURCE_TRANSACTIONS") != ""
@@ -377,7 +384,23 @@ func BenchmarkBundledChartHTTPRouteIncrementalRenderService(b *testing.B) {
 			benchmarkBundledHTTPRouteNoChange(b, cfg, setup, logger, routes)
 		})
 		b.Run(fmt.Sprintf("routes=%d/one-change", routes), func(b *testing.B) {
-			benchmarkBundledHTTPRouteOneChange(b, cfg, setup, logger, routes)
+			benchmarkBundledHTTPRouteOneChange(b, cfg, setup, logger, routes, benchRouteAdvanced)
+		})
+		// The plain shape is what the gateway-api-bench scale workload creates:
+		// a host and a path prefix, routed through the frontend maps, with no
+		// per-route rule in the root document.
+		b.Run(fmt.Sprintf("routes=%d/plain/one-change", routes), func(b *testing.B) {
+			benchmarkBundledHTTPRouteOneChange(b, cfg, setup, logger, routes, benchRoutePlain)
+		})
+		// The probe workload: plain routes created one after another, each
+		// adding a backend to the root document.
+		b.Run(fmt.Sprintf("routes=%d/plain/add-one", routes), func(b *testing.B) {
+			benchmarkBundledHTTPRouteAddOne(b, cfg, setup, logger, routes, benchRoutePlain)
+		})
+		// The scale workload's churn: a pod moves, so one backend's servers
+		// change while the root document stays as it was.
+		b.Run(fmt.Sprintf("routes=%d/plain/endpoint-change", routes), func(b *testing.B) {
+			benchmarkBundledHTTPRouteEndpointChange(b, cfg, setup, logger, routes, benchRoutePlain)
 		})
 	}
 }
@@ -966,13 +989,85 @@ func benchmarkBundledHTTPRouteOneChange(
 	setup *ValidationSetup,
 	logger *slog.Logger,
 	routes int,
+	shape benchRouteShape,
 ) {
 	b.Helper()
-	storeMap, err := createStoresForBenchmark(cfg, setup.Engine, benchHTTPRouteScaleFixtures(cfg, routes))
+	benchmarkBundledHTTPRouteChanges(b, cfg, setup, logger, routes, shape, func(iteration int) benchChange {
+		// Every iteration is a change the controller has not seen: alternating
+		// two variants lets the document cache adopt a whole earlier assembly,
+		// which a fleet's stream of distinct changes never allows.
+		return benchChange{
+			store:    "httproutes",
+			resource: benchIncrementalHTTPRouteContentShaped(fmt.Sprintf("v%d", iteration), shape),
+			keys:     []string{"default", "route-0"},
+		}
+	})
+}
+
+func benchmarkBundledHTTPRouteAddOne(
+	b *testing.B,
+	cfg *config.Config,
+	setup *ValidationSetup,
+	logger *slog.Logger,
+	routes int,
+	shape benchRouteShape,
+) {
+	b.Helper()
+	benchmarkBundledHTTPRouteChanges(b, cfg, setup, logger, routes, shape, func(iteration int) benchChange {
+		name := fmt.Sprintf("route-%d", routes+iteration)
+		return benchChange{
+			store:    "httproutes",
+			resource: benchHTTPRouteContentShaped(name, "svc-0", shape),
+			keys:     []string{"default", name},
+		}
+	})
+}
+
+func benchmarkBundledHTTPRouteEndpointChange(
+	b *testing.B,
+	cfg *config.Config,
+	setup *ValidationSetup,
+	logger *slog.Logger,
+	routes int,
+	shape benchRouteShape,
+) {
+	b.Helper()
+	benchmarkBundledHTTPRouteChanges(b, cfg, setup, logger, routes, shape, func(iteration int) benchChange {
+		slice := benchEndpointSliceContent("svc-0", 0, 0)
+		endpoint := slice["endpoints"].([]any)[0].(map[string]any)
+		endpoint["addresses"] = []any{fmt.Sprintf("10.200.%d.%d", (iteration>>8)&0xff, iteration&0xff)}
+		return benchChange{store: "endpoints", resource: slice, keys: []string{"default", "svc-0-0"}}
+	})
+}
+
+// benchChange is one store update a warm-render benchmark applies.
+type benchChange struct {
+	store    string
+	resource map[string]any
+	keys     []string
+}
+
+// benchmarkBundledHTTPRouteChanges measures one warm render per change that
+// nextChange produces, on a cache built over the fixtures.
+func benchmarkBundledHTTPRouteChanges(
+	b *testing.B,
+	cfg *config.Config,
+	setup *ValidationSetup,
+	logger *slog.Logger,
+	routes int,
+	shape benchRouteShape,
+	nextChange func(iteration int) benchChange,
+) {
+	b.Helper()
+	storeMap, err := createStoresForBenchmark(cfg, setup.Engine, benchHTTPRouteScaleFixturesShaped(cfg, routes, shape))
 	require.NoError(b, err)
 	engine := newIncrementalBenchmarkCountingEngine(b, setup.Engine)
 	lifecycle := newIncrementalBenchmarkCacheLifecycle(nil)
-	service := newBundledIncrementalBenchmarkService(cfg, setup, engine, logger, lifecycle)
+	var serviceEngine templating.Engine = engine
+	if incrementalBenchmarkBareEngine {
+		serviceEngine = setup.Engine
+	}
+	service := newBundledIncrementalBenchmarkService(cfg, setup, serviceEngine, logger, lifecycle)
 	provider := stores.NewRealStoreProvider(storeMap)
 	cold, err := runIncrementalBenchmarkRenderCacheReady(b.Context(), service, provider, lifecycle)
 	require.NoError(b, err)
@@ -988,15 +1083,8 @@ func benchmarkBundledHTTPRouteOneChange(
 	b.ResetTimer()
 	for iteration := range b.N {
 		b.StopTimer()
-		variant := "a"
-		if iteration%2 == 0 {
-			variant = "b"
-		}
-		err = storeMap["httproutes"].Update(
-			benchIncrementalHTTPRouteContent(variant),
-			[]string{"default", "route-0"},
-		)
-		if err != nil {
+		change := nextChange(iteration)
+		if err = storeMap[change.store].Update(change.resource, change.keys); err != nil {
 			b.Fatal(err)
 		}
 		b.StartTimer()
@@ -2805,14 +2893,30 @@ func benchIncrementalIngressContent(name, service, variant string) map[string]an
 	return resource
 }
 
+// benchRouteShape selects what an HTTPRoute fixture matches on.
+type benchRouteShape int
+
+const (
+	// benchRouteAdvanced matches a header and a query parameter besides the
+	// path, which the gateway library serves with per-route frontend rules.
+	benchRouteAdvanced benchRouteShape = iota
+	// benchRoutePlain matches host and path prefix only, which the gateway
+	// library serves through its frontend maps.
+	benchRoutePlain
+)
+
 func benchHTTPRouteScaleFixtures(cfg *config.Config, routes int) map[string][]any {
+	return benchHTTPRouteScaleFixturesShaped(cfg, routes, benchRouteAdvanced)
+}
+
+func benchHTTPRouteScaleFixturesShaped(cfg *config.Config, routes int, shape benchRouteShape) map[string][]any {
 	services := make([]any, 0, routes)
 	httpRoutes := make([]any, 0, routes)
 	endpoints := make([]any, 0, routes*2)
 	for index := range routes {
 		service := fmt.Sprintf("svc-%d", index)
 		services = append(services, benchServiceContent(service))
-		httpRoutes = append(httpRoutes, benchHTTPRouteContent(fmt.Sprintf("route-%d", index), service))
+		httpRoutes = append(httpRoutes, benchHTTPRouteContentShaped(fmt.Sprintf("route-%d", index), service, shape))
 		endpoints = append(endpoints,
 			benchEndpointSliceContent(service, index, 0),
 			benchEndpointSliceContent(service, index, 1),
@@ -2841,7 +2945,14 @@ func benchGatewayContent() map[string]any {
 	}
 }
 
-func benchHTTPRouteContent(name, service string) map[string]any {
+func benchHTTPRouteContentShaped(name, service string, shape benchRouteShape) map[string]any {
+	match := map[string]any{
+		"path": map[string]any{"type": "PathPrefix", "value": "/api"},
+	}
+	if shape == benchRouteAdvanced {
+		match["headers"] = []any{map[string]any{"name": "X-Version", "value": "v1"}}
+		match["queryParams"] = []any{map[string]any{"name": "debug", "value": "true"}}
+	}
 	return map[string]any{
 		"apiVersion": "gateway.networking.k8s.io/v1",
 		"kind":       "HTTPRoute",
@@ -2850,11 +2961,7 @@ func benchHTTPRouteContent(name, service string) map[string]any {
 			"parentRefs": []any{map[string]any{"name": "main-gateway", "namespace": "default"}},
 			"hostnames":  []any{name + ".example.com"},
 			"rules": []any{map[string]any{
-				"matches": []any{map[string]any{
-					"path":        map[string]any{"type": "PathPrefix", "value": "/api"},
-					"headers":     []any{map[string]any{"name": "X-Version", "value": "v1"}},
-					"queryParams": []any{map[string]any{"name": "debug", "value": "true"}},
-				}},
+				"matches": []any{match},
 				"backendRefs": []any{map[string]any{
 					"name": service, "port": int64(80), "weight": int64(1),
 				}},
@@ -2864,9 +2971,13 @@ func benchHTTPRouteContent(name, service string) map[string]any {
 }
 
 func benchIncrementalHTTPRouteContent(variant string) map[string]any {
+	return benchIncrementalHTTPRouteContentShaped(variant, benchRouteAdvanced)
+}
+
+func benchIncrementalHTTPRouteContentShaped(variant string, shape benchRouteShape) map[string]any {
 	const name = "route-0"
 	const service = "svc-0"
-	resource := benchHTTPRouteContent(name, service)
+	resource := benchHTTPRouteContentShaped(name, service, shape)
 	resource["spec"].(map[string]any)["hostnames"] = []any{name + "-" + variant + ".example.com"}
 	return resource
 }

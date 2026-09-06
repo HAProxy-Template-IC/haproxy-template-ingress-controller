@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 
@@ -224,7 +223,7 @@ func validateIncrementalSnapshotBindingCache(
 		return nil
 	}
 	if snapshot.bindingCache.inputs == nil || snapshot.bindingCache.inputs != auth.bindingInput ||
-		snapshot.bindingCache.plan == nil || !reflect.DeepEqual(snapshot.bindingCache.plan, auth.bindingPlan) {
+		snapshot.bindingCache.plan == nil || !equalIncrementalBindingPlan(snapshot.bindingCache.plan, auth.bindingPlan) {
 		return errors.New("incremental state snapshot binding cache failed authentication")
 	}
 	return nil

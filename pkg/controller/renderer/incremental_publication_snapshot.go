@@ -496,6 +496,10 @@ func (g *incrementalPublicationSnapshotGeneration) resolveSelectorValues(
 			live = true
 			continue
 		}
+		if winners[index].decoded != nil {
+			values[index] = winners[index].decoded
+			continue
+		}
 		value, err := decodeResourceValue(winners[index].value.Value)
 		if err != nil {
 			return nil, nil, false, fmt.Errorf(

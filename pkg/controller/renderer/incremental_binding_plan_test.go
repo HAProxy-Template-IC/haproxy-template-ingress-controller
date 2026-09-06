@@ -15,9 +15,12 @@
 package renderer
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 func TestIncrementalBindingPlanRejectsMultipleActiveDeriveOwners(t *testing.T) {
@@ -56,3 +59,59 @@ func TestIncrementalBindingPlanRejectsMultipleActiveDeriveOwners(t *testing.T) {
 		})
 	}
 }
+
+func TestEqualIncrementalBindingPlanMatchesDeepEqual(t *testing.T) {
+	activation, err := templating.CompileExistenceJSONPath("spec.rules")
+	require.NoError(t, err)
+	component := incrementalComponent{
+		name: "backend", entryPoint: "backend.cfg", source: "routes", root: "haproxy.cfg", group: "backends",
+		consumes: []string{"services"}, optionalConsumes: []string{"endpoints"},
+		activationPaths: []templating.ExistenceJSONPath{activation}, resourceProjection: true, publishValue: true,
+	}
+	plan := newIncrementalBindingPlan()
+	plan.bindings = []incrementalBinding{{
+		component: "backend", source: "routes", props: []byte(`{"cell":"a"}`),
+		projection: &incrementalResourceProjection{Cell: "a", Key: "k", Keys: []string{"k"}, digest: "d", identity: "i"},
+	}}
+	plan.byComponent["backend"] = plan.bindings
+	plan.bySource["routes"] = []incrementalComponent{component}
+	plan.projectionSources["routes"] = struct{}{}
+	plan.props["backend"] = []byte(`{}`)
+	plan.owners["routes"] = component
+
+	sealed := cloneIncrementalBindingPlan(plan)
+	require.True(t, reflect.DeepEqual(plan, sealed))
+	require.True(t, equalIncrementalBindingPlan(plan, sealed))
+
+	mutations := map[string]func(*incrementalBindingPlan){
+		"binding props":        func(p *incrementalBindingPlan) { p.bindings[0].props[2] = 'x' },
+		"binding projection":   func(p *incrementalBindingPlan) { p.bindings[0].projection.Keys[0] = "x" },
+		"component consumes":   func(p *incrementalBindingPlan) { p.bySource["routes"][0].consumes[0] = "x" },
+		"component activation": func(p *incrementalBindingPlan) { p.bySource["routes"][0].activationPaths = nil },
+		"projection source":    func(p *incrementalBindingPlan) { p.projectionSources["x"] = struct{}{} },
+		"props":                func(p *incrementalBindingPlan) { p.props["backend"] = nil },
+		"owner":                func(p *incrementalBindingPlan) { delete(p.owners, "routes") },
+		"nil versus empty":     func(p *incrementalBindingPlan) { p.bindings[0].projection.Keys = []string{} },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			mutated := cloneIncrementalBindingPlan(plan)
+			mutate(mutated)
+			if name == "nil versus empty" {
+				sealed.bindings[0].projection.Keys = nil
+				defer func() { sealed.bindings[0].projection.Keys = []string{"k"} }()
+			}
+			require.Equal(t, reflect.DeepEqual(mutated, sealed), equalIncrementalBindingPlan(mutated, sealed))
+			require.False(t, equalIncrementalBindingPlan(mutated, sealed))
+		})
+	}
+}
+
+// Unkeyed literals stop compiling when a field is added, so the typed
+// comparators cannot silently skip a new field.
+var (
+	_ = incrementalBindingPlan{nil, nil, nil, nil, nil, nil}
+	_ = incrementalBinding{"", "", nil, nil}
+	_ = incrementalResourceProjection{"", "", nil, "", "", ""}
+	_ = incrementalComponent{"", "", "", "", "", nil, nil, nil, false, false, false, false, false, false}
+)

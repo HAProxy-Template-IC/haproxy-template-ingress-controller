@@ -277,22 +277,6 @@ func TestWithCurrentAuxFilesIsolatesEachRenderingContext(t *testing.T) {
 	assert.Equal(t, "published", (*secondFiles)["gate"])
 }
 
-func TestWithDetachedExtraContextIsolatesEachRenderingContext(t *testing.T) {
-	extraContext, err := DetachExtraContext(map[string]any{
-		"nested": map[string]any{"gate": "published"},
-	})
-	require.NoError(t, err)
-	option := WithDetachedExtraContext(extraContext)
-
-	first := NewBuilder(t.Context(), &config.Config{}, &templating.PathResolver{}, testutil.NewTestLogger(), option).Build().Context
-	firstExtra := first["extraContext"].(map[string]any)
-	firstExtra["nested"].(map[string]any)["gate"] = "template-mutated"
-
-	second := NewBuilder(t.Context(), &config.Config{}, &templating.PathResolver{}, testutil.NewTestLogger(), option).Build().Context
-	secondExtra := second["extraContext"].(map[string]any)
-	assert.Equal(t, "published", secondExtra["nested"].(map[string]any)["gate"])
-}
-
 func TestWithCurrentConfigIsolatesEachRenderingContext(t *testing.T) {
 	port := int64(8080)
 	current := &renderplan.CurrentConfig{ServerIndex: map[string]map[string]renderplan.ServerAddr{

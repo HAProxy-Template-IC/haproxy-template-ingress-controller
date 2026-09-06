@@ -32,29 +32,32 @@ The admission webhook renders the entire configuration once per admitted object,
 
 ## Incremental render cost
 
-When template snippets declare `incremental`, a reconcile render re-executes only the components whose recorded inputs changed. The numbers below come from `cmd/haptic`'s incremental render-service benchmark against the bundled chart's Gateway API libraries on an 8-core x86-64 desktop CPU, one HTTPRoute changed per render:
+When template snippets declare `incremental`, a reconcile render re-executes only the components whose recorded inputs changed. The numbers below come from `cmd/haptic`'s incremental render-service benchmark against the bundled chart's Gateway API libraries on a 16-thread x86-64 desktop CPU. The routes are plain path-prefix routes, the shape the `gateway-api-bench` workloads create; a route with header and query matches costs within 10% of the same column.
 
-| HTTPRoutes | First render (cold) | Nothing changed | One route changed | Components re-executed |
-|---|---|---|---|---|
-| 300 | 292 ms | 5.4 ms | 21 ms | 13 |
-| 1,000 | 648 ms | 5.4 ms | 32 ms | 13 |
-| 3,000 | 1,889 ms | 5.5 ms | 67 ms | 13 |
+| HTTPRoutes | First render (cold) | Nothing changed | One route changed | One route added | One endpoint changed |
+|---|---|---|---|---|---|
+| 300 | 579 ms | 2.2 ms | 18 ms | 22 ms | 3.5 ms |
+| 1,000 | 942 ms | 2.3 ms | 23 ms | 32 ms | 3.8 ms |
+| 3,000 | 2,165 ms | 2.6 ms | 37 ms | 60 ms | 5.6 ms |
 
 Reproduce them with:
 
 ```bash
-BENCH='^BenchmarkBundledChartHTTPRouteIncrementalRenderService$' PKG=./cmd/haptic make bench
+HAPTIC_BENCHMARK_BARE_ENGINE=1 HAPTIC_BENCHMARK_SKIP_ORACLE=1 \
+  BENCH='^BenchmarkBundledChartHTTPRouteIncrementalRenderService$' PKG=./cmd/haptic make bench
 ```
+
+`HAPTIC_BENCHMARK_BARE_ENGINE=1` renders on the chart's engine, as the controller does. Without it the benchmark wraps the engine to count component executions, and the document caches refuse a wrapped engine, so the timings then describe a controller without them. `HAPTIC_BENCHMARK_SKIP_ORACLE=1` skips the cold render the benchmark otherwise runs after every iteration to prove the incremental output equal to a cold one; leave it unset to run that check.
 
 Read four things off this table.
 
 **The cold column is what a controller pays with an empty cache**, and it's linear in the object count. You pay it on startup and on a configuration or chart change. You don't pay it on a steady-state reconcile, and you don't pay it on a leader failover: a follower renders every change too, without deploying anything, so its graph is warm when it takes over. That costs each follower the same render CPU and graph memory as the leader; `haptic_render_total{cache_state}` on every replica shows what each one pays.
 
-**A render with no relevant change is flat and cheap.** It costs about 5.4 ms whether you run 300 routes or 3,000, and executes zero components. That 5.4 ms is the cost of proving nothing changed and re-publishing the existing output, not of rendering it.
+**A render with no relevant change is flat and cheap.** It costs about 2.3 ms whether you run 300 routes or 3,000, and executes zero components. That 2.3 ms is the cost of proving nothing changed and re-publishing the existing output, not of rendering it.
 
-**The work that's incremental is exactly incremental.** Thirteen components re-execute for one changed route, and that count doesn't move as the fleet grows tenfold. This is the guarantee the dependency journal buys: component re-execution tracks what changed, not how much exists.
+**The work that's incremental is exactly incremental.** Thirteen components re-execute for one changed route, fourteen for an added one, and none for an endpoint change, whose servers reach the backend through a published value. Those counts don't move as the fleet grows tenfold. This is the guarantee the dependency journal buys: component re-execution tracks what changed, not how much exists.
 
-**One changed route still costs more on a bigger cluster** — about 17 µs per route. The root document template runs once per render, and while the per-route rules it used to re-emit are now declared as plan fragments and spliced from text the engine already caches, the template still executes and the 4.8 MB `haproxy.cfg` still has to be produced. Component execution is flat; whole-document production isn't.
+**One changed route still costs more on a bigger cluster** — about 7 µs per route, and 14 µs per route when the change adds a backend. The root document template runs once per render, and while the per-route rules it used to re-emit are now declared as plan fragments and spliced from text the engine already caches, the template still visits every fragment, the frontend maps are still written whole, and the plan is still validated section by section. Component execution is flat; whole-document production isn't.
 
 ## Gateway API implementation benchmark
 

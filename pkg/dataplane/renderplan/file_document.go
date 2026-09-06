@@ -16,7 +16,6 @@ package renderplan
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 
@@ -320,7 +319,7 @@ func (f *snapshotDeferredFile) digestValue() (string, error) {
 			f.memo.digestErr = errors.Join(errInvalidSnapshot, err)
 			return
 		}
-		f.memo.digest = fmt.Sprintf("%016x", hasher.Sum64())
+		f.memo.digest = FormatDigest(hasher.Sum64())
 	})
 	return f.memo.digest, f.memo.digestErr
 }

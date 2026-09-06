@@ -81,6 +81,7 @@ type Builder struct {
 	runtimeEnvironment    templating.RuntimeEnvironment
 	runtimeEnvironmentSet bool
 	planTokenAuthority    *PlanTokenAuthority
+	mapEntriesMemo        *MapEntriesMemo
 }
 
 // admissionSubjectOrEmpty returns the subject map for the template context.
@@ -253,11 +254,21 @@ func WithAdmissionSubjectStores(aliases []string, namespace, name string) Option
 	}
 }
 
-// WithDetachedExtraContext supplies a stable, caller-owned extra-context snapshot.
+// WithDetachedExtraContext supplies a caller-owned extra-context snapshot.
+// The caller keeps it isolated from template mutation: see
+// RenderService.attemptExtraContext.
 func WithDetachedExtraContext(extraContext map[string]any) Option {
 	return func(b *Builder) {
-		b.extraContext = cloneDetachedExtraContext(extraContext)
+		b.extraContext = extraContext
 		b.extraContextSet = true
+	}
+}
+
+// WithImmutableCertificates guards already-certified inputs without walking
+// them again in every render.
+func WithImmutableCertificates(certificates ...*templating.IncrementalImmutableCertificate) Option {
+	return func(b *Builder) {
+		b.readContext = templating.WithIncrementalImmutableCertificates(b.readContext, certificates...)
 	}
 }
 
@@ -299,6 +310,13 @@ func WithTypedResources(types map[string]reflect.Type) Option {
 func WithPlanTokenAuthority(authority *PlanTokenAuthority) Option {
 	return func(b *Builder) {
 		b.planTokenAuthority = authority
+	}
+}
+
+// WithMapEntriesMemo reuses parsed map entries across renders.
+func WithMapEntriesMemo(memo *MapEntriesMemo) Option {
+	return func(b *Builder) {
+		b.mapEntriesMemo = memo
 	}
 }
 
@@ -424,6 +442,7 @@ func (b *Builder) Build() *BuildResult {
 			resourceErrors.Record(err)
 		}
 	}
+	planRegistry.mapEntries = b.mapEntriesMemo
 
 	// spec.maps[].ordered belongs to the plan, and the plan is built from this
 	// registry by every caller — the reconcile renderer and the validation-test
@@ -1965,32 +1984,6 @@ func DetachExtraContext(extraContext map[string]any) (map[string]any, error) {
 		return nil, fmt.Errorf("detached extra context has type %T", cloned)
 	}
 	return result, nil
-}
-
-func cloneDetachedExtraContext(extraContext map[string]any) map[string]any {
-	if extraContext == nil {
-		return nil
-	}
-	result := make(map[string]any, len(extraContext))
-	for key, value := range extraContext {
-		result[key] = cloneDetachedExtraContextValue(value)
-	}
-	return result
-}
-
-func cloneDetachedExtraContextValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return cloneDetachedExtraContext(typed)
-	case []any:
-		result := make([]any, len(typed))
-		for index := range typed {
-			result[index] = cloneDetachedExtraContextValue(typed[index])
-		}
-		return result
-	default:
-		return typed
-	}
 }
 
 // CapabilitiesToMap converts a Capabilities struct to a template-friendly map.
