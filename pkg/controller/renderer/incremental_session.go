@@ -685,7 +685,7 @@ func (r *incrementalRenderSession) collectRetiredQueries() {
 	for _, opaque := range keys {
 		key := incremental.NewQueryKey(opaque)
 		_, _, _, activation := parseActivationQueryKey(key)
-		if !activation && r.state.graph.HasDependents(key) {
+		if !activation && r.baseHasDependents(key) {
 			continue
 		}
 		r.removed[key] = struct{}{}
@@ -1117,7 +1117,7 @@ func (r *incrementalRenderSession) collectKnownInput(
 	if !exists {
 		return nil
 	}
-	if !r.state.graph.HasInputDependents(key) {
+	if !r.baseHasInputDependents(key) {
 		if err := r.catalogDelete(key); err != nil {
 			return err
 		}

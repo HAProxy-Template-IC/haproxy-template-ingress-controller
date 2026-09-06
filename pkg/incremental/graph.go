@@ -555,7 +555,11 @@ func (g *Graph) hasDependentsLocked(key dependencyKey) bool {
 	if !g.currentValidLocked() {
 		return false
 	}
-	root, err := g.reverseRootLocked(key)
+	return g.hasDependentsOfLocked(g.current, key)
+}
+
+func (g *Graph) hasDependentsOfLocked(generation *graphGeneration, key dependencyKey) bool {
+	root, err := g.reverseRootOfLocked(generation, key)
 	if err != nil {
 		return false
 	}

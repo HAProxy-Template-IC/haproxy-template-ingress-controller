@@ -1187,3 +1187,40 @@ func (s *Session) discard() {
 	s.removedQueries = nil
 	s.preparedGraphCommit.Store(nil)
 }
+
+// BaseHasDependents reports whether a committed query in the generation this
+// session began on depends on key.
+func (s *Session) BaseHasDependents(key QueryKey) bool {
+	s.graph.mu.RLock()
+	defer s.graph.mu.RUnlock()
+	return s.baseValidLocked() && s.graph.hasDependentsOfLocked(s.base, queryDep(key))
+}
+
+// BaseHasInputDependents reports whether a committed query in the generation
+// this session began on depends on the input key.
+func (s *Session) BaseHasInputDependents(key InputKey) bool {
+	s.graph.mu.RLock()
+	defer s.graph.mu.RUnlock()
+	return s.baseValidLocked() && s.graph.hasDependentsOfLocked(s.base, inputDep(key))
+}
+
+// BaseValue returns a query's committed value in the generation this session
+// began on, or false when the base has no clean value for it. It is the
+// session-consistent counterpart of Graph.Value, which reads the graph's
+// current generation and so can be ahead of a session another commit passed.
+func (s *Session) BaseValue(key QueryKey) ([]byte, bool) {
+	s.graph.mu.RLock()
+	defer s.graph.mu.RUnlock()
+	if !s.baseValidLocked() {
+		return nil, false
+	}
+	entry, exists := s.base.nodes.Root().Get([]byte(key.value))
+	if !exists || entry.dirty {
+		return nil, false
+	}
+	if err := entry.value.validateOwned(s.graph.valueAuthority, key); err != nil {
+		return nil, false
+	}
+	value, err := entry.value.Bytes()
+	return value, err == nil
+}

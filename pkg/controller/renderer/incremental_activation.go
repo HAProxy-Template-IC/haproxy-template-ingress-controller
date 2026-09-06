@@ -151,7 +151,7 @@ func (r *incrementalRenderSession) prepareActivationStage(ctx context.Context) e
 	}
 	previous := make(map[incremental.QueryKey][]string, len(keys))
 	for _, key := range keys {
-		encoded, found := r.state.graph.Value(key)
+		encoded, found := r.baseActivationValue(key)
 		if !found {
 			continue
 		}
@@ -200,6 +200,31 @@ func (r *incrementalRenderSession) prepareActivationStage(ctx context.Context) e
 		return fmt.Errorf("retiring inactive incremental components: %w", err)
 	}
 	return nil
+}
+
+// baseActivationValue reads a cached activation from the generation the
+// session began on. The graph's current generation can be ahead of it once a
+// concurrent commit lands, and an activation read from there reports an
+// instance as already active that this session never activated.
+func (r *incrementalRenderSession) baseActivationValue(key incremental.QueryKey) ([]byte, bool) {
+	if r.graphSession != nil {
+		return r.graphSession.BaseValue(key)
+	}
+	return r.state.graph.Value(key)
+}
+
+func (r *incrementalRenderSession) baseHasDependents(key incremental.QueryKey) bool {
+	if r.graphSession != nil {
+		return r.graphSession.BaseHasDependents(key)
+	}
+	return r.state.graph.HasDependents(key)
+}
+
+func (r *incrementalRenderSession) baseHasInputDependents(key incremental.InputKey) bool {
+	if r.graphSession != nil {
+		return r.graphSession.BaseHasInputDependents(key)
+	}
+	return r.state.graph.HasInputDependents(key)
 }
 
 func (r *incrementalRenderSession) pendingActivationQueries() []incremental.QueryKey {
@@ -327,7 +352,7 @@ func (r *incrementalRenderSession) activationActive(
 	key := activationQueryKey(source, namespace, name)
 	active, exists := r.activationValues[key]
 	if !exists {
-		encoded, found := r.state.graph.Value(key)
+		encoded, found := r.baseActivationValue(key)
 		if !found {
 			return false, fmt.Errorf("incremental activation for %q %s/%s is unavailable",
 				source, namespace, name)
