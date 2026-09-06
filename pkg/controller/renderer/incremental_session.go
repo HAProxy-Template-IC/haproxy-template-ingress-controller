@@ -3791,7 +3791,7 @@ func (r *incrementalRenderSession) stageColdGroupAdditions(
 	for additionIndex := range additions {
 		if err := stageIncrementalSelectorReplacementInto(
 			staged.selectorPending,
-			r.state.graph,
+			r.sessionHasInputDependents,
 			group,
 			index,
 			updated,

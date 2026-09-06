@@ -621,13 +621,24 @@ func (r *incrementalRenderSession) stageIncrementalSelectorReplacement(
 	nextResult *incrementalComponentResult,
 ) error {
 	return stageIncrementalSelectorReplacementInto(
-		r.selectorPending, r.state.graph, group, previous, next, id, nextResult,
+		r.selectorPending, r.sessionHasInputDependents, group, previous, next, id, nextResult,
 	)
+}
+
+// sessionHasInputDependents answers for the generation this session began on
+// plus what it staged. The graph's current generation can be a commit ahead
+// of the session's base; judged there, a cell whose last reader that commit
+// removed would keep its base value in this session while its index moved on.
+func (r *incrementalRenderSession) sessionHasInputDependents(key incremental.InputKey) (bool, error) {
+	if r.graphSession != nil {
+		return r.graphSession.HasInputDependents(key)
+	}
+	return r.state.graph.HasInputDependents(key), nil
 }
 
 func stageIncrementalSelectorReplacementInto(
 	pending map[incrementalSelectorIdentity]incremental.Input,
-	graph *incremental.Graph,
+	hasInputDependents func(incremental.InputKey) (bool, error),
 	group string,
 	previous, next *incrementalGroupIndex,
 	id incrementalGroupInstanceID,
@@ -639,8 +650,14 @@ func stageIncrementalSelectorReplacementInto(
 	}
 	for _, identity := range identities {
 		identity.group = group
-		inputKey := incrementalSelectorIdentityInputKey(identity)
-		if _, exists := pending[identity]; exists || !graph.HasInputDependents(inputKey) {
+		if _, exists := pending[identity]; exists {
+			continue
+		}
+		dependents, err := hasInputDependents(incrementalSelectorIdentityInputKey(identity))
+		if err != nil {
+			return err
+		}
+		if !dependents {
 			continue
 		}
 		oldInput, err := incrementalSelectorInputForIdentity(previous, identity)
