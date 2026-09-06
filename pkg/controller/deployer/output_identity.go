@@ -146,6 +146,18 @@ func sameOccurrence(left, right *rendercycle.Occurrence) bool {
 	return err == nil && same
 }
 
+// samePlan reports whether two render occurrences carry the same plan: the
+// same content, whichever render produced it. A verdict from `haproxy -c` is
+// about content, so it names every occurrence of the plan.
+func samePlan(left, right *rendercycle.Occurrence) bool {
+	leftIdentity, leftErr := inspectOccurrence(left)
+	rightIdentity, rightErr := inspectOccurrence(right)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	return leftIdentity.planID == rightIdentity.planID && leftIdentity.checksum == rightIdentity.checksum
+}
+
 func sameOccurrenceOutput(left, right *rendercycle.Occurrence) bool {
 	leftIdentity, leftErr := inspectOccurrence(left)
 	rightIdentity, rightErr := inspectOccurrence(right)

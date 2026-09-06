@@ -35,6 +35,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -67,6 +68,12 @@ const (
 	// higher number means pods are stuck, which the deployer reports, not
 	// something this gate should spend a 5 MB render on.
 	maxRetainedRenders = 4
+
+	// maxRememberedVerdicts bounds the verdicts kept per plan content. A
+	// reconcile loop re-rendering the same plan produces one occurrence per
+	// pass; the verdict belongs to the content, so each later occurrence
+	// settles from memory instead of spending another `haproxy -c`.
+	maxRememberedVerdicts = 16
 )
 
 // Checker runs the controller's own `haproxy -c` over one rendered file set.
@@ -84,6 +91,13 @@ type SnapshotChecker interface {
 // OutputChecker validates one authenticated complete render output directly.
 type OutputChecker interface {
 	CheckOutput(ctx context.Context, snapshot *renderoutput.Snapshot, checksum string) error
+}
+
+// verdict is HAProxy's answer for one plan's content.
+type verdict struct {
+	ok      bool
+	refused bool
+	message string
 }
 
 // render is one plan's bytes, kept until no pod needs a verdict on it.
@@ -133,6 +147,9 @@ type Component struct {
 	appliedByPod map[string]string
 	// pessimistic is the latch: true while renders are held for a verdict.
 	pessimistic bool
+	// verdicts remembers HAProxy's answer per plan content, newest last.
+	verdicts     map[string]verdict
+	verdictOrder []string
 }
 
 // Config contains the dependencies for the render gate.
@@ -171,6 +188,7 @@ func New(cfg *Config) *Component {
 		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 		wake:          make(chan struct{}, 1),
 		appliedByPod:  map[string]string{},
+		verdicts:      map[string]verdict{},
 	}
 }
 
@@ -250,6 +268,8 @@ func (c *Component) reset() {
 	c.superseded = nil
 	c.appliedByPod = map[string]string{}
 	c.pessimistic = false
+	c.verdicts = map[string]verdict{}
+	c.verdictOrder = nil
 	c.mu.Unlock()
 	c.setPinnedGauge(false)
 }
@@ -482,55 +502,63 @@ func (c *Component) trimSupersededLocked() {
 // reached at all: a check that could not run is not one, and its render stays
 // unchecked so the worker can come back to it.
 func (c *Component) check(ctx context.Context, job *render) bool {
-	checkCtx, cancel := context.WithTimeout(ctx, c.checkTimeout)
 	start := time.Now()
-	err := c.checkRendered(checkCtx, job)
-	cancel()
+	answer, remembered := c.rememberedVerdict(job)
+	if !remembered {
+		checkCtx, cancel := context.WithTimeout(ctx, c.checkTimeout)
+		err := c.checkRendered(checkCtx, job)
+		cancel()
+		// A cancelled check is not a verdict: the term is ending, and
+		// publishing a failure here would pin the next leader on nothing.
+		if ctx.Err() != nil {
+			return false
+		}
+		answer = verdict{ok: err == nil, refused: errors.Is(err, dataplane.ErrHAProxyRefused)}
+		if err != nil {
+			answer.message = dataplane.SimplifyValidationError(err)
+		}
+	}
 	durationMs := time.Since(start).Milliseconds()
-
-	// A cancelled check is not a verdict: the term is ending, and publishing a
-	// failure here would pin the next leader on nothing.
-	if ctx.Err() != nil {
-		return false
-	}
-
-	refused := errors.Is(err, dataplane.ErrHAProxyRefused)
-	verdict := err == nil || refused
-	message := ""
-	if err != nil {
-		message = dataplane.SimplifyValidationError(err)
-	}
+	judged := answer.ok || answer.refused
 
 	c.mu.Lock()
 	// Only HAProxy's own answer settles a plan. A check that could not run
 	// leaves it unchecked, so the retry re-runs this render rather than
 	// leaving it judged by an unwritable temp directory forever.
-	job.checked = verdict
+	job.checked = judged
+	if judged && !remembered {
+		c.rememberVerdictLocked(job, answer)
+	}
 	// A newer render may arrive while haproxy -c is running. The verdict may
-	// move the latch only if this render is still newest at settlement time.
-	newest := c.newest != nil && c.newest.renderProof == job.renderProof
-	pinned := c.settleLocked(err == nil, newest)
+	// move the latch only if it still speaks for the newest render: the same
+	// occurrence, or a later occurrence of the same content, which a reconcile
+	// loop re-rendering a refused plan produces once per pass.
+	newest := c.newest != nil &&
+		(c.newest.renderProof == job.renderProof || verdictKey(c.newest) == verdictKey(job))
+	pinned := c.settleLocked(answer.ok, newest)
 	c.mu.Unlock()
 	if newest {
 		c.setPinnedGauge(pinned)
 	}
 
 	switch {
-	case err == nil:
-		c.logger.Debug("Render gate passed", "plan", job.planID, "newest", newest, "duration_ms", durationMs)
-	case refused:
-		if c.metrics != nil {
+	case answer.ok:
+		c.logger.Debug("Render gate passed", "plan", job.planID, "newest", newest,
+			"remembered", remembered, "duration_ms", durationMs)
+	case answer.refused:
+		if c.metrics != nil && !remembered {
 			c.metrics.RecordConfigRejected(validatorLabel)
 		}
 		c.logger.Error("HAProxy refused the rendered configuration",
-			"plan", job.planID, "newest", newest, "error", message, "correlation_id", job.correlationID)
+			"plan", job.planID, "newest", newest, "remembered", remembered,
+			"error", answer.message, "correlation_id", job.correlationID)
 	default:
 		c.logger.Error("Render gate could not run; holding renders until a check succeeds",
-			"plan", job.planID, "newest", newest, "error", message, "correlation_id", job.correlationID)
+			"plan", job.planID, "newest", newest, "error", answer.message, "correlation_id", job.correlationID)
 	}
 
 	event, eventErr := events.NewRenderGateCompletedEventWithCycle(
-		job.occurrence, err == nil, refused, newest, message, pinned, durationMs,
+		job.occurrence, answer.ok, answer.refused, newest, answer.message, pinned, durationMs,
 		events.WithCorrelation(job.correlationID, job.causationID),
 	)
 	if eventErr != nil {
@@ -538,7 +566,52 @@ func (c *Component) check(ctx context.Context, job *render) bool {
 		return false
 	}
 	c.eventBus.Publish(event)
-	return verdict
+	return judged
+}
+
+// verdictKey identifies a render's content: the plan and the checksum over
+// everything HAProxy reads, so two occurrences with the same key get the same
+// answer from `haproxy -c`.
+func verdictKey(job *render) string {
+	return job.planID + "/" + job.checksum
+}
+
+// rememberedVerdict returns the answer kept for the job's content. A hit
+// moves the content to the back of the eviction order, so a plan the
+// reconcile loop keeps re-rendering outlives contents seen once.
+func (c *Component) rememberedVerdict(job *render) (verdict, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := verdictKey(job)
+	answer, found := c.verdicts[key]
+	if found {
+		c.touchVerdictLocked(key)
+	}
+	return answer, found
+}
+
+// rememberVerdictLocked keeps HAProxy's answer for the job's content, evicting
+// the least recently used above the cap. Caller holds mu.
+func (c *Component) rememberVerdictLocked(job *render, answer verdict) {
+	key := verdictKey(job)
+	if _, exists := c.verdicts[key]; exists {
+		c.touchVerdictLocked(key)
+	} else {
+		c.verdictOrder = append(c.verdictOrder, key)
+	}
+	c.verdicts[key] = answer
+	for len(c.verdictOrder) > maxRememberedVerdicts {
+		delete(c.verdicts, c.verdictOrder[0])
+		c.verdictOrder = c.verdictOrder[1:]
+	}
+}
+
+func (c *Component) touchVerdictLocked(key string) {
+	index := slices.Index(c.verdictOrder, key)
+	if index < 0 || index == len(c.verdictOrder)-1 {
+		return
+	}
+	c.verdictOrder = append(slices.Delete(c.verdictOrder, index, index+1), key)
 }
 
 func (c *Component) checkRendered(ctx context.Context, job *render) error {

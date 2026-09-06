@@ -161,7 +161,7 @@ func (c *Component) revertPodRender(
 			"pod", endpoint.PodName, "error", err)
 		return revertFailed
 	}
-	target := c.refusedRenderReference(endpoint, state, refused)
+	target := refusedRenderReference(state, refused)
 	if target.id == "" {
 		return revertSkipped
 	}
@@ -202,44 +202,27 @@ func (c *Component) revertPodRender(
 	return revertDone
 }
 
-// carriesRefusedPlan reports whether a pod holds the refused plan in a state
-// HAProxy has not proven loadable: on disk, or in the running worker's runtime
-// state without a reload having read it. A pod whose running worker WAS started
-// from the plan loaded it successfully and is left alone.
-func (c *Component) refusedRenderReference(
-	endpoint *dataplane.Endpoint,
-	state *api.State,
-	refused refusedRender,
-) planReference {
+// refusedRenderReference reports the plan a pod holds in a state HAProxy has
+// not proven loadable: on disk, or in the running worker's runtime state
+// without a reload having read it. A pod whose running worker WAS started from
+// the plan loaded it successfully and is left alone. Matched by plan: the pod
+// carries the refused content whichever occurrence delivered it, and matching
+// the occurrence let a pod escape the revert once a later apply of the same
+// plan replaced the proof it reported.
+func refusedRenderReference(state *api.State, refused refusedRender) planReference {
 	if state == nil || refused.planID == "" {
 		return planReference{}
 	}
-	authority := podKey(endpoint)
-	if c.roleCarriesRefusedRender(
-		authority, state.RunningPlanID, state.RunningPlanProof, refused,
-	) {
+	if state.RunningPlanID == refused.planID {
 		return planReference{}
 	}
-	if c.roleCarriesRefusedRender(
-		authority, state.AppliedPlanID, state.AppliedPlanProof, refused,
-	) {
+	if state.AppliedPlanID == refused.planID {
 		return planReference{id: state.AppliedPlanID, proof: state.AppliedPlanProof}
 	}
-	if c.roleCarriesRefusedRender(
-		authority, state.WorkerOpsPlanID, state.WorkerOpsPlanProof, refused,
-	) {
+	if state.WorkerOpsPlanID == refused.planID {
 		return planReference{id: state.WorkerOpsPlanID, proof: state.WorkerOpsPlanProof}
 	}
 	return planReference{}
-}
-
-func (c *Component) roleCarriesRefusedRender(
-	authority, planID, planProof string,
-	refused refusedRender,
-) bool {
-	return sameOccurrence(
-		c.planOccurrence(authority, planID, planProof), refused.occurrence,
-	)
 }
 
 func applyErrorMessage(result *api.ApplyResult) string {

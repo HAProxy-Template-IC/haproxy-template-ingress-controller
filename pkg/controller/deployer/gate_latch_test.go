@@ -337,3 +337,55 @@ func requireNothingScheduled(t *testing.T, scheduled <-chan busevents.Event) {
 	case <-time.After(testutil.NoEventTimeout):
 	}
 }
+
+// A reconcile loop re-renders a refused plan once per pass, so by the time
+// HAProxy's verdict lands the scheduler holds a later occurrence of the same
+// content. The refusal still names it: the latch closes, the deployable
+// render rolls back to the accepted one, and the queued copy is dropped.
+func TestScheduler_RefusalOfAnEarlierOccurrenceLatchesThePlan(t *testing.T) {
+	scheduler, scheduled, ctx := gateLatchScheduler(t)
+
+	scheduler.handleEvent(ctx, renderEvent("plan-good"))
+	requireScheduled(t, scheduled, "plan-good")
+	scheduler.handleEvent(ctx, gateEvent("plan-good", true, false, true, ""))
+	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
+		&events.DeploymentResult{Total: 1, Succeeded: 1}))
+
+	first := mustTestOccurrence("config-plan-bad", "plan-bad", nil)
+	second := mustTestOccurrence("config-plan-bad", "plan-bad", nil)
+	require.False(t, sameOccurrence(first, second))
+	require.True(t, samePlan(first, second))
+
+	scheduler.handleEvent(ctx, templateOccurrenceEvent(t, first))
+	requireScheduledOccurrence(t, scheduled, first)
+	scheduler.handleEvent(ctx, templateOccurrenceEvent(t, second))
+	requireNothingScheduled(t, scheduled)
+
+	scheduler.handleEvent(ctx, gateOccurrenceEvent(t, first, false, true, true))
+
+	scheduler.mu.RLock()
+	pinned := scheduler.gatePinned
+	deployable := scheduler.lastValidatedOccurrence
+	scheduler.mu.RUnlock()
+	assert.True(t, pinned, "the refusal names the plan the scheduler holds")
+	assert.True(t, sameOccurrence(gateTestOccurrence("plan-good"), deployable),
+		"the deployable render rolls back to the accepted one")
+
+	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler,
+		&events.DeploymentResult{Total: 1, Succeeded: 1}))
+	requireNothingScheduled(t, scheduled)
+}
+
+func requireScheduledOccurrence(t *testing.T, scheduled <-chan busevents.Event, expected *rendercycle.Occurrence) {
+	t.Helper()
+	select {
+	case event := <-scheduled:
+		deployment, ok := event.(*events.DeploymentScheduledEvent)
+		require.True(t, ok)
+		occurrence, err := deployment.RenderOccurrence()
+		require.NoError(t, err)
+		require.True(t, sameOccurrence(expected, occurrence))
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("expected the render to be dispatched")
+	}
+}
