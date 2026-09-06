@@ -151,7 +151,11 @@ func TestSchedulerCompletionRequiresSameExactOccurrence(t *testing.T) {
 	assert.Same(t, occurrenceA, scheduler.lastDeployedOccurrence)
 }
 
-func TestSchedulerABARenderGateDistinguishesOccurrences(t *testing.T) {
+// HAProxy judges content, so a verdict for one occurrence of a plan speaks for
+// every occurrence of it: the pass for the first render of A releases the
+// held third render, which is A again, and a verdict for B in between says
+// nothing about it.
+func TestSchedulerABARenderGateVerdictSpeaksForThePlan(t *testing.T) {
 	fixture := testutil.NewRenderCycleFixture(t)
 	cycleA := fixture.Snapshot(t, "global\n# A\n", nil, nil)
 	cycleB := fixture.Snapshot(t, "global\n# B\n", nil, cycleA)
@@ -167,16 +171,17 @@ func TestSchedulerABARenderGateDistinguishesOccurrences(t *testing.T) {
 	scheduler.handleTemplateRendered(context.Background(), templateOccurrenceEvent(t, occurrenceB))
 	scheduler.handleTemplateRendered(context.Background(), templateOccurrenceEvent(t, occurrenceA2))
 	scheduler.handleRenderGateCompleted(
-		context.Background(), gateOccurrenceEvent(t, occurrenceA1, true, false, true),
+		context.Background(), gateOccurrenceEvent(t, occurrenceB, true, false, false),
 	)
-	assert.True(t, scheduler.gatePinned)
+	assert.True(t, scheduler.gatePinned, "a superseded plan's verdict does not move the latch")
 	assert.Nil(t, scheduler.lastValidatedOccurrence)
 
 	scheduler.handleRenderGateCompleted(
-		context.Background(), gateOccurrenceEvent(t, occurrenceA2, true, false, true),
+		context.Background(), gateOccurrenceEvent(t, occurrenceA1, true, false, true),
 	)
 	assert.False(t, scheduler.gatePinned)
-	assert.Same(t, occurrenceA2, scheduler.lastValidatedOccurrence)
+	assert.Same(t, occurrenceA2, scheduler.lastValidatedOccurrence,
+		"the held render is released on the verdict for its content")
 }
 
 func TestPlanCachePoisonsReusedAgentProofAcrossOccurrences(t *testing.T) {

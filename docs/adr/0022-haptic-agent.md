@@ -61,7 +61,11 @@ parsing": the config text is parsed only by HAProxy in production.
    semaphore slot, duty-cycle capped so admission never waits on it). It always
    checks the newest render, plus any superseded plan a pod still reports
    applied, so the fleet's exposure is bounded by what the pods hold, not by
-   the render rate. A refusal reverts every pod that carries the failed plan
+   the render rate. A verdict is about the plan's content, not the render
+   that produced it: it names every occurrence of that plan, including the
+   re-renders a reconcile loop produces while `haproxy -c` runs, and the gate
+   remembers it so later occurrences settle without another check. A refusal
+   reverts every pod that carries the failed plan
    without its own HAProxy having loaded it (`mode: revert_lkg`, the agent's
    durable last-known-good set) — a pod whose own binary reloaded it is
    stronger evidence than the controller image's community-edition binary and

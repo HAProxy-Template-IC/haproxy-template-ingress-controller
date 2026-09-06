@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A configuration HAProxy refused can no longer reach the fleet through a re-render. The render gate judged each render occurrence separately, so while the reconcile loop kept re-rendering a refused plan every verdict arrived for a superseded occurrence, the scheduler never latched, the revert skipped pods whose reported proof had moved on, and the pods' own paced reload loaded the refused files and took them out of readiness. A verdict now names the plan's content, every occurrence of it, and the gate remembers it instead of running `haproxy -c` again.
 - A `k8sResources` document carrying an unquoted RFC3339 timestamp no longer fails to render. YAML types the scalar as a timestamp, which has no JSON counterpart, so the value is restored to the string the Kubernetes API expects. The bundled ingress library emits one on the degraded-backend Event, and the failure surfaced as the admission webhook denying an Ingress whose Service did not exist yet.
 
 ### Added

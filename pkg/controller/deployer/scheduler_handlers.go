@@ -103,9 +103,11 @@ func (s *DeploymentScheduler) handleRenderGateCompleted(ctx context.Context, eve
 	// The bus delivers a render before its verdict (the gate learns of the
 	// render from the same event), so the only way this misses is a dropped
 	// render — and then the drift pass produces a fresh one within its
-	// interval, which the gate judges in turn.
-	namesHeldRender := sameOccurrence(s.lastRenderedOccurrence, occurrence)
-	alreadyDispatched := sameOccurrence(s.lastValidatedOccurrence, occurrence)
+	// interval, which the gate judges in turn. Matched by plan, not by
+	// occurrence: a reconcile loop re-renders a refused plan once per pass,
+	// and each verdict speaks for every occurrence of that content.
+	namesHeldRender := samePlan(s.lastRenderedOccurrence, occurrence)
+	alreadyDispatched := samePlan(s.lastValidatedOccurrence, occurrence)
 	if !namesHeldRender && !alreadyDispatched {
 		s.mu.Unlock()
 		s.logger.Error("Ignoring a render gate verdict that does not match scheduler state", "plan", identity.planID)
@@ -153,8 +155,8 @@ func (s *DeploymentScheduler) holdAfterRefusal(
 	planID string,
 ) {
 	s.mu.Lock()
-	matched := sameOccurrence(s.lastRenderedOccurrence, occurrence) ||
-		sameOccurrence(s.lastValidatedOccurrence, occurrence)
+	matched := samePlan(s.lastRenderedOccurrence, occurrence) ||
+		samePlan(s.lastValidatedOccurrence, occurrence)
 	if !matched {
 		s.mu.Unlock()
 		return
@@ -193,7 +195,7 @@ func (s *DeploymentScheduler) dropPendingRender(
 	}
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
-	if s.state.pending == nil || !sameOccurrence(s.state.pending.occurrence, occurrence) {
+	if s.state.pending == nil || !samePlan(s.state.pending.occurrence, occurrence) {
 		return false
 	}
 	s.workRevision++
@@ -230,10 +232,10 @@ func (s *DeploymentScheduler) acceptRenderLocked() {
 func (s *DeploymentScheduler) rollBackToAcceptedRenderLocked(
 	refused *rendercycle.Occurrence,
 ) string {
-	if s.acceptedRender == nil || !sameOccurrence(s.lastValidatedOccurrence, refused) {
+	if s.acceptedRender == nil || !samePlan(s.lastValidatedOccurrence, refused) {
 		return ""
 	}
-	if sameOccurrence(s.acceptedRender.occurrence, refused) {
+	if samePlan(s.acceptedRender.occurrence, refused) {
 		return "" // the gate contradicting itself; keep what a pass established
 	}
 	s.lastValidatedOccurrence = s.acceptedRender.occurrence

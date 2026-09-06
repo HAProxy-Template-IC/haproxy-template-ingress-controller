@@ -171,3 +171,39 @@ func TestRenderGatePass_NamesTheValidatedPlan(t *testing.T) {
 		"the drift apply carries the validated plan, so LKG promotion never waits longer than one interval")
 	assert.Equal(t, plan.ID, agent.State().LKGPlanID)
 }
+
+// A reconcile loop re-renders a refused plan once per pass and each pass is
+// applied again, so the proof a pod reports belongs to a later occurrence than
+// the one HAProxy's verdict names. The pod still carries the refused content
+// and is reverted.
+func TestRenderGateRefusal_RevertsAPodCarryingALaterOccurrenceOfThePlan(t *testing.T) {
+	agent := agenttest.New(t)
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	initial := deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	validated, err := initial.RenderOccurrence()
+	require.NoError(t, err)
+	component.SetValidatedOccurrence(validated)
+	deployTo(t, component, bus, plan1, config1, aux1, events.TriggerReasonDriftPrevention, endpoint)
+	require.Equal(t, plan1.ID, agent.State().LKGPlanID)
+
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	first := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	firstOccurrence, err := first.RenderOccurrence()
+	require.NoError(t, err)
+	second := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	secondOccurrence, err := second.RenderOccurrence()
+	require.NoError(t, err)
+	require.False(t, sameOccurrence(firstOccurrence, secondOccurrence))
+	require.Equal(t, plan2.ID, agent.State().AppliedPlanID)
+
+	component.handleRenderGateCompleted(context.Background(),
+		renderGateForCompletion(t, first, false, true, "unknown keyword"))
+
+	reverted := agent.State()
+	assert.Equal(t, plan1.ID, reverted.AppliedPlanID, "the pod must be back on the plan HAProxy accepted")
+	assert.Contains(t, applyModes(agent), api.ModeRevertLKG)
+}

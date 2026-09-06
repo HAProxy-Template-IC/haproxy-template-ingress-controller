@@ -459,3 +459,67 @@ func TestRenderGateIgnoresMutableLegacyShadows(t *testing.T) {
 	assert.Equal(t, "config", config)
 	assert.NotEqual(t, "poison", component.newest.renderProof)
 }
+
+// A reconcile loop re-renders a refused plan once per pass, each a new
+// occurrence of the same content. The verdict belongs to the content: it
+// speaks for the newest occurrence, so the scheduler's latch moves, and the
+// later occurrences settle from memory instead of another `haproxy -c`.
+func TestRenderGate_VerdictSpeaksForEveryOccurrenceOfThePlan(t *testing.T) {
+	h := newGateHarness(t)
+
+	h.checker.holdOn("config-bad")
+	h.checker.answer("config-bad", refusal("unable to find userlist"))
+	h.render("bad-1", "config-bad")
+	<-h.checker.entered
+	h.render("bad-2", "config-bad")
+	h.awaitNewest(t, "bad-2")
+	h.checker.releaseHold()
+
+	first := h.verdict(t)
+	require.Equal(t, h.planID("bad-1"), first.PlanID)
+	assert.True(t, first.Refused)
+	assert.True(t, first.Newest, "a later occurrence of the same content does not supersede the verdict")
+
+	second := h.verdict(t)
+	assert.Equal(t, h.planID("bad-2"), second.PlanID)
+	assert.True(t, second.Refused)
+	assert.True(t, second.Newest)
+	assert.True(t, second.Pinned, "the second refusal of the same content pins the fleet")
+
+	h.render("bad-3", "config-bad")
+	third := h.verdict(t)
+	assert.Equal(t, h.planID("bad-3"), third.PlanID)
+	assert.True(t, third.Refused)
+	assert.Equal(t, []string{"config-bad"}, h.checker.checked(), "one check per plan content")
+
+	h.checker.answer("config-good", nil)
+	h.render("good", "config-good")
+	pass := h.verdict(t)
+	assert.True(t, pass.OK)
+	assert.False(t, pass.Pinned)
+}
+
+// The verdict memory evicts what was used least recently, so the plan a
+// reconcile loop keeps re-rendering stays remembered while contents seen once
+// cycle through the cap.
+func TestRenderGate_VerdictMemoryKeepsTheContentInUse(t *testing.T) {
+	c := New(&Config{EventBus: testutil.NewTestBus(), Logger: testutil.NewTestLogger()})
+	hot := &render{planID: "hot", checksum: "hot"}
+	c.mu.Lock()
+	c.rememberVerdictLocked(hot, verdict{refused: true, message: "boom"})
+	c.mu.Unlock()
+	for i := range maxRememberedVerdicts * 2 {
+		cold := &render{planID: fmt.Sprintf("cold-%d", i), checksum: "cold"}
+		c.mu.Lock()
+		c.rememberVerdictLocked(cold, verdict{ok: true})
+		c.mu.Unlock()
+		_, remembered := c.rememberedVerdict(hot)
+		require.True(t, remembered, "the content in use must survive %d colder ones", i+1)
+	}
+	c.mu.Lock()
+	assert.Len(t, c.verdicts, maxRememberedVerdicts)
+	assert.Len(t, c.verdictOrder, maxRememberedVerdicts)
+	c.mu.Unlock()
+	_, remembered := c.rememberedVerdict(&render{planID: "cold-0", checksum: "cold"})
+	assert.False(t, remembered, "the oldest unused content is evicted")
+}
