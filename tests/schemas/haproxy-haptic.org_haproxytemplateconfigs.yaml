@@ -1299,6 +1299,18 @@ spec:
                         Format: "field.path=value"
                         Example: "spec.ingressClassName=haproxy-internal"
                       type: string
+                    ignoreFields:
+                      description: |-
+                        IgnoreFields lists JSONPath expressions removed from this resource
+                        before it is stored, in addition to watchedResourcesIgnoreFields.
+                        `[*]` selects every element of an array. An update that changes only
+                        ignored fields is not a change: templates never see it and it
+                        triggers no render.
+
+                        Example: ["status.listeners[*].attachedRoutes"]
+                      items:
+                        type: string
+                      type: array
                     indexBy:
                       description: |-
                         IndexBy specifies JSONPath expressions for extracting index keys.

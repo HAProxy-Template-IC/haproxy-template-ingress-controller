@@ -132,6 +132,34 @@ func TestFieldFilter_Filter(t *testing.T) {
 		assert.Contains(t, md, "namespace")
 	})
 
+	t.Run("removes a field from every array element", func(t *testing.T) {
+		filter := NewFieldFilter([]string{"status.listeners[*].attachedRoutes"})
+		obj := map[string]any{
+			"status": map[string]any{
+				"listeners": []any{
+					map[string]any{"name": "http", "attachedRoutes": int64(3)},
+					map[string]any{"name": "https", "attachedRoutes": int64(0), "conditions": []any{}},
+					"not-a-map",
+				},
+				"addresses": []any{map[string]any{"value": "10.0.0.1"}},
+			},
+		}
+		require.NoError(t, filter.Filter(obj))
+
+		listeners := obj["status"].(map[string]any)["listeners"].([]any)
+		assert.Equal(t, map[string]any{"name": "http"}, listeners[0])
+		assert.Equal(t, map[string]any{"name": "https", "conditions": []any{}}, listeners[1])
+		assert.Equal(t, "not-a-map", listeners[2])
+		assert.Contains(t, obj["status"], "addresses")
+	})
+
+	t.Run("wildcard over a non-array is a no-op", func(t *testing.T) {
+		filter := NewFieldFilter([]string{"status.listeners[*].attachedRoutes"})
+		obj := map[string]any{"status": map[string]any{"listeners": map[string]any{"attachedRoutes": int64(1)}}}
+		require.NoError(t, filter.Filter(obj))
+		assert.Equal(t, map[string]any{"attachedRoutes": int64(1)}, obj["status"].(map[string]any)["listeners"])
+	})
+
 	t.Run("removes bracketed map key", func(t *testing.T) {
 		filter := NewFieldFilter([]string{"metadata.labels['app']"})
 		obj := map[string]any{

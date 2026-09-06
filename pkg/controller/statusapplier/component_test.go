@@ -17,6 +17,7 @@ package statusapplier
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1529,4 +1531,88 @@ func TestApplyVariant_DoesNotCacheOnFailure(t *testing.T) {
 	comp.mu.RLock()
 	assert.Empty(t, comp.statusCache)
 	comp.mu.RUnlock()
+}
+
+// The render's resourceVersion goes stale whenever something bumps the object
+// without changing what the render reads (the controller's own spec apply, an
+// annotation, a field the watcher ignores). The apply then conflicts; the
+// applier fetches the object, keeps the UID precondition, and applies once
+// more at the current version.
+func TestApplyVariant_ConflictRetriesAtCurrentResourceVersion(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClient()
+	var patchVersions []string
+	fakeClient.PrependReactor("patch", "ingresses", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(action.(k8stesting.PatchAction).GetPatch(), &payload))
+		version, _ := payload["metadata"].(map[string]any)["resourceVersion"].(string)
+		patchVersions = append(patchVersions, version)
+		if version != "7" {
+			return true, nil, apierrors.NewConflict(
+				schema.GroupResource{Group: "networking.k8s.io", Resource: "ingresses"}, "my-ingress",
+				errors.New("the object has been modified"))
+		}
+		result := &unstructured.Unstructured{}
+		result.SetUID("uid-my-ingress")
+		result.SetResourceVersion("8")
+		return true, result, nil
+	})
+	fakeClient.PrependReactor("get", "ingresses", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		current := &unstructured.Unstructured{}
+		current.SetUID("uid-my-ingress")
+		current.SetResourceVersion("7")
+		return true, current, nil
+	})
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+	setLeader(comp)
+
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
+	})
+	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+	first := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 1, first.AppliedCount)
+	assert.Equal(t, []string{"1", "7"}, patchVersions)
+
+	// The render still carries the stale version; the cache maps it to the
+	// applied one, so an identical payload skips without another conflict.
+	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+	second := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, 0, second.AppliedCount)
+	assert.Equal(t, 1, second.SkippedCount)
+	assert.Equal(t, []string{"1", "7"}, patchVersions)
+}
+
+// A conflict on an object that was recreated is not retried: the UID no
+// longer matches the render's, and the next render carries the new object.
+func TestApplyVariant_ConflictOnRecreatedObjectFails(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClient()
+	patchCalls := 0
+	fakeClient.PrependReactor("patch", "ingresses", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		patchCalls++
+		return true, nil, apierrors.NewConflict(
+			schema.GroupResource{Group: "networking.k8s.io", Resource: "ingresses"}, "my-ingress",
+			errors.New("the object has been modified"))
+	})
+	fakeClient.PrependReactor("get", "ingresses", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		current := &unstructured.Unstructured{}
+		current.SetUID("uid-recreated")
+		current.SetResourceVersion("9")
+		return true, current, nil
+	})
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+	setLeader(comp)
+
+	patches := newTestPatches(map[string]map[string]any{
+		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
+	})
+	comp.applyVariant(context.Background(), patches, events.StatusPatchPhaseRendered)
+	failed := testutil.WaitForEvent[*events.StatusUpdateFailedEvent](t, eventChan, testutil.EventTimeout)
+	assert.True(t, failed.Retriable)
+	assert.Equal(t, 1, patchCalls)
 }

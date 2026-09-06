@@ -205,3 +205,45 @@ func weighted(weight int) renderplan.Server {
 	server.Weight = ptr(weight)
 	return server
 }
+
+// A route's backendRef moved to a backend this render adds structurally. The
+// map value change would run in place, but the worker gets that backend only
+// from the pending reload: a value routing to it, through however many map
+// layers, sends requests to the default backend until then. No value change
+// runs in place while the render adds a backend; deletes still do.
+func TestInPlaceMapSetWaitsForABackendTheReloadAdds(t *testing.T) {
+	worker := basePlan(
+		withBackend(structuralBackend("be-old", srv("s1", "10.0.0.1", 8080))),
+		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{
+			entry("route.example.com", "route-key"), entry("gone.example.com", "be-old"),
+		}}),
+		withMap(renderplan.Map{Path: "maps/path.map", Entries: []renderplan.Entry{
+			entry("route-key/", "be-old"),
+		}}),
+	)
+	next := basePlan(
+		withBackend(structuralBackend("be-new", srv("s1", "10.0.0.1", 8081))),
+		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{
+			entry("route.example.com", "route-key"),
+		}}),
+		withMap(renderplan.Map{Path: "maps/path.map", Entries: []renderplan.Entry{
+			entry("route-key/", "be-new"),
+		}}),
+	)
+	base := withMapsLoaded(on34(worker), routeMap, "maps/path.map")
+	base.WorkerOps = worker
+	base.ReloadPending = true
+
+	got := deployplan.Diff(next, base)
+
+	require.Equal(t, []string{api.OpMapDel}, kinds(got.InPlace), "the delete runs, the value change waits")
+	assert.Equal(t, "gone.example.com", got.InPlace[0].Key)
+	assert.Equal(t, []renderplan.Entry{entry("route-key/", "be-old")}, got.WorkerPlan.Maps["maps/path.map"].Entries)
+
+	// Once the reload created the backend, the same value change runs in
+	// place against a worker that has it.
+	worker.Backends["be-new"] = next.Backends["be-new"]
+	base.WorkerOps = worker
+	again := deployplan.Diff(next, base)
+	assert.Equal(t, []string{api.OpMapSet, api.OpMapDel}, kinds(again.InPlace))
+}

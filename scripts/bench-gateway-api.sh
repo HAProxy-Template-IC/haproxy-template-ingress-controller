@@ -95,12 +95,10 @@ declare -a SCALE_ACTIVITY_METRICS=(
     haptic_deployment_total
     haptic_deployment_errors_total
     haptic_haproxy_reloads_total
-    haptic_dataplane_api_operations_total
-    haptic_runtime_fast_path_fires_total
-    haptic_runtime_fast_path_applies_total
-    haptic_runtime_fast_path_failures_total
-    haptic_runtime_fast_path_server_updates_total
-    haptic_deploy_runtime_divergence_total
+    haptic_deploy_apply_total
+    haptic_apply_rejected_total
+    haptic_runtime_server_ops_total
+    haptic_runtime_backend_ops_total
     haptic_runtime_map_divergence_total
     haptic_validation_total
     haptic_validation_errors_total
@@ -1652,6 +1650,27 @@ wait_for_config_valid() {
     die "HAProxyTemplateConfig did not become Validated=True at its current generation"
 }
 
+assert_no_limit_workloads() {
+    local manifest="$1"
+    local defaults="$2"
+    yq -o=json -I=0 '.' "$manifest" | jq -se --slurpfile defaults "$defaults" '
+        $defaults[0].controller.resources.requests as $controller_requests |
+        [.[] | select(.kind == "Deployment" and
+          (.metadata.name == "haptic-controller" or .metadata.name == "haptic-haproxy"))] as $deployments |
+        ($deployments | map(.metadata.name) | sort) == ["haptic-controller", "haptic-haproxy"] and
+        all($deployments[]; all(.spec.template.spec.containers[];
+          ((.resources.limits.memory? // "") == "") and
+          ((.resources.limits.cpu? // "") == "") and
+          all(.env[]?; .name != "GOMEMLIMIT"))) and
+        any($deployments[]; .metadata.name == "haptic-controller" and
+          any(.spec.template.spec.containers[]; .name == "controller" and
+            .resources.requests == $controller_requests and
+            .livenessProbe.httpGet.path == "/healthz" and .readinessProbe.httpGet.path == "/healthz")) and
+        any($deployments[]; .metadata.name == "haptic-haproxy" and
+          ((.spec.template.spec.shareProcessNamespace // false) == false))
+    ' >/dev/null
+}
+
 assert_effective_profile() {
     local defaults="$1"
     local effective="$2"
@@ -1860,23 +1879,8 @@ configure_haptic() {
                 ($library[0].spec.validationTests["test-httproute-session-persistence-cookie-default"] | type) == "object")}
     ' > "${BENCH_OUTPUT_DIR}/cluster/experimental-channel-profile.json"
 
-    if ! yq -o=json -I=0 '.' "$manifest_raw" | jq -se '
-        [.[] | select(.kind == "Deployment" and
-          (.metadata.name == "haptic-controller" or .metadata.name == "haptic-haproxy"))] as $deployments |
-        ($deployments | map(.metadata.name) | sort) == ["haptic-controller", "haptic-haproxy"] and
-        all($deployments[]; all(.spec.template.spec.containers[];
-          ((.resources.limits.memory? // "") == "") and
-          ((.resources.limits.cpu? // "") == "") and
-          all(.env[]?; .name != "GOMEMLIMIT"))) and
-        any($deployments[]; .metadata.name == "haptic-controller" and
-          any(.spec.template.spec.containers[]; .name == "controller" and
-            .resources.requests.cpu == "100m" and .resources.requests.memory == "512Mi" and
-            .livenessProbe.httpGet.path == "/healthz" and .readinessProbe.httpGet.path == "/healthz")) and
-        any($deployments[]; .metadata.name == "haptic-haproxy" and
-          ((.spec.template.spec.shareProcessNamespace // false) == false))
-    ' >/dev/null; then
+    assert_no_limit_workloads "$manifest_raw" "$chart_defaults" ||
         die "rendered HAPTIC workloads do not match the no-limit benchmark methodology"
-    fi
 
     kubectl get pods -n "$RELEASE_NAMESPACE" -l app.kubernetes.io/instance=haptic -o json \
         > "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json"
@@ -2373,7 +2377,14 @@ with (output / "controller-identities.json").open(encoding="utf-8") as handle:
     identities = json.load(handle)
 
 sample = re.compile(r"^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{[^}]*\})?\s+(\S+)(?:\s+\S+)?$")
-optional_vector = {"haptic_runtime_map_divergence_total"}
+# Label vectors: summed over their series, and absent until the first event.
+optional_vector = {
+    "haptic_runtime_map_divergence_total",
+    "haptic_deploy_apply_total",
+    "haptic_apply_rejected_total",
+    "haptic_runtime_server_ops_total",
+    "haptic_runtime_backend_ops_total",
+}
 per_metric = {metric: [] for metric in expected}
 for identity in identities:
     pod = identity["name"]
@@ -2579,7 +2590,7 @@ by_name = {item["metric"]: item for item in metrics}
 reconciliation_advanced = by_name["haptic_reconciliation_total"]["delta"] > 0
 dataplane_metrics = (
     "haptic_deployment_total",
-    "haptic_dataplane_api_operations_total",
+    "haptic_deploy_apply_total",
     "haptic_haproxy_reloads_total",
 )
 dataplane_advanced = any(by_name[name]["delta"] > 0 for name in dataplane_metrics)
@@ -2587,8 +2598,7 @@ outcome_metrics = (
     "haptic_reconciliation_errors_total",
     "haptic_deployment_errors_total",
     "haptic_validation_errors_total",
-    "haptic_runtime_fast_path_failures_total",
-    "haptic_deploy_runtime_divergence_total",
+    "haptic_apply_rejected_total",
     "haptic_runtime_map_divergence_total",
     "haptic_events_dropped_total",
     "haptic_events_dropped_critical_total",

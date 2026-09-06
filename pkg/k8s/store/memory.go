@@ -292,10 +292,60 @@ func (s *MemoryStore) identityUnchangedLocked(identity resourceIdentity, key str
 	for _, current := range s.data[currentKey] {
 		currentNamespace, currentName := extractNamespaceName(current)
 		if currentNamespace == identity.namespace && currentName == identity.name {
-			return reflect.DeepEqual(current, resource)
+			return equalIgnoringResourceVersion(current, resource)
 		}
 	}
 	return false
+}
+
+// equalIgnoringResourceVersion reports whether two resources differ in nothing
+// but metadata.resourceVersion. The API server bumps that on a write whose
+// only visible fields were filtered out before storage, such as the
+// controller's own status write echoing back with the written field ignored;
+// the stored object is kept so the revision does not move.
+func equalIgnoringResourceVersion(current, resource any) bool {
+	currentObject, ok := current.(map[string]any)
+	if !ok {
+		return reflect.DeepEqual(current, resource)
+	}
+	resourceObject, ok := resource.(map[string]any)
+	if !ok || len(currentObject) != len(resourceObject) {
+		return false
+	}
+	for key, currentValue := range currentObject {
+		resourceValue, ok := resourceObject[key]
+		if !ok {
+			return false
+		}
+		if key == "metadata" {
+			if !equalMetadataIgnoringResourceVersion(currentValue, resourceValue) {
+				return false
+			}
+			continue
+		}
+		if !reflect.DeepEqual(currentValue, resourceValue) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalMetadataIgnoringResourceVersion(current, resource any) bool {
+	currentMetadata, ok := current.(map[string]any)
+	if !ok {
+		return reflect.DeepEqual(current, resource)
+	}
+	resourceMetadata, ok := resource.(map[string]any)
+	if !ok || len(currentMetadata) != len(resourceMetadata) {
+		return false
+	}
+	for key, currentValue := range currentMetadata {
+		resourceValue, ok := resourceMetadata[key]
+		if !ok || (key != "resourceVersion" && !reflect.DeepEqual(currentValue, resourceValue)) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *MemoryStore) removeUntrackedIdentityLocked(keyStr string, resource any) {

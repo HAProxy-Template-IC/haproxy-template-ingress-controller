@@ -386,6 +386,7 @@ meaning with the agent; the paths didn't.
 | `labelSelector` | string | `""` | Server-side label selector for watch-time filtering (equality-only `key=value` pairs joined by commas) |
 | `enableValidationWebhook` | bool | `false` | Include this resource in the chart-rendered `ValidatingWebhookConfiguration` |
 | `statusPatch` | bool | `false` | Allow the controller to patch this resource's `/status` subresource |
+| `ignoreFields` | list | `[]` | JSONPath expressions dropped from this resource before storing it, in addition to `watchedResourcesIgnoreFields`; `[*]` selects every array element. An update that changes only ignored fields triggers no render |
 | `store` | string | `full` | `full` keeps all resources in memory; `on-demand` fetches with caching (lower memory, slower lookups). Useful for very large Secret stores |
 | `debounceInterval` | duration | `""` (`100ms`) | Per-resource debounce window; empty/unparseable falls back to the controller-wide default (`DefaultDebounceInterval`, `100ms`). Avoid raising the value for resources that drive backend membership — `EndpointSlices` and `pods` in particular — because the debounce delays Pod removal from the HAProxy server pool by that whole window, so live traffic continues hitting Terminating pods until the next render fires |
 

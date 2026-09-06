@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"reflect"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -56,7 +55,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // reconciliationWiring carries the few construction outputs later startup
@@ -68,14 +66,13 @@ import (
 //   - httpStore/capabilities/engine/typedResourceTypes/gvrMapper/publishedCurrentFiles:
 //     read by createDryRunValidator when the webhook validators are wired up.
 type reconciliationWiring struct {
-	httpStore *httpstore.Component // HTTP resource fetcher for dynamic content
-	// capabilities is the fleet's HAProxy capability set and every render
-	// service that has to see it: the webhook's render is a gate, so it must
-	// judge the config the fleet will run, not the one this image would.
-	capabilities          *renderer.CapabilitiesFanout
+	// renderService is the reconciliation render service. Admission renders
+	// on it too: its graph is warm on every replica (leader renders, follower
+	// warmer), so a dry-run rebases its overlay on the current root instead
+	// of rebuilding the graph per request, and it sees the fleet capabilities
+	// the deploy side sources into it.
+	renderService         *renderer.RenderService
 	publishedCurrentFiles *publishedAuxFiles
-	engine                templating.Engine
-	typedResourceTypes    map[string]reflect.Type
 	gvrMapper             meta.RESTMapper
 }
 
@@ -367,11 +364,8 @@ func createReconciliationComponents(
 	)
 
 	return &reconciliationWiring{
-		httpStore:             httpStoreComponent,
-		capabilities:          capabilities,
+		renderService:         renderService,
 		publishedCurrentFiles: currentFiles.published,
-		engine:                engine,
-		typedResourceTypes:    wiring.TypedResourceTypes,
 		gvrMapper:             gvrMapper,
 	}, nil
 }

@@ -208,6 +208,14 @@ func TestDedupIgnoreFields(t *testing.T) {
 	}
 }
 
+func TestMergeIgnoreFields(t *testing.T) {
+	global := []string{"metadata.managedFields"}
+	got := mergeIgnoreFields(global, []string{"status.listeners[*].attachedRoutes", "metadata.managedFields"})
+	assert.Equal(t, []string{"metadata.managedFields", "status.listeners[*].attachedRoutes"}, got)
+	assert.Equal(t, []string{"metadata.managedFields"}, global, "the global list is not modified")
+	assert.Equal(t, []string{"metadata.managedFields"}, mergeIgnoreFields(global, nil))
+}
+
 func TestDetermineStoreType(t *testing.T) {
 	tests := []struct {
 		name        string

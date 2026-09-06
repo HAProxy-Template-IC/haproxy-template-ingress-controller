@@ -20,7 +20,12 @@ const (
 
 // Session isolates speculative input and query state until commit.
 type Session struct {
-	graph              *Graph
+	graph *Graph
+	// base is the committed generation this session reads. It is retained,
+	// not re-read from the graph, so a session that never commits (an
+	// admission render) keeps a consistent view while other sessions commit;
+	// a commit still compares baseGeneration against the graph's current one.
+	base               *graphGeneration
 	baseGeneration     uint64
 	targetGeneration   uint64
 	cold               bool
@@ -388,11 +393,11 @@ func (s *Session) DirtyQueries() ([]QueryKey, error) {
 
 	dirty := map[QueryKey]struct{}{}
 	s.graph.mu.RLock()
-	if !s.graph.currentValidLocked() || s.graph.current.number != s.baseGeneration {
+	if !s.baseValidLocked() {
 		s.graph.mu.RUnlock()
-		return nil, s.fail(ErrCommitConflict)
+		return nil, s.fail(errInvalidBaseGeneration)
 	}
-	s.graph.current.dirty.Root().Walk(func(key string, _ struct{}) bool {
+	s.base.dirty.Root().Walk(func(key string, _ struct{}) bool {
 		dirty[NewQueryKey(key)] = struct{}{}
 		return false
 	})
@@ -557,16 +562,22 @@ func (s *Session) borrowInput(key InputKey) (inputEntry, bool, error) {
 
 	s.graph.mu.RLock()
 	defer s.graph.mu.RUnlock()
-	if !s.graph.currentValidLocked() || s.graph.current.number != s.baseGeneration {
-		return inputEntry{}, false, ErrCommitConflict
+	if !s.baseValidLocked() {
+		return inputEntry{}, false, errInvalidBaseGeneration
 	}
-	committed, exists := s.graph.current.inputs.Root().Get([]byte(key.value))
+	committed, exists := s.base.inputs.Root().Get([]byte(key.value))
 	if exists {
 		entry := openCommittedInputEntry(committed)
 		s.baseInputs[key] = entry
 		return entry, true, nil
 	}
 	return inputEntry{}, false, nil
+}
+
+// baseValidLocked reports whether the retained base generation still carries
+// its provenance. Callers hold graph.mu.
+func (s *Session) baseValidLocked() bool {
+	return s.base != nil && s.base.valid(s.graph)
 }
 
 func (s *Session) baseInput(key InputKey) (inputEntry, bool, error) {
@@ -579,10 +590,10 @@ func (s *Session) baseInput(key InputKey) (inputEntry, bool, error) {
 
 	s.graph.mu.RLock()
 	defer s.graph.mu.RUnlock()
-	if !s.graph.currentValidLocked() || s.graph.current.number != s.baseGeneration {
-		return inputEntry{}, false, ErrCommitConflict
+	if !s.baseValidLocked() {
+		return inputEntry{}, false, errInvalidBaseGeneration
 	}
-	committed, exists := s.graph.current.inputs.Root().Get([]byte(key.value))
+	committed, exists := s.base.inputs.Root().Get([]byte(key.value))
 	if exists {
 		entry := openCommittedInputEntry(committed)
 		s.baseInputs[key] = entry
@@ -617,10 +628,10 @@ func (s *Session) baseNode(key QueryKey) (nodeEntry, bool, error) {
 
 	s.graph.mu.RLock()
 	defer s.graph.mu.RUnlock()
-	if !s.graph.currentValidLocked() || s.graph.current.number != s.baseGeneration {
-		return nodeEntry{}, false, ErrCommitConflict
+	if !s.baseValidLocked() {
+		return nodeEntry{}, false, errInvalidBaseGeneration
 	}
-	committed, exists := s.graph.current.nodes.Root().Get([]byte(key.value))
+	committed, exists := s.base.nodes.Root().Get([]byte(key.value))
 	if exists {
 		entry, err := openCommittedNodeEntry(s.graph, key, committed)
 		if err != nil {
@@ -721,11 +732,11 @@ func (s *Session) currentReverseRoots(
 	}
 	if !s.cold {
 		s.graph.mu.RLock()
-		if !s.graph.currentValidLocked() || s.graph.current.number != s.baseGeneration {
+		if !s.baseValidLocked() {
 			s.graph.mu.RUnlock()
-			return orderedset.Root{}, orderedset.Root{}, ErrCommitConflict
+			return orderedset.Root{}, orderedset.Root{}, errInvalidBaseGeneration
 		}
-		committed, err = s.graph.reverseRootLocked(key)
+		committed, err = s.graph.reverseRootOfLocked(s.base, key)
 		s.graph.mu.RUnlock()
 		if err != nil {
 			return orderedset.Root{}, orderedset.Root{}, err

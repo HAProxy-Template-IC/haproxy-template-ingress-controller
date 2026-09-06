@@ -84,6 +84,10 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
     statusPatch: true
+    # The controller writes this counter on every route change and reads it
+    # nowhere; every route reads its Gateway, so the write's echo would
+    # otherwise re-render them all.
+    ignoreFields: ["status.listeners[*].attachedRoutes"]
     # fieldSelector: injected by Helm from gatewayClass.name
 
   httproutes:
@@ -167,6 +171,8 @@ watchedResources:
     # ListenerSet without scanning the watched store.
     indexBy: ["metadata.namespace", "metadata.name"]
     statusPatch: true
+    # Same counter echo as gateways.
+    ignoreFields: ["status.listeners[*].attachedRoutes"]
 
   backendtlspolicies:
     # v1 standard since Gateway API v1.4; experimental v1alpha3 (v1.1-1.3)

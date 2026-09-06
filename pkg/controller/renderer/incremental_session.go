@@ -42,6 +42,7 @@ import (
 var (
 	errIncrementalUnsupported = errors.New("incremental rendering requires exact source snapshots")
 	errIncrementalColdRestart = errors.New("incremental rendering requires a cold restart")
+	errIncrementalBaseMoved   = errors.New("incremental render base moved before its graph session began")
 )
 
 const (
@@ -153,6 +154,7 @@ type incrementalRenderSession struct {
 	httpComponent   *controllerhttpstore.Component
 	httpWrapper     *controllerhttpstore.HTTPStoreWrapper
 	httpLease       *httpstore.ActiveLeaseSnapshot
+	beginHTTPLease  *httpstore.ActiveLeaseSnapshot
 
 	members      *iradix.Txn[struct{}]
 	activeGroups *iradix.Txn[struct{}]
@@ -268,7 +270,23 @@ func (s *incrementalRenderState) begin(
 	if err := s.ensureHTTPLeaseAuthority(httpComponent); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
+	// Resolve the HTTP sources before taking the state lock: each read waits
+	// on the HTTP store's lock, which a commit holds while it takes the state
+	// lock.
+	httpWrapper, err := incrementalHTTPWrapper(baseContext)
+	if err != nil {
+		return nil, fmt.Errorf("binding http inputs: %w", err)
+	}
+	httpSources := incrementalHTTPSources{wrapper: httpWrapper.RevisionSource()}
+	if httpComponent != nil {
+		httpSources.component = httpComponent.RevisionSource()
+	}
+	var beginLease *httpstore.ActiveLeaseSnapshot
+	if httpComponent == nil {
+		s.mu.Lock()
+	} else if beginLease, err = s.lockStateWithHTTPLease(httpComponent); err != nil {
+		return nil, fmt.Errorf("binding http inputs: %w", err)
+	}
 	stateLocked := true
 	defer func() {
 		if stateLocked {
@@ -290,10 +308,10 @@ func (s *incrementalRenderState) begin(
 	if err != nil {
 		return nil, fmt.Errorf("pinning store snapshots: %w", err)
 	}
-	if err := pinIncrementalControllerSnapshots(ctx, baseContext, snapshots); err != nil {
+	if err := pinIncrementalControllerSnapshots(baseContext, snapshots); err != nil {
 		return nil, fmt.Errorf("pinning controller snapshots: %w", err)
 	}
-	httpWrapper, httpCursor, err := s.beginHTTPBinding(baseContext, httpComponent)
+	httpCursor, err := s.beginHTTPBinding(httpWrapper, httpComponent, httpSources)
 	if err != nil {
 		return nil, fmt.Errorf("binding http inputs: %w", err)
 	}
@@ -309,6 +327,7 @@ func (s *incrementalRenderState) begin(
 		overlayChanges:          snapshots.overlayChanges,
 		httpComponent:           httpComponent,
 		httpWrapper:             httpWrapper,
+		beginHTTPLease:          beginLease,
 		cursors:                 mapsCloneCursors(s.snapshot.cursors),
 		httpCursor:              httpCursor,
 		groupIndexes:            cloneGroupIndexes(s.snapshot.groupIndexes),
@@ -362,11 +381,36 @@ func (s *incrementalRenderState) begin(
 	runtime.resetTransactions(false)
 	s.mu.Unlock()
 	stateLocked = false
+	if err := runtime.pinGraphBase(); err != nil {
+		runtime.abort()
+		return nil, err
+	}
 	if err := runtime.startGraphSession(ctx); err != nil {
 		runtime.abort()
 		return nil, err
 	}
 	return runtime, nil
+}
+
+// pinGraphBase begins the graph session on the generation the copied base
+// was committed with. The base is copied under the state lock and the graph
+// session begins outside it, because a commit holds the graph lock while it
+// takes the state lock; a commit landing in between moves the state past the
+// copied base, and the session starts over rather than read two generations.
+func (r *incrementalRenderSession) pinGraphBase() error {
+	graphSession, err := r.state.graph.BeginWithResolver(r.resolveInput)
+	if err != nil {
+		return fmt.Errorf("starting incremental graph session: %w", err)
+	}
+	r.state.mu.Lock()
+	moved := r.state.snapshot != r.base
+	r.state.mu.Unlock()
+	if moved {
+		graphSession.Abort()
+		return errIncrementalBaseMoved
+	}
+	r.graphSession = graphSession
+	return nil
 }
 
 func (s *incrementalRenderState) validateBeginPreconditionsLocked(
@@ -387,17 +431,21 @@ func (s *incrementalRenderState) validateBeginPreconditionsLocked(
 	return validateIncrementalStateSnapshotAuthentication(s.snapshot)
 }
 
+// incrementalHTTPSources carries the HTTP revision sources a session read
+// before it took the state lock.
+type incrementalHTTPSources struct {
+	wrapper   httpstore.SourceID
+	component httpstore.SourceID
+}
+
 func (s *incrementalRenderState) beginHTTPBinding(
-	baseContext map[string]any,
+	httpWrapper *controllerhttpstore.HTTPStoreWrapper,
 	httpComponent *controllerhttpstore.Component,
-) (*controllerhttpstore.HTTPStoreWrapper, incrementalHTTPCursor, error) {
-	httpWrapper, err := incrementalHTTPWrapper(baseContext)
-	if err != nil {
-		return nil, incrementalHTTPCursor{}, err
-	}
-	if httpWrapper != nil && (httpComponent == nil || httpComponent.RevisionSource() == 0 ||
-		httpWrapper.RevisionSource() != httpComponent.RevisionSource()) {
-		return nil, incrementalHTTPCursor{}, fmt.Errorf(
+	sources incrementalHTTPSources,
+) (incrementalHTTPCursor, error) {
+	if httpWrapper != nil && (httpComponent == nil || sources.component == 0 ||
+		sources.wrapper != sources.component) {
+		return incrementalHTTPCursor{}, fmt.Errorf(
 			"%w: template HTTP fetcher has no matching revision source",
 			errIncrementalUnsupported,
 		)
@@ -406,7 +454,42 @@ func (s *incrementalRenderState) beginHTTPBinding(
 	if httpComponent != nil && !httpCursor.token.Valid() {
 		httpCursor.token = s.httpInitial
 	}
-	return httpWrapper, httpCursor, nil
+	return httpCursor, nil
+}
+
+// lockStateWithHTTPLease takes the state lock holding an HTTP lease snapshot
+// begun on the token the locked base carries. The lease begins outside the
+// lock because a commit holds the HTTP store while taking this lock, so a
+// commit landing in between moves the token and the pair is taken again.
+func (s *incrementalRenderState) lockStateWithHTTPLease(
+	component *controllerhttpstore.Component,
+) (*httpstore.ActiveLeaseSnapshot, error) {
+	for range 8 {
+		s.mu.Lock()
+		token, leaseSet := s.baseHTTPTokenLocked(), s.httpLeaseSet
+		s.mu.Unlock()
+		lease, err := component.BeginActiveLeases(leaseSet, token)
+		if errors.Is(err, httpstore.ErrActiveLeaseTokenStale) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		s.mu.Lock()
+		if s.baseHTTPTokenLocked() == lease.Token() {
+			return lease, nil
+		}
+		s.mu.Unlock()
+	}
+	return nil, httpstore.ErrActiveLeaseTokenStale
+}
+
+func (s *incrementalRenderState) baseHTTPTokenLocked() httpstore.ActiveLeaseToken {
+	token := s.snapshot.httpCursor.token
+	if !token.Valid() {
+		token = s.httpInitial
+	}
+	return token
 }
 
 func (s *incrementalRenderState) ensureHTTPLeaseAuthority(
@@ -454,7 +537,6 @@ func (r *incrementalRenderSession) incrementalTransitionTime(ctx context.Context
 }
 
 func pinIncrementalControllerSnapshots(
-	ctx context.Context,
 	baseContext map[string]any,
 	snapshots *incrementalStoreSnapshots,
 ) error {
@@ -483,7 +565,7 @@ func pinIncrementalControllerSnapshots(
 			return fmt.Errorf("%w: controller resource %q cannot pin an immutable root",
 				errIncrementalUnsupported, field)
 		}
-		if err := validateIncrementalStoreProtocol(ctx, "controller resource", field, wrapper.Store); err != nil {
+		if err := validateIncrementalStoreProtocol("controller resource", field, wrapper.Store); err != nil {
 			return err
 		}
 		if existing := snapshots.base[alias]; existing != nil &&
@@ -575,12 +657,10 @@ func (r *incrementalRenderSession) startGraphSession(ctx context.Context) error 
 	}
 	inputs := sortedInputs(r.inputChanges)
 	if r.cold {
+		r.graphSession.Abort()
 		r.graphSession, err = r.state.graph.BeginColdResetWithConcurrentResolver(r.resolveInput, inputs...)
 	} else {
-		r.graphSession, err = r.state.graph.BeginWithResolver(r.resolveInput)
-		if err == nil {
-			err = r.graphSession.ApplyInputs(inputs...)
-		}
+		err = r.graphSession.ApplyInputs(inputs...)
 	}
 	if err != nil {
 		return fmt.Errorf("starting incremental graph session: %w", err)
@@ -939,7 +1019,7 @@ func (r *incrementalRenderSession) prepareHTTPChanges() (bool, error) {
 		r.httpCursor.token.Source() != r.httpComponent.RevisionSource() {
 		return false, fmt.Errorf("%w: HTTP lease authority changed", errIncrementalUnsupported)
 	}
-	snapshot, err := r.httpComponent.BeginActiveLeases(r.state.httpLeaseSet, r.httpCursor.token)
+	snapshot, err := r.beginActiveLeases(r.httpCursor.token)
 	if err != nil {
 		return false, fmt.Errorf("beginning incremental HTTP leases: %w", err)
 	}
@@ -1134,6 +1214,18 @@ func (r *incrementalRenderSession) loadSource(ctx context.Context, source string
 	return nil
 }
 
+// beginActiveLeases returns the lease pinned with the base at begin for the
+// base token, so a commit after begin cannot strand the session on a token the
+// store no longer accepts.
+func (r *incrementalRenderSession) beginActiveLeases(
+	token httpstore.ActiveLeaseToken,
+) (*httpstore.ActiveLeaseSnapshot, error) {
+	if r.beginHTTPLease != nil && r.beginHTTPLease.Token() == token {
+		return r.beginHTTPLease, nil
+	}
+	return r.httpComponent.BeginActiveLeases(r.state.httpLeaseSet, token)
+}
+
 func (r *incrementalRenderSession) loadHTTPCursor() error {
 	if r.httpComponent == nil {
 		return nil
@@ -1148,7 +1240,7 @@ func (r *incrementalRenderSession) loadHTTPCursor() error {
 	if !token.Valid() || token.Source() != r.httpComponent.RevisionSource() {
 		return fmt.Errorf("%w: HTTP store has no revision source", errIncrementalUnsupported)
 	}
-	snapshot, err := r.httpComponent.BeginActiveLeases(r.state.httpLeaseSet, token)
+	snapshot, err := r.beginActiveLeases(token)
 	if err != nil {
 		return err
 	}

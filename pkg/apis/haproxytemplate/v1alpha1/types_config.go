@@ -554,6 +554,16 @@ type WatchedResource struct {
 	// "0" disables debouncing; default 100ms.
 	// +optional
 	DebounceInterval string `json:"debounceInterval,omitempty"`
+
+	// IgnoreFields lists JSONPath expressions removed from this resource
+	// before it is stored, in addition to watchedResourcesIgnoreFields.
+	// `[*]` selects every element of an array. An update that changes only
+	// ignored fields is not a change: templates never see it and it
+	// triggers no render.
+	//
+	// Example: ["status.listeners[*].attachedRoutes"]
+	// +optional
+	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
 // TemplateSnippet defines a reusable template fragment.

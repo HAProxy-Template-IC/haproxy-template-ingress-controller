@@ -67,19 +67,26 @@ backend http_back
 	// The controller image's own HAProxy is newer than the fleet's, which is
 	// what a rolling upgrade looks like from here.
 	capabilities := renderer.NewCapabilitiesFanout(dataplane.Capabilities{SupportsCrtList: true})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
+		Engine:             engine,
+		Config:             cfg,
+		Logger:             logger,
+		Capabilities:       capabilities.Capabilities(),
+		TypedResourceTypes: map[string]reflect.Type{},
+	})
+	capabilities.Add(renderService)
 	validator, err := createDryRunValidator(
 		cfg,
 		busevents.NewEventBus(100),
 		stores.NewRealStoreProvider(map[string]stores.Store{"ingresses": &storetest.MockStore{}}),
 		&reconciliationWiring{
-			capabilities:          capabilities,
+			renderService:         renderService,
 			publishedCurrentFiles: newPublishedAuxFiles("haptic"),
-			engine:                engine,
-			typedResourceTypes:    map[string]reflect.Type{},
 			gvrMapper:             ingressRESTMapper(),
 		},
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger,
 	)
 	require.NoError(t, err)
 

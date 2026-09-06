@@ -437,3 +437,38 @@ func hasRevision(inputs []InputRevision, key InputKey, revision Revision) bool {
 	}
 	return false
 }
+
+// An admission render reads a session it never commits while the reconcile
+// path commits generations underneath it. The session keeps reading the
+// generation it began on; only its commit conflicts.
+func TestReadOnlySessionSurvivesConcurrentCommit(t *testing.T) {
+	inputKey := NewInputKey("input")
+	queryKey := NewQueryKey("query")
+	graph := mustGraph(t, Definition{Key: queryKey, Run: func(_ context.Context, reader Reader) ([]byte, error) {
+		value, _, err := reader.Input(inputKey)
+		return value, err
+	}})
+	seed := mustBegin(t, graph)
+	mustApply(t, seed, exactInput(inputKey, "r1", "base"))
+	mustEvaluate(t, seed, queryKey)
+	mustCommit(t, seed)
+
+	reader := mustBegin(t, graph)
+	writer := mustBegin(t, graph)
+	mustApply(t, writer, exactInput(inputKey, "r2", "newer"))
+	mustEvaluate(t, writer, queryKey)
+	mustCommit(t, writer)
+
+	if _, err := reader.DirtyQueries(); err != nil {
+		t.Fatalf("DirtyQueries() after a concurrent commit = %v", err)
+	}
+	if got := string(mustEvaluate(t, reader, queryKey)); got != "base" {
+		t.Fatalf("reader value = %q, want the generation it began on", got)
+	}
+	if err := reader.Commit(context.Background(), acceptRevisions); !errors.Is(err, ErrCommitConflict) {
+		t.Fatalf("stale reader Commit() error = %v, want ErrCommitConflict", err)
+	}
+	if got := stringValue(t, graph, queryKey); got != "newer" {
+		t.Fatalf("committed value = %q", got)
+	}
+}

@@ -433,6 +433,12 @@ type WatchedResource struct {
 	// the cost of more reconciliations and GC pressure. Most workloads
 	// should leave this empty.
 	DebounceInterval string `yaml:"debounce_interval,omitempty"`
+
+	// IgnoreFields lists JSONPath expressions removed from this resource
+	// before it is stored, in addition to WatchedResourcesIgnoreFields.
+	// `[*]` selects every element of an array. An update that changes only
+	// ignored fields is not a change.
+	IgnoreFields []string `yaml:"ignore_fields,omitempty"`
 }
 
 // GetDebounceInterval returns the configured debounce interval. The CRD field

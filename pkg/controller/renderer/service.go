@@ -42,6 +42,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -533,7 +534,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	tryExactReuse := true
 	forceCold := false
 	for range 3 {
-		result, restart, err := s.renderAttempt(
+		result, restart, err := s.renderAttemptOnCurrentBase(
 			ctx, provider, mode, startTime, forceCold, tryExactReuse, attemptInputs, retryInputs, extraOpts...,
 		)
 		if errors.Is(err, errExactCycleOutputOnlyRetry) && tryExactReuse {
@@ -561,6 +562,41 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		forceCold = true
 	}
 	return nil, errors.New("render attempt restart limit exceeded")
+}
+
+// renderBaseMoveLimit bounds how often one render restarts because a commit
+// replaced the base it began on. The window is the few instructions between
+// copying the base and pinning it, so a second restart in a row means a
+// commit storm rather than bad luck.
+const renderBaseMoveLimit = 4
+
+// renderAttemptOnCurrentBase runs one attempt, beginning again on the current
+// base when a concurrent commit replaced the one it copied. These restarts
+// have their own budget: they are not the exact-cycle restarts the caller
+// counts.
+func (s *RenderService) renderAttemptOnCurrentBase(
+	ctx context.Context,
+	provider stores.StoreProvider,
+	mode rendercontext.RenderMode,
+	startTime time.Time,
+	forceCold, tryExactReuse bool,
+	attemptInputs *renderAttemptInputs,
+	retryInputs *renderRetryInputs,
+	extraOpts ...rendercontext.Option,
+) (*RenderResult, bool, error) {
+	var err error
+	for range renderBaseMoveLimit {
+		var result *RenderResult
+		var restart bool
+		result, restart, err = s.renderAttempt(
+			ctx, provider, mode, startTime, forceCold, tryExactReuse, attemptInputs, retryInputs, extraOpts...,
+		)
+		if errors.Is(err, purehttpstore.ErrActiveLeaseTokenStale) || errors.Is(err, errIncrementalBaseMoved) {
+			continue
+		}
+		return result, restart, err
+	}
+	return nil, false, fmt.Errorf("render base moved %d times in a row: %w", renderBaseMoveLimit, err)
 }
 
 type renderRetryInputs struct {
