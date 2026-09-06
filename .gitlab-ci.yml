@@ -1688,13 +1688,14 @@ test-acceptance:
           echo "=== Namespace: $ns ===" >> debug-logs/test-namespaces.log
 
           # Controller pod logs with timestamps for correlation
+          # --tail=-1: with a label selector kubectl keeps 10 lines per pod.
           kubectl -n "$ns" logs -l app=haptic-controller --all-containers=true \
-            --timestamps=true --since=10m \
+            --timestamps=true --since=10m --tail=-1 --prefix \
             >> debug-logs/controller-$ns.log 2>&1 || true
 
           # Blocklist server logs (nginx) - critical for HTTP store tests
           kubectl -n "$ns" logs -l app=blocklist-server --all-containers=true \
-            --timestamps=true --since=10m \
+            --timestamps=true --since=10m --tail=-1 --prefix \
             >> debug-logs/blocklist-server-$ns.log 2>&1 || true
 
           # Pod status with IP addresses for debugging service routing
