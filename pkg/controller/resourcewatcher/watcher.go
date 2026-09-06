@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -146,8 +147,7 @@ func New(
 			return nil, fmt.Errorf("invalid resource %q: %w", resourceTypeName, err)
 		}
 
-		// Deduplicate the global ignore-field list once per watcher.
-		ignoreFields := dedupIgnoreFields(cfg.WatchedResourcesIgnoreFields)
+		ignoreFields := mergeIgnoreFields(cfg.WatchedResourcesIgnoreFields, watchedResource.IgnoreFields)
 
 		// Convert label selector map to metav1.LabelSelector
 		var labelSelector *metav1.LabelSelector
@@ -364,6 +364,11 @@ func parseAPIVersion(apiVersion string) (group, version string) {
 		return "", parts[0]
 	}
 	return parts[0], parts[1]
+}
+
+// mergeIgnoreFields joins the global ignore list with one resource's own.
+func mergeIgnoreFields(global, resource []string) []string {
+	return dedupIgnoreFields(append(slices.Clone(global), resource...))
 }
 
 // dedupIgnoreFields returns a new slice containing the entries of fields with

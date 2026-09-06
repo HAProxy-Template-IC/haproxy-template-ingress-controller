@@ -69,6 +69,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -627,18 +628,10 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 		return patchFailed
 	}
 
-	// Apply via SSA on the status subresource.
-	applied, err := c.dynamicClient.Resource(gvr).Namespace(patch.Namespace).Patch(
-		ctx,
-		patch.Name,
-		types.ApplyPatchType,
-		ssaBytes,
-		metav1.PatchOptions{
-			FieldManager: fieldManagerPrefix + "-" + phaseKey,
-			Force:        new(true),
-		},
-		statusKey,
-	)
+	applied, err := c.applyStatus(ctx, gvr, patch, phaseKey, ssaBytes)
+	if err != nil && exactLineage && apierrors.IsConflict(err) {
+		applied, err = c.retryStatusAtCurrentResourceVersion(ctx, gvr, patch, phaseKey, statusPayload, err)
+	}
 	if err != nil {
 		// The resource was deleted between render and apply — a benign
 		// race that is common under churn (the store snapshot still had
@@ -688,6 +681,55 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 	}
 
 	return patchApplied
+}
+
+func (c *Component) applyStatus(
+	ctx context.Context,
+	gvr schema.GroupVersionResource,
+	patch *templating.StatusPatch,
+	phaseKey string,
+	ssaBytes []byte,
+) (*unstructured.Unstructured, error) {
+	return c.dynamicClient.Resource(gvr).Namespace(patch.Namespace).Patch(
+		ctx,
+		patch.Name,
+		types.ApplyPatchType,
+		ssaBytes,
+		metav1.PatchOptions{
+			FieldManager: fieldManagerPrefix + "-" + phaseKey,
+			Force:        new(true),
+		},
+		statusKey,
+	)
+}
+
+// retryStatusAtCurrentResourceVersion re-applies once at the object's current
+// resourceVersion after a conflict. The render's version goes stale whenever
+// something bumps the object without changing what the render reads: the
+// controller's own spec apply, an annotation, a field the watcher ignores.
+// No render follows such a bump, so without this the status never lands. The
+// UID precondition stays: a recreated object gets its status from the next
+// render.
+func (c *Component) retryStatusAtCurrentResourceVersion(
+	ctx context.Context,
+	gvr schema.GroupVersionResource,
+	patch *templating.StatusPatch,
+	phaseKey string,
+	statusPayload map[string]any,
+	conflict error,
+) (*unstructured.Unstructured, error) {
+	current, err := c.dynamicClient.Resource(gvr).Namespace(patch.Namespace).Get(ctx, patch.Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if string(current.GetUID()) != patch.UID || current.GetResourceVersion() == "" {
+		return nil, conflict
+	}
+	ssaBytes, err := encodeStatusApplyPayload(patch, statusPayload, true, current.GetResourceVersion())
+	if err != nil {
+		return nil, err
+	}
+	return c.applyStatus(ctx, gvr, patch, phaseKey, ssaBytes)
 }
 
 func (c *Component) prepareStatusApply(
@@ -771,7 +813,10 @@ func (c *Component) statusApplyDecision(
 		c.statusCache[cacheKey] = entry
 		return sourceResourceVersion, entry.lastPhase == phase && bytes.Equal(entry.lastPayload, payload)
 	case entry.baseResourceVersion:
-		return entry.latestResourceVersion, false
+		// The render has not observed the applied version, which stays so
+		// for good when the write's echo changed nothing it reads. Any
+		// content change re-executes the render with a new source version.
+		return entry.latestResourceVersion, entry.lastPhase == phase && bytes.Equal(entry.lastPayload, payload)
 	default:
 		delete(c.statusCache, cacheKey)
 		return sourceResourceVersion, false

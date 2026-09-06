@@ -47,6 +47,55 @@ jq -e '
     .kept == "value"
 ' "$tmp/redacted.json" >/dev/null
 
+# assert_no_limit_workloads takes the controller requests from the chart
+# defaults, so a chart sizing change cannot fail every run.
+cat > "$tmp/defaults.json" <<'EOF'
+{"controller":{"resources":{"limits":{"memory":"1Gi"},"requests":{"cpu":"100m","memory":"1Gi"}}}}
+EOF
+write_manifest() {
+    local controller_resources="$1"
+    cat > "$tmp/manifest.yaml" <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haptic-controller
+spec:
+  template:
+    spec:
+      containers:
+      - name: controller
+        resources: $controller_resources
+        livenessProbe: {httpGet: {path: /healthz}}
+        readinessProbe: {httpGet: {path: /healthz}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haptic-haproxy
+spec:
+  template:
+    spec:
+      containers:
+      - name: haproxy
+        resources: {requests: {cpu: 250m, memory: 1Gi}}
+EOF
+}
+no_limit_workloads() {
+    bash -c 'source "$1"; assert_no_limit_workloads "$2" "$3"' bash "$runner" "$tmp/manifest.yaml" "$tmp/defaults.json"
+}
+write_manifest '{requests: {cpu: 100m, memory: 1Gi}}'
+no_limit_workloads
+write_manifest '{requests: {cpu: 100m, memory: 1Gi}, limits: {memory: 1Gi}}'
+if no_limit_workloads; then
+    echo "assert_no_limit_workloads accepted a controller memory limit" >&2
+    exit 1
+fi
+write_manifest '{requests: {cpu: 100m, memory: 512Mi}}'
+if no_limit_workloads; then
+    echo "assert_no_limit_workloads accepted controller requests that differ from the chart defaults" >&2
+    exit 1
+fi
+
 # extract_upstream_backend_manifest must lift the program's backendTemplate
 # constant byte-for-byte and accept only the Deployment + Service pair.
 mkdir -p "$tmp/upstream/tests/probe"

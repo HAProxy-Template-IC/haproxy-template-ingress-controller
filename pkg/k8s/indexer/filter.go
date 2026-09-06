@@ -3,6 +3,7 @@ package indexer
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -57,14 +58,34 @@ func (f *FieldFilter) Filter(resource any) error {
 			}
 		}
 
-		// RemoveNestedField walks the nested maps and deletes the final
-		// segment. Missing intermediate segments (or non-map intermediates)
-		// are silent no-ops, matching the "missing fields are not errors
-		// during filtering" contract.
-		unstructured.RemoveNestedField(data, segments...)
+		removeField(data, segments)
 	}
 
 	return nil
+}
+
+// removeField deletes the field at segments below data. A "*" segment fans
+// out over every array element. Missing or differently shaped intermediates
+// are silent no-ops: missing fields are not errors during filtering.
+func removeField(data map[string]any, segments []string) {
+	wildcard := slices.Index(segments, "*")
+	if wildcard < 0 {
+		unstructured.RemoveNestedField(data, segments...)
+		return
+	}
+	items, found, err := unstructured.NestedFieldNoCopy(data, segments[:wildcard]...)
+	if err != nil || !found {
+		return
+	}
+	elements, ok := items.([]any)
+	if !ok {
+		return
+	}
+	for _, element := range elements {
+		if child, ok := element.(map[string]any); ok {
+			removeField(child, segments[wildcard+1:])
+		}
+	}
 }
 
 // parseJSONPathPattern parses a JSONPath pattern into segments.

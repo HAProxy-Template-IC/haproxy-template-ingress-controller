@@ -235,6 +235,7 @@ func (b *builder) serverOpsAgainstWorker(running, next *renderplan.Backend) []ap
 // replacement would unmap a key whose re-add is not allowed here.
 func (b *builder) inPlaceMapOps(worker *renderplan.Plan) []api.Op {
 	var ops []api.Op
+	addsBackends := b.addsBackends(worker)
 	for _, name := range sortedMapNames(b.next.Maps) {
 		next := b.next.Maps[name]
 		path := next.Path
@@ -253,13 +254,27 @@ func (b *builder) inPlaceMapOps(worker *renderplan.Plan) []api.Op {
 			continue
 		}
 		for i := range delta.upserts {
-			if delta.upserts[i].Kind == api.OpMapSet {
+			if delta.upserts[i].Kind == api.OpMapSet && !addsBackends {
 				ops = append(ops, delta.upserts[i])
 			}
 		}
 		ops = append(ops, delta.deletes...)
 	}
 	return ops
+}
+
+// addsBackends reports whether the render has a backend the worker lacks. A
+// map value may route to such a backend through any number of map layers,
+// which nothing here can parse; pointing the worker at it before the reload
+// creates it sends those requests to the default backend. So no value change
+// runs in place while that holds: the map files the reload loads carry them.
+func (b *builder) addsBackends(worker *renderplan.Plan) bool {
+	for name := range b.next.Backends {
+		if _, running := worker.Backends[name]; !running {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *builder) inPlaceCertOps(worker *renderplan.Plan) []api.Op {

@@ -500,3 +500,30 @@ func TestCachedStoreRevisionAPIUsesPinnedRoot(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, "target", resourceName(t, resource))
 }
+
+// A watch echo of the controller's own status write differs from the stored
+// object only in metadata.resourceVersion once the written fields are
+// ignored. That is not a change: nothing a template can read moved.
+func TestMemoryStoreResourceVersionAloneIsNotAChange(t *testing.T) {
+	resourceStore := NewMemoryStore(2)
+	versioned := func(version string, spec any) map[string]any {
+		return map[string]any{
+			"metadata": map[string]any{"namespace": "default", "name": "target", "resourceVersion": version},
+			"spec":     spec,
+		}
+	}
+	require.NoError(t, resourceStore.Add(versioned("1", "a"), []string{"blue", "target"}))
+	list := resourceStore.ListRevision()
+	identity := resourceStore.IdentityRevision("default", "target")
+
+	require.NoError(t, resourceStore.Update(versioned("2", "a"), []string{"blue", "target"}))
+	require.Equal(t, list, resourceStore.ListRevision())
+	require.Equal(t, identity, resourceStore.IdentityRevision("default", "target"))
+
+	require.NoError(t, resourceStore.Update(versioned("3", "b"), []string{"blue", "target"}))
+	require.NotEqual(t, identity, resourceStore.IdentityRevision("default", "target"))
+	items, err := resourceStore.Get("blue", "target")
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, "3", items[0].(map[string]any)["metadata"].(map[string]any)["resourceVersion"])
+}

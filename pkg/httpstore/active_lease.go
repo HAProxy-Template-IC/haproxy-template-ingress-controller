@@ -259,10 +259,15 @@ func (s *HTTPStore) validateActiveLeaseTokenLocked(
 		return nil
 	}
 	if token != state.token {
-		return errors.New("HTTP active lease token is stale or substituted")
+		return ErrActiveLeaseTokenStale
 	}
 	return nil
 }
+
+// ErrActiveLeaseTokenStale means a newer lease generation was committed
+// after the token was read: the reader began on a snapshot that a concurrent
+// commit has since replaced, and can begin again on the current one.
+var ErrActiveLeaseTokenStale = errors.New("HTTP active lease token is stale or substituted")
 
 func activeLeaseSnapshotSealIntact(s *HTTPStore, snapshot *ActiveLeaseSnapshot) bool {
 	return snapshot != nil && snapshot.set != nil && snapshot.seal != nil &&

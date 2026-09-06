@@ -93,14 +93,18 @@ backend http_back
 			engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, declarations, helpers.EngineOptions{})
 			require.NoError(t, err)
 			countingEngine := &renderCountingEngine{Engine: engine}
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 			wiring := &reconciliationWiring{
-				capabilities:          renderer.NewCapabilitiesFanout(dataplane.Capabilities{}),
+				renderService: renderer.NewRenderService(&renderer.RenderServiceConfig{
+					Engine:             countingEngine,
+					Config:             cfg,
+					Logger:             logger,
+					Capabilities:       renderer.NewCapabilitiesFanout(dataplane.Capabilities{}).Capabilities(),
+					TypedResourceTypes: map[string]reflect.Type{},
+				}),
 				publishedCurrentFiles: published,
-				engine:                countingEngine,
-				typedResourceTypes:    map[string]reflect.Type{},
 				gvrMapper:             ingressRESTMapper(),
 			}
-			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 			validator, err := createDryRunValidator(
 				cfg,
 				busevents.NewEventBus(100),
@@ -142,7 +146,7 @@ func (e *renderCountingEngine) RenderWithProfiling(ctx context.Context, template
 	return e.Engine.RenderWithProfiling(ctx, templateName, templateContext)
 }
 
-func TestCreateDryRunValidatorRequiresReconciliationEngine(t *testing.T) {
+func TestCreateDryRunValidatorRequiresReconciliationRenderService(t *testing.T) {
 	_, err := createDryRunValidator(
 		currentFilesAdmissionConfig(testutil.MinimalHAProxyConfig),
 		busevents.NewEventBus(10),
@@ -151,7 +155,7 @@ func TestCreateDryRunValidatorRequiresReconciliationEngine(t *testing.T) {
 		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
-	require.EqualError(t, err, "dry-run validation requires the reconciliation template engine")
+	require.EqualError(t, err, "dry-run validation requires the reconciliation render service")
 }
 
 func currentFilesAdmissionConfig(template string) *coreconfig.Config {

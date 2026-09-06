@@ -107,6 +107,7 @@ More than one key can target the same Kubernetes group, version, and resource tu
 | `store` | string (`full` / `on-demand`) | No | `full` |
 | `enableValidationWebhook` | bool | No | `false` |
 | `debounceInterval` | string | No | `""` — empty / invalid uses the `100ms` default; an explicit `"0"` disables debouncing |
+| `ignoreFields` | `[]string` | No | — (JSONPath expressions dropped from this resource in addition to `watchedResourcesIgnoreFields`; `[*]` selects every array element; an update that changes only ignored fields triggers no render) |
 
 ```yaml
 watchedResources:
@@ -165,7 +166,7 @@ watchedResourcesIgnoreFields:
   - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
 ```
 
-Applies uniformly to every watched resource; fields referenced by `indexBy` must not be trimmed. See [Watching Resources — Trimming Fields](./watching-resources.md#trimming-fields).
+Applies uniformly to every watched resource; fields referenced by `indexBy` must not be trimmed. A resource adds its own entries with `watchedResources.<name>.ignoreFields`. See [Watching Resources — Trimming Fields](./watching-resources.md#trimming-fields).
 
 ### `haproxyConfig`
 

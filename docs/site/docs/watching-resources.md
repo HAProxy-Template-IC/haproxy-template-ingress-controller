@@ -24,6 +24,7 @@ watchedResources:
     enableValidationWebhook: false          # include this kind in the webhook fan-out
     store: full                             # "full" (default) or "on-demand"
     debounceInterval: ""                    # Go duration string; empty / invalid uses the 100ms default
+    ignoreFields: []                        # JSONPath expressions dropped from this resource, added to watchedResourcesIgnoreFields
 ```
 
 All selector fields are plain label-selector strings — the `matchLabels`/`matchExpressions` object form that Prometheus Operator and others use is *not* accepted here.
@@ -244,6 +245,18 @@ watchedResourcesIgnoreFields:
 ```
 
 Applies uniformly to every watched-resource store. Fields that are referenced by `indexBy` must not be trimmed.
+
+A single resource adds its own list with `ignoreFields`; `[*]` selects every element of an array. An update that changes only ignored fields isn't a change: the stored object keeps its previous content and no render runs. Use it for a field the controller writes itself and never reads, whose write would otherwise echo back and re-render every template that reads the object. The bundled Gateway API library ignores the per-listener `attachedRoutes` counter on Gateways and ListenerSets for that reason:
+
+```yaml
+watchedResources:
+  gateways:
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: gateways
+    indexBy: [metadata.namespace, metadata.name]
+    ignoreFields:
+      - status.listeners[*].attachedRoutes
+```
 
 ## HTTP Resources
 

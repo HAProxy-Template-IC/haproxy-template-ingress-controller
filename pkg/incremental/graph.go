@@ -426,6 +426,7 @@ func (g *Graph) begin(cold bool, resolver InputResolver, resolverConcurrent bool
 
 	return &Session{
 		graph:              g,
+		base:               current,
 		baseGeneration:     generation,
 		targetGeneration:   generation + 1,
 		cold:               cold,
@@ -566,7 +567,11 @@ func (g *Graph) reverseRootLocked(key dependencyKey) (orderedset.Root, error) {
 	if !g.currentValidLocked() {
 		return orderedset.Root{}, fmt.Errorf("incremental graph generation has invalid provenance")
 	}
-	root, exists := g.current.reverse.Root().Get([]byte(dependencyTreeKey(key)))
+	return g.reverseRootOfLocked(g.current, key)
+}
+
+func (g *Graph) reverseRootOfLocked(generation *graphGeneration, key dependencyKey) (orderedset.Root, error) {
+	root, exists := generation.reverse.Root().Get([]byte(dependencyTreeKey(key)))
 	if !exists {
 		root = g.reverseAuthority.Empty()
 	}

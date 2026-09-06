@@ -9,6 +9,9 @@ import (
 var (
 	// ErrCommitConflict means another session committed first.
 	ErrCommitConflict = errors.New("incremental graph commit conflict")
+	// errInvalidBaseGeneration means the generation a session began on lost
+	// its provenance, which no commit can cause.
+	errInvalidBaseGeneration = errors.New("incremental graph base generation has invalid provenance")
 	// ErrRevisionConflict means final input verification found a newer snapshot.
 	ErrRevisionConflict = errors.New("incremental input revision conflict")
 	// ErrVerifierRequired prevents publishing unverified speculative state.

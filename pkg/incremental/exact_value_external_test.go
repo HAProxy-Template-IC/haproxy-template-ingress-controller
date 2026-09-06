@@ -257,8 +257,13 @@ func TestSessionCapturedExactValueSurvivesConcurrentWinningCommit(t *testing.T) 
 	if err := captured.Commit(t.Context(), externalAcceptRevisions); !errors.Is(err, incremental.ErrCommitConflict) {
 		t.Fatalf("captured Commit() error = %v", err)
 	}
-	if err := uncaptured.ValidateBaseExactValue(query, initialRoot); !errors.Is(err, incremental.ErrCommitConflict) {
-		t.Fatalf("uncaptured ValidateBaseExactValue() error = %v", err)
+	// A session reads the generation it began on, captured or not; only
+	// its commit races the winner.
+	if err := uncaptured.ValidateBaseExactValue(query, initialRoot); err != nil {
+		t.Fatalf("uncaptured ValidateBaseExactValue() after winner error = %v", err)
+	}
+	if err := uncaptured.Commit(t.Context(), externalAcceptRevisions); !errors.Is(err, incremental.ErrCommitConflict) {
+		t.Fatalf("uncaptured Commit() error = %v", err)
 	}
 }
 

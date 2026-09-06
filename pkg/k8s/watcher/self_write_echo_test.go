@@ -122,3 +122,47 @@ func makeConfigMap(version, value string) *unstructured.Unstructured {
 		},
 	}
 }
+
+// The controller's own status write comes back as an update that differs in
+// the written field and the resourceVersion. With that field ignored, the
+// echo is not a change and no reconciliation follows it.
+func TestWatcher_HandleUpdate_IgnoredFieldEchoDoesNotTriggerChange(t *testing.T) {
+	var modified atomic.Int32
+
+	cfg := validWatcherConfig()
+	cfg.CallOnChangeDuringSync = true
+	cfg.DebounceInterval = 5 * time.Millisecond
+	cfg.IgnoreFields = []string{"status.listeners[*].attachedRoutes"}
+	cfg.OnChange = func(_ types.Store, stats types.ChangeStats) {
+		modified.Add(int32(stats.Modified))
+	}
+	w, err := New(cfg, newTestClient(t), slog.Default())
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	t.Cleanup(cancel)
+	go func() { _ = w.Start(ctx) }()
+	_, err = w.WaitForSync(ctx)
+	require.NoError(t, err)
+
+	// The informer's transform applies IgnoreFields before a handler runs;
+	// calling the handlers directly means applying it here.
+	withCount := func(version string, attached int64, value string) *unstructured.Unstructured {
+		object := makeConfigMap(version, value)
+		object.Object["status"] = map[string]any{
+			"listeners": []any{map[string]any{"name": "http", "attachedRoutes": attached}},
+		}
+		require.NoError(t, w.indexer.FilterFields(object))
+		return object
+	}
+	first := withCount("10", 0, "a")
+	w.handleAdd(first)
+	time.Sleep(50 * time.Millisecond)
+
+	w.handleUpdate(first, withCount("11", 1, "a"))
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(0), modified.Load(), "an echo changing only an ignored field is not a change")
+
+	w.handleUpdate(withCount("11", 1, "a"), withCount("12", 1, "b"))
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(1), modified.Load(), "a visible change still triggers")
+}

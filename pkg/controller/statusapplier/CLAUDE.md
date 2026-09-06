@@ -106,10 +106,18 @@ explanation.
 
 `Component.statusCache` maps `"namespace/name/gvr"` to the exact UID,
 source and applied resource versions, phase, and last payload. A patch skips
-only when its source observes the applied resource version and its phase and
-payload match. An incomplete UID/resourceVersion pair invalidates that target's
-entry and applies without either metadata precondition; it never reads or
-populates the cache.
+when its phase and payload match and its source observes either the applied
+resource version or the version the applier last wrote from. The second case
+lasts for good when the write's echo changed nothing the render reads (a
+watcher-ignored field): the component never re-executes, so its source
+version never advances. An incomplete UID/resourceVersion pair invalidates
+that target's entry and applies without either metadata precondition; it
+never reads or populates the cache.
+
+A conflict on the source version means something bumped the object without
+changing what the render reads (the controller's own spec apply, an
+annotation, an ignored field). The applier fetches the object and, if the UID
+still matches, applies once more at the current version.
 
 The cache is cleared on `BecameLeaderEvent`; a failed exact-lineage apply never
 advances its entry, so the same source revision retries instead of skipping.

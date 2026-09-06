@@ -99,7 +99,7 @@ func (s *incrementalStoreSnapshots) pinWatchedResource(
 		}
 		return nil
 	}
-	if err := validateIncrementalStoreProtocol(ctx, "watched resource", name, baseStore); err != nil {
+	if err := validateIncrementalStoreProtocol("watched resource", name, baseStore); err != nil {
 		return err
 	}
 	s.base[name] = base
@@ -110,29 +110,16 @@ func (s *incrementalStoreSnapshots) pinWatchedResource(
 	return s.pinOverlay(ctx, cfg, name, base, overlay)
 }
 
-func validateIncrementalStoreProtocol(
-	ctx context.Context,
-	kind, name string,
-	store stores.Store,
-) error {
+// validateIncrementalStoreProtocol checks the store's capabilities without
+// touching its fence: this runs under the render state lock, and a commit
+// holds the fences while it takes that same lock.
+func validateIncrementalStoreProtocol(kind, name string, store stores.Store) error {
 	if !stores.SupportsExactRevisionJournal(store) {
 		return fmt.Errorf("%w: %s %q has no exact change journal", errIncrementalUnsupported, kind, name)
 	}
 	if !stores.SupportsSnapshotCommitFence(store) {
 		return fmt.Errorf("%w: %s %q has no atomic commit fence", errIncrementalUnsupported, kind, name)
 	}
-	fencer := store.(stores.SnapshotCommitFencer)
-	release, err := fencer.AcquireSnapshotCommitFence(ctx)
-	if err != nil {
-		if errors.Is(err, stores.ErrSnapshotCommitFenceUnsupported) {
-			return fmt.Errorf("%w: %s %q has no atomic commit fence", errIncrementalUnsupported, kind, name)
-		}
-		return fmt.Errorf("checking %s %q commit fence: %w", kind, name, err)
-	}
-	if release == nil {
-		return fmt.Errorf("%w: %s %q returned an invalid commit fence", errIncrementalUnsupported, kind, name)
-	}
-	release()
 	return nil
 }
 

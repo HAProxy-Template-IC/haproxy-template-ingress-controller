@@ -232,32 +232,10 @@ func createDryRunValidator(
 
 	logger.Debug("Creating webhook validators", "watched_resource_rules", len(rules))
 
-	if wiring.engine == nil {
-		return nil, errors.New("dry-run validation requires the reconciliation template engine")
+	if wiring.renderService == nil {
+		return nil, errors.New("dry-run validation requires the reconciliation render service")
 	}
-
-	// Admission wrappers reuse matching HTTP content and stage other sources per render.
-	//
-	// HAProxyPodStore intentionally remains nil: the webhook validates
-	// hypothetical future state, not what's currently deployed.
-	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
-		Engine:             wiring.engine,
-		Config:             cfg,
-		Logger:             logger,
-		Capabilities:       wiring.capabilities.Capabilities(),
-		HTTPStoreComponent: wiring.httpStore,
-		// TypedResourceTypes mirrors the reconciliation RenderService
-		// so dry-run renders bind the same typed `resources` global as
-		// production. Without it, the engine compile succeeds (the
-		// declarations are present) but rendercontext.BuildResourcesValue
-		// would fall back to the untyped map shape and chart code that
-		// reaches typed access (`resources.<name>.List()` etc.) would
-		// compile-fail under the typed engine declaration.
-		TypedResourceTypes: wiring.typedResourceTypes,
-	})
-	// Admission renders what the fleet will run: a gate branching on this
-	// image's own HAProxy admits objects whose production render nothing checked.
-	wiring.capabilities.Add(renderService)
+	renderService := wiring.renderService
 
 	// Create ValidationService (pure service for validation)
 	// Use strict DNS validation for webhook (catch DNS issues before admission)
