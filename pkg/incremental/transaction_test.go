@@ -472,3 +472,38 @@ func TestReadOnlySessionSurvivesConcurrentCommit(t *testing.T) {
 		t.Fatalf("committed value = %q", got)
 	}
 }
+
+// A session's cached reads answer from the generation it began on even after
+// another session committed: the graph's current value moved, the base did not.
+func TestReadOnlySessionBaseValueIgnoresConcurrentCommit(t *testing.T) {
+	inputKey := NewInputKey("input")
+	queryKey := NewQueryKey("query")
+	graph := mustGraph(t, Definition{Key: queryKey, Run: func(_ context.Context, reader Reader) ([]byte, error) {
+		value, _, err := reader.Input(inputKey)
+		return value, err
+	}})
+	seed := mustBegin(t, graph)
+	mustApply(t, seed, exactInput(inputKey, "r1", "base"))
+	mustEvaluate(t, seed, queryKey)
+	mustCommit(t, seed)
+
+	reader := mustBegin(t, graph)
+	writer := mustBegin(t, graph)
+	mustApply(t, writer, exactInput(inputKey, "r2", "newer"))
+	mustEvaluate(t, writer, queryKey)
+	mustCommit(t, writer)
+
+	value, found := reader.BaseValue(queryKey)
+	if !found || string(value) != "base" {
+		t.Fatalf("BaseValue() = %q, %v; want the generation the session began on", value, found)
+	}
+	if current, _ := graph.Value(queryKey); string(current) != "newer" {
+		t.Fatalf("graph.Value() = %q, want the committed generation", current)
+	}
+	if !reader.BaseHasInputDependents(inputKey) {
+		t.Fatal("BaseHasInputDependents() = false, want the base's dependency on the input")
+	}
+	if reader.BaseHasDependents(queryKey) {
+		t.Fatal("BaseHasDependents() = true for a query nothing depends on")
+	}
+}
