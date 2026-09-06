@@ -1,6 +1,6 @@
 module gitlab.com/haproxy-haptic/haptic
 
-go 1.27.0
+go 1.27.1
 
 require (
 	dario.cat/mergo v1.0.2
