@@ -564,12 +564,9 @@ func TestIncrementalBatchCapabilityRevocationDrainsAcceptedResourceCall(t *testi
 		prepared.deactivate()
 		close(revoked)
 	}()
-	for attempts := 0; prepared.lease.state.Load() == incrementalCapabilityLeaseActive; attempts++ {
-		if attempts == 100_000 {
-			t.Fatal("capability revocation did not enter revoking state")
-		}
-		runtime.Gosched()
-	}
+	awaitScheduled(t, func() bool {
+		return prepared.lease.state.Load() != incrementalCapabilityLeaseActive
+	}, "capability revocation did not enter revoking state")
 	assert.Equal(t, incrementalCapabilityLeaseRevoking, prepared.lease.state.Load())
 	select {
 	case <-revoked:
@@ -614,12 +611,9 @@ func TestIncrementalBatchCapabilityRevocationDrainsAcceptedSharedCall(t *testing
 		prepared.deactivate()
 		close(revoked)
 	}()
-	for attempts := 0; prepared.lease.state.Load() == incrementalCapabilityLeaseActive; attempts++ {
-		if attempts == 100_000 {
-			t.Fatal("capability revocation did not enter revoking state")
-		}
-		runtime.Gosched()
-	}
+	awaitScheduled(t, func() bool {
+		return prepared.lease.state.Load() != incrementalCapabilityLeaseActive
+	}, "capability revocation did not enter revoking state")
 	assert.Equal(t, incrementalCapabilityLeaseRevoking, prepared.lease.state.Load())
 	select {
 	case <-revoked:

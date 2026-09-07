@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -505,12 +506,31 @@ func TestIncrementalVectorDirectBoundResourceConcurrentCalls(t *testing.T) {
 
 func waitForDirectResourceWriter(t *testing.T, execution *incrementalVectorExecution) {
 	t.Helper()
-	for range 100_000 {
-		if !execution.callGate.TryRLock() {
-			return
+	awaitCallGateWriter(t, execution, "terminal transition never reached the direct resource call gate")
+}
+
+// awaitScheduled spins until cond holds. The goroutine under test only has to
+// get scheduled, and a yield count is no bound on that under -race on a loaded
+// runner (measured: 100,000 yields lost the race on CI); ten seconds is.
+func awaitScheduled(tb testing.TB, cond func() bool, failure string) {
+	tb.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			tb.Fatal(failure)
 		}
-		execution.callGate.RUnlock()
 		runtime.Gosched()
 	}
-	t.Fatal("terminal transition never reached the direct resource call gate")
+}
+
+// awaitCallGateWriter waits until a writer holds or waits for the call gate.
+func awaitCallGateWriter(tb testing.TB, execution *incrementalVectorExecution, failure string) {
+	tb.Helper()
+	awaitScheduled(tb, func() bool {
+		if !execution.callGate.TryRLock() {
+			return true
+		}
+		execution.callGate.RUnlock()
+		return false
+	}, failure)
 }
