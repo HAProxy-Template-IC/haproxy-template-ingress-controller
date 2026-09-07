@@ -1428,6 +1428,44 @@ func TestRestMapperResolver_Resolve_ResetsOnNoMatchThenRetries(t *testing.T) {
 	assert.Equal(t, "ingresses", gvr.Resource)
 }
 
+// countingMapper counts RESTMapping calls so the memo can be observed.
+type countingMapper struct {
+	meta.RESTMapper
+	calls int
+}
+
+func (m *countingMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
+	m.calls++
+	return m.RESTMapper.RESTMapping(gk, versions...)
+}
+
+// A resolved kind is answered from memory until its entry ages out; a kind
+// that fails to resolve is asked again every time.
+func TestRestMapperResolver_Resolve_MemoisesUntilTheEntryAges(t *testing.T) {
+	rm := &countingMapper{RESTMapper: newFakeRESTMapper()}
+	resolver := NewRestMapperResolver(rm)
+	now := time.Now()
+	resolver.now = func() time.Time { return now }
+
+	for range 3 {
+		gvr, err := resolver.Resolve("networking.k8s.io/v1", "Ingress")
+		require.NoError(t, err)
+		assert.Equal(t, "ingresses", gvr.Resource)
+	}
+	assert.Equal(t, 1, rm.calls, "the second and third lookups come from memory")
+
+	for range 2 {
+		_, err := resolver.Resolve("example.com/v1", "Unknown")
+		require.Error(t, err)
+	}
+	assert.Equal(t, 3, rm.calls, "a failed lookup is never memoised")
+
+	now = now.Add(resolvedTTL)
+	_, err := resolver.Resolve("networking.k8s.io/v1", "Ingress")
+	require.NoError(t, err)
+	assert.Equal(t, 4, rm.calls, "an aged entry is resolved again")
+}
+
 func TestRestMapperResolver_Resolve(t *testing.T) {
 	resolver := NewRestMapperResolver(newFakeRESTMapper())
 

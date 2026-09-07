@@ -15,7 +15,6 @@
 package deployplan
 
 import (
-	"reflect"
 	"slices"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
@@ -62,18 +61,11 @@ func sameBackendComments(prev, next *renderplan.Backend) bool {
 }
 
 // sameBackendRecord compares the declared record only: RecordDigest excludes
-// the body and comments, so the exact branch must clear them too or a
-// body-only edit reads as a record change and forces a reload.
+// the body and comments, and so does the exact branch, or a body-only edit
+// would read as a record change and force a reload.
 func sameBackendRecord(prev, next *renderplan.Backend) bool {
 	if prev.ContentKnown && next.ContentKnown {
-		left, right := *prev, *next
-		left.BodyDigest, right.BodyDigest = "", ""
-		left.CommentsDigest, right.CommentsDigest = "", ""
-		left.RecordDigest, right.RecordDigest = "", ""
-		left.TextDigest, right.TextDigest = "", ""
-		left.Body, right.Body = nil, nil
-		left.Comments, right.Comments = nil, nil
-		return reflect.DeepEqual(left, right)
+		return prev.EqualRecord(next)
 	}
 	return next.RecordDigest != "" && prev.RecordDigest == next.RecordDigest
 }

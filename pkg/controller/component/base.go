@@ -159,6 +159,25 @@ type mailboxEntry struct {
 	superseded int
 }
 
+// runningMailboxes holds every Base whose mailbox loop is running, by
+// component name, so the queue depths can be read for metrics. Every queued
+// event pins a render output, and the backlog warning only fires from 256.
+var runningMailboxes sync.Map // string -> *Base
+
+// MailboxDepths reports the queue length of every running mailbox by
+// component name.
+func MailboxDepths() map[string]int {
+	depths := map[string]int{}
+	runningMailboxes.Range(func(key, value any) bool {
+		base := value.(*Base)
+		base.mbMu.Lock()
+		depths[key.(string)] = len(base.mbQueue)
+		base.mbMu.Unlock()
+		return true
+	})
+	return depths
+}
+
 // Config wires up a new Base.
 //
 // If EventTypes is empty the component receives every event on the bus; if
@@ -278,6 +297,8 @@ func (b *Base) startMailbox(ctx context.Context, eventTypes []string) error {
 	for _, t := range eventTypes {
 		coalesced[t] = struct{}{}
 	}
+	runningMailboxes.Store(b.name, b)
+	defer runningMailboxes.Delete(b.name)
 
 	intakeDone := make(chan struct{})
 	go func() {

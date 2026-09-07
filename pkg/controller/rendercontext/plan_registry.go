@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -443,11 +442,7 @@ func (r *PlanRegistry) planBackends() (map[string]renderplan.Backend, error) {
 }
 
 func sameBackendRecordExact(left, right *renderplan.Backend) bool {
-	leftCopy := *left
-	rightCopy := *right
-	leftCopy.TextDigest = ""
-	rightCopy.TextDigest = ""
-	return reflect.DeepEqual(leftCopy, rightCopy)
+	return left.EqualRecord(right) && left.EqualContent(right)
 }
 
 // profiles derives the profile records from the exact assembled section bytes.

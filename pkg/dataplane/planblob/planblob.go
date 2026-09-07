@@ -22,6 +22,7 @@
 package planblob
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -61,9 +62,31 @@ func Encode(plan *renderplan.Plan) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encoding plan %s: %w", plan.ID, err)
 	}
+	return compress(plan.ID, encoded)
+}
+
+// EncodeSnapshot is Encode for the snapshot a render sealed: the same bytes,
+// streamed from the fragments the snapshot already holds instead of a plan
+// re-encoded from scratch on every deployment.
+func EncodeSnapshot(snapshot *renderplan.Snapshot) ([]byte, error) {
+	if snapshot == nil {
+		return nil, fmt.Errorf("planblob: no plan to encode")
+	}
+	id, err := snapshot.ID()
+	if err != nil {
+		return nil, fmt.Errorf("encoding plan: %w", err)
+	}
+	var encoded bytes.Buffer
+	if err := snapshot.WriteJSON(&encoded); err != nil {
+		return nil, fmt.Errorf("encoding plan %s: %w", id, err)
+	}
+	return compress(id, encoded.Bytes())
+}
+
+func compress(id string, encoded []byte) ([]byte, error) {
 	blob := codec.encoder.EncodeAll(encoded, nil)
 	if len(blob) > api.MaxPlanBlobBytes {
-		return nil, fmt.Errorf("plan %s compresses to %d bytes, over the %d-byte limit", plan.ID, len(blob), api.MaxPlanBlobBytes)
+		return nil, fmt.Errorf("plan %s compresses to %d bytes, over the %d-byte limit", id, len(blob), api.MaxPlanBlobBytes)
 	}
 	return blob, nil
 }

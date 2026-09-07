@@ -317,6 +317,7 @@ rate(haptic_validation_total[5m])
 | `haptic_haproxy_pods_rejected_total` | Counter | `reason` | HAProxy pods refused admission by the discovery component. Persistent non-zero growth typically means the controller can't talk to the deployed HAProxy pods (for example, the bundled HAProxy major.minor differs from the chart's `haproxyVersion`). |
 | `haptic_config_rejected_total` | Counter | `validator` | Configuration refused by a validation gate. The `validator` label names which check rejected it: `basic`, `template`, `jsonpath` or `validationtests` for a `HAProxyTemplateConfig` load, `coordinator` when a validator timed out, and `haproxy` when the render gate's own `haproxy -c` refused a rendered config. Non-zero growth means the leader is refusing new config and continuing on the last-good one — **alert on it**: the operator's latest change isn't live. |
 | `haptic_config_pinned` | Gauge | | `1` while the render gate holds renders HAProxy refused twice in a row. The pods keep serving the last configuration HAProxy accepted, and nothing new reaches them until the input the `ConfigValidated` condition names is fixed. Leader-only; `0` on followers. |
+| `haptic_component_mailbox_depth` | Gauge | `component` | Events waiting in a component's coalescing mailbox. Each waiting event keeps the rendered configuration it carries in memory, so a depth that grows while resources change means the component isn't keeping up with the leader's render rate. |
 
 **Key queries:**
 

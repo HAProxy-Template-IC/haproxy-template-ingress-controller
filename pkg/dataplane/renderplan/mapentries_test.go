@@ -19,6 +19,7 @@ import (
 	"math/rand/v2"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 
@@ -77,6 +78,7 @@ func TestReparseMatchesParseMapEntriesAcrossRandomEdits(t *testing.T) {
 		require.Equal(t, renderplan.ParseMapEntries(content), parsed.Entries, "step %d", step)
 		fresh := renderplan.ParseMapEntriesIndexed(content)
 		require.Equal(t, fresh, parsed, "step %d", step)
+		requireEntriesAliasOnly(t, parsed, step)
 		require.True(t, renderplan.MapEntriesMatch(content, parsed.Entries), "step %d", step)
 		if len(parsed.Entries) > 0 {
 			changed := append([]renderplan.Entry(nil), parsed.Entries...)
@@ -85,6 +87,29 @@ func TestReparseMatchesParseMapEntriesAcrossRandomEdits(t *testing.T) {
 			require.False(t, renderplan.MapEntriesMatch(content, parsed.Entries[:len(parsed.Entries)-1]), "step %d", step)
 			require.False(t, renderplan.MapEntriesMatch(content, append(changed, renderplan.Entry{Key: "k"})), "step %d", step)
 		}
+	}
+}
+
+// requireEntriesAliasOnly pins that every key and value is a substring of the
+// parsed content itself: an entry carried from an earlier version that still
+// pointed into that version's text would keep every such text alive.
+func requireEntriesAliasOnly(t *testing.T, parsed renderplan.ParsedMapEntries, step int) {
+	t.Helper()
+	if parsed.Content == "" {
+		return
+	}
+	base := uintptr(unsafe.Pointer(unsafe.StringData(parsed.Content)))
+	limit := base + uintptr(len(parsed.Content))
+	inside := func(s string) bool {
+		if s == "" {
+			return true
+		}
+		at := uintptr(unsafe.Pointer(unsafe.StringData(s)))
+		return at >= base && at+uintptr(len(s)) <= limit
+	}
+	for i, entry := range parsed.Entries {
+		require.True(t, inside(entry.Key), "step %d entry %d key points outside the content", step, i)
+		require.True(t, inside(entry.Value), "step %d entry %d value points outside the content", step, i)
 	}
 }
 

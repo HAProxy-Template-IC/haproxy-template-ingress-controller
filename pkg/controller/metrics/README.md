@@ -87,6 +87,7 @@ Each agent also exports its own view on the pod's `agent-metrics` port; [monitor
 | `haptic_events_dropped_critical_total` | counter | — | Drops where the buffered event was marked critical |
 | `haptic_events_dropped_by_subscriber_total` | counter | `subscriber`, `event_type` | Drops attributed to each subscriber/event-type pair (the second label lets dashboards split by which event type the subscriber couldn't keep up with) |
 | `haptic_events_dropped_observability_total` | gauge | — | Drops to the observability subscribers (commentator, debug buffer); expected to be low but non-zero on bursts |
+| `haptic_component_mailbox_depth` | gauge | `component` | Events queued in a component's coalescing mailbox. Each queued event pins the render it carries, so a depth that grows under churn is memory as much as latency; the mailbox only logs from 256 |
 
 ### Webhook
 
