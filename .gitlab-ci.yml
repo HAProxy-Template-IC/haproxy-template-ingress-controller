@@ -1837,7 +1837,11 @@ test-acceptance:
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/name=haptic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== Controller: $pod ===" >> debug-logs/_suite/controller.log
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> debug-logs/_suite/controller.log 2>&1 || true
+          # A restarted container's own log is the only record of why it died.
+          echo "=== Controller (previous container): $pod ===" >> debug-logs/_suite/controller-previous.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true --previous >> debug-logs/_suite/controller-previous.log 2>&1 || true
         done
+        kubectl -n ${CTRL_NAMESPACE} get pods -o json > debug-logs/_suite/controller-pods.json 2>&1 || true
 
         # The ROTATED controller logs, straight off the node.
         #
@@ -2329,7 +2333,11 @@ test-gateway-conformance:
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/name=haptic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== Controller: $pod ===" >> "$LOG_DIR/controller.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
+          # A restarted container's own log is the only record of why it died.
+          echo "=== Controller (previous container): $pod ===" >> "$LOG_DIR/controller-previous.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true --previous >> "$LOG_DIR/controller-previous.log" 2>&1 || true
         done
+        kubectl -n ${CTRL_NAMESPACE} get pods -o json > "$LOG_DIR/controller-pods.json" 2>&1 || true
 
         # HAProxy + agent + spoa-hub sidecar logs. spoa-hub stdout
         # is the only place that records SPOE NOTIFY arrivals and
@@ -3225,7 +3233,11 @@ test-ingress-conformance:
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/name=haptic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== Controller: $pod ===" >> "$LOG_DIR/controller.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
+          # A restarted container's own log is the only record of why it died.
+          echo "=== Controller (previous container): $pod ===" >> "$LOG_DIR/controller-previous.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true --previous >> "$LOG_DIR/controller-previous.log" 2>&1 || true
         done
+        kubectl -n ${CTRL_NAMESPACE} get pods -o json > "$LOG_DIR/controller-pods.json" 2>&1 || true
 
         # HAProxy + agent + spoa-hub sidecar logs. spoa-hub stdout
         # is the only place that records SPOE NOTIFY arrivals and
