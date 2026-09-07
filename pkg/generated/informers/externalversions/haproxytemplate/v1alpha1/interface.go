@@ -23,17 +23,17 @@ import (
 // Interface provides access to all the informers in this group version.
 type Interface interface {
 	// HAProxyCRTListFiles returns a HAProxyCRTListFileInformer.
-	HAProxyCRTListFiles() HAProxyCRTListFileInformer
+	HAProxyCRTListFiles() TypedHAProxyCRTListFileInformer
 	// HAProxyCfgs returns a HAProxyCfgInformer.
-	HAProxyCfgs() HAProxyCfgInformer
+	HAProxyCfgs() TypedHAProxyCfgInformer
 	// HAProxyGeneralFiles returns a HAProxyGeneralFileInformer.
-	HAProxyGeneralFiles() HAProxyGeneralFileInformer
+	HAProxyGeneralFiles() TypedHAProxyGeneralFileInformer
 	// HAProxyMapFiles returns a HAProxyMapFileInformer.
-	HAProxyMapFiles() HAProxyMapFileInformer
+	HAProxyMapFiles() TypedHAProxyMapFileInformer
 	// HAProxyTemplateConfigs returns a HAProxyTemplateConfigInformer.
-	HAProxyTemplateConfigs() HAProxyTemplateConfigInformer
+	HAProxyTemplateConfigs() TypedHAProxyTemplateConfigInformer
 	// HAProxyTemplateLibraries returns a HAProxyTemplateLibraryInformer.
-	HAProxyTemplateLibraries() HAProxyTemplateLibraryInformer
+	HAProxyTemplateLibraries() TypedHAProxyTemplateLibraryInformer
 }
 
 type version struct {
@@ -47,32 +47,32 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
-// HAProxyCRTListFiles returns a HAProxyCRTListFileInformer.
-func (v *version) HAProxyCRTListFiles() HAProxyCRTListFileInformer {
+// HAProxyCRTListFiles returns a TypedHAProxyCRTListFileInformer.
+func (v *version) HAProxyCRTListFiles() TypedHAProxyCRTListFileInformer {
 	return &hAProxyCRTListFileInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
-// HAProxyCfgs returns a HAProxyCfgInformer.
-func (v *version) HAProxyCfgs() HAProxyCfgInformer {
+// HAProxyCfgs returns a TypedHAProxyCfgInformer.
+func (v *version) HAProxyCfgs() TypedHAProxyCfgInformer {
 	return &hAProxyCfgInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
-// HAProxyGeneralFiles returns a HAProxyGeneralFileInformer.
-func (v *version) HAProxyGeneralFiles() HAProxyGeneralFileInformer {
+// HAProxyGeneralFiles returns a TypedHAProxyGeneralFileInformer.
+func (v *version) HAProxyGeneralFiles() TypedHAProxyGeneralFileInformer {
 	return &hAProxyGeneralFileInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
-// HAProxyMapFiles returns a HAProxyMapFileInformer.
-func (v *version) HAProxyMapFiles() HAProxyMapFileInformer {
+// HAProxyMapFiles returns a TypedHAProxyMapFileInformer.
+func (v *version) HAProxyMapFiles() TypedHAProxyMapFileInformer {
 	return &hAProxyMapFileInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
-// HAProxyTemplateConfigs returns a HAProxyTemplateConfigInformer.
-func (v *version) HAProxyTemplateConfigs() HAProxyTemplateConfigInformer {
+// HAProxyTemplateConfigs returns a TypedHAProxyTemplateConfigInformer.
+func (v *version) HAProxyTemplateConfigs() TypedHAProxyTemplateConfigInformer {
 	return &hAProxyTemplateConfigInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
-// HAProxyTemplateLibraries returns a HAProxyTemplateLibraryInformer.
-func (v *version) HAProxyTemplateLibraries() HAProxyTemplateLibraryInformer {
+// HAProxyTemplateLibraries returns a TypedHAProxyTemplateLibraryInformer.
+func (v *version) HAProxyTemplateLibraries() TypedHAProxyTemplateLibraryInformer {
 	return &hAProxyTemplateLibraryInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

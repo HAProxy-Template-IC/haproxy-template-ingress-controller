@@ -32,11 +32,39 @@ import (
 )
 
 // HAProxyCRTListFileInformer provides access to a shared informer and lister for
-// HAProxyCRTListFiles.
+// HAProxyCRTListFiles. Prefer using the type-safe variant (see [TypedHAProxyCRTListFileInformer]).
 type HAProxyCRTListFileInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() haproxytemplatev1alpha1.HAProxyCRTListFileLister
 }
+
+// TypedHAProxyCRTListFileInformer provides access to a shared informer and lister for
+// HAProxyCRTListFiles, including the type-safe TypedInformer variant.
+// It is a superset of HAProxyCRTListFileInformer.
+type TypedHAProxyCRTListFileInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() HAProxyCRTListFileIndexInformer
+	Lister() haproxytemplatev1alpha1.HAProxyCRTListFileLister
+}
+
+// HAProxyCRTListFileIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type HAProxyCRTListFileIndexInformer cache.TypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCRTListFile]
+
+// HAProxyCRTListFileHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for HAProxyCRTListFile.
+type HAProxyCRTListFileHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apishaproxytemplatev1alpha1.HAProxyCRTListFile]
+
+// HAProxyCRTListFileDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for HAProxyCRTListFile.
+type HAProxyCRTListFileDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apishaproxytemplatev1alpha1.HAProxyCRTListFile]
+
+// HAProxyCRTListFileFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for HAProxyCRTListFile.
+type HAProxyCRTListFileFilteringHandler = cache.TypedFilteringResourceEventHandler[*apishaproxytemplatev1alpha1.HAProxyCRTListFile]
+
+// HAProxyCRTListFileIndexers is a specialization of [cache.TypedIndexers] for HAProxyCRTListFile.
+type HAProxyCRTListFileIndexers = cache.TypedIndexers[*apishaproxytemplatev1alpha1.HAProxyCRTListFile]
+
+// DeletedHAProxyCRTListFile is a specialization of [cache.DeletedObject] for HAProxyCRTListFile.
+type DeletedHAProxyCRTListFile = cache.DeletedObject[*apishaproxytemplatev1alpha1.HAProxyCRTListFile]
 
 type hAProxyCRTListFileInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -47,25 +75,49 @@ type hAProxyCRTListFileInformer struct {
 // NewHAProxyCRTListFileInformer constructs a new informer for HAProxyCRTListFile type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedHAProxyCRTListFileInformer]).
 func NewHAProxyCRTListFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
 	return NewHAProxyCRTListFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedHAProxyCRTListFileInformer constructs a new informer for HAProxyCRTListFile type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedHAProxyCRTListFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers HAProxyCRTListFileIndexers) HAProxyCRTListFileIndexInformer {
+	return NewTypedHAProxyCRTListFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredHAProxyCRTListFileInformer constructs a new informer for HAProxyCRTListFile type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredHAProxyCRTListFileInformer]).
 func NewFilteredHAProxyCRTListFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return NewHAProxyCRTListFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+	return NewTypedHAProxyCRTListFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredHAProxyCRTListFileInformer constructs a new informer for HAProxyCRTListFile type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredHAProxyCRTListFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers HAProxyCRTListFileIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) HAProxyCRTListFileIndexInformer {
+	return NewTypedHAProxyCRTListFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
 }
 
 // NewHAProxyCRTListFileInformerWithOptions constructs a new informer for HAProxyCRTListFile type with additional options.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedHAProxyCRTListFileInformerWithOptions]).
 func NewHAProxyCRTListFileInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedHAProxyCRTListFileInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedHAProxyCRTListFileInformerWithOptions constructs a new informer for HAProxyCRTListFile type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedHAProxyCRTListFileInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) HAProxyCRTListFileIndexInformer {
 	gvr := schema.GroupVersionResource{Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxycrtlistfiles"}
 	identifier := options.InformerName.WithResource(gvr)
 	tweakListOptions := options.TweakListOptions
-	return cache.NewSharedIndexInformerWithOptions(
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCRTListFile](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
@@ -98,17 +150,57 @@ func NewHAProxyCRTListFileInformerWithOptions(client versioned.Interface, namesp
 			Indexers:     options.Indexers,
 			Identifier:   identifier,
 		},
-	)
+	))
 }
 
 func (f *hAProxyCRTListFileInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewHAProxyCRTListFileInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
+	return NewTypedHAProxyCRTListFileInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *hAProxyCRTListFileInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyCRTListFile{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *hAProxyCRTListFileInformer) TypedInformer() HAProxyCRTListFileIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCRTListFile](f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyCRTListFile{}, f.defaultInformer))
 }
 
 func (f *hAProxyCRTListFileInformer) Lister() haproxytemplatev1alpha1.HAProxyCRTListFileLister {
 	return haproxytemplatev1alpha1.NewHAProxyCRTListFileLister(f.Informer().GetIndexer())
+}
+
+// ToTypedHAProxyCRTListFileInformer converts an untyped informer into a TypedHAProxyCRTListFileInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *HAProxyCRTListFile. If that is not the case, calling type-safe methods of the returned
+// TypedHAProxyCRTListFileInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedHAProxyCRTListFileInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedHAProxyCRTListFileInformer(informer HAProxyCRTListFileInformer) TypedHAProxyCRTListFileInformer {
+	if informer, ok := informer.(TypedHAProxyCRTListFileInformer); ok {
+		return informer
+	}
+	return &hAProxyCRTListFileTypedInformerAdapter{informer}
+}
+
+type hAProxyCRTListFileTypedInformerAdapter struct {
+	HAProxyCRTListFileInformer
+}
+
+func (a *hAProxyCRTListFileTypedInformerAdapter) TypedInformer() HAProxyCRTListFileIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCRTListFile](a.Informer())
+}
+
+// ToHAProxyCRTListFileIndexInformer converts an untyped informer into a HAProxyCRTListFileIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *HAProxyCRTListFile. If that is not the case, calling type-safe methods of the returned
+// HAProxyCRTListFileIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a HAProxyCRTListFileIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToHAProxyCRTListFileIndexInformer(informer cache.SharedIndexInformer) HAProxyCRTListFileIndexInformer {
+	if informer, ok := informer.(HAProxyCRTListFileIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCRTListFile](informer)
 }

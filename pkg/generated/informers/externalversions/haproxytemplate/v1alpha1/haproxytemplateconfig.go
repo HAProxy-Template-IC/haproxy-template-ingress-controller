@@ -32,11 +32,39 @@ import (
 )
 
 // HAProxyTemplateConfigInformer provides access to a shared informer and lister for
-// HAProxyTemplateConfigs.
+// HAProxyTemplateConfigs. Prefer using the type-safe variant (see [TypedHAProxyTemplateConfigInformer]).
 type HAProxyTemplateConfigInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() haproxytemplatev1alpha1.HAProxyTemplateConfigLister
 }
+
+// TypedHAProxyTemplateConfigInformer provides access to a shared informer and lister for
+// HAProxyTemplateConfigs, including the type-safe TypedInformer variant.
+// It is a superset of HAProxyTemplateConfigInformer.
+type TypedHAProxyTemplateConfigInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() HAProxyTemplateConfigIndexInformer
+	Lister() haproxytemplatev1alpha1.HAProxyTemplateConfigLister
+}
+
+// HAProxyTemplateConfigIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type HAProxyTemplateConfigIndexInformer cache.TypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig]
+
+// HAProxyTemplateConfigHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for HAProxyTemplateConfig.
+type HAProxyTemplateConfigHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig]
+
+// HAProxyTemplateConfigDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for HAProxyTemplateConfig.
+type HAProxyTemplateConfigDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig]
+
+// HAProxyTemplateConfigFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for HAProxyTemplateConfig.
+type HAProxyTemplateConfigFilteringHandler = cache.TypedFilteringResourceEventHandler[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig]
+
+// HAProxyTemplateConfigIndexers is a specialization of [cache.TypedIndexers] for HAProxyTemplateConfig.
+type HAProxyTemplateConfigIndexers = cache.TypedIndexers[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig]
+
+// DeletedHAProxyTemplateConfig is a specialization of [cache.DeletedObject] for HAProxyTemplateConfig.
+type DeletedHAProxyTemplateConfig = cache.DeletedObject[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig]
 
 type hAProxyTemplateConfigInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -47,25 +75,49 @@ type hAProxyTemplateConfigInformer struct {
 // NewHAProxyTemplateConfigInformer constructs a new informer for HAProxyTemplateConfig type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedHAProxyTemplateConfigInformer]).
 func NewHAProxyTemplateConfigInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
 	return NewHAProxyTemplateConfigInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedHAProxyTemplateConfigInformer constructs a new informer for HAProxyTemplateConfig type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedHAProxyTemplateConfigInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers HAProxyTemplateConfigIndexers) HAProxyTemplateConfigIndexInformer {
+	return NewTypedHAProxyTemplateConfigInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredHAProxyTemplateConfigInformer constructs a new informer for HAProxyTemplateConfig type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredHAProxyTemplateConfigInformer]).
 func NewFilteredHAProxyTemplateConfigInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return NewHAProxyTemplateConfigInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+	return NewTypedHAProxyTemplateConfigInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredHAProxyTemplateConfigInformer constructs a new informer for HAProxyTemplateConfig type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredHAProxyTemplateConfigInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers HAProxyTemplateConfigIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) HAProxyTemplateConfigIndexInformer {
+	return NewTypedHAProxyTemplateConfigInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
 }
 
 // NewHAProxyTemplateConfigInformerWithOptions constructs a new informer for HAProxyTemplateConfig type with additional options.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedHAProxyTemplateConfigInformerWithOptions]).
 func NewHAProxyTemplateConfigInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedHAProxyTemplateConfigInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedHAProxyTemplateConfigInformerWithOptions constructs a new informer for HAProxyTemplateConfig type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedHAProxyTemplateConfigInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) HAProxyTemplateConfigIndexInformer {
 	gvr := schema.GroupVersionResource{Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxytemplateconfigs"}
 	identifier := options.InformerName.WithResource(gvr)
 	tweakListOptions := options.TweakListOptions
-	return cache.NewSharedIndexInformerWithOptions(
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
@@ -98,17 +150,57 @@ func NewHAProxyTemplateConfigInformerWithOptions(client versioned.Interface, nam
 			Indexers:     options.Indexers,
 			Identifier:   identifier,
 		},
-	)
+	))
 }
 
 func (f *hAProxyTemplateConfigInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewHAProxyTemplateConfigInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
+	return NewTypedHAProxyTemplateConfigInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *hAProxyTemplateConfigInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyTemplateConfig{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *hAProxyTemplateConfigInformer) TypedInformer() HAProxyTemplateConfigIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig](f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyTemplateConfig{}, f.defaultInformer))
 }
 
 func (f *hAProxyTemplateConfigInformer) Lister() haproxytemplatev1alpha1.HAProxyTemplateConfigLister {
 	return haproxytemplatev1alpha1.NewHAProxyTemplateConfigLister(f.Informer().GetIndexer())
+}
+
+// ToTypedHAProxyTemplateConfigInformer converts an untyped informer into a TypedHAProxyTemplateConfigInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *HAProxyTemplateConfig. If that is not the case, calling type-safe methods of the returned
+// TypedHAProxyTemplateConfigInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedHAProxyTemplateConfigInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedHAProxyTemplateConfigInformer(informer HAProxyTemplateConfigInformer) TypedHAProxyTemplateConfigInformer {
+	if informer, ok := informer.(TypedHAProxyTemplateConfigInformer); ok {
+		return informer
+	}
+	return &hAProxyTemplateConfigTypedInformerAdapter{informer}
+}
+
+type hAProxyTemplateConfigTypedInformerAdapter struct {
+	HAProxyTemplateConfigInformer
+}
+
+func (a *hAProxyTemplateConfigTypedInformerAdapter) TypedInformer() HAProxyTemplateConfigIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig](a.Informer())
+}
+
+// ToHAProxyTemplateConfigIndexInformer converts an untyped informer into a HAProxyTemplateConfigIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *HAProxyTemplateConfig. If that is not the case, calling type-safe methods of the returned
+// HAProxyTemplateConfigIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a HAProxyTemplateConfigIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToHAProxyTemplateConfigIndexInformer(informer cache.SharedIndexInformer) HAProxyTemplateConfigIndexInformer {
+	if informer, ok := informer.(HAProxyTemplateConfigIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyTemplateConfig](informer)
 }

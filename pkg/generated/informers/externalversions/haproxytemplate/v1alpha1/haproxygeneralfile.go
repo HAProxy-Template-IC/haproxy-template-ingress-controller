@@ -32,11 +32,39 @@ import (
 )
 
 // HAProxyGeneralFileInformer provides access to a shared informer and lister for
-// HAProxyGeneralFiles.
+// HAProxyGeneralFiles. Prefer using the type-safe variant (see [TypedHAProxyGeneralFileInformer]).
 type HAProxyGeneralFileInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() haproxytemplatev1alpha1.HAProxyGeneralFileLister
 }
+
+// TypedHAProxyGeneralFileInformer provides access to a shared informer and lister for
+// HAProxyGeneralFiles, including the type-safe TypedInformer variant.
+// It is a superset of HAProxyGeneralFileInformer.
+type TypedHAProxyGeneralFileInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() HAProxyGeneralFileIndexInformer
+	Lister() haproxytemplatev1alpha1.HAProxyGeneralFileLister
+}
+
+// HAProxyGeneralFileIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type HAProxyGeneralFileIndexInformer cache.TypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyGeneralFile]
+
+// HAProxyGeneralFileHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for HAProxyGeneralFile.
+type HAProxyGeneralFileHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apishaproxytemplatev1alpha1.HAProxyGeneralFile]
+
+// HAProxyGeneralFileDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for HAProxyGeneralFile.
+type HAProxyGeneralFileDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apishaproxytemplatev1alpha1.HAProxyGeneralFile]
+
+// HAProxyGeneralFileFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for HAProxyGeneralFile.
+type HAProxyGeneralFileFilteringHandler = cache.TypedFilteringResourceEventHandler[*apishaproxytemplatev1alpha1.HAProxyGeneralFile]
+
+// HAProxyGeneralFileIndexers is a specialization of [cache.TypedIndexers] for HAProxyGeneralFile.
+type HAProxyGeneralFileIndexers = cache.TypedIndexers[*apishaproxytemplatev1alpha1.HAProxyGeneralFile]
+
+// DeletedHAProxyGeneralFile is a specialization of [cache.DeletedObject] for HAProxyGeneralFile.
+type DeletedHAProxyGeneralFile = cache.DeletedObject[*apishaproxytemplatev1alpha1.HAProxyGeneralFile]
 
 type hAProxyGeneralFileInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -47,25 +75,49 @@ type hAProxyGeneralFileInformer struct {
 // NewHAProxyGeneralFileInformer constructs a new informer for HAProxyGeneralFile type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedHAProxyGeneralFileInformer]).
 func NewHAProxyGeneralFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
 	return NewHAProxyGeneralFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedHAProxyGeneralFileInformer constructs a new informer for HAProxyGeneralFile type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedHAProxyGeneralFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers HAProxyGeneralFileIndexers) HAProxyGeneralFileIndexInformer {
+	return NewTypedHAProxyGeneralFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredHAProxyGeneralFileInformer constructs a new informer for HAProxyGeneralFile type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredHAProxyGeneralFileInformer]).
 func NewFilteredHAProxyGeneralFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return NewHAProxyGeneralFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+	return NewTypedHAProxyGeneralFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredHAProxyGeneralFileInformer constructs a new informer for HAProxyGeneralFile type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredHAProxyGeneralFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers HAProxyGeneralFileIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) HAProxyGeneralFileIndexInformer {
+	return NewTypedHAProxyGeneralFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
 }
 
 // NewHAProxyGeneralFileInformerWithOptions constructs a new informer for HAProxyGeneralFile type with additional options.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedHAProxyGeneralFileInformerWithOptions]).
 func NewHAProxyGeneralFileInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedHAProxyGeneralFileInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedHAProxyGeneralFileInformerWithOptions constructs a new informer for HAProxyGeneralFile type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedHAProxyGeneralFileInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) HAProxyGeneralFileIndexInformer {
 	gvr := schema.GroupVersionResource{Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxygeneralfiles"}
 	identifier := options.InformerName.WithResource(gvr)
 	tweakListOptions := options.TweakListOptions
-	return cache.NewSharedIndexInformerWithOptions(
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyGeneralFile](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
@@ -98,17 +150,57 @@ func NewHAProxyGeneralFileInformerWithOptions(client versioned.Interface, namesp
 			Indexers:     options.Indexers,
 			Identifier:   identifier,
 		},
-	)
+	))
 }
 
 func (f *hAProxyGeneralFileInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewHAProxyGeneralFileInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
+	return NewTypedHAProxyGeneralFileInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *hAProxyGeneralFileInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyGeneralFile{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *hAProxyGeneralFileInformer) TypedInformer() HAProxyGeneralFileIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyGeneralFile](f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyGeneralFile{}, f.defaultInformer))
 }
 
 func (f *hAProxyGeneralFileInformer) Lister() haproxytemplatev1alpha1.HAProxyGeneralFileLister {
 	return haproxytemplatev1alpha1.NewHAProxyGeneralFileLister(f.Informer().GetIndexer())
+}
+
+// ToTypedHAProxyGeneralFileInformer converts an untyped informer into a TypedHAProxyGeneralFileInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *HAProxyGeneralFile. If that is not the case, calling type-safe methods of the returned
+// TypedHAProxyGeneralFileInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedHAProxyGeneralFileInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedHAProxyGeneralFileInformer(informer HAProxyGeneralFileInformer) TypedHAProxyGeneralFileInformer {
+	if informer, ok := informer.(TypedHAProxyGeneralFileInformer); ok {
+		return informer
+	}
+	return &hAProxyGeneralFileTypedInformerAdapter{informer}
+}
+
+type hAProxyGeneralFileTypedInformerAdapter struct {
+	HAProxyGeneralFileInformer
+}
+
+func (a *hAProxyGeneralFileTypedInformerAdapter) TypedInformer() HAProxyGeneralFileIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyGeneralFile](a.Informer())
+}
+
+// ToHAProxyGeneralFileIndexInformer converts an untyped informer into a HAProxyGeneralFileIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *HAProxyGeneralFile. If that is not the case, calling type-safe methods of the returned
+// HAProxyGeneralFileIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a HAProxyGeneralFileIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToHAProxyGeneralFileIndexInformer(informer cache.SharedIndexInformer) HAProxyGeneralFileIndexInformer {
+	if informer, ok := informer.(HAProxyGeneralFileIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyGeneralFile](informer)
 }

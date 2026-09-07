@@ -27,7 +27,7 @@ import (
 )
 
 type Interface interface {
-	Discovery() discovery.DiscoveryInterface
+	Discovery() discovery.DiscoveryInterfaces
 	HaproxyTemplateICV1alpha1() haproxytemplateicv1alpha1.HaproxyTemplateICV1alpha1Interface
 }
 
@@ -43,7 +43,7 @@ func (c *Clientset) HaproxyTemplateICV1alpha1() haproxytemplateicv1alpha1.Haprox
 }
 
 // Discovery retrieves the DiscoveryClient
-func (c *Clientset) Discovery() discovery.DiscoveryInterface {
+func (c *Clientset) Discovery() discovery.DiscoveryInterfaces {
 	if c == nil {
 		return nil
 	}
