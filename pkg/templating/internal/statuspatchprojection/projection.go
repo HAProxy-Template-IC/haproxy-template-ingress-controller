@@ -315,6 +315,12 @@ func (v PatchView) Metadata() (Metadata, error) {
 	}, nil
 }
 
+// Same reports exact authenticated patch identity: the same patch of the same
+// root under the same owner, which makes every phase the same too.
+func (v PatchView) Same(other PatchView) bool {
+	return v.root == other.root && sameOwner(v.owner, other.owner) && v.patchIndex == other.patchIndex
+}
+
 // Owner returns the exact owner token bound to the referenced leaf root.
 func (v PatchView) Owner() (any, error) {
 	if _, err := v.patch(); err != nil {
@@ -627,9 +633,16 @@ func sameOwner(left, right any) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
-	leftValue := reflect.ValueOf(left)
-	rightValue := reflect.ValueOf(right)
-	return leftValue.Type() == rightValue.Type() && leftValue.Comparable() && rightValue.Comparable() && left == right
+	leftType := reflect.TypeOf(left)
+	if leftType != reflect.TypeOf(right) {
+		return false
+	}
+	// Owners are pointers, which always compare; the value walk that guards
+	// == for every other kind allocates per call and is only taken for those.
+	if leftType.Kind() == reflect.Pointer {
+		return left == right
+	}
+	return reflect.ValueOf(left).Comparable() && reflect.ValueOf(right).Comparable() && left == right
 }
 
 func compareStrings(left, right string) int {

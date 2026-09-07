@@ -161,6 +161,12 @@ type Component struct {
 	statusCache map[string]statusCacheEntry
 	applyLocks  [statusApplyLockCount]sync.Mutex
 
+	// applied is, per phase, the snapshot whose patches were last applied
+	// and the patches of it that failed to apply. The next snapshot of the
+	// phase applies only what changed since, plus those, instead of
+	// materializing and marshalling every patch of a fleet-sized render.
+	applied map[events.StatusPatchPhase]*appliedPhase
+
 	// selfWrites receives the resourceVersion of every applied patch (nil-safe).
 	selfWrites *k8stypes.SelfWriteRegistry
 }
@@ -421,12 +427,14 @@ func (c *Component) applyStatusPatchSet(
 	if count == 0 {
 		return
 	}
-	phasePatches, err := snapshot.PatchesForPhase(string(phase))
+	previous, retries := c.takeAppliedPhase(phase)
+	phasePatches, err := snapshot.ChangedPatchesForPhase(previous, string(phase))
 	if err != nil {
 		c.rejectStatusPatchSnapshot(err)
 		return
 	}
-	c.applyVariant(ctx, phasePatches, phase)
+	failed := c.applyVariant(ctx, mergeRetries(phasePatches, retries), phase)
+	c.rememberAppliedPhase(phase, snapshot, failed)
 }
 
 type renderOccurrenceEvent interface {
@@ -471,6 +479,7 @@ func (c *Component) handleBecameLeader(_ context.Context) {
 	c.mu.Lock()
 	c.isLeader = true
 	c.statusCache = make(map[string]statusCacheEntry)
+	c.applied = nil
 	c.mu.Unlock()
 	c.Logger().Info("Became leader, clearing status apply cache")
 }
@@ -495,11 +504,15 @@ func (c *Component) handleLostLeadership() {
 }
 
 // applyVariant applies the given phase variant from each patch to the target resource.
-func (c *Component) applyVariant(ctx context.Context, patches []templating.StatusPatch, phase events.StatusPatchPhase) {
+// applyVariant applies the phase variant of every patch and returns the ones
+// that did not reach the apiserver, for the next application to retry.
+func (c *Component) applyVariant(ctx context.Context, patches []templating.StatusPatch, phase events.StatusPatchPhase) []templating.StatusPatch {
 	startTime := time.Now()
 	phaseKey := string(phase)
 
 	var applied, skipped atomic.Int64
+	var failedMu sync.Mutex
+	var failed []templating.StatusPatch
 
 	// Apply the per-resource SSA patches CONCURRENTLY with bounded parallelism.
 	// Serially this loop is O(patches) sequential Kubernetes API round-trips
@@ -540,6 +553,9 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 				skipped.Add(1)
 			case patchFailed:
 				// Logged and published inside applyOnePatch.
+				failedMu.Lock()
+				failed = append(failed, *patch)
+				failedMu.Unlock()
 			}
 			return nil
 		})
@@ -561,6 +577,70 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	c.EventBus().Publish(events.NewStatusUpdateCompletedEvent(
 		phase, appliedN, skippedN, durationMs,
 	))
+	return failed
+}
+
+// appliedPhase is what one phase last applied: the snapshot, and the patches
+// of it that did not reach the apiserver.
+type appliedPhase struct {
+	snapshot *templating.StatusPatchSnapshot
+	failed   map[string]templating.StatusPatch
+}
+
+// takeAppliedPhase returns the snapshot last applied for phase and the
+// patches still to retry, or nil and nothing on the first application of a
+// term. Caller holds no lock.
+func (c *Component) takeAppliedPhase(phase events.StatusPatchPhase) (*templating.StatusPatchSnapshot, []templating.StatusPatch) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	last := c.applied[phase]
+	if last == nil {
+		return nil, nil
+	}
+	retries := make([]templating.StatusPatch, 0, len(last.failed))
+	for key := range last.failed {
+		retries = append(retries, last.failed[key])
+	}
+	return last.snapshot, retries
+}
+
+func (c *Component) rememberAppliedPhase(
+	phase events.StatusPatchPhase,
+	snapshot *templating.StatusPatchSnapshot,
+	failed []templating.StatusPatch,
+) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.applied == nil {
+		c.applied = make(map[events.StatusPatchPhase]*appliedPhase)
+	}
+	byKey := make(map[string]templating.StatusPatch, len(failed))
+	for index := range failed {
+		byKey[statusPatchKey(&failed[index])] = failed[index]
+	}
+	c.applied[phase] = &appliedPhase{snapshot: snapshot, failed: byKey}
+}
+
+func statusPatchKey(patch *templating.StatusPatch) string {
+	return patch.Namespace + "/" + patch.Name + "/" + patch.APIVersion + "/" + patch.Kind
+}
+
+// mergeRetries appends the retried patches whose resource is not already in
+// changed, which carries the newer version when both have one.
+func mergeRetries(changed, retries []templating.StatusPatch) []templating.StatusPatch {
+	if len(retries) == 0 {
+		return changed
+	}
+	present := make(map[string]struct{}, len(changed))
+	for index := range changed {
+		present[statusPatchKey(&changed[index])] = struct{}{}
+	}
+	for index := range retries {
+		if _, exists := present[statusPatchKey(&retries[index])]; !exists {
+			changed = append(changed, retries[index])
+		}
+	}
+	return changed
 }
 
 // patchOutcome classifies one status-patch apply attempt.
