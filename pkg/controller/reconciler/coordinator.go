@@ -458,11 +458,11 @@ func (c *Coordinator) handlePipelineSuccess(
 		c.logger.Warn("Rendered output validator warning",
 			"warning", warning, "correlation_id", triggerEvent.CorrelationID())
 	}
-	c.eventBus.Publish(completed)
-
 	if c.metrics != nil {
 		c.metrics.RecordRender(result.CacheState)
 	}
+	c.eventBus.Publish(completed)
+
 	c.logger.Debug("Reconciliation completed",
 		"correlation_id", triggerEvent.CorrelationID(),
 		"render_ms", result.RenderDurationMs,
