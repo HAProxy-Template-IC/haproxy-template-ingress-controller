@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/boumenot/gocover-cobertura v1.5.0
-	github.com/google/go-containerregistry v0.22.0
+	github.com/google/go-containerregistry v0.22.1
 	oras.land/oras v1.3.4
 )
 
