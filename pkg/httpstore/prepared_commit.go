@@ -564,11 +564,11 @@ func (s *HTTPStore) prepareInitialCandidatesLocked(
 		var ok bool
 		advancedReplay, ok = s.advanceAcceptedReplayStateLocked(input.replayState)
 		if !ok {
-			return nil, errors.New("accepted HTTP replay inputs changed while the render was running")
+			return nil, fmt.Errorf("accepted HTTP replay inputs %w", ErrInputsMoved)
 		}
 	}
 	if !s.verifySnapshotsLocked(input.accepted) || !s.verifyObservationsLocked(input.observations) {
-		return nil, errors.New("accepted HTTP content changed while the render was running")
+		return nil, fmt.Errorf("accepted HTTP content %w", ErrInputsMoved)
 	}
 	plans, sourceByURL, err := s.planStagedSourcesLocked(input.sources)
 	if err != nil {
@@ -626,7 +626,7 @@ func (s *HTTPStore) validatePrepareReplayFencesLocked(
 		return errors.New("HTTP render commit has conflicting replay fences")
 	}
 	if replayEpoch != nil && !s.replayEpochCurrentLocked(replayEpoch) {
-		return errors.New("HTTP render root changed while the render was running")
+		return fmt.Errorf("HTTP render root %w", ErrInputsMoved)
 	}
 	return nil
 }

@@ -30,6 +30,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -582,12 +583,17 @@ const renderInputConflictAttempts = 3
 // composed against inputs that no longer hold — and both are answered by
 // rendering again, not by refusing.
 //
+// The HTTP store's inputs move without any watch event: another render on the
+// same replica accepted the content first (the follower warmer beats the new
+// leader's first render at startup), so nothing re-triggers the loser. Left
+// unretried it never validated, and a quiet cluster stayed that way (#199).
+//
 // Refusing is what made this matter: an admission render that hit a snapshot
 // change DENIED the object under review, so one namespace's Secret rotating
 // could reject an unrelated Ingress in another. The user's object was never the
 // problem.
 func inputsMovedUnderTheRender(err error, mode rendercontext.RenderMode) bool {
-	if errors.Is(err, incremental.ErrRevisionConflict) {
+	if errors.Is(err, incremental.ErrRevisionConflict) || errors.Is(err, httpstore.ErrInputsMoved) {
 		return true
 	}
 	// A moved snapshot is only worth re-reading inline for admission, which has

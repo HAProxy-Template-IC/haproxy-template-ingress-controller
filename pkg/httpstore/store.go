@@ -70,6 +70,12 @@ type HTTPStore struct {
 
 var errHTTPStorePublicationPoisoned = errors.New("HTTP store is unavailable after publication authentication failure")
 
+// ErrInputsMoved reports that another render accepted content the failing
+// render had read, so it was composed against inputs that no longer hold.
+// Rendering again reads the accepted content; refusing leaves the render
+// without a trigger, because acceptance raises no watch event.
+var ErrInputsMoved = errors.New("changed while the render was running")
+
 func (s *HTTPStore) publicationErrorLocked() error {
 	if s == nil || s.publicationPoisoned.Load() {
 		return errHTTPStorePublicationPoisoned

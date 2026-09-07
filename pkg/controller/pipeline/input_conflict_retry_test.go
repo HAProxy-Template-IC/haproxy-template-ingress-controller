@@ -26,6 +26,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
+	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
@@ -53,6 +54,29 @@ func TestARenderThatLosesTheInputRaceIsRetried(t *testing.T) {
 	assert.Equal(t, 2, attempts, "the second render should have been attempted")
 	assert.Same(t, want, result)
 	assert.True(t, validationResult.Valid)
+}
+
+// The HTTP store's acceptance raises no watch event, so a reconcile that lost
+// the race to a sibling render accepting the same content has no next trigger
+// (#199: the follower warmer beat the new leader's first render).
+func TestAReconcileThatLosesTheHTTPAcceptanceRaceIsRetried(t *testing.T) {
+	attempts := 0
+	want := &PipelineResult{HAProxyConfig: "settled"}
+
+	result, _, err := settleInputConflicts(
+		t.Context(), nil, rendercontext.RenderModeReconcile,
+		func() (*PipelineResult, *validation.ValidationResult, error) {
+			attempts++
+			if attempts == 1 {
+				return nil, nil, fmt.Errorf("committing validated render inputs: HTTP source http://x %w",
+					httpstore.ErrInputsMoved)
+			}
+			return want, &validation.ValidationResult{Valid: true}, nil
+		})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, attempts)
+	assert.Same(t, want, result)
 }
 
 // The bound has to hold: a cluster changing continuously must not spin here
