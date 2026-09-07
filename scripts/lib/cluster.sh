@@ -45,8 +45,9 @@ kind_create_cluster() {
 # a real 77-line render.
 #
 # Polls until the condition reads True, then echoes it. On timeout it echoes the
-# last value seen (MISSING / False / a reason), so the caller's failure names
-# what it actually found rather than just "not True".
+# last value seen (MISSING, or False with the condition's reason and message),
+# so the caller's failure names what it actually found rather than just
+# "not True".
 config_validated_status() {
   k get haproxytemplateconfig -o json 2>/dev/null | python3 -c '
 import json,sys
@@ -55,7 +56,12 @@ try:
 except Exception:
     print("UNREADABLE"); sys.exit(0)
 c = [c for i in items for c in i.get("status", {}).get("conditions", []) if c["type"] == "Validated"]
-print(c[0]["status"] if c else "MISSING")'
+if not c:
+    print("MISSING")
+elif c[0]["status"] == "True":
+    print("True")
+else:
+    print("%s (%s: %s)" % (c[0]["status"], c[0].get("reason", ""), (c[0].get("message") or "").replace(chr(10), " ")[:300]))'
 }
 
 wait_config_validated() {
