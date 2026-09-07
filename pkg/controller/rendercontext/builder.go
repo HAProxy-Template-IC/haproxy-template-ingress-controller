@@ -81,7 +81,7 @@ type Builder struct {
 	runtimeEnvironment    templating.RuntimeEnvironment
 	runtimeEnvironmentSet bool
 	planTokenAuthority    *PlanTokenAuthority
-	mapEntriesMemo        *MapEntriesMemo
+	planMemo              *PlanMemo
 }
 
 // admissionSubjectOrEmpty returns the subject map for the template context.
@@ -313,10 +313,10 @@ func WithPlanTokenAuthority(authority *PlanTokenAuthority) Option {
 	}
 }
 
-// WithMapEntriesMemo reuses parsed map entries across renders.
-func WithMapEntriesMemo(memo *MapEntriesMemo) Option {
+// WithPlanMemo reuses plan derivations across renders.
+func WithPlanMemo(memo *PlanMemo) Option {
 	return func(b *Builder) {
-		b.mapEntriesMemo = memo
+		b.planMemo = memo
 	}
 }
 
@@ -442,7 +442,7 @@ func (b *Builder) Build() *BuildResult {
 			resourceErrors.Record(err)
 		}
 	}
-	planRegistry.mapEntries = b.mapEntriesMemo
+	planRegistry.memo = b.planMemo
 
 	// spec.maps[].ordered belongs to the plan, and the plan is built from this
 	// registry by every caller — the reconcile renderer and the validation-test

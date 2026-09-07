@@ -268,6 +268,7 @@ func registerStatusAndEventFunctions(decl native.Declarations) {
 	decl[FuncIncrementalRankedTextFragment] = scriggoIncrementalRankedTextFragment
 	decl[FuncIncrementalRankedTextFragmentJoin] = scriggoIncrementalRankedTextFragmentJoin
 	decl[FuncIncrementalRankedFragmentBytes] = scriggoIncrementalRankedFragmentBytes
+	decl[FuncIncrementalValueCount] = scriggoIncrementalValueCount
 	decl[FuncUntarGz] = scriggoUntarGz
 }
 

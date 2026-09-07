@@ -314,6 +314,10 @@ const (
 	// without materialising it, so a template can test emptiness cheaply.
 	FuncIncrementalRankedFragmentBytes = "incremental_ranked_fragment_bytes"
 
+	// FuncIncrementalValueCount reports how many winning values a cell holds
+	// without decoding them, so a presence test costs nothing per value.
+	FuncIncrementalValueCount = "incremental_value_count"
+
 	// Collection pipeline helpers (ADR-0018). Each preserves its input's
 	// element type, so a chain over a typed watched resource keeps typed
 	// field access at every stage. Predicates are closures rather than

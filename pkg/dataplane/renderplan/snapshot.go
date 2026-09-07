@@ -128,8 +128,11 @@ type snapshotEntry[T any] struct {
 	value        *snapshotValue[T]
 	deferredFile *snapshotDeferredFile
 	canonical    *canonicalFragment
-	seal         *snapshotEntry[T]
-	auth         snapshotEntryAuthentication[T]
+	// predecessor is the entry this one replaced under the same key, kept
+	// until the canonical fragment is derived from it and then dropped.
+	predecessor *snapshotEntry[T]
+	seal        *snapshotEntry[T]
+	auth        snapshotEntryAuthentication[T]
 }
 
 func sealSnapshotEntry[T any](

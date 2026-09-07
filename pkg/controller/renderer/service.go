@@ -123,6 +123,10 @@ type RenderResult struct {
 	// none has completed.
 	CacheBuildMs int64
 
+	// RootsReused counts the auxiliary roots that handed back their previous
+	// output instead of executing, because they observed nothing new.
+	RootsReused int
+
 	// IncludeStats holds per-snippet render counts/timing for the main template.
 	// Populated only when the engine was built with profiling enabled (nil in
 	// production); consumed by the browser playground's render-trace view.
@@ -304,7 +308,7 @@ type RenderService struct {
 	incremental                 *incrementalRenderState
 	mainDocumentCache           *rendercontext.RenderDocumentCache
 	planTokenAuthority          *rendercontext.PlanTokenAuthority
-	mapEntriesMemo              *rendercontext.MapEntriesMemo
+	planMemo                    *rendercontext.PlanMemo
 	exactCycleProgram           *templating.ExactCycleReplayProgram
 	extraContextMu              sync.Mutex
 	extraContext                map[string]any
@@ -462,7 +466,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		logger:                      cfg.Logger,
 		mainDocumentCache:           mainDocumentCache,
 		planTokenAuthority:          planTokenAuthority,
-		mapEntriesMemo:              rendercontext.NewMapEntriesMemo(),
+		planMemo:                    rendercontext.NewPlanMemo(),
 		planAuthority:               planAuthority,
 		artifactAuthority:           artifactAuthority,
 		outputAuthority:             outputAuthority,
@@ -839,6 +843,7 @@ func (s *RenderService) renderAttempt(
 	result, handedOff, err = s.publishRenderAttempt(ctx, bctx, mode, &renderArtifacts{
 		main:             mainRender,
 		staticFiles:      staticFiles,
+		rootsReused:      renderSession.exactCycleRootReuser().reused(),
 		inputTransaction: inputTransaction,
 		startTime:        startTime,
 		outputGeneration: attemptInputs.outputGeneration,
@@ -866,7 +871,7 @@ func (s *RenderService) publishRenderAttempt(
 		return nil, false, err
 	}
 	if err := s.attachExactCycleCandidate(
-		result, bctx, renderSession, exactInputs, mode, artifacts.outputGeneration,
+		result, bctx, renderSession, exactInputs, mode, artifacts.outputGeneration, artifacts.staticFiles,
 	); err != nil {
 		return nil, false, err
 	}
@@ -1039,8 +1044,10 @@ func (s *RenderService) attachExactCycleCandidate(
 	exactInputs *templating.ExactCycleReplayInputs,
 	mode rendercontext.RenderMode,
 	outputGeneration uint64,
+	staticFiles *dataplane.AuxiliaryFiles,
 ) error {
 	var exactCandidate *exactCycleCandidate
+	roots := captureExactCycleRootOutputs(staticFiles)
 	if exactInputs != nil {
 		candidate, err := captureExactCycleCandidate(
 			s.exactCycleProgram,
@@ -1051,6 +1058,7 @@ func (s *RenderService) attachExactCycleCandidate(
 			result.CycleSnapshot,
 			result.renderCachePublication,
 			result.planIdentity,
+			roots,
 		)
 		if err != nil && !errors.Is(err, errExactCycleUnavailable) {
 			return exactCycleCaptureError("candidate", err)
@@ -1072,6 +1080,7 @@ func (s *RenderService) attachExactCycleCandidate(
 			result.CycleSnapshot,
 			result.renderCachePublication,
 			result.planIdentity,
+			roots,
 		)
 		return nil
 	}
@@ -1141,7 +1150,7 @@ func (s *RenderService) renderAuxiliaryAttempt(
 	renderSession *incrementalRenderSession,
 	inputTransaction RenderInputTransaction,
 ) (*dataplane.AuxiliaryFiles, bool, error) {
-	staticFiles, err := s.renderAuxiliaryFiles(ctx, renderContext)
+	staticFiles, err := s.renderAuxiliaryFiles(ctx, renderContext, renderSession.exactCycleRootReuser())
 	if resourceErr := bctx.Err(ctx); resourceErr != nil {
 		return nil, false, resourceErr
 	}
@@ -1194,6 +1203,7 @@ func inputRetrySeed(transaction RenderInputTransaction) *httpstore.InputRetrySee
 type renderArtifacts struct {
 	main             rendercontext.MainDocumentRender
 	staticFiles      *dataplane.AuxiliaryFiles
+	rootsReused      int
 	inputTransaction RenderInputTransaction
 	startTime        time.Time
 	outputGeneration uint64
@@ -1354,6 +1364,10 @@ func (s *RenderService) finishRender(
 	if err != nil {
 		return nil, err
 	}
+	// The content checksum hashes the whole configuration; its document part
+	// only needs the document, so it runs alongside the plan work below.
+	preparedHash := make(chan *renderoutput.PreparedContentHash, 1)
+	go func() { preparedHash <- renderoutput.PrepareContentHash(artifacts.main.Document) }()
 	previousCycleSnapshot, previousPlanIdentity, previousCurrentConfigRoot := s.previousCycleState()
 	previousOutputSnapshot, previousStatusPatchSnapshot, previousEventSnapshot,
 		previousRenderedResourceSnapshot, err := renderCycleChildren(previousCycleSnapshot)
@@ -1422,18 +1436,10 @@ func (s *RenderService) finishRender(
 	if outputSnapshot == previousOutputSnapshot {
 		planIdentity = previousPlanIdentity
 	}
-	cycleSnapshot, err := rendercycle.NewSnapshot(
-		s.cycleAuthority,
-		outputSnapshot,
-		statusPatchSnapshot,
-		eventSnapshot,
-		renderedResourceSnapshot,
-		previousCycleSnapshot,
+	cycleSnapshot, contentChecksum, planID, err := s.sealRenderCycle(
+		outputSnapshot, <-preparedHash, statusPatchSnapshot, eventSnapshot,
+		renderedResourceSnapshot, previousCycleSnapshot,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("sealing render cycle: %w", err)
-	}
-	contentChecksum, planID, err := outputSnapshotIdentity(outputSnapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -1471,12 +1477,44 @@ func (s *RenderService) finishRender(
 		DurationMs:               time.Since(artifacts.startTime).Milliseconds(),
 		CacheState:               cacheState,
 		CacheBuildMs:             cacheBuildMs,
+		RootsReused:              artifacts.rootsReused,
 		AuxFileCount:             auxFileCount,
 		IncludeStats:             artifacts.main.IncludeStats,
 		InputTransaction:         inputTransaction,
 		renderCachePublication:   cachePublication,
 		planIdentity:             planIdentity,
 	}, nil
+}
+
+// sealRenderCycle completes the output's checksum from the document hash
+// prepared earlier and seals the cycle over it.
+func (s *RenderService) sealRenderCycle(
+	outputSnapshot *renderoutput.Snapshot,
+	preparedHash *renderoutput.PreparedContentHash,
+	statusPatchSnapshot *templating.StatusPatchSnapshot,
+	eventSnapshot *templating.RenderedEventSnapshot,
+	renderedResourceSnapshot *templating.RenderedResourceSnapshot,
+	previousCycleSnapshot *rendercycle.Snapshot,
+) (cycleSnapshot *rendercycle.Snapshot, contentChecksum, planID string, err error) {
+	if _, err := outputSnapshot.ContentChecksumWith(preparedHash); err != nil {
+		return nil, "", "", fmt.Errorf("computing rendered output checksum: %w", err)
+	}
+	cycleSnapshot, err = rendercycle.NewSnapshot(
+		s.cycleAuthority,
+		outputSnapshot,
+		statusPatchSnapshot,
+		eventSnapshot,
+		renderedResourceSnapshot,
+		previousCycleSnapshot,
+	)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("sealing render cycle: %w", err)
+	}
+	contentChecksum, planID, err = outputSnapshotIdentity(outputSnapshot)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return cycleSnapshot, contentChecksum, planID, nil
 }
 
 func (s *RenderService) buildAuxiliaryFileTransition(
@@ -1753,7 +1791,7 @@ func (s *RenderService) buildRenderingContextFromAttemptInputs(
 		rendercontext.WithTypedResources(s.typedResourceTypes),
 		rendercontext.WithRenderMode(mode),
 		rendercontext.WithPlanTokenAuthority(s.planTokenAuthority),
-		rendercontext.WithMapEntriesMemo(s.mapEntriesMemo),
+		rendercontext.WithPlanMemo(s.planMemo),
 	}
 	opts = append(opts, attemptInputs.options()...)
 
@@ -1789,7 +1827,11 @@ func (s *RenderService) buildRenderingContextFromAttemptInputs(
 
 // renderAuxiliaryFiles renders all auxiliary files in parallel.
 // It respects the caller's context for cancellation.
-func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[string]any) (*dataplane.AuxiliaryFiles, error) {
+func (s *RenderService) renderAuxiliaryFiles(
+	ctx context.Context,
+	renderCtx map[string]any,
+	reuser *exactCycleRootReuser,
+) (*dataplane.AuxiliaryFiles, error) {
 	totalFiles := len(s.config.Maps) + len(s.config.Files) + len(s.config.SSLCertificates)
 	if totalFiles == 0 {
 		return &dataplane.AuxiliaryFiles{}, nil
@@ -1804,7 +1846,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 	}
 	if templating.ExactCycleReplayExecutionActive(ctx) {
 		if err := renderAuxGroupSerial(
-			ctx, s.engine, renderCtx, s.config.Maps, "map", &auxFiles.MapFiles,
+			ctx, s.engine, renderCtx, reuser, s.config.Maps, "map", &auxFiles.MapFiles,
 			func(name, content string) auxiliaryfiles.MapFile {
 				return auxiliaryfiles.MapFile{Path: name, Content: content}
 			},
@@ -1812,7 +1854,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 			return nil, err
 		}
 		if err := renderAuxGroupSerial(
-			ctx, s.engine, renderCtx, s.config.Files, "file", &auxFiles.GeneralFiles,
+			ctx, s.engine, renderCtx, reuser, s.config.Files, "file", &auxFiles.GeneralFiles,
 			func(name, content string) auxiliaryfiles.GeneralFile {
 				return auxiliaryfiles.GeneralFile{
 					Filename: name, Path: path.Join(s.pathResolver.GeneralDir, name),
@@ -1823,7 +1865,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 			return nil, err
 		}
 		if err := renderAuxGroupSerial(
-			ctx, s.engine, renderCtx, s.config.SSLCertificates, "SSL certificate",
+			ctx, s.engine, renderCtx, reuser, s.config.SSLCertificates, "SSL certificate",
 			&auxFiles.SSLCertificates,
 			func(name, content string) auxiliaryfiles.SSLCertificate {
 				return auxiliaryfiles.SSLCertificate{Path: name, Content: content}
@@ -2128,6 +2170,7 @@ func renderAuxGroupSerial[V any, T any](
 	ctx context.Context,
 	engine templating.Engine,
 	renderCtx map[string]any,
+	reuser *exactCycleRootReuser,
 	sources map[string]V,
 	label string,
 	out *[]T,
@@ -2143,9 +2186,15 @@ func renderAuxGroupSerial[V any, T any](
 		scopedCtx = templating.WithExactCycleRootInvocation(
 			scopedCtx, templating.ExactCycleRootInvocation{Kind: label, Name: name},
 		)
-		rendered, err := engine.Render(scopedCtx, name, renderCtx)
+		rendered, reused, err := reuser.reuse(scopedCtx, label, name)
 		if err != nil {
-			return fmt.Errorf("rendering %s %s: %w", label, name, err)
+			return fmt.Errorf("reusing %s %s: %w", label, name, err)
+		}
+		if !reused {
+			rendered, err = engine.Render(scopedCtx, name, renderCtx)
+			if err != nil {
+				return fmt.Errorf("rendering %s %s: %w", label, name, err)
+			}
 		}
 		*out = append(*out, build(name, rendered))
 	}

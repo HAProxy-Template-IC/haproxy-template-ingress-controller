@@ -15,6 +15,7 @@
 package planblob_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,4 +65,45 @@ func TestDecodeRejectsGarbage(t *testing.T) {
 	_, err := planblob.Decode([]byte("not a zstd frame"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "decompressing plan blob")
+}
+
+// BenchmarkEncodeFleetPlan prices the blob for the fleet size the plan
+// budgets for: 3,000 backends with one server each and 25 maps of 100 lines.
+func BenchmarkEncodeFleetPlan(b *testing.B) {
+	plan := &renderplan.Plan{
+		SchemaVersion: renderplan.SchemaVersion,
+		Backends:      map[string]renderplan.Backend{},
+		Maps:          map[string]renderplan.Map{},
+	}
+	for i := range 3000 {
+		name := fmt.Sprintf("be-%04d", i)
+		plan.Sections = append(plan.Sections, renderplan.Section{
+			Kind: renderplan.SectionKindBackend, Name: name, TextDigest: "0123456789abcdef", Length: 200,
+		})
+		plan.Backends[name] = renderplan.Backend{
+			Name: name, Shape: "dynamic", GUID: "guid-" + name, Balance: "roundrobin",
+			Servers:    []renderplan.Server{{Name: "SRV_1", Address: "10.0.0.1", Port: 8080, GUID: "srv-" + name}},
+			BodyDigest: "0123456789abcdef", CommentsDigest: "0123456789abcdef",
+			RecordDigest: "0123456789abcdef", TextDigest: "0123456789abcdef",
+		}
+	}
+	for i := range 25 {
+		entries := make([]renderplan.Entry, 0, 100)
+		for j := range 100 {
+			entries = append(entries, renderplan.Entry{
+				Key: fmt.Sprintf("host-%d-%d.example.com", i, j), Value: fmt.Sprintf("be-%04d", j),
+			})
+		}
+		path := fmt.Sprintf("maps/route-%02d.map", i)
+		plan.Maps[path] = renderplan.Map{Path: path, Ordered: true, Entries: entries}
+	}
+	blob, err := planblob.Encode(plan)
+	require.NoError(b, err)
+	b.ReportMetric(float64(len(blob)), "blob-B")
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := planblob.Encode(plan); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

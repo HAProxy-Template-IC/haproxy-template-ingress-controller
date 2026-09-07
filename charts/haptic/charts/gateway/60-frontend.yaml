@@ -99,7 +99,7 @@ templateSnippets:
       {# txn.gw_rule_id (<ns>_<name>_<ruleIdx>) comes from frontend-matchers-advanced-500-gateway;
           gated on Gateways existing so an Ingress-only install has no permanently-empty log key. #}
       {{- render "util-gateway-listener-hostname-claim-publications" -}}
-      {%- if len(incremental_values("gateway-listener-hostname-claims", "present")) > 0 %}
+      {%- if incremental_value_count("gateway-listener-hostname-claims", "present") > 0 %}
       %(gw_route)[var(txn.gw_rule_id)]
       {%- end %}
 

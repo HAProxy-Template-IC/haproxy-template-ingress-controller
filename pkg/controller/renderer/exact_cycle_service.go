@@ -103,6 +103,7 @@ type exactCycleCandidateAuthentication struct {
 	storeRoots    *exactCycleStoreRoots
 	http          *exactCycleHTTPObservations
 	incremental   *exactCycleIncrementalObservations
+	roots         *exactCycleRootOutputs
 	cycle         *rendercycle.Snapshot
 	cache         *rendercontext.PreparedRenderCachePublication
 	planIdentity  *rendercontext.RenderPlanIdentity
@@ -119,6 +120,7 @@ type exactCycleCandidate struct {
 	storeRoots    *exactCycleStoreRoots
 	http          *exactCycleHTTPObservations
 	incremental   *exactCycleIncrementalObservations
+	roots         *exactCycleRootOutputs
 	cycle         *rendercycle.Snapshot
 	cache         *rendercontext.PreparedRenderCachePublication
 	planIdentity  *rendercontext.RenderPlanIdentity
@@ -137,6 +139,7 @@ func newExactCycleCandidate(
 	storeRoots *exactCycleStoreRoots,
 	httpObservations *exactCycleHTTPObservations,
 	incrementalObservations *exactCycleIncrementalObservations,
+	roots *exactCycleRootOutputs,
 	cycle *rendercycle.Snapshot,
 	cache *rendercontext.PreparedRenderCachePublication,
 	planIdentity *rendercontext.RenderPlanIdentity,
@@ -146,14 +149,14 @@ func newExactCycleCandidate(
 ) *exactCycleCandidate {
 	candidate := &exactCycleCandidate{
 		program: program, inputs: inputs, previous: previous, resources: resources,
-		storeRoots: storeRoots, http: httpObservations, incremental: incrementalObservations,
+		storeRoots: storeRoots, http: httpObservations, incremental: incrementalObservations, roots: roots,
 		cycle: cycle, cache: cache, planIdentity: planIdentity, requiresRoots: requiresRoots, mode: mode,
 		bindingPlan: bindingPlan,
 	}
 	candidate.auth = exactCycleCandidateAuthentication{
 		program: candidate.program, inputs: candidate.inputs, previous: candidate.previous,
 		resources: candidate.resources, storeRoots: candidate.storeRoots, http: candidate.http,
-		incremental: candidate.incremental, cycle: candidate.cycle, cache: candidate.cache,
+		incremental: candidate.incremental, roots: candidate.roots, cycle: candidate.cycle, cache: candidate.cache,
 		planIdentity: candidate.planIdentity, requiresRoots: candidate.requiresRoots, mode: candidate.mode,
 		bindingPlan: candidate.bindingPlan,
 	}
@@ -171,7 +174,7 @@ func (c *exactCycleCandidate) matchesAuthentication() bool {
 	return c.program == c.auth.program && c.inputs == c.auth.inputs &&
 		c.previous == c.auth.previous && c.resources == c.auth.resources &&
 		c.storeRoots == c.auth.storeRoots && c.http == c.auth.http &&
-		c.incremental == c.auth.incremental && c.cycle == c.auth.cycle &&
+		c.incremental == c.auth.incremental && c.roots == c.auth.roots && c.cycle == c.auth.cycle &&
 		c.cache == c.auth.cache && c.planIdentity == c.auth.planIdentity &&
 		c.requiresRoots == c.auth.requiresRoots && c.bindingPlan == c.auth.bindingPlan &&
 		c.mode == c.auth.mode
@@ -227,6 +230,7 @@ func captureExactCycleCandidate(
 	cycle *rendercycle.Snapshot,
 	cache *rendercontext.PreparedRenderCachePublication,
 	planIdentity *rendercontext.RenderPlanIdentity,
+	roots *exactCycleRootOutputs,
 ) (*exactCycleCandidate, error) {
 	if program == nil || inputs == nil || bctx == nil || session == nil ||
 		!session.cachePublicationEnabled || cycle == nil || cache == nil {
@@ -257,7 +261,7 @@ func captureExactCycleCandidate(
 	}
 	candidate := newExactCycleCandidate(
 		program, inputs, previous, resources, storeRoots, httpObservations,
-		incrementalObservations, cycle, cache, planIdentity,
+		incrementalObservations, roots, cycle, cache, planIdentity,
 		exactCycleBindingPlanState(session.bindingPlan), requiresRoots, mode,
 	)
 	if err := candidate.validate(); err != nil {
@@ -480,6 +484,7 @@ func (c *exactCycleCandidate) rebasedSuccessor(
 		storeRoots,
 		httpObservations,
 		c.incremental,
+		c.roots,
 		c.cycle,
 		cache,
 		c.planIdentity,
@@ -553,6 +558,7 @@ func (s *RenderService) tryExactCycleReuse(
 		return nil, false, err
 	}
 	if !replayable {
+		session.rootReuser = newExactCycleRootReuser(s.exactCycleProgram, s.engine, candidate, session)
 		return nil, false, nil
 	}
 	result, err := s.finishExactCycleReuse(
@@ -736,6 +742,7 @@ func (s *RenderService) stageExactCycleCandidateCapture(
 	cycle *rendercycle.Snapshot,
 	cache *rendercontext.PreparedRenderCachePublication,
 	planIdentity *rendercontext.RenderPlanIdentity,
+	roots *exactCycleRootOutputs,
 ) RenderInputTransaction {
 	return stageOptionalRenderPublication(transaction, func() {
 		candidate, err := captureExactCycleCandidate(
@@ -747,6 +754,7 @@ func (s *RenderService) stageExactCycleCandidateCapture(
 			cycle,
 			cache,
 			planIdentity,
+			roots,
 		)
 		if err != nil && !errors.Is(err, errExactCycleUnavailable) && s.logger != nil {
 			s.logger.Debug("Exact cycle candidate could not be captured after input commit", "reason", err)

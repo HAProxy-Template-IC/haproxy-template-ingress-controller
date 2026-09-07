@@ -64,7 +64,7 @@ func renderServiceStaticCold(
 	if err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
-	staticFiles, err := service.renderAuxiliaryFiles(ctx, bctx.Context)
+	staticFiles, err := service.renderAuxiliaryFiles(ctx, bctx.Context, nil)
 	if err != nil {
 		return nil, err
 	}

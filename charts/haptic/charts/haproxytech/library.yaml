@@ -33,7 +33,7 @@ templateSnippets:
 
   frontend-filters-100-haproxytech-basic-headers:
     template: |
-      {%- if len(incremental_values("haproxytech-forwarded-for", "enabled")) > 0 %}
+      {%- if incremental_value_count("haproxytech-forwarded-for", "enabled") > 0 %}
       # haproxytech/frontend-filters-haproxytech-basic-headers (forwarded-for)
       option forwardfor
       {%- end -%}
@@ -1035,7 +1035,7 @@ templateSnippets:
     template: |-
       {# %hr is the positional capture list — the only consumer of haproxy.org/request-capture.
           haptic-annotations emits the identical item for the native vocabulary; base deduplicates. #}
-      {%- if len(incremental_values("haproxytech-captured-headers", "enabled")) > 0 %}
+      {%- if incremental_value_count("haproxytech-captured-headers", "enabled") > 0 %}
       %(captured_headers)hr
       {%- end %}
 

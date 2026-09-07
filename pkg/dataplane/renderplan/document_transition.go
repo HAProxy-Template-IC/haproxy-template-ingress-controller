@@ -39,7 +39,7 @@ func ReconcileSnapshotWithConfigDocument(
 			return nil, nil, err
 		}
 	}
-	configIndex, err := validateDocumentPlanSource(plan, document)
+	configIndex, err := validateDocumentPlanSource(authority, previous, plan, document)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -199,6 +199,8 @@ func (s *Snapshot) SectionsCopy() ([]Section, error) {
 }
 
 func validateDocumentPlanSource(
+	authority *Authority,
+	previous *Snapshot,
 	plan *Plan,
 	document rendercontent.Document,
 ) (int, error) {
@@ -215,7 +217,11 @@ func validateDocumentPlanSource(
 	if err != nil {
 		return 0, err
 	}
-	if err := validateDocumentPlanSections(plan, documentBytes); err != nil {
+	verified, err := verifiedSnapshotSections(authority, previous)
+	if err != nil {
+		return 0, err
+	}
+	if err := validateDocumentPlanSections(plan, documentBytes, verified); err != nil {
 		return 0, err
 	}
 	for name := range plan.Backends {
@@ -226,14 +232,46 @@ func validateDocumentPlanSource(
 	return validateDocumentPlanFiles(plan, documentBytes)
 }
 
-func validateDocumentPlanSections(plan *Plan, documentBytes int) error {
+type sectionIdentity struct {
+	kind string
+	name string
+}
+
+// verifiedSnapshotSections indexes the sections of a sealed snapshot, whose
+// digests were checked when it was sealed, so a plan that carries them over
+// does not hash the whole configuration again.
+func verifiedSnapshotSections(authority *Authority, previous *Snapshot) (map[sectionIdentity]Section, error) {
+	if previous == nil {
+		return map[sectionIdentity]Section{}, nil
+	}
+	entries, err := snapshotEntries(previous.root.sections, authority, sectionSnapshotCollection)
+	if err != nil {
+		return nil, err
+	}
+	verified := make(map[sectionIdentity]Section, len(entries))
+	for _, entry := range entries {
+		section := entry.value.value
+		verified[sectionIdentity{kind: section.Kind, name: section.Name}] = section
+	}
+	return verified, nil
+}
+
+func validateDocumentPlanSections(plan *Plan, documentBytes int, verified map[sectionIdentity]Section) error {
 	sectionBytes := 0
 	for index := range plan.Sections {
 		section := plan.Sections[index]
-		if !section.TextKnown || section.Length != len(section.Text) ||
-			section.TextDigest != DigestString(section.Text) || section.Length < 0 ||
+		if !section.TextKnown || section.Length != len(section.Text) || section.Length < 0 ||
 			sectionBytes > documentBytes-section.Length {
 			return errInexactSnapshotPlan
+		}
+		// A string compare is a pointer compare when the text was carried
+		// over from the sealed snapshot, which is how an unchanged section
+		// arrives here.
+		known, carried := verified[sectionIdentity{kind: section.Kind, name: section.Name}]
+		if !carried || known.TextDigest != section.TextDigest || known.Text != section.Text {
+			if section.TextDigest != DigestString(section.Text) {
+				return errInexactSnapshotPlan
+			}
 		}
 		sectionBytes += section.Length
 	}
@@ -446,6 +484,9 @@ func reconcileMapCollection[T any](
 			after = sealSnapshotEntry(
 				authority, kind, snapshotKey{index: -1, name: name}, own(value),
 			)
+			if kind == mapSnapshotCollection {
+				after.predecessor = before
+			}
 		}
 		changes = append(changes, sealMapChange(name, before, after))
 	}

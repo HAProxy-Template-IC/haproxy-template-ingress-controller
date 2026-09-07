@@ -192,6 +192,11 @@ type incrementalRenderSession struct {
 	httpExecuted                 map[incremental.QueryKey][]incrementalHTTPEffect
 	freshResults                 map[incremental.QueryKey]*authenticatedFreshComponentResult
 	componentQueries             *queryidentity.Authority[*incrementalRenderSession]
+	rootReuser                   *exactCycleRootReuser
+	batchResourcesMu             sync.Mutex
+	capabilityAuthority          *incrementalCapabilityAuthority
+	batchResources               any
+	batchResourceView            *incrementalBatchResourceView
 	decodedInputs                incrementalDecodedCache[incremental.InputKey, *incrementalDecodedInput]
 	decodedObjects               incrementalDecodedCache[string, *incrementalCertifiedObject]
 	decodedResourceInputs        incrementalDecodedCache[incremental.InputKey, *incrementalDecodedResourceInput]
@@ -2737,6 +2742,11 @@ type incrementalBatchCapabilities struct {
 	view      *incrementalBatchResourceView
 }
 
+// prepareBatchCapabilities binds the batch's context to the session's shared
+// resources value. The value is built once per session: it reads through a
+// view of the session and the session's read context, neither of which a
+// batch changes, and building it costs a reflective walk over every watched
+// resource.
 func (r *incrementalRenderSession) prepareBatchCapabilities(
 	ctx context.Context,
 	authority *incrementalCapabilityAuthority,
@@ -2744,19 +2754,28 @@ func (r *incrementalRenderSession) prepareBatchCapabilities(
 	batchCtx := templating.WithIncrementalImmutableInputs(
 		templating.WithImmutableResourceInputs(ctx),
 	)
-	view := &incrementalBatchResourceView{session: r, authority: authority}
-	view.seal = view
-	resources := r.state.incrementalResourcesValue(
-		batchCtx,
-		r.stores,
-		r.resourceErrors,
-		view,
-		nil,
-		r.loggerContext,
-	)
-	batchCtx = templating.WithIncrementalImmutableCapabilityInputs(batchCtx, resources)
+	r.batchResourcesMu.Lock()
+	defer r.batchResourcesMu.Unlock()
+	if r.batchResources == nil || r.batchResourceView.authority != authority {
+		view := &incrementalBatchResourceView{session: r, authority: authority}
+		view.seal = view
+		readContext := r.readContext
+		if readContext == nil {
+			readContext = ctx
+		}
+		r.batchResourceView = view
+		r.batchResources = r.state.incrementalResourcesValue(
+			templating.WithIncrementalImmutableInputs(templating.WithImmutableResourceInputs(readContext)),
+			r.stores,
+			r.resourceErrors,
+			view,
+			nil,
+			r.loggerContext,
+		)
+	}
+	batchCtx = templating.WithIncrementalImmutableCapabilityInputs(batchCtx, r.batchResources)
 	return &incrementalBatchCapabilities{
-		ctx: batchCtx, resources: resources, view: view,
+		ctx: batchCtx, resources: r.batchResources, view: r.batchResourceView,
 	}
 }
 
@@ -3138,7 +3157,12 @@ func (r *incrementalRenderSession) executeComponentBatch(
 		return nil, errors.New("template engine has no incremental component batch executor")
 	}
 	values := make([]incremental.ExactBatchValue, len(queries))
-	authority := newIncrementalCapabilityAuthority(r.resourceErrors)
+	r.batchResourcesMu.Lock()
+	if r.capabilityAuthority == nil {
+		r.capabilityAuthority = newIncrementalCapabilityAuthority(r.resourceErrors)
+	}
+	authority := r.capabilityAuthority
+	r.batchResourcesMu.Unlock()
 	batches, err := r.groupComponentBatchQueries(ctx, queries, values)
 	if err != nil {
 		return nil, err
@@ -5363,4 +5387,14 @@ func verifyCurrentResourceInput(
 
 func sameIncrementalInput(left, right incremental.Input) bool {
 	return left.Key == right.Key && left.Found == right.Found && bytes.Equal(left.Value, right.Value)
+}
+
+// exactCycleRootReuser is set when the previous cycle's external inputs
+// matched but the cycle as a whole could not be replayed, so single roots
+// that observed nothing new can still hand back their previous output.
+func (r *incrementalRenderSession) exactCycleRootReuser() *exactCycleRootReuser {
+	if r == nil {
+		return nil
+	}
+	return r.rootReuser
 }

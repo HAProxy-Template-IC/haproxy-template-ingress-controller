@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 
+	iradix "github.com/hashicorp/go-immutable-radix/v2"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
@@ -59,7 +61,7 @@ type PlanRegistry struct {
 	fragments           map[string]rendercontent.TextFragment
 	backends            map[string]renderplan.Backend
 	mapsMeta            map[string]bool
-	mapEntries          *MapEntriesMemo
+	memo                *PlanMemo
 	assembled           []renderplan.Section
 	prepared            *PreparedPlanSnapshot
 	assembly            *renderAssemblyGeneration
@@ -410,27 +412,21 @@ func (r *PlanRegistry) plan(
 // every consumer copies before it mutates (renderplan owns its entries, the
 // deploy side clones), and cloning here priced each render by the fleet size.
 func (r *PlanRegistry) planBackends() (map[string]renderplan.Backend, error) {
-	backends := maps.Clone(r.backends)
+	var backends map[string]renderplan.Backend
 	if r.prepared != nil {
 		if err := r.prepared.ValidateAuthentication(); err != nil {
 			return nil, err
 		}
-		var conflictErr error
-		r.prepared.backends.Root().Walk(func(name []byte, prepared PreparedPlanBackend) bool {
-			backend := prepared.Backend
-			backend.Body = sharedStrings(prepared.Body)
-			backend.Comments = sharedStrings(prepared.Comments)
-			backend.ContentKnown = true
-			if existing, exists := backends[string(name)]; exists && !sameBackendRecordExact(&existing, &backend) {
-				conflictErr = fmt.Errorf("planRegistry.Backend: backend %q declared twice with different values", name)
-				return true
+		backends = maps.Clone(r.memo.preparedBackends(r.prepared))
+		for name := range r.backends {
+			backend := r.backends[name]
+			if existing, exists := backends[name]; exists && !sameBackendRecordExact(&existing, &backend) {
+				return nil, fmt.Errorf("planRegistry.Backend: backend %q declared twice with different values", name)
 			}
-			backends[string(name)] = backend
-			return false
-		})
-		if conflictErr != nil {
-			return nil, conflictErr
+			backends[name] = backend
 		}
+	} else {
+		backends = maps.Clone(r.backends)
 	}
 	textDigests := make(map[string]string)
 	for _, section := range r.assembled {
@@ -497,45 +493,81 @@ func (r *PlanRegistry) mapFiles(contents map[string]string) map[string]renderpla
 		files[path] = renderplan.Map{
 			Path:    path,
 			Ordered: !declared || ordered,
-			Entries: r.mapEntries.parse(path, content),
+			Entries: r.memo.parseMapEntries(path, content),
 		}
 	}
 	return files
 }
 
-// MapEntriesMemo reuses a map file's parsed entries across renders while its
-// text is unchanged. The entries are shared, never mutated: renderplan copies
-// them into its snapshot and the deploy side clones before editing.
-type MapEntriesMemo struct {
-	mu    sync.Mutex
-	files map[string]memoizedMapEntries
+// PlanMemo carries plan derivations across a render service's renders: each
+// map file's parsed entries while its text is unchanged, and the prepared
+// snapshot's backends as plan records while the snapshot is the same. Both
+// are shared, never mutated: renderplan copies them into its snapshot and the
+// deploy side clones before editing.
+type PlanMemo struct {
+	mu           sync.Mutex
+	files        map[string]memoizedMapEntries
+	backendsRoot *iradix.Node[PreparedPlanBackend]
+	backends     map[string]renderplan.Backend
 }
 
 type memoizedMapEntries struct {
-	content string
-	entries []renderplan.Entry
+	parsed renderplan.ParsedMapEntries
 }
 
-// NewMapEntriesMemo creates an empty memo shared by one render service.
-func NewMapEntriesMemo() *MapEntriesMemo {
-	return &MapEntriesMemo{files: make(map[string]memoizedMapEntries)}
+// NewPlanMemo creates an empty memo shared by one render service.
+func NewPlanMemo() *PlanMemo {
+	return &PlanMemo{files: make(map[string]memoizedMapEntries)}
 }
 
-func (m *MapEntriesMemo) parse(path, content string) []renderplan.Entry {
+func (m *PlanMemo) parseMapEntries(path, content string) []renderplan.Entry {
 	if m == nil {
 		return renderplan.ParseMapEntries(content)
 	}
 	m.mu.Lock()
 	known, exists := m.files[path]
 	m.mu.Unlock()
-	if exists && known.content == content {
-		return known.entries
+	var parsed renderplan.ParsedMapEntries
+	if exists {
+		parsed = known.parsed.Reparse(content)
+	} else {
+		parsed = renderplan.ParseMapEntriesIndexed(content)
 	}
-	entries := renderplan.ParseMapEntries(content)
 	m.mu.Lock()
-	m.files[path] = memoizedMapEntries{content: content, entries: entries}
+	m.files[path] = memoizedMapEntries{parsed: parsed}
 	m.mu.Unlock()
-	return entries
+	return parsed.Entries
+}
+
+// preparedBackends returns the prepared snapshot's backends as plan records
+// without their text digests, which change per render. The map is shared:
+// callers clone it before adding their own entries.
+func (m *PlanMemo) preparedBackends(prepared *PreparedPlanSnapshot) map[string]renderplan.Backend {
+	root := prepared.backends.Root()
+	if m != nil {
+		m.mu.Lock()
+		if m.backendsRoot == root && m.backends != nil {
+			backends := m.backends
+			m.mu.Unlock()
+			return backends
+		}
+		m.mu.Unlock()
+	}
+	backends := make(map[string]renderplan.Backend, prepared.backends.Len())
+	root.Walk(func(name []byte, entry PreparedPlanBackend) bool {
+		backend := entry.Backend
+		backend.Body = sharedStrings(entry.Body)
+		backend.Comments = sharedStrings(entry.Comments)
+		backend.ContentKnown = true
+		backends[string(name)] = backend
+		return false
+	})
+	if m != nil {
+		m.mu.Lock()
+		m.backendsRoot, m.backends = root, backends
+		m.mu.Unlock()
+	}
+	return backends
 }
 
 func sharedStrings(source []string) []string {
