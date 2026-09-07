@@ -15,7 +15,6 @@
 package renderer
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,16 +29,7 @@ func TestIncrementalVectorDirectCallDrainsBeforeEnd(t *testing.T) {
 
 	ended := make(chan error, 1)
 	go func() { ended <- execution.End(0, "") }()
-	writerWaiting := false
-	for range 100_000 {
-		if !execution.callGate.TryRLock() {
-			writerWaiting = true
-			break
-		}
-		execution.callGate.RUnlock()
-		runtime.Gosched()
-	}
-	require.True(t, writerWaiting, "End never reached the revocation gate")
+	awaitCallGateWriter(t, execution, "End never reached the revocation gate")
 	select {
 	case <-ended:
 		t.Fatal("End returned before the direct call drained")

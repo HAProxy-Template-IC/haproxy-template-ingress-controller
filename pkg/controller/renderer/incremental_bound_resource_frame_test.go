@@ -87,16 +87,7 @@ func TestIncrementalVectorBoundResourceFrameDrainsBeforeRevocation(t *testing.T)
 
 	ended := make(chan error, 1)
 	go func() { ended <- execution.End(0, "stable") }()
-	writerWaiting := false
-	for range 100_000 {
-		if !execution.callGate.TryRLock() {
-			writerWaiting = true
-			break
-		}
-		execution.callGate.RUnlock()
-		runtime.Gosched()
-	}
-	require.True(t, writerWaiting, "vector revocation never reached the bound resource gate")
+	awaitCallGateWriter(t, execution, "vector revocation never reached the bound resource gate")
 	select {
 	case <-ended:
 		t.Fatal("vector revocation completed before the bound resource frame drained")

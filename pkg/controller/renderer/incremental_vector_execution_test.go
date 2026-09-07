@@ -17,7 +17,6 @@ package renderer
 import (
 	"context"
 	"errors"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -131,16 +130,7 @@ func TestIncrementalVectorStoreInvocationDrainsBeforeEnd(t *testing.T) {
 	ended := make(chan error, 1)
 	go func() { ended <- execution.End(0, "") }()
 
-	writerWaiting := false
-	for range 100_000 {
-		if !execution.callGate.TryRLock() {
-			writerWaiting = true
-			break
-		}
-		execution.callGate.RUnlock()
-		runtime.Gosched()
-	}
-	require.True(t, writerWaiting, "End never reached the revocation gate")
+	awaitCallGateWriter(t, execution, "End never reached the revocation gate")
 	select {
 	case <-ended:
 		t.Fatal("End returned before the store invocation drained")
@@ -286,16 +276,7 @@ func TestIncrementalVectorAbortDrainsActiveCapability(t *testing.T) {
 		execution.Abort(0, errors.New("abort"))
 		close(aborted)
 	}()
-	writerWaiting := false
-	for range 100_000 {
-		if !execution.callGate.TryRLock() {
-			writerWaiting = true
-			break
-		}
-		execution.callGate.RUnlock()
-		runtime.Gosched()
-	}
-	require.True(t, writerWaiting, "Abort never reached the revocation gate")
+	awaitCallGateWriter(t, execution, "Abort never reached the revocation gate")
 	select {
 	case <-aborted:
 		t.Fatal("Abort returned before the active capability drained")
