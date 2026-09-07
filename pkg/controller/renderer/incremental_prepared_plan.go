@@ -144,7 +144,7 @@ type incrementalPreparedPlanReplacement struct {
 
 type incrementalPreparedPlanRegistry interface {
 	AttachPreparedPlan(*rendercontext.PreparedPlanSnapshot) error
-	PreparedBackendToken(string) (string, error)
+	PreparedBackendTokenIn(*rendercontext.PreparedPlanSnapshot, string) (string, error)
 	PreparedPlanTokenAuthority() (*rendercontext.PlanTokenAuthority, error)
 }
 
@@ -1085,11 +1085,29 @@ func (p *incrementalPreparedPlan) refreshOutputMemo(
 		p.outputMemo = base
 		return
 	}
+	// Each memo materializes against its own snapshot, and a backend that
+	// enters or leaves the selected plan dirties its winner's output, so a
+	// chain stays exact across snapshots.
 	parent := base
-	if parent == nil || parent.selected != p.selected || parent.depth >= incrementalPreparedPlanOutputMemoMaxDepth {
-		parent = nil
+	if parent != nil && parent.depth >= incrementalPreparedPlanOutputMemoMaxDepth {
+		parent = parent.flattened()
 	}
 	p.outputMemo = newIncrementalPreparedPlanOutputMemo(p.outputs.Root(), p.selected, parent, changes)
+}
+
+// flattened returns a parentless memo holding the outputs this memo has
+// already materialized, so capping the chain costs no walk over every output.
+func (m *incrementalPreparedPlanOutputMemo) flattened() *incrementalPreparedPlanOutputMemo {
+	flat := newIncrementalPreparedPlanOutputMemo(m.root, m.selected, nil, nil)
+	m.entries.Range(func(cachedKey, cached any) bool {
+		key, isKey := cachedKey.(incrementalPreparedPlanOutputMemoKey)
+		entry, isEntry := cached.(*incrementalPreparedPlanOutputMemoEntry)
+		if isKey && isEntry && entry.valid(m, key) {
+			_, _ = flat.store(key, entry.output)
+		}
+		return true
+	})
+	return flat
 }
 
 func newIncrementalPreparedPlanOutputMemo(
@@ -1148,6 +1166,13 @@ func (m *incrementalPreparedPlanOutputMemo) output(
 	if err != nil {
 		return rendercontent.Output{}, err
 	}
+	return m.store(key, output)
+}
+
+func (m *incrementalPreparedPlanOutputMemo) store(
+	key incrementalPreparedPlanOutputMemoKey,
+	output rendercontent.Output,
+) (rendercontent.Output, error) {
 	entry := &incrementalPreparedPlanOutputMemoEntry{owner: m, key: key, output: output}
 	entry.auth = incrementalPreparedPlanOutputMemoEntryAuthentication{
 		owner: entry, memo: m, key: key, output: output,
@@ -1181,7 +1206,7 @@ func (m *incrementalPreparedPlanOutputMemo) build(
 		changes := make([]rendercontent.Change, 0)
 		var walkErr error
 		m.root.WalkPrefix(prefix, func(outputKey []byte, encoded string) bool {
-			text, err := materializeIncrementalPreparedPlanOutput(encoded, registry)
+			text, err := materializeIncrementalPreparedPlanOutput(encoded, m.selected, registry)
 			if err != nil {
 				walkErr = err
 				return true
@@ -1205,7 +1230,7 @@ func (m *incrementalPreparedPlanOutputMemo) build(
 		encoded, exists := m.root.Get(changedKey)
 		text := ""
 		if exists {
-			text, err = materializeIncrementalPreparedPlanOutput(encoded, registry)
+			text, err = materializeIncrementalPreparedPlanOutput(encoded, m.selected, registry)
 			if err != nil {
 				walkErr = err
 				return true
@@ -1222,6 +1247,7 @@ func (m *incrementalPreparedPlanOutputMemo) build(
 
 func materializeIncrementalPreparedPlanOutput(
 	encoded string,
+	selected *rendercontext.PreparedPlanSnapshot,
 	registry incrementalPreparedPlanRegistry,
 ) (string, error) {
 	var parts []incrementalPreparedPlanOutputPart
@@ -1237,7 +1263,7 @@ func materializeIncrementalPreparedPlanOutput(
 			builder.WriteString(part.Text)
 			continue
 		}
-		token, err := registry.PreparedBackendToken(part.Backend)
+		token, err := registry.PreparedBackendTokenIn(selected, part.Backend)
 		if err != nil {
 			return "", err
 		}

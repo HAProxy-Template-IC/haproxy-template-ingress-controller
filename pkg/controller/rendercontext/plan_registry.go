@@ -259,21 +259,29 @@ func (r *PlanRegistry) AttachPreparedPlan(snapshot *PreparedPlanSnapshot) error 
 
 // PreparedBackendToken returns this render's token for an attached backend declaration.
 func (r *PlanRegistry) PreparedBackendToken(name string) (string, error) {
+	r.mu.Lock()
+	prepared := r.prepared
+	r.mu.Unlock()
+	if prepared == nil {
+		return "", errors.New("planRegistry: no prepared plan is attached")
+	}
+	return r.PreparedBackendTokenIn(prepared, name)
+}
+
+// PreparedBackendTokenIn returns this render's token for a backend that
+// snapshot declares. A memo built for an earlier generation of the attached
+// plan materializes against that generation's snapshot.
+func (r *PlanRegistry) PreparedBackendTokenIn(snapshot *PreparedPlanSnapshot, name string) (string, error) {
 	if !sectionNamePattern.MatchString(name) {
 		return "", fmt.Errorf("planRegistry: backend name %q must match %s", name, sectionNamePattern)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.prepared == nil {
-		return "", errors.New("planRegistry: no prepared plan is attached")
-	}
-	if err := r.prepared.ValidateAuthentication(); err != nil {
+	if err := snapshot.ValidateAuthentication(); err != nil {
 		return "", err
 	}
-	if _, exists := r.prepared.section(renderplan.SectionKindBackend, name); !exists {
+	if _, exists := snapshot.section(renderplan.SectionKindBackend, name); !exists {
 		return "", fmt.Errorf("planRegistry: prepared backend %q is unavailable", name)
 	}
-	if _, exists := r.prepared.backends.Root().Get([]byte(name)); !exists {
+	if _, exists := snapshot.backends.Root().Get([]byte(name)); !exists {
 		return "", fmt.Errorf("planRegistry: prepared backend %q has no record", name)
 	}
 	return r.sectionToken(renderplan.SectionKindBackend, name), nil

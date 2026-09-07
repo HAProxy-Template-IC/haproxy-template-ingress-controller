@@ -42,9 +42,12 @@ type countingIncrementalPreparedPlanRegistry struct {
 	preparedBackendTokens int
 }
 
-func (r *countingIncrementalPreparedPlanRegistry) PreparedBackendToken(name string) (string, error) {
+func (r *countingIncrementalPreparedPlanRegistry) PreparedBackendTokenIn(
+	snapshot *rendercontext.PreparedPlanSnapshot,
+	name string,
+) (string, error) {
 	r.preparedBackendTokens++
-	return r.PlanRegistry.PreparedBackendToken(name)
+	return r.PlanRegistry.PreparedBackendTokenIn(snapshot, name)
 }
 
 func newIncrementalPreparedPlanFixture(tb testing.TB) *incrementalPreparedPlanFixture {
@@ -520,4 +523,76 @@ func benchmarkBackendPlanResult(tb testing.TB, name, revision string) incrementa
 	result, err := (&incrementalRecorder{plan: plan}).result(token)
 	require.NoError(tb, err)
 	return result
+}
+
+func TestIncrementalPreparedPlanOutputMemoChainsAcrossBackendChanges(t *testing.T) {
+	fixture := newIncrementalPreparedPlanFixture(t)
+	first := backendPlanResult(t, map[string]any{"name": "be_a"}, "backend be_a\n", nil)
+	second := backendPlanResult(t, map[string]any{"name": "be_b"}, "backend be_b\n", nil)
+	fixture.replace(t, "a", &first)
+	fixture.replace(t, "b", &second)
+	authority := rendercontext.NewPlanTokenAuthority()
+	registry := fixture.prepareRegistry(t, authority)
+	fixture.outputFragment(t, registry)
+	assert.Equal(t, 2, registry.preparedBackendTokens)
+
+	baseMemo := fixture.plan.outputMemo
+	baseSelected := fixture.plan.selected
+	third := backendPlanResult(t, map[string]any{"name": "be_c"}, "backend be_c\n", nil)
+	fixture.replace(t, "c", &third)
+	assert.NotSame(t, baseSelected, fixture.plan.selected)
+	assert.Same(t, baseMemo, fixture.plan.outputMemo.parent)
+
+	registry = fixture.prepareRegistry(t, authority)
+	fixture.outputFragment(t, registry)
+	assert.Equal(t, 1, registry.preparedBackendTokens)
+	assert.Equal(t, "backend be_a\nbackend be_b\nbackend be_c\n", fixture.render(t))
+
+	fixture.replace(t, "c", nil)
+	registry = fixture.prepareRegistry(t, authority)
+	fixture.outputFragment(t, registry)
+	assert.Zero(t, registry.preparedBackendTokens)
+	assert.Equal(t, "backend be_a\nbackend be_b\n", fixture.render(t))
+}
+
+func TestIncrementalPreparedPlanOutputMemoFlattensAtMaxDepth(t *testing.T) {
+	fixture := newIncrementalPreparedPlanFixture(t)
+	for _, name := range []string{"a", "b", "c"} {
+		result := backendPlanResult(t, map[string]any{"name": "be_" + name}, "backend be_"+name+"\n", nil)
+		fixture.replace(t, name, &result)
+	}
+	authority := rendercontext.NewPlanTokenAuthority()
+	fixture.outputFragment(t, fixture.prepareRegistry(t, authority))
+
+	for round := range incrementalPreparedPlanOutputMemoMaxDepth + 2 {
+		text := fmt.Sprintf("backend be_a\n    # round %d\n", round)
+		result := backendPlanResult(t, map[string]any{"name": "be_a"}, text, nil)
+		fixture.replace(t, "a", &result)
+		registry := fixture.prepareRegistry(t, authority)
+		fixture.outputFragment(t, registry)
+		assert.Equal(t, 1, registry.preparedBackendTokens, "round %d", round)
+		assert.LessOrEqual(t, fixture.plan.outputMemo.depth, uint8(incrementalPreparedPlanOutputMemoMaxDepth))
+		assert.Equal(t, text+"backend be_b\nbackend be_c\n", fixture.render(t))
+	}
+}
+
+func BenchmarkIncrementalPreparedPlanOutputMemoAfterCreation(b *testing.B) {
+	for _, declarations := range []int{1000, 5000} {
+		b.Run(fmt.Sprintf("declarations=%d", declarations), func(b *testing.B) {
+			fixture := benchmarkIncrementalPreparedPlanFixture(b, declarations)
+			authority := rendercontext.NewPlanTokenAuthority()
+			fixture.outputFragment(b, fixture.prepareRegistry(b, authority))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := range b.N {
+				b.StopTimer()
+				name := fmt.Sprintf("new-%08d", iteration)
+				result := benchmarkBackendPlanResult(b, "be_"+name, "initial")
+				fixture.replace(b, name, &result)
+				registry := fixture.prepareRegistry(b, authority)
+				b.StartTimer()
+				fixture.outputFragment(b, registry)
+			}
+		})
+	}
 }
