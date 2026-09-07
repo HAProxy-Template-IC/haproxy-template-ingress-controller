@@ -123,6 +123,7 @@ source. The derived view freezes before roots render, so a later root call fails
 | Function | Purpose | Example |
 |----------|---------|---------|
 | `incremental_values(group, cell)` | Return the winning structured values published by a configured incremental group, in deterministic winner order | `{% for _, host := range incremental_values("tls", "hosts") %}` |
+| `incremental_value_count(group, cell)` | Return how many winning values a cell holds without decoding them. Use it for presence tests: the root then depends on the count alone, so a change to one value doesn't re-run the root | `{% if incremental_value_count("tls", "hosts") > 0 %}` |
 
 An incremental component that declares the `publishValue` effect publishes a
 value with `shared.Publish(cell, key, value)`. `incremental_values` is available

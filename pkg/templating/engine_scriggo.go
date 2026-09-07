@@ -45,6 +45,8 @@ import (
 // This engine offers excellent performance and low memory usage with Go-style
 // template syntax.
 type ScriggoEngine struct {
+	exactCycleRootEntryPointsOnce sync.Once
+	exactCycleRootEntryPointsMemo []string
 	rawTemplates                  map[string]string
 	compiledTemplates             map[string]*scriggo.Template
 	incrementalEntryPoints        map[string]struct{}

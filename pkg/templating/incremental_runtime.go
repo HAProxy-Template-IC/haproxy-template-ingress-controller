@@ -363,6 +363,25 @@ func scriggoIncrementalValues(env native.Env, group, cell string) []any {
 	return values
 }
 
+// IncrementalValueCounter answers how many winning values a cell holds.
+type IncrementalValueCounter interface {
+	IncrementalValueCount(ctx context.Context, group, cell string) (int, error)
+}
+
+func scriggoIncrementalValueCount(env native.Env, group, cell string) int {
+	renderer, ok := env.Context().Value(incrementalRendererContextKey{}).(IncrementalValueCounter)
+	if !ok || renderer == nil {
+		env.Stop(fmt.Errorf("incremental value count %q/%q has no render transaction", group, cell))
+		return 0
+	}
+	count, err := renderer.IncrementalValueCount(env.Context(), group, cell)
+	if err != nil {
+		env.Stop(err)
+		return 0
+	}
+	return count
+}
+
 func scriggoIncrementalRankedFragments(env native.Env, group, cell string) string {
 	renderer, ok := env.Context().Value(incrementalRendererContextKey{}).(IncrementalRenderer)
 	if !ok || renderer == nil {

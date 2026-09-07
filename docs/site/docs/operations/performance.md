@@ -36,9 +36,9 @@ When template snippets declare `incremental`, a reconcile render re-executes onl
 
 | HTTPRoutes | First render (cold) | Nothing changed | One route changed | One route added | One endpoint changed |
 |---|---|---|---|---|---|
-| 300 | 579 ms | 2.2 ms | 18 ms | 22 ms | 3.5 ms |
-| 1,000 | 942 ms | 2.3 ms | 23 ms | 32 ms | 3.8 ms |
-| 3,000 | 2,165 ms | 2.6 ms | 37 ms | 60 ms | 5.6 ms |
+| 300 | 600 ms | 2.2 ms | 14 ms | 19 ms | 3.3 ms |
+| 1,000 | 1,022 ms | 2.3 ms | 18 ms | 26 ms | 3.6 ms |
+| 3,000 | 2,415 ms | 2.3 ms | 27 ms | 50 ms | 3.9 ms |
 
 Reproduce them with:
 
@@ -57,7 +57,7 @@ Read four things off this table.
 
 **The work that's incremental is exactly incremental.** Thirteen components re-execute for one changed route, fourteen for an added one, and none for an endpoint change, whose servers reach the backend through a published value. Those counts don't move as the fleet grows tenfold. This is the guarantee the dependency journal buys: component re-execution tracks what changed, not how much exists.
 
-**One changed route still costs more on a bigger cluster** — about 7 µs per route, and 14 µs per route when the change adds a backend. The root document template runs once per render, and while the per-route rules it used to re-emit are now declared as plan fragments and spliced from text the engine already caches, the template still visits every fragment, the frontend maps are still written whole, and the plan is still validated section by section. Component execution is flat; whole-document production isn't.
+**One changed route still costs more on a bigger cluster** — about 5 µs per route, and 11 µs per route when the change adds a backend. The root document template runs once per render, and while the per-route rules it used to re-emit are now declared as plan fragments and spliced from text the engine already caches, the template still visits every fragment and the changed frontend maps are still written whole. An auxiliary file whose template observed nothing new isn't rendered again; the maps a route change touches are. Component execution is flat; whole-document production isn't.
 
 ## Gateway API implementation benchmark
 

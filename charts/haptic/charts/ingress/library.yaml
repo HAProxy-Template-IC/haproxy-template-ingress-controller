@@ -619,7 +619,7 @@ templateSnippets:
       {%- import "util-replay-ingress-backend-effects" for ReplayIngressBackendEffects -%}
       {{- ReplayIngressBackendEffects("500") -}}
       {%- var block = render "backenditems-500-ingress" -%}
-      {%- if len(incremental_values("ingress-backends", "headers")) > 0 -%}
+      {%- if incremental_value_count("ingress-backends", "headers") > 0 -%}
       {{- "\n# ingress/backends-ingress\n" -}}
       {{- block }}{{ "\n" -}}
       {%- end -%}

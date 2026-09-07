@@ -838,8 +838,8 @@ templateSnippets:
           the frontend has to exist whenever at least one route is
           declared. The narrower bindHTTPDefault flag stays gated on
           actual listeners at the chart's default httpPort. -#}
-      {%- if len(incremental_values("gateway-route-candidates", "presence-http")) > 0 ||
-        len(incremental_values("gateway-route-candidates", "presence-grpc")) > 0 -%}
+      {%- if incremental_value_count("gateway-route-candidates", "presence-http") > 0 ||
+        incremental_value_count("gateway-route-candidates", "presence-grpc") > 0 -%}
         {%- gf["needHTTPFrontend"] = true -%}
       {%- end -%}
       {#- Ingress contribution: any cert registered via

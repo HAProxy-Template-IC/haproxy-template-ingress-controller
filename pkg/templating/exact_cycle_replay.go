@@ -90,6 +90,7 @@ var exactCycleReplayObservedFunctions = map[string]struct{}{
 	FuncIncrementalRankedTextFragment:     {},
 	FuncIncrementalRankedTextFragmentJoin: {},
 	FuncIncrementalRender:                 {},
+	FuncIncrementalValueCount:             {},
 	FuncIncrementalValues:                 {},
 	FuncRecordEvent:                       {},
 	FuncResource:                          {},
@@ -118,6 +119,7 @@ type exactCycleReplayProgramAuthentication struct {
 	ambientNames      []string
 	protocolNames     []string
 	postProcessProofs []*PostProcessReuseProof
+	outputOnlyRoots   []bool
 	recordsEffects    bool
 	requiresAllRoots  bool
 	usesCurrentConfig bool
@@ -126,12 +128,16 @@ type exactCycleReplayProgramAuthentication struct {
 
 // ExactCycleReplayProgram certifies the statically used root-template surface.
 type ExactCycleReplayProgram struct {
-	owner             *ScriggoEngine
-	entryPoints       []string
-	rootEntryPoints   []string
-	templates         []*scriggo.Template
-	ambientNames      []string
-	protocolNames     []string
+	owner           *ScriggoEngine
+	entryPoints     []string
+	rootEntryPoints []string
+	templates       []*scriggo.Template
+	ambientNames    []string
+	protocolNames   []string
+	// outputOnlyRoots marks, per entry point, a root whose only product is
+	// its text: no protocol global, no effect, no post-processing. Such a
+	// root's output is a function of its ambient inputs and what it observed.
+	outputOnlyRoots   []bool
 	postProcessProofs []*PostProcessReuseProof
 	recordsEffects    bool
 	requiresAllRoots  bool
@@ -360,6 +366,7 @@ func (e *ScriggoEngine) PrepareExactCycleReplay(
 		templates:         scan.templates,
 		ambientNames:      ambientNames,
 		protocolNames:     protocolNames,
+		outputOnlyRoots:   scan.outputOnly,
 		postProcessProofs: scan.proofs,
 		recordsEffects:    scan.recordsEffects,
 		requiresAllRoots:  requiresAllRoots,
@@ -373,6 +380,7 @@ func (e *ScriggoEngine) PrepareExactCycleReplay(
 		ambientNames:      slices.Clone(ambientNames),
 		protocolNames:     slices.Clone(protocolNames),
 		postProcessProofs: slices.Clone(scan.proofs),
+		outputOnlyRoots:   slices.Clone(scan.outputOnly),
 		recordsEffects:    scan.recordsEffects,
 		requiresAllRoots:  requiresAllRoots,
 		usesCurrentConfig: scan.usesCurrentConfig,
@@ -385,6 +393,7 @@ func (e *ScriggoEngine) PrepareExactCycleReplay(
 type exactCycleReplayEntryPointScan struct {
 	templates         []*scriggo.Template
 	proofs            []*PostProcessReuseProof
+	outputOnly        []bool
 	ambient           map[string]struct{}
 	protocols         map[string]struct{}
 	recordsEffects    bool
@@ -396,10 +405,11 @@ func (e *ScriggoEngine) scanExactCycleReplayEntryPoints(
 	ordered []string,
 ) (*exactCycleReplayEntryPointScan, error) {
 	scan := &exactCycleReplayEntryPointScan{
-		templates: make([]*scriggo.Template, len(ordered)),
-		proofs:    make([]*PostProcessReuseProof, len(ordered)),
-		ambient:   map[string]struct{}{},
-		protocols: map[string]struct{}{},
+		templates:  make([]*scriggo.Template, len(ordered)),
+		proofs:     make([]*PostProcessReuseProof, len(ordered)),
+		outputOnly: make([]bool, len(ordered)),
+		ambient:    map[string]struct{}{},
+		protocols:  map[string]struct{}{},
 	}
 	for index, name := range ordered {
 		template := e.compiledTemplates[name]
@@ -424,8 +434,13 @@ func (e *ScriggoEngine) scanExactCycleReplayEntryPoints(
 		if proof == nil {
 			return nil, fmt.Errorf("exact cycle replay entry point %q has no deterministic post-process proof", name)
 		}
+		identity, err := proof.CertifiesIdentity(e, name)
+		if err != nil {
+			return nil, err
+		}
 		scan.templates[index] = template
 		scan.proofs[index] = proof
+		scan.outputOnly[index] = identity && !usesEffects && len(usedProtocols) == 0
 		templateUsesConfig, templateUsesFiles := collectExactCycleAmbientGlobals(template, scan.ambient)
 		scan.usesCurrentConfig = scan.usesCurrentConfig || templateUsesConfig
 		scan.usesCurrentFiles = scan.usesCurrentFiles || templateUsesFiles
@@ -496,19 +511,25 @@ func exactCycleCurrentConfigDeclaration(declaration any) bool {
 	return registeredExactCyclePreviousOutputType(reflect.TypeOf(declaration))
 }
 
+// exactCycleRootEntryPoints lists the non-private templates once: the set is
+// fixed after construction, and the program authenticates against it on
+// every root and auxiliary render.
 func (e *ScriggoEngine) exactCycleRootEntryPoints() []string {
-	entryPoints := make([]string, 0, len(e.compiledTemplates))
-	for name := range e.compiledTemplates {
-		if _, private := e.incrementalEntryPoints[name]; private {
-			continue
+	e.exactCycleRootEntryPointsOnce.Do(func() {
+		entryPoints := make([]string, 0, len(e.compiledTemplates))
+		for name := range e.compiledTemplates {
+			if _, private := e.incrementalEntryPoints[name]; private {
+				continue
+			}
+			if _, private := e.incrementalBindingEntryPoints[name]; private {
+				continue
+			}
+			entryPoints = append(entryPoints, name)
 		}
-		if _, private := e.incrementalBindingEntryPoints[name]; private {
-			continue
-		}
-		entryPoints = append(entryPoints, name)
-	}
-	slices.Sort(entryPoints)
-	return entryPoints
+		slices.Sort(entryPoints)
+		e.exactCycleRootEntryPointsMemo = entryPoints
+	})
+	return e.exactCycleRootEntryPointsMemo
 }
 
 func (e *ScriggoEngine) validateExactCycleReplayTemplate(
@@ -874,8 +895,43 @@ func (p *ExactCycleReplayProgram) validate() error {
 	return nil
 }
 
+// OutputOnlyRoot reports whether the named root produces nothing but its
+// text: it uses no protocol global, records no effect and is not
+// post-processed, so its previous output can stand in for a render whose
+// ambient inputs and observed incremental values are unchanged.
+func (p *ExactCycleReplayProgram) OutputOnlyRoot(name string) (bool, error) {
+	if err := p.validate(); err != nil {
+		return false, err
+	}
+	index, found := slices.BinarySearch(p.entryPoints, name)
+	if !found {
+		return false, nil
+	}
+	return p.outputOnlyRoots[index], nil
+}
+
+// ReuseExactCycleRoot accounts for a root whose previous output the caller
+// reuses, so the cycle's root invocations stay complete and in order.
+func (e *ScriggoEngine) ReuseExactCycleRoot(ctx context.Context, templateName string) error {
+	execution, exact, err := exactCycleReplayExecutionFor(ctx, e, templateName)
+	if err != nil {
+		return err
+	}
+	if !exact {
+		return errors.New("exact cycle root reuse outside an exact cycle execution")
+	}
+	complete, err := execution.beginRoot(ctx, templateName)
+	if err != nil {
+		return err
+	}
+	complete(true)
+	return nil
+}
+
 func (p *ExactCycleReplayProgram) authenticated() bool {
-	return slices.Equal(p.entryPoints, p.auth.entryPoints) &&
+	return slices.Equal(p.outputOnlyRoots, p.auth.outputOnlyRoots) &&
+		len(p.outputOnlyRoots) == len(p.entryPoints) &&
+		slices.Equal(p.entryPoints, p.auth.entryPoints) &&
 		slices.Equal(p.rootEntryPoints, p.auth.rootEntryPoints) &&
 		slices.Equal(p.templates, p.auth.templates) &&
 		slices.Equal(p.ambientNames, p.auth.ambientNames) &&

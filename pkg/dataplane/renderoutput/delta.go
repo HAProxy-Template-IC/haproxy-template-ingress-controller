@@ -1338,9 +1338,8 @@ func validateChangedConfigFile(document rendercontent.Document, file *renderplan
 }
 
 func mapMatchesFile(declared renderplan.Map, file *renderplan.File) bool {
-	parsed := renderplan.ParseMapEntries(file.Content)
 	return declared.Path == file.Path && file.Kind == renderplan.FileKindMap &&
-		(declared.Entries == nil) == (parsed == nil) && slices.Equal(declared.Entries, parsed)
+		renderplan.MapEntriesMatch(file.Content, declared.Entries)
 }
 
 func validateChangedArtifact(artifact *renderartifact.Artifact, file *renderplan.File) error {

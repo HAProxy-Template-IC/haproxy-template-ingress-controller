@@ -819,6 +819,12 @@ func (s *Snapshot) PlanID() (string, error) {
 
 // ContentChecksum returns the checksum authenticated by this output root.
 func (s *Snapshot) ContentChecksum() (string, error) {
+	return s.ContentChecksumWith(nil)
+}
+
+// ContentChecksumWith is ContentChecksum continuing from a document hash
+// prepared ahead of time; a prepared hash of another document is ignored.
+func (s *Snapshot) ContentChecksumWith(prepared *PreparedContentHash) (string, error) {
 	if err := s.ValidateAuthentication(); err != nil {
 		return "", err
 	}
@@ -827,7 +833,7 @@ func (s *Snapshot) ContentChecksum() (string, error) {
 	}
 	s.root.compatibilityMemo.checksumOnce.Do(func() {
 		s.root.compatibilityMemo.checksum, s.root.compatibilityMemo.checksumErr =
-			computeSnapshotContentChecksum(s.root.config.document, s.root.artifacts)
+			computeSnapshotContentChecksum(s.root.config.document, s.root.artifacts, prepared)
 	})
 	return s.root.compatibilityMemo.checksum, s.root.compatibilityMemo.checksumErr
 }

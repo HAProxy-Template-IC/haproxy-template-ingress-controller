@@ -41,7 +41,7 @@ func (r *incrementalRenderSession) IncrementalValues(
 			return nil, inputErr
 		}
 		values, _, resolved, resolveErr := r.publicationGeneration.resolveSelectorValues(
-			group, input, winners,
+			index, group, input, winners,
 		)
 		if resolveErr != nil || resolved {
 			return values, resolveErr
@@ -74,6 +74,31 @@ func (r *incrementalRenderSession) IncrementalValuesCertified(
 		return nil, err
 	}
 	return certified, nil
+}
+
+// IncrementalValueCount answers a root's presence test from the cell's winner
+// count. The root then depends on the count alone, so the values themselves
+// never reach it and a change to one of them does not re-run the root.
+func (r *incrementalRenderSession) IncrementalValueCount(
+	ctx context.Context,
+	group, cell string,
+) (int, error) {
+	r.renderMu.Lock()
+	defer r.renderMu.Unlock()
+	index, err := r.incrementalValuesIndex(ctx, group, cell)
+	if err != nil {
+		return 0, err
+	}
+	count, err := index.publishedWinnerCount(cell)
+	if err != nil {
+		return 0, err
+	}
+	if err := r.recordExactCycleIncrementalObservation(
+		ctx, exactCycleIncrementalValueCount, group, "", cell, "", count,
+	); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (r *incrementalRenderSession) incrementalValuesIndex(
@@ -116,7 +141,7 @@ func (r *coldIncrementalRenderer) IncrementalValues(
 			return nil, inputErr
 		}
 		values, _, resolved, resolveErr := r.publicationGeneration.resolveSelectorValues(
-			group, input, winners,
+			index, group, input, winners,
 		)
 		if resolveErr != nil || resolved {
 			return values, resolveErr
@@ -144,6 +169,19 @@ func (r *coldIncrementalRenderer) IncrementalValuesCertified(
 		return nil, errors.New("incremental publication memo has an invalid immutable certificate")
 	}
 	return certified, nil
+}
+
+func (r *coldIncrementalRenderer) IncrementalValueCount(
+	ctx context.Context,
+	group, cell string,
+) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	index, err := r.incrementalValuesIndex(ctx, group, cell)
+	if err != nil {
+		return 0, err
+	}
+	return index.publishedWinnerCount(cell)
 }
 
 func (r *coldIncrementalRenderer) incrementalValuesIndex(

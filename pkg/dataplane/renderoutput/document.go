@@ -483,14 +483,48 @@ func computeDocumentSnapshotContentChecksum(
 	return hex.EncodeToString(sum[:8]), nil
 }
 
+// PreparedContentHash is the document's share of a content checksum, hashed
+// ahead of the snapshot that will carry it so the hashing overlaps the plan
+// work that precedes the snapshot. It serves one snapshot whose document is
+// the one it hashed.
+type PreparedContentHash struct {
+	document rendercontent.Document
+	hasher   *boundedHashWriter
+	written  int64
+	err      error
+}
+
+// PrepareContentHash hashes the document part of the content checksum.
+func PrepareContentHash(document rendercontent.Document) *PreparedContentHash {
+	hasher := &boundedHashWriter{Hash: sha256.New()}
+	written, err := document.WriteTo(hasher)
+	return &PreparedContentHash{document: document, hasher: hasher, written: written, err: err}
+}
+
+func (p *PreparedContentHash) matches(document rendercontent.Document) bool {
+	if p == nil || p.err != nil || p.hasher == nil {
+		return false
+	}
+	same, err := p.document.SameRoot(document)
+	return err == nil && same
+}
+
 func computeSnapshotContentChecksum(
 	document rendercontent.Document,
 	artifacts *renderartifact.Snapshot,
+	prepared *PreparedContentHash,
 ) (string, error) {
-	hasher := &boundedHashWriter{Hash: sha256.New()}
-	written, err := document.WriteTo(hasher)
-	if err != nil {
-		return "", err
+	var hasher *boundedHashWriter
+	var written int64
+	if prepared.matches(document) {
+		hasher, written = prepared.hasher, prepared.written
+		prepared.hasher = nil
+	} else {
+		hasher = &boundedHashWriter{Hash: sha256.New()}
+		var err error
+		if written, err = document.WriteTo(hasher); err != nil {
+			return "", err
+		}
 	}
 	bytes, err := document.Bytes()
 	if err != nil || written != int64(bytes) {

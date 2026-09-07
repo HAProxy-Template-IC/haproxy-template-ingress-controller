@@ -468,7 +468,12 @@ func (g *incrementalPublicationSnapshotGeneration) resolveSelector(
 	return stored.value, stored.certificate, true, nil
 }
 
+// resolveSelectorValues resolves a cell's values when at least one winner is
+// live in this generation. It leaves the decoded winners in the index memo:
+// only the memo-miss path in certifiedPublishedValues recorded them, so a
+// cell that changed every render decoded all of its winners every render.
 func (g *incrementalPublicationSnapshotGeneration) resolveSelectorValues(
+	index *incrementalGroupIndex,
 	group string,
 	input incremental.Input,
 	winners []incrementalPublishedWinner,
@@ -485,34 +490,40 @@ func (g *incrementalPublicationSnapshotGeneration) resolveSelectorValues(
 	}
 
 	values = make([]any, len(winners))
+	decoded := make(map[string]incrementalDecodedWinner, len(winners))
 	live := false
-	for index := range winners {
-		source, exists, err := g.resolveSource(group, &winners[index])
+	cell := ""
+	for position := range winners {
+		winner := &winners[position]
+		cell = winner.value.Cell
+		source, exists, err := g.resolveSource(group, winner)
 		if err != nil {
 			return nil, nil, false, err
 		}
-		if exists {
-			values[index] = source.value
+		switch {
+		case exists:
+			values[position] = source.value
 			live = true
-			continue
+		case winner.decoded != nil:
+			values[position] = winner.decoded
+		default:
+			value, err := decodeResourceValue(winner.value.Value)
+			if err != nil {
+				return nil, nil, false, fmt.Errorf(
+					"decoding incremental publication %q/%q: %w", winner.value.Cell, winner.value.Key, err,
+				)
+			}
+			values[position] = value
 		}
-		if winners[index].decoded != nil {
-			values[index] = winners[index].decoded
-			continue
+		decoded[winner.value.Key] = incrementalDecodedWinner{
+			encoded: string(winner.value.Value), value: values[position],
 		}
-		value, err := decodeResourceValue(winners[index].value.Value)
-		if err != nil {
-			return nil, nil, false, fmt.Errorf(
-				"decoding incremental publication %q/%q: %w",
-				winners[index].value.Cell,
-				winners[index].value.Key,
-				err,
-			)
-		}
-		values[index] = value
 	}
 	if !live {
 		return nil, nil, false, nil
+	}
+	if index != nil {
+		index.memo.storeDecodedWinners(cell, decoded)
 	}
 	certificate = templating.CertifyIncrementalImmutableInputs(values)
 	stored, err := g.storeDerived(binding, values, certificate)
@@ -780,7 +791,7 @@ func (r *incrementalRenderSession) selectorValuesPublicationInput(
 	}
 	if r.publicationGeneration != nil {
 		values, certificate, resolved, err := r.publicationGeneration.resolveSelectorValues(
-			identity.group, expected, winners,
+			index, identity.group, expected, winners,
 		)
 		if err != nil || resolved {
 			return values, certificate, resolved, err
@@ -816,7 +827,7 @@ func (r *incrementalRenderSession) certifiedPublicationValues(
 	}
 	if r.publicationGeneration != nil {
 		values, certificate, resolved, err := r.publicationGeneration.resolveSelectorValues(
-			group, input, winners,
+			index, group, input, winners,
 		)
 		if err != nil || resolved {
 			return values, certificate, err
@@ -840,7 +851,7 @@ func (r *coldIncrementalRenderer) certifiedPublicationValues(
 	}
 	if r.publicationGeneration != nil {
 		values, certificate, resolved, err := r.publicationGeneration.resolveSelectorValues(
-			group, input, winners,
+			index, group, input, winners,
 		)
 		if err != nil || resolved {
 			return values, certificate, err

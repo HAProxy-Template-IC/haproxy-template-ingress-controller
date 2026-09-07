@@ -269,7 +269,7 @@ func (s *coldIncrementalPublicationSelector) SelectValues(group, cell string) ([
 			return nil, err
 		}
 		values, certificate, resolved, resolveErr := s.renderer.publicationGeneration.resolveSelectorValues(
-			group, input, winners,
+			s.renderer.groupIndexes[group], group, input, winners,
 		)
 		if resolveErr != nil {
 			return nil, resolveErr

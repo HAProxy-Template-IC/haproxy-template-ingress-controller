@@ -35,6 +35,9 @@ type canonicalFragment struct {
 	once  sync.Once
 	bytes []byte
 	err   error
+	// spans is the offset of every list element inside bytes, for the
+	// fragments that splice their successor: see canonicalMapMemberFragment.
+	spans []int
 }
 
 type canonicalWriter struct {
@@ -77,7 +80,7 @@ func writeCanonicalPlan(root *planRoot, target io.Writer) error {
 		return err
 	}
 	writer.writeString(`,"maps":`)
-	if err := writeCanonicalMap(writer, root.maps); err != nil {
+	if err := writeCanonicalMapWith(writer, root.maps, canonicalMapMemberFragment); err != nil {
 		return err
 	}
 	if err := writeCanonicalCRTLists(writer, root.crtLists); err != nil {
@@ -152,6 +155,14 @@ func writeCanonicalMap[T any](
 	writer *canonicalWriter,
 	collection *snapshotCollection[T],
 ) error {
+	return writeCanonicalMapWith(writer, collection, canonicalMemberFragment[T])
+}
+
+func writeCanonicalMapWith[T any](
+	writer *canonicalWriter,
+	collection *snapshotCollection[T],
+	fragment func(*snapshotEntry[T]) ([]byte, error),
+) error {
 	if collection == nil {
 		return errCanonicalOrderUnproven
 	}
@@ -180,7 +191,7 @@ func writeCanonicalMap[T any](
 			}
 			writer.writeString(",")
 		}
-		encoded, err := canonicalMemberFragment(entry)
+		encoded, err := fragment(entry)
 		if err != nil {
 			return err
 		}

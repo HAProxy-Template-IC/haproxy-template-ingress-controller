@@ -31,6 +31,7 @@ const (
 	exactCycleIncrementalComponent exactCycleIncrementalKind = iota + 1
 	exactCycleIncrementalValues
 	exactCycleIncrementalRanked
+	exactCycleIncrementalValueCount
 )
 
 type exactCycleIncrementalObservation struct {
@@ -279,6 +280,8 @@ func (o *exactCycleIncrementalObservations) matches(
 			current, matchErr = session.RenderIncrementalTextFragment(scoped, observation.component)
 		case exactCycleIncrementalValues:
 			current, matchErr = session.IncrementalValuesCertified(scoped, observation.group, observation.cell)
+		case exactCycleIncrementalValueCount:
+			current, matchErr = session.IncrementalValueCount(scoped, observation.group, observation.cell)
 		case exactCycleIncrementalRanked:
 			if observation.delimiter == "" {
 				current, matchErr = session.IncrementalRankedTextFragment(
@@ -363,7 +366,7 @@ func (o *exactCycleIncrementalObservation) validateKindFields() error {
 		if o.group == "" || o.component == "" || o.cell != "" || o.delimiter != "" {
 			return errors.New("exact cycle incremental component observation is invalid")
 		}
-	case exactCycleIncrementalValues:
+	case exactCycleIncrementalValues, exactCycleIncrementalValueCount:
 		if o.group == "" || o.cell == "" || o.component != "" || o.delimiter != "" {
 			return errors.New("exact cycle incremental values observation is invalid")
 		}
@@ -437,6 +440,9 @@ func sameExactCycleIncrementalPresentationRoot(left, right any) (bool, error) {
 			return false, nil
 		}
 		return expected.SameRoot(current)
+	case int:
+		current, ok := right.(int)
+		return ok && expected == current, nil
 	default:
 		return false, fmt.Errorf("exact cycle incremental presentation root has unsupported type %T", left)
 	}

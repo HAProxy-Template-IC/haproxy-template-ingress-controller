@@ -262,10 +262,11 @@ func validateSectionDocumentShape(
 		return errors.New("planRegistry: plan sections do not align with document leaves")
 	}
 	total := 0
+	// Digests are checked once, when renderplan seals the snapshot; this
+	// checks the shape against the document.
 	for index := range sections {
 		section := sections[index]
-		if !section.TextKnown || section.Length != len(section.Text) ||
-			section.TextDigest != renderplan.DigestString(section.Text) {
+		if !section.TextKnown || section.Length != len(section.Text) {
 			return fmt.Errorf("planRegistry: section %d has invalid exact content", index)
 		}
 		leafBytes, err := document.LeafBytes(index)
