@@ -200,7 +200,7 @@ func (s *HTTPStore) validateStagedSourceLocked(source *StagedSource) error {
 		return errors.New("staged HTTP source does not belong to this store")
 	}
 	if !s.stagedSourceCurrentLocked(source) {
-		return fmt.Errorf("HTTP source %s changed while the render was running", source.url)
+		return fmt.Errorf("HTTP source %s %w", source.url, ErrInputsMoved)
 	}
 	return nil
 }

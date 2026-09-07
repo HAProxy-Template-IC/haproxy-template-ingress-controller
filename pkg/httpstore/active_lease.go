@@ -308,7 +308,7 @@ func (s *HTTPStore) validateActiveLeaseSnapshotLocked(
 	}
 	state := s.activeLeaseSets[snapshot.set.id]
 	if !s.activeLeaseSnapshotCurrentLocked(snapshot, state) {
-		return nil, errors.New("leased HTTP content changed while the render was running")
+		return nil, fmt.Errorf("leased HTTP content %w", ErrInputsMoved)
 	}
 	return state, nil
 }
