@@ -15,7 +15,10 @@
 package renderplan
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"sync"
@@ -659,6 +662,37 @@ func (s *Snapshot) deferredID() (string, error) {
 	}
 	plan.ComputeID()
 	return plan.ID, nil
+}
+
+// WriteJSON streams what encoding/json would produce for LegacyCopy, out of
+// the fragments the snapshot already carries, so a plan of thousands of
+// backends is not re-encoded per consumer. It rebuilds the plan only when the
+// fragment stream cannot prove its own order; ID, computed first, has already
+// counted that snapshot as a digest fallback, so this path counts nothing.
+func (s *Snapshot) WriteJSON(target io.Writer) error {
+	id, err := s.ID()
+	if err != nil {
+		return err
+	}
+	var buffer bytes.Buffer
+	err = writePlanJSON(s.root, id, &buffer)
+	if err == nil {
+		_, err = target.Write(buffer.Bytes())
+		return err
+	}
+	if !errors.Is(err, errCanonicalOrderUnproven) {
+		return err
+	}
+	plan, err := s.LegacyCopy()
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return err
+	}
+	_, err = target.Write(encoded)
+	return err
 }
 
 // SameRoot reports exact authenticated root identity.

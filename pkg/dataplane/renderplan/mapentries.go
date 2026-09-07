@@ -47,18 +47,29 @@ func ParseMapEntries(content string) []Entry {
 }
 
 // ParsedMapEntries is a map file's entries with the text they came from, so
-// the next version of the text parses only the lines that changed.
+// the next version of the text parses only the lines that changed. Every
+// entry's key and value are substrings of Content and of nothing older:
+// a carried entry is re-sliced into the new text, or the text of every
+// version whose lines survive would stay alive behind it.
 type ParsedMapEntries struct {
 	Content string
 	Entries []Entry
-	// starts[i] is the offset in Content of the line Entries[i] came from.
-	starts []int
+	// spans[i] locates the line, key and value of Entries[i] in Content.
+	spans []entrySpan
+}
+
+// entrySpan is where an entry's line, key and value start in the content;
+// the key and value lengths are the strings' own.
+type entrySpan struct {
+	line  int
+	key   int
+	value int
 }
 
 // ParseMapEntriesIndexed is ParseMapEntries keeping what Reparse needs.
 func ParseMapEntriesIndexed(content string) ParsedMapEntries {
-	entries, starts := parseMapLines(content, 0, nil, nil)
-	return ParsedMapEntries{Content: content, Entries: entries, starts: starts}
+	entries, spans := parseMapLines(content, 0, nil, nil)
+	return ParsedMapEntries{Content: content, Entries: entries, spans: spans}
 }
 
 // Reparse parses content, reusing the entries of every line that is unchanged
@@ -84,34 +95,53 @@ func (p ParsedMapEntries) Reparse(content string) ParsedMapEntries {
 	newTail := len(content) - (len(previous) - oldTail)
 
 	head := 0
-	for head < len(p.Entries) && p.starts[head] < prefix {
+	for head < len(p.Entries) && p.spans[head].line < prefix {
 		head++
 	}
 	tail := len(p.Entries)
-	for tail > head && p.starts[tail-1] >= oldTail {
+	for tail > head && p.spans[tail-1].line >= oldTail {
 		tail--
 	}
 	entries := make([]Entry, 0, len(p.Entries)+8)
-	starts := make([]int, 0, len(p.Entries)+8)
-	entries = append(entries, p.Entries[:head]...)
-	starts = append(starts, p.starts[:head]...)
-	entries, starts = parseMapLines(content[prefix:newTail], prefix, entries, starts)
-	entries = append(entries, p.Entries[tail:]...)
-	for _, start := range p.starts[tail:] {
-		starts = append(starts, start-oldTail+newTail)
-	}
+	spans := make([]entrySpan, 0, len(p.Entries)+8)
+	entries, spans = carryMapEntries(content, p.Entries[:head], p.spans[:head], 0, entries, spans)
+	entries, spans = parseMapLines(content[prefix:newTail], prefix, entries, spans)
+	entries, spans = carryMapEntries(content, p.Entries[tail:], p.spans[tail:], newTail-oldTail, entries, spans)
 	if len(entries) == 0 {
-		entries, starts = nil, nil
+		entries, spans = nil, nil
 	}
-	return ParsedMapEntries{Content: content, Entries: entries, starts: starts}
+	return ParsedMapEntries{Content: content, Entries: entries, spans: spans}
+}
+
+// carryMapEntries appends entries whose lines are unchanged, re-sliced into
+// content at their spans shifted by delta, so nothing points into the text
+// they were first parsed from.
+func carryMapEntries(
+	content string,
+	carried []Entry,
+	spans []entrySpan,
+	delta int,
+	entries []Entry,
+	out []entrySpan,
+) ([]Entry, []entrySpan) {
+	for i := range carried {
+		span := entrySpan{line: spans[i].line + delta, key: spans[i].key + delta, value: spans[i].value + delta}
+		entry := Entry{Key: content[span.key : span.key+len(carried[i].Key)]}
+		if carried[i].Value != "" {
+			entry.Value = content[span.value : span.value+len(carried[i].Value)]
+		}
+		entries = append(entries, entry)
+		out = append(out, span)
+	}
+	return entries, out
 }
 
 func parseMapLines(
 	content string,
 	base int,
 	entries []Entry,
-	starts []int,
-) (parsed []Entry, lineStarts []int) {
+	spans []entrySpan,
+) (parsed []Entry, lineSpans []entrySpan) {
 	offset := 0
 	for offset <= len(content) {
 		end := strings.IndexByte(content[offset:], '\n')
@@ -121,20 +151,25 @@ func parseMapLines(
 		}
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			key, value := trimmed, ""
+			lead := strings.Index(line, trimmed)
+			key, value, valueAt := trimmed, "", 0
 			if i := strings.IndexAny(trimmed, " \t"); i >= 0 {
 				key = trimmed[:i]
-				value = strings.TrimSpace(trimmed[i+1:])
+				rest := trimmed[i+1:]
+				value = strings.TrimSpace(rest)
+				valueAt = lead + i + 1 + strings.Index(rest, value)
 			}
 			entries = append(entries, Entry{Key: key, Value: value})
-			starts = append(starts, base+offset)
+			spans = append(spans, entrySpan{
+				line: base + offset, key: base + offset + lead, value: base + offset + valueAt,
+			})
 		}
 		if end < 0 {
 			break
 		}
 		offset += end + 1
 	}
-	return entries, starts
+	return entries, spans
 }
 
 func commonPrefixLen(left, right string) int {

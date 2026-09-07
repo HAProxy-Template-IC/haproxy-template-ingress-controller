@@ -305,6 +305,7 @@ type RenderService struct {
 	config                      *config.Config
 	pathResolver                *templating.PathResolver
 	logger                      *slog.Logger
+	admissionSlots              chan struct{}
 	incremental                 *incrementalRenderState
 	mainDocumentCache           *rendercontext.RenderDocumentCache
 	planTokenAuthority          *rendercontext.PlanTokenAuthority
@@ -464,6 +465,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		config:                      cfg.Config,
 		pathResolver:                pathResolver,
 		logger:                      cfg.Logger,
+		admissionSlots:              make(chan struct{}, admissionRenderSlots(runtime.GOMAXPROCS(0))),
 		mainDocumentCache:           mainDocumentCache,
 		planTokenAuthority:          planTokenAuthority,
 		planMemo:                    rendercontext.NewPlanMemo(),
@@ -534,6 +536,13 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	startTime := time.Now()
 	ctx, cancel := s.withRenderTimeout(ctx)
 	defer cancel()
+	if mode == rendercontext.RenderModeAdmission {
+		release, err := s.acquireAdmissionSlot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	attemptInputs, err := s.captureRenderAttemptInputs(mode)
 	if err != nil {
 		return nil, err
@@ -571,6 +580,31 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		forceCold = true
 	}
 	return nil, errors.New("render attempt restart limit exceeded")
+}
+
+// admissionRenderSlots is how many admission renders may run at once on a
+// pod with cpus available: half of them, at least one. Admission requests
+// arrive in parallel from every apiserver worker, each render allocates tens
+// of megabytes while it runs and needs a CPU of its own, so more in flight
+// than this only piles up memory and slows every one of them; the ones that
+// wait finish no later than they would have running side by side.
+func admissionRenderSlots(cpus int) int {
+	return max(1, cpus/2)
+}
+
+// acquireAdmissionSlot waits for a slot or for the request to expire; a
+// request that expires waiting is refused with the context's error, as one
+// that expired rendering would be.
+func (s *RenderService) acquireAdmissionSlot(ctx context.Context) (func(), error) {
+	if s.admissionSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case s.admissionSlots <- struct{}{}:
+		return func() { <-s.admissionSlots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("waiting for an admission render slot: %w", ctx.Err())
+	}
 }
 
 // renderBaseMoveLimit bounds how often one render restarts because a commit

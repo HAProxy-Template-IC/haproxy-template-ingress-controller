@@ -32,6 +32,7 @@ import (
 // deployRequest is one deployment's desired state, identical for every pod.
 type deployRequest struct {
 	occurrence      *rendercycle.Occurrence
+	identity        *renderOccurrenceIdentity // the occurrence materialized once, shared by every pod
 	plan            *renderplan.Plan
 	planID          string
 	occurrenceProof string
@@ -228,7 +229,7 @@ func (c *Component) newDeployRequest(
 	if !sameOccurrence(occurrence, identity.occurrence) {
 		return nil
 	}
-	blob, err := planblob.Encode(identity.plan)
+	blob, err := planblob.EncodeSnapshot(identity.planSnapshot)
 	if err != nil {
 		// Without the blob a pod that outlives this controller reports a
 		// baseline nobody can decode, which costs it one reload — never
@@ -238,6 +239,7 @@ func (c *Component) newDeployRequest(
 	}
 	return &deployRequest{
 		occurrence:       occurrence,
+		identity:         identity,
 		plan:             identity.plan,
 		planID:           identity.plan.ID,
 		occurrenceProof:  identity.proof,

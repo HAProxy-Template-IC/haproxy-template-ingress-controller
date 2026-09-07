@@ -54,19 +54,15 @@ func (c *planCache) Bind(authority, id, proof string, plan *renderplan.Plan) boo
 	return c.bind(authority, id, proof, plan, nil)
 }
 
-func (c *planCache) BindOccurrence(
-	authority, id, proof string,
-	plan *renderplan.Plan,
-	occurrence *rendercycle.Occurrence,
-) error {
-	identity, err := materializeOccurrence(occurrence)
-	if err != nil {
-		return err
-	}
-	if identity.planID != id || !exactPlan(identity.plan, plan) {
+// BindOccurrence records the plan an agent proved under the render occurrence
+// it was materialized from. The identity is the deployer's own materialization
+// of that occurrence, so the plan it carries is the plan the pods were sent.
+func (c *planCache) BindOccurrence(authority, id, proof string, identity *renderOccurrenceIdentity) error {
+	if identity == nil || identity.occurrence == nil || identity.plan == nil ||
+		identity.planID != id || identity.plan.ID != id {
 		return fmt.Errorf("render occurrence does not carry plan %s", id)
 	}
-	if !c.bind(authority, id, proof, plan, occurrence) {
+	if !c.bind(authority, id, proof, identity.plan, identity.occurrence) {
 		return fmt.Errorf("plan %s conflicts with the plan already bound to this role proof", id)
 	}
 	return nil

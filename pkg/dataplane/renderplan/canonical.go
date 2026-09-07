@@ -63,11 +63,24 @@ func (w *canonicalWriter) writeString(value string) {
 // reusing each entry's memoised fragment. The field order is encoding/json's
 // declaration order for Plan; the field inventory test pins it.
 func writeCanonicalPlan(root *planRoot, target io.Writer) error {
+	return writePlanJSON(root, "", target)
+}
+
+// writePlanJSON streams the plan's encoding/json form carrying id, out of the
+// same memoised fragments the canonical form is digested from; the canonical
+// form is the id-less one.
+func writePlanJSON(root *planRoot, id string, target io.Writer) error {
 	writer := &canonicalWriter{target: target}
 	var digits [24]byte
 	writer.writeString(`{"schemaVersion":`)
 	writer.write(strconv.AppendInt(digits[:0], int64(root.schema), 10))
-	writer.writeString(`,"id":"","sections":`)
+	writer.writeString(`,"id":`)
+	encodedID, err := json.Marshal(id)
+	if err != nil {
+		return err
+	}
+	writer.write(encodedID)
+	writer.writeString(`,"sections":`)
 	if err := writeCanonicalSequence(writer, root.sections, canonicalValueFragment); err != nil {
 		return err
 	}

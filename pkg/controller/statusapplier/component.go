@@ -874,11 +874,29 @@ func IsRetriable(err error) bool {
 // pluralization (RULE #1: the controller stays resource-agnostic).
 type RestMapperResolver struct {
 	mapper meta.RESTMapper
+	// resolved memoises successful lookups: the mapper walks every API group
+	// on each call, which at a few patches per change is a tenth of the
+	// leader's CPU. An entry is re-resolved after resolvedTTL so a CRD
+	// recreated under another plural is picked up without a restart.
+	resolved sync.Map // resolverKey -> resolvedGVR
+	now      func() time.Time
 }
+
+type resolverKey struct {
+	apiVersion string
+	kind       string
+}
+
+type resolvedGVR struct {
+	gvr schema.GroupVersionResource
+	at  time.Time
+}
+
+const resolvedTTL = 10 * time.Minute
 
 // NewRestMapperResolver creates a GVRResolver backed by the given RESTMapper.
 func NewRestMapperResolver(mapper meta.RESTMapper) *RestMapperResolver {
-	return &RestMapperResolver{mapper: mapper}
+	return &RestMapperResolver{mapper: mapper, now: time.Now}
 }
 
 // Resolve maps apiVersion + kind to a GroupVersionResource by consulting the
@@ -888,6 +906,21 @@ func NewRestMapperResolver(mapper meta.RESTMapper) *RestMapperResolver {
 // rules in Go (RULE #1). An unknown kind returns an error rather than a
 // guessed plural.
 func (r *RestMapperResolver) Resolve(apiVersion, kind string) (schema.GroupVersionResource, error) {
+	key := resolverKey{apiVersion: apiVersion, kind: kind}
+	if entry, ok := r.resolved.Load(key); ok {
+		if cached := entry.(resolvedGVR); r.now().Sub(cached.at) < resolvedTTL {
+			return cached.gvr, nil
+		}
+	}
+	gvr, err := r.resolve(apiVersion, kind)
+	if err != nil {
+		return schema.GroupVersionResource{}, err
+	}
+	r.resolved.Store(key, resolvedGVR{gvr: gvr, at: r.now()})
+	return gvr, nil
+}
+
+func (r *RestMapperResolver) resolve(apiVersion, kind string) (schema.GroupVersionResource, error) {
 	gv, err := schema.ParseGroupVersion(apiVersion)
 	if err != nil {
 		return schema.GroupVersionResource{}, fmt.Errorf("invalid apiVersion %q: %w", apiVersion, err)

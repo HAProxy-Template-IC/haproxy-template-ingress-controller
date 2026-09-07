@@ -447,6 +447,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 	// fleet sync, staleness (time() - gauge) reads as uptime rather than the
 	// entire Unix epoch.
 	m.LastFullSyncTimestamp.Set(float64(time.Now().Unix()))
+	registry.MustRegister(newMailboxDepthCollector())
 
 	return m
 }

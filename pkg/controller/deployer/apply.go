@@ -231,8 +231,7 @@ func (c *Component) bindApplyResult(
 		return nil
 	}
 	if err := c.plans.BindOccurrence(
-		authority, result.AppliedPlanID, result.AppliedPlanProof,
-		attempt.req.plan, attempt.req.occurrence,
+		authority, result.AppliedPlanID, result.AppliedPlanProof, attempt.req.identity,
 	); err != nil {
 		return fmt.Errorf("agent reused or omitted the applied plan proof: %w", err)
 	}
@@ -334,7 +333,7 @@ func (a *podApply) sendsPlanBlob(baseline *renderplan.Plan) bool {
 	if a.full || a.resend || a.req.verify {
 		return true
 	}
-	return !renderplan.ExactlyEqual(baseline, a.req.plan) || len(a.state.AppliedPlan) == 0
+	return !exactPlan(baseline, a.req.plan) || len(a.state.AppliedPlan) == 0
 }
 
 func (a *podApply) planBlob(send bool) io.Reader {
