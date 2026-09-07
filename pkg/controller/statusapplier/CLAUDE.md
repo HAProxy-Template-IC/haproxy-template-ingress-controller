@@ -44,6 +44,15 @@ There is no `cachedPatches` field or any other side-channel cache. Public
 fields on success events are compatibility or diagnostic shadows. Mutating
 them cannot change the authenticated occurrence the applier consumes.
 
+The one thing the applier keeps per phase (`Component.applied`) is the
+snapshot it last applied and the patches of it that failed to reach the
+apiserver. The next snapshot of the phase applies
+`ChangedPatchesForPhase(previous, phase)` plus those retries, so a fleet-sized
+render costs the applier its changed patches, not every patch. The previous
+snapshot only narrows what is re-sent; every patch that is sent comes from
+the event's own authenticated snapshot, which is what keeps the `cachedPatches`
+race below impossible. A new leader term starts without a previous snapshot.
+
 ### Why this matters
 
 The previous implementation kept a `cachedPatches` field overwritten on
