@@ -24,6 +24,20 @@ fi
 
 assert_eq standard "$(BENCH_GATEWAY_API_CHANNEL=standard bash -c 'source "$1"; printf "%s" "$BENCH_GATEWAY_API_CHANNEL"' bash "$runner")"
 
+# pilot-load is stopped by signal at the end of the steady-churn interval; a
+# signal exit after that stop is the stop working, before it a crash.
+touch "$tmp/stop-issued"
+workload_exit() {
+    bash -c 'source "$1"; workload_exit_acceptable "$2" "$3" && echo ok || echo fail' bash "$runner" "$1" "$2"
+}
+assert_eq ok "$(workload_exit 0 "$tmp/missing")"
+assert_eq ok "$(workload_exit 0 "$tmp/stop-issued")"
+assert_eq ok "$(workload_exit 130 "$tmp/stop-issued")"
+assert_eq ok "$(workload_exit 143 "$tmp/stop-issued")"
+assert_eq fail "$(workload_exit 143 "$tmp/missing")"
+assert_eq fail "$(workload_exit 137 "$tmp/stop-issued")"
+assert_eq fail "$(workload_exit 1 "$tmp/stop-issued")"
+
 mkdir "$tmp/bin"
 cat > "$tmp/bin/kind" <<'EOF'
 #!/usr/bin/env bash

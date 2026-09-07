@@ -569,6 +569,17 @@ scan_artifacts_for_live_secrets() {
     return 1
 }
 
+# workload_exit_acceptable judges pilot-load's exit code. After the harness
+# issued the steady-churn stop, exiting on INT (130) or TERM (143) is the
+# stop working; needing KILL (137) still fails, as does any exit before it.
+workload_exit_acceptable() {
+    local rc="$1"
+    local stop_issued="$2"
+    [[ "$rc" -eq 0 ]] && return 0
+    [[ -f "$stop_issued" ]] || return 1
+    [[ "$rc" -eq 130 || "$rc" -eq 143 ]]
+}
+
 signal_workload_container() {
     local container="$1"
     docker inspect "$container" >/dev/null 2>&1 || return 0
@@ -5410,7 +5421,8 @@ run_scale() {
         die "pilot-load did not stop after the HAPTIC readiness deadline"
     [[ ! -f "$scenario_dir/steady-signal-failed.txt" ]] || die "pilot-load did not stop after the steady-churn interval"
     [[ ! -f "$scenario_dir/steady-timer-error.txt" ]] || die "the steady-churn timer failed"
-    [[ $scale_rc -eq 0 ]] || die "pilot-load exited with ${scale_rc}"
+    workload_exit_acceptable "$scale_rc" "$scenario_dir/steady-stop-issued.txt" || \
+        die "pilot-load exited with ${scale_rc}"
     finish_workload_container "$scenario_dir" 0
     if rg -ni '(^|[[:space:]])error([:=[:space:]]|$)|failed to' "$scenario_dir/upstream.log" \
         > "$scenario_dir/upstream-errors.txt"; then
