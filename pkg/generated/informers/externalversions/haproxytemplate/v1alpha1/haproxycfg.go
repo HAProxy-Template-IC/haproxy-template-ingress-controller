@@ -32,11 +32,39 @@ import (
 )
 
 // HAProxyCfgInformer provides access to a shared informer and lister for
-// HAProxyCfgs.
+// HAProxyCfgs. Prefer using the type-safe variant (see [TypedHAProxyCfgInformer]).
 type HAProxyCfgInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() haproxytemplatev1alpha1.HAProxyCfgLister
 }
+
+// TypedHAProxyCfgInformer provides access to a shared informer and lister for
+// HAProxyCfgs, including the type-safe TypedInformer variant.
+// It is a superset of HAProxyCfgInformer.
+type TypedHAProxyCfgInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() HAProxyCfgIndexInformer
+	Lister() haproxytemplatev1alpha1.HAProxyCfgLister
+}
+
+// HAProxyCfgIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type HAProxyCfgIndexInformer cache.TypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCfg]
+
+// HAProxyCfgHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for HAProxyCfg.
+type HAProxyCfgHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apishaproxytemplatev1alpha1.HAProxyCfg]
+
+// HAProxyCfgDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for HAProxyCfg.
+type HAProxyCfgDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apishaproxytemplatev1alpha1.HAProxyCfg]
+
+// HAProxyCfgFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for HAProxyCfg.
+type HAProxyCfgFilteringHandler = cache.TypedFilteringResourceEventHandler[*apishaproxytemplatev1alpha1.HAProxyCfg]
+
+// HAProxyCfgIndexers is a specialization of [cache.TypedIndexers] for HAProxyCfg.
+type HAProxyCfgIndexers = cache.TypedIndexers[*apishaproxytemplatev1alpha1.HAProxyCfg]
+
+// DeletedHAProxyCfg is a specialization of [cache.DeletedObject] for HAProxyCfg.
+type DeletedHAProxyCfg = cache.DeletedObject[*apishaproxytemplatev1alpha1.HAProxyCfg]
 
 type hAProxyCfgInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -47,25 +75,49 @@ type hAProxyCfgInformer struct {
 // NewHAProxyCfgInformer constructs a new informer for HAProxyCfg type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedHAProxyCfgInformer]).
 func NewHAProxyCfgInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
 	return NewHAProxyCfgInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedHAProxyCfgInformer constructs a new informer for HAProxyCfg type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedHAProxyCfgInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers HAProxyCfgIndexers) HAProxyCfgIndexInformer {
+	return NewTypedHAProxyCfgInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredHAProxyCfgInformer constructs a new informer for HAProxyCfg type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredHAProxyCfgInformer]).
 func NewFilteredHAProxyCfgInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return NewHAProxyCfgInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+	return NewTypedHAProxyCfgInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredHAProxyCfgInformer constructs a new informer for HAProxyCfg type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredHAProxyCfgInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers HAProxyCfgIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) HAProxyCfgIndexInformer {
+	return NewTypedHAProxyCfgInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
 }
 
 // NewHAProxyCfgInformerWithOptions constructs a new informer for HAProxyCfg type with additional options.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedHAProxyCfgInformerWithOptions]).
 func NewHAProxyCfgInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedHAProxyCfgInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedHAProxyCfgInformerWithOptions constructs a new informer for HAProxyCfg type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedHAProxyCfgInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) HAProxyCfgIndexInformer {
 	gvr := schema.GroupVersionResource{Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxycfgs"}
 	identifier := options.InformerName.WithResource(gvr)
 	tweakListOptions := options.TweakListOptions
-	return cache.NewSharedIndexInformerWithOptions(
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCfg](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
@@ -98,17 +150,57 @@ func NewHAProxyCfgInformerWithOptions(client versioned.Interface, namespace stri
 			Indexers:     options.Indexers,
 			Identifier:   identifier,
 		},
-	)
+	))
 }
 
 func (f *hAProxyCfgInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewHAProxyCfgInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
+	return NewTypedHAProxyCfgInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *hAProxyCfgInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyCfg{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *hAProxyCfgInformer) TypedInformer() HAProxyCfgIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCfg](f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyCfg{}, f.defaultInformer))
 }
 
 func (f *hAProxyCfgInformer) Lister() haproxytemplatev1alpha1.HAProxyCfgLister {
 	return haproxytemplatev1alpha1.NewHAProxyCfgLister(f.Informer().GetIndexer())
+}
+
+// ToTypedHAProxyCfgInformer converts an untyped informer into a TypedHAProxyCfgInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *HAProxyCfg. If that is not the case, calling type-safe methods of the returned
+// TypedHAProxyCfgInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedHAProxyCfgInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedHAProxyCfgInformer(informer HAProxyCfgInformer) TypedHAProxyCfgInformer {
+	if informer, ok := informer.(TypedHAProxyCfgInformer); ok {
+		return informer
+	}
+	return &hAProxyCfgTypedInformerAdapter{informer}
+}
+
+type hAProxyCfgTypedInformerAdapter struct {
+	HAProxyCfgInformer
+}
+
+func (a *hAProxyCfgTypedInformerAdapter) TypedInformer() HAProxyCfgIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCfg](a.Informer())
+}
+
+// ToHAProxyCfgIndexInformer converts an untyped informer into a HAProxyCfgIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *HAProxyCfg. If that is not the case, calling type-safe methods of the returned
+// HAProxyCfgIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a HAProxyCfgIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToHAProxyCfgIndexInformer(informer cache.SharedIndexInformer) HAProxyCfgIndexInformer {
+	if informer, ok := informer.(HAProxyCfgIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apishaproxytemplatev1alpha1.HAProxyCfg](informer)
 }
