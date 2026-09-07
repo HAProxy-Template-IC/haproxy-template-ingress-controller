@@ -122,6 +122,11 @@ type StatusUpdater struct {
 	// Events mark changes rather than repeating once per render. Nil until the
 	// gate has answered at all.
 	lastGateState *gateEventState
+	// haproxyRefused is set while the Validated condition says a render
+	// failed HAProxy's check, so the next passing verdict can clear it: the
+	// condition is otherwise only rewritten on a configuration load, and a
+	// single failed check would leave it False for the rest of the term.
+	haproxyRefused bool
 }
 
 // NewStatusUpdater creates a new StatusUpdater.
@@ -195,6 +200,37 @@ func (u *StatusUpdater) HandleEvent(event busevents.Event) {
 		u.handleHAProxyValidationFailed(u.ctx, e)
 	case *events.RenderGateCompletedEvent:
 		u.handleRenderGateCompleted(e)
+		u.restoreValidatedAfterPass(u.ctx, e)
+	}
+}
+
+// restoreValidatedAfterPass sets the Validated condition back to True once
+// HAProxy accepts a render again after a failed check.
+func (u *StatusUpdater) restoreValidatedAfterPass(ctx context.Context, event *events.RenderGateCompletedEvent) {
+	if !event.Newest || !event.OK {
+		return
+	}
+	u.mu.Lock()
+	refused := u.haproxyRefused
+	u.haproxyRefused = false
+	refs := slices.Clone(u.configRefs)
+	u.mu.Unlock()
+	if !refused {
+		return
+	}
+	for _, ref := range refs {
+		u.applyStatus(ctx, ref.Namespace, ref.Name,
+			func(status *v1alpha1.HAProxyTemplateConfigStatus) {
+				now := metav1.NewTime(time.Now())
+				status.ObservedGeneration = ref.Generation
+				status.LastValidated = &now
+				status.ValidationStatus = statusValid
+				status.ValidationMessage = "HAProxy accepted the rendered configuration again"
+				status.ValidationErrors = nil
+				setValidatedCondition(status, metav1.ConditionTrue, reasonValidationSucceeded,
+					"HAProxy accepted the rendered configuration again", ref.Generation)
+			},
+			"Updated HAProxyTemplateConfig status to Valid (HAProxy accepted a render again)")
 	}
 }
 
@@ -375,9 +411,10 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 // the rendered config fails HAProxy's syntax check (haproxy -c).
 func (u *StatusUpdater) handleHAProxyValidationFailed(ctx context.Context, event *events.ValidationFailedEvent) {
 	// Get cached config references (set during handleConfigValidated/handleConfigInvalid)
-	u.mu.RLock()
+	u.mu.Lock()
 	refs := slices.Clone(u.configRefs)
-	u.mu.RUnlock()
+	u.haproxyRefused = len(refs) > 0
+	u.mu.Unlock()
 
 	if len(refs) == 0 {
 		u.Logger().Debug("No cached config references, skipping HAProxy validation status update")
@@ -408,6 +445,9 @@ func (u *StatusUpdater) cacheConfigRefs(refs []events.ConfigSourceRef) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.configRefs = slices.Clone(refs)
+	// A load rewrites the condition itself, so a verdict that arrives later
+	// has nothing of the previous configuration's failed check to restore.
+	u.haproxyRefused = false
 }
 
 // sourceRefsOrFallback returns the event's source set, or the merged object's

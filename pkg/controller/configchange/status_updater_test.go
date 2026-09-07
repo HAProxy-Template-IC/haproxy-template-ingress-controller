@@ -458,6 +458,43 @@ func TestStatusUpdater_HandleHAProxyValidationFailed_Success(t *testing.T) {
 	assert.Equal(t, errs, status.ValidationErrors)
 }
 
+// A failed HAProxy check leaves the condition False only until HAProxy
+// accepts a render again; a load is not needed to clear it.
+func TestStatusUpdater_PassingGateRestoresValidatedAfterHAProxyFailure(t *testing.T) {
+	htc := newHTC()
+	u, crd := newStatusUpdaterFixture(t, htc)
+	u.handleConfigValidated(context.Background(), events.NewConfigValidatedEvent(nil, htc, "v1", ""))
+	u.handleHAProxyValidationFailed(context.Background(), events.NewValidationFailedEvent([]string{"refused"}, 1, "reconcile"))
+	require.Equal(t, "Invalid", getStatus(t, crd).ValidationStatus)
+
+	// A verdict for a superseded render, or a failing one, changes nothing.
+	u.HandleEvent(events.NewRenderGateCompletedEvent("plan-old", true, false, false, "", false, 1))
+	u.HandleEvent(events.NewRenderGateCompletedEvent("plan-1", false, true, true, "[ALERT] bogus", false, 1))
+	assert.Equal(t, "Invalid", getStatus(t, crd).ValidationStatus)
+
+	u.HandleEvent(events.NewRenderGateCompletedEvent("plan-2", true, false, true, "", false, 1))
+	status := getStatus(t, crd)
+	assert.Equal(t, "Valid", status.ValidationStatus)
+	assert.Empty(t, status.ValidationErrors)
+	require.NotEmpty(t, status.Conditions)
+	assert.Equal(t, metav1.ConditionTrue, status.Conditions[0].Status)
+	assert.Equal(t, "HAProxy accepted the rendered configuration again", status.Conditions[0].Message)
+
+	// A pass with nothing to restore leaves the status alone.
+	u.HandleEvent(events.NewRenderGateCompletedEvent("plan-3", true, false, true, "", false, 1))
+	assert.Equal(t, "Valid", getStatus(t, crd).ValidationStatus)
+
+	// A load that fails after a refused check owns the condition from then on:
+	// a verdict accepting the previous configuration's render must not flip
+	// the new, invalid configuration to Valid.
+	u.handleHAProxyValidationFailed(context.Background(), events.NewValidationFailedEvent([]string{"refused"}, 1, "reconcile"))
+	u.handleConfigInvalid(context.Background(), events.NewConfigInvalidEvent("v2", htc, map[string][]string{"basic": {"bad"}}))
+	u.HandleEvent(events.NewRenderGateCompletedEvent("plan-4", true, false, true, "", false, 1))
+	status = getStatus(t, crd)
+	assert.Equal(t, "Invalid", status.ValidationStatus)
+	assert.Equal(t, metav1.ConditionFalse, status.Conditions[0].Status)
+}
+
 func TestStatusUpdater_HandleHAProxyValidationFailed_GetError(t *testing.T) {
 	// Seed an HTC so cache can be populated, then delete it so the subsequent Get fails.
 	htc := newHTC()
