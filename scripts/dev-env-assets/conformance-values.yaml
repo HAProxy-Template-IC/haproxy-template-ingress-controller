@@ -44,7 +44,9 @@ controller:
   resources:
     limits:
       cpu: "4"
-      memory: 512Mi
+      # The chart default. Startup (load gate + graph bootstrap) samples at
+      # 475Mi on a 4-CPU pod; at 512Mi the leader was OOM-killed mid-suite (#205).
+      memory: 1Gi
     requests:
       cpu: 100m
       memory: 128Mi
