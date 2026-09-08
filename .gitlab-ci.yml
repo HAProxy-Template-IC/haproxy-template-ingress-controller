@@ -2805,8 +2805,10 @@ nightly-gwapi-canary:
     - TEST_RUN_PATTERN="^$" make test-e2e
     # Move the conformance suite to upstream main and run it unsharded.
     # Builds use -mod=mod, so the vendor/ tree staying at the pinned release
-    # is irrelevant here; nothing is committed from CI.
-    - go get sigs.k8s.io/gateway-api@main
+    # is irrelevant here; nothing is committed from CI. The suite is its own
+    # module: left at the release it no longer compiles against main's
+    # features package (nightly 2828052802).
+    - go get sigs.k8s.io/gateway-api@main sigs.k8s.io/gateway-api/conformance@main
     - go mod tidy
     - make test-gateway-conformance
 
