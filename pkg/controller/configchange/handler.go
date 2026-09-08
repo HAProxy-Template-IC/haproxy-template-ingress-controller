@@ -133,6 +133,9 @@ type ConfigChangeHandler struct {
 	// Without tracking this version, ConfigChangeHandler would trigger reinitialization
 	// for the bootstrap event, creating an infinite loop.
 	initialConfigVersion string
+	// runningVersionAnnounced is set once the running configuration's
+	// validated event went out for this iteration.
+	runningVersionAnnounced bool
 
 	// Initial credentials Secret version tracked the same way, for the same
 	// reason. The credentialsloader emits CredentialsUpdatedEvent on every
@@ -287,6 +290,7 @@ func (h *ConfigChangeHandler) SetInitialSnapshot(snapshot *ValidatedSnapshot) {
 	}
 	h.initialConfigVersion = snapshot.ConfigVersion
 	h.initialCredentialsVersion = snapshot.CredentialsVersion
+	h.runningVersionAnnounced = false
 	h.currentCredentials = snapshot.Credentials
 	h.currentCredentialsVersion = snapshot.CredentialsVersion
 	activeReplay := events.NewConfigValidatedEvent(
@@ -370,21 +374,65 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 				h.sendReload(reload)
 			}
 		case event := <-h.eventChan:
-			// Validation stays off-loop so leadership replay remains responsive.
-			if parsed, ok := event.(*events.ConfigParsedEvent); ok {
-				h.recordParsed(parsed)
-				h.startQueuedValidation(ctx)
-			} else {
-				h.dispatchSideEvent(event)
-			}
+			h.handleLoopEvent(ctx, event)
 		}
 	}
+}
+
+// handleLoopEvent parks a parsed config for validation, which stays off-loop
+// so leadership replay remains responsive, and dispatches everything else.
+func (h *ConfigChangeHandler) handleLoopEvent(ctx context.Context, event busevents.Event) {
+	parsed, ok := event.(*events.ConfigParsedEvent)
+	if !ok {
+		h.dispatchSideEvent(event)
+		return
+	}
+	if h.isRunningVersion(parsed.Version) {
+		h.logger.Debug("Ignoring parsed config that matches the running version",
+			"version", parsed.Version)
+		h.publishRunningVersionValidated(parsed)
+		return
+	}
+	h.recordParsed(parsed)
+	h.startQueuedValidation(ctx)
+}
+
+// publishRunningVersionValidated announces the running configuration as
+// validated once per iteration, in place of the re-validation that used to
+// announce it: the status updater stamps every source's Validated condition
+// from this event, and the leadership replay caches it.
+func (h *ConfigChangeHandler) publishRunningVersionValidated(parsed *events.ConfigParsedEvent) {
+	h.mu.Lock()
+	if h.runningVersionAnnounced || h.activeSnapshot == nil {
+		h.mu.Unlock()
+		return
+	}
+	h.runningVersionAnnounced = true
+	config := h.activeSnapshot.Config
+	credentialsVersion := h.currentCredentialsVersion
+	h.mu.Unlock()
+	validated := events.NewConfigValidatedEvent(config, parsed.TemplateConfig, parsed.Version, credentialsVersion)
+	validated.Sources = append([]events.ConfigSourceRef(nil), parsed.Sources...)
+	h.eventBus.Publish(validated)
 }
 
 // cleanup performs cleanup when the component is shutting down.
 func (h *ConfigChangeHandler) cleanup() {
 	h.debounceTimer.Stop()
 	h.pendingReload = nil
+}
+
+// isRunningVersion reports whether a parsed config is the one this iteration
+// started from with nothing newer parked or accepted: the watchers deliver it
+// again at startup, and validating it costs the whole validationTests suite
+// for a verdict acceptValidatedSnapshot then discards.
+func (h *ConfigChangeHandler) isRunningVersion(version string) bool {
+	if version == "" || h.queuedParsed != nil {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return version == h.initialConfigVersion && h.acceptedCandidate == nil
 }
 
 // recordParsed assigns an authority generation and retires any restart armed
@@ -558,7 +606,11 @@ func (h *ConfigChangeHandler) drainQueuedEvents() {
 		select {
 		case ev := <-h.eventChan:
 			if parsed, ok := ev.(*events.ConfigParsedEvent); ok {
-				h.recordParsed(parsed)
+				if h.isRunningVersion(parsed.Version) {
+					h.publishRunningVersionValidated(parsed)
+				} else {
+					h.recordParsed(parsed)
+				}
 				continue
 			}
 			h.dispatchSideEvent(ev)

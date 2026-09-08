@@ -20,7 +20,9 @@ controller:
   resources:
     limits:
       cpu: "4"
-      memory: 512Mi
+      # The chart default: a served-CRD change re-runs the load gate inside
+      # the new iteration and OOM-killed both replicas at 512Mi.
+      memory: 1Gi
     requests:
       cpu: 100m
       memory: 128Mi
