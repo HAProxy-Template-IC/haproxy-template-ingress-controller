@@ -479,6 +479,7 @@ type snapshotAuthentication struct {
 	authority *Authority
 	root      *planRoot
 	entries   int
+	source    any
 }
 
 // Snapshot is an authenticated immutable final render plan.
@@ -486,15 +487,22 @@ type Snapshot struct {
 	authority *Authority
 	root      *planRoot
 	entries   int
-	seal      *Snapshot
-	auth      snapshotAuthentication
+	// source is the BackendSource token the backends were reconciled from,
+	// nil when they came from a map.
+	source any
+	seal   *Snapshot
+	auth   snapshotAuthentication
 }
 
 func sealSnapshot(authority *Authority, root *planRoot) *Snapshot {
-	snapshot := &Snapshot{authority: authority, root: root, entries: root.entries}
+	return sealSnapshotFromSource(authority, root, nil)
+}
+
+func sealSnapshotFromSource(authority *Authority, root *planRoot, source any) *Snapshot {
+	snapshot := &Snapshot{authority: authority, root: root, entries: root.entries, source: source}
 	snapshot.seal = snapshot
 	snapshot.auth = snapshotAuthentication{
-		owner: snapshot, authority: authority, root: root, entries: snapshot.entries,
+		owner: snapshot, authority: authority, root: root, entries: snapshot.entries, source: source,
 	}
 	return snapshot
 }
@@ -605,7 +613,7 @@ func exactPlanRootPointers(left, right *planRoot) bool {
 func (s *Snapshot) ValidateAuthentication() error {
 	if s == nil || s.seal != s || s.auth.owner != s || s.authority == nil ||
 		s.auth.authority != s.authority || s.root == nil || s.auth.root != s.root ||
-		s.auth.entries != s.entries || s.entries < 0 {
+		s.auth.entries != s.entries || s.entries < 0 || s.auth.source != s.source {
 		return errInvalidSnapshot
 	}
 	if err := s.authority.ValidateAuthentication(); err != nil {

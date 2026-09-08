@@ -31,6 +31,29 @@ func ReconcileSnapshotWithConfigDocument(
 	plan *Plan,
 	document rendercontent.Document,
 ) (*Snapshot, *Delta, error) {
+	if plan == nil {
+		return nil, nil, errNilSnapshotPlan
+	}
+	var backends BackendSource
+	if plan.Backends != nil {
+		backends = mapBackendSource(plan.Backends)
+	}
+	detached := *plan
+	detached.Backends = nil
+	return ReconcileSnapshotWithBackendSource(authority, previous, &detached, backends, document)
+}
+
+// ReconcileSnapshotWithBackendSource is ReconcileSnapshotWithConfigDocument
+// with the backends read from source; plan.Backends must be nil. A previous
+// snapshot built from an earlier state of the same source is compared over
+// the names that changed since, not over every backend.
+func ReconcileSnapshotWithBackendSource(
+	authority *Authority,
+	previous *Snapshot,
+	plan *Plan,
+	backends BackendSource,
+	document rendercontent.Document,
+) (*Snapshot, *Delta, error) {
 	if err := authority.ValidateAuthentication(); err != nil {
 		return nil, nil, err
 	}
@@ -39,23 +62,30 @@ func ReconcileSnapshotWithConfigDocument(
 			return nil, nil, err
 		}
 	}
-	configIndex, err := validateDocumentPlanSource(authority, previous, plan, document)
+	configIndex, err := validateDocumentPlanSource(authority, previous, plan, backends, document)
 	if err != nil {
 		return nil, nil, err
 	}
+	var token any
+	if backends != nil {
+		token, err = backendSourceToken(backends)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	if previous == nil {
-		snapshot, buildErr := buildInitialDocumentPlanSnapshot(authority, plan, document, configIndex)
+		snapshot, buildErr := buildInitialDocumentPlanSnapshot(authority, plan, backends, token, document, configIndex)
 		return snapshot, nil, buildErr
 	}
 	if previous.root.schema != plan.SchemaVersion {
 		return nil, nil, ErrDocumentTransitionRequiresRebuild
 	}
 
-	changes, err := reconcileDocumentPlanChanges(authority, previous, plan, document, configIndex)
+	changes, err := reconcileDocumentPlanChanges(authority, previous, plan, backends, document, configIndex)
 	if err != nil {
 		return nil, nil, err
 	}
-	next, err := applyDocumentPlanChanges(authority, previous, plan, changes)
+	next, err := applyDocumentPlanChanges(authority, previous, plan, token, changes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -86,6 +116,7 @@ func reconcileDocumentPlanChanges(
 	authority *Authority,
 	previous *Snapshot,
 	plan *Plan,
+	source BackendSource,
 	document rendercontent.Document,
 	configIndex int,
 ) (*documentPlanChanges, error) {
@@ -96,9 +127,8 @@ func reconcileDocumentPlanChanges(
 	if err != nil {
 		return nil, err
 	}
-	backends, err := reconcileMapCollection(
-		authority, previous.root.backends, backendSnapshotCollection,
-		plan.Backends, ownBackend, exactBackend,
+	backends, err := reconcileBackendSource(
+		authority, previous.root.backends, previous.source, source, sections,
 	)
 	if err != nil {
 		return nil, err
@@ -140,6 +170,7 @@ func applyDocumentPlanChanges(
 	authority *Authority,
 	previous *Snapshot,
 	plan *Plan,
+	token any,
 	changes *documentPlanChanges,
 ) (*Snapshot, error) {
 	nextSections, err := applySequenceChanges(
@@ -187,7 +218,7 @@ func applyDocumentPlanChanges(
 		authority, plan.SchemaVersion, nextSections, nextBackends,
 		nextProfiles, nextMaps, nextCRTLists, nextFiles,
 	)
-	return sealSnapshot(authority, root), nil
+	return sealSnapshotFromSource(authority, root, token), nil
 }
 
 // SectionsCopy returns detached ordered section metadata without materializing config.
@@ -202,10 +233,14 @@ func validateDocumentPlanSource(
 	authority *Authority,
 	previous *Snapshot,
 	plan *Plan,
+	backends BackendSource,
 	document rendercontent.Document,
 ) (int, error) {
 	if plan == nil {
 		return 0, errNilSnapshotPlan
+	}
+	if plan.Backends != nil {
+		return 0, errInexactSnapshotPlan
 	}
 	if err := document.ValidateAuthentication(); err != nil {
 		return 0, errors.Join(errInexactSnapshotPlan, err)
@@ -224,9 +259,11 @@ func validateDocumentPlanSource(
 	if err := validateDocumentPlanSections(plan, documentBytes, verified); err != nil {
 		return 0, err
 	}
-	for name := range plan.Backends {
-		if !plan.Backends[name].ContentKnown {
-			return 0, errInexactSnapshotPlan
+	if m, ok := backends.(mapBackendSource); ok {
+		for name := range m {
+			if !m[name].ContentKnown {
+				return 0, errInexactSnapshotPlan
+			}
 		}
 	}
 	return validateDocumentPlanFiles(plan, documentBytes)
@@ -308,6 +345,8 @@ func validateDocumentPlanFiles(plan *Plan, documentBytes int) (int, error) {
 func buildInitialDocumentPlanSnapshot(
 	authority *Authority,
 	plan *Plan,
+	source BackendSource,
+	token any,
 	document rendercontent.Document,
 	configIndex int,
 ) (*Snapshot, error) {
@@ -317,8 +356,15 @@ func buildInitialDocumentPlanSnapshot(
 	if err != nil {
 		return nil, err
 	}
+	var sourceBackends map[string]Backend
+	if source != nil {
+		sourceBackends, err = backendSourceMap(source)
+		if err != nil {
+			return nil, err
+		}
+	}
 	backends, err := buildSnapshotMap(
-		authority, backendSnapshotCollection, plan.Backends, nil, ownBackend, exactBackend,
+		authority, backendSnapshotCollection, sourceBackends, nil, ownBackend, exactBackend,
 	)
 	if err != nil {
 		return nil, err
@@ -351,7 +397,7 @@ func buildInitialDocumentPlanSnapshot(
 		authority, plan.SchemaVersion, sections, backends, profiles,
 		mapsCollection, crtLists, files,
 	)
-	return sealSnapshot(authority, root), nil
+	return sealSnapshotFromSource(authority, root, token), nil
 }
 
 func buildInitialDocumentFileCollection(

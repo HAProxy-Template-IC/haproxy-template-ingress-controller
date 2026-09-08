@@ -29,12 +29,58 @@ import (
 type PreparedPlanSnapshot struct {
 	sections *iradix.Tree[string]
 	backends *iradix.Tree[PreparedPlanBackend]
+	log      *preparedBackendLog
 	auth     preparedPlanSnapshotAuthentication
 }
 
 type preparedPlanSnapshotAuthentication struct {
 	sections *iradix.Tree[string]
 	backends *iradix.Tree[PreparedPlanBackend]
+	log      *preparedBackendLog
+}
+
+// preparedBackendLog records how a snapshot's backends derive from an
+// ancestor's, one changed name per step, so two snapshots of one lineage
+// compare by walking the steps between them instead of their trees. A step
+// that touched no backend shares its parent's node. The chain is cut at
+// maxPreparedBackendLogDepth steps; a comparison across the cut walks the
+// trees once.
+type preparedBackendLog struct {
+	parent *preparedBackendLog
+	name   string
+	depth  uint32
+}
+
+const maxPreparedBackendLogDepth = 4096
+
+func newPreparedBackendLog() *preparedBackendLog {
+	return &preparedBackendLog{}
+}
+
+func (l *preparedBackendLog) step(name string) *preparedBackendLog {
+	if l.depth >= maxPreparedBackendLogDepth {
+		return &preparedBackendLog{name: name, depth: 1, parent: newPreparedBackendLog()}
+	}
+	return &preparedBackendLog{parent: l, name: name, depth: l.depth + 1}
+}
+
+// backendsChangedSince lists the backend names this snapshot's log records
+// after base's; ok is false when base is not an ancestor within the chain.
+func (s *PreparedPlanSnapshot) backendsChangedSince(base *preparedBackendLog) ([]string, bool) {
+	if s == nil || s.log == nil || base == nil || base.depth > s.log.depth {
+		return nil, false
+	}
+	names := make([]string, 0, s.log.depth-base.depth)
+	for log := s.log; log != nil; log = log.parent {
+		if log == base {
+			return names, true
+		}
+		if log.depth <= base.depth {
+			return nil, false
+		}
+		names = append(names, log.name)
+	}
+	return nil, false
 }
 
 // NewPreparedPlanSnapshot creates an authenticated empty declaration set.
@@ -42,6 +88,7 @@ func NewPreparedPlanSnapshot() *PreparedPlanSnapshot {
 	snapshot := &PreparedPlanSnapshot{
 		sections: iradix.New[string](),
 		backends: iradix.New[PreparedPlanBackend](),
+		log:      newPreparedBackendLog(),
 	}
 	snapshot.authenticate()
 	return snapshot
@@ -108,7 +155,9 @@ func NewPreparedPlanSnapshotFromDeclarations(
 		sections.Insert(preparedSectionKey(renderplan.SectionKindBackend, backend.name), backend.prepared.Text)
 		backendTree.Insert([]byte(backend.name), backend.prepared)
 	}
-	snapshot := &PreparedPlanSnapshot{sections: sections.Commit(), backends: backendTree.Commit()}
+	snapshot := &PreparedPlanSnapshot{
+		sections: sections.Commit(), backends: backendTree.Commit(), log: newPreparedBackendLog(),
+	}
 	snapshot.authenticate()
 	return snapshot, nil
 }
@@ -122,7 +171,7 @@ func (s *PreparedPlanSnapshot) WithProfile(profile PreparedPlanProfile) (*Prepar
 		return nil, fmt.Errorf("prepared plan snapshot profile: %w", err)
 	}
 	sections, _, _ := s.sections.Insert(preparedSectionKey(renderplan.SectionKindProfile, profile.Name), profile.Text)
-	updated := &PreparedPlanSnapshot{sections: sections, backends: s.backends}
+	updated := &PreparedPlanSnapshot{sections: sections, backends: s.backends, log: s.log}
 	updated.authenticate()
 	return updated, nil
 }
@@ -136,7 +185,7 @@ func (s *PreparedPlanSnapshot) WithoutProfile(name string) (*PreparedPlanSnapsho
 	if !changed {
 		return s, nil
 	}
-	updated := &PreparedPlanSnapshot{sections: sections, backends: s.backends}
+	updated := &PreparedPlanSnapshot{sections: sections, backends: s.backends, log: s.log}
 	updated.authenticate()
 	return updated, nil
 }
@@ -153,7 +202,7 @@ func (s *PreparedPlanSnapshot) WithBackend(backend *PreparedPlanBackend) (*Prepa
 	name := detached.Backend.Name
 	sections, _, _ := s.sections.Insert(preparedSectionKey(renderplan.SectionKindBackend, name), detached.Text)
 	backends, _, _ := s.backends.Insert([]byte(name), detached)
-	updated := &PreparedPlanSnapshot{sections: sections, backends: backends}
+	updated := &PreparedPlanSnapshot{sections: sections, backends: backends, log: s.log.step(name)}
 	updated.authenticate()
 	return updated, nil
 }
@@ -171,24 +220,24 @@ func (s *PreparedPlanSnapshot) WithoutBackend(name string) (*PreparedPlanSnapsho
 	if sectionChanged != backendChanged {
 		return nil, fmt.Errorf("prepared plan snapshot backend %q is incomplete", name)
 	}
-	updated := &PreparedPlanSnapshot{sections: sections, backends: backends}
+	updated := &PreparedPlanSnapshot{sections: sections, backends: backends, log: s.log.step(name)}
 	updated.authenticate()
 	return updated, nil
 }
 
 // ValidateAuthentication rejects an unsealed or root-substituted snapshot.
 func (s *PreparedPlanSnapshot) ValidateAuthentication() error {
-	if s == nil || s.sections == nil || s.backends == nil {
+	if s == nil || s.sections == nil || s.backends == nil || s.log == nil {
 		return errors.New("prepared plan snapshot is unavailable")
 	}
-	if s.auth.sections != s.sections || s.auth.backends != s.backends {
+	if s.auth.sections != s.sections || s.auth.backends != s.backends || s.auth.log != s.log {
 		return errors.New("prepared plan snapshot authentication seal does not match its roots")
 	}
 	return nil
 }
 
 func (s *PreparedPlanSnapshot) authenticate() {
-	s.auth = preparedPlanSnapshotAuthentication{sections: s.sections, backends: s.backends}
+	s.auth = preparedPlanSnapshotAuthentication{sections: s.sections, backends: s.backends, log: s.log}
 }
 
 func (s *PreparedPlanSnapshot) section(kind, name string) (string, bool) {

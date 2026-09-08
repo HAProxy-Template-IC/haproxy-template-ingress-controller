@@ -662,7 +662,11 @@ func (t *Transaction) Commit() (*Snapshot, *Delta, error) {
 			t.authority, t.base.root.schema, sectionCollection, backendCollection,
 			profileCollection, mapCollection, crtListCollection, fileCollection,
 		)
-		t.built = sealSnapshot(t.authority, root)
+		var source any
+		if backendCollection == t.base.root.backends {
+			source = t.base.source
+		}
+		t.built = sealSnapshotFromSource(t.authority, root, source)
 	}
 	t.delta = sealPlanDelta(
 		t.authority, t.base, t.built, sections, backends, profiles,

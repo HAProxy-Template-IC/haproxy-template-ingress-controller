@@ -576,11 +576,7 @@ func (m *PlanMemo) preparedBackends(prepared *PreparedPlanSnapshot) map[string]r
 	}
 	backends := make(map[string]renderplan.Backend, prepared.backends.Len())
 	root.Walk(func(name []byte, entry PreparedPlanBackend) bool {
-		backend := entry.Backend
-		backend.Body = sharedStrings(entry.Body)
-		backend.Comments = sharedStrings(entry.Comments)
-		backend.ContentKnown = true
-		backends[string(name)] = backend
+		backends[string(name)] = preparedBackendRecord(&entry)
 		return false
 	})
 	if m != nil {
