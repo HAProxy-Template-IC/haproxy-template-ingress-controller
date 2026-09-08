@@ -3445,6 +3445,8 @@ test-helm-defaults:
     - |
       # Pre-create kind cluster with DinD-compatible networking
       kind create cluster --name ${CLUSTER_NAME} --config .gitlab/ci/kind-config-dind.yaml --wait 120s
+      source scripts/lib/cluster.sh
+      kind_blackhole_synthetic_backends ${CLUSTER_NAME}
     - |
       # Fix kubeconfig to use "docker" hostname instead of 0.0.0.0
       mkdir -p ~/.kube

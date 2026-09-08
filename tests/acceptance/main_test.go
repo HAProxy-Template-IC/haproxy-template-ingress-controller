@@ -225,6 +225,9 @@ func setupForDind(kindClusterName, kindNodeImage string) {
 				if err := provider.Create(kindClusterName, createOpts...); err != nil {
 					return ctx, fmt.Errorf("failed to create kind cluster: %w", err)
 				}
+				if err := kindutil.BlackholeSyntheticBackends(kindClusterName); err != nil {
+					return ctx, err
+				}
 			}
 
 			// Get kubeconfig

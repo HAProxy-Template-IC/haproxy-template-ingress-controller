@@ -54,6 +54,8 @@ TEMP_KIND_CONFIG=""
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/cluster.sh
+source "$SCRIPT_DIR/lib/cluster.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -139,6 +141,7 @@ EOF
     if ! kind create cluster --name "$CLUSTER_NAME" --config "$kind_config" --wait 120s; then
         die "Failed to create Kind cluster" 1
     fi
+    kind_blackhole_synthetic_backends "$CLUSTER_NAME" || die "Failed to blackhole synthetic backend ranges" 1
 
     # Patch kubeconfig for DinD
     if is_docker_in_docker; then

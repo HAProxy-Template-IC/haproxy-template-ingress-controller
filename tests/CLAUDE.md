@@ -271,6 +271,20 @@ make test && make test-integration && make test-acceptance && make test-e2e
 
 ## Common Patterns
 
+### Synthetic backends must not leave the cluster
+
+A backend address that exists only so HAProxy has something to fail against
+(`gateway-api-bench`'s pilot-load pods at 10.0.0.10 upward, fixtures with
+RFC 5737 addresses) matches no cluster route, so every health check is a SYN
+that the node NATs to the host and the host forwards to the LAN's default
+gateway. At 5,000 routes that was 126,000 concurrent connections and took a
+home router down. Every kind cluster creator in the repo therefore blackholes
+`kindutil.SyntheticBackendRanges` (`10.0.0.0/12` and the three RFC 5737 nets)
+on the node right after creation: `kindutil.BlackholeSyntheticBackends` in Go
+(e2e, acceptance, integration), `kind_blackhole_synthetic_backends` in
+`scripts/lib/cluster.sh`. Pick synthetic
+addresses inside those ranges, and add any new creator to the list.
+
 ### Architecture Validation
 
 Tests enforce clean architecture via `arch-go.yml`:
