@@ -7,7 +7,7 @@ The controller uses a **reinitialization loop** pattern where it responds to con
 ```mermaid
 sequenceDiagram
     participant Main
-    participant Iteration as runIteration()
+    participant Iteration as startIteration()
     participant EventBus
     participant Components
     participant ConfigChangeHandler
@@ -44,15 +44,18 @@ sequenceDiagram
         Note over Iteration,EventBus: 6. Start EventBus
         Iteration->>EventBus: Start() (replay buffered events)
 
-        Note over Iteration: 7. Event Loop
+        Note over Iteration: 7. Serving
         Iteration->>Iteration: Wait for config change or cancellation
 
         alt Config Change Detected
             CRDSingleWatcher->>EventBus: ConfigParsedEvent (new CRD spec)
             EventBus->>ConfigChangeHandler: Validate latest candidate
             ConfigChangeHandler->>ReloadAuthority: Accepted config snapshot
-            ReloadAuthority->>Iteration: Cancel iteration context
-            Iteration-->>Main: Return nil (reinitialize)
+            ReloadAuthority-->>Main: Reload recorded (iteration keeps serving)
+            Main->>Iteration: Start the successor (Stages 1–5, warm-up)
+            Iteration->>Iteration: Retire the predecessor's leadership, keep the Lease
+            Iteration->>Iteration: Successor enters election (Stages 6–8)
+            Main->>Iteration: Tear the predecessor down
         else Context Cancelled
             Iteration-->>Main: Return nil (shutdown)
         end
@@ -70,8 +73,9 @@ The controller runs iterations that respond to configuration changes:
 5. **Reconciliation & Observability (Stage 5)**: Create reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Each subscribes in its constructor, and the initial trigger events are published — buffered — before the bus starts. Rendering and full HAProxy validation run synchronously inside `Pipeline.Execute` from the Coordinator's call stack ([Architecture Decision Record (ADR) 0001](../adr/0001-renderer-is-synchronous-not-event-adapter.md)) — neither has its own goroutine or event subscription. The config validators (Basic, Template, JSONPath, and `validationTests`) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
 6. **EventBus Start**: Call `EventBus.Start()` to replay the buffered events and begin normal operation.
 7. **Leader Election, Webhook, Debug (Stages 6–8)**: Start leader election (Stage 6), the admission webhook when a TLS cert directory is mounted (Stage 7), and register debug variables and the full health checker (Stage 8).
-8. **Reload authority**: Observe the config-change channel from the beginning of the iteration. An accepted request cancels startup sync waits as well as the steady-state event loop.
-9. **Reinitialization**: The active snapshot and latest accepted candidate remain distinct. A newer parsed config retires the older candidate's reload reason and restores active state consumers; credential and schema reasons remain pending. A served-CRD change re-resolves the authoritative raw config before rebuilding, and the replacement CRD watch compares discovery once after sync to cover changes made during handoff.
+8. **Reload authority**: Observe the config-change channel from the beginning of the iteration. An accepted request during startup cancels the startup's sync waits; once the iteration serves, it's recorded and the iteration keeps serving.
+9. **Hand-over**: The successor iteration runs Stages 1–5 while the current one still leads, waits for its follower warmer's first render (bounded at 30 s), then retires the predecessor's term: the leader-only components stop and the election loop stops with the Lease kept. The successor's election resumes the Lease under the same identity on its first acquire, so no other replica sees a vacancy and its first render as leader is warm. The predecessor is torn down once the successor serves. A successor that fails before the hand-over leaves the predecessor serving and retries from live state; one that fails after it tears both down.
+10. **Reinitialization**: The active snapshot and latest accepted candidate remain distinct. A newer parsed config retires the older candidate's reload reason and restores active state consumers; credential and schema reasons remain pending. A served-CRD change re-resolves the authoritative raw config before rebuilding, and the replacement CRD watch compares discovery once after sync to cover changes made during handoff.
 
 The stage numbers are the code's startup log labels (`Stage 1: Creating config management components` through `Stage 8: Registering debug variables and updating health checker` — see `pkg/controller/iteration.go` and its callees). `EventBus.Start()` carries no stage label of its own; it runs between Stages 5 and 6, after every component has subscribed.
 

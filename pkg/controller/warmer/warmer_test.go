@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,6 +80,8 @@ type harness struct {
 	metrics   *metrics.Metrics
 	published <-chan busevents.Event
 	files     func() (map[string]string, error)
+	graphWarm atomic.Bool
+	component *Component
 }
 
 func newHarness(t *testing.T, p *recordingPipeline) *harness {
@@ -101,9 +104,12 @@ func newHarness(t *testing.T, p *recordingPipeline) *harness {
 		Pipeline:      p,
 		StoreProvider: stores.NewRealStoreProvider(nil),
 		CurrentFiles:  func() (map[string]string, error) { return h.files() },
+		GraphWarm:     h.graphWarm.Load,
 		Metrics:       h.metrics,
 		Logger:        logger,
 	})
+	h.component = component
+	h.graphWarm.Store(true)
 	bus.Start()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -237,4 +243,30 @@ func TestWarmerStandsDownWhenLeadershipArrivesMidRender(t *testing.T) {
 	h.waitForRender(t)
 	h.assertNoRender(t)
 	assert.Equal(t, 1, p.executions(), "only the render that was already in flight")
+}
+
+// A hand-over waits for a committed graph. A render whose cache the next
+// input change discarded leaves none, so it must not report the graph warm;
+// the render after it does.
+func TestWarmerReportsWarmOnlyOnceARenderLeftAGraph(t *testing.T) {
+	p := &recordingPipeline{result: warmResult(), ran: make(chan struct{}, 1)}
+	h := newHarness(t, p)
+	h.graphWarm.Store(false)
+
+	h.bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	h.waitForRender(t)
+	select {
+	case <-h.component.Warmed():
+		t.Fatal("the graph was reported warm after a render that left no cache")
+	case <-time.After(testutil.NoEventTimeout):
+	}
+
+	h.graphWarm.Store(true)
+	h.bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	h.waitForRender(t)
+	select {
+	case <-h.component.Warmed():
+	case <-time.After(testutil.EventTimeout):
+		t.Fatal("the graph was not reported warm after a render left a cache")
+	}
 }

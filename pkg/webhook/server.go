@@ -72,7 +72,7 @@ type Server struct {
 	boundAddr      string
 	httpServer     *http.Server
 	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
-	generation     *validatorGeneration
+	generation     *ValidatorGeneration
 	closed         bool
 
 	// listening is closed once the TLS listener has been bound to the
@@ -84,7 +84,9 @@ type Server struct {
 	listening chan struct{}
 }
 
-type validatorGeneration struct {
+// ValidatorGeneration is one installed validator table; the installer keeps
+// it to retire only its own.
+type ValidatorGeneration struct {
 	validators        map[string]ValidationFunc
 	onUnregisteredGVK func(gvk string)
 	onRetired         func()
@@ -96,15 +98,15 @@ func newValidatorGeneration(
 	validators map[string]ValidationFunc,
 	onUnregisteredGVK func(gvk string),
 	onRetired func(),
-) *validatorGeneration {
-	return &validatorGeneration{
+) *ValidatorGeneration {
+	return &ValidatorGeneration{
 		validators:        validators,
 		onUnregisteredGVK: onUnregisteredGVK,
 		onRetired:         onRetired,
 	}
 }
 
-func (g *validatorGeneration) retire() {
+func (g *ValidatorGeneration) retire() {
 	if g == nil {
 		return
 	}
@@ -244,6 +246,18 @@ func (s *Server) ReplaceValidatorGeneration(
 	onUnregisteredGVK func(gvk string),
 	onRetired func(),
 ) error {
+	_, err := s.InstallValidatorGeneration(validators, onUnregisteredGVK, onRetired)
+	return err
+}
+
+// InstallValidatorGeneration is ReplaceValidatorGeneration returning the
+// installed generation, which the installer hands to
+// RetireValidatorGenerationIfCurrent when it stops.
+func (s *Server) InstallValidatorGeneration(
+	validators map[string]ValidationFunc,
+	onUnregisteredGVK func(gvk string),
+	onRetired func(),
+) (*ValidatorGeneration, error) {
 	replacement := make(map[string]ValidationFunc, len(validators))
 	maps.Copy(replacement, validators)
 	next := newValidatorGeneration(replacement, onUnregisteredGVK, onRetired)
@@ -251,7 +265,7 @@ func (s *Server) ReplaceValidatorGeneration(
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return errors.New("webhook server is closed")
+		return nil, errors.New("webhook server is closed")
 	}
 	previous := s.generation
 	s.generation = next
@@ -260,6 +274,29 @@ func (s *Server) ReplaceValidatorGeneration(
 	s.mu.Unlock()
 
 	previous.retire()
+	return next, nil
+}
+
+// RetireValidatorGenerationIfCurrent empties the table only while generation
+// is still the installed one. An iteration that stops after its successor
+// installed the next generation must leave that one serving.
+func (s *Server) RetireValidatorGenerationIfCurrent(generation *ValidatorGeneration) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("webhook server is closed")
+	}
+	if s.generation != generation {
+		s.mu.Unlock()
+		return nil
+	}
+	empty := newValidatorGeneration(make(map[string]ValidationFunc), nil, nil)
+	s.generation = empty
+	s.validators = empty.validators
+	s.onUnregisteredGVK = nil
+	s.mu.Unlock()
+
+	generation.retire()
 	return nil
 }
 

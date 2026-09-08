@@ -128,6 +128,21 @@ type leaderCallbackState struct {
 	mu         sync.Mutex
 	components *leaderOnlyComponents
 	stopped    bool
+	retiring   bool
+}
+
+// retire marks the coming loss of the Lease as the planned hand-over to the
+// successor iteration, so it is not reported as a lost election.
+func (s *leaderCallbackState) retire() {
+	s.mu.Lock()
+	s.retiring = true
+	s.mu.Unlock()
+}
+
+func (s *leaderCallbackState) isRetiring() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retiring
 }
 
 func (s *leaderCallbackState) take() *leaderOnlyComponents {
@@ -182,7 +197,11 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 			}
 		},
 		OnStoppedLeading: func() {
-			deps.logger.Warn("Lost leadership, stopping deployment components")
+			if state.isRetiring() {
+				deps.logger.Info("Leadership term ended for the successor iteration, stopping deployment components")
+			} else {
+				deps.logger.Warn("Lost leadership, stopping deployment components")
+			}
 			state.stop(deps.logger)
 		},
 		OnNewLeader: func(identity string) {
@@ -194,6 +213,36 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 	}
 
 	return callbacks, state
+}
+
+// electionRun is one iteration's election loop.
+type electionRun struct {
+	elector *leaderelectionctrl.Component
+	cancel  context.CancelFunc
+	done    chan struct{}
+}
+
+// retireLeadership ends this iteration's leadership for a successor on the
+// same replica: the leader-only components stop, the election loop stops
+// with the Lease kept, and no term starts here again. The successor's
+// election then resumes the Lease on its first acquire.
+func retireLeadership(setup *componentSetup, logger *slog.Logger) {
+	if setup.LeaderState != nil {
+		setup.LeaderState.retire()
+	}
+	if setup.Election != nil {
+		setup.Election.elector.KeepLeaseOnStop()
+		setup.Election.cancel()
+		<-setup.Election.done
+	}
+	if setup.LeaderState != nil {
+		// The loop's end stopped the components through OnStoppedLeading;
+		// with election disabled nothing else does, so stop them here, then
+		// latch so no term starts again.
+		setup.LeaderState.stop(logger)
+		setup.LeaderState.cancel()
+	}
+	logger.Info("Leadership retired for the successor iteration")
 }
 
 // reacquireDelay paces re-entry into leader election after a lost lease.
@@ -327,10 +376,14 @@ func setupLeaderElection(
 			return nil, fmt.Errorf("creating leader elector: %w", err)
 		}
 
-		// Start leader election loop in errgroup for graceful shutdown
-		// This ensures the elector can release the lease on context cancellation
+		// The loop runs on its own child context so a hand-over can end this
+		// term without cancelling the iteration; the errgroup still owns it.
+		electionCtx, cancelElection := context.WithCancel(setup.IterCtx)
+		run := &electionRun{elector: elector, cancel: cancelElection, done: make(chan struct{})}
+		setup.Election = run
 		setup.ErrGroup.Go(func() error {
-			return superviseElection(setup.IterCtx, elector.Start, setup.ElectionRestart, logger)
+			defer close(run.done)
+			return superviseElection(electionCtx, elector.Start, setup.ElectionRestart, logger)
 		})
 
 		logger.Info("Leader election initialized", "identity", podName, "lease_name", leConfig.LeaseName, "lease_namespace", leConfig.LeaseNamespace)

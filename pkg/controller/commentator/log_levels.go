@@ -23,9 +23,14 @@ func (ec *EventCommentator) determineLogLevel(event busevents.Event) slog.Level 
 		events.EventTypeStatusUpdateFailed:
 		return slog.LevelError
 
-	// Warn level - recoverable states and leadership loss
-	case events.EventTypeLostLeadership,
-		events.EventTypeHAProxyPodRejected:
+	// Warn level - recoverable states and leadership loss; a hand-over to
+	// the successor iteration is planned and stays at Info
+	case events.EventTypeLostLeadership:
+		if lost, ok := event.(*events.LostLeadershipEvent); ok && lost.Reason == events.LeadershipLostReasonHandover {
+			return slog.LevelInfo
+		}
+		return slog.LevelWarn
+	case events.EventTypeHAProxyPodRejected:
 		return slog.LevelWarn
 
 	// Info level - lifecycle and completion events

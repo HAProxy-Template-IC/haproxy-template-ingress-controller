@@ -1317,3 +1317,19 @@ func assertIncrementalSourceTransactionObservablesEqual(t *testing.T, want, got 
 	assert.Equal(t, requireRenderedResources(t, want), requireRenderedResources(t, got))
 	assert.Equal(t, want.AuxFileCount, got.AuxFileCount)
 }
+
+// The hand-over to a successor iteration waits for this: a fresh service has
+// no graph, a committed render with its cache built has one, and a service
+// without incremental snippets has nothing to warm.
+func TestIncrementalGraphWarmFollowsTheCommittedCache(t *testing.T) {
+	cfg := incrementalSourceTransactionSharedConfig()
+	provider := incrementalSourceTransactionTestProvider(t)
+	service, _ := newIncrementalSourceTransactionTestService(t, cfg, true)
+	assert.False(t, service.IncrementalGraphWarm(), "a fresh service holds no graph")
+
+	renderIncrementalSourceTransactionTestResult(t, service, provider)
+	assert.True(t, service.IncrementalGraphWarm(), "a committed render with its cache built leaves a graph")
+
+	plain := NewRenderService(&RenderServiceConfig{Config: &config.Config{}, Logger: slog.Default()})
+	assert.True(t, plain.IncrementalGraphWarm(), "no incremental snippets means nothing to warm")
+}

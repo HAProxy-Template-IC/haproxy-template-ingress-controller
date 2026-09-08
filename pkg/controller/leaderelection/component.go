@@ -107,9 +107,11 @@ func (c *Component) wrapCallbacks(identity string, callbacks k8sleaderelection.C
 			c.eventBus.StartContext(ctx)
 		},
 		OnStoppedLeading: func() {
-			// Publish event BEFORE executing callback
-			// Note: We don't have the reason at this point, so we use a generic message
-			c.eventBus.Publish(events.NewLostLeadershipEvent(identity, "lease_lost"))
+			reason := events.LeadershipLostReasonLeaseLost
+			if c.elector.LeaseKept() {
+				reason = events.LeadershipLostReasonHandover
+			}
+			c.eventBus.Publish(events.NewLostLeadershipEvent(identity, reason))
 
 			// Execute user callback
 			if callbacks.OnStoppedLeading != nil {
@@ -163,6 +165,13 @@ func (c *Component) claimEpoch(ctx context.Context) error {
 		delay *= 2
 	}
 	return err
+}
+
+// KeepLeaseOnStop makes the loop's stop leave the Lease held, for a successor
+// iteration on this replica to resume without any other replica seeing a
+// vacancy.
+func (c *Component) KeepLeaseOnStop() {
+	c.elector.KeepLeaseOnStop()
 }
 
 // Start starts the leader election loop.

@@ -62,7 +62,7 @@ wrappedCallbacks := k8sleaderelection.Callbacks{
         // No pause/resume on the way down: leader-only components are torn
         // down by their context cancellation, not by an event subscription.
         c.eventBus.Publish(events.NewLostLeadershipEvent(
-            config.Identity, "lease_lost", // generic reason; specifics live elsewhere
+            config.Identity, reason, // "handover" after KeepLeaseOnStop, else "lease_lost"
         ))
         if callbacks.OnStoppedLeading != nil {
             callbacks.OnStoppedLeading()

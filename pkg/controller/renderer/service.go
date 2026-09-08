@@ -505,6 +505,18 @@ func (s *RenderService) withRenderTimeout(ctx context.Context) (context.Context,
 	return ctx, func() {}
 }
 
+// IncrementalGraphWarm reports whether the next reconcile render builds on a
+// committed graph: one has been published and no cache build is pending. A
+// service without incremental snippets has nothing to warm and reports true.
+func (s *RenderService) IncrementalGraphWarm() bool {
+	if s.incremental == nil {
+		return true
+	}
+	s.incremental.mu.Lock()
+	defer s.incremental.mu.Unlock()
+	return s.incremental.graph != nil && s.incremental.graph.Generation() != 0 && !s.incremental.cachePending
+}
+
 // incrementalCacheFigures reports whether this render built on a graph and what
 // the last completed cache build cost. A fleet steadily reporting "cold" pays
 // full render cost on every reconcile.

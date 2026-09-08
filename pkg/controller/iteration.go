@@ -96,22 +96,77 @@ func waitAndLoadInitialConfig(
 	)
 }
 
-// runIteration runs a single controller iteration.
+// liveIteration is a started iteration: serving, or retired and waiting for
+// teardown.
+type liveIteration struct {
+	setup     *componentSetup
+	authority *iterationReloadAuthority
+	logger    *slog.Logger
+	retired   bool
+}
+
+// awaitReload blocks until the iteration records a reload or ends. A reload
+// leaves the iteration serving: the caller starts the successor against it
+// and tears this one down afterwards.
+func (it *liveIteration) awaitReload() (*configchange.ReloadRequest, error) {
+	select {
+	case <-it.authority.Ready():
+		reload := it.authority.Latest()
+		it.logger.Info("Configuration change detected, preparing the successor iteration",
+			"new_config_version", reload.Snapshot.ConfigVersion)
+		return reload, nil
+	case <-it.setup.IterCtx.Done():
+		return waitForIterationExit(it.setup, it.authority, it.logger)
+	}
+}
+
+// startupInterruptedError reports a startup that a reload cut short; the
+// sequence restarts at once from that reload instead of the retry delay.
+type startupInterruptedError struct {
+	reload *configchange.ReloadRequest
+}
+
+func (e *startupInterruptedError) Error() string {
+	return "iteration startup interrupted by a configuration change to " + e.reload.Snapshot.ConfigVersion
+}
+
+// retireLeadership ends this iteration's term for its successor on the same
+// replica; the iteration's watchers and bus keep running until teardown.
+func (it *liveIteration) retireLeadership() {
+	if it.retired {
+		return
+	}
+	it.retired = true
+	retireLeadership(it.setup, it.logger)
+}
+
+// teardown stops everything the iteration still runs.
+func (it *liveIteration) teardown() error {
+	return completeIteration(it.setup, nil, it.logger)
+}
+
+// handoverWarmupWait bounds how long a successor waits for its warmer's first
+// render before taking leadership with a cold graph.
+const handoverWarmupWait = 30 * time.Second
+
+// startIteration starts a controller iteration and returns once it serves.
 //
-// This function orchestrates the initialization sequence:
+// The sequence:
 //  1. Fetches and validates the initial HAProxyTemplateConfig CRD and credentials Secret
 //  2. Creates and starts all event-driven components
 //  3. Creates and starts resource watchers, waits for sync
 //  4. Creates and starts SingleWatchers for the CRD and credentials Secret, waits for sync
 //  5. Starts the EventBus (releases buffered events)
 //  6. Starts reconciliation components (Stage 5)
-//  7. Starts debug infrastructure (StateCache, EventBuffer, debug server if enabled)
-//  8. Waits for config change signal or context cancellation
+//  7. Retires the previous iteration's leadership, once this one's graph is warm
+//  8. Enters leader election and installs the webhook validators
+//  9. Starts debug infrastructure (StateCache, EventBuffer, debug server if enabled)
 //
-// Returns:
-//   - Error if initialization fails (causes retry)
-//   - nil if context is cancelled or config change occurs (normal exit)
-func runIteration(
+// previous is the iteration still serving the old configuration; its
+// leadership is handed over right before this one enters election, so the
+// fleet sees a warm leader the whole time. On error the started parts are torn
+// down and previous keeps whatever it still has.
+func startIteration(
 	ctx context.Context,
 	k8sClient *client.Client,
 	crdName string,
@@ -122,9 +177,9 @@ func runIteration(
 	webhookPort int,
 	infra *persistentInfra,
 	startup *configchange.ReloadRequest,
-	result *iterationResult,
+	previous *liveIteration,
 	logger *slog.Logger,
-) (iterationErr error) {
+) (live *liveIteration, iterationErr error) {
 	logger.Info("Starting controller iteration")
 
 	// Reinit-grace accounting (a voluntary restart must not flip /healthz
@@ -138,10 +193,12 @@ func runIteration(
 	// gate below, so it's hoisted to a local rather than constructed inline.
 	typeBootstrapper := newIterationTypeBootstrapper(k8sClient, logger)
 	setup := setupComponents(ctx, infra.IntrospectionRegistry, infra.eventDropMetrics, typeBootstrapper, crdName, logger)
-	reloadAuthority := &iterationReloadAuthority{}
+	reloadAuthority := newIterationReloadAuthority()
 	startIterationReloadObserver(setup, reloadAuthority)
 	defer func() {
-		iterationErr = completeIterationWithReload(setup, reloadAuthority, result, iterationErr, logger)
+		if iterationErr != nil {
+			iterationErr = completeFailedStartup(setup, reloadAuthority, iterationErr, logger)
+		}
 	}()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)
@@ -156,20 +213,20 @@ func runIteration(
 	// The introspection server persists across iterations to avoid port rebinding issues
 	// We pass the main ctx (not setup.IterCtx) so the server stays alive across iterations
 	if err := startEarlyInfrastructureServers(ctx, debugPort, infra, setup, state, eventBuffer, logger); err != nil {
-		return err
+		return nil, err
 	}
 
 	active, bundle, err := loadAcceptedIterationConfig(
 		setup, state, startup, k8sClient, crdName, secretName, typeBootstrapper, infra, logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cfg, crd, creds := active.Config, bundle.CRD, bundle.Credentials
 
 	// 3. Setup resource watchers
 	resourceWatcher, err := setupResourceWatchers(setup, cfg, k8sClient, logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Build the store provider (used for webhook dry-run validation) from the
@@ -181,19 +238,19 @@ func runIteration(
 		setup, k8sClient, crdName, secretName,
 		crdGVR, libraryGVR, secretGVR, logger,
 	); err != nil {
-		return err
+		return nil, err
 	}
 
 	// 5. Initialize debug state and the leader-term `currentFiles` authority.
 	stateCache, currentFiles, err := initRenderState(setup, resourceWatcher, k8sClient, crdName, logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// 5.5. Construct the validator used by every render pipeline.
 	pluggableMgr, pluggableMgrCleanup, err := buildAndRegisterPluggableValidatorManager(setup, cfg, logger)
 	if err != nil {
-		return fmt.Errorf("creating pluggable validators: %w", err)
+		return nil, fmt.Errorf("creating pluggable validators: %w", err)
 	}
 
 	// 6. Create reconciliation components (Stage 5)
@@ -201,7 +258,7 @@ func runIteration(
 	logger.Info("Stage 5: Creating reconciliation components")
 	wiring, err := setupReconciliation(setup, cfg, crd, bundle.Sources, creds, k8sClient, resourceWatcher, currentFiles, storeProvider, pluggableMgr, logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// 6.1. EventBuffer was already created early (step 0.25) for /debug/events handler
@@ -218,7 +275,7 @@ func runIteration(
 	// The DryRunValidator is nil when no watched-resource rules exist.
 	dryrunValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, logger)
 	if err != nil && !errors.Is(err, errNoWebhookRules) {
-		return fmt.Errorf("creating webhook validators: %w", err)
+		return nil, fmt.Errorf("creating webhook validators: %w", err)
 	}
 
 	// 6.5. Start the EventBus (releases buffered events and begins normal operation)
@@ -226,11 +283,12 @@ func runIteration(
 	// the bus without race conditions or timing-based sleeps
 	logger.Info("Starting EventBus (all components subscribed)")
 	if err := startEventBus(setup); err != nil {
-		return err
+		return nil, err
 	}
 
+	takeOverLeadership(setup.IterCtx, previous, wiring.warmed, logger)
 	if err := setupLeadershipAndWebhook(ctx, setup, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, pluggableMgrCleanup, logger); err != nil {
-		return err
+		return nil, err
 	}
 
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
@@ -247,22 +305,51 @@ func runIteration(
 	// signal — see configState.SetInitialized's docstring and the
 	// "initialized" entry in the full health checker installed by
 	// setupInfrastructureServers.
-	if err := finishIterationStartup(setup, state, infra, logger); err != nil {
-		return err
+	if err := finishIterationStartup(setup, state, infra, reloadAuthority, logger); err != nil {
+		return nil, err
 	}
-	result.Reload, err = waitForIterationExit(setup, reloadAuthority, logger)
+	return &liveIteration{setup: setup, authority: reloadAuthority, logger: logger}, nil
+}
+
+// completeFailedStartup tears a failed startup down. A startup that a reload
+// cut short reports that reload so the sequence restarts from it at once.
+func completeFailedStartup(setup *componentSetup, authority *iterationReloadAuthority, startupErr error, logger *slog.Logger) error {
+	reload := authority.Latest()
+	interrupted := reload != nil && isContextTermination(setup.IterCtx, startupErr)
+	if interrupted {
+		startupErr = nil
+	}
+	err := completeIteration(setup, startupErr, logger)
+	if interrupted && err == nil {
+		return &startupInterruptedError{reload: reload}
+	}
 	return err
 }
 
-type iterationResult struct {
-	Reload *configchange.ReloadRequest
+// takeOverLeadership retires the predecessor's term once this iteration's
+// graph is warm, right before this one enters election. The wait is bounded
+// so a slow or failing warm-up cannot hold the hand-over indefinitely.
+func takeOverLeadership(ctx context.Context, previous *liveIteration, warmed <-chan struct{}, logger *slog.Logger) {
+	if previous == nil {
+		return
+	}
+	awaitWarmGraph(ctx, warmed, logger)
+	previous.retireLeadership()
 }
 
-func nextIterationStartup(result *iterationResult) *configchange.ReloadRequest {
-	if result == nil {
-		return nil
+func awaitWarmGraph(ctx context.Context, warmed <-chan struct{}, logger *slog.Logger) {
+	if warmed == nil {
+		return
 	}
-	return result.Reload
+	timer := time.NewTimer(handoverWarmupWait)
+	defer timer.Stop()
+	select {
+	case <-warmed:
+	case <-timer.C:
+		logger.Warn("Taking leadership with a cold graph: the warm-up did not finish in time",
+			"waited", handoverWarmupWait)
+	case <-ctx.Done():
+	}
 }
 
 func loadAcceptedIterationConfig(
@@ -370,11 +457,15 @@ func finishIterationStartup(
 	setup *componentSetup,
 	state *configState,
 	infra *persistentInfra,
+	authority *iterationReloadAuthority,
 	logger *slog.Logger,
 ) error {
 	if err := iterationContextError(setup.IterCtx); err != nil {
 		return err
 	}
+	// Serving before EnableReinitialization opens reload delivery: a reload
+	// landing in between must start the successor, not cancel this iteration.
+	authority.MarkServing()
 	markIterationInitialized(setup, state, infra, logger)
 	return nil
 }
@@ -447,22 +538,6 @@ func completeIteration(setup *componentSetup, iterationErr error, logger *slog.L
 		result = errors.Join(result, cause)
 	}
 	return result
-}
-
-func completeIterationWithReload(
-	setup *componentSetup,
-	authority *iterationReloadAuthority,
-	result *iterationResult,
-	iterationErr error,
-	logger *slog.Logger,
-) error {
-	if reload := authority.Latest(); reload != nil {
-		result.Reload = reload
-		if iterationErr == nil || isContextTermination(setup.IterCtx, iterationErr) {
-			iterationErr = nil
-		}
-	}
-	return completeIteration(setup, iterationErr, logger)
 }
 
 // maybeSetupWebhook sets up the webhook server when the chart has mounted a

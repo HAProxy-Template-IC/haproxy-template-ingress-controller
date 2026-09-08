@@ -472,7 +472,7 @@ The controller uses an eight-stage startup sequence coordinated via events (Stag
 
 ```go
 // pkg/controller/iteration.go (sketch — see source for the real thing)
-func runIteration(ctx context.Context, k8sClient *client.Client, ...) error {
+func startIteration(ctx context.Context, k8sClient *client.Client, ..., previous *liveIteration, ...) (*liveIteration, error) {
     bus := busevents.NewEventBus(busBufferSize)
 
     // Stage 1: Config management — every component subscribes to its events
@@ -529,8 +529,10 @@ func runIteration(ctx context.Context, k8sClient *client.Client, ...) error {
     // subscribe inside their Start methods after BecameLeaderEvent).
     setupLeaderElection(...)
 
-    <-iterCtx.Done()  // until config change cancels the iteration or shutdown signal
-    return nil
+    // Serve until a config change is recorded; the iteration keeps running
+    // while its successor starts and takes leadership over (iterationSequence
+    // in controller.go), then it is torn down.
+    return &liveIteration{...}, nil
 }
 ```
 

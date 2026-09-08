@@ -71,25 +71,6 @@ func TestLoadIterationBundleUsesValidatedSnapshotWithoutLiveRefetch(t *testing.T
 	assert.Same(t, request.Snapshot.Resolution, resolution)
 }
 
-func TestNextIterationStartupDoesNotReuseConsumedHandoff(t *testing.T) {
-	consumed := &configchange.ReloadRequest{Snapshot: &configchange.ValidatedSnapshot{
-		ConfigVersion: "validated-b",
-	}}
-	startup := consumed
-	assert.Same(t, consumed, startup)
-
-	startup = nextIterationStartup(&iterationResult{})
-
-	assert.Nil(t, startup,
-		"an attempt that accepts no new reload must fetch and validate live state on retry")
-
-	accepted := &configchange.ReloadRequest{Snapshot: &configchange.ValidatedSnapshot{
-		ConfigVersion: "validated-c",
-	}}
-	startup = nextIterationStartup(&iterationResult{Reload: accepted})
-	assert.Same(t, accepted, startup)
-}
-
 func TestBuildAndRegisterPluggableValidatorManagerRejectsMalformedGlob(t *testing.T) {
 	setup := &componentSetup{}
 	cfg := &coreconfig.Config{
@@ -115,9 +96,11 @@ func TestFinishIterationStartupRejectsCanceledIteration(t *testing.T) {
 	infra := &persistentInfra{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	err := finishIterationStartup(&componentSetup{IterCtx: iterCtx}, state, infra, logger)
+	authority := newIterationReloadAuthority()
+	err := finishIterationStartup(&componentSetup{IterCtx: iterCtx}, state, infra, authority, logger)
 	require.ErrorIs(t, err, failure)
 	assert.False(t, state.IsInitialized())
+	assert.False(t, authority.Serving())
 	infra.graceMu.Lock()
 	assert.False(t, infra.iterationInitialized)
 	infra.graceMu.Unlock()
@@ -130,7 +113,7 @@ func TestWaitForIterationExitReturnsCancellationCause(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	_, err := waitForIterationExit(
-		&componentSetup{IterCtx: iterCtx}, &iterationReloadAuthority{}, logger)
+		&componentSetup{IterCtx: iterCtx}, newIterationReloadAuthority(), logger)
 	require.ErrorIs(t, err, failure)
 }
 
@@ -143,7 +126,7 @@ func TestCRDDisappearanceReloadInterruptsStartupWatcherSync(t *testing.T) {
 		ConfigChangeCh: make(chan *configchange.ReloadRequest, 1),
 		ErrGroup:       group,
 	}
-	authority := &iterationReloadAuthority{}
+	authority := newIterationReloadAuthority()
 	startIterationReloadObserver(setup, authority)
 
 	startupExited := make(chan struct{})
@@ -212,4 +195,131 @@ func TestCompleteIterationPreservesCancellationCause(t *testing.T) {
 			assert.Equal(t, test.wantTyped, errors.As(err, &typed))
 		})
 	}
+}
+
+func newTestLiveIteration(t *testing.T) *liveIteration {
+	t.Helper()
+	parent, cancelCause := context.WithCancelCause(t.Context())
+	group, iterCtx := errgroup.WithContext(parent)
+	setup := &componentSetup{
+		IterCtx:  iterCtx,
+		Cancel:   func() { cancelCause(nil) },
+		ErrGroup: group,
+	}
+	authority := newIterationReloadAuthority()
+	authority.MarkServing()
+	return &liveIteration{
+		setup:     setup,
+		authority: authority,
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+func testReload(version string) *configchange.ReloadRequest {
+	return &configchange.ReloadRequest{Snapshot: &configchange.ValidatedSnapshot{ConfigVersion: version}}
+}
+
+// The serving iteration keeps serving until its successor is up; a successor
+// that fails to start leaves it in place, and one that started replaces it.
+func TestIterationSequenceStepHandsOverOnlyToAStartedSuccessor(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	first := newTestLiveIteration(t)
+	seq := &iterationSequence{logger: logger, current: first, startup: testReload("b")}
+
+	startFailure := errors.New("startup failed")
+	err := seq.step(func(startup *configchange.ReloadRequest, previous *liveIteration) (*liveIteration, error) {
+		assert.Same(t, previous, first)
+		assert.Equal(t, "b", startup.Snapshot.ConfigVersion)
+		return nil, startFailure
+	})
+	require.ErrorIs(t, err, startFailure)
+	assert.Same(t, first, seq.current, "a failed start must leave the serving iteration in place")
+	require.NoError(t, first.setup.IterCtx.Err(), "the serving iteration must not be torn down")
+	assert.Nil(t, seq.startup, "the retry must load live state, not the consumed hand-off")
+
+	second := newTestLiveIteration(t)
+	second.authority.Record(testReload("c"))
+	err = seq.step(func(startup *configchange.ReloadRequest, previous *liveIteration) (*liveIteration, error) {
+		assert.Nil(t, startup)
+		assert.Same(t, previous, first)
+		return second, nil
+	})
+	require.NoError(t, err)
+	require.Error(t, first.setup.IterCtx.Err(), "the predecessor is torn down once the successor serves")
+	assert.Same(t, second, seq.current)
+	require.NoError(t, second.setup.IterCtx.Err(), "a reload leaves the iteration serving for the next hand-over")
+	assert.Equal(t, "c", seq.startup.Snapshot.ConfigVersion)
+}
+
+// A successor whose start fails after it already took leadership over cannot
+// leave the predecessor serving: neither leads, so both go and the retry
+// starts cold.
+func TestIterationSequenceStepTearsDownARetiredPredecessorOnFailure(t *testing.T) {
+	first := newTestLiveIteration(t)
+	first.retired = true
+	seq := &iterationSequence{logger: first.logger, current: first}
+
+	startFailure := errors.New("startup failed")
+	err := seq.step(func(*configchange.ReloadRequest, *liveIteration) (*liveIteration, error) {
+		return nil, startFailure
+	})
+	require.ErrorIs(t, err, startFailure)
+	assert.Nil(t, seq.current)
+	require.Error(t, first.setup.IterCtx.Err())
+}
+
+// A reload that interrupts a startup restarts at once from that reload, with
+// the predecessor still serving.
+func TestIterationSequenceStepRestartsFromAnInterruptingReload(t *testing.T) {
+	first := newTestLiveIteration(t)
+	seq := &iterationSequence{logger: first.logger, current: first}
+
+	err := seq.step(func(*configchange.ReloadRequest, *liveIteration) (*liveIteration, error) {
+		return nil, &startupInterruptedError{reload: testReload("d")}
+	})
+	require.NoError(t, err)
+	assert.Same(t, first, seq.current)
+	require.NoError(t, first.setup.IterCtx.Err())
+	assert.Equal(t, "d", seq.startup.Snapshot.ConfigVersion)
+}
+
+// An iteration that ends without a reload is torn down and its cause surfaces.
+func TestIterationSequenceStepReportsAnIterationThatEnds(t *testing.T) {
+	next := newTestLiveIteration(t)
+	seq := &iterationSequence{logger: next.logger}
+	failure := errors.New("required component failed")
+	next.setup.ErrGroup.Go(func() error { return failure })
+
+	err := seq.step(func(*configchange.ReloadRequest, *liveIteration) (*liveIteration, error) {
+		return next, nil
+	})
+	require.ErrorIs(t, err, failure)
+	assert.Nil(t, seq.current)
+}
+
+// Once the iteration serves, a reload is recorded for the hand-over and the
+// iteration keeps running; only a reload during startup cancels it.
+func TestReloadObserverKeepsAServingIterationRunning(t *testing.T) {
+	parent, cancelCause := context.WithCancelCause(t.Context())
+	group, iterCtx := errgroup.WithContext(parent)
+	setup := &componentSetup{
+		IterCtx:        iterCtx,
+		Cancel:         func() { cancelCause(nil) },
+		ConfigChangeCh: make(chan *configchange.ReloadRequest, 1),
+		ErrGroup:       group,
+	}
+	authority := newIterationReloadAuthority()
+	authority.MarkServing()
+	startIterationReloadObserver(setup, authority)
+
+	setup.ConfigChangeCh <- testReload("f")
+	select {
+	case <-authority.Ready():
+	case <-time.After(time.Second):
+		t.Fatal("the reload was not recorded")
+	}
+	assert.Equal(t, "f", authority.Latest().Snapshot.ConfigVersion)
+	require.NoError(t, setup.IterCtx.Err(), "a serving iteration must not be cancelled by a reload")
+	cancelCause(nil)
+	require.NoError(t, group.Wait())
 }

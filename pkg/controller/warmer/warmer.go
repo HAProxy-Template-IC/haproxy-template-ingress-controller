@@ -25,6 +25,7 @@ package warmer
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -57,8 +58,12 @@ type Config struct {
 	// CurrentFiles returns the auxiliary files the fleet runs, the same set a
 	// new leader's first render reads.
 	CurrentFiles func() (map[string]string, error)
-	Metrics      *metrics.Metrics
-	Logger       *slog.Logger
+	// GraphWarm reports whether the render service holds a committed graph;
+	// Warmed closes after the first render that leaves one. Nil means every
+	// completed render counts.
+	GraphWarm func() bool
+	Metrics   *metrics.Metrics
+	Logger    *slog.Logger
 }
 
 // Component renders on a follower and publishes nothing.
@@ -74,8 +79,19 @@ type Component struct {
 	pipeline      PipelineExecutor
 	storeProvider stores.StoreProvider
 	currentFiles  func() (map[string]string, error)
+	graphWarm     func() bool
 	metrics       *metrics.Metrics
 	leader        bool
+	warmed        chan struct{}
+	warmedOnce    sync.Once
+}
+
+// Warmed is closed once a render left a committed graph behind, which is when
+// a hand-over to this iteration finds a warm graph. A render whose cache the
+// next input change discarded does not count; that change's own trigger
+// renders again.
+func (c *Component) Warmed() <-chan struct{} {
+	return c.warmed
 }
 
 // New subscribes the component; call before the bus starts.
@@ -84,7 +100,9 @@ func New(cfg *Config) *Component {
 		pipeline:      cfg.Pipeline,
 		storeProvider: cfg.StoreProvider,
 		currentFiles:  cfg.CurrentFiles,
+		graphWarm:     cfg.GraphWarm,
 		metrics:       cfg.Metrics,
+		warmed:        make(chan struct{}),
 	}
 	c.Base = component.New(&component.Config{
 		EventBus:   cfg.EventBus,
@@ -106,6 +124,10 @@ func New(cfg *Config) *Component {
 func (c *Component) CoalescesOn() []string {
 	return []string{events.EventTypeReconciliationTriggered}
 }
+
+// CoalescesAcrossQueue keeps one trigger queued whatever sits between them: a
+// leadership event does not make an older trigger worth a render of its own.
+func (c *Component) CoalescesAcrossQueue() bool { return true }
 
 // HandleEvent implements component.EventHandler.
 func (c *Component) HandleEvent(event busevents.Event) {
@@ -141,6 +163,9 @@ func (c *Component) render() {
 	}
 	if c.metrics != nil {
 		c.metrics.RecordRender(result.CacheState)
+	}
+	if c.graphWarm == nil || c.graphWarm() {
+		c.warmedOnce.Do(func() { close(c.warmed) })
 	}
 	c.Logger().Debug("Follower render completed",
 		"render_ms", result.RenderDurationMs,
