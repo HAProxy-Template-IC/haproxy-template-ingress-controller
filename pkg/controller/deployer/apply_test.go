@@ -741,6 +741,7 @@ func TestApply_UnchangedRenderDoesNotRepeatThePlanBlob(t *testing.T) {
 	require.Len(t, applies, 2)
 	assert.NotEmpty(t, applies[0].Plan)
 	assert.Empty(t, applies[1].Plan, "the pod already reports the blob for this plan")
+	assert.Zero(t, agent.PlanReads(), "a controller that holds the plan reads the state without the blob")
 }
 
 // One deployment that needs several fenced applies stores one blob: every chunk

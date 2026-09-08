@@ -146,14 +146,11 @@ func (c *Client) Close() {
 
 // State reads the agent's baseline. verify makes the agent re-hash its tree
 // so the reported digests are observations rather than its last-known set.
-func (c *Client) State(ctx context.Context, verify bool) (*api.State, error) {
+func (c *Client) State(ctx context.Context, read api.StateRead) (*api.State, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	target := c.baseURL + api.PathState
-	if verify {
-		target += "?verify=1"
-	}
+	target := c.baseURL + api.PathState + read.Query()
 	build := func(ctx context.Context) (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 		if err != nil {

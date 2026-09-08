@@ -17,6 +17,7 @@ package deployer
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,8 +39,11 @@ type deployRequest struct {
 	occurrenceProof string
 	checksum        string
 	contents        map[string]string // file content by manifest path
-	blob            []byte            // the plan, zstd-compressed, as the agent stores it
+	blob            *planBlob         // the plan, zstd-compressed, as the agent stores it
 	token           api.Token
+	// baselineIsPlan memoizes, per pod baseline, whether it already is this
+	// plan: the answer is the same for every pod on that baseline.
+	baselineIsPlan sync.Map
 	// validatedPlanFor answers, per pod, which passed plan its manifest should
 	// name — the pod's own applied plan when that one passed.
 	validatedPlanFor func(authority string, state *api.State) planReference
@@ -229,14 +233,6 @@ func (c *Component) newDeployRequest(
 	if !sameOccurrence(occurrence, identity.occurrence) {
 		return nil
 	}
-	blob, err := planblob.EncodeSnapshot(identity.planSnapshot)
-	if err != nil {
-		// Without the blob a pod that outlives this controller reports a
-		// baseline nobody can decode, which costs it one reload — never
-		// correctness, so the deployment goes ahead.
-		c.Logger().Error("Encoding the plan blob failed; pods will not retain this baseline",
-			"plan", identity.plan.ID, "error", err)
-	}
 	return &deployRequest{
 		occurrence:       occurrence,
 		identity:         identity,
@@ -245,12 +241,61 @@ func (c *Component) newDeployRequest(
 		occurrenceProof:  identity.proof,
 		checksum:         identity.checksum,
 		contents:         contentsByPath(identity.plan),
-		blob:             blob,
+		blob:             encodePlanBlob(identity, c.Logger()),
 		token:            api.Token{LeaderEpoch: c.leaderEpoch(), RenderSeq: c.nextRenderSeq()},
 		validatedPlanFor: c.validatedPlanFor,
 		verify:           verify,
 		diffs:            newDiffMemo(),
 	}
+}
+
+// planBlob is the plan's blob, encoded while the pods' state is read and
+// diffed: at 2,600 routes the encode is 17 ms of the deploy, and nothing before
+// the apply itself needs it.
+type planBlob struct {
+	done chan struct{}
+	blob []byte
+}
+
+func encodePlanBlob(identity *renderOccurrenceIdentity, logger *slog.Logger) *planBlob {
+	b := &planBlob{done: make(chan struct{})}
+	go func() {
+		defer close(b.done)
+		blob, err := planblob.EncodeSnapshot(identity.planSnapshot)
+		if err != nil {
+			// Without the blob a pod that outlives this controller reports a
+			// baseline nobody can decode, which costs it one reload — never
+			// correctness, so the deployment goes ahead.
+			logger.Error("Encoding the plan blob failed; pods will not retain this baseline",
+				"plan", identity.plan.ID, "error", err)
+			return
+		}
+		b.blob = blob
+	}()
+	return b
+}
+
+// bytes waits for the encode; nil when it failed.
+func (b *planBlob) bytes() []byte {
+	if b == nil {
+		return nil
+	}
+	<-b.done
+	return b.blob
+}
+
+// isPlan reports whether a pod's baseline already is this plan, once per
+// baseline rather than once per pod.
+func (r *deployRequest) isPlan(baseline *renderplan.Plan) bool {
+	if baseline == nil {
+		return false
+	}
+	if known, ok := r.baselineIsPlan.Load(baseline); ok {
+		return known.(bool)
+	}
+	same := exactPlan(baseline, r.plan)
+	r.baselineIsPlan.Store(baseline, same)
+	return same
 }
 
 func contentsByPath(plan *renderplan.Plan) map[string]string {
@@ -294,6 +339,18 @@ type deploymentState struct {
 	stoodDown          bool
 	pendingReloadUntil time.Time
 	running            map[string]runningRender // pod → exact render its worker runs, from its ACK
+	slowest            *events.DeployPhases     // the accepted pod whose apply took longest
+}
+
+// notePhases keeps the split of the slowest accepted pod.
+func (s *deploymentState) notePhases(phases *events.DeployPhases, durationMs int64) {
+	kept := *phases
+	kept.TotalMs = durationMs
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.slowest == nil || durationMs > s.slowest.TotalMs {
+		s.slowest = &kept
+	}
 }
 
 type runningRender struct {

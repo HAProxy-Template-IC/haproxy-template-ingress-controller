@@ -274,7 +274,7 @@ At the default `info` log level, each change produces a single consolidated `Rec
 level=INFO msg=Reconciliation trigger=resource_change instances=2/2 reloads=2 ops=30 render_ms=1 validate_ms=1 deploy_ms=184 total_ms=289 backend_create=2 server_create=20 server_update=8 map_update=6
 ```
 
-It reports the trigger, how many HAProxy instances were updated (`instances`), the reloads and runtime operations applied (with a per-operation breakdown such as `backend_create` / `server_create`), and per-phase timings. For the individual stages — the resource change, template render, validation, and per-instance deploy — raise the controller to the `debug` level (see [Enable debug logging](./troubleshooting.md#enable-debug-logging)).
+It reports the trigger, how many HAProxy instances were updated (`instances`), the reloads and runtime operations applied (with a per-operation breakdown such as `backend_create` / `server_create`), and per-phase timings. The `pod_*` and `agent_*` fields split `deploy_ms` for the slowest instance: reading the agent's state, composing the change, waiting for the plan blob's encoding, the apply round trip and the bytes it uploaded, and how long the agent spent receiving the files, writing them, and running the runtime commands or reload. For the individual stages — the resource change, template render, validation, and per-instance deploy — raise the controller to the `debug` level (see [Enable debug logging](./troubleshooting.md#enable-debug-logging)).
 
 #### Inspect the rendered HAProxy configuration
 

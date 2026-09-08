@@ -248,7 +248,7 @@ func (s *Session) Plan() *renderplan.Plan {
 // State reads the pod's baseline from the agent.
 func (s *Session) State(ctx context.Context) *api.State {
 	s.t.Helper()
-	state, err := s.client.State(ctx, false)
+	state, err := s.client.State(ctx, api.StateRead{})
 	require.NoError(s.t, err, "reading the agent's state")
 	return state
 }
@@ -366,7 +366,7 @@ func (s *Session) awaitScheduled(ctx context.Context, planID string) *api.ApplyR
 	s.t.Helper()
 	deadline := time.Now().Add(scheduledReloadBudget)
 	for time.Now().Before(deadline) {
-		state, err := s.client.State(ctx, false)
+		state, err := s.client.State(ctx, api.StateRead{})
 		if err == nil && state.ReloadPendingAt == "" && state.LastApply != nil &&
 			state.LastApply.PlanID == planID && state.LastApply.Mode != api.ResultScheduled {
 			s.t.Logf("scheduled reload of %s ran: ok=%t mode=%s",

@@ -74,8 +74,19 @@ func (b *builder) pushMapOps(ops mapOps, path string) {
 }
 
 // unorderedMapOps is the per-entry delta for a map whose lookup order does not
-// matter: a runtime append lands wherever HAProxy puts it.
+// matter: a runtime append lands wherever HAProxy puts it. Only the window
+// between the common prefix and suffix is compared: a route change touches a
+// few lines of a map thousands long, and the full compare cost 6 ms per
+// deployment at 2,600 routes.
 func unorderedMapOps(path string, prev, next []renderplan.Entry) mapOps {
+	if prevWindow, nextWindow, ok := trimCommonEntries(prev, next); ok {
+		prev, next = prevWindow, nextWindow
+	}
+	return unorderedEntryOps(path, prev, next)
+}
+
+// unorderedEntryOps is the per-entry delta over exactly the entries given.
+func unorderedEntryOps(path string, prev, next []renderplan.Entry) mapOps {
 	before, after := valuesByKey(prev), valuesByKey(next)
 	ops := mapOps{}
 	for _, key := range keyOrder(next) {
@@ -97,6 +108,49 @@ func unorderedMapOps(path string, prev, next []renderplan.Entry) mapOps {
 		}
 	}
 	return withRemovals(ops, path, prev, after)
+}
+
+// trimCommonEntries drops the entries both files share at the front and the
+// back. The delta over the window equals the delta over the whole files only
+// while no key of the window also appears in the trimmed part: values are a
+// multiset per key across the file, and a del names every value of its key,
+// so such a key needs the full compare and the trim is refused.
+func trimCommonEntries(prev, next []renderplan.Entry) (prevWindow, nextWindow []renderplan.Entry, ok bool) {
+	front := 0
+	for front < len(prev) && front < len(next) && prev[front] == next[front] {
+		front++
+	}
+	back := 0
+	for back < len(prev)-front && back < len(next)-front &&
+		prev[len(prev)-1-back] == next[len(next)-1-back] {
+		back++
+	}
+	if front == 0 && back == 0 {
+		return prev, next, true
+	}
+	prevWindow, nextWindow = prev[front:len(prev)-back], next[front:len(next)-back]
+	windowKeys := make(map[string]struct{}, len(prevWindow)+len(nextWindow))
+	for i := range prevWindow {
+		windowKeys[prevWindow[i].Key] = struct{}{}
+	}
+	for i := range nextWindow {
+		windowKeys[nextWindow[i].Key] = struct{}{}
+	}
+	if len(windowKeys) == 0 {
+		return prevWindow, nextWindow, true
+	}
+	// The trimmed entries are the same in both files; prev stands for both.
+	for i := range prev[:front] {
+		if _, shared := windowKeys[prev[i].Key]; shared {
+			return nil, nil, false
+		}
+	}
+	for i := range prev[len(prev)-back:] {
+		if _, shared := windowKeys[prev[len(prev)-back+i].Key]; shared {
+			return nil, nil, false
+		}
+	}
+	return prevWindow, nextWindow, true
 }
 
 // orderedMapOps is the delta for a map HAProxy matches in order. Only appends

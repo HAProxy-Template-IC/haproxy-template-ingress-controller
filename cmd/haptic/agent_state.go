@@ -103,7 +103,7 @@ func fetchAgentState(ctx context.Context, url string) (*api.State, error) {
 	}
 	defer agent.Close()
 
-	state, err := agent.State(ctx, agentStateVerify)
+	state, err := agent.State(ctx, api.StateRead{Verify: agentStateVerify, Plan: true})
 	if err != nil {
 		return nil, fmt.Errorf("reading %s from %s: %w", api.PathState, url, err)
 	}

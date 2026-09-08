@@ -95,7 +95,7 @@ func TestHAProxyRestartConvergesOnTheNextApply(t *testing.T) {
 	e.restartHAProxy()
 	e.waitForReady(http.StatusServiceUnavailable)
 
-	state, err := e.client.State(context.Background(), true)
+	state, err := e.client.State(context.Background(), api.StateRead{Verify: true})
 	require.NoError(t, err)
 	assert.Equal(t, e.workerPID(), state.HAProxy.WorkerPID, "the agent must observe the new worker")
 

@@ -317,10 +317,13 @@ func (h *harness) apply(m *api.Manifest, list []file) api.ApplyResult {
 
 func (h *harness) state(verify bool) api.State {
 	h.t.Helper()
-	url := h.url + api.PathState
-	if verify {
-		url += "?verify=1"
-	}
+	return h.stateRead(api.StateRead{Verify: verify, Plan: true})
+}
+
+// stateRead reads the state the way the controller asks for it.
+func (h *harness) stateRead(read api.StateRead) api.State {
+	h.t.Helper()
+	url := h.url + api.PathState + read.Query()
 	request, err := http.NewRequestWithContext(h.t.Context(), http.MethodGet, url, http.NoBody)
 	require.NoError(h.t, err)
 	request.SetBasicAuth(testUser, testPassword)

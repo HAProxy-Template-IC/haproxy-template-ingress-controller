@@ -19,6 +19,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
@@ -50,7 +51,7 @@ func (c *Component) seedBaseline(ctx context.Context, endpoints []dataplane.Endp
 		}
 		// Measured, not remembered: AdoptMeasured only imports a plan this
 		// controller never sent once the pod's own tree accounts for every file.
-		state, err := client.State(ctx, true)
+		state, err := client.State(ctx, api.StateRead{Verify: true, Plan: true})
 		if err != nil {
 			c.Logger().Debug("Pod did not answer the cold-start state read",
 				"pod", endpoints[i].PodName, "error", err)

@@ -53,6 +53,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, api.ApplyError{Stage: "manifest", Message: err.Error()})
 		return
 	}
+	started := time.Now()
 
 	s.apply.Lock()
 	defer s.apply.Unlock()
@@ -62,13 +63,14 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, conflict)
 		return
 	}
-	s.stageAndRun(w, reader, manifest)
+	s.stageAndRun(w, reader, manifest, started)
 }
 
 // stageAndRun consumes the file parts and hands the request to the state
 // machine.
-func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, manifest *api.Manifest) {
+func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, manifest *api.Manifest, started time.Time) {
 	got, err := s.stageParts(reader, manifest)
+	timing := api.ApplyTiming{StageMs: time.Since(started).Milliseconds()}
 	defer func() {
 		for _, part := range got.files {
 			part.Discard()
@@ -108,7 +110,8 @@ func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, ma
 			return
 		}
 	}
-	result := s.runApply(manifest, got, digest, work, appliedProof, workerProof)
+	result := s.runApply(manifest, got, digest, work, appliedProof, workerProof, timing)
+	result.Timing.TotalMs = time.Since(started).Milliseconds()
 	writeJSON(w, http.StatusOK, result)
 }
 

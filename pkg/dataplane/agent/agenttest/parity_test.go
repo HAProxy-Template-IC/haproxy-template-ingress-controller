@@ -122,7 +122,7 @@ func (p *parityAgent) applyWithPlan(t *testing.T, step string, m *api.Manifest, 
 			seen.ErrorStage = result.Error.Stage
 		}
 	}
-	state, err := p.client.State(t.Context(), false)
+	state, err := p.client.State(t.Context(), api.StateRead{Plan: true})
 	require.NoError(t, err, step)
 	seen.StoredPlan = len(state.AppliedPlan) > 0
 	p.seen = append(p.seen, seen)

@@ -219,6 +219,11 @@ func (p *Plan) Clone() *Plan {
 // digest. It returns false when either plan came from a blob and therefore no
 // longer carries the controller-local exact bytes.
 func ExactlyEqual(left, right *Plan) bool {
+	if left == right {
+		// The same object; only its exactness is in question. A deep compare
+		// of a plan with itself cost 3 ms per pod per deployment at scale.
+		return hasExactIdentity(left)
+	}
 	if !hasExactIdentity(left) || !hasExactIdentity(right) {
 		return false
 	}

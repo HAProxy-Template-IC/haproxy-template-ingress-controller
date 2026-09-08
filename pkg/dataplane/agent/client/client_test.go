@@ -97,12 +97,22 @@ func TestStateSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	state, err := newTestClient(t, srv.URL).State(context.Background(), true)
+	state, err := newTestClient(t, srv.URL).State(context.Background(), api.StateRead{Verify: true})
 	require.NoError(t, err)
 	assert.Equal(t, "plan-1", state.AppliedPlanID)
 	assert.Equal(t, "3.4.3", state.HAProxy.Version)
-	assert.Equal(t, api.PathState+"?verify=1", gotPath.Load())
+	assert.Equal(t, api.PathState+"?verify=1&plan=0", gotPath.Load(), "a read that holds the plan leaves the blob out")
 	assert.Equal(t, "admin:adminpwd", gotAuth.Load())
+}
+
+// The query names what the read asks for: the blob is left out unless the
+// caller needs it, and an agent that predates the flag ignores it.
+func TestStateReadQuery(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "?plan=0", api.StateRead{}.Query())
+	assert.Equal(t, "?verify=1&plan=0", api.StateRead{Verify: true}.Query())
+	assert.Equal(t, "", api.StateRead{Plan: true}.Query())
+	assert.Equal(t, "?verify=1", api.StateRead{Verify: true, Plan: true}.Query())
 }
 
 func TestStateUnauthorized(t *testing.T) {
@@ -112,7 +122,7 @@ func TestStateUnauthorized(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newTestClient(t, srv.URL).State(context.Background(), false)
+	_, err := newTestClient(t, srv.URL).State(context.Background(), api.StateRead{})
 	var httpErr *HTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, http.StatusUnauthorized, httpErr.Status)
@@ -366,7 +376,7 @@ func TestStateRetriesResetConnectionThenSucceeds(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	state, err := newTestClient(t, srv.URL).State(context.Background(), false)
+	state, err := newTestClient(t, srv.URL).State(context.Background(), api.StateRead{})
 	require.NoError(t, err)
 	assert.Equal(t, "plan-1", state.AppliedPlanID)
 	assert.Equal(t, int32(3), listener.accepted.Load(), "two resets then one served connection")
@@ -381,7 +391,7 @@ func TestStateGivesUpAfterConnectRetries(t *testing.T) {
 
 	c := newTestClient(t, closed)
 	start := time.Now()
-	_, err = c.State(context.Background(), false)
+	_, err = c.State(context.Background(), api.StateRead{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, syscall.ECONNREFUSED)
 	// One attempt plus ConnectRetries retries, each preceded by the backoff.

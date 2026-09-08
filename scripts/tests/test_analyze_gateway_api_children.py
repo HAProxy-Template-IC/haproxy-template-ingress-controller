@@ -1984,7 +1984,7 @@ validate_haptic_scale_routes 1 "$3" "$4"
         match = re.search(r"\nrun_scale\(\) \{(.*?)\n\}\n\nwrite_runner_summary", runner, re.DOTALL)
         self.assertIsNotNone(match)
         self.assertIn(
-            'if ! signal_workload_container "$active_workload_container"; then',
+            'if ! signal_workload_container "$active_workload_container" "$expected_routes"; then',
             match.group(1),
         )
         self.assertIn(

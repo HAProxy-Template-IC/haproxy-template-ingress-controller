@@ -16,6 +16,8 @@ package deployer
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -28,6 +30,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/planblob"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -275,4 +279,59 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 
 	// Flag should still be true (not modified)
 	assert.True(t, deployer.deploymentInProgress.Load())
+}
+
+// The deployment reports the split of the pod whose apply took longest: pods
+// apply in parallel, so that pod's phases are what the duration is made of.
+func TestDeploymentStateKeepsTheSlowestPodsPhases(t *testing.T) {
+	state := &deploymentState{}
+	state.notePhases(&events.DeployPhases{Pod: "fast", SendMs: 5}, 20)
+	state.notePhases(&events.DeployPhases{Pod: "slow", SendMs: 40}, 80)
+	state.notePhases(&events.DeployPhases{Pod: "middle", SendMs: 10}, 50)
+
+	require.NotNil(t, state.slowest)
+	assert.Equal(t, "slow", state.slowest.Pod)
+	assert.Equal(t, int64(80), state.slowest.TotalMs)
+	assert.Equal(t, int64(40), state.slowest.SendMs)
+}
+
+// The blob is encoded while the pods' state is read and diffed; the apply
+// waits for it only when it sends it, and an encode that failed sends none.
+func TestPlanBlobIsEncodedOffTheCriticalPath(t *testing.T) {
+	plan, _, _ := renderFor("plan-1", "10.0.0.1", mapEntry)
+	snapshot, err := renderplan.NewSnapshot(renderplan.NewAuthority(), plan, nil)
+	require.NoError(t, err)
+	identity := &renderOccurrenceIdentity{plan: plan, planSnapshot: snapshot}
+	blob := encodePlanBlob(identity, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	attempt := &podApply{req: &deployRequest{blob: blob}}
+	assert.Nil(t, attempt.planBlob(false), "not sent: nothing waited for")
+	reader := attempt.planBlob(true)
+	require.NotNil(t, reader)
+	got, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	assert.NotEmpty(t, got)
+	decoded, err := planblob.Decode(got)
+	require.NoError(t, err)
+	assert.Equal(t, plan.ID, decoded.ID)
+	assert.Nil(t, (*planBlob)(nil).bytes())
+}
+
+// Whether a pod's baseline already is the plan is decided once per baseline,
+// not once per pod, and only a pod without a stored blob gets it again.
+func TestSendsPlanBlobDecidesPerBaseline(t *testing.T) {
+	plan, _, _ := renderFor("plan-1", "10.0.0.1", mapEntry)
+	req := &deployRequest{plan: plan, planID: plan.ID}
+	stored := &api.State{AppliedPlanStored: true}
+	first := &podApply{req: req, state: stored}
+	second := &podApply{req: req, state: stored}
+	assert.False(t, first.sendsPlanBlob(plan), "the baseline is this plan and the pod holds its blob")
+	assert.False(t, second.sendsPlanBlob(plan))
+	memoized, ok := req.baselineIsPlan.Load(plan)
+	require.True(t, ok)
+	assert.Equal(t, true, memoized)
+
+	bare := &podApply{req: req, state: &api.State{}}
+	assert.True(t, bare.sendsPlanBlob(plan), "the pod holds no blob for its plan")
+	other, _, _ := renderFor("plan-2", "10.0.0.2", mapEntry)
+	assert.True(t, first.sendsPlanBlob(other), "the baseline is another plan")
 }

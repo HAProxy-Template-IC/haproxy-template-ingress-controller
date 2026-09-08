@@ -165,6 +165,19 @@ func (ec *EventCommentator) deploymentInsight(event busevents.Event, attrs []any
 			"queue_render_to_validate_ms", summary.RenderToValidateQueueMs,
 			"queue_validate_to_deploy_ms", summary.ValidateToDeployQueueMs,
 			"queue_total_ms", summary.TotalQueueMs)
+		if p := e.Phases; p != nil {
+			attrs = append(attrs,
+				"slowest_pod", p.Pod,
+				"pod_state_ms", p.StateMs,
+				"pod_diff_ms", p.DiffMs,
+				"pod_send_ms", p.SendMs,
+				"pod_blob_wait_ms", p.BlobWaitMs,
+				"pod_upload_bytes", p.UploadBytes,
+				"agent_stage_ms", p.Agent.StageMs,
+				"agent_write_ms", p.Agent.WriteMs,
+				"agent_ops_ms", p.Agent.OpsMs,
+				"agent_total_ms", p.Agent.TotalMs)
+		}
 
 		// Add non-zero operation breakdown entries
 		// Keys are formatted as "section_type" (e.g., "backend_create", "server_update")

@@ -580,8 +580,18 @@ workload_exit_acceptable() {
     [[ "$rc" -eq 130 || "$rc" -eq 143 ]]
 }
 
+# workload_stop_grace_seconds is how long pilot-load gets to answer INT by
+# deleting what it created before TERM cuts it short. Its cleanup deletes
+# routes at roughly 400/s; 5,000 routes took 12 s and the fixed 10 s left
+# 840 behind, which the harness then waited five minutes for.
+workload_stop_grace_seconds() {
+    local routes="${1:-0}"
+    echo $((10 + routes / 100))
+}
+
 signal_workload_container() {
     local container="$1"
+    local routes="${2:-0}"
     docker inspect "$container" >/dev/null 2>&1 || return 0
     local signal deadline running wait_seconds
     for signal in INT TERM KILL; do
@@ -592,7 +602,7 @@ signal_workload_container() {
             [[ "$running" == "false" ]] && return 0
             return 1
         fi
-        wait_seconds=10
+        wait_seconds="$(workload_stop_grace_seconds "$routes")"
         if [[ "$signal" == "KILL" ]]; then
             wait_seconds=3
         fi
@@ -4510,6 +4520,10 @@ write_scale_readiness_timeout() {
     elif [[ "$readiness_attempts" -gt 0 ]]; then
         die "scale readiness HAProxyCfg snapshot is missing after an observation"
     fi
+    # The snapshot is megabytes at scale: a file, not an argument, or jq dies
+    # with "argument list too long" and the evidence is lost.
+    local cfg_file="$scenario_dir/readiness-haproxycfg-snapshot.json"
+    printf '%s\n' "$cfg_json" > "$cfg_file"
     jq -S -n \
         --arg baseline_checksum "$baseline_checksum" \
         --arg reason_code "$reason_code" \
@@ -4517,8 +4531,9 @@ write_scale_readiness_timeout() {
         --argjson baseline_generation "$baseline_generation" \
         --argjson routes "$expected_routes" \
         --argjson stages "$stages_json" \
-        --argjson cfg "$cfg_json" \
+        --slurpfile cfg_file "$cfg_file" \
         --slurpfile readiness "$readiness_report" '
+        $cfg_file[0] as $cfg |
         ($stages | index($failure_stage)) as $failed |
         select($failed != null) |
         {routes_with_snapshot_generation_haptic_status: $routes,
@@ -5393,7 +5408,7 @@ run_scale() {
             capture_prometheus_range "$scenario_dir" \
                 "$(<"$scenario_dir/steady-start-epoch.txt")" \
                 "$(<"$scenario_dir/steady-end-epoch.txt")" steady-prometheus-range
-            if ! signal_workload_container "$active_workload_container"; then
+            if ! signal_workload_container "$active_workload_container" "$expected_routes"; then
                 date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$scenario_dir/steady-signal-failed.txt"
                 die "pilot-load could not be stopped after the steady-churn interval"
             fi

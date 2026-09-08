@@ -91,7 +91,7 @@ func readPodState(ctx context.Context, ref *podRef) (*api.State, error) {
 		return nil, err
 	}
 	defer agent.Close()
-	state, err := agent.State(ctx, false)
+	state, err := agent.State(ctx, api.StateRead{Plan: true})
 	if err != nil {
 		return nil, fmt.Errorf("reading %s from %s/%s: %w", api.PathState, pod.Namespace, pod.Name, err)
 	}

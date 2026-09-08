@@ -155,7 +155,7 @@ func (c *Component) revertPodRender(
 		c.Logger().Error("Cannot reach a pod to revert it", "pod", endpoint.PodName, "error", err)
 		return revertFailed
 	}
-	state, err := client.State(ctx, false)
+	state, err := client.State(ctx, api.StateRead{})
 	if err != nil {
 		c.Logger().Error("Cannot read a pod's state to decide on reverting it",
 			"pod", endpoint.PodName, "error", err)
