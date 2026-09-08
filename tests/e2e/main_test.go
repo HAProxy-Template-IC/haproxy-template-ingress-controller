@@ -362,6 +362,9 @@ func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluste
 			}
 			return ctx, errors.Join(createErr, cleanupErr)
 		}
+		if err := kindutil.BlackholeSyntheticBackends(ClusterName); err != nil {
+			return ctx, err
+		}
 		// Best-effort metrics-server so the rolling-restart failure snapshot's
 		// `kubectl top` capture has real utilization data. Non-fatal.
 		installMetricsServerBestEffort(ctx)

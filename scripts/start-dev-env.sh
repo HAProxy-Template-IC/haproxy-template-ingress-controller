@@ -10,6 +10,8 @@ ASSETS_DIR="${SCRIPT_DIR}/dev-env-assets"
 # Source centralized version configuration
 # shellcheck source=../versions.env
 source "${REPO_ROOT}/versions.env"
+# shellcheck source=lib/cluster.sh
+source "${SCRIPT_DIR}/lib/cluster.sh"
 
 # Default configuration
 # Naming conventions - defaults match chart name for clean resource names
@@ -379,6 +381,7 @@ ensure_cluster() {
 	if ! kind get clusters | grep -qx "${CLUSTER_NAME}"; then
 		log INFO "Creating kind cluster '${CLUSTER_NAME}'..."
 		kind create cluster --name "${CLUSTER_NAME}" --config "${ASSETS_DIR}/kind-config.yaml"
+		kind_blackhole_synthetic_backends "${CLUSTER_NAME}"
 		ok "Cluster created with admission controllers enabled."
 	else
 		ok "Using existing cluster '${CLUSTER_NAME}'."

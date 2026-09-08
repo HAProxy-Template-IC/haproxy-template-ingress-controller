@@ -36,6 +36,19 @@ kind_create_cluster() {
 
   kubectl --context "kind-$name" cluster-info >/dev/null 2>&1 \
     || { echo "FAIL: kind cluster $name is not reachable after creation" >&2; return 1; }
+  kind_blackhole_synthetic_backends "$name"
+}
+
+# The address ranges test fixtures use for backends that must not exist;
+# the same list is tests/kindutil.SyntheticBackendRanges. Blackholed on the
+# node so health checks to them fail there instead of being NAT'd to the
+# host and forwarded to the LAN's default gateway.
+kind_blackhole_synthetic_backends() {
+  local name="$1" cidr
+  for cidr in 10.0.0.0/12 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24; do
+    docker exec "${name}-control-plane" ip route replace blackhole "$cidr" \
+      || { echo "FAIL: could not blackhole $cidr on kind node ${name}-control-plane" >&2; return 1; }
+  done
 }
 
 # The Validated condition is written asynchronously by the leader's status

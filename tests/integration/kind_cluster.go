@@ -97,6 +97,9 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 		if err := provider.Create(cfg.Name, createOpts...); err != nil {
 			return nil, fmt.Errorf("failed to create kind cluster: %w", err)
 		}
+		if err := kindutil.BlackholeSyntheticBackends(cfg.Name); err != nil {
+			return nil, err
+		}
 	}
 
 	// Get kubeconfig
