@@ -112,8 +112,10 @@ func (c *Component) HandleEvent(event busevents.Event) {
 	switch event.(type) {
 	case *events.BecameLeaderEvent:
 		c.leader = true
+		c.Logger().Debug("Follower renders stopped: this replica leads")
 	case *events.LostLeadershipEvent:
 		c.leader = false
+		c.Logger().Debug("Follower renders resumed: this replica follows")
 	case *events.ReconciliationTriggeredEvent:
 		if !c.leader {
 			c.render()

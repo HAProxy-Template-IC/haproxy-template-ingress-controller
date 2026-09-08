@@ -593,7 +593,7 @@ const renderInputConflictAttempts = 3
 // could reject an unrelated Ingress in another. The user's object was never the
 // problem.
 func inputsMovedUnderTheRender(err error, mode rendercontext.RenderMode) bool {
-	if errors.Is(err, incremental.ErrRevisionConflict) || errors.Is(err, httpstore.ErrInputsMoved) {
+	if lostTheCommitRace(err) {
 		return true
 	}
 	// A moved snapshot is only worth re-reading inline for admission, which has
@@ -604,6 +604,18 @@ func inputsMovedUnderTheRender(err error, mode rendercontext.RenderMode) bool {
 	// as a 2.4s gap in endpoint propagation on a contended node, long enough for
 	// a rolling restart to lose its last server.
 	return mode == rendercontext.RenderModeAdmission && errors.Is(err, stores.ErrSnapshotChanged)
+}
+
+// lostTheCommitRace reports whether a render's commit failed only because
+// another session committed first: the inputs' revision moved, the HTTP store
+// accepted content the render had read, or the graph took a cold cache from
+// a concurrent render (the follower warmer's first render on the replica that
+// just became leader). None says anything about the configuration; all are
+// answered by the next attempt, which finds the winner's state in place.
+func lostTheCommitRace(err error) bool {
+	return errors.Is(err, incremental.ErrRevisionConflict) ||
+		errors.Is(err, incremental.ErrCommitConflict) ||
+		errors.Is(err, httpstore.ErrInputsMoved)
 }
 
 // admissionInputConflictBackoff paces an admission re-render.
@@ -770,7 +782,7 @@ func (p *Pipeline) commitInputs(
 // and a conflict means the check that authorised it was against inputs that
 // have since moved.
 func commitConflictLeavesOutputUsable(err error, transaction renderer.RenderInputTransaction) bool {
-	if !errors.Is(err, incremental.ErrRevisionConflict) {
+	if !lostTheCommitRace(err) {
 		return false
 	}
 	if transaction.HasCandidates() {

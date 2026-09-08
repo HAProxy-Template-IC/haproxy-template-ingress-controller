@@ -79,6 +79,30 @@ func TestAReconcileThatLosesTheHTTPAcceptanceRaceIsRetried(t *testing.T) {
 	assert.Same(t, want, result)
 }
 
+// A cold first render whose graph cache lost to a concurrent cold render
+// (the warmer's, on the replica that just became leader) failed with
+// ErrCommitConflict and, with no trigger behind it, the new leader never
+// published a config: e2e setup timed out on main (#207).
+func TestAReconcileThatLosesTheColdGraphRaceIsRetried(t *testing.T) {
+	attempts := 0
+	want := &PipelineResult{HAProxyConfig: "settled"}
+
+	result, _, err := settleInputConflicts(
+		t.Context(), nil, rendercontext.RenderModeReconcile,
+		func() (*PipelineResult, *validation.ValidationResult, error) {
+			attempts++
+			if attempts == 1 {
+				return nil, nil, fmt.Errorf("committing validated render inputs: %w",
+					incremental.ErrCommitConflict)
+			}
+			return want, &validation.ValidationResult{Valid: true}, nil
+		})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, attempts)
+	assert.Same(t, want, result)
+}
+
 // The bound has to hold: a cluster changing continuously must not spin here
 // instead of making progress, and the caller still learns why.
 func TestAPersistentInputRaceStopsAtTheAttemptLimit(t *testing.T) {
@@ -150,6 +174,16 @@ func TestAConflictWithNothingExternalToAcceptKeepsTheRender(t *testing.T) {
 	err := fmt.Errorf("committing validated render inputs: %w", incremental.ErrRevisionConflict)
 
 	assert.True(t, commitConflictLeavesOutputUsable(err, fakeInputTransaction{candidates: false}))
+}
+
+// A cold render whose graph cache lost to a concurrent cold render is in the
+// same position: its output describes inputs that still hold, only the cache
+// went to the other session.
+func TestAColdCacheRaceWithNothingExternalToAcceptKeepsTheRender(t *testing.T) {
+	err := fmt.Errorf("committing validated render inputs: %w", incremental.ErrCommitConflict)
+
+	assert.True(t, commitConflictLeavesOutputUsable(err, fakeInputTransaction{candidates: false}))
+	assert.False(t, commitConflictLeavesOutputUsable(err, fakeInputTransaction{candidates: true}))
 }
 
 // A render accepting external content must still fail: the commit decides the
