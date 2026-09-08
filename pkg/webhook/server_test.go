@@ -1059,3 +1059,37 @@ func sendConfigMapReview(t *testing.T, server *Server) {
 	req.Header.Set("Content-Type", "application/json")
 	server.handleValidation(httptest.NewRecorder(), req)
 }
+
+// An iteration retires the table it installed; once its successor installed
+// the next one, the old iteration's stop must leave that one serving.
+func TestServer_RetireValidatorGenerationIfCurrentLeavesASuccessorServing(t *testing.T) {
+	server := newTestServer(t, &ServerConfig{})
+	validator := func(*ValidationContext) (bool, string, []string, error) { return true, "", nil, nil }
+	oldRetired := make(chan struct{})
+	old, err := server.InstallValidatorGeneration(
+		map[string]ValidationFunc{"v1.ConfigMap": validator}, nil, func() { close(oldRetired) })
+	require.NoError(t, err)
+
+	newRetired := make(chan struct{})
+	next, err := server.InstallValidatorGeneration(
+		map[string]ValidationFunc{"v1.ConfigMap": validator, "v1.Secret": validator}, nil, func() { close(newRetired) })
+	require.NoError(t, err)
+	<-oldRetired
+
+	require.NoError(t, server.RetireValidatorGenerationIfCurrent(old))
+	server.mu.RLock()
+	installed := server.generation
+	server.mu.RUnlock()
+	assert.Same(t, next, installed, "the successor's table must survive the predecessor's stop")
+	select {
+	case <-newRetired:
+		t.Fatal("the successor's table was retired")
+	default:
+	}
+
+	require.NoError(t, server.RetireValidatorGenerationIfCurrent(next))
+	<-newRetired
+	server.mu.RLock()
+	assert.Empty(t, server.validators)
+	server.mu.RUnlock()
+}

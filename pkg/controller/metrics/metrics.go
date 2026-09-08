@@ -412,7 +412,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 		ControllerReinitializationsTotal: pkgmetrics.NewCounter(
 			registry,
 			"haptic_controller_reinitializations_total",
-			"Total controller iteration restarts after the first. A restart stops the leader-only components and rebuilds them from a freshly resolved configuration; nothing reaches the HAProxy pods until it finishes. Growth means the effective configuration keeps changing, most often a CRD appearing or disappearing.",
+			"Total controller iteration restarts after the first. A restart rebuilds the components from a freshly resolved configuration while the running iteration keeps serving, then hands leadership over on the same replica. Growth means the effective configuration keeps changing, most often a CRD appearing or disappearing.",
 		),
 
 		ConfigPinned: pkgmetrics.NewGauge(

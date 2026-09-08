@@ -37,6 +37,13 @@ throughout. Consequences for component authors:
 - A component that returns an error marks itself `Failed` and fails the
   iteration; only a graceful, context-cancelled return is restartable.
 
+A configuration change ends the term the same way, by hand-over rather than
+loss: the successor iteration starts on the same replica, warms its render
+graph, and then retires this term with the Lease kept (`retireLeadership` in
+`leader.go`). `LostLeadershipEvent` carries `Reason: "handover"`; the
+successor's election resumes the Lease on its first acquire, so no replica
+sees a vacancy and the leader-only components of the successor start warm.
+
 ## Leader-Only Components
 
 Components that only run on the elected leader (registered via `registry.Build().LeaderOnly(...)` in `pkg/controller/reconciliation.go`):

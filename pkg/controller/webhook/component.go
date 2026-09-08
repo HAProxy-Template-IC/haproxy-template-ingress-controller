@@ -76,6 +76,9 @@ type Component struct {
 
 	// Webhook library components
 	server *webhook.Server
+	// generation is the validator table this component installed on the
+	// shared server, retired on stop only while it is still the installed one.
+	generation *webhook.ValidatorGeneration
 
 	// Configuration
 	config Config
@@ -348,7 +351,9 @@ func (c *Component) startAdopted(ctx context.Context) error {
 		"path", c.config.Path)
 
 	<-ctx.Done()
-	if err := c.server.ReplaceValidatorGeneration(nil, nil, nil); err != nil {
+	// Only this iteration's own table is retired: after a hand-over the
+	// successor's generation is already installed and keeps serving.
+	if err := c.server.RetireValidatorGenerationIfCurrent(c.generation); err != nil {
 		c.logger.Debug("Persistent webhook server stopped while retiring validators", "error", err)
 	}
 	c.logger.Info("Webhook validators retired; leaving the shared listener bound")
@@ -453,13 +458,15 @@ func (c *Component) registerValidators() error {
 		}
 	}
 
-	if err := c.server.ReplaceValidatorGeneration(
+	generation, err := c.server.InstallValidatorGeneration(
 		validators,
 		c.reportUnregisteredGVK,
 		c.config.OnGenerationRetired,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("installing webhook validator generation: %w", err)
 	}
+	c.generation = generation
 	c.config.OnGenerationRetired = nil
 	return nil
 }

@@ -21,8 +21,30 @@ import (
 )
 
 type iterationReloadAuthority struct {
-	mu     sync.RWMutex
-	reload *configchange.ReloadRequest
+	mu      sync.RWMutex
+	reload  *configchange.ReloadRequest
+	serving bool
+	ready   chan struct{}
+	once    sync.Once
+}
+
+func newIterationReloadAuthority() *iterationReloadAuthority {
+	return &iterationReloadAuthority{ready: make(chan struct{})}
+}
+
+// MarkServing records that the iteration finished starting. A reload before
+// that interrupts the startup (a watcher may be syncing a CRD that is gone);
+// a reload after it lets the iteration serve on while its successor prepares.
+func (a *iterationReloadAuthority) MarkServing() {
+	a.mu.Lock()
+	a.serving = true
+	a.mu.Unlock()
+}
+
+func (a *iterationReloadAuthority) Serving() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.serving
 }
 
 func (a *iterationReloadAuthority) Record(reload *configchange.ReloadRequest) {
@@ -32,6 +54,14 @@ func (a *iterationReloadAuthority) Record(reload *configchange.ReloadRequest) {
 	a.mu.Lock()
 	a.reload = reload
 	a.mu.Unlock()
+	a.once.Do(func() { close(a.ready) })
+}
+
+// Ready is closed once a reload has been recorded. The iteration keeps
+// serving past it: the successor prepares while this one runs and takes
+// leadership over before this one is torn down.
+func (a *iterationReloadAuthority) Ready() <-chan struct{} {
+	return a.ready
 }
 
 func (a *iterationReloadAuthority) Latest() *configchange.ReloadRequest {
@@ -42,12 +72,17 @@ func (a *iterationReloadAuthority) Latest() *configchange.ReloadRequest {
 
 func startIterationReloadObserver(setup *componentSetup, authority *iterationReloadAuthority) {
 	setup.ErrGroup.Go(func() error {
-		select {
-		case reload := <-setup.ConfigChangeCh:
-			authority.Record(reload)
-			setup.Cancel()
-		case <-setup.IterCtx.Done():
+		for {
+			select {
+			case reload := <-setup.ConfigChangeCh:
+				authority.Record(reload)
+				if !authority.Serving() {
+					setup.Cancel()
+					return nil
+				}
+			case <-setup.IterCtx.Done():
+				return nil
+			}
 		}
-		return nil
 	})
 }

@@ -50,6 +50,16 @@ func NewBecameLeaderEvent(identity string) *BecameLeaderEvent {
 
 func (e *BecameLeaderEvent) EventType() string { return EventTypeBecameLeader }
 
+// Reasons a LostLeadershipEvent carries.
+const (
+	// LeadershipLostReasonLeaseLost is an unplanned loss: the Lease expired
+	// or another replica holds it.
+	LeadershipLostReasonLeaseLost = "lease_lost"
+	// LeadershipLostReasonHandover is the planned end of an iteration's term
+	// for its successor on the same replica, which keeps the Lease.
+	LeadershipLostReasonHandover = "handover"
+)
+
 // LostLeadershipEvent is published when this replica loses leadership.
 type LostLeadershipEvent struct {
 	Identity string

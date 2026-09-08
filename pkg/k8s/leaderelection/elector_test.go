@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -460,4 +461,84 @@ func TestNew_AllConfigFieldsUsed(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, elector)
+}
+
+// leaseHolder returns the Lease's holder, or "" while it is vacant or absent.
+func leaseHolder(t *testing.T, clientset kubernetes.Interface) string {
+	t.Helper()
+	l, err := clientset.CoordinationV1().Leases("default").Get(context.Background(), "keep-lease", metav1.GetOptions{})
+	if err != nil || l.Spec.HolderIdentity == nil {
+		return ""
+	}
+	return *l.Spec.HolderIdentity
+}
+
+func keepLeaseTestConfig() *Config {
+	return &Config{
+		Enabled: true, Identity: "test-pod-keep", LeaseName: "keep-lease", LeaseNamespace: "default",
+		LeaseDuration: 5 * time.Second, RenewDeadline: 3 * time.Second, RetryPeriod: 1 * time.Second,
+		ReleaseOnCancel: true,
+	}
+}
+
+// startLeadingElector runs an elector until it holds the test Lease and
+// returns a stop that waits for the loop to end.
+func startLeadingElector(t *testing.T, clientset *fake.Clientset, callbacks Callbacks) (elector *Elector, stop func()) {
+	t.Helper()
+	elector, err := New(keepLeaseTestConfig(), clientset, callbacks, nil)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	errChan := make(chan error, 1)
+	go func() { errChan <- elector.Start(ctx) }()
+	stop = func() {
+		cancel()
+		select {
+		case err := <-errChan:
+			require.NoError(t, err)
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for elector to stop")
+		}
+	}
+	require.Eventually(t, func() bool {
+		return leaseHolder(t, clientset) == "test-pod-keep"
+	}, 3*time.Second, 20*time.Millisecond)
+	return elector, stop
+}
+
+// A stop releases the Lease, so another replica can take over at once.
+func TestElector_StopReleasesTheLease(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping leader election test in short mode")
+	}
+	clientset := fake.NewClientset()
+	_, stop := startLeadingElector(t, clientset, Callbacks{})
+	stop()
+	assert.Empty(t, leaseHolder(t, clientset))
+}
+
+// A stop after KeepLeaseOnStop leaves the Lease held, so a successor elector
+// with the same identity resumes leadership on its first acquire: the
+// controller hands leadership from one iteration to the next on the same pod
+// without any replica ever seeing a vacancy.
+func TestElector_KeepLeaseOnStopLetsASuccessorResume(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping leader election test in short mode")
+	}
+	clientset := fake.NewClientset()
+	elector, stop := startLeadingElector(t, clientset, Callbacks{})
+	elector.KeepLeaseOnStop()
+	stop()
+	assert.Equal(t, "test-pod-keep", leaseHolder(t, clientset))
+
+	resumed := make(chan struct{})
+	_, stopSuccessor := startLeadingElector(t, clientset, Callbacks{
+		OnStartedLeading: func(context.Context) { close(resumed) },
+	})
+	defer stopSuccessor()
+	select {
+	case <-resumed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the successor did not resume the kept Lease")
+	}
+	assert.Equal(t, "test-pod-keep", leaseHolder(t, clientset))
 }

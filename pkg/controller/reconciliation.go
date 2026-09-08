@@ -74,6 +74,9 @@ type reconciliationWiring struct {
 	renderService         *renderer.RenderService
 	publishedCurrentFiles *publishedAuxFiles
 	gvrMapper             meta.RESTMapper
+	// warmed is the follower warmer's first-render signal; a hand-over waits
+	// for it so the new leader's first render is warm.
+	warmed <-chan struct{}
 }
 
 // renderInputs routes the deploy side's two feedback channels: the plan the
@@ -243,6 +246,7 @@ func createReconciliationComponents(
 		}),
 		StoreProvider: storeProvider,
 		CurrentFiles:  currentFiles.publishedSnapshot,
+		GraphWarm:     renderService.IncrementalGraphWarm,
 		Metrics:       setup.MetricsComponent.Metrics(),
 		Logger:        logger,
 	})
@@ -367,6 +371,7 @@ func createReconciliationComponents(
 		renderService:         renderService,
 		publishedCurrentFiles: currentFiles.published,
 		gvrMapper:             gvrMapper,
+		warmed:                warmerComponent.Warmed(),
 	}, nil
 }
 

@@ -68,6 +68,25 @@ type Elector struct {
 	mu      sync.RWMutex
 	elector *leaderelection.LeaderElector
 	leader  string
+	// keepLease suppresses the release on stop: the Lease stays held for a
+	// successor with the same identity to resume.
+	keepLease bool
+}
+
+// KeepLeaseOnStop makes the next stop leave the Lease held instead of
+// releasing it, so a successor elector with the same identity resumes
+// leadership on its first acquire and no other replica sees a vacancy.
+func (e *Elector) KeepLeaseOnStop() {
+	e.mu.Lock()
+	e.keepLease = true
+	e.mu.Unlock()
+}
+
+// LeaseKept reports whether the stop hands the Lease to a successor.
+func (e *Elector) LeaseKept() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.keepLease
 }
 
 // New creates a new leader elector.
@@ -165,11 +184,13 @@ func (e *Elector) Start(ctx context.Context) error {
 
 	// Create leader election config
 	leConfig := leaderelection.LeaderElectionConfig{
-		Lock:            lock,
-		LeaseDuration:   e.config.LeaseDuration,
-		RenewDeadline:   e.config.RenewDeadline,
-		RetryPeriod:     e.config.RetryPeriod,
-		ReleaseOnCancel: e.config.ReleaseOnCancel,
+		Lock:          lock,
+		LeaseDuration: e.config.LeaseDuration,
+		RenewDeadline: e.config.RenewDeadline,
+		RetryPeriod:   e.config.RetryPeriod,
+		// Released below, after Run returns, unless a hand-over asked to keep
+		// the Lease; client-go decides at Run time and cannot be told later.
+		ReleaseOnCancel: false,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				e.mu.Lock()
@@ -189,10 +210,15 @@ func (e *Elector) Start(ctx context.Context) error {
 				previousLeader := e.leader
 				e.mu.RUnlock()
 
-				e.logger.Warn("Stopped leading",
+				level := slog.LevelWarn
+				if e.LeaseKept() {
+					level = slog.LevelInfo
+				}
+				e.logger.Log(context.Background(), level, "Stopped leading",
 					"identity", e.config.Identity,
 					"previous_leader", previousLeader,
-					"lease", e.config.LeaseName)
+					"lease", e.config.LeaseName,
+					"lease_kept", e.LeaseKept())
 
 				if e.callbacks.OnStoppedLeading != nil {
 					e.callbacks.OnStoppedLeading()
@@ -234,8 +260,33 @@ func (e *Elector) Start(ctx context.Context) error {
 	// Run leader election (blocks until context is cancelled)
 	elector.Run(ctx)
 
+	keep := e.LeaseKept()
+	if e.config.ReleaseOnCancel && !keep && elector.IsLeader() {
+		e.release(lock, elector.GetLeader())
+	}
+
 	e.logger.Info("Leader election loop stopped",
-		"identity", e.config.Identity)
+		"identity", e.config.Identity, "lease_kept", keep)
 
 	return nil
+}
+
+// release writes the Lease back vacant the way client-go's ReleaseOnCancel
+// does: one-second duration, no holder, transitions carried over.
+func (e *Elector) release(lock *resourcelock.LeaseLock, holder string) {
+	ctx, cancel := context.WithTimeout(context.Background(), e.config.RenewDeadline)
+	defer cancel()
+	record, _, err := lock.Get(ctx)
+	if err != nil || record == nil || record.HolderIdentity != holder {
+		return
+	}
+	now := metav1.Now()
+	if err := lock.Update(ctx, resourcelock.LeaderElectionRecord{
+		LeaderTransitions:    record.LeaderTransitions,
+		LeaseDurationSeconds: 1,
+		RenewTime:            now,
+		AcquireTime:          now,
+	}); err != nil {
+		e.logger.Warn("Failed to release the Lease", "lease", e.config.LeaseName, "error", err)
+	}
 }

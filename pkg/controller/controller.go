@@ -584,13 +584,13 @@ func Run(
 		infra.MetricsServer = pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), prometheus.NewRegistry())
 	}
 
-	var startup *configchange.ReloadRequest
+	iterations := &iterationSequence{logger: logger}
 	err = runIterations(procCtx, logger, RetryDelay, func() error {
-		result := &iterationResult{}
-		iterationErr := runIteration(procCtx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, startup, result, logger)
-		startup = nextIterationStartup(result)
-		return iterationErr
+		return iterations.step(func(startup *configchange.ReloadRequest, previous *liveIteration) (*liveIteration, error) {
+			return startIteration(procCtx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, startup, previous, logger)
+		})
 	})
+	err = errors.Join(err, iterations.close())
 	procCancel()
 	shutdownAt := <-shutdownStarted
 	remainingShutdown := ProcessShutdownTimeout - time.Since(shutdownAt)
@@ -606,6 +606,61 @@ func Run(
 		return errors.Join(err, serverErr)
 	}
 	return serverErr
+}
+
+// iterationSequence hands leadership from one iteration to the next on the
+// same replica. The serving iteration keeps rendering and deploying while its
+// successor starts; the successor retires the predecessor's term right before
+// entering election, resumes the kept Lease, and only then is the predecessor
+// torn down. The fleet sees no vacancy and the new leader's first render is
+// warm.
+type iterationSequence struct {
+	logger  *slog.Logger
+	current *liveIteration
+	startup *configchange.ReloadRequest
+}
+
+// step starts the next iteration against the current one and then waits for
+// the reload that ends the new one's term. A failed start leaves the current
+// iteration serving unless its leadership was already handed over, and the
+// retry loads live state rather than the consumed hand-off.
+func (s *iterationSequence) step(
+	start func(startup *configchange.ReloadRequest, previous *liveIteration) (*liveIteration, error),
+) error {
+	next, err := start(s.startup, s.current)
+	s.startup = nil
+	if err != nil {
+		var interrupted *startupInterruptedError
+		if errors.As(err, &interrupted) {
+			s.startup = interrupted.reload
+			err = nil
+		}
+		if s.current != nil && s.current.retired {
+			err = errors.Join(err, s.close())
+		}
+		return err
+	}
+	if err := s.close(); err != nil {
+		return errors.Join(err, next.teardown())
+	}
+	s.current = next
+	reload, err := next.awaitReload()
+	s.startup = reload
+	if reload == nil {
+		err = errors.Join(err, s.close())
+	}
+	return err
+}
+
+// close tears the current iteration down, if any. A teardown that times out
+// is reported: the process restarts rather than run with leaked goroutines.
+func (s *iterationSequence) close() error {
+	if s.current == nil {
+		return nil
+	}
+	err := s.current.teardown()
+	s.current = nil
+	return err
 }
 
 func runIterations(ctx context.Context, logger *slog.Logger, retryDelay time.Duration, run func() error) error {
@@ -685,6 +740,11 @@ type componentSetup struct {
 	ConfigChangeCh        chan *configchange.ReloadRequest
 	ErrGroup              *errgroup.Group // Tracks all background goroutines for graceful shutdown
 	LeaderState           *leaderCallbackState
+
+	// Election is the running election loop, stoppable on its own so a
+	// hand-over can end this iteration's term before the rest of it stops.
+	// Nil when leader election is disabled.
+	Election *electionRun
 
 	// LeaderEpoch is the fencing epoch the deployer stamps on every apply, plus
 	// the way to hand leadership back. It is built with the deploy stack and
