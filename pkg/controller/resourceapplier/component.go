@@ -826,6 +826,12 @@ const (
 // The read costs one request per declaring resource per pass, which is why it
 // runs only for the ones that declare a path. If the object is deleted between
 // the read and the apply, the apply recreates it from the template's values.
+//
+// The apply carries the resourceVersion it read, so a scale that lands between
+// the read and the apply makes the apply fail with a conflict instead of being
+// overwritten with the value read a moment earlier; the next pass reads the
+// scale. Measured: `kubectl scale --replicas=0` undone two seconds later, e2e
+// job 16356029027.
 func (c *Component) withCreateOnlyFieldsFromLive(
 	ctx context.Context,
 	gvr schema.GroupVersionResource,
@@ -842,7 +848,7 @@ func (c *Component) withCreateOnlyFieldsFromLive(
 	if err != nil {
 		return nil, err
 	}
-	out := object
+	out := setNestedFieldCopying(object, live.GetResourceVersion(), "metadata", "resourceVersion")
 	for _, path := range r.CreateOnlyFields {
 		fields := strings.Split(path, ".")
 		if len(fields) == 0 || slices.Contains(fields, "") {
@@ -869,7 +875,10 @@ func setNestedFieldCopying(object map[string]any, value any, fields ...string) m
 	if out == nil {
 		out = map[string]any{}
 	}
-	if len(fields) == 1 {
+	switch len(fields) {
+	case 0:
+		return out
+	case 1:
 		out[fields[0]] = value
 		return out
 	}
@@ -901,31 +910,18 @@ func (c *Component) applyOne(
 	key := fmt.Sprintf("%s/%s/%s", r.Namespace, r.Name, gvr.String())
 	partial := isPartialOwnership(r)
 
-	object := c.prepareForApply(r.Object, partial)
-	object, err = c.withCreateOnlyFieldsFromLive(ctx, gvr, r, object)
-	if err != nil {
-		c.Logger().Error("Failed to read a rendered resource before applying it",
-			"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(), "error", err)
-		return applyOutcomeError
+	prepared := c.prepareForApply(r.Object, partial)
+	var appliedObject *unstructured.Unstructured
+	// A create-only read pins the apply to the version it read, and any write
+	// in between, a status update included, makes the API server refuse it.
+	// One re-read covers that; a second refusal reaches the next pass.
+	for attempt := 1; ; attempt++ {
+		appliedObject, err = c.applyPrepared(ctx, gvr, r, prepared)
+		if err == nil || attempt == createOnlyApplyAttempts || !apierrors.IsConflict(err) ||
+			len(r.CreateOnlyFields) == 0 {
+			break
+		}
 	}
-	payload, err := json.Marshal(object)
-	if err != nil {
-		c.Logger().Error("Failed to marshal rendered resource",
-			"namespace", r.Namespace, "name", r.Name, "kind", r.Kind, "error", err)
-		return applyOutcomeError
-	}
-	// No local digest can prove that an unwatched target wasn't mutated or
-	// recreated after the previous apply, so every cycle reaches the API server.
-	appliedObject, err := c.dynamicClient.Resource(gvr).Namespace(r.Namespace).Patch(
-		ctx,
-		r.Name,
-		types.ApplyPatchType,
-		payload,
-		metav1.PatchOptions{
-			FieldManager: fieldManager,
-			Force:        new(true),
-		},
-	)
 	if err != nil {
 		c.Logger().Error("Failed to apply rendered resource",
 			"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(),
@@ -951,6 +947,40 @@ func (c *Component) applyOne(
 		c.mu.Unlock()
 	}
 	return applyOutcomeApplied
+}
+
+// createOnlyApplyAttempts bounds the re-reads an apply pinned to a live
+// resourceVersion spends on writes that landed in between.
+const createOnlyApplyAttempts = 2
+
+// applyPrepared reads the create-only fields the resource declares and
+// server-side applies the prepared object. No local digest can prove that an
+// unwatched target wasn't mutated or recreated after the previous apply, so
+// every cycle reaches the API server.
+func (c *Component) applyPrepared(
+	ctx context.Context,
+	gvr schema.GroupVersionResource,
+	r *templating.RenderedResource,
+	prepared map[string]any,
+) (*unstructured.Unstructured, error) {
+	object, err := c.withCreateOnlyFieldsFromLive(ctx, gvr, r, prepared)
+	if err != nil {
+		return nil, fmt.Errorf("reading the object before applying it: %w", err)
+	}
+	payload, err := json.Marshal(object)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling the rendered object: %w", err)
+	}
+	return c.dynamicClient.Resource(gvr).Namespace(r.Namespace).Patch(
+		ctx,
+		r.Name,
+		types.ApplyPatchType,
+		payload,
+		metav1.PatchOptions{
+			FieldManager: fieldManager,
+			Force:        new(true),
+		},
+	)
 }
 
 func appliedMetaFromResponse(

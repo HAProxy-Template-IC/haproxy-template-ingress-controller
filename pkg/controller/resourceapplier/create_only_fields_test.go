@@ -15,15 +15,20 @@
 package resourceapplier
 
 import (
+	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -55,6 +60,7 @@ func createOnlyComponent(t *testing.T, existing ...runtime.Object) *Component {
 func TestCreateOnlyFieldsFollowTheLiveObject(t *testing.T) {
 	scaled := createOnlyObject()
 	scaled["spec"].(map[string]any)["replicas"] = int64(0)
+	scaled["metadata"].(map[string]any)["resourceVersion"] = "7"
 	component := createOnlyComponent(t, &unstructured.Unstructured{Object: scaled})
 	object := createOnlyObject()
 
@@ -70,6 +76,10 @@ func TestCreateOnlyFieldsFollowTheLiveObject(t *testing.T) {
 	spec := applied["spec"].(map[string]any)
 	assert.Equal(t, int64(0), spec["replicas"],
 		"an operator's scale must be read back and re-applied, not overwritten")
+	assert.Equal(t, "7", applied["metadata"].(map[string]any)["resourceVersion"],
+		"the apply must carry the version it read, so a scale landing in between conflicts instead of being overwritten")
+	assert.Nil(t, object["metadata"].(map[string]any)["resourceVersion"],
+		"the rendered object the render cache holds must not be mutated")
 	assert.Equal(t, "store", spec["serviceName"], "every other field still comes from the template")
 
 	// prepareForApply copies only the top level, so the nested maps belong to
@@ -153,4 +163,49 @@ func TestCreateOnlyFieldsSurviveTheSnapshot(t *testing.T) {
 	require.Len(t, resources, 1)
 	assert.Equal(t, []string{"spec.replicas"}, resources[0].CreateOnlyFields,
 		"the snapshot must carry the paths the configuration declared")
+}
+
+// A write between the read and the apply, a status update included, makes the
+// API server refuse the pinned apply; one re-read covers it, so status churn
+// on a StatefulSet does not turn into a failed pass.
+func TestCreateOnlyFieldsRereadOnceOnConflict(t *testing.T) {
+	live := createOnlyObject()
+	live["metadata"].(map[string]any)["resourceVersion"] = "7"
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "StatefulSetList"},
+		&unstructured.UnstructuredList{},
+	)
+	client := dynamicfake.NewSimpleDynamicClient(scheme, &unstructured.Unstructured{Object: live})
+	patches := 0
+	client.PrependReactor("patch", "statefulsets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		patches++
+		if patches == 1 {
+			return true, nil, apierrors.NewConflict(
+				stsGVR.GroupResource(), "store", errors.New("the object has been modified"))
+		}
+		applied := &unstructured.Unstructured{Object: createOnlyObject()}
+		applied.SetUID("uid-store")
+		applied.SetResourceVersion("8")
+		return true, applied, nil
+	})
+	component := New(&Config{
+		EventBus:      testutil.NewTestBus(),
+		DynamicClient: client,
+		GVRResolver:   &mockResolver{results: map[string]schema.GroupVersionResource{"apps/v1/StatefulSet": stsGVR}},
+		Logger:        testutil.NewTestLogger(),
+		OwnNamespace:  "haptic",
+	})
+
+	outcome := component.applyOne(
+		t.Context(),
+		&templating.RenderedResource{
+			APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "haptic", Name: "store",
+			Object: createOnlyObject(), CreateOnlyFields: []string{"spec.replicas"},
+		},
+		map[string]appliedKeyMeta{}, map[string]struct{}{}, &sync.Mutex{},
+	)
+
+	assert.Equal(t, applyOutcomeApplied, outcome)
+	assert.Equal(t, 2, patches, "one refused apply, one re-read and re-applied")
 }
