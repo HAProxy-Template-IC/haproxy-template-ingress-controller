@@ -320,6 +320,20 @@ func (h *harness) state(verify bool) api.State {
 	return h.stateRead(api.StateRead{Verify: verify, Plan: true})
 }
 
+// putPlan uploads a blob for (planID, proof) and returns the status.
+func (h *harness) putPlan(planID, proof string, blob []byte) int {
+	h.t.Helper()
+	url := h.url + api.PathPlan + "?plan_id=" + planID + "&proof=" + proof
+	request, err := http.NewRequestWithContext(h.t.Context(), http.MethodPut, url, bytes.NewReader(blob))
+	require.NoError(h.t, err)
+	request.SetBasicAuth(testUser, testPassword)
+	response, err := h.client.Do(request)
+	require.NoError(h.t, err)
+	defer func() { _ = response.Body.Close() }()
+	_, _ = io.Copy(io.Discard, response.Body)
+	return response.StatusCode
+}
+
 // stateRead reads the state the way the controller asks for it.
 func (h *harness) stateRead(read api.StateRead) api.State {
 	h.t.Helper()

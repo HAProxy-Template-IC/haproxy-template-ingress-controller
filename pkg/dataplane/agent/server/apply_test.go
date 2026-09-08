@@ -925,3 +925,38 @@ func TestApplyReportsWhereItsTimeWent(t *testing.T) {
 	assert.GreaterOrEqual(t, timing.TotalMs, timing.StageMs+timing.WriteMs+timing.OpsMs,
 		"the phases are measured inside the total")
 }
+
+// A blob put after the apply is the pod's baseline like one that rode the
+// apply: handed back for its plan, dropped with the proofs at a restart,
+// refused once the applied plan moved on.
+func TestPlanPutAfterTheApplyIsTheBaseline(t *testing.T) {
+	h := newHarness(t)
+	files := baseFiles("global\n")
+	m := buildManifest("plan-1", files)
+	m.Mode = api.ModeReload
+	first := h.apply(&m, files)
+	require.True(t, first.OK, "%+v", first.Error)
+	assert.False(t, h.stateRead(api.StateRead{}).AppliedPlanStored, "the apply carried no blob")
+
+	assert.Equal(t, http.StatusConflict, h.putPlan("plan-1", "not-the-proof", []byte("opaque-plan-1")))
+	assert.Equal(t, http.StatusOK, h.putPlan("plan-1", first.AppliedPlanProof, []byte("opaque-plan-1")))
+	state := h.state(false)
+	assert.Equal(t, []byte("opaque-plan-1"), state.AppliedPlan)
+	assert.True(t, state.AppliedPlanStored)
+
+	// A restart invalidates every in-process proof, for a put blob as for one
+	// that rode the apply: nothing is handed back until a new apply binds it.
+	restarted := h.restart()
+	assert.Empty(t, restarted.state(false).AppliedPlan)
+
+	next := buildManifest("plan-2", files)
+	next.ExpectedPrevPlanID = "plan-1"
+	next.ExpectedPrevToken = first.AppliedToken
+	second := restarted.apply(&next, files)
+	require.True(t, second.OK, "%+v", second.Error)
+	assert.Equal(t, http.StatusConflict, restarted.putPlan("plan-1", first.AppliedPlanProof, []byte("opaque-plan-1")),
+		"the pod moved on; the old plan's blob is refused")
+	assert.Empty(t, restarted.state(false).AppliedPlan)
+	assert.Equal(t, http.StatusOK, restarted.putPlan("plan-2", second.AppliedPlanProof, []byte("opaque-plan-2")))
+	assert.Equal(t, []byte("opaque-plan-2"), restarted.state(false).AppliedPlan)
+}

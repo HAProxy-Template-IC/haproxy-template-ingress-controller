@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
@@ -260,9 +261,20 @@ func TestApply_SecondApplyRunsAtRuntime(t *testing.T) {
 	assert.Equal(t, api.ResultRuntime, second.Result.Mode)
 	assert.Contains(t, second.Parts, "haproxy.cfg", "haproxy.cfg always travels whole")
 	assert.NotContains(t, second.Parts, "maps/host.map", "an unchanged file the agent holds must not travel")
-	assert.NotEmpty(t, second.Plan,
-		"this apply moves the pod's applied plan, and a pod hands back only the blob of the plan it applied")
+	assert.Empty(t, second.Plan, "a runtime apply carries no blob; the keeper delivers it afterwards")
 	assert.Equal(t, plan1.ID, second.Manifest.ExpectedPrevPlanID)
+	awaitStoredPlan(t, agent, plan2.ID)
+}
+
+// awaitStoredPlan waits for the keeper to hand the pod the blob of planID:
+// the pod hands back only the blob of the plan it applied, and a leader with
+// a cold cache reads its baseline from it.
+func awaitStoredPlan(t *testing.T, agent *agenttest.Agent, planID string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		state := agent.State()
+		return state.AppliedPlanID == planID && len(state.AppliedPlan) > 0
+	}, testutil.EventTimeout, 5*time.Millisecond, "the keeper did not deliver the blob of %s", planID)
 }
 
 // A map file whose content changed but whose entries the diff cannot express as
@@ -744,9 +756,8 @@ func TestApply_UnchangedRenderDoesNotRepeatThePlanBlob(t *testing.T) {
 	assert.Zero(t, agent.PlanReads(), "a controller that holds the plan reads the state without the blob")
 }
 
-// One deployment that needs several fenced applies stores one blob: every chunk
-// carries the same plan id, so repeating it would send the same 100-200 KB
-// again per chunk.
+// One deployment that needs several fenced applies stores one blob: every
+// chunk carries the same plan id, so the blob follows the last chunk, once.
 func TestApply_ChunkedApplyCarriesThePlanBlobOnce(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
@@ -761,8 +772,66 @@ func TestApply_ChunkedApplyCarriesThePlanBlobOnce(t *testing.T) {
 	applies := agent.Applies()
 	require.Len(t, applies, 3)
 	assert.Empty(t, applies[1].Plan)
-	assert.NotEmpty(t, applies[2].Plan)
-	assert.NotEmpty(t, agent.State().AppliedPlan, "the pod must still answer with a baseline")
+	assert.Empty(t, applies[2].Plan)
+	awaitStoredPlan(t, agent, plan2.ID)
+	puts := agent.PlanPuts()
+	require.Len(t, puts, 1, "one upload for the deployment, bound to the last chunk's proof")
+	assert.Equal(t, plan2.ID, puts[0].PlanID)
+	assert.Equal(t, applies[2].Result.AppliedPlanProof, puts[0].Proof)
+}
+
+// The upload runs on the term's context, not the deployment's: a deployment
+// cancels its own context as soon as it completes, which is right after the
+// apply that offered the blob.
+func TestPlanBlobUploadOutlivesTheDeployment(t *testing.T) {
+	agent := agenttest.New(t, agenttest.WithPlanPutDelay(50*time.Millisecond))
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+	term, endTerm := context.WithCancel(context.Background())
+	defer endTerm()
+	component.keeper.Begin(term)
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	occurrence := mustOccurrenceFor(plan2, config2, aux2, nil)
+	event, err := events.NewDeploymentScheduledEventWithCycle(
+		occurrence, []dataplane.Endpoint{endpoint}, "rt-cfg-1", "haptic", "config_validation", true,
+	)
+	require.NoError(t, err)
+	deployCtx, cancel := context.WithCancel(context.Background())
+	component.deployToEndpoints(deployCtx, func() {}, event, "deployment-"+plan2.ID)
+	cancel()
+	testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, bus.Events, testutil.LongTimeout)
+
+	awaitStoredPlan(t, agent, plan2.ID)
+}
+
+// An agent without the plan endpoint gets the blob with every apply that
+// moves its applied plan on, as before the keeper.
+func TestApply_AgentWithoutPlanEndpointGetsTheBlobWithTheApply(t *testing.T) {
+	agent := agenttest.New(t, agenttest.WithoutPlanEndpoint())
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	require.Eventually(t, func() bool { return !component.keeper.Delivers(&endpoint) },
+		testutil.EventTimeout, 5*time.Millisecond, "the 404 must retire the keeper for this pod")
+	plan3, config3, aux3 := renderFor("plan-3", "10.0.0.3", mapEntry)
+	deployTo(t, component, bus, plan3, config3, aux3, "config_validation", endpoint)
+
+	applies := agent.Applies()
+	require.Len(t, applies, 3)
+	assert.NotEmpty(t, applies[0].Plan, "the first apply reloads and carries the blob")
+	assert.Empty(t, applies[1].Plan, "the keeper tried this one and learnt the agent has no endpoint")
+	assert.NotEmpty(t, applies[2].Plan, "from then on the apply carries it")
+	assert.Equal(t, plan3.ID, agent.State().AppliedPlanID)
+	assert.NotEmpty(t, agent.State().AppliedPlan)
 }
 
 // More ops than one apply may carry are split into fenced chunks, each one

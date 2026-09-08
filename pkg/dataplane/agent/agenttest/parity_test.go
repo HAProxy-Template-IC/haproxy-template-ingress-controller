@@ -141,6 +141,7 @@ func TestFakeAndRealAgentAnswerAlike(t *testing.T) {
 		{name: "a pending reload coalesces and only in-place ops run", run: pendingReloadScenario},
 		{name: "a revert restores the last known good set", run: revertScenario},
 		{name: "a stored plan is handed back only for the plan it describes", run: planBlobScenario},
+		{name: "a plan put after the apply binds to it and is refused once it moved", run: deferredPlanScenario},
 	}
 
 	for _, sc := range scenarios {
@@ -279,6 +280,45 @@ func planBlobScenario(t *testing.T, p *parityAgent) {
 	again.ExpectedPrevPlanID = "plan-2"
 	again.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 2}
 	p.applyWithPlan(t, "the next apply brings the plan back", again, parts, []byte("plan-3-blob"))
+}
+
+// deferredPlanScenario is the keeper's path: the apply carries no blob, the
+// blob is put afterwards under the apply's proof, and a put for a plan the pod
+// has moved past is refused and leaves the newer state alone.
+func deferredPlanScenario(t *testing.T, p *parityAgent) {
+	t.Helper()
+	first, parts := build("plan-1", api.ModeReload, api.Token{LeaderEpoch: 1, RenderSeq: 1}, seedFiles)
+	p.apply(t, "first apply carries no plan", first, parts)
+	p.putPlan(t, "the plan is put after the apply", "plan-1", p.seen[len(p.seen)-1].AppliedProof, []byte("plan-1-blob"))
+
+	routed := map[string]string{"haproxy.cfg": "global\n", "maps/host.map": "example.com be-1\nnew.example.com be-2\n"}
+	next, parts := build("plan-2", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 2}, routed)
+	next.ExpectedPrevPlanID = "plan-1"
+	next.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
+	next.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "new.example.com", Value: "be-2"}}
+	p.apply(t, "the applied plan moves on", next, parts)
+	p.putPlan(t, "a put for the plan that moved is refused", "plan-1", p.seen[0].AppliedProof, []byte("plan-1-blob"))
+	p.putPlan(t, "a put with a wrong proof is refused", "plan-2", "not-the-proof", []byte("plan-2-blob"))
+	p.putPlan(t, "the put for the applied plan lands", "plan-2", p.seen[len(p.seen)-3].AppliedProof, []byte("plan-2-blob"))
+}
+
+// putPlan records what a PUT of the blob answered and whether the pod hands
+// a blob back afterwards.
+func (p *parityAgent) putPlan(t *testing.T, step, planID, proof string, blob []byte) {
+	t.Helper()
+	err := p.client.PutPlan(t.Context(), planID, proof, blob)
+	seen := observation{Step: step, Status: http.StatusOK, OK: err == nil}
+	if errors.Is(err, client.ErrPlanMoved) {
+		seen.Status = http.StatusConflict
+	} else {
+		require.NoError(t, err, step)
+	}
+	state, err := p.client.State(t.Context(), api.StateRead{Plan: true})
+	require.NoError(t, err, step)
+	seen.StoredPlan = len(state.AppliedPlan) > 0
+	seen.AppliedPlanID = state.AppliedPlanID
+	seen.AppliedProof = state.AppliedPlanProof
+	p.seen = append(p.seen, seen)
 }
 
 func newFakeParityAgent(t *testing.T) *parityAgent {

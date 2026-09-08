@@ -249,38 +249,37 @@ func (c *Component) newDeployRequest(
 	}
 }
 
-// planBlob is the plan's blob, encoded while the pods' state is read and
-// diffed: at 2,600 routes the encode is 17 ms of the deploy, and nothing before
-// the apply itself needs it.
+// planBlob is the plan's blob, encoded on first use: the keeper asks for it
+// after the apply, off the deploy's critical path, and a plan the pods have
+// moved past is never encoded at all. At 5,000 routes the encode is 35 ms.
 type planBlob struct {
-	done chan struct{}
-	blob []byte
+	identity *renderOccurrenceIdentity
+	logger   *slog.Logger
+	once     sync.Once
+	blob     []byte
 }
 
 func encodePlanBlob(identity *renderOccurrenceIdentity, logger *slog.Logger) *planBlob {
-	b := &planBlob{done: make(chan struct{})}
-	go func() {
-		defer close(b.done)
-		blob, err := planblob.EncodeSnapshot(identity.planSnapshot)
-		if err != nil {
-			// Without the blob a pod that outlives this controller reports a
-			// baseline nobody can decode, which costs it one reload — never
-			// correctness, so the deployment goes ahead.
-			logger.Error("Encoding the plan blob failed; pods will not retain this baseline",
-				"plan", identity.plan.ID, "error", err)
-			return
-		}
-		b.blob = blob
-	}()
-	return b
+	return &planBlob{identity: identity, logger: logger}
 }
 
-// bytes waits for the encode; nil when it failed.
+// bytes encodes on first call; nil when the encode failed.
 func (b *planBlob) bytes() []byte {
 	if b == nil {
 		return nil
 	}
-	<-b.done
+	b.once.Do(func() {
+		blob, err := planblob.EncodeSnapshot(b.identity.planSnapshot)
+		if err != nil {
+			// Without the blob a pod that outlives this controller reports a
+			// baseline nobody can decode, which costs it one reload — never
+			// correctness, so the deployment goes ahead.
+			b.logger.Error("Encoding the plan blob failed; pods will not retain this baseline",
+				"plan", b.identity.plan.ID, "error", err)
+			return
+		}
+		b.blob = blob
+	})
 	return b.blob
 }
 

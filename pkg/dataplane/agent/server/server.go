@@ -181,6 +181,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET "+api.PathReadyz, s.handleReadyz)
 	mux.Handle("GET "+api.PathState, s.authenticated(s.handleState))
 	mux.Handle("POST "+api.PathApply, s.authenticated(s.handleApply))
+	mux.Handle("PUT "+api.PathPlan, s.authenticated(s.handlePlan))
 	return mux
 }
 

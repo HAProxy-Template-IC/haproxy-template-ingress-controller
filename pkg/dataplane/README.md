@@ -13,7 +13,7 @@ Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative
    `haproxy.cfg`, the backend and server records behind them, the entries of
    every map and crt-list, the file set. The generator produces it; nothing
    parses HAProxy configuration.
-2. `agent/api` is the wire contract, compiled by both ends: `GET /v1/state`,
+2. `agent/api` is the wire contract, compiled by both ends: `GET /v1/state`, `PUT /v1/plan`,
    `POST /v1/apply`, the typed ops, the limits.
 3. `deployplan` compares two plans against one pod's baseline and returns a
    verdict — `runtime`, `file_only` or `reload` — plus the ops to run. Pure

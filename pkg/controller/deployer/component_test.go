@@ -295,8 +295,8 @@ func TestDeploymentStateKeepsTheSlowestPodsPhases(t *testing.T) {
 	assert.Equal(t, int64(40), state.slowest.SendMs)
 }
 
-// The blob is encoded while the pods' state is read and diffed; the apply
-// waits for it only when it sends it, and an encode that failed sends none.
+// The blob is encoded on first use and only once; an apply that does not send
+// it never waits for it, and a nil blob sends nothing.
 func TestPlanBlobIsEncodedOffTheCriticalPath(t *testing.T) {
 	plan, _, _ := renderFor("plan-1", "10.0.0.1", mapEntry)
 	snapshot, err := renderplan.NewSnapshot(renderplan.NewAuthority(), plan, nil)
@@ -316,22 +316,27 @@ func TestPlanBlobIsEncodedOffTheCriticalPath(t *testing.T) {
 	assert.Nil(t, (*planBlob)(nil).bytes())
 }
 
-// Whether a pod's baseline already is the plan is decided once per baseline,
-// not once per pod, and only a pod without a stored blob gets it again.
+// The blob rides the apply only where the keeper cannot deliver it afterwards:
+// a full re-send, a verified pass, or an agent without the plan endpoint. For
+// such an agent, whether the pod's baseline already is the plan is decided
+// once per baseline, not once per pod.
 func TestSendsPlanBlobDecidesPerBaseline(t *testing.T) {
 	plan, _, _ := renderFor("plan-1", "10.0.0.1", mapEntry)
 	req := &deployRequest{plan: plan, planID: plan.ID}
 	stored := &api.State{AppliedPlanStored: true}
 	first := &podApply{req: req, state: stored}
 	second := &podApply{req: req, state: stored}
-	assert.False(t, first.sendsPlanBlob(plan), "the baseline is this plan and the pod holds its blob")
-	assert.False(t, second.sendsPlanBlob(plan))
+	assert.False(t, first.sendsPlanBlob(plan, true), "the keeper delivers it after the apply")
+	assert.True(t, (&podApply{req: req, state: stored, full: true}).sendsPlanBlob(plan, true), "a full re-send carries it")
+
+	assert.False(t, first.sendsPlanBlob(plan, false), "the baseline is this plan and the pod holds its blob")
+	assert.False(t, second.sendsPlanBlob(plan, false))
 	memoized, ok := req.baselineIsPlan.Load(plan)
 	require.True(t, ok)
 	assert.Equal(t, true, memoized)
 
 	bare := &podApply{req: req, state: &api.State{}}
-	assert.True(t, bare.sendsPlanBlob(plan), "the pod holds no blob for its plan")
+	assert.True(t, bare.sendsPlanBlob(plan, false), "the pod holds no blob for its plan")
 	other, _, _ := renderFor("plan-2", "10.0.0.2", mapEntry)
-	assert.True(t, first.sendsPlanBlob(other), "the baseline is another plan")
+	assert.True(t, first.sendsPlanBlob(other, false), "the baseline is another plan")
 }

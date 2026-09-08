@@ -88,6 +88,7 @@ type Component struct {
 
 	clients *agentClients
 	plans   *planCache
+	keeper  *planKeeper
 	fence   LeadershipFence
 
 	contentProofMu sync.Mutex
@@ -142,9 +143,11 @@ type Component struct {
 // chart-templated agent flag, not a client timeout. domainMetrics may be nil in
 // tests; the per-pod counters are then not recorded.
 func New(eventBus *busevents.EventBus, logger *slog.Logger, syncTimeout time.Duration, domainMetrics *metrics.Metrics) *Component {
+	clients := newAgentClients(agentStateTimeout, syncTimeout)
 	c := &Component{
 		ReadySignal:     component.NewReadySignal(),
-		clients:         newAgentClients(agentStateTimeout, syncTimeout),
+		clients:         clients,
+		keeper:          newPlanKeeper(clients, logger),
 		plans:           newPlanCache(),
 		contentProofs:   map[string]map[string]contentProof{},
 		invalidBaseline: map[string]struct{}{},
@@ -206,6 +209,7 @@ func (c *Component) Start(ctx context.Context) error {
 	c.forgetAwaitingConvergence()
 
 	c.ctx = ctx
+	c.keeper.Begin(ctx)
 	controlCtx, stopControl := context.WithCancel(ctx)
 	controlDone := make(chan struct{})
 	go c.runCancellationLoop(controlCtx, controlDone)
@@ -214,6 +218,7 @@ func (c *Component) Start(ctx context.Context) error {
 	stopControl()
 	c.cancelActiveDeployment("shutdown")
 	<-controlDone
+	c.keeper.Wait()
 	c.clients.Close()
 	return err
 }

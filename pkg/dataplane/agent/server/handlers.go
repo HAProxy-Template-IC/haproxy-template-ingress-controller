@@ -106,6 +106,35 @@ func (s *Server) refreshTree() error {
 	return nil
 }
 
+// handlePlan stores the plan blob for the pod's applied plan after the apply
+// that landed it, so the apply itself carries none: the controller encodes and
+// uploads the blob in the background, and a cold leader still finds it here.
+func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
+	if !s.ready.Load() {
+		writeJSON(w, http.StatusServiceUnavailable, api.ApplyError{Stage: "startup", Message: "agent is initialising"})
+		return
+	}
+	id, proof := r.URL.Query().Get("plan_id"), r.URL.Query().Get("proof")
+	if id == "" || proof == "" {
+		writeJSON(w, http.StatusBadRequest, api.ApplyError{Stage: "request", Message: "plan_id and proof are required"})
+		return
+	}
+	blob, err := readPlanBlob(http.MaxBytesReader(w, r.Body, api.MaxPlanBlobBytes+1))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, api.ApplyError{Stage: "plan", Message: err.Error()})
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.storePlanBlobLocked(id, proof, blob) {
+		writeJSON(w, http.StatusConflict, api.PlanMoved{
+			AppliedPlanID: s.state.AppliedPlanID, AppliedPlanProof: s.state.AppliedPlanProof,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, api.PlanStored{PlanID: id, Proof: proof})
+}
+
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	raw, err := json.Marshal(body)
 	if err != nil {
