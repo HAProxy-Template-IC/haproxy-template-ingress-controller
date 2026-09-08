@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
@@ -244,20 +245,27 @@ func standbyController(ctx context.Context, t *testing.T, cs kubernetes.Interfac
 func handLeaseTo(ctx context.Context, t *testing.T, cs kubernetes.Interface, standby string) {
 	t.Helper()
 	leases := cs.CoordinationV1().Leases(ControllerNamespace)
-	lease, err := leases.Get(ctx, controllerLeaseName, metav1.GetOptions{})
+	// The leader renews the Lease every retry period, so a read-modify-write
+	// races it; a conflict means re-read and write again, as any Lease writer
+	// does.
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		lease, err := leases.Get(ctx, controllerLeaseName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		now := metav1.NewMicroTime(time.Now())
+		transitions := int32(1)
+		if lease.Spec.LeaseTransitions != nil {
+			transitions = *lease.Spec.LeaseTransitions + 1
+		}
+		lease.Spec.HolderIdentity = &standby
+		lease.Spec.AcquireTime = &now
+		lease.Spec.RenewTime = &now
+		lease.Spec.LeaseTransitions = &transitions
+		_, err = leases.Update(ctx, lease, metav1.UpdateOptions{})
+		return err
+	})
 	if err != nil {
-		t.Fatalf("get the controller lease: %v", err)
-	}
-	now := metav1.NewMicroTime(time.Now())
-	transitions := int32(1)
-	if lease.Spec.LeaseTransitions != nil {
-		transitions = *lease.Spec.LeaseTransitions + 1
-	}
-	lease.Spec.HolderIdentity = &standby
-	lease.Spec.AcquireTime = &now
-	lease.Spec.RenewTime = &now
-	lease.Spec.LeaseTransitions = &transitions
-	if _, err := leases.Update(ctx, lease, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("hand the lease to %s: %v", standby, err)
 	}
 	t.Logf("handed the lease to %s", standby)
