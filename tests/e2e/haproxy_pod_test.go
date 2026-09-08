@@ -152,8 +152,11 @@ if [ "$_actual_token" != "$_token" ]; then
   exit 1
 fi
 
-_signal_process "$_state/child" TERM
+# The monitor goes first, and is told why: a probe the stop itself cuts
+# short must not be reported as HAProxy being unavailable.
+: > "$_state/stopping"
 _signal_process "$_state/pid" TERM
+_signal_process "$_state/child" TERM
 
 _waited=0
 while _any_process_alive && [ "$_waited" -lt 30 ]; do
@@ -242,7 +245,7 @@ _finish() {
   trap - EXIT HUP INT TERM
   _shutdown
   rm -f "$_state/child" "$_state/pid" "$_state/status" "$_state"/*.tmp.*
-  rm -f "$_state/token"
+  rm -f "$_state/token" "$_state/stopping"
   rmdir "$_state" 2>/dev/null || true
   exit "$_rc"
 }
@@ -261,6 +264,9 @@ while :; do
   _status=$(cat "$_state/status" 2>/dev/null || true)
   rm -f "$_state/status"
   if [ "$_status" != 200 ]; then
+    if [ -e "$_state/stopping" ]; then
+      exit 0
+    fi
     printf 'HAPTIC_AVAILABILITY_FAILED status=%s\n' "$_status" >&2
     exit 1
   fi
