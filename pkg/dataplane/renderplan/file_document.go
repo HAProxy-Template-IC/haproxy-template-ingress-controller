@@ -119,7 +119,7 @@ func NewSnapshotWithConfigDocument(
 		snapshot.root.sections, snapshot.root.backends, snapshot.root.profiles,
 		snapshot.root.maps, snapshot.root.crtLists, files,
 	)
-	return sealSnapshot(authority, planRoot), nil
+	return sealSnapshotFromSource(authority, planRoot, snapshot.source), nil
 }
 
 func buildSnapshotFileSequence(

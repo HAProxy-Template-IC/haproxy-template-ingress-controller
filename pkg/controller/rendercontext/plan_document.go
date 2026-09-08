@@ -68,12 +68,12 @@ func (r *PlanRegistry) PlanDocument(
 		}
 	}
 
-	plan, err := r.documentPlanMetadata(nextDocument, aux)
+	plan, backends, err := r.documentPlanMetadata(nextDocument, aux)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, planDelta, err := renderplan.ReconcileSnapshotWithConfigDocument(
-		authority, previousPlan, plan, nextDocument,
+	snapshot, planDelta, err := renderplan.ReconcileSnapshotWithBackendSource(
+		authority, previousPlan, plan, backends, nextDocument,
 	)
 	if err != nil {
 		return nil, err
@@ -120,34 +120,35 @@ func (r *PlanRegistry) transitionFromPreviousLocked(
 	return nextDocument, previousPlan, documentDelta, nil
 }
 
+// documentPlanMetadata builds the plan without its backends, which the
+// returned source serves by name so the transition compares only what moved.
 func (r *PlanRegistry) documentPlanMetadata(
 	document rendercontent.Document,
 	aux *dataplane.AuxiliaryFiles,
-) (*renderplan.Plan, error) {
+) (*renderplan.Plan, renderplan.BackendSource, error) {
 	files, mapContents, err := r.planFiles("", aux)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	bytes, err := document.Bytes()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	files[0] = renderplan.File{
 		Path: renderplan.ConfigFilePath, Kind: renderplan.FileKindConfig,
 		ReloadOnChange: true, Size: int64(bytes),
 	}
-	backends, err := r.planBackends()
+	backends, err := r.planBackendSource()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return &renderplan.Plan{
 		SchemaVersion: renderplan.SchemaVersion,
 		Sections:      slices.Clone(r.assembled),
-		Backends:      backends,
 		Profiles:      r.profiles(),
 		Maps:          r.mapFiles(mapContents),
 		Files:         sortedFiles(files),
-	}, nil
+	}, backends, nil
 }
 
 func transitionPlanDocument(
