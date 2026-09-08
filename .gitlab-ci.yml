@@ -820,6 +820,11 @@ build-ingress-conformance-image:
     # matrix.
     HAPROXY_VERSION: "3.4"
     INGRESS_CONFORMANCE_IMAGE: "${CI_REGISTRY_IMAGE}/ingress-conformance:ci-${CI_PIPELINE_ID}-haproxy3.4"
+    # The upstream suite's modules are fetched on every run (its go.mod, not
+    # ours, so no vendor and no shared cache). With `|` Go falls back to the
+    # origin on any proxy error, not only a 404: a proxy stream reset
+    # (INTERNAL_ERROR mid-download of k8s.io/api) failed a main pipeline.
+    GOPROXY: "https://proxy.golang.org|direct"
   needs:
     - compute-ci-image-tag
     - job: build-ci
