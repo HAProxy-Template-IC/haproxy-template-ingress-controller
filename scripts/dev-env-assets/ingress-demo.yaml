@@ -582,27 +582,6 @@ spec:
 
 ---
 ##############################################################################
-# 25. SCALE SERVER SLOTS - Pre-allocate slots for dynamic scaling
-##############################################################################
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: echo-scale-slots
-  namespace: echo
-  annotations:
-    # Pre-allocate 20 server slots (allows scaling without HAProxy reload)
-    haproxy.org/scale-server-slots: "20"
-spec:
-  ingressClassName: haptic
-  rules:
-    - host: echo-scale-slots.localdev.me
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend: {service: {name: echo-server, port: {number: 80}}}
-
-##############################################################################
 # 26. Backend mTLS (Mutual TLS to backend servers)
 #
 # Demonstrates using client certificates and CA verification for backend
