@@ -162,8 +162,9 @@ func newTestComponent(t *testing.T) testEnv {
 	component := New(publisher, bus, testutil.NewTestLogger())
 
 	return testEnv{ctx, crdClient, bus, publisher, func() {
-		bus.Start()
 		go component.Start(ctx)
+		waitForTestSignal(t, ctx, component.SubscriptionReady(), "config publisher did not subscribe")
+		bus.Start()
 	}}
 }
 
@@ -174,8 +175,6 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	eventChan := env.bus.Subscribe("test-sub", 50)
 
 	env.start()
-
-	time.Sleep(100 * time.Millisecond)
 
 	// Create template config for ConfigValidatedEvent
 	templateConfig := &v1alpha1.HAProxyTemplateConfig{
@@ -318,7 +317,6 @@ func TestComponent_DeployedConfigPublishRequest(t *testing.T) {
 
 	eventChan := env.bus.Subscribe("test-sub", 50)
 	env.start()
-	time.Sleep(100 * time.Millisecond)
 
 	// Cache the template config — handleDeployedConfigPublishRequest drops the
 	// request if no template config is cached yet.
@@ -370,9 +368,6 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 
 	env.start()
 
-	// Give component time to subscribe
-	time.Sleep(100 * time.Millisecond)
-
 	// First create a runtime config manually (since we're not testing the full event flow)
 	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -416,9 +411,6 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	env := newTestComponent(t)
 
 	env.start()
-
-	// Give component time to subscribe
-	time.Sleep(100 * time.Millisecond)
 
 	// Send ConfigValidatedEvent to set up templateConfig (required for namespace-scoped cleanup)
 	templateConfig := &v1alpha1.HAProxyTemplateConfig{
@@ -483,9 +475,6 @@ func TestComponent_MultiplePods(t *testing.T) {
 	env := newTestComponent(t)
 
 	env.start()
-
-	// Give component time to subscribe
-	time.Sleep(100 * time.Millisecond)
 
 	// Send ConfigValidatedEvent to set up templateConfig (required for namespace-scoped cleanup)
 	templateConfig := &v1alpha1.HAProxyTemplateConfig{
@@ -581,8 +570,6 @@ func TestComponent_LostLeadership(t *testing.T) {
 
 	env.start()
 
-	time.Sleep(100 * time.Millisecond)
-
 	// Create template config for ConfigValidatedEvent
 	templateConfig := &v1alpha1.HAProxyTemplateConfig{
 		ObjectMeta: metav1.ObjectMeta{
@@ -639,8 +626,6 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	env := newTestComponent(t)
 
 	env.start()
-
-	time.Sleep(100 * time.Millisecond)
 
 	// Create template config for ConfigValidatedEvent
 	templateConfig := &v1alpha1.HAProxyTemplateConfig{
@@ -699,8 +684,6 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 
 	env.start()
 
-	time.Sleep(100 * time.Millisecond)
-
 	// Publish ValidationFailedEvent without any prior cached state
 	// Even with a correlation ID, there's no matching TemplateRenderedEvent
 	correlationID := t.Name()
@@ -726,9 +709,6 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	env := newTestComponent(t)
 
 	env.start()
-
-	// Give component time to subscribe
-	time.Sleep(100 * time.Millisecond)
 
 	// First create a runtime config manually
 	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
@@ -787,9 +767,6 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 
 	env.start()
 
-	// Give component time to subscribe
-	time.Sleep(100 * time.Millisecond)
-
 	// First create a runtime config manually
 	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -842,9 +819,6 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	env := newTestComponent(t)
 
 	env.start()
-
-	// Give component time to subscribe
-	time.Sleep(100 * time.Millisecond)
 
 	// First create a runtime config manually
 	_, err := env.publisher.PublishConfig(env.ctx, &configpublisher.PublishRequest{
