@@ -208,3 +208,33 @@ func TestWarmerSurvivesAFailedRender(t *testing.T) {
 	testutil.AssertNoEvent[busevents.Event](t, h.published, testutil.NoEventTimeout)
 	assert.Equal(t, 0.0, promtestutil.ToFloat64(h.metrics.RenderTotal.WithLabelValues("warm")))
 }
+
+// The production sequence on the replica that wins the first election: the
+// warmer is inside its cold first render when BecameLeaderEvent and the
+// leader's triggers arrive behind it. Whatever it dequeues afterwards must
+// not render, or it races the Coordinator's first cold render for the graph.
+func TestWarmerStandsDownWhenLeadershipArrivesMidRender(t *testing.T) {
+	p := &recordingPipeline{
+		result: warmResult(), ran: make(chan struct{}, 8), gate: make(chan struct{}), entered: make(chan struct{}, 8),
+	}
+	h := newHarness(t, p)
+
+	h.bus.Publish(events.NewReconciliationTriggeredEvent("initial_sync_complete", true))
+	select {
+	case <-p.entered:
+	case <-time.After(testutil.EventTimeout):
+		t.Fatal("the first render never started")
+	}
+	h.bus.Pause()
+	h.bus.Publish(events.NewBecameLeaderEvent("this-replica"))
+	h.bus.Start()
+	h.bus.Publish(events.NewReconciliationTriggeredEvent("became_leader", false))
+	for range 4 {
+		h.bus.Publish(events.NewReconciliationTriggeredEvent("fleet_capabilities_changed", true))
+	}
+	time.Sleep(testutil.StartupDelay)
+	close(p.gate)
+	h.waitForRender(t)
+	h.assertNoRender(t)
+	assert.Equal(t, 1, p.executions(), "only the render that was already in flight")
+}
