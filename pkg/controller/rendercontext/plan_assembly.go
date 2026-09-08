@@ -509,7 +509,7 @@ func (r *PlanRegistry) classifyLine(line string) (planToken, bool, error) {
 	if !known {
 		return planToken{}, false, fmt.Errorf("plan assembly: token %q has unknown kind %q", trimmed, kind)
 	}
-	if !sectionNamePattern.MatchString(name) {
+	if !validSectionName(name) {
 		return planToken{}, false, fmt.Errorf("plan assembly: token %q has an invalid name %q", trimmed, name)
 	}
 	// The line can be a view into the whole rendered config; a retained token

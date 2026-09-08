@@ -187,23 +187,23 @@ func (a *documentPlanAssembler) run(
 	if err != nil || ok {
 		return carried, carriedSections, carriedParts, err
 	}
-	if a.postBatch != nil {
-		keys, hasMarker, keysErr := a.orderedSectionKeys(source)
-		if keysErr != nil {
-			return rendercontent.Document{}, nil, nil, keysErr
-		}
-		if !hasMarker {
-			return a.runWithoutTokens(source)
-		}
-		if err := a.preparePostProcessedSections(keys); err != nil {
-			return rendercontent.Document{}, nil, nil, err
-		}
-	}
-	if err := visitDocumentLines(source, a.consumeLine); err != nil {
+	// One pass over the document: the token order is needed before the
+	// post-processing batch, and the parts after it, so the pass records
+	// what it saw and the parts are built from that record.
+	script, keys, err := a.scanDocument(source)
+	if err != nil {
 		return rendercontent.Document{}, nil, nil, err
 	}
 	if !a.sawToken {
 		return a.runWithoutTokens(source)
+	}
+	if err := a.preparePostProcessedSections(keys); err != nil {
+		return rendercontent.Document{}, nil, nil, err
+	}
+	for i := range script {
+		if err := a.consumeStep(&script[i]); err != nil {
+			return rendercontent.Document{}, nil, nil, err
+		}
 	}
 	if err := a.flushCore(); err != nil {
 		return rendercontent.Document{}, nil, nil, err
@@ -447,16 +447,14 @@ func sameEmittedSectionText(text, emitted string) bool {
 }
 
 type sectionKeyCollector struct {
-	registry  *PlanRegistry
-	keys      []sectionKey
-	consumed  map[sectionKey]bool
-	hasMarker bool
+	registry *PlanRegistry
+	keys     []sectionKey
+	consumed map[sectionKey]bool
 }
 
+// visitLine classifies one line and records its keys, for the string
+// assembler that still walks the config line by line.
 func (c *sectionKeyCollector) visitLine(line string) error {
-	if strings.Contains(line, c.registry.marker()) {
-		c.hasMarker = true
-	}
 	if _, _, ok := c.registry.cutFragmentToken(line); ok {
 		// Not a section: it contributes no key and no post-processing unit.
 		return nil
@@ -465,6 +463,11 @@ func (c *sectionKeyCollector) visitLine(line string) error {
 	if err != nil || !isToken {
 		return err
 	}
+	return c.collect(token)
+}
+
+// collect records a classified token's keys in emission order.
+func (c *sectionKeyCollector) collect(token planToken) error {
 	if token.Group {
 		for _, name := range c.registry.profileNames() {
 			if err := c.appendKey(sectionKey{Kind: renderplan.SectionKindProfile, Name: name}); err != nil {
@@ -488,26 +491,85 @@ func (c *sectionKeyCollector) appendKey(key sectionKey) error {
 	return nil
 }
 
-func (a *documentPlanAssembler) orderedSectionKeys(
-	source rendercontent.Document,
-) ([]sectionKey, bool, error) {
+// scanStep is one thing the scan saw, in document order: a run of core
+// text, a fragment token with the text before it on its line, or a section
+// token, already classified.
+type scanStep struct {
+	text     string
+	fragment string
+	token    planToken
+	isToken  bool
+}
+
+// scanDocument walks the document once and records its steps and the section
+// keys in emission order; a group token expands to every profile.
+func (a *documentPlanAssembler) scanDocument(source rendercontent.Document) ([]scanStep, []sectionKey, error) {
+	script := make([]scanStep, 0, 2*a.registry.sectionCount()+1)
 	collector := &sectionKeyCollector{
 		registry: a.registry,
 		keys:     make([]sectionKey, 0, a.registry.sectionCount()),
 		consumed: make(map[sectionKey]bool, a.registry.sectionCount()),
 	}
-	if err := visitDocumentLines(source, collector.visitLine); err != nil {
-		return nil, false, err
+	visitText := func(text string) error {
+		script = append(script, scanStep{text: text})
+		return nil
 	}
-	if collector.hasMarker && len(collector.consumed) != a.registry.sectionCount() {
-		return nil, false, fmt.Errorf(
-			"plan assembly: %d of %d registered sections have no token in the config: %s",
-			a.registry.sectionCount()-len(collector.consumed),
-			a.registry.sectionCount(),
-			a.registry.unconsumedNames(collector.consumed),
-		)
+	visitLine := func(line string) error {
+		a.sawToken = true
+		if prefix, name, ok := a.registry.cutFragmentToken(line); ok {
+			script = append(script, scanStep{text: prefix, fragment: name})
+			return nil
+		}
+		token, isToken, err := a.registry.classifyLine(line)
+		if err != nil {
+			return err
+		}
+		if !isToken {
+			return fmt.Errorf("plan assembly: marker line %q is not a token", line)
+		}
+		if err := collector.collect(token); err != nil {
+			return err
+		}
+		script = append(script, scanStep{token: token, isToken: true})
+		return nil
 	}
-	return collector.keys, collector.hasMarker, nil
+	if err := visitDocumentTokens(source, a.registry.marker(), visitText, visitLine); err != nil {
+		return nil, nil, err
+	}
+	// A registered section without a token is reported once the parts are
+	// built: a token inside a fragment is the more specific fault and comes
+	// first.
+	return script, collector.keys, nil
+}
+
+// consumeStep builds the parts from what the scan recorded.
+func (a *documentPlanAssembler) consumeStep(step *scanStep) error {
+	switch {
+	case step.fragment != "":
+		if step.text != "" {
+			if _, err := a.core.WriteString(step.text); err != nil {
+				return err
+			}
+		}
+		// Spliced into the surrounding core text, not flushed as its own
+		// section: a fragment must leave the section partition unchanged.
+		return a.appendFragment(step.fragment)
+	case !step.isToken:
+		_, err := a.core.WriteString(step.text)
+		return err
+	}
+	if err := a.flushCore(); err != nil {
+		return err
+	}
+	if step.token.Group {
+		for _, name := range a.registry.profileNames() {
+			if err := a.spliceSection(renderplan.SectionKindProfile, name); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return a.spliceSection(step.token.Kind, step.token.Name)
 }
 
 func (a *documentPlanAssembler) preparePostProcessedSections(keys []sectionKey) error {
@@ -555,41 +617,6 @@ func (a *documentPlanAssembler) preparePostProcessedSections(keys []sectionKey) 
 		a.processed[key] = processed[index]
 	}
 	return nil
-}
-
-func (a *documentPlanAssembler) consumeLine(line string) error {
-	if prefix, name, ok := a.registry.cutFragmentToken(line); ok {
-		a.sawToken = true
-		if prefix != "" {
-			if _, err := a.core.WriteString(prefix); err != nil {
-				return err
-			}
-		}
-		// Spliced into the surrounding core text, not flushed as its own
-		// section: a fragment must leave the section partition unchanged.
-		return a.appendFragment(name)
-	}
-	token, isToken, err := a.registry.classifyLine(line)
-	if err != nil {
-		return err
-	}
-	if !isToken {
-		_, err := a.core.WriteString(line)
-		return err
-	}
-	a.sawToken = true
-	if err := a.flushCore(); err != nil {
-		return err
-	}
-	if token.Group {
-		for _, name := range a.registry.profileNames() {
-			if err := a.spliceSection(renderplan.SectionKindProfile, name); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	return a.spliceSection(token.Kind, token.Name)
 }
 
 func (a *documentPlanAssembler) appendFragment(name string) error {
@@ -731,17 +758,24 @@ func (a *documentPlanAssembler) recordBackendText(kind, name string) {
 	a.registry.backends[name] = backend
 }
 
-type documentLineVisitor struct {
-	pending strings.Builder
-	visit   func(string) error
-	err     error
-}
-
-func visitDocumentLines(document rendercontent.Document, visit func(string) error) error {
-	if visit == nil {
-		return errors.New("plan assembly: document line visitor is nil")
+// visitDocumentTokens hands every line that carries marker to visitLine and
+// every run of lines between them to visitText (nil to skip them). The marker
+// is searched over whole runs rather than line by line: at 3,000 routes the
+// root document is 800 KB of which 3,000 lines are tokens, and splitting
+// every line cost two 3 ms passes per render.
+func visitDocumentTokens(
+	document rendercontent.Document,
+	marker string,
+	visitText func(string) error,
+	visitLine func(string) error,
+) error {
+	if visitLine == nil {
+		return errors.New("plan assembly: document token visitor is nil")
 	}
-	visitor := &documentLineVisitor{visit: visit}
+	if visitText == nil {
+		visitText = func(string) error { return nil }
+	}
+	visitor := &documentTokenVisitor{marker: marker, visitText: visitText, visitLine: visitLine}
 	if _, err := document.WriteTo(visitor); err != nil {
 		return err
 	}
@@ -751,35 +785,71 @@ func visitDocumentLines(document rendercontent.Document, visit func(string) erro
 	if visitor.pending.Len() == 0 {
 		return nil
 	}
-	return visitor.visit(visitor.pending.String())
+	return visitor.visitRun(visitor.pending.String())
 }
 
-func (v *documentLineVisitor) Write(value []byte) (int, error) {
+// documentTokenVisitor splits the document at complete lines: a chunk's tail
+// after its last newline waits for the next chunk, so a line or a marker
+// that straddles two chunks is seen whole.
+type documentTokenVisitor struct {
+	marker    string
+	visitText func(string) error
+	visitLine func(string) error
+	pending   strings.Builder
+	err       error
+}
+
+func (v *documentTokenVisitor) Write(value []byte) (int, error) {
 	return v.WriteString(string(value))
 }
 
-func (v *documentLineVisitor) WriteString(value string) (int, error) {
+func (v *documentTokenVisitor) WriteString(value string) (int, error) {
 	if v.err != nil {
 		return 0, v.err
 	}
 	written := len(value)
-	for value != "" {
-		newline := strings.IndexByte(value, '\n')
-		if newline < 0 {
-			_, _ = v.pending.WriteString(value)
-			return written, nil
-		}
-		line := value[:newline+1]
-		if v.pending.Len() > 0 {
-			_, _ = v.pending.WriteString(line)
-			line = v.pending.String()
-			v.pending.Reset()
-		}
-		if err := v.visit(line); err != nil {
-			v.err = err
-			return written, err
-		}
-		value = value[newline+1:]
+	last := strings.LastIndexByte(value, '\n')
+	if last < 0 {
+		_, _ = v.pending.WriteString(value)
+		return written, nil
+	}
+	complete := value[:last+1]
+	if v.pending.Len() > 0 {
+		_, _ = v.pending.WriteString(complete)
+		complete = v.pending.String()
+		v.pending.Reset()
+	}
+	if err := v.visitRun(complete); err != nil {
+		v.err = err
+		return written, err
+	}
+	if rest := value[last+1:]; rest != "" {
+		_, _ = v.pending.WriteString(rest)
 	}
 	return written, nil
+}
+
+// visitRun walks text made of complete lines, except possibly the last.
+func (v *documentTokenVisitor) visitRun(text string) error {
+	for text != "" {
+		at := strings.Index(text, v.marker)
+		if at < 0 {
+			return v.visitText(text)
+		}
+		lineStart := strings.LastIndexByte(text[:at], '\n') + 1
+		lineEnd := len(text)
+		if newline := strings.IndexByte(text[at:], '\n'); newline >= 0 {
+			lineEnd = at + newline + 1
+		}
+		if lineStart > 0 {
+			if err := v.visitText(text[:lineStart]); err != nil {
+				return err
+			}
+		}
+		if err := v.visitLine(text[lineStart:lineEnd]); err != nil {
+			return err
+		}
+		text = text[lineEnd:]
+	}
+	return nil
 }

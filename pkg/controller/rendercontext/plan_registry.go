@@ -37,6 +37,24 @@ import (
 // whitespace and '@' so a name can never close or forge a token.
 var sectionNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 
+// validSectionName is sectionNamePattern without the regexp: it runs once
+// per token per render, 6,000 times at 3,000 routes.
+func validSectionName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '_', c == '.', c == ':', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // PlanRegistry collects the structure templates declare about the config they
 // emit and assembles the final config from the placeholder tokens they got
 // back. One per render; every method is safe for the sharded render's
@@ -611,7 +629,7 @@ func (r *PlanRegistry) cutFragmentToken(line string) (prefix, name string, ok bo
 		return "", "", false
 	}
 	name = rest[:end]
-	if !sectionNamePattern.MatchString(name) {
+	if !validSectionName(name) {
 		return "", "", false
 	}
 	return strings.Clone(line[:start]), strings.Clone(name), true
