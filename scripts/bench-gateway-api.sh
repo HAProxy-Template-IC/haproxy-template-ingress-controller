@@ -5423,7 +5423,7 @@ run_scale() {
     [[ ! -f "$scenario_dir/steady-timer-error.txt" ]] || die "the steady-churn timer failed"
     workload_exit_acceptable "$scale_rc" "$scenario_dir/steady-stop-issued.txt" || \
         die "pilot-load exited with ${scale_rc}"
-    finish_workload_container "$scenario_dir" 0
+    finish_workload_container "$scenario_dir" "$scale_rc"
     if rg -ni '(^|[[:space:]])error([:=[:space:]]|$)|failed to' "$scenario_dir/upstream.log" \
         > "$scenario_dir/upstream-errors.txt"; then
         die "pilot-load logged an error"
