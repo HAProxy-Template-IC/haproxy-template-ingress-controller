@@ -22,6 +22,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -113,6 +114,9 @@ type DeploymentCompletedEvent struct {
 	DurationMs         int64 // Total deployment duration in milliseconds
 	ReloadsTriggered   int   // Count of instances that triggered HAProxy reload
 	TotalAPIOperations int   // Sum of API operations across all instances
+	// Phases is the slowest accepted pod's split of DurationMs; nil when no
+	// pod accepted.
+	Phases *DeployPhases
 	timestamped
 
 	// OperationBreakdown provides a generic breakdown of operations performed.
@@ -164,6 +168,19 @@ type DeploymentCompletedEvent struct {
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
+}
+
+// DeployPhases is where the slowest pod's apply spent its time. Pods apply in
+// parallel, so this pod's split is what the deployment's duration is made of.
+type DeployPhases struct {
+	Pod         string
+	TotalMs     int64 // the whole apply, state read to result
+	StateMs     int64 // reading the agent's state
+	DiffMs      int64 // composing the decision
+	SendMs      int64 // the apply round trips, upload included
+	BlobWaitMs  int64 // waiting for the plan blob's encode before the apply that carries it
+	UploadBytes int64 // file content sent, which the agent had not proved
+	Agent       api.ApplyTiming
 }
 
 // DeploymentResult contains the outcome of a deployment operation.
@@ -220,6 +237,9 @@ type DeploymentResult struct {
 	// PodSetHash identifies the endpoint authorities THIS deployment targeted.
 	// Empty when no deployment occurred (zero-endpoint path).
 	PodSetHash string
+
+	// Phases is the slowest accepted pod's split; nil when no pod accepted.
+	Phases *DeployPhases
 }
 
 // NewDeploymentResultWithOccurrence creates a production result identity.
@@ -316,9 +336,18 @@ func newDeploymentCompletedEvent(result *DeploymentResult, opts ...CorrelationOp
 		RenderProof:         result.RenderProof,
 		Plan:                result.Plan.Clone(),
 		PodSetHash:          result.PodSetHash,
+		Phases:              clonePhases(result.Phases),
 		timestamped:         newTimestamped(),
 		Correlation:         newCorrelation(opts...),
 	}
+}
+
+func clonePhases(p *DeployPhases) *DeployPhases {
+	if p == nil {
+		return nil
+	}
+	clone := *p
+	return &clone
 }
 
 func (e *DeploymentCompletedEvent) EventType() string { return EventTypeDeploymentCompleted }
@@ -332,6 +361,7 @@ func (e *DeploymentCompletedEvent) CloneForSubscriber() busevents.Event {
 	clone.OperationBreakdown = cloneOperationBreakdown(e.OperationBreakdown)
 	clone.StatusPatches = cloneStatusPatches(e.StatusPatches)
 	clone.Plan = e.Plan.Clone()
+	clone.Phases = clonePhases(e.Phases)
 	if e.occurrence != nil {
 		clone = withDeploymentCompletedIdentity(&clone, mustInspectRenderOccurrence(e.renderOccurrenceCarrier))
 	}

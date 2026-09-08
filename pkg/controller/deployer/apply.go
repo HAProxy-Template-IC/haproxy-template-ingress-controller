@@ -22,7 +22,9 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
@@ -87,6 +89,7 @@ type podOutcome struct {
 	result   *api.ApplyResult
 	decision deployplan.Decision
 	sent     []api.Op
+	phases   events.DeployPhases
 	// notes explain what the controller decided about this pod before the diff
 	// ran — a contract skew, a dropped baseline — ahead of the diff's reasons.
 	notes     []string
@@ -107,12 +110,15 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 	if err != nil {
 		return nil, fmt.Errorf("creating agent client: %w", err)
 	}
-	state, err := client.State(ctx, req.verify)
+	stateStarted := time.Now()
+	state, err := client.State(ctx, api.StateRead{Verify: req.verify})
 	if err != nil {
 		return nil, fmt.Errorf("reading agent state: %w", err)
 	}
 	c.notePodPlans(endpoint, state.AppliedPlanProof, state.RunningPlanProof, state.WorkerOpsPlanProof)
 	attempt := &podApply{client: client, endpoint: endpoint, req: req, state: state}
+	attempt.phases.Pod = endpoint.PodName
+	attempt.phases.StateMs = time.Since(stateStarted).Milliseconds()
 	attempt.full, attempt.notes = c.applyPosture(endpoint, state)
 
 	for round := 1; ; round++ {
@@ -121,6 +127,7 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 		if !errors.As(err, &conflict) {
 			if outcome != nil {
 				outcome.notes = attempt.notes
+				outcome.phases = attempt.phases
 			}
 			return outcome, err
 		}
@@ -133,9 +140,11 @@ func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint
 		attempt.full = attempt.full || conflict.Conflict.Reason == conflictUnknownBaseline
 		c.Logger().Info("Agent rejected the apply against its baseline, re-reading its state",
 			"pod", endpoint.PodName, "reason", conflict.Conflict.Reason, "full_state", attempt.full)
-		if attempt.state, err = client.State(ctx, false); err != nil {
+		stateStarted = time.Now()
+		if attempt.state, err = client.State(ctx, api.StateRead{}); err != nil {
 			return nil, fmt.Errorf("re-reading agent state: %w", err)
 		}
+		attempt.phases.StateMs += time.Since(stateStarted).Milliseconds()
 		c.notePodPlans(endpoint, attempt.state.AppliedPlanProof, attempt.state.RunningPlanProof, attempt.state.WorkerOpsPlanProof)
 		if conflict.Conflict.Reason == conflictWorkerOpsMismatch {
 			// Only the worker moved on (its pacer fired between the state read
@@ -159,13 +168,16 @@ type podApply struct {
 	full     bool     // send the complete file set and reload, ops composed against nothing
 	resend   bool     // carry the plan blob even though the pod holds a baseline
 	notes    []string // what the controller decided before the diff ran
+	phases   events.DeployPhases
 }
 
 // applyOnce composes the decision for the pod's current state and sends every
 // chunk of it. Each chunk is fenced on what the previous one applied.
 func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutcome, error) {
 	authority := podKey(attempt.endpoint)
+	diffStarted := time.Now()
 	decision := attempt.req.decisionFor(attempt.state, c.plans, authority)
+	attempt.phases.DiffMs += time.Since(diffStarted).Milliseconds()
 	if decision.Verdict == deployplan.VerdictReload {
 		c.Logger().Debug("Reload required: this change cannot run as runtime ops",
 			"pod", attempt.endpoint.PodName, "reasons", decision.Reasons)
@@ -255,11 +267,20 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 	}
 	held = c.prepareContentProofs(attempt, manifest, held)
 	for {
-		parts, err := attempt.req.parts(manifest.Files, held)
+		parts, uploaded, err := attempt.req.parts(manifest.Files, held)
 		if err != nil {
 			return nil, err
 		}
-		result, err := attempt.client.Apply(ctx, manifest, parts, attempt.planBlob(withBlob))
+		blobStarted := time.Now()
+		blob := attempt.planBlob(withBlob)
+		attempt.phases.BlobWaitMs += time.Since(blobStarted).Milliseconds()
+		sendStarted := time.Now()
+		result, err := attempt.client.Apply(ctx, manifest, parts, blob)
+		attempt.phases.SendMs += time.Since(sendStarted).Milliseconds()
+		attempt.phases.UploadBytes += uploaded
+		if result != nil {
+			attempt.phases.Agent = addApplyTiming(attempt.phases.Agent, result.Timing)
+		}
 		var missing *agentclient.MissingError
 		if !errors.As(err, &missing) || held == nil {
 			if err == nil && result != nil && result.OK {
@@ -327,20 +348,24 @@ func (c *Component) acceptContentProofs(attempt *podApply, manifest *api.Manifes
 // leader with a cold cache reads its baseline from, and a pod with none costs
 // a full-state reload.
 func (a *podApply) sendsPlanBlob(baseline *renderplan.Plan) bool {
-	if len(a.req.blob) == 0 {
-		return false
-	}
 	if a.full || a.resend || a.req.verify {
 		return true
 	}
-	return !exactPlan(baseline, a.req.plan) || len(a.state.AppliedPlan) == 0
+	return !a.req.isPlan(baseline) || !a.state.HoldsAppliedPlan()
 }
 
+// planBlob is the part to send, nil when the blob is not sent or could not be
+// encoded. The wait for the encode lands here, after the state read and the
+// diff, which is what it runs alongside.
 func (a *podApply) planBlob(send bool) io.Reader {
 	if !send {
 		return nil
 	}
-	return bytes.NewReader(a.req.blob)
+	blob := a.req.blob.bytes()
+	if len(blob) == 0 {
+		return nil
+	}
+	return bytes.NewReader(blob)
 }
 
 // fence is the baseline one apply is composed against.
@@ -401,9 +426,20 @@ func (r *deployRequest) manifest(
 	return manifest
 }
 
-// parts carries every file the agent has not proved it holds.
-func (r *deployRequest) parts(files []api.File, held map[string]api.FileAt) (map[string]io.Reader, error) {
-	parts := make(map[string]io.Reader, len(files))
+// addApplyTiming sums the agent's split over the chunks of one apply.
+func addApplyTiming(sum, next api.ApplyTiming) api.ApplyTiming {
+	return api.ApplyTiming{
+		StageMs: sum.StageMs + next.StageMs,
+		WriteMs: sum.WriteMs + next.WriteMs,
+		OpsMs:   sum.OpsMs + next.OpsMs,
+		TotalMs: sum.TotalMs + next.TotalMs,
+	}
+}
+
+// parts carries every file the agent has not proved it holds, and how many
+// bytes that is.
+func (r *deployRequest) parts(files []api.File, held map[string]api.FileAt) (parts map[string]io.Reader, uploaded int64, err error) {
+	parts = make(map[string]io.Reader, len(files))
 	for i := range files {
 		file := &files[i]
 		if at, ok := held[file.Path]; ok && file.Proof != "" && at.Proof == file.Proof &&
@@ -412,11 +448,12 @@ func (r *deployRequest) parts(files []api.File, held map[string]api.FileAt) (map
 		}
 		content, ok := r.contents[file.Path]
 		if !ok {
-			return nil, fmt.Errorf("render carries no content for %s (digest %s)", file.Path, file.Digest)
+			return nil, 0, fmt.Errorf("render carries no content for %s (digest %s)", file.Path, file.Digest)
 		}
 		parts[file.Path] = strings.NewReader(content)
+		uploaded += int64(len(content))
 	}
-	return parts, nil
+	return parts, uploaded, nil
 }
 
 // decisionFor diffs the render against what this pod applied, reusing the

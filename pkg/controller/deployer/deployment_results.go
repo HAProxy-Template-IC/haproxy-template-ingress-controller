@@ -123,6 +123,7 @@ func (c *Component) handleEndpointSuccess(
 	c.publishPodStatus(endpoint, event, metadata, deploymentRequestChecksum(event, requests))
 
 	atomic.AddInt32(&state.ackCount, 1)
+	state.notePhases(&outcome.phases, durationMs)
 	if outcome.converged {
 		atomic.AddInt32(&state.convergedCount, 1)
 	}
@@ -243,6 +244,7 @@ func (c *Component) publishCompleted(
 	}
 	operations := state.totalOperations
 	pendingUntil := state.pendingReloadUntil
+	slowest := state.slowest
 	state.mu.Unlock()
 
 	result, err := events.NewDeploymentResultWithOccurrence(occurrence)
@@ -261,6 +263,7 @@ func (c *Component) publishCompleted(
 	result.TotalAPIOperations = operations
 	result.PodSetHash = podSetHash
 	result.OperationBreakdown = breakdown
+	result.Phases = slowest
 	completed, err := events.NewDeploymentCompletedEventWithCycle(
 		result, events.WithCorrelation(event.CorrelationID(), deploymentID),
 	)

@@ -25,6 +25,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
@@ -380,6 +381,23 @@ func TestEventCommentator_GenerateInsight_DeploymentEvents(t *testing.T) {
 		assertContainsAttr(t, attrs, "instances", "2/3")
 		assertContainsAttr(t, attrs, "reloads", 1)
 		assertContainsAttr(t, attrs, "ops", 10)
+	})
+
+	t.Run("DeploymentCompletedEvent carries the slowest pod's split", func(t *testing.T) {
+		event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+			Total: 2, Succeeded: 2, DurationMs: 90,
+			Phases: &events.DeployPhases{
+				Pod: "haproxy-1", TotalMs: 90, StateMs: 4, DiffMs: 3, SendMs: 80, UploadBytes: 5_000_000,
+				Agent: api.ApplyTiming{StageMs: 30, WriteMs: 25, OpsMs: 6, TotalMs: 70},
+			},
+		})
+
+		_, attrs := ec.generateInsight(event)
+
+		assertContainsAttr(t, attrs, "slowest_pod", "haproxy-1")
+		assertContainsAttr(t, attrs, "pod_send_ms", int64(80))
+		assertContainsAttr(t, attrs, "pod_upload_bytes", int64(5_000_000))
+		assertContainsAttr(t, attrs, "agent_write_ms", int64(25))
 	})
 }
 

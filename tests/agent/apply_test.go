@@ -36,7 +36,7 @@ func TestFreshPodServesStateAndStaysOutOfService(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, status)
 
-	state, err := e.client.State(context.Background(), true)
+	state, err := e.client.State(context.Background(), api.StateRead{Verify: true})
 	require.NoError(t, err)
 	assert.Equal(t, api.Version, state.APIVersion)
 	assert.True(t, strings.HasPrefix(state.HAProxy.Version, haproxyVersion()),
@@ -78,7 +78,7 @@ func TestFirstApplyReloadsOntoTheRenderedConfig(t *testing.T) {
 	assert.Equal(t, http.StatusOK, status)
 	assert.Equal(t, "be-2", body, "the routing map from the same apply must be live")
 
-	state, err := e.client.State(context.Background(), true)
+	state, err := e.client.State(context.Background(), api.StateRead{Verify: true})
 	require.NoError(t, err)
 	assert.Equal(t, result.PlanID, state.AppliedPlanID)
 	assert.Len(t, state.Files, len(s.files))

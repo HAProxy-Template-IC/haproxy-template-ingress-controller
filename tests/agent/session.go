@@ -145,7 +145,7 @@ func (s *session) awaitScheduled(planID string) *api.ApplyResult {
 	s.env.t.Helper()
 	var final *api.ApplyResult
 	waitFor(s.env.t, "the scheduled reload of "+planID, convergeBudget, func() error {
-		state, err := s.env.client.State(context.Background(), false)
+		state, err := s.env.client.State(context.Background(), api.StateRead{})
 		if err != nil {
 			return err
 		}

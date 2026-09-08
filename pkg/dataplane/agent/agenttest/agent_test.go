@@ -81,7 +81,7 @@ func applyExact(
 	plan io.Reader,
 ) (*api.ApplyResult, error) {
 	t.Helper()
-	state, err := c.State(t.Context(), false)
+	state, err := c.State(t.Context(), api.StateRead{})
 	require.NoError(t, err)
 	m.IdentityVersion = api.ExactIdentityVersion
 	if m.ExpectedPrevPlanID == state.AppliedPlanID {
@@ -554,7 +554,7 @@ func TestWrongCredentialsAreRefused(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
 
-	_, err = c.State(context.Background(), false)
+	_, err = c.State(context.Background(), api.StateRead{})
 	var httpErr *client.HTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, 401, httpErr.Status)
@@ -563,14 +563,14 @@ func TestWrongCredentialsAreRefused(t *testing.T) {
 func TestReportedContractDrivesTheSkewCheck(t *testing.T) {
 	t.Parallel()
 	full := agenttest.New(t)
-	state, err := newClient(t, full).State(context.Background(), false)
+	state, err := newClient(t, full).State(context.Background(), api.StateRead{})
 	require.NoError(t, err)
 	mismatch, missing := client.CheckSkew(state)
 	assert.False(t, mismatch)
 	assert.Empty(t, missing)
 
 	partial := agenttest.New(t, agenttest.WithAgentOps(api.OpMapSet, api.OpMapDel))
-	state, err = newClient(t, partial).State(context.Background(), false)
+	state, err = newClient(t, partial).State(context.Background(), api.StateRead{})
 	require.NoError(t, err)
 	mismatch, missing = client.CheckSkew(state)
 	assert.False(t, mismatch)
@@ -582,7 +582,7 @@ func TestInventoryOptionIsReported(t *testing.T) {
 	agent := agenttest.New(t, agenttest.WithInventory(&api.Inventory{Generation: 7, Maps: []string{"maps/host.map"}}),
 		agenttest.WithHAProxyInfo(api.HAProxyInfo{Version: "3.0.26", WorkerPID: 42}))
 
-	state, err := newClient(t, agent).State(context.Background(), true)
+	state, err := newClient(t, agent).State(context.Background(), api.StateRead{Verify: true})
 	require.NoError(t, err)
 	assert.Equal(t, uint64(7), state.Inventory.Generation)
 	assert.Equal(t, "3.0.26", state.HAProxy.Version)

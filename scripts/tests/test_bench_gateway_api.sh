@@ -155,4 +155,26 @@ if bash -c 'source "$1"; UPSTREAM_DIR="$3"; extract_upstream_backend_manifest pr
     exit 1
 fi
 
+# The readiness-timeout evidence carries the HAProxyCfg snapshot, which is
+# megabytes at scale; as a jq argument it exceeded the argument list and the
+# run lost its evidence.
+scenario="$tmp/scale"
+mkdir -p "$scenario"
+printf '{"metadata":{"generation":3}}\n' > "$scenario/haproxycfg-baseline.json"
+printf 'abc123\n' > "$scenario/haproxycfg-baseline-checksum.txt"
+printf '{"attempts":2,"reason_code":"exact-current-timeout","outcome":"deadline","evidence_valid":true,"pass":false,"deadline_reached":true}\n' > "$tmp/readiness.json"
+python3 - "$tmp/haproxycfg.json" <<'EOF'
+import json, sys
+cfg = {"metadata": {"generation": 9}, "spec": {"checksum": "big", "config": "x" * 3_000_000},
+       "status": {"deployedToPods": [{"checksum": "big"}]}}
+json.dump(cfg, open(sys.argv[1], "w"))
+EOF
+bash -c 'source "$1"; write_scale_readiness_timeout "$2" 5000 initial-exact-current "$3" "$4"' bash "$runner" "$scenario" "$tmp/haproxycfg.json" "$tmp/readiness.json"
+assert_eq big "$(jq -r '.at_scale.checksum' "$scenario/scale-readiness.json")"
+assert_eq exact-current-timeout "$(jq -r '.reason_code' "$scenario/scale-readiness.json")"
+
+# The stop grace grows with the routes pilot-load has to delete on INT.
+assert_eq 10 "$(bash -c 'source "$1"; workload_stop_grace_seconds 0' bash "$runner")"
+assert_eq 60 "$(bash -c 'source "$1"; workload_stop_grace_seconds 5000' bash "$runner")"
+
 printf 'bench-gateway-api shell tests: OK\n'

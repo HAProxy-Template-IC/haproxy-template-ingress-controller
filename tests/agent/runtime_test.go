@@ -134,7 +134,7 @@ func TestMapReplaceInstallsExactlyTheEntries(t *testing.T) {
 
 	// The read-back compares that same file against `show map`; a divergence
 	// would reload, so an unchanged worker pid is what proves they agree.
-	state, err := e.client.State(context.Background(), false)
+	state, err := e.client.State(context.Background(), api.StateRead{})
 	require.NoError(t, err)
 	assert.Equal(t, result.PlanID, state.AppliedPlanID)
 	assert.Equal(t, worker, e.workerPID(), "the read-back found no divergence")
@@ -283,7 +283,7 @@ func TestDynamicBackendLifecycle(t *testing.T) {
 		return nil
 	})
 	assert.Equal(t, worker, e.workerPID(), "deferred deletes must not reload")
-	state, err := e.client.State(context.Background(), false)
+	state, err := e.client.State(context.Background(), api.StateRead{})
 	require.NoError(t, err)
 	assert.Empty(t, state.PendingDeletes.Servers)
 	assert.Empty(t, state.PendingDeletes.Backends)

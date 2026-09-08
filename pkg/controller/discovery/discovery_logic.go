@@ -231,7 +231,7 @@ func (c *Component) probeAgent(ctx context.Context, endpoint *dataplane.Endpoint
 
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	return client.State(ctx, false)
+	return client.State(ctx, api.StateRead{})
 }
 
 func (c *Component) admittedVersion(identity *endpointIdentity) (string, bool) {

@@ -93,7 +93,7 @@ func run() error {
 
 	// The pod's own account of itself: which plan it applied, which one its
 	// worker runs, and what that worker has loaded.
-	state, err := agent.State(ctx, false)
+	state, err := agent.State(ctx, api.StateRead{})
 	if err != nil {
 		return fmt.Errorf("failed to read the agent's state: %w", err)
 	}
@@ -111,7 +111,7 @@ func run() error {
 	// whole point of the plan — the change reaches the running worker as
 	// `add map`, and HAProxy is never reloaded.
 	second := buildPlan(hostMapV2)
-	state, err = agent.State(ctx, false)
+	state, err = agent.State(ctx, api.StateRead{})
 	if err != nil {
 		return fmt.Errorf("failed to re-read the agent's state: %w", err)
 	}

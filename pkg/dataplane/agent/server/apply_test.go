@@ -444,6 +444,13 @@ func TestStateReturnsThePlanOfTheAppliedPlanID(t *testing.T) {
 	state := h.state(false)
 	assert.Equal(t, []byte("opaque-plan-1"), state.AppliedPlan)
 	assert.Equal(t, "plan-1", state.AppliedPlanID)
+	assert.True(t, state.AppliedPlanStored)
+	// A controller that holds the plan reads without the blob and still
+	// learns that the pod keeps one.
+	light := h.stateRead(api.StateRead{})
+	assert.Empty(t, light.AppliedPlan)
+	assert.True(t, light.AppliedPlanStored)
+	assert.True(t, light.HoldsAppliedPlan())
 
 	// An apply that carries no plan advances the applied id, so the stored
 	// blob no longer describes it and must not be handed out.
@@ -452,6 +459,7 @@ func TestStateReturnsThePlanOfTheAppliedPlanID(t *testing.T) {
 	next.ExpectedPrevToken = first.AppliedToken
 	require.True(t, h.apply(&next, files).OK)
 	assert.Empty(t, h.state(false).AppliedPlan, "a blob for another plan is not a baseline")
+	assert.False(t, h.stateRead(api.StateRead{}).AppliedPlanStored)
 
 	// A restart invalidates every in-process observation proof. The blob stays
 	// opaque until a full reload binds fresh bytes to a fresh agent proof.
@@ -893,4 +901,27 @@ func TestAuthenticationIsRequiredForTheAPIButNotTheProbes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
+}
+
+// The result says where the apply spent its time: the parts, the write and
+// the ops each inside the total, so the controller can report the slowest
+// pod's split with every deployment.
+func TestApplyReportsWhereItsTimeWent(t *testing.T) {
+	h := newHarness(t)
+	first := firstApply(t, h)
+
+	files := baseFiles("global\n  maxconn 500\n")
+	m := buildManifest("plan-2", files)
+	m.ExpectedPrevPlanID = first.AppliedPlanID
+	m.ExpectedPrevToken = first.AppliedToken
+	m.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "example.com", Value: "be-a"}}
+	result := h.apply(&m, files)
+	require.True(t, result.OK, "%+v", result.Error)
+
+	timing := result.Timing
+	assert.GreaterOrEqual(t, timing.StageMs, int64(0))
+	assert.GreaterOrEqual(t, timing.WriteMs, int64(0))
+	assert.GreaterOrEqual(t, timing.OpsMs, int64(0))
+	assert.GreaterOrEqual(t, timing.TotalMs, timing.StageMs+timing.WriteMs+timing.OpsMs,
+		"the phases are measured inside the total")
 }

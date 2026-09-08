@@ -27,7 +27,7 @@ import (
 // handleState answers the controller's view of this pod. With verify=1 the
 // digests are a fresh observation of the tree rather than the last one.
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	state, err := s.stateResponse(r.URL.Query().Get("verify") == "1")
+	state, err := s.stateResponse(r.URL.Query().Get("verify") == "1", r.URL.Query().Get("plan") != "0")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, api.ApplyError{Stage: "state", Message: err.Error()})
 		return
@@ -37,8 +37,10 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 
 // stateResponse reports the agent's state; with verify it re-observes the tree
 // and the worker identity, so drift prevention sees a restarted HAProxy
-// container without waiting for the next apply.
-func (s *Server) stateResponse(verify bool) (api.State, error) {
+// container without waiting for the next apply. withPlan carries the stored
+// plan blob, which only a controller without the plan needs: at 2,600 routes it
+// is 360 KB on every read.
+func (s *Server) stateResponse(verify, withPlan bool) (api.State, error) {
 	if verify {
 		if err := s.refreshTree(); err != nil {
 			return api.State{}, err
@@ -75,7 +77,10 @@ func (s *Server) stateResponse(verify bool) (api.State, error) {
 	}
 	if s.state.PlanBlobPlanID != "" && s.state.PlanBlobPlanID == s.state.AppliedPlanID &&
 		s.state.PlanBlobPlanProof != "" && s.state.PlanBlobPlanProof == s.state.AppliedPlanProof {
-		out.AppliedPlan = s.appliedPlan
+		out.AppliedPlanStored = true
+		if withPlan {
+			out.AppliedPlan = s.appliedPlan
+		}
 	}
 	if !s.state.ReloadPendingAt.IsZero() {
 		out.ReloadPendingAt = s.state.ReloadPendingAt.UTC().Format(time.RFC3339Nano)

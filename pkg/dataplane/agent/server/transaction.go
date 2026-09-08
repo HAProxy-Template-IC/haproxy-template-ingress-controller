@@ -75,6 +75,7 @@ func (s *Server) runApply(
 	work []byte,
 	appliedProof string,
 	workerProof string,
+	timing api.ApplyTiming,
 ) api.ApplyResult {
 	run := &applyRun{
 		server:        s,
@@ -86,7 +87,7 @@ func (s *Server) runApply(
 		appliedProof:  appliedProof,
 		workerProof:   workerProof,
 		invalidations: s.invalidationCount(),
-		result:        api.ApplyResult{PlanID: m.PlanID, OK: true, At: time.Now().UTC().Format(time.RFC3339)},
+		result:        api.ApplyResult{PlanID: m.PlanID, OK: true, At: time.Now().UTC().Format(time.RFC3339), Timing: timing},
 	}
 	if err := run.execute(); err != nil {
 		s.logger.Error("apply failed", "plan_id", m.PlanID, "error", err)
@@ -106,6 +107,7 @@ func (r *applyRun) execute() error {
 		return r.revertLKG()
 	}
 	r.server.setPhase(phaseVerified, r.manifest.PlanID)
+	writeStarted := time.Now()
 	r.tx = r.begin()
 	if err := r.tx.Backup(); err != nil {
 		return r.abort("backup", err)
@@ -114,8 +116,11 @@ func (r *applyRun) execute() error {
 	if err := r.tx.Write(); err != nil {
 		return r.abort("write", err)
 	}
+	r.result.Timing.WriteMs = time.Since(writeStarted).Milliseconds()
 	r.server.setPhase(phaseWritten, r.manifest.PlanID)
 	r.server.observeTree(r.manifest, r.staged, r.deletions())
+	opsStarted := time.Now()
+	defer func() { r.result.Timing.OpsMs = time.Since(opsStarted).Milliseconds() }()
 	return r.activate()
 }
 

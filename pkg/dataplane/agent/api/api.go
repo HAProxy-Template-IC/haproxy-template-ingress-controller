@@ -170,31 +170,65 @@ type KeywordArg struct {
 
 // State is the response of GET /v1/state.
 type State struct {
-	APIVersion         int               `json:"api_version"`
-	AgentVersion       string            `json:"agent_version"`
-	PlanSchemaVersion  int               `json:"plan_schema_version"`
-	AgentOps           []string          `json:"agent_ops"` // op kinds this agent executes
-	HAProxy            HAProxyInfo       `json:"haproxy"`
-	Generation         uint64            `json:"generation"`
-	AppliedPlanID      string            `json:"applied_plan_id"`
-	AppliedPlanProof   string            `json:"applied_plan_proof,omitempty"`
-	RunningPlanID      string            `json:"running_plan_id"`
-	RunningPlanProof   string            `json:"running_plan_proof,omitempty"`
-	WorkerOpsPlanID    string            `json:"worker_ops_plan_id"`
-	WorkerOpsPlanProof string            `json:"worker_ops_plan_proof,omitempty"`
-	AppliedToken       Token             `json:"applied_token"`
-	LKGPlanID          string            `json:"lkg_plan_id"`
-	LKGPlanProof       string            `json:"lkg_plan_proof,omitempty"`
-	AppliedPlan        []byte            `json:"applied_plan,omitempty"` // opaque, what the controller sent
-	Files              map[string]FileAt `json:"files"`
-	Inventory          Inventory         `json:"runtime_inventory"`
-	ReloadPendingAt    string            `json:"reload_pending_at,omitempty"` // RFC 3339
-	PendingDeletes     PendingDeletes    `json:"pending_deletes"`
-	LastApply          *ApplyResult      `json:"last_apply,omitempty"`
+	APIVersion         int         `json:"api_version"`
+	AgentVersion       string      `json:"agent_version"`
+	PlanSchemaVersion  int         `json:"plan_schema_version"`
+	AgentOps           []string    `json:"agent_ops"` // op kinds this agent executes
+	HAProxy            HAProxyInfo `json:"haproxy"`
+	Generation         uint64      `json:"generation"`
+	AppliedPlanID      string      `json:"applied_plan_id"`
+	AppliedPlanProof   string      `json:"applied_plan_proof,omitempty"`
+	RunningPlanID      string      `json:"running_plan_id"`
+	RunningPlanProof   string      `json:"running_plan_proof,omitempty"`
+	WorkerOpsPlanID    string      `json:"worker_ops_plan_id"`
+	WorkerOpsPlanProof string      `json:"worker_ops_plan_proof,omitempty"`
+	AppliedToken       Token       `json:"applied_token"`
+	LKGPlanID          string      `json:"lkg_plan_id"`
+	LKGPlanProof       string      `json:"lkg_plan_proof,omitempty"`
+	AppliedPlan        []byte      `json:"applied_plan,omitempty"` // opaque, what the controller sent
+	// AppliedPlanStored reports that the agent holds the blob for the applied
+	// plan; a state read with plan=0 leaves the blob itself out.
+	AppliedPlanStored bool              `json:"applied_plan_stored"`
+	Files             map[string]FileAt `json:"files"`
+	Inventory         Inventory         `json:"runtime_inventory"`
+	ReloadPendingAt   string            `json:"reload_pending_at,omitempty"` // RFC 3339
+	PendingDeletes    PendingDeletes    `json:"pending_deletes"`
+	LastApply         *ApplyResult      `json:"last_apply,omitempty"`
 	// InvariantViolation is the name of the invariant that failed most recently,
 	// empty if none has. The agent never takes itself down over a violation, so
 	// this is the only place a silent one surfaces.
 	InvariantViolation string `json:"invariant_violation,omitempty"`
+}
+
+// StateRead is what a state read asks the agent for.
+type StateRead struct {
+	// Verify re-hashes the tree and re-checks the worker before answering.
+	Verify bool
+	// Plan carries the stored plan blob; a controller that holds the plan
+	// leaves it out.
+	Plan bool
+}
+
+// Query is the read as the state endpoint's query string.
+func (r StateRead) Query() string {
+	query := ""
+	if r.Verify {
+		query = "?verify=1"
+	}
+	if !r.Plan {
+		if query == "" {
+			query = "?plan=0"
+		} else {
+			query += "&plan=0"
+		}
+	}
+	return query
+}
+
+// HoldsAppliedPlan reports whether the agent stores the blob for its applied
+// plan, whether or not the read carried the blob itself.
+func (s *State) HoldsAppliedPlan() bool {
+	return s.AppliedPlanStored || len(s.AppliedPlan) > 0
 }
 
 // HAProxyInfo is what the agent learned from the worker (`show info`).
@@ -259,6 +293,21 @@ type ApplyResult struct {
 	HAProxy            HAProxyInfo   `json:"haproxy"`
 	Inventory          *Inventory    `json:"runtime_inventory,omitempty"` // present when its generation advanced
 	At                 string        `json:"at"`                          // RFC 3339
+	Timing             ApplyTiming   `json:"timing"`
+}
+
+// ApplyTiming is where an apply spent its time on the agent, for the deploy
+// latency budget: the controller reports the slowest pod's split with every
+// deployment.
+type ApplyTiming struct {
+	// StageMs is receiving and verifying the file parts.
+	StageMs int64 `json:"stage_ms"`
+	// WriteMs is backing up and installing the staged parts.
+	WriteMs int64 `json:"write_ms"`
+	// OpsMs is the runtime commands, or the reload when one ran instead.
+	OpsMs int64 `json:"ops_ms"`
+	// TotalMs is from the manifest's arrival to the result.
+	TotalMs int64 `json:"total_ms"`
 }
 
 // OpResult is one executed op's verdict.

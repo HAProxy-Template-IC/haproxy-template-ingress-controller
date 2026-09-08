@@ -80,6 +80,7 @@ type Agent struct {
 	missingOnce       []string
 	applies           []RecordedApply
 	stateReads        int
+	planReads         int
 }
 
 // Option customises the fake before it starts serving.
@@ -147,11 +148,12 @@ func (a *Agent) Username() string { return a.username }
 // Password is the basic-auth password the fake requires.
 func (a *Agent) Password() string { return a.password }
 
-// State is a snapshot of what the fake would report on /v1/state.
+// State is a snapshot of what the fake would report on /v1/state, blob
+// included.
 func (a *Agent) State() api.State {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.snapshot()
+	return a.snapshot(true)
 }
 
 // Applies returns every request the fake received, in order.
@@ -167,6 +169,14 @@ func (a *Agent) StateReads() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.stateReads
+}
+
+// PlanReads is how many of those reads asked for the plan blob, which a
+// controller that holds the plan leaves out.
+func (a *Agent) PlanReads() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.planReads
 }
 
 // SetReloadPending makes the fake behave as if a paced reload were already
@@ -292,16 +302,21 @@ func (a *Agent) handleState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	withPlan := r.URL.Query().Get("plan") != "0"
 	a.mu.Lock()
 	a.stateReads++
-	state := a.snapshot()
+	if withPlan {
+		a.planReads++
+	}
+	state := a.snapshot(withPlan)
 	a.mu.Unlock()
 	writeJSON(w, http.StatusOK, state)
 }
 
 // snapshot copies the maps the state carries so a caller cannot observe a
-// later apply through them. Callers hold a.mu.
-func (a *Agent) snapshot() api.State {
+// later apply through them. The blob rides only a read that asked for it, as
+// on the real agent. Callers hold a.mu.
+func (a *Agent) snapshot(withPlan bool) api.State {
 	state := a.state
 	state.Files = make(map[string]api.FileAt, len(a.state.Files))
 	for path, at := range a.state.Files {
@@ -309,7 +324,10 @@ func (a *Agent) snapshot() api.State {
 	}
 	if a.planBlobPlanID != "" && a.planBlobPlanProof != "" &&
 		a.planBlobPlanID == a.state.AppliedPlanID && a.planBlobPlanProof == a.state.AppliedPlanProof {
-		state.AppliedPlan = a.appliedPlan
+		state.AppliedPlanStored = true
+		if withPlan {
+			state.AppliedPlan = a.appliedPlan
+		}
 	}
 	return state
 }
