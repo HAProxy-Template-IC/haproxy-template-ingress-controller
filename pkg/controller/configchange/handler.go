@@ -107,8 +107,16 @@ type ConfigChangeHandler struct {
 	// strictly ordered: at most one validation is in flight, and a parsed
 	// event arriving meanwhile waits in queuedParsed (latest wins — a
 	// superseded config is never validated).
-	validationInFlight  bool
-	queuedParsed        *validationCandidate
+	validationInFlight bool
+	inFlight           *validationCandidate
+	queuedParsed       *validationCandidate
+	// effectiveReloadDue records that a served-resource change owes a restart
+	// and stays set until one is sent, across any candidate that supersedes
+	// the effective one: every candidate validated after the request resolves
+	// afresh, so a valid verdict restarts validated with its snapshot, and an
+	// invalid one restarts the active config through the load gate rather
+	// than losing the restart.
+	effectiveReloadDue  bool
 	validationDone      chan validationOutcome
 	candidateGeneration uint64
 	startupReplay       chan struct{}
@@ -357,6 +365,7 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 			h.startQueuedValidation(ctx)
 		case outcome := <-h.validationDone:
 			h.validationInFlight = false
+			h.inFlight = nil
 			h.drainQueuedEvents()
 			h.applyValidationOutcome(outcome)
 			h.startQueuedValidation(ctx)
@@ -370,9 +379,7 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 		case <-h.effectiveReload:
 			h.drainQueuedEvents()
 			h.retirePendingReload()
-			if reload := h.effectiveReloadRequest(); reload != nil {
-				h.sendReload(reload)
-			}
+			h.startEffectiveValidation(ctx)
 		case event := <-h.eventChan:
 			h.handleLoopEvent(ctx, event)
 		}
@@ -475,6 +482,60 @@ func (h *ConfigChangeHandler) recordParsed(event *events.ConfigParsedEvent) {
 	h.queuedParsed = &validationCandidate{generation: h.candidateGeneration, event: event}
 }
 
+// startEffectiveValidation validates the newest raw configuration against a
+// fresh resolution on this iteration, so the restart adopts a validated
+// snapshot instead of running the load gate with nothing serving (34 s
+// measured on a served-CRD change). Without a resolver or validators, or
+// before the iteration finished starting, the restart happens at once as
+// before.
+func (h *ConfigChangeHandler) startEffectiveValidation(ctx context.Context) {
+	h.mu.RLock()
+	canValidate := h.effectiveResolver != nil && len(h.validators) > 0 && h.reinitializationEnabled
+	h.mu.RUnlock()
+	base := h.newestRawConfigEvent()
+	if !canValidate || base == nil {
+		h.sendEffectiveReload()
+		return
+	}
+	h.effectiveReloadDue = true
+	h.candidateGeneration++
+	h.queuedParsed = &validationCandidate{generation: h.candidateGeneration, event: base}
+	h.startQueuedValidation(ctx)
+}
+
+// newestRawConfigEvent returns the newest raw configuration the handler knows:
+// a parked candidate, then the one being validated, then the accepted one,
+// then the running one.
+func (h *ConfigChangeHandler) newestRawConfigEvent() *events.ConfigParsedEvent {
+	if h.queuedParsed != nil {
+		return h.queuedParsed.event
+	}
+	if h.inFlight != nil {
+		return h.inFlight.event
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	base := h.acceptedCandidate
+	if base == nil {
+		base = h.activeSnapshot
+	}
+	if base == nil || base.RawConfig == nil {
+		return nil
+	}
+	event := events.NewConfigParsedEvent(base.RawConfig, base.TemplateConfig, base.ConfigVersion, base.CredentialsVersion)
+	event.Sources = append([]events.ConfigSourceRef(nil), base.Sources...)
+	return event
+}
+
+// sendEffectiveReload restarts the way a served-resource change always did:
+// the new iteration resolves again and runs the load gate.
+func (h *ConfigChangeHandler) sendEffectiveReload() {
+	h.effectiveReloadDue = false
+	if reload := h.effectiveReloadRequest(); reload != nil {
+		h.sendReload(reload)
+	}
+}
+
 func (h *ConfigChangeHandler) startQueuedValidation(ctx context.Context) {
 	if h.validationInFlight || h.queuedParsed == nil {
 		return
@@ -482,6 +543,7 @@ func (h *ConfigChangeHandler) startQueuedValidation(ctx context.Context) {
 	candidate := h.queuedParsed
 	h.queuedParsed = nil
 	h.validationInFlight = true
+	h.inFlight = candidate
 	go func() {
 		h.validationDone <- h.validateCandidate(ctx, candidate)
 	}()
@@ -634,6 +696,9 @@ func (h *ConfigChangeHandler) applyValidationOutcome(outcome validationOutcome) 
 		invalidEvent := events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, outcome.validationErrors)
 		invalidEvent.Sources = event.Sources
 		h.eventBus.Publish(invalidEvent)
+		if h.effectiveReloadDue {
+			h.sendEffectiveReload()
+		}
 		return
 	}
 
@@ -665,7 +730,27 @@ func (h *ConfigChangeHandler) applyValidationOutcome(outcome validationOutcome) 
 	snapshot.Credentials = h.currentCredentials
 	snapshot.CredentialsVersion = h.currentCredentialsVersion
 	h.mu.RUnlock()
+	if h.effectiveReloadDue {
+		h.acceptEffectiveSnapshot(snapshot)
+		return
+	}
 	h.acceptValidatedSnapshot(snapshot)
+}
+
+// acceptEffectiveSnapshot restarts with a snapshot validated against a fresh
+// resolution. Its version may be the running one: what changed is the
+// resolution, so the initial-version guard does not apply.
+func (h *ConfigChangeHandler) acceptEffectiveSnapshot(snapshot *ValidatedSnapshot) {
+	h.effectiveReloadDue = false
+	reasons := ReloadReasonConfig
+	h.mu.Lock()
+	h.acceptedCandidate = cloneSnapshot(snapshot)
+	if h.credentialsDirty {
+		reasons |= ReloadReasonCredentials
+	}
+	h.mu.Unlock()
+	h.augmentQueuedReload(ReloadReasonConfig)
+	h.scheduleReload(snapshot, reasons)
 }
 
 func (h *ConfigChangeHandler) credentialsVersion() string {

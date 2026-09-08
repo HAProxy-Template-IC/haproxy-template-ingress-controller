@@ -526,3 +526,137 @@ func TestConfigChangeHandler_DrainAnnouncesTheRunningVersion(t *testing.T) {
 	assert.Same(t, running, announced.Config)
 	assert.Nil(t, handler.queuedParsed, "the running version must not be parked for validation")
 }
+
+// A served-CRD change used to restart the iteration at once and let the new
+// one run the load gate with nothing serving (34 s measured). The outgoing
+// iteration validates the freshly resolved config first and the restart
+// adopts it as validated.
+func TestConfigChangeHandler_EffectiveReloadValidatesOnTheOutgoingIteration(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *ReloadRequest, 1)
+	handler := NewConfigChangeHandler(bus, logger, configCh, []string{"gated"}, testDebounceInterval)
+	raw := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "raw"}}
+	active := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "active"}}
+	handler.SetInitialSnapshot(&ValidatedSnapshot{
+		RawConfig: raw, Config: active, ConfigVersion: "active",
+		Resolution: &coreconfig.Resolution{ResolvedVersions: map[string]string{"routes": "example.io/v1"}},
+	})
+	fresh := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "fresh"}}
+	freshResolution := &coreconfig.Resolution{ResolvedVersions: map[string]string{"routes": "example.io/v2"}}
+	handler.SetEffectiveResolver(func(cfg *coreconfig.Config) (*ResolvedConfig, error) {
+		require.Same(t, raw, cfg, "the raw config is what gets re-resolved")
+		return &ResolvedConfig{Config: fresh, Resolution: freshResolution}, nil
+	})
+	validatorChan := bus.Subscribe("gated-validator", 20)
+	bus.Start()
+	go handler.Start(t.Context())
+	handler.EnableReinitialization()
+
+	handler.RequestEffectiveReload()
+	request := testutil.WaitForEvent[*events.ConfigValidationRequest](t, validatorChan, testutil.LongTimeout)
+	assert.Same(t, fresh, request.Config, "validators judge the re-resolved config")
+	assert.Empty(t, configCh, "no restart before the verdict")
+	bus.Publish(events.NewConfigValidationResponse(request.RequestID(), "gated", true, nil))
+
+	select {
+	case reload := <-configCh:
+		assert.Equal(t, ReloadReasonConfig, reload.Reasons, "validated: the new iteration must not run the load gate")
+		assert.Same(t, fresh, reload.Snapshot.Config)
+		assert.Same(t, freshResolution, reload.Snapshot.Resolution)
+		assert.Same(t, raw, reload.Snapshot.RawConfig)
+	case <-time.After(testDebounceInterval + testutil.LongTimeout):
+		t.Fatal("a validated effective reload must restart the iteration")
+	}
+}
+
+// When the re-resolved config fails validation the restart still happens the
+// old way: the new iteration re-resolves and runs the load gate, which is
+// what reports a required resource that lost its CRD.
+func TestConfigChangeHandler_EffectiveReloadFallsBackToTheGateWhenInvalid(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *ReloadRequest, 1)
+	handler := NewConfigChangeHandler(bus, logger, configCh, []string{"gated"}, testDebounceInterval)
+	raw := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "raw"}}
+	active := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "active"}}
+	handler.SetInitialSnapshot(&ValidatedSnapshot{RawConfig: raw, Config: active, ConfigVersion: "active"})
+	handler.SetEffectiveResolver(func(*coreconfig.Config) (*ResolvedConfig, error) {
+		return &ResolvedConfig{Config: active, Resolution: &coreconfig.Resolution{}}, nil
+	})
+	validatorChan := bus.Subscribe("gated-validator", 20)
+	bus.Start()
+	go handler.Start(t.Context())
+	handler.EnableReinitialization()
+
+	handler.RequestEffectiveReload()
+	request := testutil.WaitForEvent[*events.ConfigValidationRequest](t, validatorChan, testutil.LongTimeout)
+	bus.Publish(events.NewConfigValidationResponse(request.RequestID(), "gated", false, []string{"rejected"}))
+
+	select {
+	case reload := <-configCh:
+		assert.Equal(t, ReloadReasonEffectiveConfig, reload.Reasons)
+		assert.Same(t, active, reload.Snapshot.Config)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("a rejected effective reload must still restart through the load gate")
+	}
+}
+
+// A configuration change that arrives while the effective validation is
+// pending supersedes it. Its own validation resolves afresh, so a valid
+// verdict restarts with that config and resolution, validated; an invalid one
+// must not lose the owed restart: the active config restarts through the
+// gate, as a served-resource change always did.
+func TestConfigChangeHandler_ConfigChangeDuringEffectiveValidationStillRestarts(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		valid   bool
+		reasons ReloadReason
+	}{
+		{name: "valid newer config restarts validated", valid: true, reasons: ReloadReasonConfig},
+		{name: "invalid newer config restarts the active config through the gate", valid: false, reasons: ReloadReasonEffectiveConfig},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bus, logger := testutil.NewTestBusAndLogger()
+			configCh := make(chan *ReloadRequest, 1)
+			handler := NewConfigChangeHandler(bus, logger, configCh, []string{"gated"}, testDebounceInterval)
+			raw := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "raw"}}
+			active := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "active"}}
+			newer := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "newer"}}
+			newerEffective := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "newer-effective"}}
+			newerResolution := &coreconfig.Resolution{ResolvedVersions: map[string]string{"routes": "example.io/v2"}}
+			handler.SetInitialSnapshot(&ValidatedSnapshot{RawConfig: raw, Config: active, ConfigVersion: "active"})
+			handler.SetEffectiveResolver(func(cfg *coreconfig.Config) (*ResolvedConfig, error) {
+				if cfg == newer {
+					return &ResolvedConfig{Config: newerEffective, Resolution: newerResolution}, nil
+				}
+				return &ResolvedConfig{Config: active, Resolution: &coreconfig.Resolution{}}, nil
+			})
+			validatorChan := bus.Subscribe("gated-validator", 20)
+			bus.Start()
+			go handler.Start(t.Context())
+			handler.EnableReinitialization()
+
+			handler.RequestEffectiveReload()
+			first := testutil.WaitForEvent[*events.ConfigValidationRequest](t, validatorChan, testutil.LongTimeout)
+			assert.Equal(t, "active", first.Version)
+			bus.Publish(events.NewConfigParsedEvent(newer, &v1alpha1.HAProxyTemplateConfig{}, "newer", ""))
+			bus.Publish(events.NewConfigValidationResponse(first.RequestID(), "gated", true, nil))
+			second := testutil.WaitForEvent[*events.ConfigValidationRequest](t, validatorChan, testutil.LongTimeout)
+			assert.Equal(t, "newer", second.Version, "the newer config supersedes the effective candidate")
+			assert.Empty(t, configCh, "the superseded effective verdict must not restart")
+			bus.Publish(events.NewConfigValidationResponse(second.RequestID(), "gated", tc.valid, []string{"verdict"}))
+
+			select {
+			case reload := <-configCh:
+				assert.Equal(t, tc.reasons, reload.Reasons)
+				if tc.valid {
+					assert.Same(t, newerEffective, reload.Snapshot.Config)
+					assert.Same(t, newerResolution, reload.Snapshot.Resolution)
+				} else {
+					assert.Same(t, active, reload.Snapshot.Config)
+				}
+			case <-time.After(testDebounceInterval + testutil.LongTimeout):
+				t.Fatal("the owed restart was lost")
+			}
+		})
+	}
+}
