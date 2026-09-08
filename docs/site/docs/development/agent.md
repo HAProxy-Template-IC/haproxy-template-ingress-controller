@@ -44,6 +44,13 @@ are three pure steps and one round trip.
    only for the files the agent answers that it lacks. A `409` carrying the pod's
    actual baseline means the ops were composed against a state the pod no longer
    has: re-diff from what it returned. Nothing was written.
+5. **The plan follows.** The pod keeps the plan's blob so a controller with a
+   cold cache can read its baseline back. A runtime apply doesn't carry it:
+   the controller encodes it afterwards and hands it over with
+   `PUT /v1/plan?plan_id=…&proof=…`, bound to the proof that apply returned. A
+   put for a plan the pod has since moved past answers `409` and is dropped.
+   The blob rides the apply itself on a reload, a full re-send and the drift
+   pass, and for an agent that predates the call.
 
 A pod whose agent speaks a different API major, or doesn't execute an op kind
 the decision needs, gets the complete file set plus a reload. Version skew
@@ -76,8 +83,9 @@ log level; logs are JSON.
 |---|---|---|
 | `GET /healthz` | none | The process is alive. |
 | `GET /readyz` | none | Startup initialisation finished. |
-| `GET /v1/state[?verify=1]` | basic | What this pod holds and runs. |
+| `GET /v1/state[?verify=1][&plan=0]` | basic | What this pod holds and runs; `plan=0` leaves the stored plan blob out. |
 | `POST /v1/apply` | basic | Apply a desired state. |
+| `PUT /v1/plan?plan_id=…&proof=…` | basic | Store the blob of the applied plan after the apply. |
 
 `/readyz` turns true once the worker socket answers `show info`, the master
 socket answers `show proc`, the tree is hashed against the state file, crash

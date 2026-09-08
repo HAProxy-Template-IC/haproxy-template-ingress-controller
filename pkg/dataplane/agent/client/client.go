@@ -22,6 +22,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -214,6 +215,48 @@ func (c *Client) Apply(ctx context.Context, m *api.Manifest, parts map[string]io
 		return nil, fmt.Errorf("agent client: decode apply result: %w", err)
 	}
 	return &result, nil
+}
+
+// PutPlan stores the blob of the plan the pod applied under (planID, proof),
+// after the apply that landed it. ErrPlanMoved means the pod has applied
+// another plan since and dropped the blob; ErrNoPlanEndpoint means the agent
+// predates the call, so the blob has to ride the next apply.
+func (c *Client) PutPlan(ctx context.Context, planID, proof string, blob []byte) error {
+	if planID == "" || proof == "" {
+		return errors.New("agent client: plan id and proof are required")
+	}
+	if len(blob) == 0 || len(blob) > api.MaxPlanBlobBytes {
+		return fmt.Errorf("agent client: plan blob of %d bytes is outside 1..%d", len(blob), api.MaxPlanBlobBytes)
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.applyTimeout)
+	defer cancel()
+
+	query := url.Values{"plan_id": {planID}, "proof": {proof}}
+	build := func(ctx context.Context) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+api.PathPlan+"?"+query.Encode(), bytes.NewReader(blob))
+		if err != nil {
+			return nil, err
+		}
+		req.ContentLength = int64(len(blob))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		c.authorize(req)
+		return req, nil
+	}
+	_, err := c.roundTrip(ctx, build, replayableAlways)
+	var conflict *ConflictError
+	if errors.As(err, &conflict) {
+		return ErrPlanMoved
+	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		switch httpErr.Status {
+		case http.StatusConflict:
+			return ErrPlanMoved
+		case http.StatusNotFound, http.StatusMethodNotAllowed:
+			return ErrNoPlanEndpoint
+		}
+	}
+	return err
 }
 
 func (c *Client) authorize(req *http.Request) {

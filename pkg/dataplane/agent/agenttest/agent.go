@@ -26,11 +26,13 @@ package agenttest
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
@@ -57,6 +59,13 @@ type RecordedApply struct {
 	Missing  []string
 }
 
+// RecordedPlanPut is one PUT /v1/plan the fake received.
+type RecordedPlanPut struct {
+	PlanID string
+	Proof  string
+	Plan   []byte
+}
+
 // Agent is the fake. Every method is safe for concurrent use.
 type Agent struct {
 	server   *httptest.Server
@@ -79,8 +88,11 @@ type Agent struct {
 	failOnce          bool
 	missingOnce       []string
 	applies           []RecordedApply
+	planPuts          []RecordedPlanPut
 	stateReads        int
 	planReads         int
+	noPlanEndpoint    bool
+	planPutDelay      time.Duration
 }
 
 // Option customises the fake before it starts serving.
@@ -281,7 +293,64 @@ func (a *Agent) routes() http.Handler {
 	})
 	mux.HandleFunc(api.PathState, a.authorized(a.handleState))
 	mux.HandleFunc(api.PathApply, a.authorized(a.handleApply))
+	if !a.noPlanEndpoint {
+		mux.HandleFunc(api.PathPlan, a.authorized(a.handlePlan))
+	}
 	return mux
+}
+
+// handlePlan mirrors the agent: the blob is kept only while (plan id, proof)
+// still name the applied plan.
+func (a *Agent) handlePlan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id, proof := r.URL.Query().Get("plan_id"), r.URL.Query().Get("proof")
+	blob, err := io.ReadAll(io.LimitReader(r.Body, api.MaxPlanBlobBytes+1))
+	if err != nil || id == "" || proof == "" || len(blob) == 0 || len(blob) > api.MaxPlanBlobBytes {
+		http.Error(w, "bad plan upload", http.StatusBadRequest)
+		return
+	}
+	if a.planPutDelay > 0 {
+		select {
+		case <-time.After(a.planPutDelay):
+		case <-r.Context().Done():
+			return
+		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.planPuts = append(a.planPuts, RecordedPlanPut{PlanID: id, Proof: proof, Plan: blob})
+	if !samePlanRef(a.state.AppliedPlanID, a.state.AppliedPlanProof, id, proof) {
+		writeJSON(w, http.StatusConflict, api.PlanMoved{
+			AppliedPlanID: a.state.AppliedPlanID, AppliedPlanProof: a.state.AppliedPlanProof,
+		})
+		return
+	}
+	a.appliedPlan = blob
+	a.planBlobPlanID = id
+	a.planBlobPlanProof = proof
+	writeJSON(w, http.StatusOK, api.PlanStored{PlanID: id, Proof: proof})
+}
+
+// PlanPuts returns every plan blob upload the fake received, in order.
+func (a *Agent) PlanPuts() []RecordedPlanPut {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]RecordedPlanPut(nil), a.planPuts...)
+}
+
+// WithoutPlanEndpoint makes the fake behave like an agent that predates
+// PUT /v1/plan, so the blob has to ride the apply.
+func WithoutPlanEndpoint() Option {
+	return func(a *Agent) { a.noPlanEndpoint = true }
+}
+
+// WithPlanPutDelay makes every PUT /v1/plan take this long before it is
+// stored, and gives it up when the request's context ends first.
+func WithPlanPutDelay(delay time.Duration) Option {
+	return func(a *Agent) { a.planPutDelay = delay }
 }
 
 func (a *Agent) authorized(next http.HandlerFunc) http.HandlerFunc {

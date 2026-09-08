@@ -26,13 +26,28 @@ const Version = 1
 // legacy identity and forces a full reload without asynchronous promotion.
 const ExactIdentityVersion = 1
 
-// Paths of the two calls plus health.
+// Paths of the calls plus health.
 const (
 	PathState   = "/v1/state"
 	PathApply   = "/v1/apply"
+	PathPlan    = "/v1/plan"
 	PathHealthz = "/healthz"
 	PathReadyz  = "/readyz"
 )
+
+// PlanStored answers a PUT of the plan blob: the plan the blob now describes,
+// which is the pod's applied plan at that moment.
+type PlanStored struct {
+	PlanID string `json:"plan_id"`
+	Proof  string `json:"proof"`
+}
+
+// PlanMoved is the 409 to a PUT of a plan blob for a plan the pod no longer
+// has applied; the blob was dropped.
+type PlanMoved struct {
+	AppliedPlanID    string `json:"applied_plan_id"`
+	AppliedPlanProof string `json:"applied_plan_proof,omitempty"`
+}
 
 // Multipart part names of an Apply request. Every other part is a file whose
 // filename is its manifest path.

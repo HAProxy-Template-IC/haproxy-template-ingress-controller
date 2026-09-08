@@ -28,6 +28,13 @@ import (
 // maxErrorBodyBytes bounds what an error carries into a log line or an Event.
 const maxErrorBodyBytes = 4 << 10
 
+// ErrPlanMoved is PutPlan's answer when the pod has applied another plan
+// since the one the blob describes.
+var ErrPlanMoved = errors.New("agent client: the pod's applied plan has moved on")
+
+// ErrNoPlanEndpoint is PutPlan's answer from an agent that predates it.
+var ErrNoPlanEndpoint = errors.New("agent client: the agent has no plan endpoint")
+
 // ConflictError is a 409 whose body is the agent's actual baseline: the ops
 // were composed against a state the agent no longer has, and it wrote nothing.
 type ConflictError struct {

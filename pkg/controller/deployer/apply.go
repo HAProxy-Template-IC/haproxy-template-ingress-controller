@@ -193,7 +193,8 @@ func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutco
 	// The blob rides the last chunk only. Every successful chunk gets a fresh
 	// agent role proof, so only the final chunk can bind the stored blob to the
 	// role the completed deployment reports.
-	blob := attempt.sendsPlanBlob(c.plans.Baseline(authority, attempt.state))
+	blob := attempt.sendsPlanBlob(c.plans.Baseline(authority, attempt.state),
+		c.keeper.Delivers(attempt.endpoint) && decision.Verdict != deployplan.VerdictReload)
 	for i, ops := range chunks {
 		manifest := attempt.req.manifest(&decision, ops, &prev, attempt.full, validated)
 		if i > 0 {
@@ -210,6 +211,9 @@ func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutco
 		}
 		if err := c.bindApplyResult(attempt, authority, &decision, result); err != nil {
 			return nil, err
+		}
+		if !blob && i == len(chunks)-1 && result.AppliedPlanID == attempt.req.planID {
+			c.keeper.Offer(attempt.endpoint, result.AppliedPlanID, result.AppliedPlanProof, attempt.req.blob)
 		}
 		prev = fence{
 			planID:         result.AppliedPlanID,
@@ -342,14 +346,19 @@ func (c *Component) acceptContentProofs(attempt *podApply, manifest *api.Manifes
 	attempt.state.Files = held
 }
 
-// sendsPlanBlob reports whether this apply has to carry the plan. A pod hands
-// its stored blob back only while it describes the plan it applied, so every
-// apply that moves that plan on has to bring the new one: the pod is what a
-// leader with a cold cache reads its baseline from, and a pod with none costs
-// a full-state reload.
-func (a *podApply) sendsPlanBlob(baseline *renderplan.Plan) bool {
+// sendsPlanBlob reports whether this apply has to carry the plan. The pod is
+// what a leader with a cold cache reads its baseline from, and a pod with none
+// costs a full-state reload. A pod that re-reads its whole state, or resends,
+// or is verified, gets the blob with the apply; so does one that reloads, the
+// cold path where the blob's cost does not count. Otherwise the keeper
+// delivers it afterwards, unless the pod's agent has no plan endpoint, in
+// which case every apply that moves the applied plan on brings the blob.
+func (a *podApply) sendsPlanBlob(baseline *renderplan.Plan, keeperDelivers bool) bool {
 	if a.full || a.resend || a.req.verify {
 		return true
+	}
+	if keeperDelivers {
+		return false
 	}
 	return !a.req.isPlan(baseline) || !a.state.HoldsAppliedPlan()
 }

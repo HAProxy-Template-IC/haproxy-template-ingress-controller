@@ -467,3 +467,48 @@ func TestCheckSkew(t *testing.T) {
 		assert.Empty(t, missing)
 	})
 }
+
+// PutPlan tells the keeper apart what it must act on: a pod that moved on
+// (drop this blob), an agent without the endpoint (ride the next apply), and
+// any other failure (retry with the next offer).
+func TestPutPlanMapsTheAgentsAnswers(t *testing.T) {
+	t.Parallel()
+	var status atomic.Int32
+	var gotQuery, gotBody atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery.Store(r.URL.RawQuery)
+		body, _ := io.ReadAll(r.Body)
+		gotBody.Store(string(body))
+		code := int(status.Load())
+		switch code {
+		case http.StatusOK:
+			writeJSON(t, w, code, api.PlanStored{PlanID: "plan-1", Proof: "p"})
+		case http.StatusConflict:
+			writeJSON(t, w, code, api.PlanMoved{AppliedPlanID: "plan-2"})
+		default:
+			http.Error(w, "nope", code)
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv.URL)
+
+	status.Store(http.StatusOK)
+	require.NoError(t, c.PutPlan(context.Background(), "plan-1", "p", []byte("blob")))
+	assert.Equal(t, "plan_id=plan-1&proof=p", gotQuery.Load())
+	assert.Equal(t, "blob", gotBody.Load())
+
+	status.Store(http.StatusConflict)
+	assert.ErrorIs(t, c.PutPlan(context.Background(), "plan-1", "p", []byte("blob")), ErrPlanMoved)
+
+	status.Store(http.StatusNotFound)
+	assert.ErrorIs(t, c.PutPlan(context.Background(), "plan-1", "p", []byte("blob")), ErrNoPlanEndpoint)
+
+	status.Store(http.StatusInternalServerError)
+	err := c.PutPlan(context.Background(), "plan-1", "p", []byte("blob"))
+	var httpErr *HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	assert.Equal(t, http.StatusInternalServerError, httpErr.Status)
+
+	require.Error(t, c.PutPlan(context.Background(), "", "p", []byte("blob")))
+	require.Error(t, c.PutPlan(context.Background(), "plan-1", "p", nil))
+}

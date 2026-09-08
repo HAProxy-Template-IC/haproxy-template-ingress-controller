@@ -524,24 +524,26 @@ func (s *Server) commitPlanBlob(run *applyRun) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !samePlanRef(
-		s.state.AppliedPlanID,
-		s.state.AppliedPlanProof,
-		run.manifest.PlanID,
-		run.appliedProof,
-	) {
-		return
+	s.storePlanBlobLocked(run.manifest.PlanID, run.appliedProof, run.planBlob)
+}
+
+// storePlanBlobLocked keeps blob as the plan of the pod's applied plan, when
+// id and proof still name it. Callers hold s.mu.
+func (s *Server) storePlanBlobLocked(id, proof string, blob []byte) bool {
+	if !samePlanRef(s.state.AppliedPlanID, s.state.AppliedPlanProof, id, proof) {
+		return false
 	}
-	if err := os.WriteFile(s.planBlobPath(), run.planBlob, 0o600); err != nil {
+	if err := os.WriteFile(s.planBlobPath(), blob, 0o600); err != nil {
 		s.logger.Error("could not store the applied plan", "error", err)
-		return
+		return false
 	}
-	s.appliedPlan = run.planBlob
-	s.state.PlanBlobPlanID = run.manifest.PlanID
-	s.state.PlanBlobPlanProof = run.appliedProof
+	s.appliedPlan = blob
+	s.state.PlanBlobPlanID = id
+	s.state.PlanBlobPlanProof = proof
 	if err := s.states.save(s.state); err != nil {
 		s.logger.Error("could not persist the agent state", "error", err)
 	}
+	return true
 }
 
 // rebindPlanBlobProof re-binds the stored blob to the proof of an apply that did
