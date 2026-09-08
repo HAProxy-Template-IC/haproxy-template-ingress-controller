@@ -1109,7 +1109,6 @@ deploy_ingress_demo() {
 	echo "    - echo-srcip (echo-srcip.localdev.me) - Source IP header"
 	echo "    - echo-proxy-protocol (echo-proxy-protocol.localdev.me) - PROXY protocol to backends"
 	echo "    - echo-backend-ssl (echo-backend-ssl.localdev.me) - SSL/TLS + HTTP/2 to backends"
-	echo "    - echo-scale-slots (echo-scale-slots.localdev.me) - Server slot pre-allocation"
 	echo "    - echo-backend-snippet (echo-backend-snippet.localdev.me) - Raw HAProxy config"
 	echo ""
 	echo "  Combined:"
@@ -1491,7 +1490,7 @@ post_deploy_tips() {
 	echo
 	echo "  Browser test:"
 	echo "    Add to /etc/hosts:"
-	echo "      127.0.0.1 echo.localdev.me echo-auth.localdev.me echo-cors.localdev.me echo-ratelimit.localdev.me echo-allowlist.localdev.me echo-denylist.localdev.me echo-ssl.localdev.me echo-redirect.localdev.me echo-headers-request.localdev.me echo-headers-response.localdev.me echo-sethost.localdev.me echo-rewrite.localdev.me echo-loadbalance.localdev.me echo-sticky.localdev.me echo-timeouts.localdev.me echo-forwardedfor.localdev.me echo-capture.localdev.me echo-healthcheck.localdev.me echo-maxconn.localdev.me echo-srcip.localdev.me echo-backend-snippet.localdev.me echo-ssl-redirect.localdev.me echo-proxy-protocol.localdev.me echo-backend-ssl.localdev.me echo-scale-slots.localdev.me echo-combined.localdev.me echo-gateway.localdev.me echo-paths.localdev.me echo-split.localdev.me echo-methods.localdev.me echo-headers.localdev.me echo-query.localdev.me"
+	echo "      127.0.0.1 echo.localdev.me echo-auth.localdev.me echo-cors.localdev.me echo-ratelimit.localdev.me echo-allowlist.localdev.me echo-denylist.localdev.me echo-ssl.localdev.me echo-redirect.localdev.me echo-headers-request.localdev.me echo-headers-response.localdev.me echo-sethost.localdev.me echo-rewrite.localdev.me echo-loadbalance.localdev.me echo-sticky.localdev.me echo-timeouts.localdev.me echo-forwardedfor.localdev.me echo-capture.localdev.me echo-healthcheck.localdev.me echo-maxconn.localdev.me echo-srcip.localdev.me echo-backend-snippet.localdev.me echo-ssl-redirect.localdev.me echo-proxy-protocol.localdev.me echo-backend-ssl.localdev.me echo-combined.localdev.me echo-gateway.localdev.me echo-paths.localdev.me echo-split.localdev.me echo-methods.localdev.me echo-headers.localdev.me echo-query.localdev.me"
 	echo "    Visit: http://echo.localdev.me:30080 (Ingress, no auth)"
 	echo "    Visit: http://echo-auth.localdev.me:30080 (Ingress, basic auth)"
 	echo "    Visit: http://echo-cors.localdev.me:30080 (Ingress, CORS)"
