@@ -459,3 +459,70 @@ func TestConfigChangeHandler_InFlightValidation_SupersededParsedCoalesced(t *tes
 	// Neither superseded candidate may produce a ConfigValidatedEvent.
 	testutil.AssertNoEvent[*events.ConfigValidatedEvent](t, eventChan, testutil.NoEventTimeout)
 }
+
+// The watchers of a fresh iteration deliver the configuration that iteration
+// was built from, and the loader parses it again. Validating it costs the
+// whole validationTests suite per replica, twice, after every reload
+// (measured: 2 x 32 s at four CPUs), for a verdict the handler then discards
+// as "matches the initial version". The version check belongs before the
+// suite, not after it.
+func TestConfigChangeHandler_DoesNotRevalidateTheVersionTheIterationStartedFrom(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *ReloadRequest, 1)
+	handler := NewConfigChangeHandler(bus, logger, configCh, []string{"validationtests"}, testDebounceInterval)
+	validatorChan := bus.Subscribe("test-validator", 50)
+	bus.Start()
+	go handler.Start(t.Context())
+	time.Sleep(testutil.StartupDelay)
+
+	running := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "running"}}
+	handler.SetInitialSnapshot(&ValidatedSnapshot{Config: running, ConfigVersion: "v-initial"})
+	handler.EnableReinitialization()
+	resultChan := bus.Subscribe("result-observer", 20)
+
+	template := &v1alpha1.HAProxyTemplateConfig{}
+	parsed := events.NewConfigParsedEvent(&coreconfig.Config{}, template, "v-initial", "sv1")
+	parsed.Sources = []events.ConfigSourceRef{{Name: "haptic-config", Generation: 3}}
+	bus.Publish(parsed)
+	bus.Publish(events.NewConfigParsedEvent(&coreconfig.Config{}, template, "v-initial", "sv1"))
+	testutil.AssertNoEvent[*events.ConfigValidationRequest](t, validatorChan, testutil.NoEventTimeout)
+
+	// The status updater stamps Validated from this event, so the running
+	// version is still announced, once, with the sources the parse carried.
+	announced := testutil.WaitForEvent[*events.ConfigValidatedEvent](t, resultChan, testutil.LongTimeout)
+	assert.Equal(t, "v-initial", announced.Version)
+	assert.Same(t, running, announced.Config, "the effective config, not the raw parse")
+	assert.Same(t, template, announced.TemplateConfig)
+	assert.Equal(t, parsed.Sources, announced.Sources)
+	testutil.AssertNoEvent[*events.ConfigValidatedEvent](t, resultChan, testutil.NoEventTimeout)
+	assert.Empty(t, configCh, "the running version must not restart the iteration")
+
+	bus.Publish(events.NewConfigParsedEvent(&coreconfig.Config{}, nil, "v-next", "sv1"))
+	request := testutil.WaitForEvent[*events.ConfigValidationRequest](t, validatorChan, testutil.LongTimeout)
+	assert.Equal(t, "v-next", request.Version)
+}
+
+// The drain path sees the same parses when they arrive while the loop is on
+// another select case, which is exactly the window right after a rebuild.
+// Dropping the running version there without announcing it would leave the
+// sources unstamped whenever the sole delivery lands in that window.
+func TestConfigChangeHandler_DrainAnnouncesTheRunningVersion(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	handler := NewConfigChangeHandler(bus, logger, make(chan *ReloadRequest, 1), []string{"validationtests"}, testDebounceInterval)
+	running := &coreconfig.Config{Dataplane: coreconfig.DataplaneConfig{MapsDir: "running"}}
+	handler.SetInitialSnapshot(&ValidatedSnapshot{Config: running, ConfigVersion: "v-initial"})
+	handler.EnableReinitialization()
+	resultChan := bus.Subscribe("result-observer", 20)
+	bus.Start()
+
+	// The loop is not running: the parse waits in the subscription channel
+	// the way it does while the loop is busy on another case.
+	bus.Publish(events.NewConfigParsedEvent(&coreconfig.Config{}, &v1alpha1.HAProxyTemplateConfig{}, "v-initial", "sv1"))
+	require.Eventually(t, func() bool { return len(handler.eventChan) == 1 }, testutil.LongTimeout, time.Millisecond)
+	handler.drainQueuedEvents()
+
+	announced := testutil.WaitForEvent[*events.ConfigValidatedEvent](t, resultChan, testutil.LongTimeout)
+	assert.Equal(t, "v-initial", announced.Version)
+	assert.Same(t, running, announced.Config)
+	assert.Nil(t, handler.queuedParsed, "the running version must not be parked for validation")
+}
