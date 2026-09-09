@@ -348,7 +348,7 @@ func (s *Snapshot) FileAt(index int) (File, error) {
 	if err != nil {
 		return File{}, err
 	}
-	return materializeSnapshotFileEntry(entry)
+	return materializeSnapshotFileEntry(entry, false)
 }
 
 // BackendNamed returns a detached exact backend by name.
@@ -969,7 +969,7 @@ func (t *Transaction) replaceFile(handle sequenceHandle[File], file *File) error
 	if _, exists := t.files[handle.index]; exists {
 		return t.recordError(errPlanChangeConflict)
 	}
-	before, err := materializeSnapshotFileEntry(handle.entry)
+	before, err := materializeSnapshotFileEntry(handle.entry, false)
 	if err != nil {
 		return t.recordError(err)
 	}

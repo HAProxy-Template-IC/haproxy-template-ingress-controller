@@ -15,6 +15,7 @@
 package files
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,10 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
+
+const stageWriteBufferSize = 1 << 20
+
+type writerOnly struct{ io.Writer }
 
 // ErrDigestMismatch is what a received part failing its manifest digest wraps;
 // it is a refusal, never a retry.
@@ -59,8 +64,12 @@ func (s *Store) Stage(rel string, r io.Reader, digest string, size int64) (*Stag
 	if err != nil {
 		return nil, fmt.Errorf("stage %q: %w", rel, err)
 	}
-	written, copyErr := io.Copy(f, io.LimitReader(r, size+1))
-	closeErr := f.Close()
+	// A multipart part yields 4 KB per read; unbuffered, a 4 MB config lands
+	// in a thousand write calls. writerOnly keeps bufio from handing the copy
+	// straight to the file's ReadFrom, which would do exactly that.
+	buffered := bufio.NewWriterSize(writerOnly{f}, stageWriteBufferSize)
+	written, copyErr := io.Copy(buffered, io.LimitReader(r, size+1))
+	closeErr := errors.Join(buffered.Flush(), f.Close())
 	if err := errors.Join(copyErr, closeErr); err != nil {
 		_ = os.Remove(f.Name())
 		return nil, fmt.Errorf("stage %q: %w", rel, err)

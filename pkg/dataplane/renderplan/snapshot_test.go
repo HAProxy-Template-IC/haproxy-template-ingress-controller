@@ -45,6 +45,35 @@ func TestSnapshotOwnsSourceAndEveryLegacyCopy(t *testing.T) {
 	assert.NotSame(t, firstWeight, second.Backends["backend-000000"].Servers[0].Weight)
 }
 
+// TestSnapshotSharedPlanIsBuiltOnceAndAliasesTheSealedRecords pins the
+// read-only view: one object per snapshot, equal to the owned copy, and its
+// slices are the sealed entries' own, so no copy is made.
+func TestSnapshotSharedPlanIsBuiltOnceAndAliasesTheSealedRecords(t *testing.T) {
+	source := snapshotPlanFixture(3)
+	want := source.Clone()
+	snapshot := mustPlanSnapshot(t, NewAuthority(), source, nil)
+	poisonPlanFixture(source)
+
+	shared, err := snapshot.SharedPlan()
+	require.NoError(t, err)
+	assert.Equal(t, want, shared)
+	assert.True(t, ExactlyEqual(want, shared))
+	assert.Equal(t, want.ID, shared.ID)
+	again, err := snapshot.SharedPlan()
+	require.NoError(t, err)
+	assert.Same(t, shared, again)
+
+	entry, err := findSnapshotEntry(
+		snapshot.authority, backendSnapshotCollection, snapshot.root.backends,
+		snapshotKey{index: -1, name: "backend-000000"},
+	)
+	require.NoError(t, err)
+	assert.Same(t, &entry.value.value.Servers[0], &shared.Backends["backend-000000"].Servers[0])
+	owned, err := snapshot.LegacyCopy()
+	require.NoError(t, err)
+	assert.NotSame(t, &entry.value.value.Servers[0], &owned.Backends["backend-000000"].Servers[0])
+}
+
 func TestSnapshotReusesExactRootEntriesAndSubtrees(t *testing.T) {
 	authority := NewAuthority()
 	basePlan := snapshotPlanFixture(7)

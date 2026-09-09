@@ -480,6 +480,14 @@ type snapshotAuthentication struct {
 	root      *planRoot
 	entries   int
 	source    any
+	shared    *sharedPlanMemo
+}
+
+// sharedPlanMemo holds the read-only Plan a snapshot hands out, built once.
+type sharedPlanMemo struct {
+	once sync.Once
+	plan *Plan
+	err  error
 }
 
 // Snapshot is an authenticated immutable final render plan.
@@ -490,6 +498,7 @@ type Snapshot struct {
 	// source is the BackendSource token the backends were reconciled from,
 	// nil when they came from a map.
 	source any
+	shared *sharedPlanMemo
 	seal   *Snapshot
 	auth   snapshotAuthentication
 }
@@ -499,10 +508,13 @@ func sealSnapshot(authority *Authority, root *planRoot) *Snapshot {
 }
 
 func sealSnapshotFromSource(authority *Authority, root *planRoot, source any) *Snapshot {
-	snapshot := &Snapshot{authority: authority, root: root, entries: root.entries, source: source}
+	snapshot := &Snapshot{
+		authority: authority, root: root, entries: root.entries, source: source, shared: &sharedPlanMemo{},
+	}
 	snapshot.seal = snapshot
 	snapshot.auth = snapshotAuthentication{
-		owner: snapshot, authority: authority, root: root, entries: snapshot.entries, source: source,
+		owner: snapshot, authority: authority, root: root, entries: snapshot.entries,
+		source: source, shared: snapshot.shared,
 	}
 	return snapshot
 }
@@ -613,7 +625,8 @@ func exactPlanRootPointers(left, right *planRoot) bool {
 func (s *Snapshot) ValidateAuthentication() error {
 	if s == nil || s.seal != s || s.auth.owner != s || s.authority == nil ||
 		s.auth.authority != s.authority || s.root == nil || s.auth.root != s.root ||
-		s.auth.entries != s.entries || s.entries < 0 || s.auth.source != s.source {
+		s.auth.entries != s.entries || s.entries < 0 || s.auth.source != s.source ||
+		s.shared == nil || s.auth.shared != s.shared {
 		return errInvalidSnapshot
 	}
 	if err := s.authority.ValidateAuthentication(); err != nil {
@@ -762,36 +775,78 @@ func (s *Snapshot) LegacyCopy() (*Plan, error) {
 	return plan, nil
 }
 
+// SharedPlan is the snapshot's Plan as a read-only view, built once per
+// snapshot: its records alias the sealed entries, which every reader of a
+// plan must leave alone. A caller that changes a plan takes LegacyCopy.
+// Materialising a detached copy per deployment deep-copied every backend
+// before any pod was touched.
+func (s *Snapshot) SharedPlan() (*Plan, error) {
+	if err := s.ValidateAuthentication(); err != nil {
+		return nil, err
+	}
+	s.shared.once.Do(func() {
+		plan, err := s.copyWithoutID(false, sharedRecords)
+		if err == nil {
+			plan.ID, err = s.ID()
+		}
+		s.shared.plan, s.shared.err = plan, err
+	})
+	return s.shared.plan, s.shared.err
+}
+
 func (s *Snapshot) legacyCopyWithoutID() (*Plan, error) {
-	return s.copyWithoutID(false)
+	return s.copyWithoutID(false, ownedRecords)
 }
 
 func (s *Snapshot) canonicalCopyWithoutID() (*Plan, error) {
-	return s.copyWithoutID(true)
+	return s.copyWithoutID(true, ownedRecords)
 }
 
-func (s *Snapshot) copyWithoutID(canonical bool) (*Plan, error) {
-	sections, err := materializeSnapshotSequence(s.root.sections, ownSection)
+// recordDetachment is how a materialised plan takes the snapshot's records:
+// owned copies, or the sealed values themselves.
+type recordDetachment struct {
+	section    func(Section) Section
+	backend    func(Backend) Backend
+	profile    func(Profile) Profile
+	mapFile    func(Map) Map
+	crtList    func(CRTList) CRTList
+	fileShared bool
+}
+
+var (
+	ownedRecords = recordDetachment{
+		section: ownSection, backend: ownBackend, profile: ownProfile, mapFile: ownMap, crtList: ownCRTList,
+	}
+	sharedRecords = recordDetachment{
+		section: sharedRecord[Section], backend: sharedRecord[Backend], profile: sharedRecord[Profile],
+		mapFile: sharedRecord[Map], crtList: sharedRecord[CRTList], fileShared: true,
+	}
+)
+
+func sharedRecord[T any](value T) T { return value }
+
+func (s *Snapshot) copyWithoutID(canonical bool, detach recordDetachment) (*Plan, error) {
+	sections, err := materializeSnapshotSequence(s.root.sections, detach.section)
 	if err != nil {
 		return nil, err
 	}
-	backends, err := materializeSnapshotMap(s.root.backends, ownBackend)
+	backends, err := materializeSnapshotMap(s.root.backends, detach.backend)
 	if err != nil {
 		return nil, err
 	}
-	profiles, err := materializeSnapshotMap(s.root.profiles, ownProfile)
+	profiles, err := materializeSnapshotMap(s.root.profiles, detach.profile)
 	if err != nil {
 		return nil, err
 	}
-	mapsCopy, err := materializeSnapshotMap(s.root.maps, ownMap)
+	mapsCopy, err := materializeSnapshotMap(s.root.maps, detach.mapFile)
 	if err != nil {
 		return nil, err
 	}
-	crtLists, err := materializeSnapshotMap(s.root.crtLists, ownCRTList)
+	crtLists, err := materializeSnapshotMap(s.root.crtLists, detach.crtList)
 	if err != nil {
 		return nil, err
 	}
-	files, err := materializeSnapshotFiles(s.root.files, canonical)
+	files, err := materializeSnapshotFiles(s.root.files, canonical, detach.fileShared)
 	if err != nil {
 		return nil, err
 	}

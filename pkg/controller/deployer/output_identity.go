@@ -93,7 +93,7 @@ func materializeOccurrence(occurrence *rendercycle.Occurrence) (renderOccurrence
 	if err != nil {
 		return renderOccurrenceIdentity{}, err
 	}
-	plan, err := identity.planSnapshot.LegacyCopy()
+	plan, err := identity.planSnapshot.SharedPlan()
 	if err != nil {
 		return renderOccurrenceIdentity{}, fmt.Errorf("render occurrence plan: %w", err)
 	}
