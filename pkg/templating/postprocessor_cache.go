@@ -44,9 +44,24 @@ type postProcessCacheKey struct {
 	input    string
 }
 
-type postProcessCacheGeneration struct {
-	entries map[postProcessCacheKey]string
+type postProcessCacheEntry struct {
+	value string
+	// seen is the serial of the last generation whose transaction looked the
+	// entry up.
+	seen uint64
 }
+
+// postProcessCacheGeneration is what one published transaction leaves: the
+// entries it looked up, stamped with its serial, and the base's other entries
+// while they were looked up within the last postProcessCacheRetainGenerations
+// publications. A render that post-processes nothing therefore evicts
+// nothing, and an entry whose input is gone leaves after that many renders.
+type postProcessCacheGeneration struct {
+	serial  uint64
+	entries map[postProcessCacheKey]postProcessCacheEntry
+}
+
+const postProcessCacheRetainGenerations = 16
 
 type postProcessCache struct {
 	active atomic.Pointer[postProcessCacheGeneration]
@@ -54,8 +69,28 @@ type postProcessCache struct {
 
 func newPostProcessCache() *postProcessCache {
 	cache := &postProcessCache{}
-	cache.active.Store(&postProcessCacheGeneration{entries: map[postProcessCacheKey]string{}})
+	cache.active.Store(&postProcessCacheGeneration{entries: map[postProcessCacheKey]postProcessCacheEntry{}})
 	return cache
+}
+
+func nextPostProcessCacheGeneration(
+	base *postProcessCacheGeneration,
+	touched map[postProcessCacheKey]string,
+) *postProcessCacheGeneration {
+	if len(touched) == 0 {
+		return base
+	}
+	serial := base.serial + 1
+	entries := make(map[postProcessCacheKey]postProcessCacheEntry, len(touched)+len(base.entries))
+	for key, entry := range base.entries {
+		if entry.seen+postProcessCacheRetainGenerations >= serial {
+			entries[key] = entry
+		}
+	}
+	for key, value := range touched {
+		entries[key] = postProcessCacheEntry{value: value, seen: serial}
+	}
+	return &postProcessCacheGeneration{serial: serial, entries: entries}
 }
 
 func newPostProcessCacheIdentity() *postProcessCacheIdentity {
@@ -133,10 +168,10 @@ func (t *postProcessCacheTransaction) process(
 		t.mu.Unlock()
 		return t.waitForFlight(ctx, flight)
 	}
-	if value, exists := t.base.entries[key]; exists {
-		t.next[key] = value
+	if entry, exists := t.base.entries[key]; exists {
+		t.next[key] = entry.value
 		t.mu.Unlock()
-		return t.finishHit(ctx, value)
+		return t.finishHit(ctx, entry.value)
 	}
 	flight := &postProcessCacheFlight{done: make(chan struct{})}
 	t.inFlight[key] = flight
@@ -252,9 +287,9 @@ func (t *postProcessCacheTransaction) claimBatchEntries(
 			entry.flight = flight
 			continue
 		}
-		if value, exists := t.base.entries[entry.key]; exists {
-			t.next[entry.key] = value
-			entry.value = value
+		if cached, exists := t.base.entries[entry.key]; exists {
+			t.next[entry.key] = cached.value
+			entry.value = cached.value
 			entry.hit = true
 			continue
 		}
@@ -471,7 +506,7 @@ func (t *postProcessCacheTransaction) stage(ctx context.Context) (*postProcessCa
 	publication := &postProcessCachePublication{
 		cache:       t.cache,
 		base:        t.base,
-		generation:  &postProcessCacheGeneration{entries: t.next},
+		generation:  nextPostProcessCacheGeneration(t.base, t.next),
 		transaction: t,
 	}
 	t.base = nil
@@ -548,14 +583,14 @@ func mergePostProcessCacheGenerations(
 	active,
 	staged *postProcessCacheGeneration,
 ) *postProcessCacheGeneration {
-	entries := make(map[postProcessCacheKey]string, len(active.entries)+len(staged.entries))
-	for key, value := range active.entries {
-		entries[key] = value
+	entries := make(map[postProcessCacheKey]postProcessCacheEntry, len(active.entries)+len(staged.entries))
+	for key, entry := range active.entries {
+		entries[key] = entry
 	}
-	for key, value := range staged.entries {
-		entries[key] = value
+	for key, entry := range staged.entries {
+		entries[key] = entry
 	}
-	return &postProcessCacheGeneration{entries: entries}
+	return &postProcessCacheGeneration{serial: max(active.serial, staged.serial), entries: entries}
 }
 
 func (p *postProcessCachePublication) abort() bool {
