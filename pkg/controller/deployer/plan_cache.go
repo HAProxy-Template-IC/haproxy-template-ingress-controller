@@ -87,9 +87,11 @@ func (c *planCache) bind(
 		c.plans[key] = nil
 		return false
 	}
-	owned := plan.Clone()
-	if occurrence != nil {
-		owned = plan
+	// A render occurrence's plan is immutable and shared; only a caller-owned
+	// plan is copied.
+	owned := plan
+	if occurrence == nil {
+		owned = plan.Clone()
 	}
 	c.plans[key] = &cachedPlan{plan: owned, occurrence: occurrence}
 	return true
