@@ -53,6 +53,19 @@ declare -A LIB_NAMES=(
 
 ARCHES=(amd64 arm64 armv7)
 
+# fetch downloads one registry asset, retrying a transient registry answer,
+# and names the URL when it gives up: main's pipeline 2832094108 failed this
+# job with a bare "exit code 22" from a silent curl on one of forty downloads.
+fetch() {
+    local target="$1" url="$2"
+    if ! curl --fail --silent --show-error --location \
+        --retry 5 --retry-delay 2 --retry-all-errors \
+        --output "${target}" "${url}"; then
+        echo "  ERROR: download failed: ${url}" >&2
+        exit 1
+    fi
+}
+
 mkdir -p plugins
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "${WORKDIR}"' EXIT
@@ -71,7 +84,7 @@ for plugin in "${!PLUGINS[@]}"; do
     # Pull the SHA256SUMS manifest as the authoritative file list for this
     # plugin/version. Each line is "<sha256>  <filename>".
     sums="${WORKDIR}/${plugin}-SHA256SUMS"
-    curl --fail --silent --location --output "${sums}" "${pkg_base}/SHA256SUMS"
+    fetch "${sums}" "${pkg_base}/SHA256SUMS"
 
     for arch in "${ARCHES[@]}"; do
         suffixed="${lib_name}-${arch}-glibc${SPOA_PLUGIN_GLIBC_VERSION}.so"
@@ -87,10 +100,8 @@ for plugin in "${!PLUGINS[@]}"; do
         target_so="${archdir}/${lib_name}.so"
         bundle="${WORKDIR}/${suffixed}.cosign.bundle"
 
-        curl --fail --silent --location --output "${target_so}" \
-            "${pkg_base}/${suffixed}"
-        curl --fail --silent --location --output "${bundle}" \
-            "${pkg_base}/${suffixed}.cosign.bundle"
+        fetch "${target_so}" "${pkg_base}/${suffixed}"
+        fetch "${bundle}" "${pkg_base}/${suffixed}.cosign.bundle"
 
         # SHA256 check: compare expected line from manifest against the
         # downloaded file. We strip the arch+glibc suffix locally, so
