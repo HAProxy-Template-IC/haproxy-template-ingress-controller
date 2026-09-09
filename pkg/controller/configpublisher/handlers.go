@@ -705,9 +705,8 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 		)
 	}
 
-	// Clear all cached state
-	c.templateConfig = nil
-	c.hasTemplateConfig = false
+	c.templateConfig = c.seedTemplateConfig
+	c.hasTemplateConfig = c.seedTemplateConfig != nil
 	c.renderedConfigs = make(map[string]*renderedConfigEntry)
 	c.lastRender = nil
 	c.lastRenderCorrelationID = ""
