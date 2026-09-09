@@ -667,7 +667,7 @@ test-coverage-combined: ## Run unit and integration tests with combined coverage
 
 bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=BenchmarkVMPool COUNT=6; BENCHFLAGS='-cpuprofile=/tmp/cpu.prof' to profile)
 	@echo "Running benchmarks..."
-	$(GO) tool gotestsum --format testname -- \
+	$(GO) test \
 		-run='^$$' \
 		-bench=$${BENCH:-'.'} \
 		-benchmem \

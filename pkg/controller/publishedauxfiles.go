@@ -98,11 +98,7 @@ type publishedAuxFiles struct {
 }
 
 func newPublishedAuxFiles(namespace string) *publishedAuxFiles {
-	empty := map[string]string{}
-	root, err := newCurrentAuxFilesMapRoot(empty)
-	if err != nil {
-		panic(err)
-	}
+	root := newCurrentAuxFilesMapRoot(nil)
 	return &publishedAuxFiles{
 		namespace:   namespace,
 		byGVR:       map[string]map[string]publishedAuxFile{},
@@ -267,11 +263,7 @@ func (p *publishedAuxFiles) advanceLocked() {
 }
 
 func (p *publishedAuxFiles) setCurrentLocked(next map[string]string) {
-	root, err := retainCurrentAuxFilesMapRoot(p.currentRoot, next)
-	if err != nil {
-		p.lastErr = err
-		return
-	}
+	root := retainCurrentAuxFilesMapRoot(p.currentRoot, next)
 	p.current = root.files
 	p.currentRoot = root
 }

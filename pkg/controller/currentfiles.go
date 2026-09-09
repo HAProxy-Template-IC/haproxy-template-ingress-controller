@@ -15,7 +15,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -54,9 +53,8 @@ type currentFilesAuthority struct {
 }
 
 type currentAuxFilesMapRoot struct {
-	files     map[string]string
-	canonical string
-	seal      *currentAuxFilesMapRoot
+	files map[string]string
+	seal  *currentAuxFilesMapRoot
 }
 
 type currentAuxFilesSource struct {
@@ -66,26 +64,22 @@ type currentAuxFilesSource struct {
 	seal       *currentAuxFilesSource
 }
 
-func newCurrentAuxFilesMapRoot(files map[string]string) (*currentAuxFilesMapRoot, error) {
+func newCurrentAuxFilesMapRoot(files map[string]string) *currentAuxFilesMapRoot {
 	owned := maps.Clone(files)
 	if owned == nil {
 		owned = map[string]string{}
 	}
-	canonical, err := json.Marshal(owned)
-	if err != nil {
-		return nil, fmt.Errorf("encoding currentFiles root: %w", err)
-	}
-	root := &currentAuxFilesMapRoot{files: owned, canonical: string(canonical)}
+	root := &currentAuxFilesMapRoot{files: owned}
 	root.seal = root
-	return root, nil
+	return root
 }
 
 func retainCurrentAuxFilesMapRoot(
 	previous *currentAuxFilesMapRoot,
 	files map[string]string,
-) (*currentAuxFilesMapRoot, error) {
+) *currentAuxFilesMapRoot {
 	if previous != nil && previous.seal == previous && maps.Equal(previous.files, files) {
-		return previous, nil
+		return previous
 	}
 	return newCurrentAuxFilesMapRoot(files)
 }
@@ -134,7 +128,7 @@ func (s *currentAuxFilesSource) ValidateAuthentication() error {
 	if s == nil || s.seal != s || s.authority == nil || s.generation == 0 {
 		return errors.New("currentFiles source has invalid provenance")
 	}
-	if s.root == nil || s.root.seal != s.root || s.root.files == nil || s.root.canonical == "" {
+	if s.root == nil || s.root.seal != s.root || s.root.files == nil {
 		return errors.New("currentFiles source has an invalid exact root")
 	}
 	return nil
@@ -159,7 +153,7 @@ func (s *currentAuxFilesSource) SameRoot(
 	if s.root == typed.root {
 		return true, nil
 	}
-	return s.root.canonical == typed.root.canonical, nil
+	return maps.Equal(s.root.files, typed.root.files), nil
 }
 
 func (s *currentAuxFilesSource) MaterializeCurrentAuxFiles() (map[string]string, error) {
@@ -170,11 +164,7 @@ func (s *currentAuxFilesSource) MaterializeCurrentAuxFiles() (map[string]string,
 }
 
 func newCurrentFilesAuthority(published *publishedAuxFiles) *currentFilesAuthority {
-	empty, err := newCurrentAuxFilesMapRoot(nil)
-	if err != nil {
-		panic(err)
-	}
-	return &currentFilesAuthority{published: published, emptyRoot: empty}
+	return &currentFilesAuthority{published: published, emptyRoot: newCurrentAuxFilesMapRoot(nil)}
 }
 
 func (a *currentFilesAuthority) BeginTerm() uint64 {
@@ -277,10 +267,7 @@ func (a *currentFilesAuthority) Accept(
 		return
 	}
 	a.hasAccepted = true
-	root, err := retainCurrentAuxFilesMapRoot(a.acceptedRoot, files)
-	if err != nil {
-		return
-	}
+	root := retainCurrentAuxFilesMapRoot(a.acceptedRoot, files)
 	a.acceptedRoot = root
 	a.accepted = root.files
 	a.acceptedSnapshot = nil
@@ -308,10 +295,7 @@ func (a *currentFilesAuthority) AcceptSnapshot(
 	if !a.active || a.generation != generation {
 		return fmt.Errorf("accepting auxiliary snapshot: leader term %d is not active", generation)
 	}
-	root, err := retainCurrentAuxFilesMapRoot(a.acceptedRoot, files)
-	if err != nil {
-		return fmt.Errorf("accepting auxiliary snapshot: %w", err)
-	}
+	root := retainCurrentAuxFilesMapRoot(a.acceptedRoot, files)
 	a.hasAccepted = true
 	a.accepted = root.files
 	a.acceptedRoot = root
@@ -345,10 +329,7 @@ func (a *currentFilesAuthority) AcceptOutput(
 	if !a.active || a.generation != generation {
 		return fmt.Errorf("accepting render output: leader term %d is not active", generation)
 	}
-	root, err := retainCurrentAuxFilesMapRoot(a.acceptedRoot, files)
-	if err != nil {
-		return fmt.Errorf("accepting render output: %w", err)
-	}
+	root := retainCurrentAuxFilesMapRoot(a.acceptedRoot, files)
 	a.hasAccepted = true
 	a.accepted = root.files
 	a.acceptedRoot = root
