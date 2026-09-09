@@ -20,6 +20,7 @@ import (
 	"io"
 	"strings"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
@@ -42,6 +43,9 @@ func (f incrementalStringFragment) WriteTo(writer io.Writer) (int64, error) {
 func materializeIncrementalTextFragment(fragment templating.TextFragment) (string, error) {
 	if fragment == nil {
 		return "", errors.New("incremental text fragment is nil")
+	}
+	if immutable, ok := fragment.(rendercontent.TextFragment); ok {
+		return immutable.String()
 	}
 	var output strings.Builder
 	reported, err := fragment.WriteTo(&output)
