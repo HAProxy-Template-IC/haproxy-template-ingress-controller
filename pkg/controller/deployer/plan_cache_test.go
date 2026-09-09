@@ -199,3 +199,21 @@ func TestPlanCache_MeasuredPlanFromAnotherSchemaIsNoBaseline(t *testing.T) {
 
 	assert.Nil(t, newPlanCache().AdoptMeasured("pod-a", measuredState(plan, blob)))
 }
+
+// TestPlanCache_BindCopiesOnlyACallerOwnedPlan pins that a render occurrence's
+// plan is stored as is, while a plan bound without one is copied so the
+// caller cannot mutate the cache.
+func TestPlanCache_BindCopiesOnlyACallerOwnedPlan(t *testing.T) {
+	occurrence := mustTestOccurrence("global\n# A\n", "plan-A", nil)
+	identity, err := materializeOccurrence(occurrence)
+	require.NoError(t, err)
+	cache := newPlanCache()
+	require.NoError(t, cache.BindOccurrence("pod-a", identity.planID, "a:1", &identity))
+	assert.Same(t, identity.plan, cache.Plan("pod-a", identity.planID, "a:1"))
+
+	owned := planFor("plan-1")
+	require.True(t, cache.Bind("pod-b", owned.ID, "b:1", owned))
+	cached := cache.Plan("pod-b", owned.ID, "b:1")
+	assert.NotSame(t, owned, cached)
+	assert.True(t, exactPlan(owned, cached))
+}
