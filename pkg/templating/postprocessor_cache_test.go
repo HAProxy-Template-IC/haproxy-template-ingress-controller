@@ -101,7 +101,7 @@ func TestPostProcessCacheAbortedGenerationCannotPoisonActive(t *testing.T) {
 
 	active := cache.active.Load()
 	require.Len(t, active.entries, 1)
-	assert.Equal(t, "good", active.entries[postProcessCacheKey{identity: identity, input: "stable"}])
+	assert.Equal(t, "good", active.entries[postProcessCacheKey{identity: identity, input: "stable"}].value)
 	_, exists := active.entries[postProcessCacheKey{identity: identity, input: "new"}]
 	assert.False(t, exists)
 
@@ -247,7 +247,7 @@ func TestPostProcessCacheCancellationBeforeStageLeavesActiveGeneration(t *testin
 
 	active := cache.active.Load()
 	require.Len(t, active.entries, 1)
-	assert.Equal(t, "old-value", active.entries[postProcessCacheKey{identity: identity, input: "old"}])
+	assert.Equal(t, "old-value", active.entries[postProcessCacheKey{identity: identity, input: "old"}].value)
 }
 
 func TestPostProcessCacheCanceledWaiterFailsSharedTransaction(t *testing.T) {
@@ -385,7 +385,13 @@ func TestPostProcessCacheStageChecksCancellationBeforeSealing(t *testing.T) {
 	assert.Empty(t, cache.active.Load().entries)
 }
 
-func TestPostProcessCacheRetainsOnlyLatestCommittedGeneration(t *testing.T) {
+// TestPostProcessCacheRetainsAnEntryForTheRetentionWindow pins the eviction
+// rule: an entry survives postProcessCacheRetainGenerations publications
+// that did not look it up and leaves on the next one, while a transaction
+// that looked nothing up publishes the base itself. A render that takes the
+// identity-carry path post-processes nothing, and evicting on it cost the
+// next creation render every section.
+func TestPostProcessCacheRetainsAnEntryForTheRetentionWindow(t *testing.T) {
 	cache := newPostProcessCache()
 	identity := newPostProcessCacheIdentity()
 	first := cache.begin()
@@ -395,20 +401,28 @@ func TestPostProcessCacheRetainsOnlyLatestCommittedGeneration(t *testing.T) {
 	require.NoError(t, err)
 	commitPostProcessCacheForTest(t, first)
 	require.Len(t, cache.active.Load().entries, 2)
-
-	next := cache.begin()
-	assertPostProcessCacheHit(t, next, identity, "keep", "keep-value")
-	commitPostProcessCacheForTest(t, next)
-
-	active := cache.active.Load()
-	require.Len(t, active.entries, 1)
-	assert.Equal(t, "keep-value", active.entries[postProcessCacheKey{identity: identity, input: "keep"}])
-	_, exists := active.entries[postProcessCacheKey{identity: identity, input: "old"}]
-	assert.False(t, exists)
+	seeded := cache.active.Load()
 
 	empty := cache.begin()
 	commitPostProcessCacheForTest(t, empty)
-	assert.Empty(t, cache.active.Load().entries)
+	assert.Same(t, seeded, cache.active.Load())
+
+	for range postProcessCacheRetainGenerations {
+		next := cache.begin()
+		assertPostProcessCacheHit(t, next, identity, "keep", "keep-value")
+		commitPostProcessCacheForTest(t, next)
+	}
+	active := cache.active.Load()
+	require.Len(t, active.entries, 2, "the window has not passed")
+	assertPostProcessCacheHit(t, cache.begin(), identity, "old", "old-value")
+
+	last := cache.begin()
+	assertPostProcessCacheHit(t, last, identity, "keep", "keep-value")
+	commitPostProcessCacheForTest(t, last)
+	active = cache.active.Load()
+	require.Len(t, active.entries, 1)
+	assert.Equal(t, "keep-value", active.entries[postProcessCacheKey{identity: identity, input: "keep"}].value)
+	assert.EqualValues(t, postProcessCacheRetainGenerations+2, active.serial)
 }
 
 func TestPostProcessCacheCoalescesConcurrentMisses(t *testing.T) {
@@ -603,11 +617,11 @@ func TestPostProcessCacheConcurrentPublicationsRetainBothCommittedGenerations(t 
 	secondValue, hasSecond := active.entries[postProcessCacheKey{identity: identity, input: "second"}]
 	require.True(t, hasFirst)
 	require.True(t, hasSecond)
-	assert.Equal(t, "first-value", firstValue)
-	assert.Equal(t, "second-value", secondValue)
+	assert.Equal(t, "first-value", firstValue.value)
+	assert.Equal(t, "second-value", secondValue.value)
 }
 
-func TestPostProcessCacheConcurrentPublicationMergeIsPrunedByNextGeneration(t *testing.T) {
+func TestPostProcessCacheConcurrentPublicationMergeAgesLikeAnyGeneration(t *testing.T) {
 	cache := newPostProcessCache()
 	identity := newPostProcessCacheIdentity()
 	first := cache.begin()
@@ -622,13 +636,15 @@ func TestPostProcessCacheConcurrentPublicationMergeIsPrunedByNextGeneration(t *t
 	require.True(t, secondPublication.publish())
 	require.Len(t, cache.active.Load().entries, 2)
 
-	next := cache.begin()
-	assertPostProcessCacheHit(t, next, identity, "second", "second-value")
-	commitPostProcessCacheForTest(t, next)
+	for range postProcessCacheRetainGenerations + 1 {
+		next := cache.begin()
+		assertPostProcessCacheHit(t, next, identity, "second", "second-value")
+		commitPostProcessCacheForTest(t, next)
+	}
 
 	active := cache.active.Load()
 	require.Len(t, active.entries, 1)
-	assert.Equal(t, "second-value", active.entries[postProcessCacheKey{identity: identity, input: "second"}])
+	assert.Equal(t, "second-value", active.entries[postProcessCacheKey{identity: identity, input: "second"}].value)
 }
 
 func TestPostProcessCachePublicationIsSingleUse(t *testing.T) {
