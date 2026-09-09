@@ -144,7 +144,7 @@ func buildSnapshotFileSequence(
 		var entry *snapshotEntry[File]
 		if index < len(previousEntries) {
 			entry = previousEntries[index]
-			previousFile, materializeErr := materializeSnapshotFileEntry(entry)
+			previousFile, materializeErr := materializeSnapshotFileEntry(entry, false)
 			if materializeErr != nil {
 				return nil, materializeErr
 			}
@@ -181,7 +181,7 @@ func exactFileSequenceSource(
 		if err != nil || !found {
 			return false, err
 		}
-		file, err := materializeSnapshotFileEntry(entry)
+		file, err := materializeSnapshotFileEntry(entry, false)
 		if err != nil {
 			return false, err
 		}
@@ -221,7 +221,7 @@ func (r *FileRecord) LegacyCopy() (File, error) {
 	if err := r.validate(); err != nil {
 		return File{}, err
 	}
-	return materializeSnapshotFileEntry(r.entry)
+	return materializeSnapshotFileEntry(r.entry, false)
 }
 
 func (r *FileRecord) validate() error {
@@ -409,11 +409,14 @@ func snapshotFileMatchesDocument(
 	return entry.value.value.Digest == DigestString(entry.value.value.Content), nil
 }
 
-func materializeSnapshotFileEntry(entry *snapshotEntry[File]) (File, error) {
+func materializeSnapshotFileEntry(entry *snapshotEntry[File], shared bool) (File, error) {
 	if err := entry.validate(entry.authority, fileSnapshotCollection); err != nil {
 		return File{}, err
 	}
 	if entry.deferredFile == nil {
+		if shared {
+			return entry.value.value, nil
+		}
 		return ownFile(entry.value.value), nil
 	}
 	return entry.deferredFile.legacyFile()
@@ -497,6 +500,7 @@ var _ io.StringWriter = (*snapshotExactStringWriter)(nil)
 func materializeSnapshotFiles(
 	collection *snapshotCollection[File],
 	canonical bool,
+	shared bool,
 ) ([]File, error) {
 	if err := collection.validate(collection.authority, fileSnapshotCollection); err != nil {
 		return nil, err
@@ -514,7 +518,7 @@ func materializeSnapshotFiles(
 		if canonical {
 			result[index], err = canonicalSnapshotFileEntry(entry)
 		} else {
-			result[index], err = materializeSnapshotFileEntry(entry)
+			result[index], err = materializeSnapshotFileEntry(entry, shared)
 		}
 		if err != nil {
 			return nil, err
@@ -559,11 +563,11 @@ func exactSnapshotFileCollections(
 		if leftEntry == rightEntry {
 			continue
 		}
-		leftFile, err := materializeSnapshotFileEntry(leftEntry)
+		leftFile, err := materializeSnapshotFileEntry(leftEntry, false)
 		if err != nil {
 			return false, err
 		}
-		rightFile, err := materializeSnapshotFileEntry(rightEntry)
+		rightFile, err := materializeSnapshotFileEntry(rightEntry, false)
 		if err != nil || !exactFile(leftFile, rightFile) {
 			return false, err
 		}

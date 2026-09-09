@@ -90,3 +90,43 @@ func mapBody(entries int) string {
 	}
 	return b.String()
 }
+
+// BenchmarkFourMegabyteConfigChangeWithOps is the scale leg's apply: one
+// backend section changes in a 4 MB haproxy.cfg and one map entry moves with
+// it, the ops run and nothing reloads.
+func BenchmarkFourMegabyteConfigChangeWithOps(b *testing.B) {
+	h := newHarness(b)
+	var config strings.Builder
+	config.WriteString("global\n")
+	padding := strings.Repeat("  # a line the bundled chart emits for a backend's rules, roughly this long\n", 10)
+	for i := range 4500 {
+		fmt.Fprintf(&config, "backend be-%04d\n  mode http\n  server s1 10.1.%d.%d:80 check\n  http-request set-header X-Route %d\n  option httpchk GET /healthz\n  timeout server 30s\n%s", i, i/250, i%250, i, padding)
+	}
+	head := config.String()
+	entries := mapBody(4500)
+	files := []file{
+		{Path: configPath, Content: head, Reload: true},
+		{Path: "maps/host.map", Content: entries},
+	}
+	m := buildManifest("plan-0", files)
+	m.Mode = api.ModeReload
+	previous := h.apply(&m, files)
+	require.True(b, previous.OK)
+	b.ReportMetric(float64(len(head))/1e6, "config-MB")
+
+	for i := 0; b.Loop(); i++ {
+		files[0].Content = head + fmt.Sprintf("backend be-new-%d\n  mode http\n  server s1 10.9.0.1:80 check\n", i)
+		files[1].Content = entries + fmt.Sprintf("bench%d.example.com be-new-%d\n", i, i)
+		next := buildManifest(fmt.Sprintf("plan-%d", i+1), files)
+		next.ExpectedPrevPlanID = previous.AppliedPlanID
+		next.ExpectedPrevToken = previous.AppliedToken
+		next.Ops = []api.Op{{
+			Kind: api.OpMapAdd, Path: "maps/host.map",
+			Key: fmt.Sprintf("bench%d.example.com", i), Value: fmt.Sprintf("be-new-%d", i),
+		}}
+		previous = h.apply(&next, files)
+		if !previous.OK {
+			b.Fatalf("apply %d failed: %+v", i, previous.Error)
+		}
+	}
+}

@@ -655,7 +655,7 @@ func exactDocumentFileAt(
 		}
 		return snapshotFileMatchesDocument(entry, document)
 	}
-	file, err := materializeSnapshotFileEntry(entry)
+	file, err := materializeSnapshotFileEntry(entry, false)
 	return err == nil && exactFile(file, *source), err
 }
 
