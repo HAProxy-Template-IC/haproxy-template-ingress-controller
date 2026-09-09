@@ -37,7 +37,7 @@ func (b *builder) diffMaps() {
 	for _, name := range sortedMapNames(b.next.Maps) {
 		next := b.next.Maps[name]
 		prev, existed := b.prev.Maps[name]
-		if existed && sameFileContent(b.prevFiles[name], b.nextFiles[name]) {
+		if existed && sameFileContent(b.prevIndex.files[name], b.nextIndex.files[name]) {
 			continue
 		}
 		b.diffMap(&prev, &next, name)

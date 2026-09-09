@@ -193,13 +193,13 @@ func mutateMap(after *renderplan.Plan, op *api.Op) {
 
 func (b *builder) inPlaceServerOps(worker *renderplan.Plan) []api.Op {
 	var ops []api.Op
-	for _, name := range backendSections(b.next) {
-		running, has := worker.Backends[name]
-		if !has {
+	for i := range b.nextIndex.backends {
+		next := &b.nextIndex.backends[i]
+		running, has := worker.Backends[next.name]
+		if !has || !next.described {
 			continue
 		}
-		next := b.next.Backends[name]
-		ops = append(ops, b.serverOpsAgainstWorker(&running, &next)...)
+		ops = append(ops, b.serverOpsAgainstWorker(&running, &next.record)...)
 	}
 	return ops
 }

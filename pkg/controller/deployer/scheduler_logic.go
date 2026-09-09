@@ -46,6 +46,9 @@ func (s *DeploymentScheduler) scheduleOrQueueOccurrence(
 	workRevision := s.workRevision
 	s.schedulerMutex.Unlock()
 
+	// The deployer reads the plan through the snapshot's shared view, built
+	// once per snapshot; building it now overlaps the deployment in flight.
+	go func() { _, _ = identity.planSnapshot.SharedPlan() }()
 	s.installPending(ctx, &scheduledDeployment{
 		workRevision:  workRevision,
 		occurrence:    identity.occurrence,

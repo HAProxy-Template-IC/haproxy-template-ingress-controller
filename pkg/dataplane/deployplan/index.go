@@ -21,29 +21,62 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
-// backendSections lists the plan's backends in the order its sections have
-// them; a record without a section is not part of the configuration text.
-func backendSections(p *renderplan.Plan) []string {
-	names := make([]string, 0, len(p.Backends))
-	for i := range p.Sections {
-		if p.Sections[i].Kind == renderplan.SectionKindBackend {
-			names = append(names, p.Sections[i].Name)
-		}
+// Index is what a diff looks up in a plan by name. A caller that holds a plan
+// across deployments builds it once with IndexPlan; Diff builds its own for a
+// plan that comes without one. It points into the plan, so it is only valid
+// while the plan is left alone, which a shared or decoded plan is.
+type Index struct {
+	sections map[sectionKey]*renderplan.Section // every section but the backends
+	files    map[string]*renderplan.File
+	backends []backendEntry // backend sections in document order; a record without a section is not in the text
+	byName   map[string]int // backend name → position in backends
+}
+
+// backendEntry pairs a backend section with its record, so a diff resolves a
+// backend with one lookup instead of one per map it lives in. The record is a
+// copy: a map value has no address, and one slice of them is one allocation.
+type backendEntry struct {
+	name      string
+	section   *renderplan.Section
+	record    renderplan.Backend
+	described bool // the plan has a record for the section
+}
+
+// IndexPlan indexes p; nil for a nil plan.
+func IndexPlan(p *renderplan.Plan) *Index {
+	if p == nil {
+		return nil
 	}
-	return names
+	index := &Index{
+		sections: make(map[sectionKey]*renderplan.Section, len(p.Sections)-len(p.Backends)),
+		files:    fileIndex(p.Files),
+		backends: make([]backendEntry, 0, len(p.Backends)),
+		byName:   make(map[string]int, len(p.Backends)),
+	}
+	for i := range p.Sections {
+		section := &p.Sections[i]
+		if section.Kind != renderplan.SectionKindBackend {
+			index.sections[sectionKey{section.Kind, section.Name}] = section
+			continue
+		}
+		entry := backendEntry{name: section.Name, section: section}
+		entry.record, entry.described = p.Backends[section.Name]
+		index.byName[section.Name] = len(index.backends)
+		index.backends = append(index.backends, entry)
+	}
+	return index
+}
+
+// backend is the entry for name, nil when the plan has no such section.
+func (x *Index) backend(name string) *backendEntry {
+	if at, ok := x.byName[name]; ok {
+		return &x.backends[at]
+	}
+	return nil
 }
 
 func sortedMapNames(plans map[string]renderplan.Map) []string {
 	return slices.Sorted(maps.Keys(plans))
-}
-
-// sectionIndex indexes every section; each rule selects the kinds it owns.
-func sectionIndex(sections []renderplan.Section) map[sectionKey]*renderplan.Section {
-	index := make(map[sectionKey]*renderplan.Section, len(sections))
-	for i := range sections {
-		index[sectionKey{sections[i].Kind, sections[i].Name}] = &sections[i]
-	}
-	return index
 }
 
 func fileIndex(files []renderplan.File) map[string]*renderplan.File {

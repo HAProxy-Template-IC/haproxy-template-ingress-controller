@@ -48,11 +48,12 @@ const (
 // Baseline is what the controller knows about one pod, every field sourced
 // from that pod's ACK or /v1/state.
 type Baseline struct {
-	Applied   *renderplan.Plan // the plan the pod ACKed; nil means unknown
-	Running   *renderplan.Plan // what the worker runs; equals Applied without a pending reload
-	WorkerOps *renderplan.Plan // Running plus the in-place ops accepted since
-	Inventory api.Inventory    // maps, certs, CA and crt-list files the worker loaded
-	Caps      Caps
+	Applied      *renderplan.Plan // the plan the pod ACKed; nil means unknown
+	AppliedIndex *Index           // Applied's index when the caller keeps one
+	Running      *renderplan.Plan // what the worker runs; equals Applied without a pending reload
+	WorkerOps    *renderplan.Plan // Running plus the in-place ops accepted since
+	Inventory    api.Inventory    // maps, certs, CA and crt-list files the worker loaded
+	Caps         Caps
 
 	PendingServerDeletes  int
 	PendingBackendDeletes int

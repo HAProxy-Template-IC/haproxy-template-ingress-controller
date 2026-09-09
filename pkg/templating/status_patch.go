@@ -90,7 +90,10 @@ func newStatusPatchIdentity(namespace, name, apiVersion, kind string) statusPatc
 // It is thread-safe for concurrent writes from parallel template goroutines.
 // Created per render cycle (same lifecycle as FileRegistry).
 type StatusPatchCollector struct {
-	mu             sync.Mutex
+	// mu is held for writing until the collector is sealed; a sealed collector
+	// only has readers, and a walk of every patch must not hold up a
+	// provenance check on another goroutine.
+	mu             sync.RWMutex
 	patches        map[statusPatchIdentity]*collectedStatusPatch
 	order          []statusPatchIdentity
 	projections    []*StatusPatchProjectionReplay

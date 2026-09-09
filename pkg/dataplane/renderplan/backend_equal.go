@@ -33,8 +33,31 @@ func (b *Backend) EqualRecord(other *Backend) bool {
 		b.HashType == other.HashType &&
 		b.Shape == other.Shape &&
 		b.ShapeReason == other.ShapeReason &&
-		slices.EqualFunc(b.Servers, other.Servers, func(left, right Server) bool { return left.Equal(&right) }) &&
+		equalServers(b.Servers, other.Servers) &&
 		EqualKeywordArgs(b.DefaultServer, other.DefaultServer)
+}
+
+func equalServers(left, right []Server) bool {
+	if sameSlice(left, right) {
+		return true
+	}
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !left[index].Equal(&right[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameSlice reports whether both slices are the same run of the same backing
+// array, in which case their elements are the same values. Plans built from
+// one snapshot lineage share their records, so a diff between two of them
+// answers most backends here.
+func sameSlice[T any](left, right []T) bool {
+	return len(left) == len(right) && (len(left) == 0 || &left[0] == &right[0])
 }
 
 // EqualContent reports whether both backends carry the same text description:
@@ -49,8 +72,8 @@ func (b *Backend) EqualContent(other *Backend) bool {
 		b.CommentsDigest == other.CommentsDigest &&
 		b.RecordDigest == other.RecordDigest &&
 		b.ContentKnown == other.ContentKnown &&
-		slices.Equal(b.Body, other.Body) &&
-		slices.Equal(b.Comments, other.Comments)
+		(sameSlice(b.Body, other.Body) || slices.Equal(b.Body, other.Body)) &&
+		(sameSlice(b.Comments, other.Comments) || slices.Equal(b.Comments, other.Comments))
 }
 
 // Equal reports whether both servers declare the same line.
@@ -72,6 +95,9 @@ func (s *Server) Equal(other *Server) bool {
 // keywords with the same arguments in the same order. Nil and empty lists
 // are the same list.
 func EqualKeywordArgs(left, right []KeywordArg) bool {
+	if sameSlice(left, right) {
+		return true
+	}
 	return slices.EqualFunc(left, right, func(a, b KeywordArg) bool {
 		return a.Name == b.Name && slices.Equal(a.Args, b.Args)
 	})

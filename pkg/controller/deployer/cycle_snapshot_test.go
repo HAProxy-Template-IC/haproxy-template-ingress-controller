@@ -193,8 +193,8 @@ func TestPlanCachePoisonsReusedAgentProofAcrossOccurrences(t *testing.T) {
 	require.NoError(t, err)
 	cache := newPlanCache()
 
-	require.NoError(t, cache.BindOccurrence("pod", identityA.planID, "agent:1", &identityA))
-	require.Error(t, cache.BindOccurrence("pod", identityB.planID, "agent:1", &identityB))
+	require.NoError(t, cache.BindOccurrence("pod", identityA.planID, "agent:1", &identityA, nil))
+	require.Error(t, cache.BindOccurrence("pod", identityB.planID, "agent:1", &identityB, nil))
 	poisonedA, err := cache.Occurrence("pod", identityA.planID, "agent:1")
 	require.NoError(t, err)
 	assert.Nil(t, poisonedA)
