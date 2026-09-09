@@ -488,6 +488,14 @@ build-ingress-conformance-image: ## Build the ingress-conformance test image (cl
 	    { echo "patch $$patch failed to apply — re-resolve against $(INGRESS_CONFORMANCE_SHA)"; exit 1; }; \
 	done
 	@echo "Building upstream ingress-controller-conformance binary..."
+	@# The upstream's modules are never in haptic's cache, so every build
+	@# downloads them and a proxy stream reset fails the job (pipeline
+	@# 2830518002); the download is separated out so it can be retried.
+	cd /tmp/haptic-ingress-conformance-upstream && for attempt in 1 2 3; do \
+	  $(GO) mod download && break; \
+	  [ "$$attempt" -lt 3 ] || { echo "module download failed after 3 attempts"; exit 1; }; \
+	  echo "module download failed (attempt $$attempt), retrying"; sleep 5; \
+	done
 	@# Mirror upstream's own Makefile flags (-trimpath, ldflags). Running
 	@# `go test -c` from inside the cloned tree uses the upstream's
 	@# go.mod, not haptic's — that's exactly what we want for the pin

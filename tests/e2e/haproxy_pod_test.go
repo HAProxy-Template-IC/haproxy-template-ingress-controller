@@ -244,7 +244,7 @@ _finish() {
   _rc=$?
   trap - EXIT HUP INT TERM
   _shutdown
-  rm -f "$_state/child" "$_state/pid" "$_state/status" "$_state"/*.tmp.*
+  rm -f "$_state/child" "$_state/pid" "$_state/status" "$_state/curl-error" "$_state"/*.tmp.*
   rm -f "$_state/token" "$_state/stopping"
   rmdir "$_state" 2>/dev/null || true
   exit "$_rc"
@@ -256,18 +256,22 @@ _write_process $$ pid || exit 1
 
 _ready=0
 while :; do
-  curl -sS --connect-timeout 1 --max-time 2 -o /dev/null -w '%{http_code}' -H "Host: $1" "http://127.0.0.1$2" > "$_state/status" 2>/dev/null &
+  curl -sS --connect-timeout 1 --max-time 2 -o /dev/null -w '%{http_code}' -H "Host: $1" "http://127.0.0.1$2" > "$_state/status" 2>"$_state/curl-error" &
   _child=$!
   _write_process "$_child" child || exit 1
-  wait "$_child" 2>/dev/null || true
+  wait "$_child" 2>/dev/null
+  _wait=$?
   rm -f "$_state/child"
   _status=$(cat "$_state/status" 2>/dev/null || true)
-  rm -f "$_state/status"
+  _curl_error=$(cat "$_state/curl-error" 2>/dev/null || true)
+  rm -f "$_state/status" "$_state/curl-error"
   if [ "$_status" != 200 ]; then
     if [ -e "$_state/stopping" ]; then
       exit 0
     fi
-    printf 'HAPTIC_AVAILABILITY_FAILED status=%s\n' "$_status" >&2
+    # The probe's exit status tells a refused or timed-out request (7, 28)
+    # from a probe something killed (128 + the signal).
+    printf 'HAPTIC_AVAILABILITY_FAILED status=%s curl_exit=%s curl_error=%s\n' "$_status" "$_wait" "$_curl_error" >&2
     exit 1
   fi
   if [ "$_ready" -eq 0 ]; then
