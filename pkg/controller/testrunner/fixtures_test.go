@@ -1411,7 +1411,8 @@ func TestAssertDeterministic(t *testing.T) {
 		// The template engine adds a trailing newline, so we need to match that
 		firstConfig := "# Deterministic config\nfrontend test\n  bind *:80\n"
 		firstAuxFiles := &dataplane.AuxiliaryFiles{} // Empty but not nil
-		result := runner.assertDeterministic(t.Context(), assertion, firstConfig, firstAuxFiles, renderDeps)
+		result := runner.assertDeterministic(t.Context(), assertion,
+			&RenderOutput{HAProxyConfig: firstConfig, AuxiliaryFiles: firstAuxFiles}, renderDeps)
 
 		if !result.Passed {
 			t.Logf("Assertion failed with error: %s", result.Error)
@@ -1461,7 +1462,7 @@ func TestAssertDeterministic(t *testing.T) {
 		}
 
 		// Empty first config and nil aux files = no first render output
-		result := runner.assertDeterministic(t.Context(), assertion, "", nil, renderDeps)
+		result := runner.assertDeterministic(t.Context(), assertion, &RenderOutput{}, renderDeps)
 
 		assert.False(t, result.Passed)
 		assert.Contains(t, result.Error, "first render produced no output")

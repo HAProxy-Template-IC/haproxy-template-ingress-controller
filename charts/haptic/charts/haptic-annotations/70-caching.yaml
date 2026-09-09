@@ -762,8 +762,9 @@ k8sResources:
       spec:
         type: ClusterIP
         selector:
-        {%- for k, v := range haproxySelector %}
-          {{ k }}: {{ tostring(v) }}
+        {#- keys() sorts; ranging the map emits a new key order per render. #}
+        {%- for _, k := range keys(haproxySelector) %}
+          {{ k }}: {{ tostring(haproxySelector[k]) }}
         {%- end %}
         ports:
           - name: cache-origin

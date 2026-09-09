@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
@@ -46,10 +47,11 @@ type RenderDependencies struct {
 func (r *Runner) assertDeterministic(
 	ctx context.Context,
 	assertion *config.ValidationAssertion,
-	firstConfig string,
-	firstAuxFiles *dataplane.AuxiliaryFiles,
+	first *RenderOutput,
 	deps *RenderDependencies,
 ) AssertionResult {
+	firstConfig := first.HAProxyConfig
+	firstAuxFiles := first.AuxiliaryFiles
 	result := AssertionResult{
 		Type:        "deterministic",
 		Description: assertion.Description,
@@ -110,7 +112,50 @@ func (r *Runner) assertDeterministic(
 		return result
 	}
 
+	// Status patches are deliberately not compared: their lastTransitionTime
+	// is stamped from the clock, so two renders legitimately differ.
+	if diffResult := compareRenderedK8sResources(first.K8sResources, second.K8sResources); diffResult != "" {
+		result.Passed = false
+		result.Error = diffResult
+		return result
+	}
+	if first.Events != second.Events {
+		result.Passed = false
+		result.Error = fmt.Sprintf("events differ between renders:\n%s",
+			generateUnifiedDiff("events (render 1)", "events (render 2)", first.Events, second.Events))
+		return result
+	}
+
 	return result
+}
+
+// compareRenderedK8sResources reports the first k8sResource whose rendered text
+// differs between two renders, or one present in only one of them.
+func compareRenderedK8sResources(first, second map[string]string) string {
+	rendered := make([]string, 0, len(first)+len(second))
+	for name := range first {
+		rendered = append(rendered, name)
+	}
+	for name := range second {
+		if _, exists := first[name]; !exists {
+			rendered = append(rendered, name)
+		}
+	}
+	slices.Sort(rendered)
+	for _, name := range rendered {
+		before, hadBefore := first[name]
+		after, hadAfter := second[name]
+		switch {
+		case hadBefore && !hadAfter:
+			return fmt.Sprintf("k8sResource %s is rendered once and then not at all", name)
+		case !hadBefore && hadAfter:
+			return fmt.Sprintf("k8sResource %s appears only on the second render", name)
+		case before != after:
+			return fmt.Sprintf("k8sResource %s differs between renders:\n%s", name,
+				generateUnifiedDiff(name+" (render 1)", name+" (render 2)", before, after))
+		}
+	}
+	return ""
 }
 
 // mergeRenderedFiles overlays a render's own general files onto the test's
@@ -275,7 +320,9 @@ func (r *Runner) executeAssertions(
 		}
 	}
 
-	if determinism := r.checkDeterminism(ctx, test, haproxyConfig, auxiliaryFiles, result, renderDeps); determinism != nil {
+	if determinism := r.checkDeterminism(
+		ctx, test, haproxyConfig, auxiliaryFiles, renderedEvents, result, renderDeps,
+	); determinism != nil {
 		if appendAssertionResult(ctx, result, determinism) {
 			return true
 		}
@@ -364,6 +411,7 @@ func (r *Runner) checkDeterminism(
 	test *config.ValidationTest,
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	renderedEvents string,
 	result *TestResult,
 	renderDeps *RenderDependencies,
 ) *AssertionResult {
@@ -378,7 +426,12 @@ func (r *Runner) checkDeterminism(
 	if haproxyConfig == "" && auxiliaryFiles == nil {
 		return nil
 	}
-	check := r.assertDeterministic(ctx, &config.ValidationAssertion{Type: "deterministic"}, haproxyConfig, auxiliaryFiles, renderDeps)
+	check := r.assertDeterministic(ctx, &config.ValidationAssertion{Type: "deterministic"}, &RenderOutput{
+		HAProxyConfig:  haproxyConfig,
+		AuxiliaryFiles: auxiliaryFiles,
+		K8sResources:   result.RenderedK8sResources,
+		Events:         renderedEvents,
+	}, renderDeps)
 	return &check
 }
 
@@ -459,7 +512,12 @@ func (r *Runner) runAssertion(
 			result.Passed = false
 			result.Error = "deterministic assertion requires render dependencies (internal error)"
 		} else {
-			result = r.assertDeterministic(ctx, assertion, haproxyConfig, auxiliaryFiles, renderDeps)
+			result = r.assertDeterministic(ctx, assertion, &RenderOutput{
+				HAProxyConfig:  haproxyConfig,
+				AuxiliaryFiles: auxiliaryFiles,
+				K8sResources:   k8sResources,
+				Events:         renderedEvents,
+			}, renderDeps)
 		}
 
 	default:
