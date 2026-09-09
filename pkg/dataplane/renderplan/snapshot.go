@@ -1323,6 +1323,9 @@ func exactServers(left, right []Server) bool {
 	if (left == nil) != (right == nil) || len(left) != len(right) {
 		return false
 	}
+	if sameSlice(left, right) {
+		return true
+	}
 	for index := range left {
 		leftServer := left[index]
 		rightServer := right[index]
@@ -1361,6 +1364,9 @@ func exactKeywordArgs(left, right []KeywordArg) bool {
 	if (left == nil) != (right == nil) || len(left) != len(right) {
 		return false
 	}
+	if sameSlice(left, right) {
+		return true
+	}
 	for index := range left {
 		if left[index].Name != right[index].Name || !exactStrings(left[index].Args, right[index].Args) {
 			return false
@@ -1374,7 +1380,10 @@ func ownStrings(source []string) []string {
 }
 
 func exactStrings(left, right []string) bool {
-	return (left == nil) == (right == nil) && slices.Equal(left, right)
+	if (left == nil) != (right == nil) {
+		return false
+	}
+	return sameSlice(left, right) || slices.Equal(left, right)
 }
 
 func ownProfile(source Profile) Profile {

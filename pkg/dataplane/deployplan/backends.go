@@ -24,32 +24,30 @@ import (
 // diffBackends applies rules 2 to 4 in the order the render emitted the
 // sections, which is deterministic without sorting anything.
 func (b *builder) diffBackends() {
-	for _, name := range backendSections(b.next) {
-		next, described := b.next.Backends[name]
-		if !described {
-			b.failf("backend %s: section without a record", name)
+	for i := range b.nextIndex.backends {
+		next := &b.nextIndex.backends[i]
+		if !next.described {
+			b.failf("backend %s: section without a record", next.name)
 			continue
 		}
-		prev, existed := b.prev.Backends[name]
-		if !existed {
+		prev := b.prevIndex.backend(next.name)
+		if prev == nil || !prev.described {
 			b.sectionChange = true
-			b.backendAdded(&next)
+			b.backendAdded(&next.record)
 			continue
 		}
-		textEqual := sameSectionText(
-			b.prevSections[sectionKey{renderplan.SectionKindBackend, name}],
-			b.nextSections[sectionKey{renderplan.SectionKindBackend, name}],
-		)
+		textEqual := sameSectionText(prev.section, next.section)
 		b.sectionChange = b.sectionChange || !textEqual
-		b.backendChanged(&prev, &next, textEqual)
+		b.backendChanged(&prev.record, &next.record, textEqual)
 	}
-	for _, name := range backendSections(b.prev) {
-		if _, kept := b.next.Backends[name]; kept {
+	for i := range b.prevIndex.backends {
+		prev := &b.prevIndex.backends[i]
+		if next := b.nextIndex.backend(prev.name); next != nil && next.described {
 			continue
 		}
-		if prev, described := b.prev.Backends[name]; described {
+		if prev.described {
 			b.sectionChange = true
-			b.backendRemoved(&prev)
+			b.backendRemoved(&prev.record)
 		}
 	}
 }

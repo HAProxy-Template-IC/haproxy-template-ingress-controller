@@ -42,11 +42,9 @@ const (
 type builder struct {
 	composer
 	next, prev    *renderplan.Plan
+	nextIndex     *Index
+	prevIndex     *Index
 	baseline      *Baseline
-	nextFiles     map[string]*renderplan.File
-	prevFiles     map[string]*renderplan.File
-	nextSections  map[sectionKey]*renderplan.Section
-	prevSections  map[sectionKey]*renderplan.Section
 	groups        [groupCount][]api.Op
 	reasons       []string
 	reload        bool
@@ -56,6 +54,11 @@ type builder struct {
 
 // Diff decides what the pod described by base has to do to reach next.
 func Diff(next *renderplan.Plan, base *Baseline) Decision {
+	return DiffIndexed(next, nil, base)
+}
+
+// DiffIndexed is Diff with next's index already built; nil builds it here.
+func DiffIndexed(next *renderplan.Plan, nextIndex *Index, base *Baseline) Decision {
 	if next == nil {
 		return Decision{Verdict: VerdictReload, Mode: api.ModeReload, Reasons: []string{"no render"}}
 	}
@@ -75,9 +78,15 @@ func Diff(next *renderplan.Plan, base *Baseline) Decision {
 		baseline:     base,
 		deletedByOps: map[string]bool{},
 	}
+	b.nextIndex = nextIndex
+	if b.nextIndex == nil {
+		b.nextIndex = IndexPlan(next)
+	}
 	if b.baselineUsable() {
-		b.nextFiles, b.prevFiles = fileIndex(next.Files), fileIndex(b.prev.Files)
-		b.nextSections, b.prevSections = sectionIndex(next.Sections), sectionIndex(b.prev.Sections)
+		b.prevIndex = base.AppliedIndex
+		if b.prevIndex == nil {
+			b.prevIndex = IndexPlan(b.prev)
+		}
 		// Ordered: a server keyword may name a certificate this diff creates, a
 		// removed profile is judged by the backend deletes this diff composes,
 		// and the config guard by whether any section changed.
@@ -188,7 +197,7 @@ func (b *builder) diffSections() {
 		if sec.Kind == renderplan.SectionKindBackend {
 			continue
 		}
-		old, existed := b.prevSections[sectionKey{sec.Kind, sec.Name}]
+		old, existed := b.prevIndex.sections[sectionKey{sec.Kind, sec.Name}]
 		switch {
 		case !existed:
 			b.sectionAdded(sec)
@@ -201,7 +210,7 @@ func (b *builder) diffSections() {
 		if sec.Kind == renderplan.SectionKindBackend {
 			continue
 		}
-		if _, kept := b.nextSections[sectionKey{sec.Kind, sec.Name}]; !kept {
+		if _, kept := b.nextIndex.sections[sectionKey{sec.Kind, sec.Name}]; !kept {
 			b.sectionRemoved(sec)
 		}
 	}
@@ -238,15 +247,17 @@ func (b *builder) sectionRemoved(sec *renderplan.Section) {
 // running worker can no longer reach it: nothing in the render uses it and
 // every backend that did is deleted by an op in this same diff.
 func (b *builder) profileRemoved(name string) {
-	for _, be := range backendSections(b.next) {
-		if b.next.Backends[be].Profile == name {
-			b.failf("profile %s removed but backend %s still uses it", name, be)
+	for i := range b.nextIndex.backends {
+		be := &b.nextIndex.backends[i]
+		if be.described && be.record.Profile == name {
+			b.failf("profile %s removed but backend %s still uses it", name, be.name)
 			return
 		}
 	}
-	for _, be := range backendSections(b.prev) {
-		if b.prev.Backends[be].Profile == name && !b.deletedByOps[be] {
-			b.failf("profile %s removed but backend %s is not deleted at runtime", name, be)
+	for i := range b.prevIndex.backends {
+		be := &b.prevIndex.backends[i]
+		if be.described && be.record.Profile == name && !b.deletedByOps[be.name] {
+			b.failf("profile %s removed but backend %s is not deleted at runtime", name, be.name)
 			return
 		}
 	}
@@ -259,7 +270,7 @@ func (b *builder) profileRemoved(name string) {
 func (b *builder) diffFiles() {
 	for i := range b.next.Files {
 		f := &b.next.Files[i]
-		if old, existed := b.prevFiles[f.Path]; existed && sameFileContent(old, f) {
+		if old, existed := b.prevIndex.files[f.Path]; existed && sameFileContent(old, f) {
 			continue
 		}
 		if f.Kind == renderplan.FileKindConfig {
@@ -282,7 +293,7 @@ func (b *builder) diffFiles() {
 func (b *builder) diffRemovedFiles() {
 	for i := range b.prev.Files {
 		f := &b.prev.Files[i]
-		if _, kept := b.nextFiles[f.Path]; kept || f.Kind == renderplan.FileKindCRTList {
+		if _, kept := b.nextIndex.files[f.Path]; kept || f.Kind == renderplan.FileKindCRTList {
 			continue
 		}
 		if f.ReloadOnChange {

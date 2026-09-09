@@ -168,6 +168,9 @@ func (ec *EventCommentator) deploymentInsight(event busevents.Event, attrs []any
 		if p := e.Phases; p != nil {
 			attrs = append(attrs,
 				"slowest_pod", p.Pod,
+				"deploy_prepare_ms", p.PrepareMs,
+				"deploy_settle_ms", p.SettleMs,
+				"pod_total_ms", p.TotalMs,
 				"pod_state_ms", p.StateMs,
 				"pod_diff_ms", p.DiffMs,
 				"pod_send_ms", p.SendMs,

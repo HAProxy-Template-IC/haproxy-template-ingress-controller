@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/planblob"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
@@ -208,7 +209,7 @@ func TestPlanCache_BindCopiesOnlyACallerOwnedPlan(t *testing.T) {
 	identity, err := materializeOccurrence(occurrence)
 	require.NoError(t, err)
 	cache := newPlanCache()
-	require.NoError(t, cache.BindOccurrence("pod-a", identity.planID, "a:1", &identity))
+	require.NoError(t, cache.BindOccurrence("pod-a", identity.planID, "a:1", &identity, nil))
 	assert.Same(t, identity.plan, cache.Plan("pod-a", identity.planID, "a:1"))
 
 	owned := planFor("plan-1")
@@ -216,4 +217,24 @@ func TestPlanCache_BindCopiesOnlyACallerOwnedPlan(t *testing.T) {
 	cached := cache.Plan("pod-b", owned.ID, "b:1")
 	assert.NotSame(t, owned, cached)
 	assert.True(t, exactPlan(owned, cached))
+}
+
+// The index a deployment diffed with is what the next deployment reads as its
+// baseline's; a plan bound without one is indexed on first use, and a copied
+// plan never takes the caller's index, which points into the original.
+func TestPlanCache_IndexFollowsTheBoundPlan(t *testing.T) {
+	occurrence := mustTestOccurrence("global\n# A\n", "plan-A", nil)
+	identity, err := materializeOccurrence(occurrence)
+	require.NoError(t, err)
+	cache := newPlanCache()
+	index := deployplan.IndexPlan(identity.plan)
+	require.NoError(t, cache.BindOccurrence("pod-a", identity.planID, "a:1", &identity, index))
+	assert.Same(t, index, cache.Index("pod-a", identity.planID, "a:1"))
+	assert.Nil(t, cache.Index("pod-a", identity.planID, "a:2"))
+
+	owned := planFor("plan-1")
+	require.True(t, cache.Bind("pod-b", owned.ID, "b:1", owned))
+	built := cache.Index("pod-b", owned.ID, "b:1")
+	require.NotNil(t, built)
+	assert.Same(t, built, cache.Index("pod-b", owned.ID, "b:1"), "built once")
 }

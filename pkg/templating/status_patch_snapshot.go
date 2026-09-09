@@ -170,8 +170,8 @@ func (s *StatusPatchSnapshot) ValidateAuthentication() error {
 	if s == nil || s.collector == nil {
 		return errors.New("statusPatch snapshot has invalid provenance")
 	}
-	s.collector.mu.Lock()
-	defer s.collector.mu.Unlock()
+	s.collector.mu.RLock()
+	defer s.collector.mu.RUnlock()
 	return s.validateLocked()
 }
 
@@ -256,8 +256,8 @@ func (s *StatusPatchSnapshot) Patches() ([]StatusPatch, error) {
 	if s == nil || s.collector == nil {
 		return nil, errors.New("statusPatch snapshot has invalid provenance")
 	}
-	s.collector.mu.Lock()
-	defer s.collector.mu.Unlock()
+	s.collector.mu.RLock()
+	defer s.collector.mu.RUnlock()
 	return s.materializeLocked("")
 }
 
@@ -269,8 +269,8 @@ func (s *StatusPatchSnapshot) PatchesForPhase(phase string) ([]StatusPatch, erro
 	if s == nil || s.collector == nil {
 		return nil, errors.New("statusPatch snapshot has invalid provenance")
 	}
-	s.collector.mu.Lock()
-	defer s.collector.mu.Unlock()
+	s.collector.mu.RLock()
+	defer s.collector.mu.RUnlock()
 	return s.materializeLocked(phase)
 }
 

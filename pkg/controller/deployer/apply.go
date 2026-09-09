@@ -247,7 +247,7 @@ func (c *Component) bindApplyResult(
 		return nil
 	}
 	if err := c.plans.BindOccurrence(
-		authority, result.AppliedPlanID, result.AppliedPlanProof, attempt.req.identity,
+		authority, result.AppliedPlanID, result.AppliedPlanProof, attempt.req.identity, attempt.req.index,
 	); err != nil {
 		return fmt.Errorf("agent reused or omitted the applied plan proof: %w", err)
 	}
@@ -518,6 +518,7 @@ func (r *deployRequest) decisionFor(state *api.State, plans *planCache, authorit
 	workerOps := plans.Plan(authority, state.WorkerOpsPlanID, state.WorkerOpsPlanProof)
 	baseline := deployplan.Baseline{
 		Applied:               applied,
+		AppliedIndex:          plans.Index(authority, state.AppliedPlanID, state.AppliedPlanProof),
 		Running:               running,
 		WorkerOps:             workerOps,
 		Inventory:             state.Inventory,
@@ -536,7 +537,8 @@ func (r *deployRequest) decisionFor(state *api.State, plans *planCache, authorit
 		pendingBackends: baseline.PendingBackendDeletes,
 		reloadPending:   baseline.ReloadPending,
 	}, func() deployplan.Decision {
-		return deployplan.Diff(r.plan, &baseline)
+		r.planIndex.Do(func() { r.index = deployplan.IndexPlan(r.plan) })
+		return deployplan.DiffIndexed(r.plan, r.index, &baseline)
 	})
 	return decision
 }

@@ -26,6 +26,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/planblob"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
@@ -35,6 +36,8 @@ type deployRequest struct {
 	occurrence      *rendercycle.Occurrence
 	identity        *renderOccurrenceIdentity // the occurrence materialized once, shared by every pod
 	plan            *renderplan.Plan
+	planIndex       sync.Once
+	index           *deployplan.Index // plan's index, built by the first diff
 	planID          string
 	occurrenceProof string
 	checksum        string
@@ -158,6 +161,7 @@ func (c *Component) deployToEndpoints(
 	))
 
 	state := &deploymentState{standDown: standDown, operationBreakdown: map[string]int{}}
+	prepared := time.Now()
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, maxConcurrentPods)
 	for i := range event.Endpoints {
@@ -170,6 +174,7 @@ func (c *Component) deployToEndpoints(
 		}(&event.Endpoints[i])
 	}
 	wg.Wait()
+	settling := time.Now()
 
 	c.plans.Retain(c.fleetPlanRefs(event.Endpoints))
 	c.clients.Retain(event.Endpoints)
@@ -183,6 +188,7 @@ func (c *Component) deployToEndpoints(
 		"duration_ms", time.Since(startTime).Milliseconds(),
 		"correlation_id", correlationID)
 
+	state.noteDeploymentPhases(prepared.Sub(startTime), time.Since(settling))
 	c.publishCompleted(event, deploymentID, podSetHash, state, time.Since(startTime).Milliseconds(), occurrence)
 	c.publishDeployedConfig(event, occurrence, int(atomic.LoadInt32(&state.ackCount)))
 	c.observeConvergence(event, podSetHash, state, occurrence)
@@ -341,6 +347,16 @@ type deploymentState struct {
 	pendingReloadUntil time.Time
 	running            map[string]runningRender // pod → exact render its worker runs, from its ACK
 	slowest            *events.DeployPhases     // the accepted pod whose apply took longest
+}
+
+// noteDeploymentPhases records what the deployment spent around the pods.
+func (s *deploymentState) noteDeploymentPhases(prepare, settle time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.slowest != nil {
+		s.slowest.PrepareMs = prepare.Milliseconds()
+		s.slowest.SettleMs = settle.Milliseconds()
+	}
 }
 
 // notePhases keeps the split of the slowest accepted pod.

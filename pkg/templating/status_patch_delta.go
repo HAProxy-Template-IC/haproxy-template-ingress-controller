@@ -44,8 +44,8 @@ func (s *StatusPatchSnapshot) ChangedPatchesForPhase(previous *StatusPatchSnapsh
 	if previous == s {
 		return nil, nil
 	}
-	s.collector.mu.Lock()
-	defer s.collector.mu.Unlock()
+	s.collector.mu.RLock()
+	defer s.collector.mu.RUnlock()
 	if err := s.validateLocked(); err != nil {
 		return nil, err
 	}

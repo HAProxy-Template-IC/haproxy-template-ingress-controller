@@ -27,7 +27,7 @@ import (
 func (b *builder) diffCerts() {
 	for i := range b.next.Files {
 		f := &b.next.Files[i]
-		old, existed := b.prevFiles[f.Path]
+		old, existed := b.prevIndex.files[f.Path]
 		if existed && sameFileContent(old, f) {
 			continue
 		}
@@ -42,7 +42,7 @@ func (b *builder) diffCerts() {
 	}
 	for i := range b.prev.Files {
 		f := &b.prev.Files[i]
-		if _, kept := b.nextFiles[f.Path]; !kept && f.Kind == renderplan.FileKindCRTList {
+		if _, kept := b.nextIndex.files[f.Path]; !kept && f.Kind == renderplan.FileKindCRTList {
 			b.failf("crt-list %s removed, which only a reload takes out of the config", f.Path)
 		}
 	}

@@ -311,7 +311,7 @@ func BenchmarkDiff(b *testing.B) {
 	prev := benchmarkPlan("10.0.0.1")
 	next := benchmarkPlan("10.0.0.2")
 	base := on34(prev)
-	base.Inventory.Maps = mapNames(benchmarkMaps)
+	base.Inventory.Maps = benchmarkMapNames()
 
 	b.ReportAllocs()
 	for b.Loop() {
@@ -336,7 +336,7 @@ func benchmarkPlan(changedAddress string) *renderplan.Plan {
 		}
 		opts = append(opts, withBackend(dynBackend(fmt.Sprintf("be-%04d", i), srv("SRV_1", address, 8080))))
 	}
-	for i, name := range mapNames(benchmarkMaps) {
+	for i, name := range benchmarkMapNames() {
 		entries := make([]renderplan.Entry, 0, 100)
 		for j := range 100 {
 			entries = append(entries, entry(fmt.Sprintf("host-%d-%d.example.com", i, j), fmt.Sprintf("be-%04d", j)))
@@ -346,10 +346,51 @@ func benchmarkPlan(changedAddress string) *renderplan.Plan {
 	return basePlan(opts...)
 }
 
-func mapNames(count int) []string {
-	names := make([]string, 0, count)
-	for i := range count {
+func benchmarkMapNames() []string {
+	names := make([]string, 0, benchmarkMaps)
+	for i := range benchmarkMaps {
 		names = append(names, fmt.Sprintf("maps/route-%02d.map", i))
 	}
 	return names
+}
+
+// BenchmarkDiffAcrossSnapshots is the fleet's diff as the deployer runs it:
+// both plans are the shared views of two snapshots of one lineage, so the
+// unchanged backends are the same records, and both come indexed.
+func BenchmarkDiffAcrossSnapshots(b *testing.B) {
+	authority := renderplan.NewAuthority()
+	previous, err := renderplan.NewSnapshot(authority, benchmarkPlan("10.0.0.1"), nil)
+	require.NoError(b, err)
+	current, err := renderplan.NewSnapshot(authority, benchmarkPlan("10.0.0.2"), previous)
+	require.NoError(b, err)
+	prev, err := previous.SharedPlan()
+	require.NoError(b, err)
+	next, err := current.SharedPlan()
+	require.NoError(b, err)
+	base := on34(prev)
+	base.Inventory.Maps = benchmarkMapNames()
+	base.AppliedIndex = deployplan.IndexPlan(prev)
+	nextIndex := deployplan.IndexPlan(next)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if got := deployplan.DiffIndexed(next, nextIndex, base); got.Verdict != deployplan.VerdictRuntime {
+			b.Fatalf("verdict %s: %q", got.Verdict, got.Reasons)
+		}
+	}
+}
+
+// The indexes are a view, not an input: a diff answers the same with them
+// prebuilt as with the plans alone.
+func TestDiffIndexedAnswersAsDiffDoes(t *testing.T) {
+	prev := benchmarkPlan("10.0.0.1")
+	next := benchmarkPlan("10.0.0.2")
+	base := on34(prev)
+	base.Inventory.Maps = benchmarkMapNames()
+	plain := deployplan.Diff(next, base)
+
+	base.AppliedIndex = deployplan.IndexPlan(prev)
+	indexed := deployplan.DiffIndexed(next, deployplan.IndexPlan(next), base)
+	require.Equal(t, deployplan.VerdictRuntime, plain.Verdict, plain.Reasons)
+	assert.Equal(t, plain, indexed)
 }

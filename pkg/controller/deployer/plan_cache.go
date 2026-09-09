@@ -20,6 +20,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/planblob"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
@@ -40,6 +41,7 @@ type planCache struct {
 type cachedPlan struct {
 	plan       *renderplan.Plan
 	occurrence *rendercycle.Occurrence
+	index      *deployplan.Index // the diff's view of plan, built once
 }
 
 func newPlanCache() *planCache {
@@ -51,18 +53,21 @@ func newPlanCache() *planCache {
 
 // Bind records an agent-proved plan imported without a local render occurrence.
 func (c *planCache) Bind(authority, id, proof string, plan *renderplan.Plan) bool {
-	return c.bind(authority, id, proof, plan, nil)
+	return c.bind(authority, id, proof, plan, nil, nil)
 }
 
 // BindOccurrence records the plan an agent proved under the render occurrence
 // it was materialized from. The identity is the deployer's own materialization
-// of that occurrence, so the plan it carries is the plan the pods were sent.
-func (c *planCache) BindOccurrence(authority, id, proof string, identity *renderOccurrenceIdentity) error {
+// of that occurrence, so the plan it carries is the plan the pods were sent;
+// index is the view the deployment diffed with, the next one's baseline view.
+func (c *planCache) BindOccurrence(
+	authority, id, proof string, identity *renderOccurrenceIdentity, index *deployplan.Index,
+) error {
 	if identity == nil || identity.occurrence == nil || identity.plan == nil ||
 		identity.planID != id || identity.plan.ID != id {
 		return fmt.Errorf("render occurrence does not carry plan %s", id)
 	}
-	if !c.bind(authority, id, proof, identity.plan, identity.occurrence) {
+	if !c.bind(authority, id, proof, identity.plan, identity.occurrence, index) {
 		return fmt.Errorf("plan %s conflicts with the plan already bound to this role proof", id)
 	}
 	return nil
@@ -72,6 +77,7 @@ func (c *planCache) bind(
 	authority, id, proof string,
 	plan *renderplan.Plan,
 	occurrence *rendercycle.Occurrence,
+	index *deployplan.Index,
 ) bool {
 	if authority == "" || id == "" || proof == "" || plan == nil || plan.ID != id ||
 		!exactPlan(plan, plan) {
@@ -82,19 +88,39 @@ func (c *planCache) bind(
 	key := planCacheKey{authority: authority, proof: proof}
 	if existing, ok := c.plans[key]; ok {
 		if sameCachedPlan(existing, plan, occurrence) {
+			if existing.index == nil && existing.plan == plan {
+				existing.index = index
+			}
 			return true
 		}
 		c.plans[key] = nil
 		return false
 	}
 	// A render occurrence's plan is immutable and shared; only a caller-owned
-	// plan is copied.
+	// plan is copied, and an index points into the original.
 	owned := plan
 	if occurrence == nil {
-		owned = plan.Clone()
+		owned, index = plan.Clone(), nil
 	}
-	c.plans[key] = &cachedPlan{plan: owned, occurrence: occurrence}
+	c.plans[key] = &cachedPlan{plan: owned, occurrence: occurrence, index: index}
 	return true
+}
+
+// Index is the diff's view of the plan bound under proof, built on first use.
+func (c *planCache) Index(authority, id, proof string) *deployplan.Index {
+	if authority == "" || id == "" || proof == "" {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry := c.plans[planCacheKey{authority: authority, proof: proof}]
+	if entry == nil || entry.plan == nil || entry.plan.ID != id {
+		return nil
+	}
+	if entry.index == nil {
+		entry.index = deployplan.IndexPlan(entry.plan)
+	}
+	return entry.index
 }
 
 func sameCachedPlan(

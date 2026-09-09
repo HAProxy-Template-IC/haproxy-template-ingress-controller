@@ -174,6 +174,8 @@ type DeploymentCompletedEvent struct {
 // parallel, so this pod's split is what the deployment's duration is made of.
 type DeployPhases struct {
 	Pod         string
+	PrepareMs   int64 // the deployment before any pod was contacted
+	SettleMs    int64 // the deployment after the last pod answered
 	TotalMs     int64 // the whole apply, state read to result
 	StateMs     int64 // reading the agent's state
 	DiffMs      int64 // composing the decision
