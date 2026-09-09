@@ -1092,6 +1092,10 @@ For detailed development context on specific packages, see:
 
 ## Agent skills
 
+### Session handoff
+
+How the work is judged, what has to be green before a push, how performance is measured on the scale leg, and the failure patterns this repo has already paid for. Read it when starting a session. See `docs/agents/handoff.md`.
+
 ### Issue tracker
 
 Issues live as GitLab issues on `gitlab.com:haproxy-haptic/haptic`. Use the `glab` CLI. See `docs/agents/issue-tracker.md`.
