@@ -41,7 +41,7 @@ contract drives the start, not an event handler.
 
 | Subscribed event | What the component does |
 |------------------|-------------------------|
-| `ConfigValidatedEvent` | Cache the validated config (CRD + secret resourceVersions) for upcoming publishes |
+| `ConfigValidatedEvent` | Refresh the cached template config; the iteration's config is seeded at construction (`WithTemplateConfig`), so a render never waits for this event |
 | `TemplateRenderedEvent` | Cache the rendered config + aux files, keyed by correlation ID |
 | `RenderGateCompletedEvent` | Mirror the gate's latch; queue the `ConfigValidated` / `ConfigPinned` conditions for the verdict worker, and publish a render the pass releases |
 | `ValidationFailedEvent` | Queue a `validationFailedWorkItem` so the failure shows up as an `-invalid` `HAProxyCfg` |

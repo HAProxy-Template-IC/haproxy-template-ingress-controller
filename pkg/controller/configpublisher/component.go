@@ -167,6 +167,9 @@ type Component struct {
 	// which is what a verdict has to name to be a statement about this object.
 	publishedPlanID string
 
+	// seedTemplateConfig is the iteration's config, restored on every term.
+	seedTemplateConfig *v1alpha1.HAProxyTemplateConfig
+
 	// pendingVerdict is the render gate's verdict awaiting its status write,
 	// latest wins. The write is an apiserver round-trip and must not run on
 	// the event loop.
@@ -273,6 +276,15 @@ func WithPublishInterval(d time.Duration) Option {
 	}
 }
 
+// WithTemplateConfig seeds the HAProxyTemplateConfig the publications belong
+// to. The iteration is built for exactly one, so the first render of a term
+// never has to wait for the ConfigValidatedEvent that re-announces it.
+func WithTemplateConfig(templateConfig *v1alpha1.HAProxyTemplateConfig) Option {
+	return func(c *Component) {
+		c.seedTemplateConfig = templateConfig
+	}
+}
+
 // New creates a new config publisher component.
 func New(
 	publisher *configpublisher.Publisher,
@@ -311,6 +323,8 @@ func New(
 	for _, opt := range opts {
 		opt(c)
 	}
+	c.templateConfig = c.seedTemplateConfig
+	c.hasTemplateConfig = c.seedTemplateConfig != nil
 
 	// Throttles are constructed after options so publishInterval is set.
 	// A zero interval disables them (Available() always returns true).
@@ -407,8 +421,8 @@ func (c *Component) preparePublicationTerm() {
 
 	c.mu.Lock()
 	c.publicationTerm++
-	c.templateConfig = nil
-	c.hasTemplateConfig = false
+	c.templateConfig = c.seedTemplateConfig
+	c.hasTemplateConfig = c.seedTemplateConfig != nil
 	c.renderedConfigs = make(map[string]*renderedConfigEntry)
 	c.lastRender = nil
 	c.lastRenderCorrelationID = ""

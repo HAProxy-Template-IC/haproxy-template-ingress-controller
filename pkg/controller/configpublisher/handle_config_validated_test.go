@@ -18,6 +18,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // handleConfigValidated has THREE branches; the existing
@@ -141,4 +142,22 @@ func TestHandleConfigValidated_ValidTemplateConfigCachesIt(t *testing.T) {
 		"the cached templateConfig MUST be the same pointer as the event's "+
 			"TemplateConfig — a regression that copied or wrapped it would "+
 			"break downstream publishers that rely on metadata identity")
+}
+
+// The first render of a term races the ConfigValidatedEvent that re-announces
+// the template config; the seeded config makes the order irrelevant.
+func TestARenderBeforeConfigValidatedPublishesWithTheSeededConfig(t *testing.T) {
+	seed := &v1alpha1.HAProxyTemplateConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "haproxy-config", Namespace: "haptic"},
+	}
+	c := New(nil, busevents.NewEventBus(10), testutil.NewTestLogger(), WithTemplateConfig(seed))
+
+	c.handleTemplateRendered(newControllerPublisherTemplateFixture(t).event)
+	require.Len(t, c.publishWork, 1)
+	assert.Equal(t, "haproxy-config", (<-c.publishWork).templateConfig.Name)
+
+	c.handleLostLeadership(nil)
+	c.preparePublicationTerm()
+	c.handleTemplateRendered(newControllerPublisherTemplateFixture(t).event)
+	require.Len(t, c.publishWork, 1, "a new term starts with the seeded config")
 }

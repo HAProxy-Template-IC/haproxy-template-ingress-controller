@@ -303,6 +303,7 @@ func createReconciliationComponents(
 	setup.AddCleanup(stopPublisherInformers)
 	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, setup.Bus, logger,
 		ctrlconfigpublisher.WithPublishInterval(cfg.Dataplane.GetConfigPublishInterval()),
+		ctrlconfigpublisher.WithTemplateConfig(crd),
 	)
 
 	// Create Status Updater (updates HAProxyTemplateConfig CRD status with validation results)
