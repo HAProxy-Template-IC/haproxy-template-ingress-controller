@@ -67,8 +67,28 @@ func validateApply(m *api.Manifest, parts map[string]io.Reader, manifestBytes in
 		}
 		body += size
 	}
+	if err := validatePatches(m, parts); err != nil {
+		return err
+	}
 	if body > api.MaxApplyBodyBytes {
 		return fmt.Errorf("agent client: apply body of %d bytes exceeds the limit of %d", body, api.MaxApplyBodyBytes)
+	}
+	return nil
+}
+
+func validatePatches(m *api.Manifest, parts map[string]io.Reader) error {
+	for i := range m.Files {
+		f := &m.Files[i]
+		if f.Patch == nil {
+			continue
+		}
+		if _, sent := parts[f.Path]; !sent {
+			return fmt.Errorf("agent client: file %q declares a patch without a part", f.Path)
+		}
+		if f.Patch.Offset < 0 || f.Patch.Length < 0 || f.Patch.BaseSize < 0 ||
+			f.Patch.Offset+f.Patch.Length > f.Patch.BaseSize || f.Size-f.Patch.BaseSize+f.Patch.Length < 0 {
+			return fmt.Errorf("agent client: file %q declares a patch that does not fit its base", f.Path)
+		}
 	}
 	return nil
 }

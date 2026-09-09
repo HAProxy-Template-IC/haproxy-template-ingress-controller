@@ -24,17 +24,21 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/cespare/xxhash/v2"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 const stageWriteBufferSize = 1 << 20
 
-type writerOnly struct{ io.Writer }
-
 // ErrDigestMismatch is what a received part failing its manifest digest wraps;
 // it is a refusal, never a retry.
 var ErrDigestMismatch = errors.New("part does not match its manifest digest")
+
+// ErrPatchBaseMissing is what a patch wraps when the file on disk is not the
+// base it splices into; the controller answers it by sending the whole file.
+var ErrPatchBaseMissing = errors.New("patch base is not the file held")
 
 // Staged is a verified part waiting in its target mount's temp directory.
 type Staged struct {
@@ -46,15 +50,59 @@ type Staged struct {
 // Size is the verified byte count of the staged content.
 func (s *Staged) Size() int64 { return s.size }
 
-// Read returns the verified bytes while the part is still staged.
-func (s *Staged) Read() ([]byte, error) {
-	return os.ReadFile(filepath.Clean(s.tmp))
-}
-
 // Stage streams a received part into the temp directory of the mount that will
 // hold it and verifies it against the manifest digest and size before the
 // content can ever reach the tree.
 func (s *Store) Stage(rel string, r io.Reader, digest string, size int64) (*Staged, error) {
+	return s.stage(rel, digest, size, func(w io.Writer) (int64, error) {
+		return io.Copy(w, io.LimitReader(r, size+1))
+	})
+}
+
+// StagePatch stages a file delivered as a splice: r carries the bytes that
+// replace [patch.Offset, patch.Offset+patch.Length) of the file at rel, which
+// has to be on disk at patch.BaseDigest and patch.BaseSize, and the result is
+// verified against digest and size exactly as a whole part is. A base that is
+// not held is ErrPatchBaseMissing; a patch that does not fit its base is a
+// refusal.
+func (s *Store) StagePatch(rel string, r io.Reader, patch *api.FilePatch, digest string, size int64) (*Staged, error) {
+	abs, err := s.Abs(rel)
+	if err != nil {
+		return nil, err
+	}
+	base, err := os.ReadFile(filepath.Clean(abs))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %q: %w", ErrPatchBaseMissing, rel, err)
+	}
+	if int64(len(base)) != patch.BaseSize || renderplan.Digest(base) != patch.BaseDigest {
+		return nil, fmt.Errorf("%w: %q is %d bytes at %s, the patch expects %d at %s",
+			ErrPatchBaseMissing, rel, len(base), renderplan.Digest(base), patch.BaseSize, patch.BaseDigest)
+	}
+	replaced := size - patch.BaseSize + patch.Length
+	if patch.Offset < 0 || patch.Length < 0 || replaced < 0 ||
+		patch.Offset > int64(len(base)) || patch.Length > int64(len(base))-patch.Offset {
+		return nil, fmt.Errorf("%w: patch for %q does not fit its base", ErrDigestMismatch, rel)
+	}
+	return s.stage(rel, digest, size, func(w io.Writer) (int64, error) {
+		if _, err := w.Write(base[:patch.Offset]); err != nil {
+			return 0, err
+		}
+		written, err := io.Copy(w, io.LimitReader(r, replaced+1))
+		if err != nil {
+			return 0, err
+		}
+		if written != replaced {
+			return 0, fmt.Errorf("%w: patch for %q carries %d bytes, the manifest implies %d",
+				ErrDigestMismatch, rel, written, replaced)
+		}
+		_, err = w.Write(base[patch.Offset+patch.Length:])
+		return int64(len(base)) - patch.Length + written, err
+	})
+}
+
+// stage writes what fill produces to a temp file on the target mount, hashing
+// it on the way so the digest check never reads the file back.
+func (s *Store) stage(rel, digest string, size int64, fill func(io.Writer) (int64, error)) (*Staged, error) {
 	abs, err := s.Abs(rel)
 	if err != nil {
 		return nil, err
@@ -64,40 +112,33 @@ func (s *Store) Stage(rel string, r io.Reader, digest string, size int64) (*Stag
 	if err != nil {
 		return nil, fmt.Errorf("stage %q: %w", rel, err)
 	}
-	// A multipart part yields 4 KB per read; unbuffered, a 4 MB config lands
-	// in a thousand write calls. writerOnly keeps bufio from handing the copy
-	// straight to the file's ReadFrom, which would do exactly that.
-	buffered := bufio.NewWriterSize(writerOnly{f}, stageWriteBufferSize)
-	written, copyErr := io.Copy(buffered, io.LimitReader(r, size+1))
+	// A multipart part yields 4 KB per read. The MultiWriter also keeps bufio
+	// from handing the copy to the file's ReadFrom, which would write it that way.
+	hasher := xxhash.New()
+	buffered := bufio.NewWriterSize(io.MultiWriter(f, hasher), stageWriteBufferSize)
+	written, fillErr := fill(buffered)
 	closeErr := errors.Join(buffered.Flush(), f.Close())
-	if err := errors.Join(copyErr, closeErr); err != nil {
+	if err := errors.Join(fillErr, closeErr); err != nil {
 		_ = os.Remove(f.Name())
+		if errors.Is(err, ErrDigestMismatch) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("stage %q: %w", rel, err)
 	}
 	staged := &Staged{Rel: rel, tmp: f.Name(), size: written}
-	if err := s.verify(staged, digest, size); err != nil {
+	if written != size {
 		staged.Discard()
-		return nil, err
+		return nil, fmt.Errorf("%w: %q is %d bytes, manifest says %d", ErrDigestMismatch, rel, written, size)
+	}
+	if got := renderplan.FormatDigest(hasher.Sum64()); got != digest {
+		staged.Discard()
+		return nil, fmt.Errorf("%w: %q hashes to %s, manifest says %s", ErrDigestMismatch, rel, got, digest)
 	}
 	if err := os.Chmod(staged.tmp, filePerm); err != nil {
 		staged.Discard()
 		return nil, fmt.Errorf("stage %q: %w", rel, err)
 	}
 	return staged, nil
-}
-
-func (s *Store) verify(staged *Staged, digest string, size int64) error {
-	if staged.size != size {
-		return fmt.Errorf("%w: %q is %d bytes, manifest says %d", ErrDigestMismatch, staged.Rel, staged.size, size)
-	}
-	content, err := os.ReadFile(filepath.Clean(staged.tmp))
-	if err != nil {
-		return fmt.Errorf("verify %q: %w", staged.Rel, err)
-	}
-	if got := renderplan.Digest(content); got != digest {
-		return fmt.Errorf("%w: %q hashes to %s, manifest says %s", ErrDigestMismatch, staged.Rel, got, digest)
-	}
-	return nil
 }
 
 // Discard drops a staged part without touching the tree.

@@ -177,4 +177,52 @@ assert_eq exact-current-timeout "$(jq -r '.reason_code' "$scenario/scale-readine
 assert_eq 10 "$(bash -c 'source "$1"; workload_stop_grace_seconds 0' bash "$runner")"
 assert_eq 60 "$(bash -c 'source "$1"; workload_stop_grace_seconds 5000' bash "$runner")"
 
+# The referenced-map poll reads the parent fresh: a snapshot taken between the
+# set-id annotation write and the status write never satisfies the equality it
+# checks, while the live object does once both writes landed.
+maps="$tmp/maps"
+mkdir -p "$maps/bin"
+python3 - "$maps" <<'EOF'
+import json, sys
+d = sys.argv[1]
+pod = {"metadata": {"name": "lb-0", "uid": "uid-0"}, "status": {"containerStatuses": []}}
+pods = {"items": [pod]}
+deployed = [{"podName": "lb-0", "podUID": "uid-0", "podRuntimeID": "rt-0", "checksum": "m1"}]
+map_object = {"metadata": {"name": "map-a", "namespace": "haptic", "uid": "map-uid", "resourceVersion": "5",
+                           "annotations": {"haproxy-haptic.org/auxiliary-set-id": "set-2"}},
+              "spec": {"mapName": "a", "path": "maps/a.map", "checksum": "m1"},
+              "status": {"deployedToPods": deployed}}
+refs = [{"kind": "HAProxyMapFile", "name": "map-a", "namespace": "haptic"}]
+def cfg(annotation, status_set):
+    return {"metadata": {"uid": "cfg-uid", "resourceVersion": "9", "generation": 4,
+                         "annotations": {"haproxy-haptic.org/auxiliary-set-id": annotation}},
+            "spec": {"checksum": "c2"},
+            "status": {"deployedToPods": [{"podName": "lb-0", "podUID": "uid-0", "checksum": "c2"}],
+                       "auxiliaryFiles": {"setID": status_set, "mapFiles": refs}}}
+json.dump(cfg("set-2", "set-1"), open(f"{d}/snapshot.json", "w"))
+json.dump(cfg("set-2", "set-2"), open(f"{d}/live.json", "w"))
+json.dump(pods, open(f"{d}/pods.json", "w"))
+json.dump({"items": [map_object]}, open(f"{d}/objects.json", "w"))
+EOF
+cat > "$maps/bin/kubectl" <<EOF
+#!/bin/bash
+case "\$2" in
+    haproxymapfiles) cat "$maps/objects.json" ;;
+    haproxycfg) cat "$maps/live.json" ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$maps/bin/kubectl"
+assert_eq 0 "$(PATH="$maps/bin:$PATH" bash -c 'source "$1"; WORK_DIR="$2"; if capture_referenced_map_inventory "$2/snapshot.json" "$2/pods.json" "$2/inventory.json" true; then echo 0; else echo $?; fi' bash "$runner" "$maps")"
+assert_eq set-2 "$(jq -r '.status.auxiliaryFiles.setID' "$maps/inventory-cfg.json")"
+cat > "$maps/bin/kubectl" <<EOF
+#!/bin/bash
+case "\$2" in
+    haproxymapfiles) cat "$maps/objects.json" ;;
+    haproxycfg) cat "$maps/snapshot.json" ;;
+    *) exit 1 ;;
+esac
+EOF
+assert_eq "$(bash -c 'source "$1"; echo $READINESS_RESULT_DEADLINE' bash "$runner")" "$(PATH="$maps/bin:$PATH" bash -c 'source "$1"; WORK_DIR="$2"; if capture_referenced_map_inventory "$2/snapshot.json" "$2/pods.json" "$2/inventory.json" true; then echo 0; else echo $?; fi' bash "$runner" "$maps")"
+
 printf 'bench-gateway-api shell tests: OK\n'

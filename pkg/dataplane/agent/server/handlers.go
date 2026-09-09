@@ -56,6 +56,7 @@ func (s *Server) stateResponse(verify, withPlan bool) (api.State, error) {
 		AgentVersion:       s.cfg.AgentVersion,
 		PlanSchemaVersion:  s.state.PlanSchemaVersion,
 		AgentOps:           cli.Kinds(),
+		Features:           []string{api.FeatureFilePatch},
 		HAProxy:            s.worker,
 		Generation:         s.state.Generation,
 		AppliedPlanID:      s.state.AppliedPlanID,

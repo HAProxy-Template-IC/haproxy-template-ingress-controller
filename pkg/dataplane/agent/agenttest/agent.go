@@ -30,6 +30,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -81,18 +82,21 @@ type Agent struct {
 	planBlobPlanProof string
 	proofGeneration   uint64
 	kinds             map[string]string
-	lkgFiles          map[string]api.FileAt
-	reloadPending     bool
-	rejectedOps       map[string]struct{}
-	conflictOnce      string
-	failOnce          bool
-	missingOnce       []string
-	applies           []RecordedApply
-	planPuts          []RecordedPlanPut
-	stateReads        int
-	planReads         int
-	noPlanEndpoint    bool
-	planPutDelay      time.Duration
+	// contents is what the fake holds on its "disk": a patch splices into it.
+	contents       map[string][]byte
+	lkgFiles       map[string]api.FileAt
+	lkgContents    map[string][]byte
+	reloadPending  bool
+	rejectedOps    map[string]struct{}
+	conflictOnce   string
+	failOnce       bool
+	missingOnce    []string
+	applies        []RecordedApply
+	planPuts       []RecordedPlanPut
+	stateReads     int
+	planReads      int
+	noPlanEndpoint bool
+	planPutDelay   time.Duration
 }
 
 // Option customises the fake before it starts serving.
@@ -109,6 +113,12 @@ func WithCredentials(username, password string) Option {
 // WithHAProxyInfo sets the worker identity the fake reports.
 func WithHAProxyInfo(info api.HAProxyInfo) Option {
 	return func(a *Agent) { a.state.HAProxy = info }
+}
+
+// WithoutFilePatches makes the fake behave like an agent that predates
+// File.Patch, so every changed file has to arrive whole.
+func WithoutFilePatches() Option {
+	return func(a *Agent) { a.state.Features = nil }
 }
 
 // WithAgentOps restricts the op kinds the fake claims to execute, so a test
@@ -133,12 +143,14 @@ func New(tb testing.TB, opts ...Option) *Agent {
 		username:    DefaultUsername,
 		password:    DefaultPassword,
 		kinds:       map[string]string{},
+		contents:    map[string][]byte{},
 		rejectedOps: map[string]struct{}{},
 		state: api.State{
 			APIVersion:        api.Version,
 			AgentVersion:      "agenttest",
 			PlanSchemaVersion: 1,
 			AgentOps:          client.ComposableOps(),
+			Features:          []string{api.FeatureFilePatch},
 			HAProxy:           api.HAProxyInfo{Version: "3.4.3", FullVersion: "3.4.3-1", WorkerPID: defaultWorkerPID},
 			Files:             map[string]api.FileAt{},
 		},
@@ -166,6 +178,13 @@ func (a *Agent) State() api.State {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.snapshot(true)
+}
+
+// Content is what the fake holds at path, nil when it holds nothing there.
+func (a *Agent) Content(path string) []byte {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.contents[path])
 }
 
 // Applies returns every request the fake received, in order.
@@ -220,6 +239,7 @@ func (a *Agent) FirePendingReload() {
 	a.state.LKGPlanID = a.state.AppliedPlanID
 	a.state.LKGPlanProof = a.state.AppliedPlanProof
 	a.lkgFiles = maps.Clone(a.state.Files)
+	a.lkgContents = maps.Clone(a.contents)
 }
 
 // SetAppliedEpoch raises the leader epoch the fake has accepted. The agent

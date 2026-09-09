@@ -115,13 +115,33 @@ type Token struct {
 // File is one desired file. Proof is an opaque controller-local equality
 // witness; an absent or unknown proof requires the multipart bytes.
 type File struct {
-	Path           string `json:"path"` // relative to the agent's base dir, no "..", no leading "/"
-	Digest         string `json:"digest"`
-	Proof          string `json:"proof,omitempty"`
-	Size           int64  `json:"size"`
-	Kind           string `json:"kind"`
-	ReloadOnChange bool   `json:"reload_on_change"`
+	Path           string     `json:"path"` // relative to the agent's base dir, no "..", no leading "/"
+	Digest         string     `json:"digest"`
+	Proof          string     `json:"proof,omitempty"`
+	Size           int64      `json:"size"`
+	Kind           string     `json:"kind"`
+	ReloadOnChange bool       `json:"reload_on_change"`
+	Patch          *FilePatch `json:"patch,omitempty"`
 }
+
+// FilePatch delivers a file as a splice into the one the agent holds: the
+// part named by the file's path carries Size-BaseSize+Length bytes that
+// replace [Offset, Offset+Length) of the held file, which must be at
+// BaseDigest and BaseSize. The result is verified against Digest and Size
+// exactly as a whole part is. An agent that does not hold the base answers
+// the path as missing, and the controller sends the whole file. Only an
+// agent whose state lists FeatureFilePatch receives one.
+type FilePatch struct {
+	BaseDigest string `json:"base_digest"`
+	BaseSize   int64  `json:"base_size"`
+	Offset     int64  `json:"offset"`
+	Length     int64  `json:"length"`
+}
+
+// Features an agent advertises in its state beyond the op kinds it executes.
+const (
+	FeatureFilePatch = "file_patch" // accepts File.Patch
+)
 
 // Op kinds the agent executes. Unknown kinds are refused and the apply falls
 // back to a reload (fail closed).
@@ -188,7 +208,8 @@ type State struct {
 	APIVersion         int         `json:"api_version"`
 	AgentVersion       string      `json:"agent_version"`
 	PlanSchemaVersion  int         `json:"plan_schema_version"`
-	AgentOps           []string    `json:"agent_ops"` // op kinds this agent executes
+	AgentOps           []string    `json:"agent_ops"`          // op kinds this agent executes
+	Features           []string    `json:"features,omitempty"` // Feature* this agent accepts
 	HAProxy            HAProxyInfo `json:"haproxy"`
 	Generation         uint64      `json:"generation"`
 	AppliedPlanID      string      `json:"applied_plan_id"`
@@ -317,10 +338,15 @@ type ApplyResult struct {
 type ApplyTiming struct {
 	// StageMs is receiving and verifying the file parts.
 	StageMs int64 `json:"stage_ms"`
+	// AdmitMs is the checks between staging and the write: held files, the
+	// known-bad cache, baseline promotion and the role proofs.
+	AdmitMs int64 `json:"admit_ms"`
 	// WriteMs is backing up and installing the staged parts.
 	WriteMs int64 `json:"write_ms"`
 	// OpsMs is the runtime commands, or the reload when one ran instead.
 	OpsMs int64 `json:"ops_ms"`
+	// FinishMs is recording the outcome once the ops ran.
+	FinishMs int64 `json:"finish_ms"`
 	// TotalMs is from the manifest's arrival to the result.
 	TotalMs int64 `json:"total_ms"`
 }

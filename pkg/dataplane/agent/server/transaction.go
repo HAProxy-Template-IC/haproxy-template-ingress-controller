@@ -92,6 +92,7 @@ func (s *Server) runApply(
 	if err := run.execute(); err != nil {
 		s.logger.Error("apply failed", "plan_id", m.PlanID, "error", err)
 	}
+	finishStarted := time.Now()
 	s.finish(run)
 	s.commitPlanBlob(run)
 	s.background.Add(1)
@@ -99,7 +100,10 @@ func (s *Server) runApply(
 		defer s.background.Done()
 		s.readBack(run)
 	}()
-	return run.result
+	// The state file holds run.result from finish on, so the answer is a copy.
+	result := run.result
+	result.Timing.FinishMs = time.Since(finishStarted).Milliseconds()
+	return result
 }
 
 func (r *applyRun) execute() error {
