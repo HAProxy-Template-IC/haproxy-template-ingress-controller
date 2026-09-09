@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Status updates avoid fleet-wide projection scans and handle removed or reordered contributions; retries use the current snapshot and stop when their target or phase disappears.
 - Bulk resource changes no longer overflow reconciliation triggers while a render is running; gate verdicts and forced triggers retain their ordering.
 
 - The determinism gate compares a test's rendered `k8sResources` and Events, not just `haproxy.cfg` and the auxiliary files. A `k8sResources` object whose text changed between two renders of the same inputs is re-applied on every reconciliation, and every assertion about it passed because assertions match content and the defect is in its order.

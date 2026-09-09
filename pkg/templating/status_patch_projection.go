@@ -313,14 +313,22 @@ func (p *StatusPatchProjection) visitPatches(
 		return err
 	}
 	return p.root.Visit(p, func(projected projection.PatchView) error {
-		owner, err := projected.Owner()
+		owner, err := statusPatchProjectionLeafOwner(projected)
 		if err != nil {
 			return err
 		}
-		projectionOwner, ok := owner.(*StatusPatchProjection)
-		if !ok || projectionOwner.ValidateAuthentication() != nil {
-			return errors.New("statusPatch projection has invalid leaf provenance")
-		}
-		return visit(projectionOwner, projected)
+		return visit(owner, projected)
 	})
+}
+
+func statusPatchProjectionLeafOwner(projected projection.PatchView) (*StatusPatchProjection, error) {
+	owner, err := projected.Owner()
+	if err != nil {
+		return nil, err
+	}
+	projectionOwner, ok := owner.(*StatusPatchProjection)
+	if !ok || projectionOwner.ValidateAuthentication() != nil {
+		return nil, errors.New("statusPatch projection has invalid leaf provenance")
+	}
+	return projectionOwner, nil
 }

@@ -21,6 +21,8 @@ import (
 	"slices"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/persistenttree"
 )
 
 type planPhaseClaim struct {
@@ -32,6 +34,13 @@ type planPhaseClaim struct {
 type planLineageClaim struct {
 	key      string
 	metadata Metadata
+	first    planIndexedPatch
+	others   []planIndexedPatch
+}
+
+type planIndexedPatch struct {
+	view     PatchView
+	position int
 }
 
 type planGroup struct {
@@ -79,10 +88,10 @@ type PlanRoot struct {
 	owner       any
 	groups      *iradix.Tree[*planGroup]
 	phaseOwners *iradix.Tree[*planPhaseOwner]
-	lineages    *iradix.Tree[*planLineage]
+	lineages    *persistenttree.Tree[*planLineage]
 	groupsRoot  *iradix.Node[*planGroup]
 	phaseRoot   *iradix.Node[*planPhaseOwner]
-	lineageRoot *iradix.Node[*planLineage]
+	lineageRoot *persistenttree.Node[*planLineage]
 	seal        *PlanRoot
 }
 
@@ -91,7 +100,7 @@ func NewPlan(owner any) (*PlanRoot, error) {
 	if owner == nil {
 		return nil, errors.New("plan owner is nil")
 	}
-	return sealPlan(owner, iradix.New[*planGroup](), iradix.New[*planPhaseOwner](), iradix.New[*planLineage]()), nil
+	return sealPlan(owner, iradix.New[*planGroup](), iradix.New[*planPhaseOwner](), persistenttree.New[*planLineage]()), nil
 }
 
 // NewPlanFromEntries returns a plan built atomically from exact ordered entries.
@@ -189,7 +198,7 @@ func buildPlanFromGroups(owner any, groups []*planGroup) (*PlanRoot, error) {
 		phaseOwner.seal = phaseOwner
 		phaseTxn.Insert([]byte(key), phaseOwner)
 	}
-	lineageTxn := iradix.New[*planLineage]().Txn()
+	lineageEntries := make([]persistenttree.Entry[*planLineage], 0, len(lineageBuilds))
 	for _, key := range sortedPlanBuildKeys(lineageBuilds) {
 		build := lineageBuilds[key]
 		owners := buildPlanGroupOwners(build.groups)
@@ -197,9 +206,13 @@ func buildPlanFromGroups(owner any, groups []*planGroup) (*PlanRoot, error) {
 			uid: build.uid, resourceVersion: build.resourceVersion, groups: owners, groupsRoot: owners.Root(),
 		}
 		lineage.seal = lineage
-		lineageTxn.Insert([]byte(key), lineage)
+		lineageEntries = append(lineageEntries, persistenttree.Entry[*planLineage]{Key: key, Value: lineage})
 	}
-	return sealPlan(owner, groupTxn.Commit(), phaseTxn.Commit(), lineageTxn.Commit()), nil
+	lineages, err := persistenttree.NewFromSorted(lineageEntries)
+	if err != nil {
+		return nil, err
+	}
+	return sealPlan(owner, groupTxn.Commit(), phaseTxn.Commit(), lineages), nil
 }
 
 func buildPlanGroupOwners(groups []*planGroup) *iradix.Tree[*planGroup] {
@@ -390,18 +403,17 @@ func (p *PlanRoot) ValidateLineage(
 func newPlanGroup(key, name string, root *Root, owner any) (*planGroup, error) {
 	group := &planGroup{key: key, name: name, root: root, owner: owner}
 	phaseKeys := make(map[string]struct{})
-	lineages := make(map[string]Metadata)
+	lineages := make(map[string]int)
+	position := 0
 	err := root.Visit(owner, func(projected PatchView) error {
 		metadata, err := projected.Metadata()
 		if err != nil {
 			return err
 		}
-		lineageKey := string(planTuple(metadata.Namespace, metadata.Name, metadata.APIVersion, metadata.Kind))
-		if previous, found := lineages[lineageKey]; found &&
-			(previous.UID != metadata.UID || previous.ResourceVersion != metadata.ResourceVersion) {
-			return fmt.Errorf("plan group %q: %s/%s has conflicting source lineage", name, metadata.Namespace, metadata.Name)
+		if err := appendPlanGroupLineage(group, lineages, &metadata, planIndexedPatch{view: projected, position: position}); err != nil {
+			return err
 		}
-		lineages[lineageKey] = metadata
+		position++
 		return projected.VisitPhases(func(phase PhaseView) error {
 			phaseName, err := phase.Name()
 			if err != nil {
@@ -423,9 +435,6 @@ func newPlanGroup(key, name string, root *Root, owner any) (*planGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	for key, metadata := range lineages {
-		group.lineages = append(group.lineages, planLineageClaim{key: key, metadata: metadata})
-	}
 	slices.SortFunc(group.phases, func(left, right planPhaseClaim) int {
 		return compareStrings(left.key, right.key)
 	})
@@ -436,11 +445,26 @@ func newPlanGroup(key, name string, root *Root, owner any) (*planGroup, error) {
 	return group, nil
 }
 
+func appendPlanGroupLineage(group *planGroup, lineages map[string]int, metadata *Metadata, indexed planIndexedPatch) error {
+	key := string(planTuple(metadata.Namespace, metadata.Name, metadata.APIVersion, metadata.Kind))
+	if index, found := lineages[key]; found {
+		previous := &group.lineages[index]
+		if previous.metadata.UID != metadata.UID || previous.metadata.ResourceVersion != metadata.ResourceVersion {
+			return fmt.Errorf("plan group %q: %s/%s has conflicting source lineage", group.name, metadata.Namespace, metadata.Name)
+		}
+		previous.others = append(previous.others, indexed)
+		return nil
+	}
+	lineages[key] = len(group.lineages)
+	group.lineages = append(group.lineages, planLineageClaim{key: key, metadata: *metadata, first: indexed})
+	return nil
+}
+
 func addPlanGroup(
 	group *planGroup,
 	groups *iradix.Txn[*planGroup],
 	phases *iradix.Txn[*planPhaseOwner],
-	lineages *iradix.Txn[*planLineage],
+	lineages *persistenttree.Txn[*planLineage],
 ) error {
 	if err := validatePlanGroup(group); err != nil {
 		return err
@@ -476,10 +500,10 @@ func validatePlanGroupPhaseClaims(group *planGroup, phases *iradix.Txn[*planPhas
 	return nil
 }
 
-func validatePlanGroupLineageClaims(group *planGroup, lineages *iradix.Txn[*planLineage]) error {
+func validatePlanGroupLineageClaims(group *planGroup, lineages *persistenttree.Txn[*planLineage]) error {
 	for index := range group.lineages {
 		claim := &group.lineages[index]
-		if existing, found := lineages.Root().Get([]byte(claim.key)); found {
+		if existing, found := lineages.Get([]byte(claim.key)); found {
 			if err := validatePlanLineage(existing); err != nil {
 				return err
 			}
@@ -508,10 +532,10 @@ func insertPlanGroupPhases(group *planGroup, phases *iradix.Txn[*planPhaseOwner]
 	}
 }
 
-func insertPlanGroupLineages(group *planGroup, lineages *iradix.Txn[*planLineage]) {
+func insertPlanGroupLineages(group *planGroup, lineages *persistenttree.Txn[*planLineage]) {
 	for index := range group.lineages {
 		claim := &group.lineages[index]
-		existing, found := lineages.Root().Get([]byte(claim.key))
+		existing, found := lineages.Get([]byte(claim.key))
 		var owners *iradix.Tree[*planGroup]
 		if found {
 			owners = existing.groups
@@ -534,7 +558,7 @@ func removePlanGroup(
 	group *planGroup,
 	groups *iradix.Txn[*planGroup],
 	phases *iradix.Txn[*planPhaseOwner],
-	lineages *iradix.Txn[*planLineage],
+	lineages *persistenttree.Txn[*planLineage],
 ) error {
 	if err := validatePlanGroup(group); err != nil {
 		return err
@@ -578,10 +602,10 @@ func removePlanGroupPhases(group *planGroup, phases *iradix.Txn[*planPhaseOwner]
 	return nil
 }
 
-func removePlanGroupLineages(group *planGroup, lineages *iradix.Txn[*planLineage]) error {
+func removePlanGroupLineages(group *planGroup, lineages *persistenttree.Txn[*planLineage]) error {
 	for index := range group.lineages {
 		claim := &group.lineages[index]
-		lineage, found := lineages.Root().Get([]byte(claim.key))
+		lineage, found := lineages.Get([]byte(claim.key))
 		if !found || validatePlanLineage(lineage) != nil {
 			return errors.New("plan lineage has invalid provenance")
 		}
@@ -635,7 +659,7 @@ func sealPlan(
 	owner any,
 	groups *iradix.Tree[*planGroup],
 	phases *iradix.Tree[*planPhaseOwner],
-	lineages *iradix.Tree[*planLineage],
+	lineages *persistenttree.Tree[*planLineage],
 ) *PlanRoot {
 	plan := &PlanRoot{
 		owner: owner, groups: groups, phaseOwners: phases, lineages: lineages,

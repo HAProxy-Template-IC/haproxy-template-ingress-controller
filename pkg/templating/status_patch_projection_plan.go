@@ -242,6 +242,38 @@ func (r *StatusPatchProjectionPlanReplay) visitPatches(
 	})
 }
 
+func (r *StatusPatchProjectionPlanReplay) visitChangedTargets(
+	previous *StatusPatchProjectionPlanReplay,
+	visit func(statusPatchIdentity) error,
+) error {
+	if !r.valid() || !previous.valid() {
+		return errors.New("statusPatch projection plan replay has invalid provenance")
+	}
+	return r.root.VisitChangedTargets(r.plan, previous.root, previous.plan, func(metadata projection.Metadata) error {
+		return visit(newStatusPatchIdentity(metadata.Namespace, metadata.Name, metadata.APIVersion, metadata.Kind))
+	})
+}
+
+func (r *StatusPatchProjectionPlanReplay) visitTargetPatches(key statusPatchIdentity, visit func(projection.PlanPatch) error) error {
+	if !r.valid() {
+		return errors.New("statusPatch projection plan replay has invalid provenance")
+	}
+	target := projection.Metadata{Namespace: key.namespace, Name: key.name, APIVersion: key.apiVersion, Kind: key.kind}
+	return r.root.VisitTargetPatches(r.plan, &target, func(patch projection.PlanPatch) error {
+		owner, ok := patch.Group.Owner.(*StatusPatchProjection)
+		if !ok || owner == nil || owner.root != patch.Group.Root {
+			return errors.New("statusPatch projection plan target has invalid provenance")
+		}
+		if err := owner.ValidateAuthentication(); err != nil {
+			return err
+		}
+		if _, err := statusPatchProjectionLeafOwner(patch.View); err != nil {
+			return err
+		}
+		return visit(patch)
+	})
+}
+
 func exactStatusPatchProjectionPlanReplays(
 	left, right *StatusPatchProjectionPlanReplay,
 ) bool {
