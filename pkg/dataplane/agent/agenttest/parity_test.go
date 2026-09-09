@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/server"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 // The plan the seeded worker starts from, shared by every scenario.
@@ -142,6 +144,7 @@ func TestFakeAndRealAgentAnswerAlike(t *testing.T) {
 		{name: "a revert restores the last known good set", run: revertScenario},
 		{name: "a stored plan is handed back only for the plan it describes", run: planBlobScenario},
 		{name: "a plan put after the apply binds to it and is refused once it moved", run: deferredPlanScenario},
+		{name: "a patched config splices into the held file or asks for it whole", run: patchScenario},
 	}
 
 	for _, sc := range scenarios {
@@ -381,4 +384,39 @@ func newRealParityAgent(t *testing.T) *parityAgent {
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
 	return &parityAgent{client: c, pendReload: func() {}}
+}
+
+// patchScenario sends a map file as a splice into a base the agent does not
+// hold, then into the one it does; the runtime op keeps both ends off their
+// reload pacing, which the fake and the real agent time differently.
+func patchScenario(t *testing.T, p *parityAgent) {
+	t.Helper()
+	first, parts := build("plan-1", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 1}, seedFiles)
+	first.Ops = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "example.com", Value: "be-1"}}
+	p.apply(t, "first apply", first, parts)
+
+	base := seedFiles["maps/host.map"]
+	added := "new.example.com be-2\n"
+	grown := map[string]string{"haproxy.cfg": seedFiles["haproxy.cfg"], "maps/host.map": base + added}
+	op := api.Op{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "new.example.com", Value: "be-2"}
+
+	wrongBase, parts := build("plan-2", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 2}, grown)
+	wrongBase.ExpectedPrevPlanID = "plan-1"
+	wrongBase.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
+	wrongBase.Ops = []api.Op{op}
+	wrongBase.Files[1].Patch = &api.FilePatch{BaseDigest: "elsewhere", BaseSize: int64(len(base)), Offset: int64(len(base))}
+	parts["maps/host.map"] = strings.NewReader(added)
+	delete(parts, "haproxy.cfg")
+	p.apply(t, "a patch on a base the agent does not hold", wrongBase, parts)
+
+	good, parts := build("plan-2", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 2}, grown)
+	good.ExpectedPrevPlanID = "plan-1"
+	good.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
+	good.Ops = []api.Op{op}
+	good.Files[1].Patch = &api.FilePatch{
+		BaseDigest: renderplan.DigestString(base), BaseSize: int64(len(base)), Offset: int64(len(base)),
+	}
+	parts["maps/host.map"] = strings.NewReader(added)
+	delete(parts, "haproxy.cfg")
+	p.apply(t, "a patch into the held base", good, parts)
 }

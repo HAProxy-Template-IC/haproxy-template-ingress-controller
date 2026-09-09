@@ -15,8 +15,6 @@
 package server
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,8 +22,6 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -71,6 +67,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, manifest *api.Manifest, started time.Time) {
 	got, err := s.stageParts(reader, manifest)
 	timing := api.ApplyTiming{StageMs: time.Since(started).Milliseconds()}
+	admitStarted := time.Now()
 	defer func() {
 		for _, part := range got.files {
 			part.Discard()
@@ -81,14 +78,14 @@ func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, ma
 		writeJSON(w, http.StatusBadRequest, api.ApplyError{Stage: "parts", Message: err.Error()})
 		return
 	}
-	if missing := s.missingParts(manifest, got.files); len(missing) > 0 {
+	if missing := s.missingParts(manifest, got); len(missing) > 0 {
 		writeJSON(w, http.StatusConflict, api.Missing{Missing: missing})
 		return
 	}
-	work, workErr := s.exactWorkIdentity(manifest, got.files)
+	work, workErr := workIdentity(manifest)
 	digest := ""
 	if workErr != nil {
-		s.logger.Warn("could not build exact NACK identity; cache disabled", "error", workErr)
+		s.logger.Warn("could not build the known-bad identity; cache disabled", "error", workErr)
 	} else {
 		digest = renderplan.Digest(work)
 		if cached := s.cachedNACK(digest, work); cached != nil {
@@ -110,6 +107,7 @@ func (s *Server) stageAndRun(w http.ResponseWriter, reader *multipart.Reader, ma
 			return
 		}
 	}
+	timing.AdmitMs = time.Since(admitStarted).Milliseconds()
 	result := s.runApply(manifest, got, digest, work, appliedProof, workerProof, timing)
 	result.Timing.TotalMs = time.Since(started).Milliseconds()
 	writeJSON(w, http.StatusOK, result)
@@ -156,8 +154,16 @@ func normalizeLegacyManifest(manifest *api.Manifest) {
 	manifest.ValidatedPlanProof = ""
 }
 
-func (s *Server) exactWorkIdentity(m *api.Manifest, staged map[string]*files.Staged) ([]byte, error) {
-	manifest, err := json.Marshal(struct {
+// workIdentity keys the known-bad cache: the desired set and the ops, with a
+// file standing for the digest the agent verified when it staged or last
+// observed it. How a file arrived (whole or as a patch) is not part of the work.
+func workIdentity(m *api.Manifest) ([]byte, error) {
+	declared := make([]api.File, len(m.Files))
+	for i, file := range m.Files {
+		file.Patch = nil
+		declared[i] = file
+	}
+	return json.Marshal(struct {
 		IdentityVersion            int        `json:"identity_version"`
 		PlanID                     string     `json:"plan_id"`
 		PlanProof                  string     `json:"plan_proof"`
@@ -174,7 +180,7 @@ func (s *Server) exactWorkIdentity(m *api.Manifest, staged map[string]*files.Sta
 		PlanID:                     m.PlanID,
 		PlanProof:                  m.PlanProof,
 		PlanSchemaVersion:          m.PlanSchemaVersion,
-		Files:                      m.Files,
+		Files:                      declared,
 		Ops:                        m.Ops,
 		InPlaceOps:                 m.InPlaceOps,
 		ExpectedWorkerOpsPlanID:    m.ExpectedWorkerOpsPlanID,
@@ -182,37 +188,6 @@ func (s *Server) exactWorkIdentity(m *api.Manifest, staged map[string]*files.Sta
 		WorkerOpsPlanID:            m.WorkerOpsPlanID,
 		Mode:                       m.Mode,
 	})
-	if err != nil {
-		return nil, err
-	}
-	var work bytes.Buffer
-	writeExactChunk(&work, manifest)
-	for i := range m.Files {
-		file := &m.Files[i]
-		var content []byte
-		if part := staged[file.Path]; part != nil {
-			content, err = part.Read()
-		} else {
-			var absolute string
-			absolute, err = s.store.Abs(file.Path)
-			if err == nil {
-				content, err = os.ReadFile(filepath.Clean(absolute))
-			}
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read exact work file %q: %w", file.Path, err)
-		}
-		writeExactChunk(&work, []byte(file.Path))
-		writeExactChunk(&work, content)
-	}
-	return work.Bytes(), nil
-}
-
-func writeExactChunk(dst *bytes.Buffer, value []byte) {
-	var length [8]byte
-	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
-	dst.Write(length[:])
-	dst.Write(value)
 }
 
 // validateManifest enforces the wire limits and the path rules. Everything it
@@ -343,10 +318,12 @@ func (s *Server) inPlaceWillRunLocked(m *api.Manifest) bool {
 }
 
 // received is what the parts of one apply carry: the verified file contents,
-// staged in their mounts, and the opaque plan blob.
+// staged in their mounts, the paths whose patch found no base to splice into,
+// and the opaque plan blob.
 type received struct {
-	files map[string]*files.Staged
-	plan  []byte
+	files     map[string]*files.Staged
+	unpatched map[string]bool
+	plan      []byte
 }
 
 // stageParts writes every received part into its mount's temp directory and
@@ -356,7 +333,7 @@ func (s *Server) stageParts(reader *multipart.Reader, m *api.Manifest) (*receive
 	for _, f := range m.Files {
 		declared[f.Path] = f
 	}
-	got := &received{files: map[string]*files.Staged{}}
+	got := &received{files: map[string]*files.Staged{}, unpatched: map[string]bool{}}
 	for count := 0; count <= api.MaxFiles; count++ {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -388,10 +365,21 @@ func (s *Server) stagePart(part *multipart.Part, declared map[string]api.File, g
 	if !known {
 		return fmt.Errorf("part %q is not in the manifest", path)
 	}
-	if _, duplicate := got.files[path]; duplicate {
+	if _, duplicate := got.files[path]; duplicate || got.unpatched[path] {
 		return fmt.Errorf("part %q appears twice", path)
 	}
-	verified, err := s.store.Stage(path, part, declaration.Digest, declaration.Size)
+	var verified *files.Staged
+	if declaration.Patch != nil {
+		verified, err = s.store.StagePatch(path, part, declaration.Patch, declaration.Digest, declaration.Size)
+		if errors.Is(err, files.ErrPatchBaseMissing) {
+			// The whole file follows once the controller learns this.
+			s.logger.Info("patch base is not the file held, asking for the whole file", "path", path, "error", err)
+			got.unpatched[path] = true
+			return nil
+		}
+	} else {
+		verified, err = s.store.Stage(path, part, declaration.Digest, declaration.Size)
+	}
 	if err != nil {
 		return err
 	}
@@ -414,16 +402,21 @@ func partPath(part *multipart.Part) (string, error) {
 	return path, nil
 }
 
-// missingParts names the files whose content the agent does not hold. The
-// controller resends exactly these.
-func (s *Server) missingParts(m *api.Manifest, staged map[string]*files.Staged) []string {
+// missingParts names the files whose content the agent does not hold, a
+// patch without its base among them. The controller resends exactly these,
+// whole.
+func (s *Server) missingParts(m *api.Manifest, got *received) []string {
 	s.mu.Lock()
 	tree := s.tree
 	s.mu.Unlock()
 
 	var missing []string
 	for _, f := range m.Files {
-		if _, have := staged[f.Path]; have {
+		if _, have := got.files[f.Path]; have {
+			continue
+		}
+		if got.unpatched[f.Path] {
+			missing = append(missing, f.Path)
 			continue
 		}
 		if at, held := tree[f.Path]; held && f.Proof != "" && at.Proof == f.Proof &&

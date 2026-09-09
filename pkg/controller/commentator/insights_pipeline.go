@@ -174,8 +174,10 @@ func (ec *EventCommentator) deploymentInsight(event busevents.Event, attrs []any
 				"pod_blob_wait_ms", p.BlobWaitMs,
 				"pod_upload_bytes", p.UploadBytes,
 				"agent_stage_ms", p.Agent.StageMs,
+				"agent_admit_ms", p.Agent.AdmitMs,
 				"agent_write_ms", p.Agent.WriteMs,
 				"agent_ops_ms", p.Agent.OpsMs,
+				"agent_finish_ms", p.Agent.FinishMs,
 				"agent_total_ms", p.Agent.TotalMs)
 		}
 

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 // BenchmarkMapOnlyApply measures the agent's overhead for the class that has
@@ -81,6 +82,96 @@ func BenchmarkOneMegabyteConfigWrite(b *testing.B) {
 			b.Fatalf("apply %d failed: %+v", i, previous.Error)
 		}
 	}
+}
+
+// BenchmarkFourMegabyteConfigPatchWithOps is the same apply once the
+// controller holds the previous content: every changed file arrives as the
+// run of bytes between its common prefix and suffix.
+func BenchmarkFourMegabyteConfigPatchWithOps(b *testing.B) {
+	h := newHarness(b)
+	var config strings.Builder
+	config.WriteString("global\n")
+	padding := strings.Repeat("  # a line the bundled chart emits for a backend's rules, roughly this long\n", 10)
+	for i := range 4500 {
+		fmt.Fprintf(&config, "backend be-%04d\n  mode http\n  server s1 10.1.%d.%d:80 check\n  http-request set-header X-Route %d\n  option httpchk GET /healthz\n  timeout server 30s\n%s", i, i/250, i%250, i, padding)
+	}
+	head := config.String()
+	entries := mapBody(4500)
+	files := []file{
+		{Path: configPath, Content: head, Reload: true},
+		{Path: "maps/host.map", Content: entries},
+	}
+	m := buildManifest("plan-0", files)
+	m.Mode = api.ModeReload
+	previous := h.apply(&m, files)
+	require.True(b, previous.OK)
+	held := []string{files[0].Content, files[1].Content}
+	timing := timingSum{}
+
+	for i := 0; b.Loop(); i++ {
+		files[0].Content = head + fmt.Sprintf("backend be-new-%d\n  mode http\n  server s1 10.9.0.1:80 check\n", i)
+		files[1].Content = entries + fmt.Sprintf("bench%d.example.com be-new-%d\n", i, i)
+		next := buildManifest(fmt.Sprintf("plan-%d", i+1), files)
+		next.ExpectedPrevPlanID = previous.AppliedPlanID
+		next.ExpectedPrevToken = previous.AppliedToken
+		next.Ops = []api.Op{{
+			Kind: api.OpMapAdd, Path: "maps/host.map",
+			Key: fmt.Sprintf("bench%d.example.com", i), Value: fmt.Sprintf("be-new-%d", i),
+		}}
+		parts := make([]file, len(files))
+		for j := range files {
+			parts[j] = files[j]
+			next.Files[j].Patch, parts[j].Content = patchBetween(held[j], files[j].Content)
+			held[j] = files[j].Content
+		}
+		previous = h.apply(&next, parts)
+		if !previous.OK {
+			b.Fatalf("apply %d failed: %+v", i, previous.Error)
+		}
+		timing.add(previous.Timing)
+	}
+	timing.report(b)
+}
+
+type timingSum struct {
+	n                        int
+	stage, write, ops, total int64
+}
+
+func (t *timingSum) add(a api.ApplyTiming) {
+	t.n++
+	t.stage += a.StageMs
+	t.write += a.WriteMs
+	t.ops += a.OpsMs
+	t.total += a.TotalMs
+}
+
+func (t *timingSum) report(b *testing.B) {
+	b.Helper()
+	if t.n == 0 {
+		return
+	}
+	b.ReportMetric(float64(t.stage)/float64(t.n), "stage-ms")
+	b.ReportMetric(float64(t.write)/float64(t.n), "write-ms")
+	b.ReportMetric(float64(t.ops)/float64(t.n), "ops-ms")
+	b.ReportMetric(float64(t.total)/float64(t.n), "total-ms")
+}
+
+// patchBetween is the controller's splice: the bytes of next that lie between
+// the longest common prefix and suffix with base.
+func patchBetween(base, next string) (patch *api.FilePatch, part string) {
+	prefix := 0
+	for prefix < len(base) && prefix < len(next) && base[prefix] == next[prefix] {
+		prefix++
+	}
+	suffix := 0
+	for suffix < len(base)-prefix && suffix < len(next)-prefix && base[len(base)-1-suffix] == next[len(next)-1-suffix] {
+		suffix++
+	}
+	return &api.FilePatch{
+		BaseDigest: renderplan.DigestString(base), BaseSize: int64(len(base)),
+		Offset: int64(prefix), Length: int64(len(base) - prefix - suffix),
+	}, next[prefix : len(next)-suffix]
 }
 
 func mapBody(entries int) string {

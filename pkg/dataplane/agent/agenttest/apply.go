@@ -34,8 +34,12 @@ import (
 const fixedTimestamp = "2026-01-01T00:00:00Z"
 
 type applyRequest struct {
-	manifest     api.Manifest
+	manifest api.Manifest
+	// parts is what arrived; contents is what each part means once a patch
+	// has been spliced into the file the fake holds.
 	parts        map[string][]byte
+	contents     map[string][]byte
+	unpatched    map[string]bool
 	plan         []byte
 	appliedProof string
 	workerProof  string
@@ -141,6 +145,7 @@ func (a *Agent) apply(req *applyRequest) outcome {
 	if conflict := a.fence(m); conflict != nil {
 		return outcome{status: http.StatusConflict, conflict: conflict}
 	}
+	a.splicePatches(req)
 	if missing := a.missingParts(req); len(missing) > 0 {
 		return outcome{status: http.StatusConflict, missing: missing}
 	}
@@ -280,7 +285,11 @@ func (a *Agent) missingParts(req *applyRequest) []string {
 	}
 	var missing []string
 	for _, f := range req.manifest.Files {
-		if _, sent := req.parts[f.Path]; sent {
+		if _, sent := req.contents[f.Path]; sent {
+			continue
+		}
+		if req.unpatched[f.Path] {
+			missing = append(missing, f.Path)
 			continue
 		}
 		if at, held := a.state.Files[f.Path]; held && f.Proof != "" && at.Proof == f.Proof &&
@@ -297,15 +306,45 @@ func (a *Agent) missingParts(req *applyRequest) []string {
 // declares. Manifest digests are renderplan.Digest of the content.
 func (a *Agent) mismatchedPart(req *applyRequest) string {
 	for _, f := range req.manifest.Files {
-		content, sent := req.parts[f.Path]
+		content, sent := req.contents[f.Path]
 		if !sent {
 			continue
 		}
-		if renderplan.Digest(content) != f.Digest {
+		if int64(len(content)) != f.Size || renderplan.Digest(content) != f.Digest {
 			return f.Path
 		}
 	}
 	return ""
+}
+
+// splicePatches turns each patched part into the whole content, the way the
+// real agent's StagePatch does: a base that is not held leaves the path
+// unpatched, and missingParts asks for it whole.
+func (a *Agent) splicePatches(req *applyRequest) {
+	req.contents = make(map[string][]byte, len(req.parts))
+	req.unpatched = map[string]bool{}
+	declared := make(map[string]api.File, len(req.manifest.Files))
+	for _, f := range req.manifest.Files {
+		declared[f.Path] = f
+	}
+	for path, data := range req.parts {
+		patch := declared[path].Patch
+		if patch == nil {
+			req.contents[path] = data
+			continue
+		}
+		base, held := a.contents[path]
+		if !held || int64(len(base)) != patch.BaseSize || renderplan.Digest(base) != patch.BaseDigest ||
+			patch.Offset < 0 || patch.Length < 0 || patch.Offset+patch.Length > int64(len(base)) {
+			req.unpatched[path] = true
+			continue
+		}
+		spliced := make([]byte, 0, int64(len(base))-patch.Length+int64(len(data)))
+		spliced = append(spliced, base[:patch.Offset]...)
+		spliced = append(spliced, data...)
+		spliced = append(spliced, base[patch.Offset+patch.Length:]...)
+		req.contents[path] = spliced
+	}
 }
 
 // promoteLKG runs before the transaction: a plan the controller has validated
@@ -317,6 +356,7 @@ func (a *Agent) promoteLKG(m *api.Manifest) {
 	a.state.LKGPlanID = a.state.AppliedPlanID
 	a.state.LKGPlanProof = a.state.AppliedPlanProof
 	a.lkgFiles = maps.Clone(a.state.Files)
+	a.lkgContents = maps.Clone(a.contents)
 }
 
 // transact writes the files and then decides, in the order the real agent does:
@@ -408,6 +448,7 @@ func (a *Agent) reload(req *applyRequest) outcome {
 	a.state.LKGPlanID = m.PlanID
 	a.state.LKGPlanProof = req.appliedProof
 	a.lkgFiles = maps.Clone(a.state.Files)
+	a.lkgContents = maps.Clone(a.contents)
 	return a.ack(m, api.ResultReload, nil, &api.ReloadInfo{
 		Performed: true,
 		OK:        true,
@@ -417,6 +458,10 @@ func (a *Agent) reload(req *applyRequest) outcome {
 
 func (a *Agent) revertLKG(m *api.Manifest) outcome {
 	a.state.Files = maps.Clone(a.lkgFiles)
+	a.contents = maps.Clone(a.lkgContents)
+	if a.contents == nil {
+		a.contents = map[string][]byte{}
+	}
 	if a.state.Files == nil {
 		a.state.Files = map[string]api.FileAt{}
 	}
@@ -469,14 +514,21 @@ func (a *Agent) advance(m *api.Manifest, proof string) {
 // about the set changed.
 func (a *Agent) storeFiles(req *applyRequest) bool {
 	next := make(map[string]api.FileAt, len(req.manifest.Files))
+	contents := make(map[string][]byte, len(req.manifest.Files))
 	for _, f := range req.manifest.Files {
 		next[f.Path] = api.FileAt{Digest: f.Digest, Proof: f.Proof, Size: f.Size}
 		// Kinds accumulate rather than replace, so a revert to the LKG set
 		// still classifies paths this manifest happens not to carry.
 		a.kinds[f.Path] = f.Kind
+		if content, sent := req.contents[f.Path]; sent {
+			contents[f.Path] = content
+		} else if held, kept := a.contents[f.Path]; kept {
+			contents[f.Path] = held
+		}
 	}
 	changed := !maps.Equal(a.state.Files, next)
 	a.state.Files = next
+	a.contents = contents
 	return changed
 }
 

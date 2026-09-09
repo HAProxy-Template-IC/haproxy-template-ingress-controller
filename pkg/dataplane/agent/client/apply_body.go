@@ -80,12 +80,16 @@ func (s *applySource) write(mw *multipart.Writer) error {
 		// A content/manifest size mismatch is a controller bug; catching it
 		// here beats letting the agent reject the digest after the bytes
 		// crossed the wire.
-		n, err := s.copyPart(mw, f.Path, content, f.Size)
+		expected := f.Size
+		if f.Patch != nil {
+			expected = f.Size - f.Patch.BaseSize + f.Patch.Length
+		}
+		n, err := s.copyPart(mw, f.Path, content, expected)
 		if err != nil {
 			return err
 		}
-		if n != f.Size {
-			return fmt.Errorf("agent client: part %q: manifest declares %d bytes, content yielded %d", f.Path, f.Size, n)
+		if n != expected {
+			return fmt.Errorf("agent client: part %q: manifest declares %d bytes, content yielded %d", f.Path, expected, n)
 		}
 	}
 	return nil

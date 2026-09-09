@@ -3779,15 +3779,27 @@ wait_for_haproxycfg_baseline() {
     : > "$scenario_dir/map-inventory.diff"
 }
 
+# capture_referenced_map_inventory reads the parent HAProxyCfg fresh on every
+# attempt and keeps the snapshot only for the object's identity: under churn
+# the parent's set-id annotation and its status are two writes, and a snapshot
+# taken between them can never satisfy the equality this polls for (run
+# 20260909T075328Z timed out on exactly that after every map had converged).
 capture_referenced_map_inventory() {
-    local cfg="$1"
+    local snapshot="$1"
     local pods="$2"
     local output="$3"
     local allow_deployed_lag="${4:-false}"
     local objects="${output%.json}-objects.json"
     local candidate="${output}.candidate"
+    local cfg="${output%.json}-cfg.json"
     kubectl get haproxymapfiles -n "$RELEASE_NAMESPACE" -o json > "$objects" || \
         return "$READINESS_RESULT_EVIDENCE_INVALID"
+    kubectl get haproxycfg "$HAPROXYCFG_NAME" -n "$RELEASE_NAMESPACE" -o json > "${cfg}.read" || \
+        return "$READINESS_RESULT_EVIDENCE_INVALID"
+    mv "${cfg}.read" "$cfg" || return "$READINESS_RESULT_EVIDENCE_INVALID"
+    jq -e --slurpfile snapshot "$snapshot" '
+        (.metadata.uid | type) == "string" and .metadata.uid == $snapshot[0].metadata.uid
+    ' "$cfg" >/dev/null || return "$READINESS_RESULT_EVIDENCE_INVALID"
     validate_haproxycfg_convergence_inputs "$cfg" "$pods" || \
         return "$READINESS_RESULT_EVIDENCE_INVALID"
     jq -e 'type == "object" and (.items | type) == "array"' "$objects" >/dev/null || \
@@ -3884,7 +3896,7 @@ observe_referenced_map_inventory() {
         return "$READINESS_RESULT_EVIDENCE_INVALID"
     [[ $inventory_rc -eq 0 ]] && pass=true
     jq -S -n --argjson attempt "$attempt" --argjson pass "$pass" \
-        --slurpfile cfg "$cfg" --slurpfile pods "$pods" \
+        --slurpfile cfg "${output%.json}-cfg.json" --slurpfile pods "$pods" \
         --slurpfile objects "${output%.json}-objects.json" '
         {attempt: $attempt,
          referenced_maps: (($cfg[0].status.auxiliaryFiles.mapFiles // []) | length),

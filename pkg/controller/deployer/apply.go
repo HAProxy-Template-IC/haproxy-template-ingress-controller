@@ -269,9 +269,10 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 	if attempt.full {
 		held = nil
 	}
+	patches := c.filePatches(attempt, manifest, held)
 	held = c.prepareContentProofs(attempt, manifest, held)
 	for {
-		parts, uploaded, err := attempt.req.parts(manifest.Files, held)
+		parts, uploaded, err := attempt.req.parts(manifest.Files, held, patches)
 		if err != nil {
 			return nil, err
 		}
@@ -292,14 +293,43 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 			}
 			return result, err
 		}
-		c.Logger().Debug("Agent is missing file parts, resending them",
+		c.Logger().Debug("Agent is missing file parts, resending them whole",
 			"pod", attempt.endpoint.PodName, "files", len(missing.Missing))
-		held = nil
+		held, patches = nil, nil
 	}
+}
+
+// filePatches splices each changed file into the one the pod holds, for an
+// agent that accepts patches, wherever the pod reports the content this
+// controller last had it accept. holds is what the pod reports on disk,
+// before the proofs narrow it to the files already at their desired content.
+func (c *Component) filePatches(attempt *podApply, manifest *api.Manifest, holds map[string]api.FileAt) map[string]filePatch {
+	if holds == nil || !acceptsFilePatches(attempt.state) {
+		return nil
+	}
+	c.contentProofMu.Lock()
+	known := c.contentProofs[podKey(attempt.endpoint)]
+	c.contentProofMu.Unlock()
+	patches := map[string]filePatch{}
+	for i := range manifest.Files {
+		file := &manifest.Files[i]
+		at, held := holds[file.Path]
+		base, remembered := known[file.Path]
+		next, available := attempt.req.contents[file.Path]
+		if !held || !remembered || !available || at.Digest == file.Digest ||
+			at.Proof != base.proof || at.Digest != base.digest || at.Size != int64(len(base.content)) {
+			continue
+		}
+		if patch, ok := attempt.req.patches.get(file.Path, &base, next); ok {
+			patches[file.Path] = patch
+		}
+	}
+	return patches
 }
 
 type contentProof struct {
 	proof   string
+	digest  string
 	content string
 }
 
@@ -336,7 +366,7 @@ func (c *Component) acceptContentProofs(attempt *podApply, manifest *api.Manifes
 		file := &manifest.Files[i]
 		content, available := attempt.req.contents[file.Path]
 		if available && file.Proof != "" {
-			known[file.Path] = contentProof{proof: file.Proof, content: content}
+			known[file.Path] = contentProof{proof: file.Proof, digest: file.Digest, content: content}
 		}
 		held[file.Path] = api.FileAt{Digest: file.Digest, Proof: file.Proof, Size: file.Size}
 	}
@@ -438,21 +468,35 @@ func (r *deployRequest) manifest(
 // addApplyTiming sums the agent's split over the chunks of one apply.
 func addApplyTiming(sum, next api.ApplyTiming) api.ApplyTiming {
 	return api.ApplyTiming{
-		StageMs: sum.StageMs + next.StageMs,
-		WriteMs: sum.WriteMs + next.WriteMs,
-		OpsMs:   sum.OpsMs + next.OpsMs,
-		TotalMs: sum.TotalMs + next.TotalMs,
+		StageMs:  sum.StageMs + next.StageMs,
+		AdmitMs:  sum.AdmitMs + next.AdmitMs,
+		WriteMs:  sum.WriteMs + next.WriteMs,
+		OpsMs:    sum.OpsMs + next.OpsMs,
+		FinishMs: sum.FinishMs + next.FinishMs,
+		TotalMs:  sum.TotalMs + next.TotalMs,
 	}
 }
 
 // parts carries every file the agent has not proved it holds, and how many
 // bytes that is.
-func (r *deployRequest) parts(files []api.File, held map[string]api.FileAt) (parts map[string]io.Reader, uploaded int64, err error) {
+// parts is the upload: every file the pod does not hold at its proof, whole
+// or as the patch computed for it. A retry without held files sends
+// everything whole, so a patch set on an earlier attempt is cleared.
+func (r *deployRequest) parts(
+	files []api.File, held map[string]api.FileAt, patches map[string]filePatch,
+) (parts map[string]io.Reader, uploaded int64, err error) {
 	parts = make(map[string]io.Reader, len(files))
 	for i := range files {
 		file := &files[i]
+		file.Patch = nil
 		if at, ok := held[file.Path]; ok && file.Proof != "" && at.Proof == file.Proof &&
 			at.Digest == file.Digest && at.Size == file.Size {
+			continue
+		}
+		if patch, ok := patches[file.Path]; ok {
+			file.Patch = &patch.patch
+			parts[file.Path] = strings.NewReader(patch.data)
+			uploaded += int64(len(patch.data))
 			continue
 		}
 		content, ok := r.contents[file.Path]

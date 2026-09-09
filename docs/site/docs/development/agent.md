@@ -132,6 +132,17 @@ part per file whose content the agent doesn't already hold, then an optional
 opaque `plan` blob. The order is load-bearing, and so is the order in which the
 agent processes it.
 
+A file the pod holds at a known content can arrive as a patch instead of whole:
+the manifest's file entry carries `patch` with the base's digest and size and
+the byte range it replaces, and the part carries only the replacement. The
+agent splices the part into the file on disk, then verifies the result against
+the file's digest and size exactly as it verifies a whole part; a base it
+doesn't hold answers the path as missing, and the controller sends the whole
+file. The controller patches every file whose content it last had the pod
+accept, the byte range being the run between the common prefix and the common
+suffix of the two contents, and only for an agent whose state lists
+`file_patch` under `features`.
+
 ```mermaid
 sequenceDiagram
     participant C as Controller
@@ -146,8 +157,8 @@ sequenceDiagram
     alt baseline mismatch
         A-->>C: 409 Conflict {reason}
     end
-    A->>D: stage parts in the target mount, verify each digest
-    alt content missing
+    A->>D: stage parts in the target mount, splice patches, verify each digest
+    alt content or patch base missing
         A-->>C: 409 {missing}
     end
     A->>D: back up every changed path into the journal
@@ -301,10 +312,11 @@ failure becomes a condition and a metric, because a data plane that fences its
 own repair path is worse than one running an unknown configuration.
 
 Only HAProxy's own verdict on a set of bytes is remembered as known-bad, for 60
-seconds. The key is the work the manifest asks for — its plan, mode, files, and
-ops — not the exact request bytes, because the same rejected render comes back
-with a different baseline attached. Input and output errors and timeouts are
-never cached: they say nothing about the configuration.
+seconds. The key is the work the manifest asks for — its plan, mode, files by
+the digests the agent verified, and ops — not the request bytes, because the
+same rejected render comes back with a different baseline attached and a file
+may arrive whole or as a patch. Input and output errors and timeouts are never
+cached: they say nothing about the configuration.
 
 ## Invariants
 

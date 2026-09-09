@@ -39,6 +39,7 @@ type deployRequest struct {
 	occurrenceProof string
 	checksum        string
 	contents        map[string]string // file content by manifest path
+	patches         *patchMemo        // splices into what the pods hold, one per base
 	blob            *planBlob         // the plan, zstd-compressed, as the agent stores it
 	token           api.Token
 	// baselineIsPlan memoizes, per pod baseline, whether it already is this
@@ -241,6 +242,7 @@ func (c *Component) newDeployRequest(
 		occurrenceProof:  identity.proof,
 		checksum:         identity.checksum,
 		contents:         contentsByPath(identity.plan),
+		patches:          newPatchMemo(),
 		blob:             encodePlanBlob(identity, c.Logger()),
 		token:            api.Token{LeaderEpoch: c.leaderEpoch(), RenderSeq: c.nextRenderSeq()},
 		validatedPlanFor: c.validatedPlanFor,
