@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent template compilation no longer shares constant conversion state, preventing races and incorrect boolean types during configuration reloads.
 - Superseded render-gate verdicts no longer produce spurious scheduler errors; stale verdicts still cannot change deployment state.
 - Configuration publication preserves concurrent pod status and rejects stale auxiliary references after the parent or rendered output changes.
 - Bulk changes pace new renders against resource application, preserving live API checks and gate ordering without accumulating resource-apply cycles.
