@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Superseded render-gate verdicts no longer produce spurious scheduler errors; stale verdicts still cannot change deployment state.
 - Configuration publication preserves concurrent pod status and rejects stale auxiliary references after the parent or rendered output changes.
 - Bulk changes pace new renders against resource application, preserving live API checks and gate ordering without accumulating resource-apply cycles.
 - Status updates avoid fleet-wide projection scans and handle removed or reordered contributions; retries use the current snapshot and stop when their target or phase disappears.
