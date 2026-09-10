@@ -53,7 +53,7 @@ func newSuccessfulPublicationGate() *successfulPublicationGate {
 }
 
 func (g *successfulPublicationGate) react(action k8stesting.Action) (bool, runtime.Object, error) {
-	if action.GetSubresource() != "status" {
+	if action.GetSubresource() != "status" || action.(k8stesting.PatchAction).GetPatchType() != types.JSONPatchType {
 		return false, nil, nil
 	}
 	blocked := false
@@ -65,12 +65,13 @@ func (g *successfulPublicationGate) react(action k8stesting.Action) (bool, runti
 		return false, nil, nil
 	}
 	<-g.release
-	return true, action.(k8stesting.UpdateAction).GetObject(), nil
+	return false, nil, nil
 }
 
 func newPublicationAuthorityComponent(t *testing.T) (*Component, *crdclientfake.Clientset, <-chan busevents.Event) {
 	t.Helper()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installRuntimeUIDReactor(crdClient)
 	bus := busevents.NewEventBus(20)
 	publisher := configpublisher.NewWithListers(
 		k8sfake.NewClientset(), crdClient, nil, testutil.NewTestLogger())
@@ -100,7 +101,7 @@ func TestSuccessfulPublishDoesNotCommitAfterGenerationSuperseded(t *testing.T) {
 
 	component, crdClient, publishedEvents := newPublicationAuthorityComponent(t)
 	gate := newSuccessfulPublicationGate()
-	crdClient.PrependReactor("update", "haproxycfgs", gate.react)
+	crdClient.PrependReactor("patch", "haproxycfgs", gate.react)
 
 	workA := publicationAuthorityWork(component, "generation-a", "checksum-a")
 	done := make(chan struct{})
@@ -130,7 +131,7 @@ func TestSuccessfulPublishDoesNotCommitAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	component, crdClient, publishedEvents := newPublicationAuthorityComponent(t)
 	gate := newSuccessfulPublicationGate()
-	crdClient.PrependReactor("update", "haproxycfgs", gate.react)
+	crdClient.PrependReactor("patch", "haproxycfgs", gate.react)
 
 	work := publicationAuthorityWork(component, "canceled-generation", "checksum-a")
 	done := make(chan struct{})
@@ -163,6 +164,7 @@ func TestPermanentPublicationFailureDoesNotStarveDeployedQueue(t *testing.T) {
 	defer cancel()
 
 	crdClient := crdclientfake.NewSimpleClientset()
+	installRuntimeUIDReactor(crdClient)
 	crdClient.PrependReactor("create", "haproxycfgs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		cfg := action.(k8stesting.CreateAction).GetObject().(*v1alpha1.HAProxyCfg)
 		if cfg.Spec.Checksum != "terminal" {
@@ -232,6 +234,7 @@ func TestThrottleFlushKeepsDeployedFIFOAheadOfValidation(t *testing.T) {
 	defer cancel()
 
 	crdClient := crdclientfake.NewSimpleClientset()
+	installRuntimeUIDReactor(crdClient)
 	bus := busevents.NewEventBus(20)
 	publisher := configpublisher.NewWithListers(
 		k8sfake.NewClientset(), crdClient, nil, testutil.NewTestLogger())

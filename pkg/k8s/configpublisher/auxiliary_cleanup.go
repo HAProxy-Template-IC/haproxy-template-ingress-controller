@@ -115,6 +115,9 @@ func (p *Publisher) ensurePublicationCurrent(
 	if err != nil {
 		return fmt.Errorf("checking publication authority: %w", err)
 	}
+	if err := validateRuntimePublication(runtimeConfig, current); err != nil {
+		return err
+	}
 	want := runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey]
 	if current.Annotations[AuxiliarySetIDAnnotationKey] != want {
 		return fmt.Errorf("publication %q was superseded; skip stale cleanup", want)

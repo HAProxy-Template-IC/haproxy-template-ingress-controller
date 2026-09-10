@@ -36,6 +36,7 @@ import (
 
 func TestComponentStartWaitsForWorkers(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
+	installRuntimeUIDReactor(crdClient)
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	released := false
@@ -99,6 +100,7 @@ func TestComponentStartWaitsForWorkers(t *testing.T) {
 
 func TestComponentShutdownDoesNotFlushPendingWrites(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
+	installRuntimeUIDReactor(crdClient)
 	kubeClient := k8sfake.NewClientset()
 	bus := busevents.NewEventBus(8)
 	publisher := configpublisher.NewWithListers(kubeClient, crdClient, nil, testutil.NewTestLogger())
@@ -135,6 +137,7 @@ func TestComponentShutdownDoesNotFlushPendingWrites(t *testing.T) {
 
 func TestComponentPublishesAfterLeadershipReacquisition(t *testing.T) {
 	crdClient := crdclientfake.NewSimpleClientset()
+	installRuntimeUIDReactor(crdClient)
 	bus := busevents.NewEventBus(16)
 	publisher := configpublisher.NewWithListers(
 		k8sfake.NewClientset(), crdClient, nil, testutil.NewTestLogger())
