@@ -319,6 +319,7 @@ func (c *Component) handleReconciliationCompleted(ctx context.Context, event *ev
 		c.Logger().Error("Rendered cycle has invalid provenance", "error", err)
 		return
 	}
+	defer c.publishResourcesProcessed(cycle)
 	c.mu.Lock()
 	if !c.isLeader {
 		c.mu.Unlock()
@@ -532,6 +533,16 @@ func (c *Component) publishResourcesApplied(cycle *resourceCycle) {
 		return
 	}
 	c.EventBus().Publish(applied)
+}
+
+func (c *Component) publishResourcesProcessed(cycle *resourceCycle) {
+	processed, err := events.NewResourcesProcessedEvent(cycle.occurrence,
+		events.WithCorrelation(cycle.correlationID, cycle.sourceEventID))
+	if err != nil {
+		c.Logger().Error("Resource completion has invalid provenance", "error", err)
+		return
+	}
+	c.EventBus().Publish(processed)
 }
 
 // handleBecameLeader rebuilds deletion lineage from live managed resources so

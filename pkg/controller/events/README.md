@@ -19,6 +19,7 @@ One file per category. The full list as of writing, with representative types:
 | `credentials.go` | `Secret` ingestion and validation | `CredentialsUpdatedEvent` |
 | `resource.go` | Watched-resource index changes | `ResourceIndexUpdatedEvent`, `IndexSynchronizedEvent` |
 | `reconciliation.go` | Reconciliation pipeline lifecycle | `ReconciliationTriggeredEvent`, `ReconciliationCompletedEvent`, `ResourcesAppliedEvent` |
+| `resources_processed.go` | Resource-application backpressure | `ResourcesProcessedEvent` |
 | `template.go` | Rendering | `TemplateRenderedEvent`, `TemplateRenderFailedEvent` |
 | `validation.go` | Syntax/semantic validation | `ValidationFailedEvent` |
 | `rendergate.go` | Asynchronous `haproxy -c` verdict on a render | `RenderGateCompletedEvent` |
@@ -52,6 +53,12 @@ Production render lifecycle events carry one sealed `*rendercycle.Occurrence` fr
 `CycleSnapshot`, `OutputSnapshot`, `RenderProof`, `PlanID`, and checksum fields are compatibility and diagnostic shadows. They aren't authentication inputs. Mutating or substituting them doesn't change `AuthenticatedRenderIdentity()`, and subscriber clones restore them from the private occurrence. Legacy constructors don't authenticate an occurrence; their occurrence accessors return an error.
 
 Don't reconstruct identity from a snapshot and proof. A proof is diagnostic, and equal output can occur in distinct A-B-A render executions.
+
+`ResourcesProcessedEvent` acknowledges that the resource applier handled one exact
+occurrence, including a failed or gate-held attempt. The coordinator waits for that
+acknowledgement before rendering again. It is not coalescible and does not replace
+`ResourcesAppliedEvent`, which alone authorizes rendered-status publication after
+successful convergence.
 
 ## Consuming
 

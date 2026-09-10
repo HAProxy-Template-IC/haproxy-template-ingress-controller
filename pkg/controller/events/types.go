@@ -86,6 +86,7 @@ const (
 	// patches forward so the rendered status variant applies after the
 	// resources exist.
 	EventTypeResourcesApplied     = "resources.applied"
+	EventTypeResourcesProcessed   = "resources.processed"
 	EventTypeReconciliationFailed = "reconciliation.failed"
 
 	// Template event types.

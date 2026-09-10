@@ -101,6 +101,14 @@ apply. The SSA response supplies the exact UID and resourceVersion later used as
 delete preconditions. Missing or mismatched lineage fails closed; a replacement
 resource with the same name is never deleted as an orphan.
 
+After handling a reconciliation occurrence, the applier publishes
+`ResourcesProcessedEvent`, including when application failed or the gate held
+the cycle. The coordinator waits for that exact acknowledgement before rendering
+again, so API latency limits production rather than growing the applier's queue.
+Only successful convergence publishes `ResourcesAppliedEvent`; the acknowledgement
+never authorizes status publication. Gate processing and live API checks are
+unchanged. See [ADR-0024](../../../docs/adr/0024-resource-application-backpressure.md).
+
 Render-gate state is keyed by the opaque occurrence, not by public
 `CycleSnapshot`, `RenderProof`, or plan fields. A verdict for another occurrence,
 including one with identical output, can't release or revert the held cycle.

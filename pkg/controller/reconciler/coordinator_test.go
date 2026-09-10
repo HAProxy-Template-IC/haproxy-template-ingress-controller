@@ -588,7 +588,8 @@ func TestCoordinator_PipelineFailureForwardsLastSuccessfulPatches(t *testing.T) 
 
 	// First reconcile: success — coordinator caches lastSuccessfulPatches.
 	bus.Publish(events.NewReconciliationTriggeredEvent("first", true))
-	_ = testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+	completed := testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+	acknowledgeResourceApplication(t, bus, completed)
 
 	// Second reconcile: failure — the failure event must carry the cached patches.
 	bus.Publish(events.NewReconciliationTriggeredEvent("second", true))
@@ -649,6 +650,7 @@ func TestCoordinatorCarriesExactResultSnapshotsAcrossSuccessAndFailure(t *testin
 	require.Nil(t, completed.StatusPatches)
 	require.Nil(t, completed.Events)
 	require.Nil(t, completed.RenderedResources)
+	acknowledgeResourceApplication(t, bus, completed)
 
 	bus.Publish(events.NewReconciliationTriggeredEvent("second", true))
 	failed := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)

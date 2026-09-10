@@ -51,6 +51,8 @@ func (ec *EventCommentator) determineLogLevel(event busevents.Event) slog.Level 
 			}
 		}
 		return slog.LevelInfo
+	case events.EventTypeResourcesProcessed:
+		return slog.LevelDebug
 
 	// Debug level - everything else (detailed operational events)
 	default:

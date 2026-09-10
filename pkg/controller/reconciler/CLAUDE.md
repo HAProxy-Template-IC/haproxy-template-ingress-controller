@@ -43,6 +43,13 @@ latest ordinary trigger. Render-gate verdicts remain ordered boundaries: trigger
 after a verdict render only after its current-file baseline has settled. The
 mailbox stops and releases its pending events when that leadership term ends.
 
+After publishing a cycle, the coordinator waits for the resource applier's
+`ResourcesProcessedEvent` naming that exact occurrence before rendering again.
+Intake continues during this wait. A separate leader-term subscription receives
+one acknowledgement per handled cycle; gate verdicts retain their mailbox order.
+Failed and held attempts acknowledge processing without claiming convergence.
+See ADR-0024 for the backpressure contract.
+
 ### Index Synchronized (Immediate)
 
 ```

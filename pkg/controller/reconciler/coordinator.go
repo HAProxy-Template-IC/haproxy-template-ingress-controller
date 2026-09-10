@@ -26,6 +26,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
@@ -181,6 +182,11 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	// re-acquisition on the same instance would stack another subscription
 	// whose orphaned channel fills up and logs critical drops forever.
 	defer c.eventBus.UnsubscribeTyped(c.eventChan)
+	processed := c.eventBus.SubscribeTypesLeaderOnly(
+		CoordinatorComponentName+"-resources", busevents.LowVolumeSubscriberBuffer,
+		events.EventTypeResourcesProcessed,
+	)
+	defer c.eventBus.UnsubscribeTyped(processed)
 	mailbox := newCoordinatorMailbox(ctx, c.eventChan)
 	defer mailbox.stop()
 
@@ -198,7 +204,13 @@ func (c *Coordinator) Start(ctx context.Context) error {
 
 		switch e := event.(type) {
 		case *events.ReconciliationTriggeredEvent:
-			c.handleReconciliationTriggered(ctx, e, generation)
+			occurrence := c.handleReconciliationTriggered(ctx, e, generation)
+			if err := waitForResourceApplication(ctx, processed, occurrence); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return err
+			}
 		case *events.RenderGateCompletedEvent:
 			c.settleCurrentFiles(generation, e)
 		}
@@ -240,9 +252,9 @@ func (c *Coordinator) settleCurrentFiles(generation uint64, event *events.Render
 }
 
 // handleReconciliationTriggered orchestrates a reconciliation cycle.
-func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *events.ReconciliationTriggeredEvent, generation uint64) {
+func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *events.ReconciliationTriggeredEvent, generation uint64) *rendercycle.Occurrence {
 	if context.Cause(ctx) != nil {
-		return
+		return nil
 	}
 	startTime := time.Now()
 	correlationID := event.CorrelationID()
@@ -261,14 +273,14 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 			source, err := exact.ExactSource(generation)
 			if err != nil {
 				c.handlePipelineFailure(ctx, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: err}, event, startTime)
-				return
+				return nil
 			}
 			renderOpts = append(renderOpts, rendercontext.WithCurrentAuxFilesSource(source))
 		} else {
 			currentFiles, err := c.currentFiles.Snapshot(generation)
 			if err != nil {
 				c.handlePipelineFailure(ctx, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: err}, event, startTime)
-				return
+				return nil
 			}
 			renderOpts = append(renderOpts, rendercontext.WithCurrentAuxFiles(currentFiles))
 		}
@@ -278,29 +290,29 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 		c.logger.Debug("Discarding reconciliation result after authority expired",
 			"cause", cause,
 			"correlation_id", correlationID)
-		return
+		return nil
 	}
 	if err != nil {
 		c.handlePipelineFailure(ctx, err, event, startTime)
-		return
+		return nil
 	}
 	if result == nil {
 		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
 			Phase: pipeline.PhaseRender,
 			Cause: errors.New("pipeline returned no result"),
 		}, event, startTime)
-		return
+		return nil
 	}
 	if err := c.acceptCurrentFiles(generation, result); err != nil {
 		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
 			Phase: pipeline.PhaseRender,
 			Cause: err,
 		}, event, startTime)
-		return
+		return nil
 	}
 
 	// Pipeline succeeded - publish events for downstream components
-	c.handlePipelineSuccess(ctx, result, event, startTime)
+	return c.handlePipelineSuccess(ctx, result, event, startTime)
 }
 
 func (c *Coordinator) acceptCurrentFiles(generation uint64, result *pipeline.PipelineResult) error {
@@ -326,16 +338,16 @@ func (c *Coordinator) handlePipelineSuccess(
 	result *pipeline.PipelineResult,
 	triggerEvent *events.ReconciliationTriggeredEvent,
 	startTime time.Time,
-) {
+) *rendercycle.Occurrence {
 	if context.Cause(ctx) != nil {
-		return
+		return nil
 	}
 	if result.CycleSnapshot == nil {
 		c.handlePipelineFailure(ctx, &pipeline.PipelineError{
 			Phase: pipeline.PhaseRender,
 			Cause: errors.New("pipeline returned no authenticated render cycle"),
 		}, triggerEvent, startTime)
-		return
+		return nil
 	}
 	coalescible := triggerEvent.Coalescible()
 
@@ -345,7 +357,7 @@ func (c *Coordinator) handlePipelineSuccess(
 			Phase: pipeline.PhaseRender,
 			Cause: fmt.Errorf("reading render cycle status patches: %w", err),
 		}, triggerEvent, startTime)
-		return
+		return nil
 	}
 	c.lastStatusPatches = nil
 	c.lastStatusPatchSnapshot = statusSnapshot
@@ -359,7 +371,7 @@ func (c *Coordinator) handlePipelineSuccess(
 			Phase: pipeline.PhaseRender,
 			Cause: fmt.Errorf("building rendered cycle event: %w", err),
 		}, triggerEvent, startTime)
-		return
+		return nil
 	}
 	occurrence, err := templateEvent.RenderOccurrence()
 	if err != nil {
@@ -367,7 +379,7 @@ func (c *Coordinator) handlePipelineSuccess(
 			Phase: pipeline.PhaseRender,
 			Cause: fmt.Errorf("reading rendered occurrence: %w", err),
 		}, triggerEvent, startTime)
-		return
+		return nil
 	}
 
 	totalDuration := time.Since(startTime).Milliseconds()
@@ -379,10 +391,10 @@ func (c *Coordinator) handlePipelineSuccess(
 			Phase: pipeline.PhaseRender,
 			Cause: fmt.Errorf("building reconciliation cycle event: %w", err),
 		}, triggerEvent, startTime)
-		return
+		return nil
 	}
 	if context.Cause(ctx) != nil {
-		return
+		return nil
 	}
 	c.eventBus.Publish(templateEvent)
 
@@ -404,6 +416,7 @@ func (c *Coordinator) handlePipelineSuccess(
 		"total_ms", totalDuration,
 		"cache_state", result.CacheState,
 		"cache_build_ms", result.CacheBuildMs)
+	return occurrence
 }
 
 // handlePipelineFailure publishes phase-specific failure events followed by ReconciliationFailedEvent.
