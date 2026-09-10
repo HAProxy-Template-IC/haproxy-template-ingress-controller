@@ -146,5 +146,7 @@ for plugin in "${PLUGINS[@]}"; do
 done
 echo "OK: every bundled plugin (${PLUGINS[*]}) reported loaded"
 
+bash "$(dirname "${BASH_SOURCE[0]}")/test-spoa-reload.sh" "$IMAGE"
+
 echo
 echo "PASS - smoke test for ${IMAGE}"

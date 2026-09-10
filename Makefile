@@ -2,7 +2,7 @@
         test test-integration test-agent-docker test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance test-helm-defaults build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined bench bench-gateway-api \
         build check-source-hash docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
-        spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
+        spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check test-spoa-reload \
         tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
         release goreleaser-snapshot \
         pgo-profile pgo-merge \
@@ -288,6 +288,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 		scripts/tests/test_analyze_gateway_api_resources.py \
 		scripts/tests/test_analyze_gateway_api_supervisor_logs.py
 	bash scripts/tests/test_bench_gateway_api.sh
+	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
 	@# No coverage flags here: instrumenting the module for coverage costs a
 	@# further 3.2x on top of -race (measured on the renderer chart-scale
@@ -583,8 +584,8 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run
 	@# CI sets SKIP_DOCKER_BUILD=1 and pre-tags from the registry-pulled image,
 	@# so this re-tag is a no-op there.
 	docker tag haptic:test haptic:test-haproxy$(HAPROXY_VERSION)
-	@if { [ "$(HAPTIC_E2E_PROFILE)" = "rate-limit" ] || [ "$(HAPTIC_E2E_PROFILE)" = "api-gateway" ]; } && [ -z "$(SPOA_TAG)" ]; then \
-		echo "$(HAPTIC_E2E_PROFILE) e2e profile without SPOA_TAG: building local spoa-hub:dev image"; \
+	@if [ -z "$(SPOA_TAG)" ]; then \
+		echo "No SPOA_TAG: building local spoa-hub:dev from versions-spoa.env"; \
 		$(MAKE) spoa-hub-image; \
 	fi
 	@cluster_name="$${HAPTIC_E2E_CLUSTER_NAME:-haptic-e2e}"; \
@@ -894,6 +895,9 @@ spoa-hub-image: spoa-prep ## Build spoa-hub image locally (single-arch amd64, ta
 		-t spoa-hub:dev \
 		.
 	@echo "Built spoa-hub:dev"
+
+test-spoa-reload: $(if $(SPOA_RELOAD_IMAGE),,spoa-hub-image) ## Verify removing Coraza never unloads its embedded runtime
+	bash scripts/test-spoa-reload.sh $(or $(SPOA_RELOAD_IMAGE),spoa-hub:dev)
 
 ## Dependency management
 
