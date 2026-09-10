@@ -100,17 +100,12 @@ func (s *DeploymentScheduler) handleRenderGateCompleted(ctx context.Context, eve
 
 	s.mu.Lock()
 	wasPinned := s.gatePinned
-	// The bus delivers a render before its verdict (the gate learns of the
-	// render from the same event), so the only way this misses is a dropped
-	// render — and then the drift pass produces a fresh one within its
-	// interval, which the gate judges in turn. Matched by plan, not by
-	// occurrence: a reconcile loop re-renders a refused plan once per pass,
-	// and each verdict speaks for every occurrence of that content.
+	// Newest is the gate's snapshot; a newer render can reach us before its verdict.
 	namesHeldRender := samePlan(s.lastRenderedOccurrence, occurrence)
 	alreadyDispatched := samePlan(s.lastValidatedOccurrence, occurrence)
 	if !namesHeldRender && !alreadyDispatched {
 		s.mu.Unlock()
-		s.logger.Error("Ignoring a render gate verdict that does not match scheduler state", "plan", identity.planID)
+		s.logger.Debug("Ignoring a render gate verdict superseded in scheduler", "plan", identity.planID)
 		return
 	}
 	if !event.OK {

@@ -68,6 +68,7 @@ Notable details:
 
 - The scheduler only deploys when it has *all three* inputs: a rendered config, a successful validation, and at least one discovered HAProxy endpoint. Partial state waits.
 - "Latest wins" is a single slot — concurrent changes don't queue up as a FIFO, they coalesce to the most recent one. One deployment is in flight at a time, which is the whole rate limit: reload pacing belongs to the agent, so an apply that needs no reload is not held back.
+- A gate verdict can become stale before delivery even when it was newest at the gate. The scheduler checks it against its held and dispatched render content before changing the latch, accepted render, or pending deployment. A stale verdict is debug-level tracing; an unauthenticated verdict remains an error.
 - `DeploymentCompletedEvent.Succeeded` counts the pods *running* the render, not the pods whose apply was accepted. A pod whose paced reload is still scheduled is neither converged nor failed.
 - The `DeploymentCompletedEvent` matching the active deployment ID closes the scheduler's in-progress flag. Every completion resets the drift monitor's idle timer, which is why the event is on the feedback edge in the diagram.
 - `deploymentTimeout` is a safety net, not an operational target — hitting it means a lost completion event or a stuck apply, both of which are bugs to investigate.
