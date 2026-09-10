@@ -208,7 +208,7 @@ func TestPublishConfig_StaleCleanupCannotDeleteNewPublication(t *testing.T) {
 	require.NoError(t, err)
 
 	err = publisher.pruneAuxiliaryFiles(ctx, staleRuntimeConfig, staleResult)
-	require.ErrorContains(t, err, "superseded; skip stale cleanup")
+	require.ErrorContains(t, err, "publication was superseded; publish the current output")
 	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
 		Get(ctx, initialResult.MapFileNames[1], metav1.GetOptions{})
 	require.NoError(t, err)
@@ -282,7 +282,7 @@ func TestPublishConfig_ReportsIncompleteAuxiliaryPublication(t *testing.T) {
 func TestPublishConfig_RetriesIncompleteAuxiliaryReferences(t *testing.T) {
 	ctx, _, crdClient, publisher := newTestPublisher(t)
 	statusFailures := 1
-	crdClient.PrependReactor("update", "haproxycfgs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+	crdClient.PrependReactor("patch", "haproxycfgs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		if action.GetSubresource() != statusSubresource || statusFailures == 0 {
 			return false, nil, nil
 		}
@@ -314,7 +314,7 @@ func TestPublishConfig_RetriesIncompleteAuxiliaryReferences(t *testing.T) {
 func TestPublishConfig_RetriesValidationStatusWithUnchangedChecksum(t *testing.T) {
 	ctx, _, crdClient, publisher := newTestPublisher(t)
 	statusFailures := 1
-	crdClient.PrependReactor("update", "haproxycfgs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+	crdClient.PrependReactor("patch", "haproxycfgs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		if action.GetSubresource() != statusSubresource || statusFailures == 0 {
 			return false, nil, nil
 		}

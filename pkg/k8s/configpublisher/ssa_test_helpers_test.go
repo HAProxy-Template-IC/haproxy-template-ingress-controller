@@ -17,6 +17,7 @@ package configpublisher
 import (
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -45,6 +46,7 @@ import (
 // Test-only: stripped from any binary that imports this package outside
 // `go test`.
 func installSSAListMapMergeReactor(c *fake.Clientset) {
+	installRuntimeUIDReactor(c)
 	c.PrependReactor("patch", "*", func(action testing.Action) (bool, runtime.Object, error) {
 		pa, ok := action.(testing.PatchAction)
 		if !ok {
@@ -90,6 +92,17 @@ func installSSAListMapMergeReactor(c *fake.Clientset) {
 			return true, nil, fmt.Errorf("ssa reactor: tracker update: %w", err)
 		}
 		return true, existing, nil
+	})
+}
+
+func installRuntimeUIDReactor(c *fake.Clientset) {
+	var sequence atomic.Uint64
+	c.PrependReactor("create", "haproxycfgs", func(action testing.Action) (bool, runtime.Object, error) {
+		object := action.(testing.CreateAction).GetObject().(*haproxyv1alpha1.HAProxyCfg)
+		if object.UID == "" {
+			object.UID = types.UID(fmt.Sprintf("runtime-uid-%d", sequence.Add(1)))
+		}
+		return false, nil, nil
 	})
 }
 

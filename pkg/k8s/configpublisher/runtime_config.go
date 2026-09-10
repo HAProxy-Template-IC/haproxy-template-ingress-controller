@@ -143,15 +143,7 @@ func (p *Publisher) createRuntimeConfig(ctx context.Context, req *PublishRequest
 // updateValidationErrorStatus sets or clears the ValidationError on a HAProxyCfg status.
 // Called only on validation error state transitions (ok→error or error→ok).
 func (p *Publisher) updateValidationErrorStatus(ctx context.Context, cfg *haproxyv1alpha1.HAProxyCfg, validationError string) error {
-	cfg.Status.ValidationError = validationError
-
-	_, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs(cfg.Namespace).
-		UpdateStatus(ctx, cfg, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("updating validation error status: %w", err)
-	}
-	return nil
+	return p.patchRuntimeConfigStatusField(ctx, cfg, cfg, "validationError", validationError)
 }
 
 // updateRuntimeConfig updates an existing HAProxyCfg resource.
@@ -190,7 +182,7 @@ func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest
 }
 
 // updateRuntimeConfigStatus updates the HAProxyCfg status with child resource references.
-// Skips the UpdateStatus API call if the references are unchanged.
+// Unchanged references still require the same publication identity.
 func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, result *PublishResult) error {
 	// Get the latest version
 	current, err := p.crdClient.HaproxyTemplateICV1alpha1().
@@ -199,6 +191,9 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 	if err != nil {
 		return fmt.Errorf("getting runtime config: %w", err)
 	}
+	if err := validateRuntimePublication(runtimeConfig, current); err != nil {
+		return err
+	}
 
 	newAux := buildAuxiliaryFileReferences(
 		runtimeConfig.Namespace,
@@ -206,7 +201,6 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 		runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey],
 	)
 
-	// Skip UpdateStatus if nothing changed
 	if auxiliaryRefsEqual(current.Status.AuxiliaryFiles, newAux) {
 		p.logger.Debug("Skipping HAProxyCfg status update, references unchanged",
 			"name", current.Name,
@@ -214,17 +208,7 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 		return nil
 	}
 
-	// Apply changes
-	current.Status.AuxiliaryFiles = newAux
-
-	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs(runtimeConfig.Namespace).
-		UpdateStatus(ctx, current, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("updating status: %w", err)
-	}
-
-	return nil
+	return p.patchRuntimeConfigStatusField(ctx, runtimeConfig, current, "auxiliaryFiles", newAux)
 }
 
 // buildAuxiliaryFileReferences constructs an AuxiliaryFileReferences from a PublishResult.
