@@ -18,7 +18,6 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="$REPO/charts/haptic"
-VECTOR_IMAGE="${VECTOR_IMAGE:-timberio/vector:0.57.0-debian}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -39,7 +38,12 @@ python3 - "$WORK" <<'PY' || exit 1
 import json, pathlib, sys, yaml
 work = pathlib.Path(sys.argv[1])
 tpl = None
+vector_images = set()
 for d in yaml.safe_load_all((work / "render.yaml").read_text()):
+    if d and d.get("kind") == "Deployment":
+        for container in d["spec"]["template"]["spec"].get("containers", []):
+            if container.get("name") == "vector":
+                vector_images.add(container.get("image"))
     # Either kind: the transform lives in its own snippet so Helm can drop it
     # when no OTLP endpoint is set, and template content now ships on
     # HAProxyTemplateLibrary objects (ADR-0017) while a config may still carry
@@ -48,6 +52,9 @@ for d in yaml.safe_load_all((work / "render.yaml").read_text()):
         snip = (d.get("spec", {}).get("templateSnippets") or {}).get("vector-span-transform")
         if snip:
             tpl = snip["template"]
+if len(vector_images) != 1 or not all(isinstance(image, str) and image for image in vector_images):
+    sys.exit("rendered chart must select exactly one nonempty Vector image")
+(work / "vector-image").write_text(next(iter(vector_images)))
 if tpl is None:
     sys.exit("no HAProxyTemplateConfig or HAProxyTemplateLibrary carries the "
              "vector-span-transform snippet")
@@ -120,6 +127,11 @@ cases = {
 (work / "names.json").write_text(json.dumps(list(cases)))
 PY
 
+CHART_VECTOR_IMAGE="$(<"$WORK/vector-image")"
+if [[ -n "${VECTOR_IMAGE:-}" && "$VECTOR_IMAGE" != "$CHART_VECTOR_IMAGE" ]]; then
+  fail "VECTOR_IMAGE=$VECTOR_IMAGE differs from the chart's $CHART_VECTOR_IMAGE; unset VECTOR_IMAGE"
+fi
+VECTOR_IMAGE="$CHART_VECTOR_IMAGE"
 info "running the VRL under $VECTOR_IMAGE"
 # The program goes in as an argv element and the records on stdin, deliberately
 # NOT as a bind mount. Under GitLab's docker:dind the daemon is a separate

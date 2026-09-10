@@ -2055,6 +2055,9 @@ test-vector-spans:
     - changes:
         - charts/haptic/charts/vector/library.yaml
         - charts/haptic/charts/base/library.yaml
+        - charts/haptic/values.yaml
+        - charts/haptic/templates/_vector.tpl
+        - charts/haptic/templates/haproxy-deployment.yaml
         - scripts/test-vector-spans.sh
         - .gitlab-ci.yml
   script:
