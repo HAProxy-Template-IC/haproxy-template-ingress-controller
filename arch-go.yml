@@ -92,7 +92,7 @@ dependenciesRules:
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"
 
-  # Rule 7: templating package should NOT depend on other top-level packages
+  # Rule 7: templating may use the domain-free persistent container, not domain packages
   - package: "**.pkg.templating.**"
     shouldNotDependsOn:
       internal:
@@ -104,7 +104,6 @@ dependenciesRules:
         - "**.pkg.incremental.**"
         - "**.pkg.introspection.**"
         - "**.pkg.k8s.**"
-        - "**.pkg.persistenttree.**"
         - "**.pkg.rendercontent.**"
         - "**.pkg.webhook.**"
 

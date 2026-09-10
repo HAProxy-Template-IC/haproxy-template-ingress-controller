@@ -108,3 +108,43 @@ func TestSnapshotsApplyOnlyWhatChangedSinceTheLastOne(t *testing.T) {
 	sixth := apply(t, deltaPatch("alpha", "1", "a"), deltaPatch("beta", "2", "b3"), deltaPatch("gamma", "1", "g"))
 	assert.Equal(t, 3, sixth.AppliedCount, "a new term starts from the whole snapshot")
 }
+
+func TestRetriesUseOnlyTheCurrentSnapshot(t *testing.T) {
+	failed := deltaPatch("beta", "1", "old")
+	otherPhase := deltaPatch("beta", "1", "deployed")
+	otherPhase.Variants = map[string]map[string]any{"deployed": {"owner": "deployed"}}
+	stable := deltaPatch("alpha", "1", "stable")
+	tests := []struct {
+		name    string
+		current []templating.StatusPatch
+		want    []string
+	}{
+		{"removed target", []templating.StatusPatch{stable}, nil},
+		{"removed phase", []templating.StatusPatch{stable, otherPhase}, nil},
+		{"empty snapshot", nil, nil},
+		{"unchanged failed target", []templating.StatusPatch{stable, failed}, []string{"beta"}},
+		{"new failed target revision", []templating.StatusPatch{stable, deltaPatch("beta", "2", "new")}, []string{"beta"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bus := testutil.NewTestBus()
+			client := newFakeDynamicClientWithPatchSuccess()
+			comp := newTestComponent(bus, client, newTestResolver())
+			setLeader(comp)
+			previous := newTestStatusPatchSnapshotFromPatches(t, []templating.StatusPatch{stable, failed})
+			comp.rememberAppliedPhase(events.StatusPatchPhaseRendered, previous, []templating.StatusPatch{failed})
+			current := newTestStatusPatchSnapshotFromPatches(t, test.current)
+			comp.applyStatusPatchSet(context.Background(), nil, current, events.StatusPatchPhaseRendered)
+			var sent []string
+			for _, action := range client.Actions() {
+				if action.GetVerb() == "patch" {
+					sent = append(sent, patchedNames(t, action))
+				}
+			}
+			assert.ElementsMatch(t, test.want, sent)
+			snapshot, retries := comp.takeAppliedPhase(events.StatusPatchPhaseRendered)
+			assert.Same(t, current, snapshot)
+			assert.Empty(t, retries)
+		})
+	}
+}

@@ -29,9 +29,9 @@ Modify this package when:
 
 ### Pure Library
 
-This is a **pure library** with zero dependencies on other pkg/ packages. It could be extracted and used in any Go project needing templating.
+This is a **pure library** with no controller or Kubernetes dependencies. Its status projection index uses the domain-free immutable container in `pkg/persistenttree`.
 
-Dependencies: Scriggo fork (from `gitlab.com/haproxy-haptic/scriggo`) and standard library.
+Dependencies: Scriggo fork (from `gitlab.com/haproxy-haptic/scriggo`), `pkg/persistenttree`, and standard library.
 
 ### Resource-Agnostic Functions (RULE #1)
 

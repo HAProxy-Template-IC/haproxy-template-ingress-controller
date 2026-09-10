@@ -17,17 +17,14 @@ package templating
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	projection "gitlab.com/haproxy-haptic/haptic/pkg/templating/internal/statuspatchprojection"
 )
 
-// ChangedPatchesForPhase materializes the patches of phase that previous did
-// not carry in the same form: a patch previous lacks, a patch whose lineage,
-// source or variants differ, and a projected patch whose projection is not the
-// one previous replayed. A snapshot reused from previous changes nothing, and
-// with no previous every patch is a change. The applier only ever needs these,
-// and materializing every patch of a fleet-sized snapshot per deployment was
-// most of its cost.
+// ChangedPatchesForPhase materializes current patches whose contributions changed.
+// A nil previous selects everything; removed contributions may expose older variants.
 func (s *StatusPatchSnapshot) ChangedPatchesForPhase(previous *StatusPatchSnapshot, phase string) ([]StatusPatch, error) {
 	if phase == "" {
 		return nil, errors.New("statusPatch snapshot phase is empty")
@@ -73,19 +70,25 @@ func (c *StatusPatchCollector) materializeChangedLocked(
 		if before != nil && sameFrozenCollectedStatusPatch(patch, c, before, previous) {
 			continue
 		}
-		// Only a patch about to be materialized has its digests recomputed;
-		// an unchanged one carries the digests its frozen predecessor was
-		// sealed with.
+		// Unchanged patches retain their frozen predecessor's authenticated digests.
 		if patch.sourceDigest != statusPatchSourceDigest(patch.SourceTemplate, patch.SourceLine) ||
 			patch.lineageDigest != statusPatchLineageDigest(patch.UID, patch.ResourceVersion) {
 			return nil, fmt.Errorf("statusPatch: patch %d has invalid provenance", index)
 		}
 		changed[key] = true
 	}
+	for _, key := range previous.order {
+		if c.patches[key] == nil {
+			changed[key] = true
+		}
+	}
 	if err := c.markChangedProjectionsLocked(previous, changed); err != nil {
 		return nil, err
 	}
+	return c.materializeSelectedLocked(changed, phase)
+}
 
+func (c *StatusPatchCollector) materializeSelectedLocked(changed map[statusPatchIdentity]bool, phase string) ([]StatusPatch, error) {
 	result, err := c.materializeKeysLocked(changed, phase)
 	if err != nil || c.projectionPlan == nil {
 		return result, err
@@ -95,17 +98,26 @@ func (c *StatusPatchCollector) materializeChangedLocked(
 		patch := &result[index]
 		resultByKey[newStatusPatchIdentity(patch.Namespace, patch.Name, patch.APIVersion, patch.Kind)] = index
 	}
-	err = c.projectionPlan.visitPatches(func(_ *StatusPatchProjection, projected projection.PatchView) error {
-		key, err := projectedIdentity(projected)
-		if err != nil || !changed[key] {
-			return err
+	var projectedPatches []projection.PlanPatch
+	for key := range changed {
+		if err := c.projectionPlan.visitTargetPatches(key, func(patch projection.PlanPatch) error {
+			projectedPatches = append(projectedPatches, patch)
+			return nil
+		}); err != nil {
+			return nil, err
 		}
-		var mergeErr error
-		result, mergeErr = mergeProjectedStatusPatch(result, resultByKey, projected, phase)
-		return mergeErr
+	}
+	slices.SortFunc(projectedPatches, func(left, right projection.PlanPatch) int {
+		if order := strings.Compare(left.EntryKey, right.EntryKey); order != 0 {
+			return order
+		}
+		return left.Position - right.Position
 	})
-	if err != nil {
-		return nil, err
+	for _, patch := range projectedPatches {
+		result, err = mergeProjectedStatusPatch(result, resultByKey, patch.View, phase)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -122,6 +134,10 @@ func (c *StatusPatchCollector) materializeKeysLocked(
 			continue
 		}
 		patch := c.patches[key]
+		if patch == nil || patch.owner != c || patch.Namespace != key.namespace || patch.Name != key.name ||
+			patch.APIVersion != key.apiVersion || patch.Kind != key.kind || !collectedStatusPatchDigestsValid(patch) {
+			return nil, errors.New("statusPatch: selected patch has invalid provenance")
+		}
 		variants, err := c.materializePatchVariantsLocked(key, patch, phase)
 		if err != nil {
 			return nil, err
@@ -138,43 +154,30 @@ func (c *StatusPatchCollector) materializeKeysLocked(
 	return result, nil
 }
 
-// markChangedProjectionsLocked adds to changed every target of the projection
-// plan whose projected patch is not the one previous replayed for it. When
-// both replays are the same plan on the same root nothing differs; otherwise
-// a target whose patch is the same patch of the same projection root is
-// unchanged, and one previous did not project is a change. Caller holds c.mu.
+// Removed contributions can expose a direct patch or an earlier projected variant.
 func (c *StatusPatchCollector) markChangedProjectionsLocked(
 	previous *StatusPatchCollector,
 	changed map[statusPatchIdentity]bool,
 ) error {
-	if c.projectionPlan == nil || exactStatusPatchProjectionPlanReplays(c.projectionPlan, previous.projectionPlan) {
+	if exactStatusPatchProjectionPlanReplays(c.projectionPlan, previous.projectionPlan) {
 		return nil
 	}
-	before := map[statusPatchIdentity]projection.PatchView{}
-	if previous.projectionPlan != nil {
-		err := previous.projectionPlan.visitPatches(func(_ *StatusPatchProjection, projected projection.PatchView) error {
-			key, err := projectedIdentity(projected)
-			if err != nil {
-				return err
-			}
-			before[key] = projected
+	if c.projectionPlan != nil && previous.projectionPlan != nil {
+		return c.projectionPlan.visitChangedTargets(previous.projectionPlan, func(key statusPatchIdentity) error {
+			changed[key] = true
 			return nil
 		})
-		if err != nil {
-			return err
-		}
 	}
-	return c.projectionPlan.visitPatches(func(_ *StatusPatchProjection, projected projection.PatchView) error {
+	plan := c.projectionPlan
+	if plan == nil {
+		plan = previous.projectionPlan
+	}
+	return plan.visitPatches(func(_ *StatusPatchProjection, projected projection.PatchView) error {
 		key, err := projectedIdentity(projected)
 		if err != nil {
 			return err
 		}
-		if changed[key] {
-			return nil
-		}
-		if earlier, projectedBefore := before[key]; !projectedBefore || !projected.Same(earlier) {
-			changed[key] = true
-		}
+		changed[key] = true
 		return nil
 	})
 }

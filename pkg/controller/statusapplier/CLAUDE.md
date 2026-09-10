@@ -44,14 +44,16 @@ There is no `cachedPatches` field or any other side-channel cache. Public
 fields on success events are compatibility or diagnostic shadows. Mutating
 them cannot change the authenticated occurrence the applier consumes.
 
-The one thing the applier keeps per phase (`Component.applied`) is the
-snapshot it last applied and the patches of it that failed to reach the
-apiserver. The next snapshot of the phase applies
-`ChangedPatchesForPhase(previous, phase)` plus those retries, so a fleet-sized
-render costs the applier its changed patches, not every patch. The previous
-snapshot only narrows what is re-sent; every patch that is sent comes from
-the event's own authenticated snapshot, which is what keeps the `cachedPatches`
-race below impossible. A new leader term starts without a previous snapshot.
+Per phase, `Component.applied` keeps the last snapshot and failed target
+identities. Shared immutable index nodes let `ChangedPatchesForPhase` find
+changed contributions without replaying every projected patch, including
+when the applier skips render cycles. Removing a contribution also selects
+that target: an earlier contribution may now supply its effective patch.
+
+Retries are selected from the event's current snapshot, never from retained
+payloads. Removed targets and missing phase variants aren't retried. An empty
+snapshot clears failed targets. A new leader term starts without a previous
+snapshot and applies the complete set.
 
 ### Why this matters
 

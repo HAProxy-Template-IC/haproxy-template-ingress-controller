@@ -425,6 +425,7 @@ func (c *Component) applyStatusPatchSet(
 		return
 	}
 	if count == 0 {
+		c.rememberAppliedPhase(phase, snapshot, nil)
 		return
 	}
 	previous, retries := c.takeAppliedPhase(phase)
@@ -433,7 +434,12 @@ func (c *Component) applyStatusPatchSet(
 		c.rejectStatusPatchSnapshot(err)
 		return
 	}
-	failed := c.applyVariant(ctx, mergeRetries(phasePatches, retries), phase)
+	retryPatches, err := snapshot.PatchesForPhaseTargets(string(phase), retries)
+	if err != nil {
+		c.rejectStatusPatchSnapshot(err)
+		return
+	}
+	failed := c.applyVariant(ctx, mergeRetries(phasePatches, retryPatches), phase)
 	c.rememberAppliedPhase(phase, snapshot, failed)
 }
 
@@ -580,26 +586,21 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	return failed
 }
 
-// appliedPhase is what one phase last applied: the snapshot, and the patches
-// of it that did not reach the apiserver.
 type appliedPhase struct {
 	snapshot *templating.StatusPatchSnapshot
-	failed   map[string]templating.StatusPatch
+	failed   map[templating.StatusPatchTarget]struct{}
 }
 
-// takeAppliedPhase returns the snapshot last applied for phase and the
-// patches still to retry, or nil and nothing on the first application of a
-// term. Caller holds no lock.
-func (c *Component) takeAppliedPhase(phase events.StatusPatchPhase) (*templating.StatusPatchSnapshot, []templating.StatusPatch) {
+func (c *Component) takeAppliedPhase(phase events.StatusPatchPhase) (*templating.StatusPatchSnapshot, []templating.StatusPatchTarget) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	last := c.applied[phase]
 	if last == nil {
 		return nil, nil
 	}
-	retries := make([]templating.StatusPatch, 0, len(last.failed))
+	retries := make([]templating.StatusPatchTarget, 0, len(last.failed))
 	for key := range last.failed {
-		retries = append(retries, last.failed[key])
+		retries = append(retries, key)
 	}
 	return last.snapshot, retries
 }
@@ -614,29 +615,23 @@ func (c *Component) rememberAppliedPhase(
 	if c.applied == nil {
 		c.applied = make(map[events.StatusPatchPhase]*appliedPhase)
 	}
-	byKey := make(map[string]templating.StatusPatch, len(failed))
+	byKey := make(map[templating.StatusPatchTarget]struct{}, len(failed))
 	for index := range failed {
-		byKey[statusPatchKey(&failed[index])] = failed[index]
+		byKey[failed[index].Target()] = struct{}{}
 	}
 	c.applied[phase] = &appliedPhase{snapshot: snapshot, failed: byKey}
 }
 
-func statusPatchKey(patch *templating.StatusPatch) string {
-	return patch.Namespace + "/" + patch.Name + "/" + patch.APIVersion + "/" + patch.Kind
-}
-
-// mergeRetries appends the retried patches whose resource is not already in
-// changed, which carries the newer version when both have one.
 func mergeRetries(changed, retries []templating.StatusPatch) []templating.StatusPatch {
 	if len(retries) == 0 {
 		return changed
 	}
-	present := make(map[string]struct{}, len(changed))
+	present := make(map[templating.StatusPatchTarget]struct{}, len(changed))
 	for index := range changed {
-		present[statusPatchKey(&changed[index])] = struct{}{}
+		present[changed[index].Target()] = struct{}{}
 	}
 	for index := range retries {
-		if _, exists := present[statusPatchKey(&retries[index])]; !exists {
+		if _, exists := present[retries[index].Target()]; !exists {
 			changed = append(changed, retries[index])
 		}
 	}
