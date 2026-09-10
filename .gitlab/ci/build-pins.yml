@@ -83,7 +83,6 @@ variables:
   CHART_TESTING_IMAGE: "quay.io/helmpack/chart-testing:v3.14.0@sha256:425ff3058dfc192fffb94e471e732b9bc995c375df963eba417ff01aea594e83"
   HELM_UNITTEST_IMAGE: "helmunittest/helm-unittest:4.2.3-1.1.2@sha256:e9909f7bc32be541c5ed2f3303badbb2633ffa926566aeac386c946288164d2d"
   KUBECONFORM_IMAGE: "ghcr.io/yannh/kubeconform:v0.8.0-alpine@sha256:6b90a5f23d846140ce0194fe050b1995e546eba938f3a6bf10c039dd5e24588f"
-  VECTOR_IMAGE: "timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39"
   VARNISH_FIXTURE_IMAGE: "varnish:9.0@sha256:4c27969e671ef7ca9110072ba298fb4a53027ddf244266adfa46df0f722f88c1"
   VALKEY_FIXTURE_IMAGE: "valkey/valkey:9.1.1-alpine@sha256:ee91f7a174ac4d6a6b0685b3a60e321f0a9dbbb691f9b0e285be2ba1d1be8328"
   NGINX_FIXTURE_IMAGE: "nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752"
