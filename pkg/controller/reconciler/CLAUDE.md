@@ -37,6 +37,12 @@ ReconciliationTriggeredEvent → Coordinator
 
 The Reconciler triggers a `ReconciliationTriggeredEvent` immediately on every event it handles — isolated changes and bursts alike. It holds no timer and keeps no refractory state. Coalescing of rapid changes is the per-watcher debounce window's job (each watcher emits one `ResourceIndexUpdatedEvent` per quiet window); reload throttling is the deployer's job. The reconciler itself adds zero latency, which is what keeps a single ingress flip and a rolling-restart EndpointSlice rotation both fast.
 
+The leader-only Coordinator drains its subscription into an intake mailbox while
+rendering. Each uninterrupted trigger run keeps its first forced trigger, or its
+latest ordinary trigger. Render-gate verdicts remain ordered boundaries: triggers
+after a verdict render only after its current-file baseline has settled. The
+mailbox stops and releases its pending events when that leadership term ends.
+
 ### Index Synchronized (Immediate)
 
 ```

@@ -56,14 +56,7 @@ const (
 	// CoordinatorComponentName is the unique identifier for the ReconciliationCoordinator.
 	CoordinatorComponentName = "reconciliation-coordinator"
 
-	// CoordinatorEventBufferSize is the size of the event subscription buffer.
-	// ReconciliationTriggeredEvents are tiny (a reason string + correlation),
-	// so a large buffer is cheap, and it must be large: under churn the
-	// Reconciler fires one trigger per resource change and a StandardSubscriber-
-	// Buffer (50) overflows, dropping triggers (and thus renders). The Start
-	// loop drains this buffer to a single trigger per render (coalesceQueuedTriggers),
-	// so it only ever needs to hold the triggers that arrive during one
-	// render+validate cycle.
+	// CoordinatorEventBufferSize bounds transport to the independently drained mailbox.
 	CoordinatorEventBufferSize = busevents.ResourceChurnSubscriberBuffer
 )
 
@@ -188,38 +181,23 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	// re-acquisition on the same instance would stack another subscription
 	// whose orphaned channel fills up and logs critical drops forever.
 	defer c.eventBus.UnsubscribeTyped(c.eventChan)
+	mailbox := newCoordinatorMailbox(ctx, c.eventChan)
+	defer mailbox.stop()
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	c.MarkReady()
 
 	c.logger.Debug("Reconciliation coordinator starting")
 
-	var pending busevents.Event
 	for {
-		var event busevents.Event
-		if pending != nil {
-			select {
-			case <-ctx.Done():
-				c.logger.Info("Reconciliation coordinator shutting down", "reason", ctx.Err())
-				return nil
-			default:
-			}
-			event = pending
-			pending = nil
-		} else {
-			select {
-			case event = <-c.eventChan:
-			case <-ctx.Done():
-				c.logger.Info("Reconciliation coordinator shutting down", "reason", ctx.Err())
-				return nil
-			}
+		event, ok := mailbox.next(ctx)
+		if !ok {
+			c.logger.Info("Reconciliation coordinator shutting down", "reason", ctx.Err())
+			return nil
 		}
 
 		switch e := event.(type) {
 		case *events.ReconciliationTriggeredEvent:
-			var boundary busevents.Event
-			e, boundary = c.coalesceQueuedTriggers(e)
-			pending = boundary
 			c.handleReconciliationTriggered(ctx, e, generation)
 		case *events.RenderGateCompletedEvent:
 			c.settleCurrentFiles(generation, e)
@@ -259,50 +237,6 @@ func (c *Coordinator) settleCurrentFiles(generation uint64, event *events.Render
 	if err != nil {
 		c.logger.Error("currentFiles could not settle render output", "error", err)
 	}
-}
-
-// coalesceQueuedTriggers collapses one uninterrupted trigger run and returns
-// the first different event as the event loop's ordering boundary.
-func (c *Coordinator) coalesceQueuedTriggers(
-	first *events.ReconciliationTriggeredEvent,
-) (*events.ReconciliationTriggeredEvent, busevents.Event) {
-	latest := first
-	var forced *events.ReconciliationTriggeredEvent // first non-coalescible seen, if any
-	if !first.Coalescible() {
-		forced = first
-	}
-	drained := 0
-	for {
-		select {
-		case ev := <-c.eventChan:
-			t, ok := ev.(*events.ReconciliationTriggeredEvent)
-			if !ok {
-				return c.finishTriggerCoalescing(latest, forced, drained, ev)
-			}
-			drained++
-			latest = t
-			if forced == nil && !t.Coalescible() {
-				forced = t
-			}
-		default:
-			return c.finishTriggerCoalescing(latest, forced, drained, nil)
-		}
-	}
-}
-
-func (c *Coordinator) finishTriggerCoalescing(
-	latest *events.ReconciliationTriggeredEvent,
-	forced *events.ReconciliationTriggeredEvent,
-	drained int,
-	boundary busevents.Event,
-) (*events.ReconciliationTriggeredEvent, busevents.Event) {
-	if drained > 0 {
-		c.logger.Debug("coalesced queued reconciliation triggers", "drained", drained)
-	}
-	if forced != nil {
-		return forced, boundary
-	}
-	return latest, boundary
 }
 
 // handleReconciliationTriggered orchestrates a reconciliation cycle.

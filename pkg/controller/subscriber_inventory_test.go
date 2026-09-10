@@ -107,7 +107,8 @@ var subscriberInventory = map[string]mailboxDecision{
 	},
 	"reconciler": {
 		mailbox: false,
-		why:     "publishes a trigger and returns; the coordinator absorbs the burst",
+		why: "the trigger publisher returns immediately; the leader-only coordinator " +
+			"uses its own intake mailbox to preserve gate boundaries and forced triggers",
 	},
 	"rendergate": {
 		mailbox: false,
