@@ -118,6 +118,11 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 			want:  slog.LevelDebug,
 		},
 		{
+			name:  "resource processing acknowledgement is debug",
+			event: mockEvent{eventType: events.EventTypeResourcesProcessed},
+			want:  slog.LevelDebug,
+		},
+		{
 			name: "deployment completed with changes is info",
 			event: events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 				Total:              2,
