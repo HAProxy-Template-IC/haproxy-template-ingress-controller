@@ -447,15 +447,9 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 		if err := pullImageIntoKind(ctx, ValkeyImage); err != nil {
 			return ctx, err
 		}
-		if os.Getenv("SPOA_TAG") == "" {
-			fmt.Fprintf(os.Stderr, "e2e: rate-limit profile — loading local %s into kind\n", LocalSPOAHubImage)
-			if err := loadImageIntoKind(ctx, LocalSPOAHubImage); err != nil {
-				return ctx, err
-			}
-		}
 	}
-	if os.Getenv("HAPTIC_E2E_PROFILE") == "api-gateway" && os.Getenv("SPOA_TAG") == "" {
-		fmt.Fprintf(os.Stderr, "e2e: api-gateway profile — loading local %s into kind\n", LocalSPOAHubImage)
+	if os.Getenv("SPOA_TAG") == "" {
+		fmt.Fprintf(os.Stderr, "e2e: loading local %s into kind\n", LocalSPOAHubImage)
 		if err := loadImageIntoKind(ctx, LocalSPOAHubImage); err != nil {
 			return ctx, err
 		}
@@ -887,42 +881,21 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		args = append(args,
 			"--set", "rateLimit.shared.enabled=true",
 			"--set", "rateLimit.shared.managedStore.enabled=true")
-		if os.Getenv("SPOA_TAG") == "" {
-			args = append(args,
-				"--set", "spoaHub.image.repository=spoa-hub",
-				"--set", "spoaHub.image.tag=dev",
-				"--set", "spoaHub.image.pullPolicy=Never")
-			fmt.Fprintln(os.Stderr, "e2e: rate-limit shard — using local spoa-hub:dev image")
-		}
 		fmt.Fprintln(os.Stderr, "e2e: rate-limit shard — enabling shared rate limiting with Valkey")
 	}
 	if apiGatewayProfile {
 		args = append(args,
 			"--set", "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true")
-		if os.Getenv("SPOA_TAG") == "" {
-			args = append(args,
-				"--set", "spoaHub.image.repository=spoa-hub",
-				"--set", "spoaHub.image.tag=dev",
-				"--set", "spoaHub.image.pullPolicy=Never")
-			fmt.Fprintln(os.Stderr, "e2e: api-gateway shard — using local spoa-hub:dev image")
-		}
 		fmt.Fprintln(os.Stderr, "e2e: api-gateway shard — enabling request validation")
 	}
-	// dev-values.yaml hardcodes spoaHub.image.tag=main-latest. CI sets
-	// SPOA_TAG to ci-${CI_PIPELINE_ID} so the test loads the spoa-hub
-	// image freshly built by build-spoa-image-snapshot in the same
-	// pipeline. Without this override the test pulls the stale
-	// :main-latest image, which carries main's hub+plugin versions —
-	// not whatever versions-spoa.env points at on the MR branch. When
-	// an MR bumps versions-spoa.env (e.g. for a new --validate-socket
-	// flag the chart references), main-latest is the wrong image to
-	// load: the validator sidecar CrashLoopBackOffs on an unknown
-	// flag and every webhook call returns 'connection refused'. This
-	// is the same shape as the !890 chart-MR breakage; the e2e test
-	// was supposed to catch it on !893 but didn't because the helm
-	// install never honored the freshly-built image.
+	// CI supplies its pipeline bundle; local runs build the checked-out pins.
 	if spoaTag := os.Getenv("SPOA_TAG"); spoaTag != "" {
 		args = append(args, "--set", "spoaHub.image.tag="+spoaTag)
+	} else {
+		args = append(args,
+			"--set", "spoaHub.image.repository=spoa-hub",
+			"--set", "spoaHub.image.tag=dev",
+			"--set", "spoaHub.image.pullPolicy=Never")
 	}
 	// Churn tier (issue #64): expose the Gateway pod-port allocator's
 	// assignments as `# gw-pod-port:` comment lines in the rendered config
