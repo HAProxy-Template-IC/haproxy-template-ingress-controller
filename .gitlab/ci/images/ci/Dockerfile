@@ -7,15 +7,22 @@
 
 ARG GO_BUILD_IMAGE=golang:must-be-supplied@sha256:0000000000000000000000000000000000000000000000000000000000000000
 ARG HAPROXY_IMAGE=haproxytech/haproxy-debian:must-be-supplied@sha256:0000000000000000000000000000000000000000000000000000000000000000
+ARG NODE_BUILD_IMAGE=node:must-be-supplied@sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 # Stage 1: Go toolchain source
 FROM ${GO_BUILD_IMAGE} AS go-toolchain
+
+FROM ${NODE_BUILD_IMAGE} AS node-toolchain
 
 # Stage 2: CI image based on official HAProxy image
 FROM ${HAPROXY_IMAGE}
 
 # Copy Go toolchain from official image
 COPY --from=go-toolchain /usr/local/go /usr/local/go
+COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-toolchain /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 ENV GOPATH=/go \
     PATH="/usr/local/go/bin:/go/bin:${PATH}"
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
@@ -62,7 +69,7 @@ RUN . /etc/os-release \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl gnupg git make ripgrep \
-       jq python3-pip nodejs npm \
+       jq python3-pip libstdc++6 libatomic1 \
        brotli gzip \
     && rm -rf /var/lib/apt/lists/*
 

@@ -14,12 +14,26 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "HAProxy pinned-patch image tags in dev-env manifests. Series-locked: the major.minor is captured from the current tag and baked into the versioning regex, so each manifest stays within its own series.",
+      "description": "Pinned Node/npm toolchain for CI without changing HAProxy runtime libraries.",
       "fileMatch": [
-        "^scripts/dev-env-assets/haproxy-.*\\.yaml$"
+        "^\\.gitlab/ci/build-pins\\.yml$"
       ],
       "matchStrings": [
-        "haproxytech/haproxy-debian:(?<currentValue>(?<seriesMajor>\\d+)\\.(?<seriesMinor>\\d+)\\.\\d+)"
+        "NODE_BUILD_IMAGE:\\s*\"node:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "node",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "HAProxy patch tags and optional digests in dev manifests and CI bases, updated within each supported series alongside the chart.",
+      "fileMatch": [
+        "^scripts/dev-env-assets/haproxy-.*\\.yaml$",
+        "^\\.gitlab/ci/build-pins\\.yml$"
+      ],
+      "matchStrings": [
+        "haproxytech/haproxy-debian:(?<currentValue>(?<seriesMajor>\\d+)\\.(?<seriesMinor>\\d+)\\.\\d+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?"
       ],
       "datasourceTemplate": "docker",
       "depNameTemplate": "haproxy-debian {{{seriesMajor}}}.{{{seriesMinor}}}.x",

@@ -233,7 +233,8 @@ compute-ci-image-tag:
   tags:
     - saas-linux-small-amd64
   script:
-    - apk add --no-cache bash
+    - apk add --no-cache bash git python3 py3-yaml
+    - ./scripts/check-image-pins.sh
     - |
       BUILD_INPUT_HASH=$(scripts/ci-image-input-hash.sh)
       echo "CI_IMAGE_TAG=${BUILD_INPUT_HASH}" >> ci-image.env
@@ -293,6 +294,7 @@ build-ci:
         --local context=.gitlab/ci/images/ci/ \
         --local dockerfile=.gitlab/ci/images/ci/ \
         --opt build-arg:GO_BUILD_IMAGE=${GO_BUILD_IMAGE} \
+        --opt build-arg:NODE_BUILD_IMAGE=${NODE_BUILD_IMAGE} \
         --opt build-arg:HAPROXY_IMAGE=${HAPROXY_IMAGE}
       for pin in $(sed -n 's/^ARG \([A-Z][A-Z0-9_]*\)$/\1/p' .gitlab/ci/images/ci/Dockerfile); do
         eval "value=\${$pin:-}"

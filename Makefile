@@ -272,6 +272,7 @@ cr-size-check: ## Check each rendered HAProxyTemplateConfig against etcd's ~1.5 
 audit: vendor ## Run security vulnerability scanning
 	@echo "Running govulncheck..."
 	$(GOVULNCHECK) ./...
+	npm --prefix .gitlab/ci/images/ci audit
 
 ## Combined checks
 
@@ -283,6 +284,7 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
 	@echo "Running tests..."
 	python3 -m unittest \
+		scripts/tests/test_check_image_pins.py \
 		scripts/tests/test_analyze_gateway_api_bench.py \
 		scripts/tests/test_analyze_gateway_api_children.py \
 		scripts/tests/test_analyze_gateway_api_resources.py \
@@ -750,6 +752,10 @@ validate-helm-libraries: build ## Render the chart and run `controller validate`
 	@HAPROXY_VERSION=$(HAPROXY_VERSION) bash scripts/test-templates.sh
 
 ## Build targets
+
+.PHONY: build-ci-image
+build-ci-image: ## Build the pinned CI image locally for HAPROXY_VERSION
+	@HAPROXY_VERSION=$(HAPROXY_VERSION) bash scripts/build-ci-image.sh
 
 build: check-source-hash ## Build the controller binary for local development (with PGO if profile exists)
 	@echo "Building controller..."
