@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fatal template errors preserve their original error values across native callbacks and parallel rendering.
 - Concurrent template compilation no longer shares constant conversion state, preventing races and incorrect boolean types during configuration reloads.
 - Superseded render-gate verdicts no longer produce spurious scheduler errors; stale verdicts still cannot change deployment state.
 - Configuration publication preserves concurrent pod status and rejects stale auxiliary references after the parent or rendered output changes.

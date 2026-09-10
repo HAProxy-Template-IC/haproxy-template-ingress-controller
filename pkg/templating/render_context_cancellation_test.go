@@ -221,20 +221,45 @@ func TestFatalRenderErrorStillPanicsWithActiveContext(t *testing.T) {
 func TestCancellationDoesNotMaskFatalRenderError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	fatalErr := errors.New("unrelated template failure")
 	engine, err := New(map[string]string{
 		"t": `{{ cancelThenFail() }}`,
 	}, &Options{Declarations: map[string]any{
 		"cancelThenFail": func(env native.Env) string {
 			cancel()
-			env.Fatal(errors.New("unrelated template failure"))
+			env.Fatal(fatalErr)
 			return ""
 		},
 	}})
 	require.NoError(t, err)
 
-	assert.Panics(t, func() {
+	assert.PanicsWithValue(t, fatalErr, func() {
 		_, _ = engine.Render(ctx, "t", nil)
 	})
+}
+
+func TestFatalValueIsPreservedByEveryRenderEntryPoint(t *testing.T) {
+	fatalErr := errors.New("fatal template failure")
+	engine, err := New(map[string]string{
+		"t": `{{ invoke(func() string { return fatal() }) }}`,
+	}, &Options{Declarations: map[string]any{
+		"fatal": func(env native.Env) string {
+			env.Fatal(fatalErr)
+			return ""
+		},
+		"invoke": func(fn func() string) string { return fn() },
+	}})
+	require.NoError(t, err)
+
+	for name, render := range map[string]func(){
+		"render":     func() { _, _ = engine.Render(context.Background(), "t", nil) },
+		"source map": func() { _, _, _ = engine.RenderWithSourceMap(context.Background(), "t", nil) },
+		"profiling":  func() { _, _, _ = engine.RenderWithProfiling(context.Background(), "t", nil) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.PanicsWithValue(t, fatalErr, render)
+		})
+	}
 }
 
 func TestCustomCancellationCausePanicIsReported(t *testing.T) {
