@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bulk resource changes no longer overflow reconciliation triggers while a render is running; gate verdicts and forced triggers retain their ordering.
+
 - The determinism gate compares a test's rendered `k8sResources` and Events, not just `haproxy.cfg` and the auxiliary files. A `k8sResources` object whose text changed between two renders of the same inputs is re-applied on every reconciliation, and every assertion about it passed because assertions match content and the defect is in its order.
 - A watched resource's CRD appearing or disappearing no longer leaves the fleet without reconciliation while the controller rebuilds. The re-resolved configuration is validated on the running iteration, as a configuration change already is, and the rebuild adopts the validated result; measured on the bundled chart the gap went from 34 s to the 4 s leader handover. A re-resolution that fails validation still rebuilds through the load gate.
 - A controller rebuild no longer takes the fleet's leader away. The next iteration now starts while the current one keeps rendering and deploying, warms its render graph, and takes leadership over on the same replica without giving up the Lease, so no other replica sees a vacancy and the first render as leader is warm; the old iteration is torn down afterwards. Measured on the bundled chart with an endpoint change every two seconds, a configuration change, a CRD appearing, or a CRD disappearing no longer delays any deployment; each used to cost a 4 s gap.

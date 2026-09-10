@@ -33,7 +33,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -345,50 +344,45 @@ func TestCoordinatorSettlesCurrentFilesOnTheGateVerdict(t *testing.T) {
 	}
 }
 
-func TestCoordinatorCoalesceQueuedTriggersPreservesEventBoundary(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	coordinator := NewCoordinator(&CoordinatorConfig{
-		EventBus:      bus,
-		Pipeline:      &mockPipeline{},
-		StoreProvider: stores.NewRealStoreProvider(nil),
-		Logger:        logger,
-	})
-	queued := make(chan busevents.Event, 4)
-	coordinator.eventChan = queued
+func TestCoordinatorMailboxPreservesEventBoundary(t *testing.T) {
+	mailbox := &coordinatorMailbox{notify: make(chan struct{}, 1)}
 	first := events.NewReconciliationTriggeredEvent("first", true)
 	latest := events.NewReconciliationTriggeredEvent("latest", true)
 	gate := events.NewRenderGateCompletedEvent("plan-1", false, true, true, "refused", false, 5)
 	trailing := events.NewReconciliationTriggeredEvent("trailing", true)
-	queued <- latest
-	queued <- gate
-	queued <- trailing
+	mailbox.enqueue(first)
+	mailbox.enqueue(latest)
+	mailbox.enqueue(gate)
+	mailbox.enqueue(trailing)
 
-	got, boundary := coordinator.coalesceQueuedTriggers(first)
+	got, ok := mailbox.pop()
+	require.True(t, ok)
+	boundary, ok := mailbox.pop()
+	require.True(t, ok)
 
 	assert.Same(t, latest, got)
 	assert.Same(t, gate, boundary)
-	assert.Same(t, trailing, <-queued)
+	got, ok = mailbox.pop()
+	require.True(t, ok)
+	assert.Same(t, trailing, got)
+	assert.Nil(t, mailbox.queue)
 }
 
-func TestCoordinatorCoalesceQueuedTriggersKeepsNonCoalescibleTriggerBeforeBoundary(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	coordinator := NewCoordinator(&CoordinatorConfig{
-		EventBus:      bus,
-		Pipeline:      &mockPipeline{},
-		StoreProvider: stores.NewRealStoreProvider(nil),
-		Logger:        logger,
-	})
-	queued := make(chan busevents.Event, 3)
-	coordinator.eventChan = queued
+func TestCoordinatorMailboxKeepsNonCoalescibleTriggerBeforeBoundary(t *testing.T) {
+	mailbox := &coordinatorMailbox{notify: make(chan struct{}, 1)}
 	first := events.NewReconciliationTriggeredEvent("first", true)
 	forced := events.NewReconciliationTriggeredEvent("forced", false)
 	latest := events.NewReconciliationTriggeredEvent("latest", true)
 	gate := events.NewRenderGateCompletedEvent("plan-1", true, false, true, "", false, 5)
-	queued <- forced
-	queued <- latest
-	queued <- gate
+	mailbox.enqueue(first)
+	mailbox.enqueue(forced)
+	mailbox.enqueue(latest)
+	mailbox.enqueue(gate)
 
-	got, boundary := coordinator.coalesceQueuedTriggers(first)
+	got, ok := mailbox.pop()
+	require.True(t, ok)
+	boundary, ok := mailbox.pop()
+	require.True(t, ok)
 
 	assert.Same(t, forced, got)
 	assert.Same(t, gate, boundary)
