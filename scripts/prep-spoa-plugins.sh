@@ -8,9 +8,7 @@
 #   2. cosign verify-blob against the upstream project's tag identity
 #
 # Outputs (overwrites):
-#   plugins/amd64/<libname>.so   (× 9 plugins)
-#   plugins/arm64/<libname>.so   (× 9 plugins)
-#   plugins/armv7/<libname>.so   (× 9 plugins)
+#   plugins/<arch>/<libname>.so
 #
 # Requires: bash, curl, sha256sum, cosign, awk.
 
@@ -53,15 +51,25 @@ declare -A LIB_NAMES=(
 
 ARCHES=(amd64 arm64 armv7)
 
-# fetch downloads one registry asset, retrying a transient registry answer,
-# and names the URL when it gives up: main's pipeline 2832094108 failed this
-# job with a bare "exit code 22" from a silent curl on one of forty downloads.
 fetch() {
-    local target="$1" url="$2"
+    local target="$1" url="$2" headers
+    headers="$(mktemp "${WORKDIR}/headers.XXXXXX")"
     if ! curl --fail --silent --show-error --location \
         --retry 5 --retry-delay 2 --retry-all-errors \
+        --dump-header "${headers}" \
         --output "${target}" "${url}"; then
         echo "  ERROR: download failed: ${url}" >&2
+        # Redirect headers can contain credentials; report only safe support identifiers.
+        LC_ALL=C awk '
+            { sub(/\r$/, "") }
+            $1 ~ /^HTTP\/[0-9.]+$/ && $2 ~ /^[0-9][0-9][0-9]$/ {
+                print "    HTTP status: " $2
+            }
+            tolower($1) == "x-request-id:" && NF == 2 && length($2) <= 256 &&
+                $2 ~ /^[A-Za-z0-9][A-Za-z0-9._:-]*$/ {
+                print "    X-Request-ID: " $2
+            }
+        ' "${headers}" >&2
         exit 1
     fi
 }
@@ -77,7 +85,7 @@ for plugin in "${!PLUGINS[@]}"; do
     project_path="haproxy-haptic/haproxy-spoa-hub-plugin-${plugin}"
     encoded_path="haproxy-haptic%2Fhaproxy-spoa-hub-plugin-${plugin}"
     pkg_base="${GITLAB_API}/projects/${encoded_path}/packages/generic/${plugin}/${version}"
-    identity_regex="^${GITLAB_HOST//./\\.}/${project_path//./\\.}//\\.gitlab-ci\\.yml@refs/tags/.*\$"
+    identity="${GITLAB_HOST}/${project_path}//.gitlab-ci.yml@refs/tags/${version}"
 
     echo "==> ${plugin} ${version}"
 
@@ -118,7 +126,7 @@ for plugin in "${!PLUGINS[@]}"; do
         # Cosign keyless verification anchored to this plugin's project tag.
         cosign verify-blob "${target_so}" \
             --bundle "${bundle}" \
-            --certificate-identity-regexp "${identity_regex}" \
+            --certificate-identity "${identity}" \
             --certificate-oidc-issuer "${ISSUER}" \
             > /dev/null
 
