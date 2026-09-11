@@ -125,6 +125,10 @@ Implements 8 assertion types (see the dispatch switch in `assertions.go`):
 
    **Detection is probabilistic, and needs a fixture with at least two keys.** Go cannot reorder a single-element map, so a redirect-code fixture with one code passes whether or not the template sorts — that is a coverage gap in the fixture, not in the check, and the fix is a fixture with two. Even then the two renders may coincidentally agree: measured against a deliberately unsorted two-code site, a single run caught it 5 times in 6. One green run is therefore not proof a site is sorted; a green CI history is.
 
+Each test samples its `cycleTimeBucket` input once before rendering. Both
+renders receive that snapshot; crossing a wall-clock bucket boundary cannot
+change the inputs to the determinism assertion.
+
 **Target Resolution** (see `assertion_helpers.go:resolveTarget`):
 
 - `haproxy.cfg` (or empty) - Main HAProxy configuration

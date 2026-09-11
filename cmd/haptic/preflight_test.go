@@ -16,11 +16,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -197,16 +197,6 @@ func TestWithLiveDeadline(t *testing.T) {
 	assert.WithinDuration(t, time.Now().Add(liveSchemaTimeout), deadline, 5*time.Second)
 }
 
-func TestCollectVCLData(t *testing.T) {
-	out := map[string]string{}
-
-	collectVCLData("kind: ConfigMap\ndata:\n  default.vcl: |\n    vcl 4.1;\n  notes.txt: hello\n", out)
-	collectVCLData("kind: Service\ndata:\n  other.vcl: nope\n", out)
-	collectVCLData("this: is: not: yaml:\n", out)
-
-	assert.Equal(t, map[string]string{"default.vcl": "vcl 4.1;\n"}, out)
-}
-
 func TestVCLBackendHosts(t *testing.T) {
 	vcl := `backend default {
     .host = "haptic-cache-origin.haptic.svc.cluster.local";
@@ -243,22 +233,7 @@ func TestCheckRenderedSidecarConfigsSkipsWhenNothingRendered(t *testing.T) {
 		RenderedK8sResources: map[string]string{"cm": "kind: ConfigMap\ndata:\n  a.txt: b\n"},
 	}}}
 
-	require.NoError(t, checkRenderedSidecarConfigs(context.Background(), results))
-}
-
-// stubRuntime writes a fake `docker` onto PATH that records its argv and exits
-// with the given code, so the invocation and error-wrapping paths are testable
-// without pulling images.
-func stubRuntime(t *testing.T, exitCode int) (argvFile string) {
-	t.Helper()
-	dir := t.TempDir()
-	argvFile = filepath.Join(dir, "argv")
-	script := filepath.Join(dir, "fake-runtime")
-	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + argvFile +
-		"\necho 'fake runtime output'\nexit " + strconv.Itoa(exitCode) + "\n"
-	require.NoError(t, os.WriteFile(script, []byte(body), 0o700))
-	t.Setenv("HAPTIC_CONTAINER_RUNTIME", script)
-	return argvFile
+	require.NoError(t, checkRenderedSidecarConfigs(context.Background(), nil, results))
 }
 
 func sidecarResults() *testrunner.TestResults {
@@ -266,19 +241,42 @@ func sidecarResults() *testrunner.TestResults {
 		TestName:      "t",
 		RenderedFiles: map[string]string{"vector.yaml": "sources: {}\n"},
 		RenderedK8sResources: map[string]string{
-			"cm": "kind: ConfigMap\ndata:\n  default.vcl: |\n    backend b { .host = \"svc.ns.svc\"; }\n",
+			"cache": "kind: Service\n---\nkind: ConfigMap\nmetadata:\n  name: cache-vcl\n" +
+				"data:\n  default.vcl: |\n    backend b { .host = \"svc.ns.svc\"; }\n---\n" +
+				varnishWorkload("StatefulSet", "varnish:chart-test", "cache-vcl"),
 		},
 	}}}
 }
 
 func TestCheckRenderedSidecarConfigsInvokesBothCompilers(t *testing.T) {
-	argvFile := stubRuntime(t, 0)
-
-	require.NoError(t, checkRenderedSidecarConfigs(context.Background(), sidecarResults()))
-
-	argv, err := os.ReadFile(argvFile)
+	t.Setenv("HAPTIC_VECTOR_IMAGE", "")
+	t.Setenv("HAPTIC_VARNISH_IMAGE", "")
+	configs, err := collectSidecarConfigs(vectorManifests("vector:chart-test"), sidecarResults())
 	require.NoError(t, err)
-	got := string(argv)
+	var argv []string
+	run := func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+		assert.Equal(t, "test-runtime", bin)
+		_, deadline := ctx.Deadline()
+		assert.True(t, deadline)
+		argv = append(argv, args...)
+		mount := strings.TrimSuffix(args[3], ":/w:ro")
+		name := filepath.Base(args[len(args)-1])
+		data, err := os.ReadFile(filepath.Join(mount, name))
+		require.NoError(t, err)
+		assert.NotEmpty(t, data)
+		mountInfo, err := os.Stat(mount)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o755), mountInfo.Mode().Perm())
+		parentInfo, err := os.Stat(filepath.Dir(mount))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), parentInfo.Mode().Perm())
+		fileInfo, err := os.Stat(filepath.Join(mount, name))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o644), fileInfo.Mode().Perm())
+		return nil, nil
+	}
+	require.NoError(t, runSidecarChecks(context.Background(), configs, "test-runtime", run))
+	got := strings.Join(argv, "\n")
 
 	assert.Contains(t, got, "validate", "vector config was not validated")
 	assert.Contains(t, got, "/w/vector.yaml")
@@ -288,16 +286,23 @@ func TestCheckRenderedSidecarConfigsInvokesBothCompilers(t *testing.T) {
 	// depend on cluster DNS that doesn't exist on the pipeline host.
 	assert.Contains(t, got, "--add-host")
 	assert.Contains(t, got, "svc.ns.svc:127.0.0.1")
+	assert.Contains(t, got, "vector:chart-test")
+	assert.Contains(t, got, "varnish:chart-test")
 }
 
 func TestCheckRenderedSidecarConfigsReportsTheConsequence(t *testing.T) {
-	stubRuntime(t, 1)
-
-	err := checkRenderedSidecarConfigs(context.Background(), sidecarResults())
-	require.Error(t, err)
-	// vector.yaml is checked first, so its message is the one that surfaces.
-	assert.Contains(t, err.Error(), "never become ready")
-	assert.Contains(t, err.Error(), "fake runtime output", "the compiler's own output must reach the operator")
+	for _, kind := range []string{"vector", "varnish"} {
+		t.Run(kind, func(t *testing.T) {
+			run := func(context.Context, string, ...string) ([]byte, error) {
+				return []byte("compiler output"), errors.New("exit status 1")
+			}
+			configs := []sidecarConfig{{testName: "failing-case", kind: kind, name: "config", image: "image:chart-test"}}
+			err := runSidecarChecks(context.Background(), configs, "test-runtime", run)
+			require.ErrorContains(t, err, "failing-case/config fails validation with image:chart-test")
+			assert.ErrorContains(t, err, "fix the rendered config")
+			assert.ErrorContains(t, err, "compiler output")
+		})
+	}
 }
 
 // writeProbeChart writes a minimal chart that echoes the values and release

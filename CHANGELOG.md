@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Validation tests share one clock input across repeated renders, preventing false determinism failures at time-bucket boundaries.
+- Preflight validates every distinct Vector and Varnish configuration with its rendered workload image and rejects conflicting image overrides.
 - Template value copies, nested and compound assignments, interface comparisons, and explicit string conversions produce the expected values.
 - Native template calls preserve variadic arguments and recover ordinary panics across callbacks and deferred calls.
 - Fatal template errors preserve their original error values across native callbacks and parallel rendering.

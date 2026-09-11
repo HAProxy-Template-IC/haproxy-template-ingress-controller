@@ -288,7 +288,7 @@ func scriggoCycleTimeBucket(env native.Env, seconds int64, layout string) string
 		env.Stop(errors.New("cycleTimeBucket requires a layout and a duration between 1 second and 365 days"))
 		return ""
 	}
-	now := time.Now()
+	now := cycleTime(env.Context())
 	unix := now.Unix()
 	result := exactCycleTimeBucketResult(now, seconds, layout)
 	untilBoundary := time.Duration(seconds-unix%seconds)*time.Second - time.Duration(now.Nanosecond())

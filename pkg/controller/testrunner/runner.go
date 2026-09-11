@@ -353,6 +353,7 @@ func (r *Runner) shouldSkipTest(test *config.ValidationTest) string {
 // runSingleTest executes a single validation test using worker-specific engine and validation paths.
 func (r *Runner) runSingleTest(ctx context.Context, testName string, test *config.ValidationTest, engine templating.Engine, validationPaths *dataplane.ValidationPaths) (TestResult, bool) {
 	startTime := time.Now()
+	ctx = templating.WithCycleTime(ctx, startTime)
 
 	result := TestResult{
 		TestName:    testName,
