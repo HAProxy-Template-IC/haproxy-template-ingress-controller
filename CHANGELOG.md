@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Namespace deletion no longer emits resource-application errors for Kubernetes' namespace-terminating response; status publication and orphan pruning still wait for a complete successful apply.
 
+### Helm chart
+
+#### Fixed
+
+- Native and NGINX-compatible canary and Varnish cache backend switches render after request filters, eliminating HAProxy rule-ordering warnings while preserving routing precedence.
+
 ## [0.2.0-alpha.2] - 2026-09-11
 
 Alpha release for testing; review the chart migrations below before upgrading. Renderer scaling work ([#212](https://gitlab.com/haproxy-haptic/haptic/-/issues/212)) and the intermittent rejected output inconsistency ([#213](https://gitlab.com/haproxy-haptic/haptic/-/issues/213)) remain open.

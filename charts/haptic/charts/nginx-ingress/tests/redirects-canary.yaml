@@ -526,6 +526,9 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "use_backend"}
       - {type: contains, target: haproxy.cfg, pattern: "req\\.hdr\\(X-Canary\\)"}
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^[ \t]+use_backend[^\n]*\n(?:[ \t]+[^\n]*\n|\n)*[ \t]+http-request '
 
   test-nginx-ingress-canary-by-weight:
     description: Nginx Ingress canary by weight generates randomized use_backend

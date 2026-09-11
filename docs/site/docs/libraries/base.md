@@ -132,6 +132,8 @@ controller:
 
 The base library defines extension points using the `render_glob "prefix-*"` operator. Any template snippet with a matching prefix is automatically rendered at the designated location in the HAProxy configuration.
 
+`frontend-switching-*` emits `use_backend` rules after request filters, avoiding HAProxy rule-ordering warnings. Switching snippets run in lexical order before the default backend selection.
+
 ### Available extension points
 
 This table is the authoritative registry of every `render_glob` extension point `base.yaml` defines. The [Template Libraries overview](../template-libraries.md#available-extension-points) lists the commonly used subset.
@@ -147,6 +149,7 @@ This table is the authoritative registry of every `render_glob` extension point 
 | Listener Port Translation | `frontend-routing-listener-port-*` | Routing prologue, after `txn.listener_port` is seeded from `dst_port` | Remap `txn.listener_port` when a library binds a pod port that differs from the user-facing listener port (for example, Gateway per-Gateway HTTPS binds) |
 | Frontend Matchers | `frontend-matchers-advanced-*` | Within frontend routing logic | Advanced request matching (method, headers, query params) |
 | Frontend Filters | `frontend-filters-*` | HTTP frontend, after routing | Request/response filters (header modification, redirects) |
+| Frontend Switching | `frontend-switching-*` | HTTP/HTTPS frontend, after filters and before the default backend selection | Conditional `use_backend` rules, including canary splits |
 | Access Log Fields | `log-fields-*` | Inside the per-frontend `log-format` line | Named JSON fields contributed to the [structured access log](../haproxy-deployment.md#access-logging) |
 | Custom Frontends | `frontends-*` | After HTTP frontend | Additional frontend definitions |
 | Custom Backends | `backends-*` | Before `default_backend` | Backend definitions from resource libraries |

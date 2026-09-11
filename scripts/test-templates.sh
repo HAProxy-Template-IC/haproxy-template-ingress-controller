@@ -415,6 +415,9 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         exit 1
     fi
     for TEST in \
+        test-haptic-canary-by-header \
+        test-nginx-ingress-canary-by-header \
+        test-haptic-cache-core \
         test-haptic-rate-limit-shared-ip \
         test-haptic-rate-limit-shared-ip-before-waf \
         test-haptic-rate-limit-shared-exact-consumer \

@@ -33,7 +33,7 @@ import (
 // onto a distinct canary backend (ENVIRONMENT="v2"). The
 // features-800-haptic-canary-colocation snippet keeps the canary out of
 // base-route ownership so normal traffic lands on the main; the
-// frontend-filters-810-haptic-canary snippet emits
+// frontend-switching-810-haptic-canary snippet emits
 // `use_backend <canary> if { req.hdr(X-Canary) -m str true }` so a request
 // carrying the canary header is split off to the canary backend.
 //

@@ -164,7 +164,7 @@ func TestIngressAnnotations(t *testing.T) {
 			name: "backend-snippet",
 			host: "ingress-backend-snippet.localdev.me",
 			annotations: map[string]string{
-				"haproxy.org/backend-config-snippet": "option httplog\noption http-keep-alive\nhttp-reuse safe",
+				"haproxy.org/backend-config-snippet": "option redispatch\noption http-keep-alive\nhttp-reuse safe",
 			},
 		},
 		// haproxy.org/scale-server-slots is intentionally NOT a row here: the

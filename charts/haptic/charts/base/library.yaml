@@ -2836,6 +2836,7 @@ haproxyConfig:
         {# Runs AFTER routing decisions, BEFORE backend selection #}
         {# Libraries can inject filter logic here (header modification, redirects, rewrites) #}
         {{- render_glob "frontend-filters-*" | indent(2, true) }}
+        {{- render_glob "frontend-switching-*" | indent(2, true) }}
         use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
         default_backend default_backend
 
@@ -2855,6 +2856,7 @@ haproxyConfig:
         {{- render_glob "frontend-extra-*" | indent(2, true) }}
         {{ render "frontend-routing-logic" | indent(2, true) }}
         {{- render_glob "frontend-filters-*" | indent(2, true) }}
+        {{- render_glob "frontend-switching-*" | indent(2, true) }}
         use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
         default_backend default_backend
     {%- end %}

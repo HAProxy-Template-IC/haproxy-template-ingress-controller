@@ -9,7 +9,7 @@
 # Snippets:
 #   - features-800-haptic-canary-colocation  — mark canary Ingresses so the main
 #     Ingress owns the base route (they only overlay a use_backend split).
-#   - frontend-filters-810-haptic-canary      — emit the use_backend split rules.
+#   - frontend-switching-810-haptic-canary   — emit the use_backend split rules.
 #   - frontend-filters-092-haptic-mirror-buffer  — buffer request bodies + fail loud
 #     when the spoa-hub mirror plugin is not enabled.
 #   - frontend-filters-820-haptic-mirror       — fire the per-Ingress SPOE mirror.
@@ -56,7 +56,7 @@ templateSnippets:
         {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
       {%- end -%}
 
-  frontend-filters-810-haptic-canary:
+  frontend-switching-810-haptic-canary:
     requires: [ingresses]
     template: |-
       {%- for _, fragment := range incremental_values("features-900-haptic-fragment-810-canary", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
