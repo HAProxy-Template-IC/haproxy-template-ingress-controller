@@ -243,10 +243,13 @@ last observed.
 
 ## Runtime commands
 
-Every runtime command goes to the worker stats socket in a single-runtime
-session: `;`-joined lines, per-connection session state, `wait` with the
-connection held open, and payload commands. The master socket carries only
-`reload` and `show proc`.
+Runtime commands use the worker stats socket. Worker identity combines the process
+ID with the microsecond start time from `show info float`, so a container restart
+can't preserve the old baseline by reusing its process ID. Each deferred delete
+verifies that identity and keeps its wait, session shutdown, and delete on the same
+connection without reconnecting. Reloads retire queued work for the outgoing
+worker. Deletes enter the queue only after their inline traffic-stopping ops
+succeed. The master socket carries `reload` and `show proc`.
 
 Framing rules the agent enforces, all measured on HAProxy 3.0 and 3.4:
 
@@ -371,7 +374,7 @@ per-pod facts it can't see.
 | `haptic_agent_invariant_violations_total` | `name` | Invariants that failed. |
 | `haptic_agent_reloads_total` | `result` | Reloads asked of the master process. |
 | `haptic_agent_rollbacks_total` | — | File sets restored to the last known good one. |
-| `haptic_agent_deferred_deletes_total` | `kind`, `outcome` | Deferred runtime deletes: `done`, `deferred` (still draining, retried), or `abandoned` (given up; the object stays until the next reload). |
+| `haptic_agent_deferred_deletes_total` | `kind`, `outcome` | Deferred deletes: `done`, `deferred` (retrying), `superseded` (worker replaced), or `abandoned` (given up until reload). Both kinds' abandonment counters start at zero. |
 | `haptic_agent_op_errors_total` | `kind` | Ops HAProxy rejected. |
 | `haptic_agent_generation` | — | The apply generation. |
 | `haptic_agent_map_divergence_total` | — | Read-backs that found the worker out of step. |

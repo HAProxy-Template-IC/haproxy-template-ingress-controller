@@ -137,6 +137,7 @@ func (e *env) waitForWorker() {
 func (e *env) startAgent() {
 	mustDocker(e.t, append(e.runArgs("-d", "--name", e.agent,
 		"-p", publishAddress()+"::"+strconv.Itoa(agentPort),
+		"-p", publishAddress()+"::"+strconv.Itoa(metricsPort),
 		"-e", "DATAPLANE_USERNAME="+agentUsername,
 		"-e", "DATAPLANE_PASSWORD="+agentPassword),
 		"--entrypoint", "/usr/local/bin/haptic", e.image,
@@ -148,7 +149,7 @@ func (e *env) startAgent() {
 		"--listen", ":"+strconv.Itoa(agentPort),
 		"--reload-interval-min", "1s",
 		"--state-file", ".haptic-agent.json",
-		"--metrics-listen", ":9101")...)
+		"--metrics-listen", ":"+strconv.Itoa(metricsPort))...)
 
 	agentClient, err := client.New(&client.Config{
 		BaseURL:            e.agentURL(),

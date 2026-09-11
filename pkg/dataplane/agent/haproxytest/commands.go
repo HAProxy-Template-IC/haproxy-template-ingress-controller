@@ -60,6 +60,7 @@ func (h *HAProxy) reload() reply {
 		return dump("Success=0\n--\n" + h.m.ReloadLog)
 	}
 	h.m.Pid++
+	h.m.StartTimeUnixMicros++
 	if h.m.OnReload != nil {
 		h.m.OnReload(&h.m)
 	}

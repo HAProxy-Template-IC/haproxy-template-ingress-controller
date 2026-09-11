@@ -544,9 +544,30 @@ func TestAnInvalidationDuringAnApplyOutranksIt(t *testing.T) {
 	assert.Empty(t, h.state(false).AppliedPlanID)
 }
 
-// The queue holds the tail of a delete sequence whose head the apply still has
-// to run. A `wait …-removable` issued before `disable server` waits out its
-// budget on a server that is still taking traffic.
+func TestFailedApplyDoesNotPublishDeferredDeletes(t *testing.T) {
+	for _, kind := range []string{"unknown-op", api.OpServerDisable} {
+		t.Run(kind, func(t *testing.T) {
+			h := newHarness(t)
+			first := firstApply(t, h)
+			h.model.With(func(m *haproxytest.Model) { m.ReloadFails = true })
+			files := baseFiles("global\n")
+			m := buildManifest("plan-2", files)
+			m.ExpectedPrevPlanID, m.ExpectedPrevToken = first.AppliedPlanID, first.AppliedToken
+			m.Ops = []api.Op{
+				{Kind: kind, Backend: "missing", Server: "srv"},
+				{Kind: api.OpServerDel, Backend: "missing", Server: "srv"},
+				{Kind: api.OpBackendDel, Backend: "missing"},
+			}
+			result := h.apply(&m, files)
+			require.False(t, result.OK)
+			state := h.state(false)
+			assert.Empty(t, state.PendingDeletes.Servers)
+			assert.Empty(t, state.PendingDeletes.Backends)
+			assert.False(t, sent(h, "wait "))
+		})
+	}
+}
+
 func TestADeferredDeleteWaitsForTheInlineHalf(t *testing.T) {
 	h := newHarness(t)
 	first := firstApply(t, h)
@@ -563,12 +584,14 @@ func TestADeferredDeleteWaitsForTheInlineHalf(t *testing.T) {
 	second := h.apply(&added, files)
 	require.True(t, second.OK, "%+v", second.Error)
 
-	release := make(chan struct{})
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
 	var once sync.Once
 	h.model.With(func(m *haproxytest.Model) {
 		m.Reject = func(command string) (string, bool) {
 			if strings.HasPrefix(command, "disable server") {
-				once.Do(func() { <-release })
+				once.Do(func() { close(entered); <-release })
 			}
 			return "", false
 		}
@@ -585,9 +608,11 @@ func TestADeferredDeleteWaitsForTheInlineHalf(t *testing.T) {
 	done := make(chan api.ApplyResult, 1)
 	go func() { done <- h.apply(&removed, files) }()
 
+	<-entered
+	assert.Empty(t, h.state(false).PendingDeletes.Servers, "an uncommitted batch must not be visible to the drainer")
 	require.Never(t, func() bool { return sent(h, "wait ") }, 300*time.Millisecond, 20*time.Millisecond,
 		"the queue must not wait on a server the apply has not disabled yet")
-	close(release)
+	unblock()
 
 	require.True(t, (<-done).OK)
 	require.Eventually(t, func() bool {

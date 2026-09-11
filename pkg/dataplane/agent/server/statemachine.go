@@ -214,6 +214,7 @@ func (s *Server) adoptWorker(info api.HAProxyInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.worker = info
+	s.deferrals.SetWorker(info)
 	s.state.ExpectedWorker = info
 	if err == nil {
 		inventory.Generation = s.inventory.Generation + 1
@@ -265,14 +266,16 @@ func (s *Server) checkWorker() error {
 	s.mu.Lock()
 	expected := s.state.ExpectedWorker
 	s.mu.Unlock()
-	if expected.WorkerPID != 0 && expected.WorkerPID == info.WorkerPID {
+	if expected.SameWorker(info) {
 		return nil
 	}
 	s.logger.Warn("the HAProxy worker changed identity",
-		"expected_pid", expected.WorkerPID, "observed_pid", info.WorkerPID)
+		"expected_pid", expected.WorkerPID, "observed_pid", info.WorkerPID,
+		"expected_start_unix_micros", expected.WorkerStartTimeUnixMicros,
+		"observed_start_unix_micros", info.WorkerStartTimeUnixMicros)
 	s.adoptWorker(info)
 	s.invalidateBaseline()
-	return fmt.Errorf("worker pid changed from %d to %d", expected.WorkerPID, info.WorkerPID)
+	return errors.New("the HAProxy worker was replaced; its runtime baseline is unknown")
 }
 
 // observeTree updates the digests the agent reports without hashing anything:

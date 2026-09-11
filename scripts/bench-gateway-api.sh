@@ -2288,9 +2288,39 @@ extract_haptic_identities() {
         "$output" >/dev/null || die "HAPTIC pod identity snapshot is incomplete"
 }
 
+agent_port() {
+    local pods_json="$1" pod="$2" port_name="$3"
+    jq -er --arg pod "$pod" --arg port_name "$port_name" '
+        [.items[] | select(.metadata.name == $pod) | .spec.containers[] |
+         select(.name == "agent") | .ports[]? |
+         select(.name == $port_name and .protocol == "TCP") | .containerPort] |
+        if length == 1 and (.[0] | type == "number" and . == floor and . > 0 and . <= 65535)
+        then .[0] else error("missing or ambiguous agent port") end
+    ' "$pods_json"
+}
+
+capture_quiescent_agent() {
+    local pods_json="$1" pod="$2" output="$3" port deadline=$((SECONDS + 10))
+    port="$(agent_port "$pods_json" "$pod" dataplane)" || die "invalid agent API port for ${pod}"
+    while true; do
+        kubectl exec -n haptic "$pod" -c agent -- /usr/local/bin/haptic agent state \
+            --listen=":${port}" --output=json | jq -e '
+                .pending_deletes | select(type == "object" and has("servers") and has("backends")) |
+                select(all(.servers, .backends; . == null or (type == "array" and all(.[]; type == "string")))) |
+                {servers: (.servers // []), backends: (.backends // [])}
+            ' > "$output" || die "could not capture pending deletes for ${pod}"
+        if jq -e '.servers == [] and .backends == []' "$output" >/dev/null; then
+            return 0
+        fi
+        (( SECONDS < deadline )) || die "agent ${pod} still has pending deletes after baseline convergence"
+        sleep 0.1
+    done
+}
+
 capture_state() {
     local output_dir="$1"
-    mkdir -p "$output_dir/cadvisor" "$output_dir/controller-metrics" "$output_dir/prometheus"
+    mkdir -p "$output_dir/cadvisor" "$output_dir/controller-metrics" "$output_dir/agent-metrics" \
+        "$output_dir/agent-pending" "$output_dir/prometheus"
     date -u +%Y-%m-%dT%H:%M:%S.%NZ > "$output_dir/timestamp.txt"
     date +%s > "$output_dir/epoch.txt"
     kubectl get pods -n "$RELEASE_NAMESPACE" -l app.kubernetes.io/instance=haptic -o json \
@@ -2299,8 +2329,8 @@ capture_state() {
     kubectl get deployments,statefulsets -n "$RELEASE_NAMESPACE" -o json > "$output_dir/workloads.json"
     kubectl get haproxycfg -n "$RELEASE_NAMESPACE" -o yaml > "$output_dir/haproxycfg.yaml"
 
-    local pod node safe_node
-    local -a controller_pods nodes
+    local pod node safe_node metrics_port
+    local -a controller_pods agent_pods nodes
     mapfile -t controller_pods < <(kubectl get pods -n haptic \
         -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
@@ -2309,6 +2339,17 @@ capture_state() {
         kubectl get --raw "/api/v1/namespaces/haptic/pods/${pod}:9090/proxy/metrics" \
             > "$output_dir/controller-metrics/${pod}.prom"
         [[ -s "$output_dir/controller-metrics/${pod}.prom" ]] || die "empty controller metrics for ${pod}"
+    done
+
+    mapfile -t agent_pods < <(jq -r '.[] | select(.component == "loadbalancer") | .name' \
+        "$output_dir/haptic-identities.json")
+    [[ ${#agent_pods[@]} -gt 0 ]] || die "no agent pods found for metrics capture"
+    for pod in "${agent_pods[@]}"; do
+        capture_quiescent_agent "$output_dir/pods.json" "$pod" "$output_dir/agent-pending/${pod}.json"
+        metrics_port="$(agent_port "$output_dir/pods.json" "$pod" agent-metrics)" || die "invalid agent metrics port for ${pod}"
+        kubectl get --raw "/api/v1/namespaces/haptic/pods/${pod}:${metrics_port}/proxy/metrics" \
+            > "$output_dir/agent-metrics/${pod}.prom"
+        [[ -s "$output_dir/agent-metrics/${pod}.prom" ]] || die "empty agent metrics for ${pod}"
     done
 
     mapfile -t nodes < <(kubectl get nodes -o json | jq -r '.items[] |

@@ -26,13 +26,30 @@ class LifecycleOutcomesTests(unittest.TestCase):
             for name in ("controller-a", "controller-b")
         ]
         self.clean_metrics = "\n".join(f"{name} 0" for name in sorted(ANALYZER.SCALARS)) + "\n"
+        self.identities += [
+            {"namespace": "haptic", "name": name, "uid": name + "-uid", "component": "loadbalancer",
+             "containers": [{"name": "agent", "image": "haptic:test", "imageID": "sha256:abc",
+                             "containerID": name + "-container", "ready": True, "restartCount": 0}]}
+            for name in ("haproxy-a", "haproxy-b")
+        ]
+        self.clean_agent_metrics = "\n".join(f"{name} 0" for name in sorted(ANALYZER.AGENT_SCALARS)) + "\n"
+        self.clean_agent_metrics += "".join(
+            f'haptic_agent_deferred_deletes_total{{kind="{kind}",outcome="abandoned"}} 0\n'
+            for kind in ("server", "backend")
+        )
         for phase, epoch in (("before", "100"), ("after", "200")):
             directory = self.directory / phase
             (directory / "controller-metrics").mkdir(parents=True)
+            (directory / "agent-metrics").mkdir()
+            (directory / "agent-pending").mkdir()
             (directory / "epoch.txt").write_text(epoch)
             self.write_identities(phase, self.identities)
             for pod in self.identities:
-                self.write_metrics(phase, self.clean_metrics, pod["name"])
+                if pod["component"] == "controller":
+                    self.write_metrics(phase, self.clean_metrics, pod["name"])
+                else:
+                    self.write_agent_metrics(phase, self.clean_agent_metrics, pod["name"])
+                    (directory / "agent-pending" / f'{pod["name"]}.json').write_text('{"servers":[],"backends":[]}')
 
     def write_identities(self, phase, identities):
         (self.directory / phase / "haptic-identities.json").write_text(json.dumps(identities))
@@ -40,12 +57,94 @@ class LifecycleOutcomesTests(unittest.TestCase):
     def write_metrics(self, phase, metrics, pod="controller-a"):
         (self.directory / phase / "controller-metrics" / f"{pod}.prom").write_text(metrics)
 
+    def write_agent_metrics(self, phase, metrics, pod="haproxy-a"):
+        (self.directory / phase / "agent-metrics" / f"{pod}.prom").write_text(metrics)
+
     def test_clean_lifecycle_allows_absent_unused_vectors(self):
         result = ANALYZER.analyze(self.directory)
         self.assertTrue(result["pass"])
         self.assertTrue(result["evidence_valid"])
-        self.assertEqual(len(result["metrics"]), 7)
+        self.assertEqual(len(result["metrics"]), 14)
         self.assertTrue(all(len(metric["per_pod"]) == 2 for metric in result["metrics"]))
+
+    def test_agent_failures_are_not_hidden_by_clean_controller_counters(self):
+        for metric in sorted(ANALYZER.AGENT_SCALARS | ANALYZER.AGENT_VECTORS):
+            with self.subTest(metric=metric):
+                if metric in ANALYZER.AGENT_SCALARS:
+                    metrics = self.clean_agent_metrics.replace(f"{metric} 0", f"{metric} 1")
+                elif metric == "haptic_agent_deferred_deletes_total":
+                    metrics = self.clean_agent_metrics.replace('kind="backend",outcome="abandoned"} 0',
+                                                                'kind="backend",outcome="abandoned"} 5')
+                elif metric == "haptic_agent_reloads_total":
+                    metrics = self.clean_agent_metrics + f'{metric}{{result="failed"}} 1\n'
+                else:
+                    metrics = self.clean_agent_metrics + f'{metric}{{reason="rejected"}} 1\n'
+                self.write_agent_metrics("after", metrics)
+                result = ANALYZER.analyze(self.directory)
+                self.assertFalse(result["pass"])
+                self.assertTrue(result["agent_identities_unchanged"])
+
+    def test_expected_agent_progress_is_not_an_adverse_outcome(self):
+        metrics = self.clean_agent_metrics + 'haptic_agent_reloads_total{result="ok"} 7\n'
+        for outcome in ("done", "deferred", "superseded"):
+            metrics += f'haptic_agent_deferred_deletes_total{{kind="backend",outcome="{outcome}"}} 5\n'
+        self.write_agent_metrics("after", metrics)
+        self.assertTrue(ANALYZER.analyze(self.directory)["pass"])
+
+    def test_agent_metrics_and_abandonment_series_must_be_present(self):
+        for metrics in ("", self.clean_agent_metrics.replace(
+                'haptic_agent_deferred_deletes_total{kind="backend",outcome="abandoned"} 0\n', "")):
+            self.write_agent_metrics("after", metrics)
+            with self.assertRaisesRegex(ValueError, "missing"):
+                ANALYZER.analyze(self.directory)
+        (self.directory / "after" / "agent-metrics" / "haproxy-a.prom").unlink()
+        with self.assertRaisesRegex(ValueError, "exact agent fleet"):
+            ANALYZER.analyze(self.directory)
+
+    def test_agent_identity_and_counters_cannot_reset(self):
+        metric = 'haptic_agent_deferred_deletes_total{kind="backend",outcome="done"}'
+        self.write_agent_metrics("before", self.clean_agent_metrics + f"{metric} 5\n")
+        for tail in ("", f"{metric} 4\n"):
+            self.write_agent_metrics("after", self.clean_agent_metrics + tail)
+            with self.assertRaisesRegex(ValueError, "disappeared|decreased"):
+                ANALYZER.analyze(self.directory)
+        self.write_agent_metrics("after", self.clean_agent_metrics + f"{metric} 5\n")
+        for field, value in (("uid", "replacement"), ("restartCount", 1), ("ready", False),
+                             ("imageID", "new-image"), ("containerID", "new-container")):
+            identities = copy.deepcopy(self.identities)
+            target = identities[2] if field == "uid" else identities[2]["containers"][0]
+            target[field] = value
+            self.write_identities("after", identities)
+            with self.assertRaises(ValueError):
+                ANALYZER.analyze(self.directory)
+
+    def test_agent_deferred_work_cannot_outlive_the_outcome_window(self):
+        pending = self.directory / "after" / "agent-pending" / "haproxy-a.json"
+        for data in ({}, {"servers": [], "backends": ["retiring"]}, {"servers": ["be/srv"], "backends": []}):
+            pending.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "pending deletes"):
+                ANALYZER.analyze(self.directory)
+        pending.unlink()
+        with self.assertRaises(OSError):
+            ANALYZER.analyze(self.directory)
+
+    def test_agent_port_uses_the_deployed_chart_port_and_fails_on_ambiguity(self):
+        pods = self.directory / "pods.json"
+        for ports, expected in (([{"name": "agent-metrics", "protocol": "TCP", "containerPort": 12345}], "12345"),
+                                ([], None),
+                                ([{"name": "agent-metrics", "protocol": "TCP", "containerPort": 0}], None),
+                                ([{"name": "agent-metrics", "protocol": "TCP", "containerPort": 12345}] * 2, None)):
+            pods.write_text(json.dumps({"items": [{"metadata": {"name": "haproxy-a"}, "spec": {
+                "containers": [{"name": "agent", "ports": ports}]}}]}))
+            result = subprocess.run([
+                "bash", "-c", 'source "$1"; agent_port "$2" haproxy-a agent-metrics',
+                "bash", str(SCRIPT.parent / "bench-gateway-api.sh"), str(pods),
+            ], capture_output=True, text=True)
+            if expected is None:
+                self.assertNotEqual(result.returncode, 0)
+            else:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
 
     def test_recovered_ramp_or_teardown_errors_fail_even_with_clean_steady_snapshots(self):
         for phase in ("steady-activity-start", "steady-activity-end"):

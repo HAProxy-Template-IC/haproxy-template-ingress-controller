@@ -89,6 +89,10 @@ func TestMissingPartsAreListedThenResent(t *testing.T) {
 
 func TestHAProxyRestartConvergesOnTheNextApply(t *testing.T) {
 	e, s := converged(t)
+	before, err := e.client.State(t.Context(), api.StateRead{Verify: true})
+	require.NoError(t, err)
+	require.NotEmpty(t, before.AppliedPlanID)
+	require.Positive(t, before.HAProxy.WorkerStartTimeUnixMicros)
 
 	// The container comes back on the bootstrap config with a new worker, which
 	// is what a kubelet restart of the haproxy container leaves behind.
@@ -98,6 +102,9 @@ func TestHAProxyRestartConvergesOnTheNextApply(t *testing.T) {
 	state, err := e.client.State(context.Background(), api.StateRead{Verify: true})
 	require.NoError(t, err)
 	assert.Equal(t, e.workerPID(), state.HAProxy.WorkerPID, "the agent must observe the new worker")
+	assert.False(t, before.HAProxy.SameWorker(state.HAProxy))
+	assert.NotEqual(t, before.HAProxy.WorkerStartTimeUnixMicros, state.HAProxy.WorkerStartTimeUnixMicros)
+	assert.Empty(t, state.AppliedPlanID, "a restarted worker must invalidate the runtime baseline")
 
 	result := applyConverging(t, s)
 	require.True(t, result.OK, "the recovery apply was rejected: %+v", result.Error)

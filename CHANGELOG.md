@@ -17,6 +17,7 @@ Alpha release for testing. This release includes the [alpha.2 changes and chart 
 ### Fixed
 
 - Namespace deletion no longer emits resource-application errors for Kubernetes' namespace-terminating response; status publication and orphan pruning still wait for a complete successful apply.
+- Deferred HAProxy deletes stay on their original worker across reloads and container restarts and begin only after their traffic-stopping commands succeed; superseded cleanup is reported separately from abandonment.
 
 ### Helm chart
 

@@ -116,6 +116,41 @@ func TestStateVerifyObservesAForeignWorker(t *testing.T) {
 	assert.Empty(t, verified.AppliedPlanID, "a foreign worker means the runtime baseline is gone")
 }
 
+func TestStateVerifyDetectsAReplacementWithTheSamePID(t *testing.T) {
+	h := newHarness(t)
+	firstApply(t, h)
+	before := h.state(false).HAProxy.WorkerPID
+	h.model.With(func(m *haproxytest.Model) { m.StartTimeUnixMicros++ })
+	verified := h.state(true)
+	assert.Equal(t, before, verified.HAProxy.WorkerPID)
+	assert.Empty(t, verified.AppliedPlanID, "the same process ID does not preserve a replacement worker's baseline")
+}
+
+func TestReloadAdoptsAReplacementWithTheSamePID(t *testing.T) {
+	h := newHarness(t)
+	first := firstApply(t, h)
+	before := h.state(false).HAProxy
+	h.model.With(func(m *haproxytest.Model) {
+		reload := m.OnReload
+		m.OnReload = func(m *haproxytest.Model) {
+			if reload != nil {
+				reload(m)
+			}
+			m.Pid--
+		}
+	})
+	files := baseFiles("global\n  maxconn 1000\n")
+	m := buildManifest("plan-2", files)
+	m.Mode = api.ModeReload
+	m.ExpectedPrevPlanID, m.ExpectedPrevToken = first.AppliedPlanID, first.AppliedToken
+	result := h.apply(&m, files)
+	require.True(t, result.OK, "%+v", result.Error)
+	after := h.state(false).HAProxy
+	assert.Equal(t, before.WorkerPID, after.WorkerPID)
+	assert.Equal(t, before.WorkerStartTimeUnixMicros+1, after.WorkerStartTimeUnixMicros)
+	assert.False(t, before.SameWorker(after))
+}
+
 func TestAManifestOverTheOpLimitIsRefused(t *testing.T) {
 	h := newHarness(t)
 	first := firstApply(t, h)

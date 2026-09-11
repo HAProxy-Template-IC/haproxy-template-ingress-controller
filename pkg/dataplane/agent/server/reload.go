@@ -110,14 +110,13 @@ func (s *Server) masterAnswers() bool {
 	return err == nil
 }
 
-// awaitNewWorker blocks until the worker socket answers with a pid different
-// from the one the agent recorded before the reload.
+// awaitNewWorker waits for a worker distinct from the recorded process and start time.
 func (s *Server) awaitNewWorker() (api.HAProxyInfo, error) {
 	previous := s.workerIdentity()
 	deadline := time.Now().Add(s.cfg.ReloadTimeout)
 	for {
 		info, err := s.runtime.Info()
-		if err == nil && info.WorkerPID != previous.WorkerPID {
+		if err == nil && !info.SameWorker(previous) {
 			s.adoptWorker(info)
 			return info, nil
 		}

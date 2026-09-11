@@ -278,7 +278,8 @@ func (h *HAProxy) show(rest, _ string) reply {
 	case "info":
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		return dump(fmt.Sprintf("Name: HAProxy\nVersion: %s\nPid: %d\nUptime: 0d 0h00m01s", h.m.Version, h.m.Pid))
+		return dump(fmt.Sprintf("Name: HAProxy\nVersion: %s\nPid: %d\nStart_time_sec: %d.%06d\nUptime: 0d 0h00m01s",
+			h.m.Version, h.m.Pid, h.m.StartTimeUnixMicros/1_000_000, h.m.StartTimeUnixMicros%1_000_000))
 	case objMap:
 		return h.showMap(args)
 	case objSSL:

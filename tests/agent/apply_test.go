@@ -42,6 +42,7 @@ func TestFreshPodServesStateAndStaysOutOfService(t *testing.T) {
 	assert.True(t, strings.HasPrefix(state.HAProxy.Version, haproxyVersion()),
 		"agent reported HAProxy %q, expected the %s bracket", state.HAProxy.Version, haproxyVersion())
 	assert.Equal(t, e.workerPID(), state.HAProxy.WorkerPID)
+	assert.Positive(t, state.HAProxy.WorkerStartTimeUnixMicros)
 	assert.Empty(t, state.AppliedPlanID, "a fresh pod has no baseline")
 
 	mismatch, missing := client.CheckSkew(state)
