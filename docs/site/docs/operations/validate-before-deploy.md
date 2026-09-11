@@ -76,8 +76,15 @@ gate always runs.
 | `--api-versions` | — | Extra API versions your cluster serves. The Gateway API `GatewayClass` version is always declared, so the Gateway library renders the same way it does in the cluster |
 | `--expect-chart-version` | `$HAPTIC_EXPECT_CHART_VERSION` | Fail unless the chart being rendered carries exactly this version. Set it to the version you're about to install, so a drifted controller image tag fails loudly instead of validating the wrong chart |
 
-Environment overrides: `HAPTIC_CONTAINER_RUNTIME` (default: `docker`, then
-`podman`), `HAPTIC_VECTOR_IMAGE`, `HAPTIC_VARNISH_IMAGE`.
+Set `HAPTIC_CONTAINER_RUNTIME` to choose a runtime (default: `docker`, then
+`podman`). Preflight selects Vector's image from the rendered Helm workload
+and Varnish's image from the workload mounting each VCL ConfigMap. It checks
+every distinct config and image pair, including variants with the same file name.
+
+Set image overrides in your Helm values so validation and deployment use the
+same images. If you set `HAPTIC_VECTOR_IMAGE` or `HAPTIC_VARNISH_IMAGE`, it must
+equal the corresponding rendered image. A mismatch or an unresolved image
+fails the check.
 
 ### Schemas
 

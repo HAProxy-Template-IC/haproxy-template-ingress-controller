@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -165,7 +166,7 @@ func runPreflight(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("this configuration would not load — deploying it would crash-loop the controller: %w", err)
 	}
 
-	if err := checkRenderedSidecarConfigs(ctx, results); err != nil {
+	if err := checkRenderedSidecarConfigs(ctx, manifests, results); err != nil {
 		return err
 	}
 
@@ -286,17 +287,13 @@ func renderChartManifests(chartDir string, valuesFiles []string, expectVersion s
 	}, caps)
 }
 
-// checkRenderedSidecarConfigs compiles the configurations the render produces
-// for the OTHER processes in the fleet. The load gate cannot: it only knows
-// whether HAProxy accepts its own config.
-//
-// Both failure modes are expensive and neither shows up as a rejected deploy —
-// Vector rejects a bad config and silently keeps its bootstrap one, which has
-// no metrics exporter, so the pod never becomes ready and the rollout wedges;
-// a VCL that does not compile leaves the cache pod in CrashLoopBackOff.
-func checkRenderedSidecarConfigs(ctx context.Context, results *testrunner.TestResults) error {
-	vectorConfigs, vclFiles := collectSidecarConfigs(results)
-	if len(vectorConfigs) == 0 && len(vclFiles) == 0 {
+// The HAProxy load gate cannot validate other processes' configuration formats.
+func checkRenderedSidecarConfigs(ctx context.Context, manifests map[string]string, results *testrunner.TestResults) error {
+	configs, err := collectSidecarConfigs(manifests, results)
+	if err != nil {
+		return err
+	}
+	if len(configs) == 0 {
 		return nil
 	}
 
@@ -309,59 +306,41 @@ func checkRenderedSidecarConfigs(ctx context.Context, results *testrunner.TestRe
 		return nil
 	}
 
+	return runSidecarChecks(ctx, configs, runtimeBin, runSidecarCommand)
+}
+
+type sidecarCommandRunner func(context.Context, string, ...string) ([]byte, error)
+
+func runSidecarCommand(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, bin, args...).CombinedOutput()
+}
+
+func runSidecarChecks(ctx context.Context, configs []sidecarConfig, runtimeBin string, run sidecarCommandRunner) error {
 	dir, err := os.MkdirTemp("", "haptic-preflight-sidecars-")
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	for name, content := range vectorConfigs {
-		fmt.Fprintf(os.Stderr, "==> validating the rendered %s\n", name)
-		if err := writeAndRun(ctx, dir, "vector.yaml", content, runtimeBin,
-			[]string{vectorImage(), "validate", "--no-environment", "/w/vector.yaml"}, nil); err != nil {
-			return fmt.Errorf("vector rejects the rendered sidecar config — it would keep its bootstrap "+
-				"config and never become ready: %w", err)
+	for i := range configs {
+		config := &configs[i]
+		configDir := filepath.Join(dir, strconv.Itoa(i))
+		// The host-only parent stays private; non-root image users can read this mount.
+		if err := os.Mkdir(configDir, 0o755); err != nil {
+			return fmt.Errorf("creating sidecar config directory: %w", err)
 		}
-	}
-
-	for name, content := range vclFiles {
-		fmt.Fprintf(os.Stderr, "==> compiling %s\n", name)
-		// varnishd resolves backend hostnames at compile time, and these are
-		// cluster DNS names that do not exist here. Point them at loopback so
-		// the compiler checks the VCL rather than the resolver.
-		var extra []string
-		for _, h := range vclBackendHosts(content) {
-			extra = append(extra, "--add-host", h+":127.0.0.1")
-		}
-		if err := writeAndRun(ctx, dir, name, content, runtimeBin,
-			[]string{varnishImage(), "varnishd", "-C", "-f", "/w/" + name}, extra); err != nil {
-			return fmt.Errorf("the rendered %s does not compile — the cache pod would CrashLoopBackOff: %w", name, err)
+		fmt.Fprintf(os.Stderr, "==> validating %s/%s with %s\n", config.testName, config.name, config.image)
+		if err := writeAndRun(ctx, configDir, config, runtimeBin, run); err != nil {
+			return fmt.Errorf("%s/%s fails validation with %s; fix the rendered config: %w",
+				config.testName, config.name, config.image, err)
 		}
 	}
 	return nil
 }
 
-// collectSidecarConfigs returns the rendered vector configs by file name and
-// the rendered VCLs by data key, across every test.
-func collectSidecarConfigs(results *testrunner.TestResults) (vectorConfigs, vclFiles map[string]string) {
-	vectorConfigs, vclFiles = map[string]string{}, map[string]string{}
-	for i := range results.TestResults {
-		test := &results.TestResults[i]
-		for name, content := range test.RenderedFiles {
-			if filepath.Base(name) == "vector.yaml" {
-				vectorConfigs[name] = content
-			}
-		}
-		for _, manifest := range test.RenderedK8sResources {
-			collectVCLData(manifest, vclFiles)
-		}
-	}
-	return vectorConfigs, vclFiles
-}
-
-func writeAndRun(ctx context.Context, dir, name, content, runtimeBin string, image, extraRunArgs []string) error {
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+func writeAndRun(ctx context.Context, dir string, config *sidecarConfig, runtimeBin string, run sidecarCommandRunner) error {
+	path := filepath.Join(dir, config.name)
+	if err := os.WriteFile(path, []byte(config.content), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	// Bound the run: a stalled image pull or a wedged compiler would otherwise
@@ -369,9 +348,17 @@ func writeAndRun(ctx context.Context, dir, name, content, runtimeBin string, ima
 	ctx, cancel := context.WithTimeout(ctx, sidecarCheckTimeout)
 	defer cancel()
 
-	args := append([]string{"run", "--rm", "-v", dir + ":/w"}, extraRunArgs...)
-	args = append(args, image...)
-	out, err := exec.CommandContext(ctx, runtimeBin, args...).CombinedOutput()
+	args := []string{"run", "--rm", "-v", dir + ":/w:ro"}
+	if config.kind == vectorSidecar {
+		args = append(args, config.image, "validate", "--no-environment", "/w/"+config.name)
+	} else {
+		// Varnish resolves cluster DNS names at compile time, outside the cluster.
+		for _, host := range vclBackendHosts(config.content) {
+			args = append(args, "--add-host", host+":127.0.0.1")
+		}
+		args = append(args, config.image, "varnishd", "-C", "-f", "/w/"+config.name)
+	}
+	out, err := run(ctx, runtimeBin, args...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("timed out after %s (image pull or compiler stalled)\n%s", sidecarCheckTimeout, out)
@@ -379,24 +366,6 @@ func writeAndRun(ctx context.Context, dir, name, content, runtimeBin string, ima
 		return fmt.Errorf("%w\n%s", err, out)
 	}
 	return nil
-}
-
-// collectVCLData adds every `*.vcl` key of a rendered ConfigMap to out. A
-// manifest that is not a ConfigMap, or does not parse, contributes nothing —
-// the load gate has already ruled on whether the render itself is sound.
-func collectVCLData(manifest string, out map[string]string) {
-	var obj struct {
-		Kind string            `json:"kind"`
-		Data map[string]string `json:"data"`
-	}
-	if err := yaml.Unmarshal([]byte(manifest), &obj); err != nil || obj.Kind != "ConfigMap" {
-		return
-	}
-	for name, content := range obj.Data {
-		if strings.HasSuffix(name, ".vcl") {
-			out[name] = content
-		}
-	}
 }
 
 var vclHostPattern = regexp.MustCompile(`\.host\s*=\s*"([^"]+)"`)
@@ -432,23 +401,6 @@ func containerRuntime() (string, error) {
 		}
 	}
 	return "", nil
-}
-
-func vectorImage() string {
-	if img := os.Getenv("HAPTIC_VECTOR_IMAGE"); img != "" {
-		return img
-	}
-	return "timberio/vector:0.57.0-debian"
-}
-
-func varnishImage() string {
-	if img := os.Getenv("HAPTIC_VARNISH_IMAGE"); img != "" {
-		return img
-	}
-	// Must match charts/haptic/values.yaml cache.varnish.image — a VCL that
-	// compiles here but not on the deployed varnishd defeats the gate.
-	// renovate: datasource=docker depName=varnish
-	return "varnish:9.0"
 }
 
 // collectConfigDocuments picks the HAProxyTemplateConfig and its

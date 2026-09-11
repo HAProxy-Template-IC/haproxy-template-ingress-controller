@@ -89,8 +89,12 @@ decided; `validate` and `preflight` both go through them.
 It also compiles what the render produces for the *other* processes in the
 fleet, which the load gate cannot judge: `vector validate` on `RenderedFiles`
 `vector.yaml`, and `varnishd -C` on every `*.vcl` in a rendered ConfigMap
-(`RenderedK8sResources`). Both run the real binaries in containers
-(`HAPTIC_CONTAINER_RUNTIME`, `HAPTIC_VECTOR_IMAGE`, `HAPTIC_VARNISH_IMAGE`);
+(`RenderedK8sResources`). Each distinct config and image pair is checked; a
+shared file name never discards another test's config. Images come from the
+rendered Helm workload for Vector and the workload mounting the VCL ConfigMap
+for Varnish. Missing or ambiguous images fail, as do conflicting
+`HAPTIC_VECTOR_IMAGE` or `HAPTIC_VARNISH_IMAGE` overrides.
+Both run the real binaries in containers (`HAPTIC_CONTAINER_RUNTIME`);
 without a runtime they warn and skip, but an explicitly configured runtime that
 is missing is an error. `varnishd` resolves backend hostnames at compile time,
 so each `.host` in the VCL is pointed at loopback via `--add-host`.

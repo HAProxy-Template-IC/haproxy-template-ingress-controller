@@ -309,6 +309,12 @@ linters:
           - gosec
         path: tests/conformance/
 
+      # Non-root containers read mounts beneath an unmounted, owner-only parent.
+      - path: ^cmd/haptic/preflight\.go$
+        linters:
+          - gosec
+        text: "G30[16]:"
+
       # Allow TODO comments in example code
       - path: examples/
         linters:
