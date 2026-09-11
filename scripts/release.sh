@@ -179,6 +179,8 @@ sed -i -E "s|(<span id=\"helm-version\" class=\"t-num\">)[^<]*|\1$VERSION|" docs
 
 # --- commit --------------------------------------------------------------------
 git add CHANGELOG.md VERSION charts/haptic/Chart.yaml \
+    charts/haptic/README.md charts/haptic/values.yaml \
+    charts/haptic/templates/NOTES.txt \
     docs/landing/overrides/home.html $VERSION_DOC_FILES
 
 if git diff --cached --quiet; then

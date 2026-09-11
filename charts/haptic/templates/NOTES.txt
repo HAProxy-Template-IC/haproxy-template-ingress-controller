@@ -138,4 +138,4 @@ Next Steps:
 {{- end }}
 
 Documentation:
-  https://haproxy-haptic.org/docs/dev/
+  https://haproxy-haptic.org/docs/0.2.0-alpha.2/

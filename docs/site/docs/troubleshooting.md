@@ -59,7 +59,7 @@ CRDs are installed by the chart. If missing, reinstall the chart at the version 
 
 ```bash
 helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.1 --namespace haptic
+  --version 0.2.0-alpha.2 --namespace haptic
 ```
 
 ### NetworkPolicy Issues in kind

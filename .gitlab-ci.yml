@@ -1296,7 +1296,21 @@ build-spoa-image-main:
     - docker buildx imagetools create --tag "${CI_REGISTRY_IMAGE}/spoa-hub:main-latest"
         "${CI_REGISTRY_IMAGE}/spoa-hub:main-${CI_COMMIT_SHORT_SHA}"
 
-# Multi-arch release on version tags. Sign + attest jobs depend on this.
+prepare-spoa-release:
+  extends: .build-spoa-image-base
+  interruptible: false
+  resource_group: spoa-release-publish
+  rules:
+    - if: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^release\/v/
+      when: manual
+      allow_failure: true
+    - if: $CI_COMMIT_BRANCH =~ /^release\/v/
+      when: manual
+      allow_failure: true
+  script:
+    - bash scripts/spoa-release-image.sh prepare
+
+# Reuse the immutable bundle tested before the release tag was created.
 build-spoa-image-release:
   extends: .build-spoa-image-base
   interruptible: false
@@ -1310,6 +1324,8 @@ build-spoa-image-release:
     # an invalid `spoa-hub:` tag on the first unified release. The leading
     # "v" is stripped in .build-spoa-image-base's script instead.
     SPOA_TAG: "$CI_COMMIT_TAG"
+  script:
+    - bash scripts/spoa-release-image.sh verify
   after_script:
     - |
       if ! echo "$CI_COMMIT_TAG" | grep -qE -- '-(alpha|beta|rc)'; then
@@ -3595,6 +3611,11 @@ release-chart:
   needs:
     - compute-ci-image-tag
     - job: build-ci
+    - release-controller
+    - sign-spoa-image
+    - attest-spoa-sbom
+    - smoke-spoa-amd64
+    - smoke-spoa-arm64
   rules:
     - if: $CI_COMMIT_TAG =~ /^v.*/
   before_script:

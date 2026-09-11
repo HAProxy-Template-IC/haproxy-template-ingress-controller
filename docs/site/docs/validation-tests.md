@@ -421,7 +421,7 @@ GitLab CI (`.gitlab-ci.yml`) — override the image entrypoint so the job's `scr
 ```yaml
 validate-haptic-config:
   image:
-    name: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
+    name: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.2-haproxy3.4
     entrypoint: [""]
   script:
     - haptic validate -f config.yaml
@@ -434,7 +434,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     container:
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.2-haproxy3.4
     steps:
       - uses: actions/checkout@v4
       - run: haptic validate -f config.yaml

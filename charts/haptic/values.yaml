@@ -14,7 +14,6 @@ commonAnnotations: {}
 # config.kubernetes.io/managed-by: helm
 
 # HAProxy version - selects the major.minor series for both controller and HAProxy pod images
-# Controller image suffix: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
 # HAProxy pod image: haproxytech/haproxy-debian:<patch from haproxyPatchVersions[<series>]>
 # Must match a version built by CI (see versions.env for supported versions).
 # Not Renovate-managed: cutting over to a new series is an operational decision
@@ -383,7 +382,7 @@ controller:
   # HAProxyTemplateConfig and the controller merges them in the order fixed by
   # templates/_libraries.tpl (haptic.libraryFiles); see ADR-0014. Merge-order
   # docs and per-library references:
-  # https://haproxy-haptic.org/docs/dev/template-libraries/
+  # https://haproxy-haptic.org/docs/0.2.0-alpha.2/template-libraries/
   templateLibraries:
     # Resource-agnostic core. Defines the haproxyConfig template and the
     # render_glob extension points the other libraries plug into.
@@ -421,7 +420,7 @@ controller:
       experimentalChannel: false
     # Shared Ingress-scoped macros for the vendor annotation libraries
     # below (level 2.5). Rationale:
-    # https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/adr/0003-annotation-compat-scaffold-level-2-5.md
+    # https://gitlab.com/haproxy-haptic/haptic/-/blob/v0.2.0-alpha.2/docs/adr/0003-annotation-compat-scaffold-level-2-5.md
     ingressAnnotationsCompat:
       enabled: true
     # Governance rule engine. Generic over any watched resource, so it is

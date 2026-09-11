@@ -223,7 +223,7 @@ You can create multiple GatewayClasses pointing to different HAProxyTemplateConf
 
 ```bash
 # Install chart with default config
-helm install haproxy-internet oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1
+helm install haproxy-internet oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.2
 
 # Create separate HAProxyTemplateConfig for internal traffic with different templates
 kubectl apply -f - <<EOF
