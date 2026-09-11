@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Helm chart
+
+#### Fixed
+
+- Routes without plaintext listeners no longer generate an unbound HTTP TCP frontend; internal HTTP routing and validation remain enabled.
+
 ## [0.2.0-alpha.3] - 2026-09-11
 
 Alpha release for testing. This release includes the [alpha.2 changes and chart migrations](https://gitlab.com/haproxy-haptic/haptic/-/blob/v0.2.0-alpha.3/CHANGELOG.md#020-alpha2---2026-09-11); alpha.2 publication did not complete. Renderer scaling work ([#212](https://gitlab.com/haproxy-haptic/haptic/-/issues/212)) and the intermittent rejected output inconsistency ([#213](https://gitlab.com/haproxy-haptic/haptic/-/issues/213)) remain open.

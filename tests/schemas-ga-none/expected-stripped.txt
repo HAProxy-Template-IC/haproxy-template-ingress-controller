@@ -92,6 +92,12 @@ test-grpcroute-method-regex
 test-grpcroute-multi-hostname-map-newlines
 test-grpcroute-multiple-headers
 test-grpcroute-status-patches
+test-http-demultiplexer-extension-listener
+test-http-demultiplexer-grpc-without-listener
+test-http-demultiplexer-https-only-route
+test-http-demultiplexer-orphan-route-validation
+test-http-demultiplexer-proxy-listener
+test-http-demultiplexer-route-without-listener
 test-httproute-all-matchers
 test-httproute-backend-header-value-injection-admission-rejected
 test-httproute-backend-header-value-injection-reconcile-warns-and-skips

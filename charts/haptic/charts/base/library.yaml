@@ -2721,22 +2721,12 @@ haproxyConfig:
         {# Extension point for status frontend directives (e.g., Prometheus exporter) #}
         {{- render_glob "status-extra-*" | indent(2, true) }}
 
-    {#- The http_frontend renders only when at least one resource
-        actually wants traffic on an HTTP port — Ingress, Gateway/
-        ListenerSet HTTP listener at any port. Without it we'd emit
-        an HAProxy frontend with no binds (validation error) any
-        time the chart is installed for a use case that never opens
-        port 80, e.g. an HTTPS-only Gateway whose listeners have
-        unresolvable certs (the GatewayFrontendInvalidDefault
-        ClientCertificateValidation conformance scenario).
-
-        The chart-static `bind *:httpPort` itself is gated by a
-        narrower flag — bindHTTPDefault — so a Gateway with only a
-        non-default-port HTTP listener (say :9090) gets the
-        frontend rendered (so http-bind-extra-* can attach `bind
-        *:9090` to it) but NO `bind *:80`. -#}
+    {#- HTTP routing still needs validation when no plaintext listener exists. -#}
     {%- var gf = shared.Get("globalFeatures") -%}
     {%- if gf != nil && tostring(gf.(map[string]any) | dig("needHTTPFrontend")) == "true" %}
+    {%- var httpExtraBinds = render_glob "http-bind-extra-*" %}
+    {#- Keep invalid non-comment extension output visible to HAProxy validation. -#}
+    {%- if tostring(gf.(map[string]any) | dig("bindHTTPDefault")) == "true" || regex_search(httpExtraBinds, "(?m)^[\\t ]*[^\\t #\\r\\n]") %}
 
     {# ─────────────────────────────────────────────────────────────────
        HTTP listener architecture: tcp inspector + dual loopback frontends.
@@ -2783,7 +2773,7 @@ haproxyConfig:
         {# Extension point for additional bind directives (Gateway HTTP listener ports). #}
         {# Lands on the OUTER tcp frontend so every HTTP port — chart-static and #}
         {# Gateway-derived — goes through the same h2c-detection inspector. #}
-        {{- render_glob "http-bind-extra-*" | indent(2, true) }}
+        {{- httpExtraBinds | indent(2, true) }}
 
         # Wait for the first wire bytes so the h2c-preface ACL can classify the
         # connection (safety net for slow initial sends; fast clients aren't delayed).
@@ -2819,6 +2809,7 @@ haproxyConfig:
            "extra": []any{map[string]any{"name": "send-proxy-v2"}}}},
        }) }}
 
+    {%- end %}
     frontend http_frontend
         guid fe:http_frontend
         mode http
