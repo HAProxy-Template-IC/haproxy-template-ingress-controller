@@ -153,7 +153,7 @@ func (c *Component) handleEvent(event busevents.Event) {
 		delete(c.triggeredAt, e.CorrelationID()) // cleanup to prevent map growth
 		c.metrics.RecordReconciliation(0, false)
 	case *events.DeploymentCompletedEvent:
-		c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0)
+		c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0 || e.PendingReloads > 0)
 		c.metrics.RecordDeploymentReloads(e.ReloadsTriggered)
 		// Leader-only event: update the fleet-convergence + config-staleness gauges.
 		c.metrics.SetFleetConvergence(e.Total, e.Succeeded, e.Failed)

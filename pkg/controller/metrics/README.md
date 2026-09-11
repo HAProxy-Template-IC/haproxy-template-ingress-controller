@@ -26,7 +26,7 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | Metric | Type | Labels | What it tracks |
 |--------|------|--------|----------------|
 | `haptic_deployment_total` | counter | — | Deployments dispatched to at least one HAProxy endpoint |
-| `haptic_deployment_errors_total` | counter | — | Deployments that failed |
+| `haptic_deployment_errors_total` | counter | — | Failed endpoint attempts and deployments with no converged or pending pods |
 | `haptic_deployment_duration_seconds` | histogram | — | Deployment duration, aggregated across all parallel endpoint calls |
 | `haptic_haproxy_reloads_total` | counter | — | HAProxy reloads triggered by deployments. A reload forks the HAProxy process; reload rate (vs runtime-API updates) is the key capacity/SLO signal |
 | `haptic_deploy_apply_total` | counter | `pod`, `mode` | Applies an agent accepted, by the mode it reported: `runtime`, `file_only`, `reload`, `scheduled` or `noop`. The reload-free share of a rollout is the `runtime`+`file_only`+`noop` fraction |
