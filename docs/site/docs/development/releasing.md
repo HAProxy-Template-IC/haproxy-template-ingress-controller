@@ -95,7 +95,25 @@ glab mr create --title "release: haptic v<version>" \
   --target-branch main
 ```
 
-Review and merge through GitLab.
+### Step 5: Prepare the SPOA release image
+
+Run the manual `prepare-spoa-release` job in the release MR pipeline. It builds
+all three architectures under the chart's release tag, before the chart's
+install tests need that image. The chart itself remains unpublished.
+
+The job records the upstream image digest, Docker build inputs, and verified
+plugin bytes in the image's input identity. An existing release image must
+match those inputs and contain all three architectures; it's never rebuilt
+or overwritten. If the bundle changes after preparation, choose a new release
+version.
+
+Temporary preparation tags use `ci-spoa-prepare-*`, covered by the project's
+configured `^ci-.*` registry cleanup policy. The versioned release tag is retained.
+
+Retry any install jobs that failed while the image was unavailable. Review and
+merge only after the full pipeline passes. The final tag pipeline verifies and
+reuses the prepared image, then signs it, attaches its software bill of materials,
+and smoke-tests amd64 and arm64 before publishing the chart.
 
 ### Automatic tag creation
 
@@ -127,7 +145,7 @@ When a `v*` tag is pushed, CI does the following:
     - Release notes from the version's `CHANGELOG.md` section (controller + chart)
     - Pre-release flag (for alpha/beta/rc versions)
 3. **Build Docker images** for every supported HAProxy series (3.0-3.4)
-4. **Build the spoa-hub image** (`spoa-hub:<version>`)
+4. **Verify the prepared spoa-hub image** (`spoa-hub:<version>`) without rebuilding it
 5. **Package the Helm chart** and push it as a signed OCI artifact to `registry.gitlab.com/haproxy-haptic/haptic/charts`
 6. **Sign all artifacts** with Cosign using keyless OpenID Connect (OIDC)
 7. **Generate a Software Bill of Materials (SBOM)** for each image and attach it as a Cosign attestation

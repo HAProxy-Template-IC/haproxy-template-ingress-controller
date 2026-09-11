@@ -29,7 +29,7 @@ So setting `ingressClass.name` keeps the IngressClass name and the watch filter 
 
 ```bash
 helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.1 \
+  --version 0.2.0-alpha.2 \
   --namespace haptic --create-namespace \
   --set ingressClass.name=haproxy
 ```

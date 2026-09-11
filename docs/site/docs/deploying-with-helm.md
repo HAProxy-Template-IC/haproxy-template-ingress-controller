@@ -17,14 +17,14 @@ The Helm chart is the supported way to install HAPTIC. A default install deploys
 ## Installation
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.2
 ```
 
 With custom values:
 
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.1 \
+  --version 0.2.0-alpha.2 \
   -f my-values.yaml
 ```
 
@@ -91,7 +91,7 @@ gatewayClass:
 
 ```bash
 helm install haptic-team-b oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.1 \
+  --version 0.2.0-alpha.2 \
   --namespace haptic-team-b --create-namespace \
   -f team-b-values.yaml
 ```
@@ -104,7 +104,7 @@ If you installed with a values file, re-pass it so your custom values survive th
 
 ```bash
 helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.1 \
+  --version 0.2.0-alpha.2 \
   -f my-values.yaml
 ```
 
@@ -112,7 +112,7 @@ Otherwise, upgrade without it:
 
 ```bash
 helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.1
+  --version 0.2.0-alpha.2
 ```
 
 !!! warning "The chart owns the `HAProxyTemplateConfig`"

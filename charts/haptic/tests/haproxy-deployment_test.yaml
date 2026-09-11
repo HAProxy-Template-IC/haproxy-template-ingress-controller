@@ -27,10 +27,12 @@ tests:
   # The agent is a first-class container with its own probes, not a supervised
   # child of a shell loop. It still owns no pod readiness: HAProxy's /ready does.
   - it: should run the agent from the controller image with its own probes
+    chart:
+      appVersion: 9.8.7-test
     asserts:
       - equal:
           path: spec.template.spec.containers[?(@.name=="agent")].image
-          value: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
+          value: registry.gitlab.com/haproxy-haptic/haptic:9.8.7-test-haproxy3.4
       - isNull:
           path: spec.template.spec.containers[?(@.name=="agent")].command
       - isNull:

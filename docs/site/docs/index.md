@@ -73,7 +73,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 - **Observability** - Per-route request metrics (rate, errors, latency by phase) derived from the access log, JSON structured logging, and debug endpoints
 
 !!! warning "Project maturity"
-    The current release is `0.2.0-alpha.1`, a pre-1.0 alpha, and the custom resources are served at API version `v1alpha1` — their schemas can still change before 1.0. The high-availability, validation, and observability features above are implemented and covered by tests, but pin an exact chart version (`--version 0.2.0-alpha.1`) and read the [changelog](changelog.md) before you upgrade.
+    This release is a pre-1.0 alpha, and the custom resources are served at API version `v1alpha1` — their schemas can still change before 1.0. Pin an exact chart version (`--version 0.2.0-alpha.2`) and read the [changelog](changelog.md) before you upgrade.
 
 !!! note "Ready to use out of the box"
     The [Helm chart](deploying-with-helm.md) ships with [Template Libraries](template-libraries.md) enabled by default. They cover Kubernetes Ingress and Gateway API resources out of the box, with HAPTIC's native [`haproxy-haptic.org/*` annotations](libraries/haptic-annotations.md) — a best-of-breed superset of the common HAProxy and nginx ingress-controller annotations — enabled by default. No template authoring required, and the vendor annotation libraries are available opt-in for migration. Customizing or extending the templates is entirely optional.
@@ -116,7 +116,7 @@ Key components:
 ## Quick start
 
 ```bash
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1 --namespace haptic --create-namespace
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.2 --namespace haptic --create-namespace
 ```
 
 This installs both the controller and a 2-replica HAProxy Deployment, plus the default template libraries that cover Ingress and Gateway API out of the box. For the full walkthrough — including a sample app, end-to-end verification, and inspecting the rendered config the controller publishes as a `HAProxyCfg` resource — see [Getting Started](getting-started.md).

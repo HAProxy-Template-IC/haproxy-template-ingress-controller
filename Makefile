@@ -4,7 +4,7 @@
         build check-source-hash docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check test-spoa-reload \
         tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
-        release goreleaser-snapshot \
+        release test-release goreleaser-snapshot \
         pgo-profile pgo-merge \
         extract-schemas
 
@@ -290,6 +290,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 		scripts/tests/test_analyze_gateway_api_supervisor_logs.py
 	bash scripts/tests/test_bench_gateway_api.sh
 	bash scripts/tests/test_chart_haproxy_image.sh
+	$(MAKE) test-release
 	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
 	@# No coverage flags here: instrumenting the module for coverage costs a
@@ -321,6 +322,9 @@ ifdef TEST_RUN_PATTERN
 else
 	$(GO) tool gotestsum --junitfile report-integration.xml --format testname -- -tags=integration -v -race -timeout 15m ./tests/integration/...
 endif
+
+test-release: ## Verify release ordering and version-file staging
+	python3 -m unittest scripts/tests/test_release.py scripts/tests/test_spoa_release_image.py
 
 test-agent-docker: ## Run the agent docker suite (real HAProxy + agent containers, no cluster)
 	@echo "Running agent docker tests against HAProxy $(HAPROXY_VERSION)..."
