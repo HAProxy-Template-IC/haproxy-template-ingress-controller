@@ -191,10 +191,8 @@ func (c *Component) handleEvent(event pkgevents.Event) {
         c.metrics.RecordReconciliation(0, false)
 
     case *events.DeploymentCompletedEvent:
-        // The deployment event reports Total / Succeeded / Failed counts; the
-        // component tracks "did anything succeed" rather than "did everything
-        // succeed" because partial rollouts still register as forward progress.
-        c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0)
+        // Accepted reloads remain pending until the agent's pacing deadline.
+        c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0 || e.PendingReloads > 0)
 
     case *events.RenderGateCompletedEvent:
         // HAProxy's own verdict on the render (ADR-0022). A refusal and a gate
