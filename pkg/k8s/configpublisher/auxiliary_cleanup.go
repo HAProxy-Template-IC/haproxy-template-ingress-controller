@@ -24,6 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/util/retry"
 )
 
 func desiredResourceNames(names []string) map[string]struct{} {
@@ -34,9 +35,10 @@ func desiredResourceNames(names []string) map[string]struct{} {
 	return desired
 }
 
-func referencesRuntimeConfig(obj metav1.Object, runtimeConfigName string) bool {
+func referencesRuntimeConfig(obj metav1.Object, runtimeConfig *haproxyv1alpha1.HAProxyCfg) bool {
 	for _, ref := range obj.GetOwnerReferences() {
-		if ref.APIVersion == apiVersionV1Alpha1 && ref.Kind == runtimeConfigKind && ref.Name == runtimeConfigName {
+		if ref.APIVersion == apiVersionV1Alpha1 && ref.Kind == runtimeConfigKind &&
+			ref.Name == runtimeConfig.Name && ref.UID == runtimeConfig.UID {
 			return true
 		}
 	}
@@ -57,9 +59,9 @@ func managedByRuntimeConfig(obj metav1.Object, runtimeConfigName string) bool {
 		obj.GetLabels()[runtimeConfigLabelKey] == runtimeConfigLabelValue(runtimeConfigName)
 }
 
-func ownedByRuntimeConfig(obj metav1.Object, runtimeConfigName string) bool {
-	return obj.GetLabels()[runtimeConfigLabelKey] == runtimeConfigLabelValue(runtimeConfigName) &&
-		referencesRuntimeConfig(obj, runtimeConfigName)
+func ownedByRuntimeConfig(obj metav1.Object, runtimeConfig *haproxyv1alpha1.HAProxyCfg) bool {
+	return obj.GetLabels()[runtimeConfigLabelKey] == runtimeConfigLabelValue(runtimeConfig.Name) &&
+		referencesRuntimeConfig(obj, runtimeConfig)
 }
 
 func pruneOwnedResources[T any](
@@ -70,22 +72,64 @@ func pruneOwnedResources[T any](
 	items []T,
 	metadata func(*T) metav1.Object,
 	publicationCurrent func(context.Context) error,
+	getResource func(context.Context, string) (metav1.Object, error),
 	deleteResource func(context.Context, string, metav1.DeleteOptions) error,
 ) error {
 	desired := desiredResourceNames(desiredNames)
 	for i := range items {
 		obj := metadata(&items[i])
-		if _, keep := desired[obj.GetName()]; keep || !ownedByRuntimeConfig(obj, runtimeConfig.Name) {
+		if _, keep := desired[obj.GetName()]; keep || !ownedByRuntimeConfig(obj, runtimeConfig) {
 			continue
 		}
-		if err := publicationCurrent(ctx); err != nil {
-			return cleanupError(runtimeConfig, kind, obj.GetName(), err)
-		}
-		if err := deleteResource(ctx, obj.GetName(), deletionOptions(obj)); err != nil && !apierrors.IsNotFound(err) {
+		if err := deleteOwnedResource(ctx, runtimeConfig, obj, publicationCurrent, getResource, deleteResource); err != nil {
 			return cleanupError(runtimeConfig, kind, obj.GetName(), fmt.Errorf("deleting stale %s: %w", description, err))
 		}
 	}
 	return nil
+}
+
+func deleteOwnedResource(
+	ctx context.Context,
+	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
+	listed metav1.Object,
+	publicationCurrent func(context.Context) error,
+	getResource func(context.Context, string) (metav1.Object, error),
+	deleteResource func(context.Context, string, metav1.DeleteOptions) error,
+) error {
+	current := listed
+	refresh := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if refresh {
+			var err error
+			current, err = getResource(ctx, listed.GetName())
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("refreshing deletion candidate: %w", err)
+			}
+		}
+		refresh = true
+		// Status writes can race cleanup; a retry must not adopt a replacement or a new owner.
+		if current.GetUID() != listed.GetUID() || !ownedByRuntimeConfig(current, runtimeConfig) {
+			return nil
+		}
+		if err := publicationCurrent(ctx); err != nil {
+			return err
+		}
+		err := deleteResource(ctx, current.GetName(), deletionOptions(current))
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	})
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	return err
 }
 
 func deletionOptions(obj metav1.Object) metav1.DeleteOptions {
@@ -154,6 +198,9 @@ func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *hapr
 	if err := pruneOwnedResources(ctx, runtimeConfig, kindMapFile, "map file", result.MapFileNames, mapFiles.Items,
 		func(file *haproxyv1alpha1.HAProxyMapFile) metav1.Object { return file },
 		publicationCurrent,
+		func(ctx context.Context, name string) (metav1.Object, error) {
+			return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(namespace).Get(ctx, name, metav1.GetOptions{})
+		},
 		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
 			err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(namespace).
 				Delete(ctx, name, options)
@@ -173,6 +220,9 @@ func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *hapr
 	if err := pruneOwnedResources(ctx, runtimeConfig, "Secret", "SSL file Secret", secretNames, secrets.Items,
 		func(secret *corev1.Secret) metav1.Object { return secret },
 		publicationCurrent,
+		func(ctx context.Context, name string) (metav1.Object, error) {
+			return p.k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+		},
 		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
 			return p.k8sClient.CoreV1().Secrets(namespace).Delete(ctx, name, options)
 		}); err != nil {
@@ -187,6 +237,9 @@ func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *hapr
 	if err := pruneOwnedResources(ctx, runtimeConfig, kindGeneralFile, "general file", result.GeneralFileNames, generalFiles.Items,
 		func(file *haproxyv1alpha1.HAProxyGeneralFile) metav1.Object { return file },
 		publicationCurrent,
+		func(ctx context.Context, name string) (metav1.Object, error) {
+			return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(namespace).Get(ctx, name, metav1.GetOptions{})
+		},
 		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
 			err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(namespace).
 				Delete(ctx, name, options)
@@ -204,6 +257,9 @@ func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *hapr
 	if err := pruneOwnedResources(ctx, runtimeConfig, kindCRTListFile, "crt-list file", result.CRTListFileNames, crtListFiles.Items,
 		func(file *haproxyv1alpha1.HAProxyCRTListFile) metav1.Object { return file },
 		publicationCurrent,
+		func(ctx context.Context, name string) (metav1.Object, error) {
+			return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).Get(ctx, name, metav1.GetOptions{})
+		},
 		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
 			err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).
 				Delete(ctx, name, options)
