@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rejected output-file inconsistencies retain redacted comparison evidence in controller logs without exposing file contents.
 - Auxiliary-file cleanup retries concurrent pod-status changes without abandoning publication or deleting replaced or re-owned files.
 - Accepted HAProxy reloads waiting for their scheduled time no longer increment deployment-error metrics.
 - Controller images use the Helm chart's HAProxy patch selection instead of floating series tags, keeping validation and deployed HAProxy versions aligned.
