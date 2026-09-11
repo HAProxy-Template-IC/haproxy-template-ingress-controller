@@ -1716,9 +1716,6 @@ allowed = (
     "haproxy.resources.limits",
     "haproxy.agent.resources.limits",
     "spoaHub.resources.limits",
-    "spoaHub.image.repository",
-    "spoaHub.image.tag",
-    "spoaHub.image.pullPolicy",
     "vector.resources.limits",
     "haproxy.service.type",
     "haproxyVersion",
@@ -1787,37 +1784,42 @@ PY
 
 verify_spoa_bundle() {
     local phase="${1:-before}" evidence="${BENCH_OUTPUT_DIR}/cluster"
-    local checksum_command='sha256sum /usr/local/bin/haproxy-spoa-hub /etc/haproxy-spoa-hub/versions-spoa.env /etc/haproxy-spoa-hub/plugins/*.so'
+    local chart_image image_id
+    chart_image="$(bash "${PROJECT_ROOT}/scripts/chart-spoa-image.sh")" || \
+        die "cannot resolve the chart's SPOA image"
+    local checksum_command='export LC_ALL=C; sha256sum /usr/local/bin/haproxy-spoa-hub /etc/haproxy-spoa-hub/plugins/*.so'
     if [[ "$phase" == "before" ]]; then
-        docker run --rm --network none --entrypoint cat spoa-hub:dev \
-            /etc/haproxy-spoa-hub/versions-spoa.env > "${evidence}/spoa-bundle-pins.env"
-        docker image inspect spoa-hub:dev > "${evidence}/spoa-bundle-image.json"
-        docker run --rm --network none --entrypoint sh spoa-hub:dev \
+        docker image inspect "$chart_image" > "${evidence}/spoa-bundle-image.json"
+        image_id="$(jq -er 'select(length == 1) | .[0].Id |
+            select(test("^sha256:[0-9a-f]{64}$"))' "${evidence}/spoa-bundle-image.json")" || \
+            die "chart SPOA image has no immutable image ID"
+        printf '%s\n' "$chart_image" > "${evidence}/spoa-bundle-image-reference.txt"
+        docker run --rm --network none --entrypoint sh "$image_id" \
             -ec "$checksum_command" > "${evidence}/spoa-bundle-expected.sha256"
         [[ -s "${evidence}/spoa-bundle-expected.sha256" ]] || die "SPOA bundle checksum evidence is empty"
     fi
-    cmp "${PROJECT_ROOT}/versions-spoa.env" "${evidence}/spoa-bundle-pins.env" || \
-        die "SPOA bundle pins differ from this checkout; rebuild with make spoa-hub-image"
+    [[ "$(<"${evidence}/spoa-bundle-image-reference.txt")" == "$chart_image" ]] || \
+        die "chart SPOA image changed during the benchmark"
     local pods="${evidence}/spoa-bundle-${phase}-pods.json"
     kubectl get pods -n "$RELEASE_NAMESPACE" -o json > "$pods"
-    jq -e '
+    jq -e --arg image "$chart_image" '
         [.items[] | .spec.containers[] | select(.name == "spoa-hub" or .name == "validators")] as $containers |
         any($containers[]; .name == "spoa-hub") and any($containers[]; .name == "validators") and
-        all($containers[]; .image == "spoa-hub:dev" and .imagePullPolicy == "Never") and
+        all($containers[]; .image == $image) and
         all(.items[] | select(any(.spec.containers[]; .name == "spoa-hub" or .name == "validators"));
           .metadata.deletionTimestamp == null) and
         all(.items[]; . as $pod |
           all(.spec.containers[] | select(.name == "spoa-hub" or .name == "validators");
             .name as $name | any($pod.status.containerStatuses[]?;
               .name == $name and .ready == true and (.imageID | length) > 0)))
-    ' "$pods" >/dev/null || die "SPOA pods do not identify a ready local bundle; inspect ${pods}"
+    ' "$pods" >/dev/null || die "SPOA pods do not identify the ready chart bundle; inspect ${pods}"
     local pod container actual
     while IFS=$'\t' read -r pod container; do
         actual="${evidence}/spoa-bundle-${phase}-${pod}-${container}.sha256"
         kubectl exec -n "$RELEASE_NAMESPACE" "$pod" -c "$container" -- \
             sh -ec "$checksum_command" > "$actual"
         cmp "${evidence}/spoa-bundle-expected.sha256" "$actual" || \
-            die "SPOA bundle bytes differ in ${pod}/${container}; rebuild and redeploy the pinned bundle"
+            die "SPOA bundle bytes differ in ${pod}/${container}; redeploy the chart-selected image"
     done < <(jq -r '.items[] | .metadata.name as $pod | .spec.containers[] |
         select(.name == "spoa-hub" or .name == "validators") | [$pod, .name] | @tsv' "$pods")
 }
@@ -1849,8 +1851,7 @@ configure_haptic() {
              "haproxy-haptic.org/e2e-rollout-id": .controller.podSpec.podAnnotations["haproxy-haptic.org/e2e-rollout-id"],
              "haproxy-haptic.org/controller-binary-sha256": .controller.podSpec.podAnnotations["haproxy-haptic.org/controller-binary-sha256"]}},
            webhook: {caBundle: .controller.webhook.caBundle}},
-         haproxy: {service: {type: "LoadBalancer"}},
-         spoaHub: {image: .spoaHub.image}}
+         haproxy: {service: {type: "LoadBalancer"}}}
     ' "$before_values" > "$runtime_values"
     jq -e '
         (.controller.image.repository | type) == "string" and
@@ -1858,9 +1859,6 @@ configure_haptic() {
         (.controller.image.tag | type) == "string" and
         (.controller.image.tag | length) > 0 and
         .controller.image.pullPolicy == "Never" and
-        .spoaHub.image.repository == "spoa-hub" and
-        .spoaHub.image.tag == "dev" and
-        .spoaHub.image.pullPolicy == "Never" and
         (.credentials.dataplane.username | type) == "string" and
         (.credentials.dataplane.username | length) > 0 and
         (.credentials.dataplane.password | type) == "string" and

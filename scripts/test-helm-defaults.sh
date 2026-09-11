@@ -249,23 +249,11 @@ install_helm_chart() {
         "--create-namespace"
     )
 
-    # Override the spoa-hub image tag from SPOA_TAG if set, so MR
-    # pipelines test against the per-pipeline `ci-${CI_PIPELINE_ID}`
-    # snapshot built by `build-spoa-image-snapshot` rather than
-    # whatever happens to be at `main-latest` (which would mask
-    # chart-branch version skew — see !893's post-mortem and the
-    # matching pattern in scripts/start-dev-env.sh:734).
-    #
-    # The chart's own default (`spoaHub.image.tag` empty → falls back
-    # to `.Chart.AppVersion`) is correct for release-version chart
-    # consumers: `build-spoa-image-release` publishes
-    # `spoa-hub:<haptic-version>` matching the chart's appVersion on
-    # tag pipelines. Pre-release main consumers between releases
-    # would still need an override; this script's caller supplies
-    # one via SPOA_TAG when it's running CI.
     if [[ -n "${SPOA_TAG:-}" ]]; then
-        info "Using SPOA_TAG=${SPOA_TAG} for spoa-hub image"
-        helm_args+=("--set" "spoaHub.image.tag=${SPOA_TAG}")
+        local spoa_image
+        spoa_image="$(bash "${SCRIPT_DIR}/chart-spoa-image.sh")"
+        [[ "$spoa_image" != *@* && "$spoa_image" == *":${SPOA_TAG}" ]] || \
+            die "SPOA_TAG differs from chart image ${spoa_image}; unset SPOA_TAG"
     fi
 
     # Add image override if specified

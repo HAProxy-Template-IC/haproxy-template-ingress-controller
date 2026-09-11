@@ -31,6 +31,17 @@ type ChartImages struct {
 	SPOAHub        string `json:"spoaHub"`
 }
 
+// ValidateChartImageTag rejects an independent tag that changes the chart image.
+func ValidateChartImageTag(image, tag string) error {
+	if tag == "" {
+		return nil
+	}
+	if strings.Contains(image, "@") || !strings.HasSuffix(image, ":"+tag) {
+		return fmt.Errorf("tag %q differs from chart image %q; unset the tag override", tag, image)
+	}
+	return nil
+}
+
 // LoadChartImages uses the chart's default series unless a matrix series is given.
 func LoadChartImages(series string) (ChartImages, error) {
 	root, err := RepoRoot()

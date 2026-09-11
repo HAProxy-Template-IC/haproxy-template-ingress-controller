@@ -6,6 +6,7 @@ test_dir="$(mktemp -d)"
 container=""
 cleanup() {
     if [[ -n "$container" ]]; then
+        docker inspect -f 'hub state: running={{.State.Running}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}' "$container" || true
         docker logs "$container" || true
         docker rm -f "$container" >/dev/null
     fi

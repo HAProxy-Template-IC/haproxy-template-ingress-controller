@@ -94,6 +94,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "e2e: chart runtime images: %v\n", err)
 		os.Exit(1)
 	}
+	if err := kindutil.ValidateChartImageTag(runtimeImages.SPOAHub, os.Getenv("SPOA_TAG")); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: SPOA_TAG: %v\n", err)
+		os.Exit(1)
+	}
 	ChartHAProxyVersion = runtimeImages.HAProxyVersion
 	ControllerImageName = "haptic:test-haproxy" + ChartHAProxyVersion
 	fmt.Fprintf(os.Stderr, "e2e: chart HAProxy image %s\n", runtimeImages.HAProxy)
@@ -241,6 +245,26 @@ func TestMain(m *testing.M) {
 				return ctx, fmt.Errorf("new clientset: %w", err)
 			}
 			return ctx, verifyControllerBinary(ctx, clientset, nil)
+		}),
+		phase("verify-runtime-images", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			client, err := cfg.NewClient()
+			if err != nil {
+				return ctx, fmt.Errorf("new client: %w", err)
+			}
+			clientset, err := newClientsetForE2E(client.RESTConfig())
+			if err != nil {
+				return ctx, fmt.Errorf("new clientset: %w", err)
+			}
+			pods, err := clientset.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app.kubernetes.io/instance=" + HelmReleaseName,
+			})
+			if err != nil {
+				return ctx, fmt.Errorf("read runtime pods: %w", err)
+			}
+			return ctx, kindutil.ValidatePodContainerImages(pods.Items, map[string]string{
+				"haproxy": runtimeImages.HAProxy, "vector": runtimeImages.Vector,
+				"spoa-hub": runtimeImages.SPOAHub, "validators": runtimeImages.SPOAHub,
+			})
 		}),
 		phase("tests-running", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return ctx, nil
@@ -456,11 +480,8 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 			return ctx, err
 		}
 	}
-	if os.Getenv("SPOA_TAG") == "" {
-		fmt.Fprintf(os.Stderr, "e2e: loading local %s into kind\n", LocalSPOAHubImage)
-		if err := loadImageIntoKind(ctx, LocalSPOAHubImage); err != nil {
-			return ctx, err
-		}
+	if err := pullImageIntoKind(ctx, runtimeImages.SPOAHub); err != nil {
+		return ctx, err
 	}
 	return ctx, nil
 }
@@ -895,15 +916,6 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		args = append(args,
 			"--set", "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true")
 		fmt.Fprintln(os.Stderr, "e2e: api-gateway shard — enabling request validation")
-	}
-	// CI supplies its pipeline bundle; local runs build the checked-out pins.
-	if spoaTag := os.Getenv("SPOA_TAG"); spoaTag != "" {
-		args = append(args, "--set", "spoaHub.image.tag="+spoaTag)
-	} else {
-		args = append(args,
-			"--set", "spoaHub.image.repository=spoa-hub",
-			"--set", "spoaHub.image.tag=dev",
-			"--set", "spoaHub.image.pullPolicy=Never")
 	}
 	// Churn tier (issue #64): expose the Gateway pod-port allocator's
 	// assignments as `# gw-pod-port:` comment lines in the rendered config
