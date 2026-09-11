@@ -735,7 +735,7 @@ spec:
       - name: agent
         # The HAPTIC image, not the HAProxy one: the agent is the controller's
         # binary in its second role, so its tag must match the controller's.
-        image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.2-haproxy3.4
+        image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.3-haproxy3.4
         args:
           - agent
           - --base-dir=/etc/haproxy

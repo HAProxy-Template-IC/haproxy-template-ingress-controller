@@ -2,27 +2,27 @@
 
 HAPTIC (HAProxy Template Ingress Controller) ships as a single Helm chart that installs the controller, its CRDs, an `HAProxyTemplateConfig` resource, and (optionally) the HAProxy pods it manages. The controller watches Ingress / Gateway API / CRD resources, renders [Scriggo](https://scriggo.com/) templates to HAProxy configuration, and pushes the result to a HAPTIC agent sidecar in each HAProxy pod, which writes the files and reloads or applies them at runtime.
 
-Full documentation: [haproxy-haptic.org/docs](https://haproxy-haptic.org/docs/0.2.0-alpha.2/) (this chart's pages live under *Deploying with Helm*).
+Full documentation: [haproxy-haptic.org/docs](https://haproxy-haptic.org/docs/0.2.0-alpha.3/) (this chart's pages live under *Deploying with Helm*).
 
 ## Prerequisites
 
 - Kubernetes **1.21+** (default `PodDisruptionBudget` is `policy/v1`; watches `discovery.k8s.io/v1` EndpointSlices)
 - Helm **3.8+** — the `oci://` chart reference needs OCI registry support, generally available since Helm 3.8
 - **HAProxy 3.0+** — the chart deploys HAProxy by default and the SSL library requires 3.0+. Pin a specific series via `haproxyVersion`.
-- **cert-manager** (optional but recommended for production) — with its API present, the default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without it, the chart creates a long-lived self-signed development certificate; production users should provide a trusted certificate — see [SSL Certificates](https://haproxy-haptic.org/docs/0.2.0-alpha.2/ssl-certificates/).
+- **cert-manager** (optional but recommended for production) — with its API present, the default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without it, the chart creates a long-lived self-signed development certificate; production users should provide a trusted certificate — see [SSL Certificates](https://haproxy-haptic.org/docs/0.2.0-alpha.3/ssl-certificates/).
 
 ## Installation
 
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.2
+  --version 0.2.0-alpha.3
 ```
 
 With custom values:
 
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.2 \
+  --version 0.2.0-alpha.3 \
   -f my-values.yaml
 ```
 
@@ -34,7 +34,7 @@ helm uninstall my-controller
 
 ## Key Values
 
-The full values reference lives in [Chart Values Reference](https://haproxy-haptic.org/docs/0.2.0-alpha.2/reference/). The ones operators most commonly change:
+The full values reference lives in [Chart Values Reference](https://haproxy-haptic.org/docs/0.2.0-alpha.3/reference/). The ones operators most commonly change:
 
 | Parameter | Default | Notes |
 |-----------|---------|-------|
@@ -54,7 +54,7 @@ The full values reference lives in [Chart Values Reference](https://haproxy-hapt
 | `controller.networkPolicy.enabled` | `true` | NetworkPolicy allowing controller ↔ HAProxy ↔ API server |
 | `cache.varnish.networkPolicy.enabled` | `true` | When the Varnish tier is enabled, isolate it to same-release HAProxy cache traffic and loopback origin requests |
 | `ingressClass.name` / `gatewayClass.name` | `haptic` | Class names the controller matches against — deliberately distinct from `haproxy` so HAPTIC can run side-by-side with other HAProxy-based ingress controllers; set to `haproxy` when replacing an incumbent |
-| `credentials.dataplane.username` / `credentials.dataplane.password` | `admin` / generated | Empty `password` generates a random 32-char password, preserved across upgrades by reading the existing Secret. GitOps tools that render without cluster access regenerate it every sync — **set explicitly there and in production**. See [Credentials](https://haproxy-haptic.org/docs/0.2.0-alpha.2/reference/#credentials). |
+| `credentials.dataplane.username` / `credentials.dataplane.password` | `admin` / generated | Empty `password` generates a random 32-char password, preserved across upgrades by reading the existing Secret. GitOps tools that render without cluster access regenerate it every sync — **set explicitly there and in production**. See [Credentials](https://haproxy-haptic.org/docs/0.2.0-alpha.3/reference/#credentials). |
 
 ## Template Libraries
 
@@ -75,25 +75,25 @@ The controller merges templates in a fixed priority order (later libraries overr
 | `nginx-ingress` | off | `nginx.ingress.kubernetes.io/*` annotation compatibility |
 | `spoaHub` | off, auto-loads | HAProxy-side wiring for the SPOA hub sidecar. Loads automatically when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy; set `controller.templateLibraries.spoaHub.enabled: true` only to force-load it with no plugins on |
 
-Each library contributes entries under `watchedResources`, `templateSnippets`, `maps`, `files`, `sslCertificates`, `haproxyConfig`, and `validationTests` — user-provided values in `controller.config` override library defaults. See [Template Libraries](https://haproxy-haptic.org/docs/0.2.0-alpha.2/template-libraries/) for the library-merging design, extension points, and snippet priority ranges.
+Each library contributes entries under `watchedResources`, `templateSnippets`, `maps`, `files`, `sslCertificates`, `haproxyConfig`, and `validationTests` — user-provided values in `controller.config` override library defaults. See [Template Libraries](https://haproxy-haptic.org/docs/0.2.0-alpha.3/template-libraries/) for the library-merging design, extension points, and snippet priority ranges.
 
 ## Documentation
 
 | Area | Where to look |
 |------|---------------|
-| Getting started | [Getting Started](https://haproxy-haptic.org/docs/0.2.0-alpha.2/getting-started/), [Deploying with Helm](https://haproxy-haptic.org/docs/0.2.0-alpha.2/deploying-with-helm/) |
-| Ingress & Gateway setup | [IngressClass](https://haproxy-haptic.org/docs/0.2.0-alpha.2/ingress-class/), [GatewayClass](https://haproxy-haptic.org/docs/0.2.0-alpha.2/gateway-class/) |
-| SSL and annotations | [SSL Certificates](https://haproxy-haptic.org/docs/0.2.0-alpha.2/ssl-certificates/), [Annotations](https://haproxy-haptic.org/docs/0.2.0-alpha.2/annotations/) |
-| Running HAProxy | [HAProxy Deployment](https://haproxy-haptic.org/docs/0.2.0-alpha.2/haproxy-deployment/) |
-| Library reference | [Template Libraries](https://haproxy-haptic.org/docs/0.2.0-alpha.2/template-libraries/) |
-| Day-two operations | [High Availability](https://haproxy-haptic.org/docs/0.2.0-alpha.2/operations/high-availability/), [Monitoring](https://haproxy-haptic.org/docs/0.2.0-alpha.2/operations/monitoring/), [Networking](https://haproxy-haptic.org/docs/0.2.0-alpha.2/operations/networking/), [Debugging](https://haproxy-haptic.org/docs/0.2.0-alpha.2/operations/debugging/), [Troubleshooting](https://haproxy-haptic.org/docs/0.2.0-alpha.2/troubleshooting/) |
-| Full values reference | [Chart Values Reference](https://haproxy-haptic.org/docs/0.2.0-alpha.2/reference/) |
+| Getting started | [Getting Started](https://haproxy-haptic.org/docs/0.2.0-alpha.3/getting-started/), [Deploying with Helm](https://haproxy-haptic.org/docs/0.2.0-alpha.3/deploying-with-helm/) |
+| Ingress & Gateway setup | [IngressClass](https://haproxy-haptic.org/docs/0.2.0-alpha.3/ingress-class/), [GatewayClass](https://haproxy-haptic.org/docs/0.2.0-alpha.3/gateway-class/) |
+| SSL and annotations | [SSL Certificates](https://haproxy-haptic.org/docs/0.2.0-alpha.3/ssl-certificates/), [Annotations](https://haproxy-haptic.org/docs/0.2.0-alpha.3/annotations/) |
+| Running HAProxy | [HAProxy Deployment](https://haproxy-haptic.org/docs/0.2.0-alpha.3/haproxy-deployment/) |
+| Library reference | [Template Libraries](https://haproxy-haptic.org/docs/0.2.0-alpha.3/template-libraries/) |
+| Day-two operations | [High Availability](https://haproxy-haptic.org/docs/0.2.0-alpha.3/operations/high-availability/), [Monitoring](https://haproxy-haptic.org/docs/0.2.0-alpha.3/operations/monitoring/), [Networking](https://haproxy-haptic.org/docs/0.2.0-alpha.3/operations/networking/), [Debugging](https://haproxy-haptic.org/docs/0.2.0-alpha.3/operations/debugging/), [Troubleshooting](https://haproxy-haptic.org/docs/0.2.0-alpha.3/troubleshooting/) |
+| Full values reference | [Chart Values Reference](https://haproxy-haptic.org/docs/0.2.0-alpha.3/reference/) |
 
 ## Upgrading
 
 ```bash
 helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.2 -f my-values.yaml
+  --version 0.2.0-alpha.3 -f my-values.yaml
 ```
 
 Helm itself never upgrades CRDs it installed from a chart's `crds/` directory. The chart closes that gap with a `pre-install`/`pre-upgrade` hook Job that server-side applies the bundled CRDs, enabled by default (`crds.upgradeJob.enabled`), so the command above is all you need.
@@ -102,7 +102,7 @@ If you manage CRDs out-of-band and set `crds.upgradeJob.enabled: false`, apply t
 
 ```bash
 helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.2 | kubectl apply --server-side --force-conflicts -f -
+  --version 0.2.0-alpha.3 | kubectl apply --server-side --force-conflicts -f -
 ```
 
 ## Examples
