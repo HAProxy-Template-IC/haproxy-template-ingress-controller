@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -348,9 +349,7 @@ func (c *Component) handleReconciliationCompleted(ctx context.Context, event *ev
 		return
 	}
 	if err := c.convergeCycle(ctx, cycle); err != nil {
-		c.Logger().Error("Rendered resources did not converge; status publication deferred",
-			"error", err,
-			"correlation_id", cycle.correlationID)
+		c.logConvergenceError(ctx, "Rendered resources did not converge; status publication deferred", err, cycle.correlationID)
 		return
 	}
 	c.rememberAppliedCycle(cycle, false)
@@ -426,8 +425,7 @@ func (c *Component) convergeCycle(ctx context.Context, cycle *resourceCycle) err
 
 func (c *Component) releaseHeldCycle(ctx context.Context, cycle *resourceCycle) {
 	if err := c.convergeCycle(ctx, cycle); err != nil {
-		c.Logger().Error("Rendered resources did not converge after the render gate's verdict",
-			"error", err, "correlation_id", cycle.correlationID)
+		c.logConvergenceError(ctx, "Rendered resources did not converge after the render gate's verdict", err, cycle.correlationID)
 		return
 	}
 
@@ -448,8 +446,7 @@ func (c *Component) releaseHeldCycle(ctx context.Context, cycle *resourceCycle) 
 
 func (c *Component) revertAppliedCycle(ctx context.Context, cycle *resourceCycle) {
 	if err := c.convergeCycle(ctx, cycle); err != nil {
-		c.Logger().Error("Rendered resources did not converge while restoring the accepted cycle",
-			"error", err, "correlation_id", cycle.correlationID)
+		c.logConvergenceError(ctx, "Rendered resources did not converge while restoring the accepted cycle", err, cycle.correlationID)
 		return
 	}
 
@@ -758,7 +755,7 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 	desiredKeys := make(map[string]appliedKeyMeta, len(resources))
 	presentKeys := make(map[string]struct{}, len(resources))
 	var keysMu sync.Mutex
-	var applied, refused, failed atomic.Int64
+	var applied, refused, failed, deferred atomic.Int64
 
 	// Apply resources CONCURRENTLY (bounded fan-out). A serial loop made each
 	// reconciliation's apply pass slow (one SSA round-trip per changed
@@ -782,6 +779,8 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 				applied.Add(1)
 			case applyOutcomeRefused:
 				refused.Add(1)
+			case applyOutcomeDeferred:
+				deferred.Add(1)
 			}
 			return nil
 		})
@@ -791,6 +790,9 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 	failedN := int(failed.Load())
 	if failedN > 0 {
 		return fmt.Errorf("%d of %d rendered resources failed; retry occurs on the next reconciliation", failedN, len(resources))
+	}
+	if deferredN := deferred.Load(); deferredN > 0 {
+		return fmt.Errorf("%w: %d of %d resources; retry occurs on the next reconciliation", errNamespaceTerminating, deferredN, len(resources))
 	}
 
 	deleted, deleteFailures := c.pruneOrphans(ctx, desiredKeys, presentKeys)
@@ -808,6 +810,16 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 	return nil
 }
 
+var errNamespaceTerminating = errors.New("resource application deferred during namespace termination")
+
+func (c *Component) logConvergenceError(ctx context.Context, message string, err error, correlationID string) {
+	level := slog.LevelError
+	if errors.Is(err, errNamespaceTerminating) {
+		level = slog.LevelDebug
+	}
+	c.Logger().Log(ctx, level, message, "error", err, "correlation_id", correlationID)
+}
+
 // applyOutcome enumerates per-resource results so applyAndPrune can keep
 // counters without an inline type-switch.
 type applyOutcome int
@@ -816,6 +828,7 @@ const (
 	applyOutcomeError   applyOutcome = iota // resolve / marshal / apply failed; logged inside applyOne
 	applyOutcomeApplied                     // SSA succeeded
 	applyOutcomeRefused                     // policy refused (cross-namespace under RestrictToOwnNamespace)
+	applyOutcomeDeferred
 )
 
 // withCreateOnlyFieldsFromLive returns the object to apply with the fields the
@@ -934,6 +947,11 @@ func (c *Component) applyOne(
 		}
 	}
 	if err != nil {
+		if apierrors.IsForbidden(err) && apierrors.HasStatusCause(err, corev1.NamespaceTerminatingCause) {
+			c.Logger().Debug("Resource application deferred during namespace termination",
+				"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String())
+			return applyOutcomeDeferred
+		}
 		c.Logger().Error("Failed to apply rendered resource",
 			"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(),
 			"retriable", statusapplier.IsRetriable(err), "error", err)
