@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- SPOA plugin signature verification now requires the exact pinned release tag, not any tag from the upstream project.
+
 ### Helm chart
 
 #### Fixed
