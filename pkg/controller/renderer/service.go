@@ -1463,6 +1463,7 @@ func (s *RenderService) finishRender(
 		)
 	}
 	if err != nil {
+		s.reportOutputPublicationMismatch(err, previousOutputSnapshot, auxiliaryFiles, planTransition, artifactSnapshot)
 		return nil, fmt.Errorf("sealing rendered output: %w", err)
 	}
 	planDelta := planTransitionDelta(planTransition)

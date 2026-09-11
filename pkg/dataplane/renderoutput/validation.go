@@ -292,15 +292,40 @@ func validateArtifactContent(
 	writer := &exactStringWriter{expected: file.Content}
 	written, err := content.WriteTo(writer)
 	if errors.Is(err, errOutputContentMismatch) {
-		return fmt.Errorf("render artifact %q content differs from its plan file", path)
+		return artifactContentMismatchEvidence(content, path, file, written, writer.offset)
 	}
 	if err != nil {
 		return err
 	}
 	if written != file.Size || writer.offset != len(file.Content) {
-		return fmt.Errorf("render artifact %q content differs from its plan file", path)
+		return artifactContentMismatchEvidence(content, path, file, written, writer.offset)
 	}
 	return nil
+}
+
+// ArtifactContentMismatchError carries comparison evidence without file contents.
+type ArtifactContentMismatchError struct {
+	Path            string
+	PlanBytes       int
+	ArtifactBytes   int
+	Written         int64
+	Matched         int
+	ReadOK          bool
+	ExactRead       bool
+	PlanDigestValid bool
+}
+
+func (e *ArtifactContentMismatchError) Error() string {
+	return fmt.Sprintf("render artifact %q content differs from its plan file", e.Path)
+}
+
+func artifactContentMismatchEvidence(content *renderartifact.Content, path string, file *renderplan.File, written int64, offset int) error {
+	text, readErr := content.String()
+	return &ArtifactContentMismatchError{
+		Path: path, PlanBytes: len(file.Content), ArtifactBytes: len(text), Written: written, Matched: offset,
+		ReadOK: readErr == nil, ExactRead: readErr == nil && text == file.Content,
+		PlanDigestValid: renderplan.DigestString(file.Content) == file.Digest,
+	}
 }
 
 func artifactPlanMetadata(descriptor renderartifact.Descriptor) (string, bool) {
