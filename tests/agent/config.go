@@ -53,6 +53,7 @@ const (
 // same process answers it, so a backend has somewhere real to send traffic.
 const (
 	agentPort    = 5555
+	metricsPort  = 9101
 	statsPort    = 8404
 	httpPort     = 8080
 	httpsPort    = 8443

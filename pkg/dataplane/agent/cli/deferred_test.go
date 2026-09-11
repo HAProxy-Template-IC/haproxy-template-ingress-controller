@@ -15,23 +15,171 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 )
 
-type countingObserver struct{ done, deferred, abandoned map[string]int }
+type countingObserver struct{ done, deferred, abandoned, superseded map[string]int }
+
+func testWorkerInfo(pid int) api.HAProxyInfo {
+	return api.HAProxyInfo{WorkerPID: pid, WorkerStartTimeUnixMicros: 1_700_000_000_000_000}
+}
 
 func newCountingObserver() *countingObserver {
-	return &countingObserver{done: map[string]int{}, deferred: map[string]int{}, abandoned: map[string]int{}}
+	return &countingObserver{done: map[string]int{}, deferred: map[string]int{}, abandoned: map[string]int{}, superseded: map[string]int{}}
 }
-func (o *countingObserver) DeferredDeleteDone(kind string)      { o.done[kind]++ }
-func (o *countingObserver) DeferredDeleteDeferred(kind string)  { o.deferred[kind]++ }
-func (o *countingObserver) DeferredDeleteAbandoned(kind string) { o.abandoned[kind]++ }
+
+func TestWorkerAdoptionRetiresOnlyOutgoingDeletes(t *testing.T) {
+	observer := newCountingObserver()
+	d := NewDeferrals(nil, slog.New(slog.DiscardHandler), observer)
+	d.SetWorker(testWorkerInfo(1000))
+	servers, backends := []ServerRef{{Backend: "be", Server: "srv"}}, []string{"be"}
+	require.NoError(t, d.Check(servers, backends))
+	assert.Empty(t, d.Pending().Servers)
+	require.NoError(t, d.Enqueue(testWorkerInfo(1000), servers, backends))
+	server, ok := d.takeServer()
+	require.True(t, ok)
+	d.SetWorker(testWorkerInfo(1000))
+	assert.Len(t, d.Pending().Servers, 1, "a failed reload leaves the worker and its cleanup intact")
+	d.SetWorker(testWorkerInfo(1001))
+	assert.Empty(t, d.Pending().Servers)
+	assert.Empty(t, d.Pending().Backends)
+	assert.ErrorIs(t, d.Enqueue(testWorkerInfo(1000), servers, backends), ErrWorkerGone)
+	require.NoError(t, d.Enqueue(testWorkerInfo(1001), servers, backends))
+	d.requeueServer(server, ErrRejected)
+	assert.Len(t, d.Pending().Servers, 1, "old in-flight work must not rejoin the replacement queue")
+	assert.Len(t, d.Pending().Backends, 1)
+	assert.Equal(t, map[string]int{"server": 1, "backend": 1}, observer.superseded)
+	assert.Empty(t, observer.abandoned)
+}
+
+func TestWorkerAdoptionDetectsTheSamePIDWithANewStartTime(t *testing.T) {
+	observer := newCountingObserver()
+	d := NewDeferrals(nil, slog.New(slog.DiscardHandler), observer)
+	old := testWorkerInfo(1000)
+	d.SetWorker(old)
+	require.NoError(t, d.Enqueue(old, nil, []string{"queued", "in-flight"}))
+	inFlight, ok := d.takeBackend()
+	require.True(t, ok)
+	replacement := old
+	replacement.WorkerStartTimeUnixMicros++
+	d.SetWorker(replacement)
+	assert.Empty(t, d.Pending().Backends)
+	assert.ErrorIs(t, d.Enqueue(old, nil, []string{"old"}), ErrWorkerGone)
+	require.NoError(t, d.Enqueue(replacement, nil, []string{"new"}))
+	d.requeueBackend(inFlight, ErrRejected)
+	assert.Equal(t, []string{"new"}, d.Pending().Backends)
+	assert.Equal(t, 2, observer.superseded["backend"])
+	assert.Empty(t, observer.abandoned)
+}
+
+func TestDeferredWorkerSessionRejectsIdentityMismatchAndCancels(t *testing.T) {
+	model := haproxytest.Start(t)
+	client, err := New(t.Context(), Config{
+		WorkerSocket: model.WorkerSocket(), MasterSocket: model.MasterSocket(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	_, err = client.openWorker(t.Context(), testWorkerInfo(999))
+	require.ErrorIs(t, err, ErrWorkerGone)
+	old := testWorkerInfo(1000)
+	old.WorkerStartTimeUnixMicros--
+	_, err = client.openWorker(t.Context(), old)
+	require.ErrorIs(t, err, ErrWorkerGone)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	session, err := client.openWorker(ctx, testWorkerInfo(1000))
+	require.NoError(t, err)
+	defer session.close()
+	cancel()
+	_, err = session.execute("show info")
+	require.Error(t, err)
+	assert.NotContains(t, model.Sent(), "del backend reused")
+}
+
+func TestWorkerCancellationInterruptsAnIncompleteReply(t *testing.T) {
+	model := haproxytest.Start(t)
+	client, err := New(t.Context(), Config{
+		WorkerSocket: model.WorkerSocket(), MasterSocket: model.MasterSocket(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	session, err := client.openWorker(ctx, testWorkerInfo(1000))
+	require.NoError(t, err)
+	defer session.close()
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
+	model.With(func(m *haproxytest.Model) {
+		m.Reject = func(string) (string, bool) {
+			close(entered)
+			<-release
+			return "", false
+		}
+	})
+	done := make(chan error, 1)
+	go func() { _, err := session.execute("show info float"); done <- err }()
+	<-entered
+	cancel()
+	require.Error(t, <-done)
+	unblock()
+}
+
+func TestDeferredBackendDeleteDoesNotCrossReload(t *testing.T) {
+	model := haproxytest.Start(t)
+	client, err := New(t.Context(), Config{
+		WorkerSocket: model.WorkerSocket(), MasterSocket: model.MasterSocket(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	observer := newCountingObserver()
+	d := NewDeferrals(client, slog.New(slog.DiscardHandler), observer)
+	d.SetWorker(testWorkerInfo(1000))
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
+	model.With(func(m *haproxytest.Model) {
+		m.Backends["reused"] = &haproxytest.Backend{}
+		m.Reject = func(command string) (string, bool) {
+			if strings.HasPrefix(command, "wait ") {
+				close(entered)
+				<-release
+			}
+			return "", false
+		}
+	})
+	require.NoError(t, d.Enqueue(testWorkerInfo(1000), nil, []string{"reused"}))
+	done := make(chan struct{})
+	go func() { d.drain(t.Context()); close(done) }()
+	<-entered
+	model.With(func(m *haproxytest.Model) {
+		m.Pid++
+		m.Backends["reused"] = &haproxytest.Backend{}
+	})
+	unblock()
+	<-done
+	d.drain(t.Context())
+	assert.True(t, model.HasBackend("reused"), "the old delete must not reach the replacement worker")
+	assert.NotContains(t, model.Sent(), "del backend reused")
+	assert.Equal(t, 1, observer.superseded["backend"])
+	assert.Empty(t, observer.abandoned)
+}
+func (o *countingObserver) DeferredDeleteDone(kind string)       { o.done[kind]++ }
+func (o *countingObserver) DeferredDeleteDeferred(kind string)   { o.deferred[kind]++ }
+func (o *countingObserver) DeferredDeleteAbandoned(kind string)  { o.abandoned[kind]++ }
+func (o *countingObserver) DeferredDeleteSuperseded(kind string) { o.superseded[kind]++ }
 
 // A delete the agent gives up on is reported as abandoned, not as one more
 // retry: the object stays in the worker until a reload, which an alert must

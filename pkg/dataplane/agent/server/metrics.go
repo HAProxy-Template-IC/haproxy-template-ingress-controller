@@ -61,6 +61,9 @@ func NewMetrics(registry prometheus.Registerer, logger *slog.Logger) *Metrics {
 			"The agent's apply generation, which increases by one per successful apply."),
 		logger: logger,
 	}
+	for _, kind := range []string{"server", "backend"} {
+		m.deferred.WithLabelValues(kind, "abandoned")
+	}
 	return m
 }
 
@@ -98,6 +101,11 @@ func (m *Metrics) DeferredDeleteDeferred(kind string) {
 // DeferredDeleteAbandoned implements cli.Observer.
 func (m *Metrics) DeferredDeleteAbandoned(kind string) {
 	m.deferred.WithLabelValues(kind, "abandoned").Inc()
+}
+
+// DeferredDeleteSuperseded implements cli.Observer.
+func (m *Metrics) DeferredDeleteSuperseded(kind string) {
+	m.deferred.WithLabelValues(kind, "superseded").Inc()
 }
 
 func counterVec(registry prometheus.Registerer, name, help string, labels ...string) *prometheus.CounterVec {

@@ -237,7 +237,11 @@ func TestInfoReadsTheWorkerIdentity(t *testing.T) {
 	client, model := newClient(t)
 	info, err := client.Info()
 	require.NoError(t, err)
-	model.With(func(m *haproxytest.Model) { assert.Equal(t, m.Pid, info.WorkerPID) })
+	model.With(func(m *haproxytest.Model) {
+		assert.Equal(t, m.Pid, info.WorkerPID)
+		assert.Equal(t, m.StartTimeUnixMicros, info.WorkerStartTimeUnixMicros)
+	})
+	assert.Contains(t, model.Sent(), "show info float")
 	assert.Equal(t, "3.4.3-1deb11u1", info.Version)
 }
 
@@ -339,6 +343,10 @@ func TestSplitSeparatesTheDeleteTail(t *testing.T) {
 	assert.Equal(t, []string{"be-a"}, backends)
 }
 
+func testWorkerInfo() api.HAProxyInfo {
+	return api.HAProxyInfo{WorkerPID: 1000, WorkerStartTimeUnixMicros: 1_700_000_000_000_000}
+}
+
 func TestDeferralsRemoveServersAndBackendsOffTheApplyPath(t *testing.T) {
 	client, model := newClient(t)
 	setup := []api.Op{
@@ -349,11 +357,12 @@ func TestDeferralsRemoveServersAndBackendsOffTheApplyPath(t *testing.T) {
 	require.NoError(t, err)
 
 	deferrals := cli.NewDeferrals(client, slog.New(slog.DiscardHandler), nil)
+	deferrals.SetWorker(testWorkerInfo())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	go func() { _ = deferrals.Start(ctx) }()
 
-	require.NoError(t, deferrals.Enqueue([]cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, []string{"be-a"}))
+	require.NoError(t, deferrals.Enqueue(testWorkerInfo(), []cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, []string{"be-a"}))
 	deferrals.Wake()
 	if !assert.Eventually(t, func() bool {
 		return !model.HasBackend("be-a")
@@ -374,11 +383,12 @@ func TestDeferralsShutDownSessionsWhenTheWaitExpires(t *testing.T) {
 	model.With(func(m *haproxytest.Model) { m.BlockedServers["be-a/srv1"] = true })
 
 	deferrals := cli.NewDeferrals(client, slog.New(slog.DiscardHandler), nil)
+	deferrals.SetWorker(testWorkerInfo())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	go func() { _ = deferrals.Start(ctx) }()
 
-	require.NoError(t, deferrals.Enqueue([]cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, nil))
+	require.NoError(t, deferrals.Enqueue(testWorkerInfo(), []cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, nil))
 	deferrals.Wake()
 	if !assert.Eventually(t, func() bool {
 		return len(model.ServerNames("be-a")) == 0
@@ -403,13 +413,13 @@ func TestDeferralsRefuseMoreThanTheCap(t *testing.T) {
 	for i := range api.MaxPendingServerDeletes + 1 {
 		servers = append(servers, cli.ServerRef{Backend: "be-a", Server: fmt.Sprintf("srv%d", i)})
 	}
-	assert.ErrorIs(t, deferrals.Enqueue(servers, nil), cli.ErrDeferralOverflow)
+	assert.ErrorIs(t, deferrals.Enqueue(testWorkerInfo(), servers, nil), cli.ErrDeferralOverflow)
 
 	backends := make([]string, 0, api.MaxPendingBackendDeletes+1)
 	for i := range api.MaxPendingBackendDeletes + 1 {
 		backends = append(backends, fmt.Sprintf("be-%d", i))
 	}
-	assert.ErrorIs(t, deferrals.Enqueue(nil, backends), cli.ErrDeferralOverflow)
+	assert.ErrorIs(t, deferrals.Enqueue(testWorkerInfo(), nil, backends), cli.ErrDeferralOverflow)
 }
 
 // A name the agent would have to quote never reaches the queue: the deferred
@@ -419,8 +429,8 @@ func TestDeferralsRefuseAnUnsafeName(t *testing.T) {
 	deferrals := cli.NewDeferrals(client, slog.New(slog.DiscardHandler), nil)
 
 	injected := []cli.ServerRef{{Backend: "be-a", Server: "srv1;shutdown sessions server be-a/srv2"}}
-	assert.ErrorIs(t, deferrals.Enqueue(injected, nil), cli.ErrUnsafeToken)
-	assert.ErrorIs(t, deferrals.Enqueue(nil, []string{"be-a;del backend be-b"}), cli.ErrUnsafeToken)
+	assert.ErrorIs(t, deferrals.Enqueue(testWorkerInfo(), injected, nil), cli.ErrUnsafeToken)
+	assert.ErrorIs(t, deferrals.Enqueue(testWorkerInfo(), nil, []string{"be-a;del backend be-b"}), cli.ErrUnsafeToken)
 	assert.Empty(t, deferrals.Pending().Servers)
 	assert.Empty(t, deferrals.Pending().Backends)
 }
@@ -453,7 +463,8 @@ func TestADeleteInFlightStaysOutstanding(t *testing.T) {
 	defer cancel()
 	go func() { _ = deferrals.Start(ctx) }()
 
-	require.NoError(t, deferrals.Enqueue([]cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, nil))
+	deferrals.SetWorker(testWorkerInfo())
+	require.NoError(t, deferrals.Enqueue(testWorkerInfo(), []cli.ServerRef{{Backend: "be-a", Server: "srv1"}}, nil))
 	deferrals.Wake()
 	select {
 	case <-entered:
@@ -466,7 +477,7 @@ func TestADeleteInFlightStaysOutstanding(t *testing.T) {
 	for i := range api.MaxPendingServerDeletes {
 		full = append(full, cli.ServerRef{Backend: "be-a", Server: fmt.Sprintf("s%d", i)})
 	}
-	assert.ErrorIs(t, deferrals.Enqueue(full, nil), cli.ErrDeferralOverflow,
+	assert.ErrorIs(t, deferrals.Enqueue(testWorkerInfo(), full, nil), cli.ErrDeferralOverflow,
 		"the cap has to see the delete that is running")
 	close(release)
 }

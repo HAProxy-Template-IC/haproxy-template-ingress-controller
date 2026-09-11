@@ -62,6 +62,7 @@ type applyRun struct {
 	touchedMaps      []string
 	touchedBackends  []string
 	retiringBackends []string
+	retiringServers  []cli.ServerRef
 	// createdCerts and createdCAs are the runtime stores the batch brings into
 	// existence, which the inventory has to learn without a reload.
 	createdCerts []string
@@ -191,10 +192,11 @@ func (r *applyRun) activate() error {
 // look at. A failure here means the batch is not executable at all.
 func (r *applyRun) compile(ops []api.Op) ([]cli.Program, error) {
 	inline, servers, backends := cli.Split(ops)
-	if err := r.server.deferrals.Enqueue(servers, backends); err != nil {
+	if err := r.server.deferrals.Check(servers, backends); err != nil {
 		return nil, err
 	}
 	r.retiringBackends = backends
+	r.retiringServers = servers
 	programs := make([]cli.Program, 0, len(inline))
 	for i := range inline {
 		program, err := cli.Compile(&inline[i], r.readFile)
@@ -238,6 +240,7 @@ func (r *applyRun) runOps(programs []cli.Program) error {
 	if err := r.server.checkWorker(); err != nil {
 		return r.reload("worker_changed")
 	}
+	worker := r.server.workerIdentity()
 	results, err := r.server.runtime.Execute(programs)
 	r.result.OpResults = results
 	r.opsRan = true
@@ -249,10 +252,20 @@ func (r *applyRun) runOps(programs []cli.Program) error {
 	if err := r.server.checkWorker(); err != nil {
 		return r.reload("worker_changed")
 	}
+	if err := r.enqueueDeletes(worker); err != nil {
+		return r.reload("deferred_delete_commit")
+	}
 	r.server.foldCreated(r)
-	r.server.deferrals.Wake()
 	r.result.Mode = api.ResultRuntime
 	r.server.setPhase(phaseApplied, r.manifest.PlanID)
+	return nil
+}
+
+func (r *applyRun) enqueueDeletes(worker api.HAProxyInfo) error {
+	if err := r.server.deferrals.Enqueue(worker, r.retiringServers, r.retiringBackends); err != nil {
+		return err
+	}
+	r.server.deferrals.Wake()
 	return nil
 }
 
@@ -296,11 +309,21 @@ func (r *applyRun) runInPlace() error {
 		return nil
 	}
 	programs, err := r.compile(r.manifest.InPlaceOps)
+	worker := r.server.workerIdentity()
+	if err == nil {
+		err = r.server.checkWorker()
+	}
 	if err == nil {
 		var results []api.OpResult
 		results, err = r.server.runtime.Execute(programs)
 		r.result.OpResults = results
 		r.opsRan = true
+	}
+	if err == nil {
+		err = r.server.checkWorker()
+	}
+	if err == nil {
+		err = r.enqueueDeletes(worker)
 	}
 	if err != nil {
 		r.result.Error = &api.ApplyError{Stage: "in_place", Message: err.Error()}
@@ -308,7 +331,6 @@ func (r *applyRun) runInPlace() error {
 		return err
 	}
 	r.server.foldCreated(r)
-	r.server.deferrals.Wake()
 	r.server.recordWorkerOps(r.manifest.WorkerOpsPlanID, r.workerProof)
 	return nil
 }

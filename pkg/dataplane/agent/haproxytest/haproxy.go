@@ -32,14 +32,15 @@ import (
 // Model is everything the fake knows. A test reaches it only through
 // HAProxy.With, which holds the lock the socket goroutines take.
 type Model struct {
-	Version  string
-	Pid      int
-	Backends map[string]*Backend
-	Maps     map[string][]MapEntry
-	Certs    map[string]string
-	CAFiles  map[string]string
-	CRLFiles map[string]string
-	CRTLists map[string][]string
+	Version             string
+	Pid                 int
+	StartTimeUnixMicros int64
+	Backends            map[string]*Backend
+	Maps                map[string][]MapEntry
+	Certs               map[string]string
+	CAFiles             map[string]string
+	CRLFiles            map[string]string
+	CRTLists            map[string][]string
 
 	// ReloadFails makes the master `reload` answer Success=0.
 	ReloadFails bool
@@ -111,21 +112,22 @@ func Start(tb testing.TB) *HAProxy {
 	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
 	h := &HAProxy{
 		m: Model{
-			Version:        "3.4.3-1deb11u1",
-			Pid:            1000,
-			Backends:       map[string]*Backend{},
-			Maps:           map[string][]MapEntry{},
-			Certs:          map[string]string{},
-			CAFiles:        map[string]string{},
-			CRLFiles:       map[string]string{},
-			CRTLists:       map[string][]string{},
-			BlockedServers: map[string]bool{},
-			ReloadLog:      "Loading success.",
-			pendingCert:    map[string]string{},
-			pendingCA:      map[string]string{},
-			pendingCRL:     map[string]string{},
-			mapVersions:    map[string][]MapEntry{},
-			preparedFor:    map[string]string{},
+			Version:             "3.4.3-1deb11u1",
+			Pid:                 1000,
+			StartTimeUnixMicros: 1_700_000_000_000_000,
+			Backends:            map[string]*Backend{},
+			Maps:                map[string][]MapEntry{},
+			Certs:               map[string]string{},
+			CAFiles:             map[string]string{},
+			CRLFiles:            map[string]string{},
+			CRTLists:            map[string][]string{},
+			BlockedServers:      map[string]bool{},
+			ReloadLog:           "Loading success.",
+			pendingCert:         map[string]string{},
+			pendingCA:           map[string]string{},
+			pendingCRL:          map[string]string{},
+			mapVersions:         map[string][]MapEntry{},
+			preparedFor:         map[string]string{},
 		},
 		workerPath: filepath.Join(dir, "haproxy-worker.sock"),
 		masterPath: filepath.Join(dir, "haproxy-master.sock"),
@@ -219,27 +221,48 @@ func (h *HAProxy) serve(tb testing.TB, path string) net.Listener {
 func (h *HAProxy) handle(conn net.Conn, master bool) {
 	defer func() { _ = conn.Close() }()
 	reader := bufio.NewReader(conn)
-	first, err := reader.ReadString('\n')
-	if err != nil {
-		return
-	}
-	line, payload := strings.TrimRight(first, "\n"), ""
-	if head, pattern, framed := strings.Cut(line, " <<"); framed {
-		line = head
-		payload = readPayload(reader, strings.TrimSpace(pattern))
-	}
-	var out strings.Builder
-	severity := false
-	for _, command := range strings.Split(line, ";") {
-		command = strings.TrimSpace(command)
-		if command == "set severity-output number" {
-			severity = true
-			out.WriteString("\n")
-			continue
+	h.mu.Lock()
+	workerPID := h.m.Pid
+	workerStart := h.m.StartTimeUnixMicros
+	h.mu.Unlock()
+	severity, prompt := false, false
+	for {
+		first, err := reader.ReadString('\n')
+		if err != nil {
+			return
 		}
-		write(&out, h.dispatch(command, payload, master), severity)
+		line, payload := strings.TrimRight(first, "\n"), ""
+		if head, pattern, framed := strings.Cut(line, " <<"); framed {
+			line = head
+			payload = readPayload(reader, strings.TrimSpace(pattern))
+		}
+		h.mu.Lock()
+		current := h.m.Pid
+		currentStart := h.m.StartTimeUnixMicros
+		h.mu.Unlock()
+		if !master && (current != workerPID || currentStart != workerStart) {
+			return
+		}
+		var out strings.Builder
+		for _, command := range strings.Split(line, ";") {
+			command = strings.TrimSpace(command)
+			switch command {
+			case "prompt":
+				prompt = !prompt
+			case "set severity-output number":
+				severity = true
+				out.WriteString("\n")
+			default:
+				write(&out, h.dispatch(command, payload, master), severity)
+			}
+		}
+		if prompt {
+			out.WriteString("\n> ")
+		}
+		if _, err := conn.Write([]byte(out.String())); err != nil || !prompt {
+			return
+		}
 	}
-	_, _ = conn.Write([]byte(out.String()))
 }
 
 // readPayload reads a payload block, which ends at a line equal to the pattern

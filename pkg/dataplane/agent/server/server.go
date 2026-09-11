@@ -142,17 +142,13 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	deferralClient, err := runtimeClient.Sibling(ctx)
-	if err != nil {
-		return nil, err
-	}
 	metrics := NewMetrics(cfg.Registry, cfg.Logger)
 	s := &Server{
 		cfg:        *cfg,
 		logger:     cfg.Logger,
 		store:      store,
 		runtime:    runtimeClient,
-		deferrals:  cli.NewDeferrals(deferralClient, cfg.Logger, metrics),
+		deferrals:  cli.NewDeferrals(runtimeClient, cfg.Logger, metrics),
 		metrics:    metrics,
 		states:     newStateStore(store.BaseDir(), cfg.StateFile),
 		reloadWake: make(chan struct{}, 1),
@@ -282,6 +278,7 @@ func (s *Server) probeHAProxy() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.worker = info
+	s.deferrals.SetWorker(info)
 	s.inventory = inventory
 	return nil
 }

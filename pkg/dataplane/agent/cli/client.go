@@ -16,10 +16,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/haproxytech/client-native/v6/runtime"
 	"github.com/haproxytech/client-native/v6/runtime/options"
@@ -41,9 +43,7 @@ const PayloadTerminator = "HAPTIC"
 // `set severity-output number;` prologue client-native puts on every line.
 const lineReserve = 64
 
-// Config names the two sockets the agent talks to. The worker socket carries
-// every runtime command; the master socket carries only `reload` and
-// `show proc`.
+// Config names the worker and master sockets the agent talks to.
 type Config struct {
 	WorkerSocket string
 	MasterSocket string
@@ -78,21 +78,16 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	return &Client{cfg: cfg, worker: worker, masterRT: masterRT, master: master, logger: cfg.Logger}, nil
 }
 
-// Sibling is a second client on the same sockets. client-native serialises
-// every command of one client behind one mutex, so work that blocks for
-// seconds — a `wait …-removable` — needs a connection of its own or an apply
-// queues behind it.
-func (c *Client) Sibling(ctx context.Context) (*Client, error) {
-	return New(ctx, c.cfg)
-}
-
-// Info reads the worker's identity. The pid is the agent's evidence that the
-// worker it is talking to is still the one it recorded.
+// Info reads the worker's process ID and microsecond-resolution start time.
 func (c *Client) Info() (api.HAProxyInfo, error) {
-	raw, err := c.worker.ExecuteRaw("show info")
+	raw, err := c.worker.ExecuteRaw("show info float")
 	if err != nil {
 		return api.HAProxyInfo{}, fmt.Errorf("show info: %w", err)
 	}
+	return parseInfo(raw)
+}
+
+func parseInfo(raw string) (api.HAProxyInfo, error) {
 	info := api.HAProxyInfo{}
 	for _, line := range strings.Split(raw, "\n") {
 		key, value, found := strings.Cut(line, ":")
@@ -105,10 +100,16 @@ func (c *Client) Info() (api.HAProxyInfo, error) {
 			info.Version, info.FullVersion = value, value
 		case "Pid":
 			info.WorkerPID, _ = strconv.Atoi(value)
+		case "Start_time_sec":
+			start, err := time.ParseDuration(value + "s")
+			if err != nil || start <= 0 {
+				return api.HAProxyInfo{}, fmt.Errorf("show info: invalid worker start time %q", value)
+			}
+			info.WorkerStartTimeUnixMicros = start.Microseconds()
 		}
 	}
-	if info.WorkerPID == 0 {
-		return api.HAProxyInfo{}, fmt.Errorf("show info: no worker pid in %q", raw)
+	if !info.HasWorkerIdentity() {
+		return api.HAProxyInfo{}, errors.New("show info: missing or invalid worker identity")
 	}
 	return info, nil
 }

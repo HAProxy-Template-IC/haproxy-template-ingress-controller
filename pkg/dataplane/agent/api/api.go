@@ -269,9 +269,20 @@ func (s *State) HoldsAppliedPlan() bool {
 
 // HAProxyInfo is what the agent learned from the worker (`show info`).
 type HAProxyInfo struct {
-	Version     string `json:"version"`
-	FullVersion string `json:"full_version"`
-	WorkerPID   int    `json:"worker_pid"`
+	Version                   string `json:"version"`
+	FullVersion               string `json:"full_version"`
+	WorkerPID                 int    `json:"worker_pid"`
+	WorkerStartTimeUnixMicros int64  `json:"worker_start_time_unix_micros"`
+}
+
+func (i HAProxyInfo) HasWorkerIdentity() bool {
+	return i.WorkerPID > 0 && i.WorkerStartTimeUnixMicros > 0
+}
+
+// SameWorker distinguishes process IDs reused after a container restart.
+func (i HAProxyInfo) SameWorker(other HAProxyInfo) bool {
+	return i.HasWorkerIdentity() &&
+		i.WorkerPID == other.WorkerPID && i.WorkerStartTimeUnixMicros == other.WorkerStartTimeUnixMicros
 }
 
 // FileAt is a file the agent holds.

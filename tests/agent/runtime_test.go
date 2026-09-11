@@ -209,9 +209,18 @@ func TestServerOpsRunAtRuntime(t *testing.T) {
 	}
 	result = s.apply(removed, nil)
 	require.True(t, result.OK, "the delete sequence was rejected: %+v", result.Error)
+	waitFor(t, "the deferred server delete", time.Second, func() error {
+		state, err := e.client.State(t.Context(), api.StateRead{})
+		if err != nil {
+			return err
+		}
+		_, present := e.statRow("be-1", "srv2")
+		if present || len(state.PendingDeletes.Servers) != 0 {
+			return errors.New("srv2 deletion has not completed")
+		}
+		return nil
+	})
 	assert.Equal(t, worker, e.workerPID(), "the whole server lifecycle must stay reload-free")
-	_, present := e.statRow("be-1", "srv2")
-	assert.False(t, present, "srv2 is still in show stat")
 }
 
 // keepAliveClient leaves one pooled connection to the HTTP frontend open, the
@@ -228,6 +237,46 @@ func keepAliveClient(t *testing.T, e *env) *http.Client {
 		require.NoError(t, resp.Body.Close())
 	}
 	return c
+}
+
+func TestReloadRetiresDeferredBackendDeletes(t *testing.T) {
+	if !haproxyAtLeast("3.4") {
+		t.Skipf("dynamic backends require HAProxy 3.4; this bracket runs %s", haproxyVersion())
+	}
+	e, s := converged(t)
+	worker := e.workerPID()
+	added := s.next(api.ModeAuto)
+	added.Ops = []api.Op{
+		{Kind: api.OpBackendAdd, Backend: "retiring", Profile: defaultsProfile, Mode: "http"},
+		{Kind: api.OpServerAdd, Backend: "retiring", Server: "srv1", Address: "127.0.0.1", Port: upstreamPort},
+	}
+	require.True(t, s.apply(added, nil).OK)
+	removed := s.next(api.ModeAuto)
+	removed.Ops = []api.Op{{Kind: api.OpBackendDel, Backend: "retiring"}}
+	require.True(t, s.apply(removed, nil).OK)
+	metricsURL := fmt.Sprintf("http://%s:%d/metrics", connectHost(), publishedPort(t, e.agent, metricsPort))
+	waitFor(t, "a backend waiting for its server removal", convergeBudget, func() error {
+		status, body, err := e.get(metricsURL)
+		if err != nil {
+			return err
+		}
+		if status != http.StatusOK || !strings.Contains(body, `haptic_agent_deferred_deletes_total{kind="backend",outcome="deferred"}`) {
+			return errors.New("backend deletion has not deferred")
+		}
+		return nil
+	})
+	result := s.apply(s.next(api.ModeReload), nil)
+	require.True(t, result.OK, "%+v", result.Error)
+	require.NotEqual(t, worker, e.workerPID())
+	state, err := e.client.State(t.Context(), api.StateRead{})
+	require.NoError(t, err)
+	assert.Empty(t, state.PendingDeletes.Backends)
+	status, metrics, err := e.get(metricsURL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	assert.Contains(t, metrics, "haptic_agent_deferred_deletes_total{kind=\"backend\",outcome=\"superseded\"} 1\n")
+	assert.Contains(t, metrics, "haptic_agent_deferred_deletes_total{kind=\"backend\",outcome=\"abandoned\"} 0\n")
+	assert.NotContains(t, e.logs(e.agent), "giving up on a deferred")
 }
 
 func TestDynamicBackendLifecycle(t *testing.T) {
