@@ -39,7 +39,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_TOKEN="${RUN_STAMP,,}-${BASHPID}"
-DEFAULT_HAPROXY_VERSION="$(sh -c '. "$1" && printf "%s" "$DEFAULT_HAPROXY"' sh "${PROJECT_ROOT}/versions.env")"
+DEFAULT_HAPROXY_VERSION="$(yq -r '.haproxyVersion' "${PROJECT_ROOT}/charts/haptic/values.yaml")"
 
 BENCH_REF="${BENCH_REF:-${DEFAULT_BENCH_REF}}"
 BENCH_SCENARIOS="${BENCH_SCENARIOS:-${DEFAULT_BENCH_SCENARIOS}}"

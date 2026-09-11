@@ -161,7 +161,7 @@ spec:
             - {name: tls-target, mountPath: /etc/ssl/demo}
       containers:
         - name: haproxy
-          image: haproxytech/haproxy-debian:3.2
+          image: %s
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
@@ -191,7 +191,7 @@ spec:
   selector: {app: haproxy-mtls-backend}
   ports:
     - {name: https, port: 8443, targetPort: https, protocol: TCP}
-`, namespace, namespace)
+`, namespace, runtimeImages.HAProxy, namespace)
 
 	if err := kubectlApplyStdin(ctx, []byte(manifest)); err != nil {
 		t.Fatalf("apply haproxy-mtls-backend: %v", err)

@@ -84,7 +84,7 @@ dockers_v2:
       - linux/arm64
       - linux/arm/v7
     build_args:
-      HAPROXY_VERSION: "3.0"
+      HAPROXY_IMAGE: "{{ .Env.HAPROXY_IMAGE_30 }}"
     flags:
       - "--target=runtime"
       - "--build-context=binary=."
@@ -103,7 +103,7 @@ dockers_v2:
       - linux/arm64
       - linux/arm/v7
     build_args:
-      HAPROXY_VERSION: "3.1"
+      HAPROXY_IMAGE: "{{ .Env.HAPROXY_IMAGE_31 }}"
     flags:
       - "--target=runtime"
       - "--build-context=binary=."
@@ -122,7 +122,7 @@ dockers_v2:
       - linux/arm64
       - linux/arm/v7
     build_args:
-      HAPROXY_VERSION: "3.2"
+      HAPROXY_IMAGE: "{{ .Env.HAPROXY_IMAGE_32 }}"
     flags:
       - "--target=runtime"
       - "--build-context=binary=."
@@ -141,7 +141,7 @@ dockers_v2:
       - linux/arm64
       - linux/arm/v7
     build_args:
-      HAPROXY_VERSION: "3.3"
+      HAPROXY_IMAGE: "{{ .Env.HAPROXY_IMAGE_33 }}"
     flags:
       - "--target=runtime"
       - "--build-context=binary=."
@@ -160,7 +160,7 @@ dockers_v2:
       - linux/arm64
       - linux/arm/v7
     build_args:
-      HAPROXY_VERSION: "3.4"
+      HAPROXY_IMAGE: "{{ .Env.HAPROXY_IMAGE_34 }}"
     flags:
       - "--target=runtime"
       - "--build-context=binary=."

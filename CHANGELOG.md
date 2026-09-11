@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Controller images use the Helm chart's HAProxy patch selection instead of floating series tags, keeping validation and deployed HAProxy versions aligned.
 - Validation tests share one clock input across repeated renders, preventing false determinism failures at time-bucket boundaries.
 - Preflight validates every distinct Vector and Varnish configuration with its rendered workload image and rejects conflicting image overrides.
 - Template value copies, nested and compound assignments, interface comparisons, and explicit string conversions produce the expected values.

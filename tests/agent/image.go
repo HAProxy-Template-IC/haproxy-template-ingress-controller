@@ -26,25 +26,19 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
-// defaultHAProxyVersion matches the bracket the docker job runs; HAPROXY_VERSION
-// overrides it.
-const defaultHAProxyVersion = "3.4"
-
 var (
-	imageOnce sync.Once
-	imageName string
-	imageErr  error
+	runtimeImages kindutil.ChartImages
+	imageOnce     sync.Once
+	imageName     string
+	imageErr      error
 )
 
 func haproxyVersion() string {
-	if version := os.Getenv("HAPROXY_VERSION"); version != "" {
-		return version
-	}
-	return defaultHAProxyVersion
+	return runtimeImages.HAProxyVersion
 }
 
 func haproxyImage() string {
-	return "haproxytech/haproxy-debian:" + haproxyVersion()
+	return runtimeImages.HAProxy
 }
 
 // requireAgentImage returns an image that is the HAProxy image plus the haptic

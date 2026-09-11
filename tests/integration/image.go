@@ -23,21 +23,16 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
-// defaultHAProxyVersion is the bracket a local run uses; the CI matrix sets
-// HAPROXY_VERSION per job.
-const defaultHAProxyVersion = "3.2"
+var runtimeImages kindutil.ChartImages
 
 // HAProxyVersion is the HAProxy release under test, as "major.minor".
 func HAProxyVersion() string {
-	if version := os.Getenv("HAPROXY_VERSION"); version != "" {
-		return version
-	}
-	return defaultHAProxyVersion
+	return runtimeImages.HAProxyVersion
 }
 
 // baseHAProxyImage is the upstream image the pod's haproxy container runs.
 func baseHAProxyImage() string {
-	return "haproxytech/haproxy-debian:" + HAProxyVersion()
+	return runtimeImages.HAProxy
 }
 
 // agentImageTag names the image both containers of the test pod run: the

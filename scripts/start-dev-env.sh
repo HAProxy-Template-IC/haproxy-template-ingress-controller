@@ -561,8 +561,9 @@ build_and_load_local_image() {
     if [[ "$SKIP_BUILD" != "true" ]]; then
         local build_args=("-t" "${LOCAL_IMAGE}")
 
-        # Pass HAProxy version to use matching base image
-        build_args+=("--build-arg" "HAPROXY_VERSION=${HAPROXY_VERSION}")
+        local haproxy_image
+        haproxy_image="$(bash "${SCRIPT_DIR}/chart-haproxy-image.sh" "${HAPROXY_VERSION}")" || return 1
+        build_args+=("--build-arg" "HAPROXY_IMAGE=${haproxy_image}")
 
         # Pass source hash to embed in binary
         build_args+=("--build-arg" "SOURCE_HASH=${source_hash}")

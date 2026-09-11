@@ -89,6 +89,14 @@ func init() {
 // `docker-build-test` to build it.
 func TestMain(m *testing.M) {
 	var err error
+	runtimeImages, err = kindutil.LoadChartImages(os.Getenv("HAPTIC_HAPROXY_VERSION"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: chart runtime images: %v\n", err)
+		os.Exit(1)
+	}
+	ChartHAProxyVersion = runtimeImages.HAProxyVersion
+	ControllerImageName = "haptic:test-haproxy" + ChartHAProxyVersion
+	fmt.Fprintf(os.Stderr, "e2e: chart HAProxy image %s\n", runtimeImages.HAProxy)
 	e2eCluster, err = e2ecluster.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "e2e: cluster configuration: %v\n", err)
@@ -433,7 +441,7 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 	// on the host and load it into kind so the StatefulSet doesn't depend on the
 	// kind node reaching Docker Hub (and no rate-limit flakiness in CI).
 	if os.Getenv("HAPTIC_E2E_PROFILE") == "cache" {
-		if err := pullImageIntoKind(ctx, VarnishImage); err != nil {
+		if err := pullImageIntoKind(ctx, runtimeImages.Varnish); err != nil {
 			return ctx, err
 		}
 		if err := pullImageIntoKind(ctx, VarnishPolicyProbeImage); err != nil {
@@ -444,7 +452,7 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 	// for the same reason as the cache shard's Varnish image: deterministic CI
 	// and no dependency on the kind node reaching Docker Hub.
 	if os.Getenv("HAPTIC_E2E_PROFILE") == "rate-limit" {
-		if err := pullImageIntoKind(ctx, ValkeyImage); err != nil {
+		if err := pullImageIntoKind(ctx, runtimeImages.Valkey); err != nil {
 			return ctx, err
 		}
 	}
@@ -973,6 +981,14 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 // is created by ensureNamespaces upstream so all five applies can fan out
 // concurrently without racing on namespace creation.
 func applyBackendFixtures(ctx context.Context) (context.Context, error) {
+	demo, err := kindutil.SetDeploymentFixtureImage(devassets.HAProxyDemoBackendYAML, "haproxy", runtimeImages.HAProxy)
+	if err != nil {
+		return ctx, fmt.Errorf("selecting demo backend image: %w", err)
+	}
+	testBackend, err := kindutil.SetDeploymentFixtureImage(devassets.HAProxyTestBackendYAML, "haproxy", runtimeImages.HAProxy)
+	if err != nil {
+		return ctx, fmt.Errorf("selecting test backend image: %w", err)
+	}
 	fixtures := []struct {
 		name string
 		yaml []byte
@@ -980,8 +996,8 @@ func applyBackendFixtures(ctx context.Context) (context.Context, error) {
 		{"echo-server", devassets.EchoServerYAML},
 		{"blocklist-server", devassets.BlocklistServerYAML},
 		{"auth-server", devassets.AuthServerYAML},
-		{"haproxy-demo-backend", devassets.HAProxyDemoBackendYAML},
-		{"haproxy-test-backend", devassets.HAProxyTestBackendYAML},
+		{"haproxy-demo-backend", demo},
+		{"haproxy-test-backend", testBackend},
 	}
 
 	g, gctx := errgroup.WithContext(ctx)

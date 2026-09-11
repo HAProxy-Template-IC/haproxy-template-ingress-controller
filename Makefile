@@ -27,10 +27,8 @@ IMAGE_TAG ?= dev# Image tag (override: IMAGE_TAG=v1.0.0)
 REGISTRY ?=# Container registry (e.g., registry.gitlab.com/myorg)
 FULL_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG),$(IMAGE_NAME):$(IMAGE_TAG))
 # HAProxy version baked into the controller image at build time.
-# Sourced from versions.env's DEFAULT_HAPROXY (single source of truth) so
-# local builds stay in lockstep with the chart's haproxyVersion default.
 # Override per-build with HAPROXY_VERSION=3.x.
-HAPROXY_VERSION ?= $(shell sh -c '. ./versions.env && echo $$DEFAULT_HAPROXY')
+HAPROXY_VERSION ?= $(shell yq -r '.haproxyVersion' charts/haptic/values.yaml)
 KIND_CLUSTER ?= haptic-dev  # Kind cluster name for local testing
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
@@ -290,6 +288,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 		scripts/tests/test_analyze_gateway_api_resources.py \
 		scripts/tests/test_analyze_gateway_api_supervisor_logs.py
 	bash scripts/tests/test_bench_gateway_api.sh
+	bash scripts/tests/test_chart_haproxy_image.sh
 	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
 	@# No coverage flags here: instrumenting the module for coverage costs a
@@ -796,12 +795,12 @@ docker-build: check-source-hash ## Build Docker image
 	@echo "  Git commit:      $(GIT_COMMIT)"
 	@echo "  Git tag:         $(GIT_TAG)"
 	@echo "  Source hash:     $(SOURCE_HASH)"
-	@echo "  HAProxy version: $(HAPROXY_VERSION) (from versions.env)"
+	@echo "  HAProxy series:  $(HAPROXY_VERSION) (chart-selected patch)"
 	DOCKER_BUILDKIT=1 docker build \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
 		--build-arg SOURCE_HASH=$(SOURCE_HASH) \
-		--build-arg HAPROXY_VERSION=$(HAPROXY_VERSION) \
+		--build-arg HAPROXY_IMAGE="$$(bash scripts/chart-haproxy-image.sh "$(HAPROXY_VERSION)")" \
 		-t $(FULL_IMAGE) \
 		.
 	@echo "✓ Image built: $(FULL_IMAGE)"
@@ -817,6 +816,7 @@ docker-build-multiarch: check-source-hash ## Build multi-platform Docker image f
 	@echo "  Source hash: $(SOURCE_HASH)"
 	DOCKER_BUILDKIT=1 docker buildx build \
 		--platform linux/amd64 \
+		--build-arg HAPROXY_IMAGE="$$(bash scripts/chart-haproxy-image.sh "$(HAPROXY_VERSION)")" \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
 		--build-arg SOURCE_HASH=$(SOURCE_HASH) \
@@ -838,6 +838,7 @@ docker-build-multiarch-push: check-source-hash ## Build and push multi-platform 
 	@echo "  Source hash: $(SOURCE_HASH)"
 	DOCKER_BUILDKIT=1 docker buildx build \
 		--platform linux/amd64,linux/arm64 \
+		--build-arg HAPROXY_IMAGE="$$(bash scripts/chart-haproxy-image.sh "$(HAPROXY_VERSION)")" \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
 		--build-arg SOURCE_HASH=$(SOURCE_HASH) \
@@ -1030,6 +1031,12 @@ release: ## Prepare a release of controller + chart (usage: make release RELEASE
 	@./scripts/release.sh $(RELEASE_VERSION)
 
 goreleaser-snapshot: check-source-hash ## Test GoReleaser locally (no push)
+	@set -eu; \
+	for series in $$(yq -r '.haproxyPatchVersions | keys | .[]' charts/haptic/values.yaml); do \
+		pin="HAPROXY_IMAGE_$$(printf '%s' "$$series" | tr -d '.')"; \
+		image="$$(bash scripts/chart-haproxy-image.sh "$$series")"; \
+		export "$$pin=$$image"; \
+	done; \
 	CI_PIPELINE_ID=$${CI_PIPELINE_ID:-local} SOURCE_HASH=$(SOURCE_HASH) goreleaser release --snapshot --clean --skip=sign
 
 ## PGO (Profile-Guided Optimization) targets

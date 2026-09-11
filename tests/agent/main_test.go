@@ -22,6 +22,7 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -31,6 +32,13 @@ import (
 // TestMain drops the image the suite builds; containers and volumes are each
 // test's own cleanup.
 func TestMain(m *testing.M) {
+	var err error
+	runtimeImages, err = kindutil.LoadChartImages(os.Getenv("HAPROXY_VERSION"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent tests: chart runtime images: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "agent tests: chart HAProxy image %s\n", runtimeImages.HAProxy)
 	code := m.Run()
 	kindutil.RemoveImage(imageName)
 	os.Exit(code)

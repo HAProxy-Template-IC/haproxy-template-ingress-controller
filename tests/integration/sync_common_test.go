@@ -18,6 +18,8 @@ package integration
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"testing"
 
 	"github.com/rekby/fixenv"
@@ -27,10 +29,18 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
 // TestMain sets up package-scoped fixtures and runs tests
 func TestMain(m *testing.M) {
+	var err error
+	runtimeImages, err = kindutil.LoadChartImages(os.Getenv("HAPROXY_VERSION"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "integration: chart runtime images: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "integration: chart HAProxy image %s\n", runtimeImages.HAProxy)
 	fixenv.RunTests(m)
 }
 
