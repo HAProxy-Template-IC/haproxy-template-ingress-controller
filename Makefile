@@ -291,6 +291,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	bash scripts/tests/test_bench_gateway_api.sh
 	bash scripts/tests/test_chart_haproxy_image.sh
 	$(MAKE) test-release
+	bash scripts/tests/test_chart_spoa_image.sh
 	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
 	@# No coverage flags here: instrumenting the module for coverage costs a
@@ -590,10 +591,6 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run
 	@# CI sets SKIP_DOCKER_BUILD=1 and pre-tags from the registry-pulled image,
 	@# so this re-tag is a no-op there.
 	docker tag haptic:test haptic:test-haproxy$(HAPROXY_VERSION)
-	@if [ -z "$(SPOA_TAG)" ]; then \
-		echo "No SPOA_TAG: building local spoa-hub:dev from versions-spoa.env"; \
-		$(MAKE) spoa-hub-image; \
-	fi
 	@cluster_name="$${HAPTIC_E2E_CLUSTER_NAME:-haptic-e2e}"; \
 		echo "Note: This creates kind cluster '$$cluster_name', helm-installs the chart, deploys fixtures."
 	@echo "Environment variables:"
@@ -908,8 +905,13 @@ spoa-hub-image: spoa-prep ## Build spoa-hub image locally (single-arch amd64, ta
 		.
 	@echo "Built spoa-hub:dev"
 
-test-spoa-reload: $(if $(SPOA_RELOAD_IMAGE),,spoa-hub-image) ## Verify removing Coraza never unloads its embedded runtime
-	bash scripts/test-spoa-reload.sh $(or $(SPOA_RELOAD_IMAGE),spoa-hub:dev)
+test-spoa-reload: ## Verify removing Coraza in the chart-selected SPOA image
+	@chart_image="$$(bash scripts/chart-spoa-image.sh)" || exit; \
+		if [ -n "$(SPOA_RELOAD_IMAGE)" ] && [ "$(SPOA_RELOAD_IMAGE)" != "$$chart_image" ]; then \
+			echo "SPOA_RELOAD_IMAGE differs from chart image $$chart_image; unset SPOA_RELOAD_IMAGE" >&2; \
+			exit 1; \
+		fi; \
+		bash scripts/test-spoa-reload.sh "$$chart_image"
 
 ## Dependency management
 

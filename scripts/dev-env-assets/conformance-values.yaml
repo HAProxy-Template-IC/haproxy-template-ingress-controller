@@ -137,8 +137,6 @@ haproxy:
 # plugin) work. Conformance doesn't exercise coraza, so no
 # directives override here; the plugin loads with chart defaults.
 spoaHub:
-  image:
-    tag: main-latest
   hub:
     logLevel: debug
   plugins:

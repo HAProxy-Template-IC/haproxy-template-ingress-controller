@@ -124,11 +124,6 @@ var ChartHAProxyServiceHTTPPort = func() int {
 // image its pod requests instead of depending on a mutable tag or a cold pull.
 const VarnishPolicyProbeImage = "alpine/curl@sha256:71597a4f6ac6c7515c77084d2a216aa2f302cd6f9ec311d2f55eb9320f161ce2"
 
-// LocalSPOAHubImage is the image tag produced by `make spoa-hub-image`.
-// Local SPOA-backed shards use it when SPOA_TAG is unset, because registry
-// main-latest does not necessarily contain MR-local bundled plugins.
-const LocalSPOAHubImage = "spoa-hub:dev"
-
 // Debug endpoint paths, mirrored from tests/acceptance/constants.go.
 const (
 	DebugPathConfig    = "/debug/vars/config"

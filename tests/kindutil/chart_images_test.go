@@ -79,3 +79,28 @@ func TestChartImagesRejectMissingPatch(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateChartImageTag(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		image string
+		tag   string
+		valid bool
+	}{
+		{name: "chart default", image: "example.test/hub:1.2.3", valid: true},
+		{name: "identical tag", image: "example.test:5000/hub:1.2.3", tag: "1.2.3", valid: true},
+		{name: "different tag", image: "example.test/hub:1.2.3", tag: "1.2.4"},
+		{name: "partial tag", image: "example.test/hub:1.2.3", tag: "2.3"},
+		{name: "digest default", image: "example.test/hub@sha256:abc", valid: true},
+		{name: "digest override", image: "example.test/hub:1.2.3@sha256:abc", tag: "1.2.3"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateChartImageTag(test.image, test.tag)
+			if test.valid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "differs from chart image")
+			}
+		})
+	}
+}

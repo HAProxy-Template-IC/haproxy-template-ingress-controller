@@ -23,7 +23,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -117,6 +116,9 @@ func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 			// certificate HAProxy accepted, which is what is asserted below.
 			condition := waitForConfigValidatedCondition(ctx, t, client, metav1.ConditionFalse)
 			observed := probe.stop()
+			if observed.observationErr != nil {
+				t.Fatalf("availability observation failed: %v", observed.observationErr)
+			}
 
 			if condition.Message == "" {
 				t.Fatal("ConfigValidated=False carries no message: HAProxy's own words are the " +
@@ -249,19 +251,18 @@ func repairTLSSecret(ctx context.Context, t *testing.T, client klient.Client, na
 
 // availabilityObservation is what a probe run saw across its window.
 type availabilityObservation struct {
-	attempts     int
-	failures     int
-	first        string
-	minReadyPods int
+	attempts       int
+	failures       int
+	first          string
+	minReadyPods   int
+	observationErr error
 }
 
 // availabilityProbe requests the route continuously until stopped, sampling
 // HAProxy pod readiness on every pass.
 type availabilityProbe struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	mu     sync.Mutex
-	result availabilityObservation
+	observer *testutil.ObservationProbe
+	result   availabilityObservation
 }
 
 // startAvailabilityProbe keeps a request in flight for the whole window a test
@@ -270,63 +271,54 @@ type availabilityProbe struct {
 // that drains mid-window and recovers is invisible to a before/after pair.
 func startAvailabilityProbe(t *testing.T, host string, cs kubernetes.Interface) *availabilityProbe {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
 	probe := &availabilityProbe{
-		cancel: cancel,
-		done:   make(chan struct{}),
 		result: availabilityObservation{minReadyPods: -1},
 	}
 	client := httpclient.New(t)
-
-	go func() {
-		defer close(probe.done)
-		for ctx.Err() == nil {
-			resp, err := client.HTTPS(host, "/").Do(ctx)
-			if err != nil && ctx.Err() == nil {
-				// A reload anywhere in the fleet closes pooled keep-alive
-				// connections, and the next request on one fails in the
-				// transport. Any real client retries that on a fresh
-				// connection, so only a second failure means traffic lost
-				// service. A 5xx is an answer, not a dead connection, and is
-				// never retried here.
-				client.CloseIdleConnections()
-				resp, err = client.HTTPS(host, "/").Do(ctx)
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			ready := countReadyHAProxyPods(ctx, cs)
-
-			probe.mu.Lock()
-			probe.result.attempts++
-			if ready >= 0 && (probe.result.minReadyPods < 0 || ready < probe.result.minReadyPods) {
-				probe.result.minReadyPods = ready
-			}
-			switch {
-			case err != nil:
-				probe.result.failures++
-				if probe.result.first == "" {
-					probe.result.first = err.Error()
-				}
-			case resp.Status >= 500:
-				probe.result.failures++
-				if probe.result.first == "" {
-					probe.result.first = "status " + strconv.Itoa(resp.Status)
-				}
-			}
-			probe.mu.Unlock()
-			time.Sleep(50 * time.Millisecond)
+	observer, err := testutil.StartObservationProbe(t.Context(), 50*time.Millisecond, func(ctx context.Context) error {
+		resp, requestErr := client.HTTPS(host, "/").Do(ctx)
+		if requestErr != nil && ctx.Err() == nil {
+			client.CloseIdleConnections()
+			resp, requestErr = client.HTTPS(host, "/").Do(ctx)
 		}
-	}()
+		ready, readyErr := countReadyHAProxyPods(ctx, cs)
+		if readyErr != nil {
+			return readyErr
+		}
+		probe.result.record(resp, requestErr, ready)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("start availability observation: %v", err)
+	}
+	probe.observer = observer
+	t.Cleanup(func() { _ = observer.Stop() })
 	return probe
 }
 
 func (p *availabilityProbe) stop() availabilityObservation {
-	p.cancel()
-	<-p.done
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.result.observationErr = p.observer.Stop()
 	return p.result
+}
+
+func (o *availabilityObservation) record(response *httpclient.Response, requestErr error, ready int) {
+	o.attempts++
+	if o.minReadyPods < 0 || ready < o.minReadyPods {
+		o.minReadyPods = ready
+	}
+	var failure string
+	switch {
+	case requestErr != nil:
+		failure = requestErr.Error()
+	case response.Status >= 500:
+		failure = "status " + strconv.Itoa(response.Status)
+	}
+	if failure != "" {
+		o.failures++
+		if o.first == "" {
+			o.first = failure
+		}
+	}
 }
 
 // applyRejectedTotal sums haptic_apply_rejected_total across every controller
@@ -464,9 +456,9 @@ func waitForConfigValidatedCondition(
 // move.
 func readyHAProxyPods(ctx context.Context, t *testing.T, cs kubernetes.Interface) int {
 	t.Helper()
-	ready := countReadyHAProxyPods(ctx, cs)
-	if ready < 0 {
-		t.Fatal("could not list HAProxy pods")
+	ready, err := countReadyHAProxyPods(ctx, cs)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if ready == 0 {
 		t.Fatal("no HAProxy pod is ready before the test even starts")
@@ -474,14 +466,14 @@ func readyHAProxyPods(ctx context.Context, t *testing.T, cs kubernetes.Interface
 	return ready
 }
 
-// countReadyHAProxyPods returns -1 when the list call fails, so a transient
-// API error inside the probe loop is not read as a drained Service.
-func countReadyHAProxyPods(ctx context.Context, cs kubernetes.Interface) int {
+func countReadyHAProxyPods(ctx context.Context, cs kubernetes.Interface) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	pods, err := cs.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: LabelSelectorHAProxy,
 	})
 	if err != nil {
-		return -1
+		return 0, fmt.Errorf("list HAProxy pods to observe readiness: %w", err)
 	}
 	ready := 0
 	for i := range pods.Items {
@@ -491,5 +483,5 @@ func countReadyHAProxyPods(ctx context.Context, cs kubernetes.Interface) int {
 			}
 		}
 	}
-	return ready
+	return ready, nil
 }
