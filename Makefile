@@ -285,6 +285,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 		scripts/tests/test_check_image_pins.py \
 		scripts/tests/test_analyze_gateway_api_bench.py \
 		scripts/tests/test_analyze_gateway_api_children.py \
+		scripts/tests/test_analyze_gateway_api_outcomes.py \
 		scripts/tests/test_analyze_gateway_api_resources.py \
 		scripts/tests/test_analyze_gateway_api_supervisor_logs.py
 	bash scripts/tests/test_bench_gateway_api.sh

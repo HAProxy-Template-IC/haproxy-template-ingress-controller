@@ -737,6 +737,7 @@ redact_secret_matches "$4" "$5" "$6"
         analysis = {
             "scenario": "probe",
             "measurement_valid": True,
+            "lifecycle_outcome_quality": {"evidence_valid": True, "pass": True},
             "pass": False,
             "upstream_program": {"pass": True},
             "haptic_non_vacuity": {"pass": None},
@@ -1498,7 +1499,8 @@ source "$1"
 trap - EXIT INT TERM
 BENCH_OUTPUT_DIR="$2"
 write_scale_readiness_timeout_analysis "$2/scale" 10 10
-jq '.supervised_child_continuity = {evidence_valid: true, pass: true}' \
+jq '.supervised_child_continuity = {evidence_valid: true, pass: true} |
+    .lifecycle_outcome_quality = {evidence_valid: true, pass: true}' \
     "$2/scale/analysis.json" > "$2/scale/analysis.json.tmp"
 mv "$2/scale/analysis.json.tmp" "$2/scale/analysis.json"
 SCENARIOS=(scale)
