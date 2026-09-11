@@ -203,6 +203,27 @@ wave arena and publishes no result. Once source-transaction preparation or
 execution starts, the renderer doesn't retry the wave through a different
 execution path.
 
+### Root calls and membership
+
+The controller compiles each declared incremental snippet into a wrapper that
+requests the component by name. A root renders that wrapper once at each mount,
+not once per watched object. The group selects its resource instances: an
+unready group enumerates current membership, while a ready group selects new
+and dirty query keys. Deleting an instance retires its result and effects
+without requiring the root to enumerate surviving instances.
+
+Every mount still records a canonical component call in its current root
+scope. Repeated mounts return authenticated ordered output and retain the
+complete sequence checks below. An early value read can evaluate a group, but
+doesn't replace its canonical calls or replay its effects.
+
+A non-replayed root executes its current control flow against pinned render
+inputs. Operator-authored loops and traversal of returned values still cost
+the work they perform. This contract removes per-instance root calls for
+declared components; it doesn't promise constant root CPU, flat-output
+construction, plan assembly, or HAProxy validation. Exact-cycle root reuse
+requires its complete current dependency and effect proof.
+
 ### Output and supported effects
 
 A component returns ordinary text, `shared.Unique` contributions, or structured
@@ -217,8 +238,10 @@ Published values are detached through canonical JSON before they enter a
 component result. Roots read one cell with `incremental_values(group, cell)`.
 An early read may evaluate and refresh a group, but it neither marks the group
 rendered nor replays its HTTP references or Events; the later canonical group
-call performs that replay once. Each read decodes fresh values and registers
-them with the immutable-input guard, so a root can't mutate persistent state.
+call performs that replay once. Reads can reuse immutable values only after
+authenticating their publication generation and exact certificates. The values
+remain registered with the immutable-input guard, so a root can't mutate
+persistent state.
 Publication indexes are scoped by group. Winner calculation includes every
 component in that group, including components without `backendPlan`.
 
@@ -232,8 +255,9 @@ changes; replacing or promoting an owner with the same cell count does not.
 
 The renderer stores group instances in persistent ordered indexes. Replacing
 one instance updates only its output chunk, contribution winners, HTTP
-observations, and Events. Materializing the requested component still copies
-its complete output string. Each committed group index carries a process-local
+observations, and Events. Unchanged retained text fragments can reuse their
+materialized strings; producing changed flat output still costs its bytes.
+Each committed group index carries a process-local
 seal that retains strong references to its exact immutable roots. An unchanged
 read authenticates those roots by identity without scanning their leaves or
 depending on a probabilistic digest. A changed update authenticates the old
@@ -276,10 +300,12 @@ environment.
 
 ### Render transaction and fail-closed boundary
 
-One graph session covers all incremental calls in a render. A group may be
-omitted only when it has no value reads and activation proves it has no active
-or cached instances. Every other configured group must be called through one
-or more complete sequences. Each sequence contains every component in
+One graph session covers all incremental calls in a render. A group with no
+component calls and no publication reads is excluded by the root's current
+control flow, even if it retains cached instances. Cached membership alone
+isn't proof that a later render may omit the group. Every participating group,
+including one read before its first call, must have one or more complete
+sequences. Each sequence contains every component in
 snippet-name order and stays within one root template. A complete sequence may
 repeat in the same or another root to mount cached text again; component bodies
 and effects still execute once. Calls from concurrent roots may interleave, so

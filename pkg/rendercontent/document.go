@@ -219,14 +219,14 @@ func (b *DocumentBuilder) Build(previous *Document) (Document, error) {
 		if err := previous.ValidateAuthentication(); err != nil {
 			return Document{}, err
 		}
-		index := 0
-		same, err := sameDocumentLeaves(previous.state.root, b.leaves, &index)
+		root, err := rebuildDocumentTree(previous.state.root, b.leaves)
 		if err != nil {
 			return Document{}, err
 		}
-		if previous.state.leaves == len(b.leaves) && same && index == len(b.leaves) {
+		if root == previous.state.root {
 			return *previous, nil
 		}
+		return sealDocument(root), nil
 	}
 	root, err := buildDocumentTree(b.leaves)
 	if err != nil {
