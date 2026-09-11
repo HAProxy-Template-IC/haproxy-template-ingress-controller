@@ -2,7 +2,7 @@
 # Canary by header, header-pattern, cookie, and weight. Each canary Ingress
 # shares its host+path with a non-canary main Ingress; the main owns the base
 # route (features-800-haptic-canary-colocation) while the canary overlays a
-# use_backend split (frontend-filters-810-haptic-canary).
+# use_backend split (frontend-switching-810-haptic-canary).
 #
 # The mirror test relies on the spoa-hub mirror plugin being enabled (mirror-target
 # fails loud otherwise). The plugin auto-enables with the gateway library, which
@@ -91,6 +91,9 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend default_canary-ingress_svc_canary-service_80 if \\{ req\\.hdr\\(X-Canary\\) -m str always \\}"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^[ \t]+use_backend[^\n]*\n(?:[ \t]+[^\n]*\n|\n)*[ \t]+http-request '
 
   test-haptic-canary-by-header-pattern:
     description: haproxy-haptic.org canary-by-header-pattern uses a regex match

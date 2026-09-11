@@ -243,7 +243,7 @@ templateSnippets:
   # ==========================================================================
   # Client-leg limit data for cache-enabled routes (#134).
   #
-  # frontend-filters-865 switches a cache-enabled route to `backend
+  # frontend-switching-865 switches a cache-enabled route to `backend
   # varnish_cache`, so backend-directives-810/815 skip such routes (see their
   # headers) and the four snippets below re-emit the same limits in the client
   # frontends. This util resolves and validates the annotations once per

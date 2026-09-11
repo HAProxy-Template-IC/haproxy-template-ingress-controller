@@ -776,6 +776,7 @@ templateSnippets:
           {{ render "frontend-routing-logic" | indent(2, true) }}
 
           {{- render_glob "frontend-filters-*" | indent(2, true) }}
+          {{- render_glob "frontend-switching-*" | indent(2, true) }}
 
           # Use backend from txn.backend_name (set by qualifier logic)
           use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }

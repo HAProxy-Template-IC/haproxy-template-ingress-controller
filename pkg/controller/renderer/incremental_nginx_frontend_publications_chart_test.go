@@ -39,7 +39,7 @@ import (
 
 const nginxFrontendPublicationRoot = `{%- var incremental = render "frontend-filters-555-nginx-ingress-mirror" +
   render "frontend-filters-730-nginx-ingress-cors" +
-  render "frontend-filters-780-nginx-ingress-canary" -%}
+  render "frontend-switching-780-nginx-ingress-canary" -%}
 {%- var legacy = render "legacy-nginx-ingress-mirror" +
   render "legacy-nginx-ingress-cors-root" +
   render "legacy-nginx-ingress-canary" -%}
@@ -432,7 +432,7 @@ func loadNginxFrontendPublicationSnippets(t *testing.T) map[string]config.Templa
 		"util-ingress-annotation-cors-fragment": true, "util-emit-annotation-cors": true,
 		"frontend-filters-555-nginx-ingress-mirror": true, "nginx-ingress-mirror-publications": true,
 		"frontend-filters-730-nginx-ingress-cors": true, "nginx-ingress-cors-publications": true,
-		"frontend-filters-780-nginx-ingress-canary": true, "nginx-ingress-canary-publications": true,
+		"frontend-switching-780-nginx-ingress-canary": true, "nginx-ingress-canary-publications": true,
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))
 	for _, relativePath := range files {

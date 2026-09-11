@@ -74,7 +74,7 @@ The Nginx Ingress library implements these extension points:
 | Features | `features-140-nginx-ingress-redirects` | Permanent (301) / temporal (302) redirect — registers host→location in the shared `redirect-loc-<code>.map` |
 | Features | `features-150-nginx-ingress-mtls-error` | mTLS error-page redirect — registers host→URL into the shared `mtls-error.map` |
 | Frontend Filters | `frontend-filters-775-nginx-ingress-from-to-www-redirect` | apex↔www redirect via `from-to-www.map` |
-| Frontend Filters | `frontend-filters-780-nginx-ingress-canary` | Canary routing rules |
+| Frontend Switching | `frontend-switching-780-nginx-ingress-canary` | Canary routing rules |
 | Frontend Filters | `frontend-filters-790-nginx-ingress-mtls-error` | mTLS cert passthrough (set-headers; the error-page redirect moved to features-150) |
 | Features | `features-100-nginx-ingress-ssl-passthrough` | SSL passthrough registration |
 | Backends | `backends-501-nginx-ingress-ssl-passthrough` | SSL passthrough backends |

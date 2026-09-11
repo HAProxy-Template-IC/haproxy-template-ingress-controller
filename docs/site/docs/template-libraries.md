@@ -147,6 +147,7 @@ These are the extension points custom snippets most commonly target. The authori
 | Frontend Extra | `frontend-extra-*` | After frontend bind, before routing | Early frontend directives (options, captures, ACLs) |
 | Frontend Matchers | `frontend-matchers-advanced-*` | Frontend routing | Method, header, query matching |
 | Frontend Filters | `frontend-filters-*` | HTTP frontend | Request/response processing |
+| Frontend Switching | `frontend-switching-*` | HTTP/HTTPS frontend, after filters | Conditional backend selection |
 | Access Log Fields | `log-fields-*` | Per-frontend `log-format` | Named JSON fields for the structured access log |
 | Custom Frontends | `frontends-*` | After HTTP frontend | HTTPS, TCP frontends |
 | Custom Backends | `backends-*` | Before default backend | Backend definitions |
@@ -277,10 +278,10 @@ To override a built-in snippet, use the **same key name**; values-file entries t
 | SSL | `global-settings-*`, `features-*`, `frontends-*`, `backends-*`, `frontend-filters-*`, `log-fields-*`, `https-bind-extra-*`, `ssl-tcp-bind-extra-*` |
 | Ingress | `features-*`, `backends-*`, `map-host-*`, `map-path-*`, `status-patches-*` |
 | Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*`, `status-patches-*` |
-| haptic-annotations | `map-path-*`, `map-pfxexact-*`, `map-host-*`, `map-hostregex-*`, `backend-directives-*`, `frontend-filters-*`, `features-*`, `backends-*`, `global-*`, `defaults-settings-*`, `frontend-extra-*` |
+| haptic-annotations | `map-path-*`, `map-pfxexact-*`, `map-host-*`, `map-hostregex-*`, `backend-directives-*`, `frontend-filters-*`, `frontend-switching-*`, `features-*`, `backends-*`, `global-*`, `defaults-settings-*`, `frontend-extra-*` |
 | haproxytech | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
 | haproxy-ingress | `features-*`, `map-path-*`, `map-pfxexact-*`, `backend-directives-*`, `frontend-filters-*`, `global-top-*`, `backends-*` |
-| nginx-ingress | `features-*`, `backends-*`, `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
+| nginx-ingress | `features-*`, `backends-*`, `global-top-*`, `backend-directives-*`, `frontend-filters-*`, `frontend-switching-*` |
 
 ## Custom libraries
 

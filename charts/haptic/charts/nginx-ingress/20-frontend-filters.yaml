@@ -160,7 +160,7 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  frontend-filters-780-nginx-ingress-canary:
+  frontend-switching-780-nginx-ingress-canary:
     template: |-
       {{- render "nginx-ingress-canary-publications" -}}
       {%- for _, fileAny := range incremental_values("nginx-ingress-canary", "files") -%}

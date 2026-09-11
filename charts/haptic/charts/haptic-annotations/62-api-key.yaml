@@ -102,7 +102,7 @@ templateSnippets:
   #
   # backend-directives-806 puts the identity and the 401 in the application
   # backend. A cache-enabled route never enters that backend on the client leg —
-  # frontend-filters-865 switches it to `backend varnish_cache` — so without this
+  # frontend-switching-865 switches it to `backend varnish_cache` — so without this
   # the deny never runs for a cached request, and an uncredentialed caller is
   # served the authenticated response straight from cache. Varnish's builtin does
   # not save us: it only refuses to serve cached responses to requests carrying

@@ -319,10 +319,18 @@ templateSnippets:
       http-after-response add-header Cache-Control private if { var(txn.resource_id),map({{ privateMap }}) -m found }
       http-request set-var(txn.cache_eligible) bool(true) if { var(txn.resource_id),map({{ enMap }}) -m found } { method GET HEAD }
       {%- var routeFragments = incremental_values("features-900-haptic-fragment-865-cache-route-items", "fragments") -%}
-      {%- for _, fragment := range routeFragments -%}{{- tostring(fragment) -}}{{ "\n" }}{%- end -%}
-      {%- if len(routeFragments) == 0 -%}{{ "\n" }}{%- end -%}
+      {%- for _, fragment := range routeFragments -%}{{ "\n" }}{{- tostring(fragment) -}}{%- end -%}{{ "\n" }}
       acl haptic_varnish_available srv_is_up(varnish_cache/CACHE_DISPATCH)
       http-request set-var(txn.cache_degraded) str(1) if { var(txn.cache_eligible) -m bool } !haptic_varnish_available
+      {%- end %}
+
+  frontend-switching-865-haptic-cache-route:
+    requires: [ingresses]
+    template: |
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
+      {%- if enabled == "true" %}
+      {%- var routeFragments = incremental_values("features-900-haptic-fragment-865-cache-route-items", "switching") -%}
+      {%- for _, fragment := range routeFragments -%}{{ "\n" }}{{- tostring(fragment) -}}{%- end -%}{{ "\n" }}
       use_backend varnish_cache if { var(txn.cache_eligible) -m bool } haptic_varnish_available
       {%- end %}
 
@@ -335,12 +343,14 @@ templateSnippets:
         - "metadata.annotations['haproxy-haptic.org/cache-exclude-paths']"
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-865-cache-route-items" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- var condition = render "util-haptic-cache-exclusion-condition" -%}
+      {%- if condition != "" -%}
+        {%- var key = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name") -%}
+        {{- shared.Publish("fragments", key, "http-request unset-var(txn.cache_eligible) if " + condition) -}}
+        {{- shared.Publish("switching", key, "use_backend %[var(txn.backend_name)] if " + condition) -}}
       {%- end -%}
 
-  util-haptic-fragment-body-865-cache-route-items:
+  util-haptic-cache-exclusion-condition:
     template: |-
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
@@ -356,9 +366,8 @@ templateSnippets:
               {%- paths = append(paths, path) -%}
             {%- end -%}
           {%- end -%}
-          {%- if len(paths) > 0 %}
-      http-request unset-var(txn.cache_eligible) if { var(txn.resource_id) -m str {{ rid }} } { path_beg {{ join(paths, " ") }} }
-      use_backend %[var(txn.backend_name)] if { var(txn.resource_id) -m str {{ rid }} } { path_beg {{ join(paths, " ") }} }
+          {%- if len(paths) > 0 -%}
+      { var(txn.resource_id) -m str {{ rid }} } { path_beg {{ join(paths, " ") }} }
           {%- end -%}
         {%- end -%}
       {%- end -%}
