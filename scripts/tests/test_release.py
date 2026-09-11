@@ -12,10 +12,52 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_tag_lookup_distinguishes_present_absent_and_failure(self):
+        config = yaml.compose((ROOT / ".gitlab-ci.yml").read_text())
+        jobs = {key.value: value for key, value in config.value}
+        job = {key.value: value for key, value in jobs["create-release-tag"].value}
+        lookup = next(node.value for node in job["script"].value if node.value.startswith("if git ls-remote"))
+        with tempfile.TemporaryDirectory(prefix="haptic-release-tags-") as temp:
+            repo = Path(temp)
+            env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+            env.update({
+                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_AUTHOR_NAME": "Release test", "GIT_AUTHOR_EMAIL": "release@example.test",
+                "GIT_COMMITTER_NAME": "Release test", "GIT_COMMITTER_EMAIL": "release@example.test",
+                "TAG": "v0.2.0-alpha.2",
+            })
+
+            def git(*args, **kwargs):
+                return subprocess.run(["git", *args], cwd=repo, env=env, check=True,
+                                      capture_output=True, text=True, **kwargs).stdout
+
+            git("init", "--initial-branch=main")
+            git("commit", "--allow-empty", "-m", "Fixture")
+            git("remote", "add", "origin", str(repo))
+            commit = git("rev-parse", "HEAD").strip()
+            refs = ["refs/tags/v0.2.0-alpha.2", *[f"refs/tags/v9.fixture-{i:05d}" for i in range(4096)]]
+            git("update-ref", "--stdin", input="".join(f"update {ref} {commit}\n" for ref in refs))
+            cases = [
+                ("present", "v0.2.0-alpha.2", str(repo), 0, "Tag v0.2.0-alpha.2 already exists, skipping\n"),
+                ("absent", "v0.2.0-alpha.3", str(repo), 0, "tag absent\n"),
+                ("lookup failure", "v0.2.0-alpha.2", str(repo / "missing.git"), 128, ""),
+            ]
+            for name, tag, remote, code, output in cases:
+                with self.subTest(name=name):
+                    git("remote", "set-url", "origin", remote)
+                    result = subprocess.run(["bash", "-euo", "pipefail", "-c", lookup + '\necho "tag absent"'],
+                                            cwd=repo, env={**env, "TAG": tag}, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, code, result.stderr)
+                    self.assertEqual(result.stdout, output, result.stderr)
+
     def test_chart_publication_waits_for_complete_signed_runtime(self):
         config = yaml.compose((ROOT / ".gitlab-ci.yml").read_text())
         jobs = {key.value: value for key, value in config.value}
         chart = {key.value: value for key, value in jobs["release-chart"].value}
+        builder = {key.value: value for key, value in jobs[".goreleaser-base"].value}
+        variables = {key.value: value.value for key, value in builder["variables"].value}
+        self.assertEqual(variables["BUILDX_NO_DEFAULT_OCI_ARTIFACT"], "true")
+        self.assertNotIn("BUILDX_NO_DEFAULT_ATTESTATIONS", variables)
         needs = set()
         for node in chart["needs"].value:
             if isinstance(node, yaml.ScalarNode):

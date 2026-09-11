@@ -211,6 +211,9 @@ variables:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   extends:
     - .docker-dind
+  variables:
+    # Retain attestations without dangling OCI subjects (docker/buildx#3991).
+    BUILDX_NO_DEFAULT_OCI_ARTIFACT: "true"
   needs:
     - compute-ci-image-tag
     - job: build-ci
@@ -3869,9 +3872,15 @@ create-release-tag:
     # Check if tag already exists (idempotency — this is the normal exit on
     # every main commit that doesn't change VERSION)
     - |
-      if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+      if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null; then
         echo "Tag ${TAG} already exists, skipping"
         exit 0
+      else
+        TAG_LOOKUP_STATUS=$?
+        if [ "${TAG_LOOKUP_STATUS}" -ne 2 ]; then
+          echo "Release tag lookup failed; no tag was created" >&2
+          exit "${TAG_LOOKUP_STATUS}"
+        fi
       fi
     # About to tag a release: VERSION and Chart.yaml must agree.
     - |
