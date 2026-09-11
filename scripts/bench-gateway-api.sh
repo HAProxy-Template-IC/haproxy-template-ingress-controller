@@ -2356,6 +2356,20 @@ snapshot_controller_counter() {
     printf '%s\n' "$sum"
 }
 
+attach_lifecycle_outcome_quality() {
+    local scenario_dir="$1"
+    python3 "${PROJECT_ROOT}/scripts/analyze-gateway-api-outcomes.py" \
+        --scenario-dir "$scenario_dir" --output "$scenario_dir/lifecycle-outcomes.json" || \
+        die "scenario lifecycle outcome evidence is invalid"
+    jq --slurpfile outcomes "$scenario_dir/lifecycle-outcomes.json" '
+        .lifecycle_outcome_quality = $outcomes[0] |
+        .haptic_scenario_quality.lifecycle_outcome_quality = $outcomes[0] |
+        .haptic_scenario_quality.pass = (.haptic_scenario_quality.pass and $outcomes[0].pass) |
+        .pass = (.pass and .haptic_scenario_quality.pass)
+    ' "$scenario_dir/analysis.json" > "$scenario_dir/analysis.json.tmp"
+    mv "$scenario_dir/analysis.json.tmp" "$scenario_dir/analysis.json"
+}
+
 capture_scale_activity_snapshot() {
     local scenario_dir="$1"
     local phase="$2"
@@ -4977,6 +4991,7 @@ run_probe() {
     ' "$scenario_dir/analysis.json" > "$scenario_dir/analysis.json.tmp"
     mv "$scenario_dir/analysis.json.tmp" "$scenario_dir/analysis.json"
     attach_supervised_child_continuity "$scenario_dir"
+    attach_lifecycle_outcome_quality "$scenario_dir"
     capture_scenario_logs "$scenario_dir"
     record_event scenario-complete probe
 }
@@ -5189,6 +5204,7 @@ run_routechange() {
     ' "$scenario_dir/analysis.json" > "$scenario_dir/analysis.json.tmp"
     mv "$scenario_dir/analysis.json.tmp" "$scenario_dir/analysis.json"
     attach_supervised_child_continuity "$scenario_dir"
+    attach_lifecycle_outcome_quality "$scenario_dir"
     capture_scenario_logs "$scenario_dir"
     record_event scenario-complete routechange
 }
@@ -5563,6 +5579,7 @@ run_scale() {
         mv "$scenario_dir/analysis.json.tmp" "$scenario_dir/analysis.json"
     fi
     attach_supervised_child_continuity "$scenario_dir"
+    attach_lifecycle_outcome_quality "$scenario_dir"
     capture_scenario_logs "$scenario_dir"
     record_event scenario-complete scale
 }
@@ -5578,6 +5595,8 @@ write_runner_summary() {
             (.pass | type) == "boolean" and
             (.upstream_program.pass | type) == "boolean" and
             (.haptic_scenario_quality.pass | type) == "boolean" and
+            .lifecycle_outcome_quality.evidence_valid == true and
+            (.lifecycle_outcome_quality.pass | type) == "boolean" and
             .supervised_child_continuity.evidence_valid == true and
             (.supervised_child_continuity.pass | type) == "boolean"
         ' "${BENCH_OUTPUT_DIR}/${scenario}/analysis.json" >/dev/null || \
