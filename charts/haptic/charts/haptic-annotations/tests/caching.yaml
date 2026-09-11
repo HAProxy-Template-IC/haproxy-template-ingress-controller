@@ -12,6 +12,34 @@ _fx:
     cache: {varnish: {enabled: true, replicas: 2}}
 
 validationTests:
+  test-haptic-cache-workdir-statefulset:
+    description: Stateful Varnish uses writable tmpfs without adding capabilities.
+    extraContext:
+      cache:
+        varnish: {enabled: true, workload: statefulset}
+    fixtures: {}
+    assertions:
+      - {type: contains, target: "k8s:varnish-cache", pattern: "kind: StatefulSet"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: 'securityContext:\s+fsGroup: 1000'}
+      - {type: contains, target: "k8s:varnish-cache", pattern: '"-n", "/var/lib/varnish/varnishd"'}
+      - {type: contains, target: "k8s:varnish-cache", pattern: 'name: varnish-workdir\s+mountPath: /var/lib/varnish'}
+      - {type: contains, target: "k8s:varnish-cache", pattern: 'name: varnish-workdir\s+emptyDir:\s+medium: Memory'}
+      - {type: not_contains, target: "k8s:varnish-cache", pattern: 'capabilities:|privileged:|vsl_space|varnishncsa|varnishlog'}
+
+  test-haptic-cache-workdir-deployment:
+    description: Deployment Varnish uses the same tmpfs and capability policy.
+    extraContext:
+      cache:
+        varnish: {enabled: true, workload: deployment}
+    fixtures: {}
+    assertions:
+      - {type: contains, target: "k8s:varnish-cache", pattern: "kind: Deployment"}
+      - {type: contains, target: "k8s:varnish-cache", pattern: 'securityContext:\s+fsGroup: 1000'}
+      - {type: contains, target: "k8s:varnish-cache", pattern: '"-n", "/var/lib/varnish/varnishd"'}
+      - {type: contains, target: "k8s:varnish-cache", pattern: 'name: varnish-workdir\s+mountPath: /var/lib/varnish'}
+      - {type: contains, target: "k8s:varnish-cache", pattern: 'name: varnish-workdir\s+emptyDir:\s+medium: Memory'}
+      - {type: not_contains, target: "k8s:varnish-cache", pattern: 'capabilities:|privileged:|vsl_space|varnishncsa|varnishlog'}
+
   test-haptic-cache-core:
     description: Cache exclusions and canaries preserve routing precedence with request filters before backend switches.
     extraContext:
