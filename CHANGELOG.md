@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-alpha.3] - 2026-09-11
+
+Alpha release for testing. This release includes the [alpha.2 changes and chart migrations](https://gitlab.com/haproxy-haptic/haptic/-/blob/v0.2.0-alpha.3/CHANGELOG.md#020-alpha2---2026-09-11); alpha.2 publication did not complete. Renderer scaling work ([#212](https://gitlab.com/haproxy-haptic/haptic/-/issues/212)) and the intermittent rejected output inconsistency ([#213](https://gitlab.com/haproxy-haptic/haptic/-/issues/213)) remain open.
+
 ### Fixed
 
 - Namespace deletion no longer emits resource-application errors for Kubernetes' namespace-terminating response; status publication and orphan pruning still wait for a complete successful apply.
@@ -22,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0-alpha.2] - 2026-09-11
 
-Alpha release for testing; review the chart migrations below before upgrading. Renderer scaling work ([#212](https://gitlab.com/haproxy-haptic/haptic/-/issues/212)) and the intermittent rejected output inconsistency ([#213](https://gitlab.com/haproxy-haptic/haptic/-/issues/213)) remain open.
+Publication did not complete: controller images were partially published, but no Helm chart or complete GitLab release was published. The changes and chart migrations below are included in alpha.3.
 
 ### Added
 

@@ -20,7 +20,7 @@ A default install converges out of the box with or without cert-manager:
 The `localdev.me` domain resolves to `127.0.0.1`, making it useful for local development. No additional configuration is required:
 
 ```bash
-helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.2 \
+helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.3 \
   --namespace haptic --create-namespace
 ```
 
