@@ -1,0 +1,138 @@
+validationTests:
+  test-http-demultiplexer-route-without-listener:
+    requires: [httproutes]
+    description: Routes without plaintext listeners retain HTTP validation without an unbound TCP frontend.
+    extraContext:
+      proxyProtocol: {enabled: false}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: orphan, namespace: default}
+          spec:
+            parentRefs: [{name: absent}]
+            rules: [{backendRefs: [{name: echo, port: 80}]}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^frontend http-tcp$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^backend http-h[12]c?-loopback\b'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http_frontend$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http_frontend_h2c$'}
+
+  test-http-demultiplexer-grpc-without-listener:
+    requires: [grpcroutes]
+    description: Orphan gRPC routes do not create a plaintext TCP listener.
+    extraContext:
+      proxyProtocol: {enabled: false}
+    fixtures:
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata: {name: orphan-grpc, namespace: default}
+          spec:
+            parentRefs: [{name: absent}]
+            rules: [{backendRefs: [{name: echo, port: 9090}]}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^frontend http-tcp$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http_frontend$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http_frontend_h2c$'}
+
+  test-http-demultiplexer-extension-listener:
+    requires: [gateways]
+    description: A non-default HTTP listener keeps its TCP demultiplexer and both loopback paths.
+    extraContext:
+      httpPort: 80
+      proxyProtocol: {enabled: false}
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: extra-http, namespace: default}
+          spec:
+            gatewayClassName: haproxy
+            listeners: [{name: extra, protocol: HTTP, port: 8095}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http-tcp\n(?:[ \t].*\n|\n)*[ \t]+bind \*:8095$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^\s+bind \*:80$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend http-h1-loopback\b'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend http-h2c-loopback\b'}
+
+  test-http-demultiplexer-https-only-route:
+    requires: [gateways, httproutes]
+    description: HTTPS-only routes keep TLS and internal HTTP frontends without a plaintext demultiplexer.
+    extraContext:
+      proxyProtocol: {enabled: false}
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: https-only, namespace: default}
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: https
+                protocol: HTTPS
+                port: 443
+                hostname: example.com
+                tls:
+                  mode: Terminate
+                  certificateRefs: [{kind: Secret, name: shared-tls}]
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: https-only, namespace: default}
+          spec:
+            parentRefs: [{name: https-only}]
+            hostnames: [example.com]
+            rules: [{backendRefs: [{name: echo, port: 80}]}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^frontend http-tcp$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^backend http-h[12]c?-loopback\b'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend https$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http_frontend$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http_frontend_h2c$'}
+
+  test-http-demultiplexer-proxy-listener:
+    requires: [httproutes]
+    description: A PROXY-protocol listener keeps both HTTP demultiplexing paths without opening the default port.
+    extraContext:
+      httpPort: 80
+      proxyProtocol: {enabled: true, httpPort: 8081}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: proxy-route, namespace: default}
+          spec:
+            parentRefs: [{name: absent}]
+            rules: [{backendRefs: [{name: echo, port: 80}]}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http-tcp\n(?:[ \t].*\n|\n)*[ \t]+bind \*:8081 accept-proxy$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^\s+bind \*:80$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend http-h1-loopback\b'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend http-h2c-loopback\b'}
+
+  test-http-demultiplexer-orphan-route-validation:
+    requires: [httproutes]
+    description: Header validation still rejects malformed routes without a plaintext listener.
+    extraContext:
+      renderMode: admission
+      proxyProtocol: {enabled: false}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: invalid-orphan, namespace: default}
+          spec:
+            parentRefs: [{name: absent}]
+            rules:
+              - filters:
+                  - type: RequestHeaderModifier
+                    requestHeaderModifier: {set: [{name: 'X-Bad|Name', value: bad}]}
+                backendRefs: [{name: echo, port: 80}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: 'is not an HTTP token'}
