@@ -217,7 +217,7 @@ func (a *documentPlanAssembler) run(
 		)
 	}
 	var previous *rendercontent.Document
-	if a.previous != nil && len(a.previous.parts.values) == len(a.parts) {
+	if a.previous != nil {
 		previous = &a.previous.assembled
 	}
 	document, err := a.output.Build(previous)

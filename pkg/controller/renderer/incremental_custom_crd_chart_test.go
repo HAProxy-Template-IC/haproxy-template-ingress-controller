@@ -139,7 +139,16 @@ func assertCustomCRDFailedRenderRetriesCleanly(
 
 func newCustomCRDChartFixture(tb testing.TB) *customCRDChartFixture {
 	tb.Helper()
-	cfg := &config.Config{
+	return newCustomCRDChartFixtureWithConfig(tb, customCRDChartConfig(tb), &typebootstrap.Result{
+		Types:  map[string]reflect.Type{},
+		Kinds:  map[string]string{},
+		Errors: map[string]error{},
+	})
+}
+
+func customCRDChartConfig(tb testing.TB) *config.Config {
+	tb.Helper()
+	return &config.Config{
 		Dataplane: testDataplaneConfig(),
 		TemplatingSettings: config.TemplatingSettings{ExtraContext: map[string]any{
 			"failAfterCustomRoutes": false,
@@ -164,11 +173,14 @@ func newCustomCRDChartFixture(tb testing.TB) *customCRDChartFixture {
 		}),
 		HAProxyConfig: config.HAProxyConfig{Template: customCRDChartRoot},
 	}
-	types := &typebootstrap.Result{
-		Types:  map[string]reflect.Type{},
-		Kinds:  map[string]string{},
-		Errors: map[string]error{},
-	}
+}
+
+func newCustomCRDChartFixtureWithConfig(
+	tb testing.TB,
+	cfg *config.Config,
+	types *typebootstrap.Result,
+) *customCRDChartFixture {
+	tb.Helper()
 	declarations := helpers.BuildAdditionalDeclarations(cfg, types)
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, declarations, helpers.EngineOptions{})
 	require.NoError(tb, err)
