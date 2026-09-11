@@ -3,12 +3,7 @@
 # Build arguments for version control
 # renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.27
-# Must match DEFAULT_HAPROXY in versions.env. Clamped to stable series by a
-# packageRule in renovate.json (HAProxy's floating `X.Y` tag on Docker Hub can
-# point at a dev release before the first `X.Y.Z` patch ships, so the rule
-# derives the tracked version from patch tags only).
-# renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=loose
-ARG HAPROXY_VERSION=3.4
+ARG HAPROXY_IMAGE=haproxytech/haproxy-debian:must-be-supplied@sha256:0000000000000000000000000000000000000000000000000000000000000000
 ARG GIT_COMMIT=unknown
 ARG GIT_TAG=unknown
 ARG SOURCE_HASH=unknown
@@ -90,7 +85,7 @@ COPY --from=builder /build/${TARGETPLATFORM}/haptic /${TARGETPLATFORM}/haptic
 # -----------------------------------------------------------------------------
 # Runtime stage - minimal image with HAProxy for validation
 # -----------------------------------------------------------------------------
-FROM haproxytech/haproxy-debian:${HAPROXY_VERSION} AS runtime
+FROM ${HAPROXY_IMAGE} AS runtime
 
 # TARGETPLATFORM is set automatically by buildx (e.g., linux/amd64)
 ARG TARGETPLATFORM

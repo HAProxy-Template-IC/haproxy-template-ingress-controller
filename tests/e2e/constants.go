@@ -19,6 +19,8 @@ package e2e
 import (
 	"os"
 	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
 // Cluster, deployment, and image constants. The e2e suite is self-contained:
@@ -94,31 +96,17 @@ const (
 	// (single multi-port Service rather than separate -debug/-metrics
 	// services).
 	DebugServiceNameValue = HelmReleaseName
-
-	// defaultHAProxyVersion is the fallback used when HAPTIC_HAPROXY_VERSION
-	// is unset (i.e., not invoked through `make test-e2e`). Aligned with
-	// versions.env's DEFAULT_HAPROXY default. The Makefile passes the
-	// authoritative value via the env var.
-	defaultHAProxyVersion = "3.4"
 )
 
-// ChartHAProxyVersion is the haproxyVersion the e2e suite installs the
-// chart with. Sourced from the HAPTIC_HAPROXY_VERSION env var (set by the
-// `make test-e2e` target from versions.env's DEFAULT_HAPROXY) so the chart's
-// haproxyVersion, the controller image's bundled HAProxy, and the chart's
-// expected image tag suffix all stay in lockstep. Falls back to a constant
-// when the env var is unset.
-var ChartHAProxyVersion = func() string {
-	if v := os.Getenv("HAPTIC_HAPROXY_VERSION"); v != "" {
-		return v
-	}
-	return defaultHAProxyVersion
-}()
+var runtimeImages kindutil.ChartImages
+
+// ChartHAProxyVersion is resolved from the chart before suite setup.
+var ChartHAProxyVersion string
 
 // ControllerImageName is the docker image tag the chart installs.
 // docker-build-test produces "haptic:test"; the e2e Makefile target
 // re-tags it with the haproxy-version suffix the chart expects.
-var ControllerImageName = "haptic:test-haproxy" + ChartHAProxyVersion
+var ControllerImageName string
 
 // ChartHAProxyServiceHTTPPort is the HAProxy Service port installed by the
 // active profile. The cache profile intentionally differs from the pod's port
@@ -131,22 +119,10 @@ var ChartHAProxyServiceHTTPPort = func() int {
 	return DefaultHAProxyServiceHTTPPort
 }()
 
-// VarnishImage is the stock upstream Varnish image the shared-cache tier
-// deploys. Must match charts/haptic/values.yaml cache.varnish.image.
-// Loaded into kind by the cache shard so the StatefulSet needn't reach Docker Hub.
-// renovate: datasource=docker depName=varnish
-const VarnishImage = "varnish:9.0"
-
 // VarnishPolicyProbeImage runs the same-namespace NetworkPolicy denial probe.
 // Pin the multi-architecture manifest so a fresh cache shard loads exactly the
 // image its pod requests instead of depending on a mutable tag or a cold pull.
 const VarnishPolicyProbeImage = "alpine/curl@sha256:71597a4f6ac6c7515c77084d2a216aa2f302cd6f9ec311d2f55eb9320f161ce2"
-
-// ValkeyImage is the stock upstream Valkey image the shared-rate-limit tier
-// deploys. Must match charts/haptic/values.yaml rateLimit.shared.managedStore.image.
-// Loaded into kind by the rate-limit shard so the StatefulSet needn't reach Docker Hub.
-// renovate: datasource=docker depName=valkey/valkey
-const ValkeyImage = "valkey/valkey:9.1.1-alpine"
 
 // LocalSPOAHubImage is the image tag produced by `make spoa-hub-image`.
 // Local SPOA-backed shards use it when SPOA_TAG is unset, because registry

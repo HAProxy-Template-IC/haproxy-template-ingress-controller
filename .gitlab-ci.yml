@@ -709,11 +709,13 @@ validate-helm-libraries:
       set -o pipefail
       build_snapshot_image() {
         local haproxy_version="$1"
+        local image_variable="HAPROXY_IMAGE_${haproxy_version//./}"
+        local haproxy_image="${!image_variable}"
         local tag="${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy${haproxy_version}"
         echo "Starting build: ${tag}"
         docker buildx build \
           --platform "${PLATFORMS}" \
-          --build-arg HAPROXY_VERSION="${haproxy_version}" \
+          --build-arg HAPROXY_IMAGE="${haproxy_image}" \
           --build-arg GIT_COMMIT="${CI_COMMIT_SHORT_SHA}" \
           --build-arg GIT_TAG="${SNAPSHOT_TAG}" \
           --build-context binary=binary-context \

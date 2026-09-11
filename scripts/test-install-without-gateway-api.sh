@@ -43,8 +43,7 @@ k() { kubectl --context "$CTX" -n "$NS" "$@"; }
 docker image inspect haptic:test >/dev/null 2>&1 \
   || fail "haptic:test not found — run 'make docker-build-test' first"
 
-HAPROXY_VERSION="$(sh -c '. '"$REPO"'/versions.env && echo $DEFAULT_HAPROXY' 2>/dev/null || true)"
-HAPROXY_VERSION="${HAPROXY_VERSION:-$(sed -n 's/^haproxyVersion: *"\?\([0-9.]*\)"\?.*/\1/p;T;q' "$CHART/values.yaml" || true)}"
+HAPROXY_VERSION="$(yq -r '.haproxyVersion' "$CHART/values.yaml")"
 [ -n "$HAPROXY_VERSION" ] || fail "cannot determine haproxyVersion"
 
 info "cluster $CLUSTER (deliberately WITHOUT Gateway API)"

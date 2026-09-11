@@ -196,10 +196,7 @@ kubectl --context "$CTX" wait --for=condition=Ready node --all --timeout=180s >/
 info "loading haptic:test"
 docker image inspect haptic:test >/dev/null 2>&1 \
   || fail "haptic:test not found — run 'make docker-build-test' first"
-# `|| true` on both: under `set -o pipefail` a grep that legitimately matches
-# nothing fails the pipeline and kills the script with no diagnostic.
-HAPROXY_VERSION="$(grep -oP 'DEFAULT_HAPROXY\s*=\s*\K[0-9.]+' "$REPO/Dockerfile" 2>/dev/null | head -1 || true)"
-HAPROXY_VERSION="${HAPROXY_VERSION:-$(sed -n 's/^haproxyVersion: *"\?\([0-9.]*\)"\?/\1/p' "$CHART/values.yaml" | head -1 || true)}"
+HAPROXY_VERSION="$(yq -r '.haproxyVersion' "$CHART/values.yaml")"
 [ -n "$HAPROXY_VERSION" ] || fail "cannot determine haproxyVersion"
 docker tag haptic:test "haptic:test-haproxy${HAPROXY_VERSION}" >/dev/null
 kind load docker-image "haptic:test-haproxy${HAPROXY_VERSION}" --name "$CLUSTER" >/dev/null

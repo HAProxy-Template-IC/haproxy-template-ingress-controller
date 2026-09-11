@@ -127,7 +127,7 @@ spec:
     spec:
       containers:
         - name: haproxy
-          image: haproxytech/haproxy-debian:3.2
+          image: %s
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
@@ -187,7 +187,7 @@ spec:
       port: 8443
       targetPort: https
       protocol: TCP
-`, namespace, namespace)
+`, namespace, runtimeImages.HAProxy, namespace)
 
 	if err := kubectlApplyStdin(ctx, []byte(manifest)); err != nil {
 		t.Fatalf("apply haproxy-demo-backend: %v", err)
