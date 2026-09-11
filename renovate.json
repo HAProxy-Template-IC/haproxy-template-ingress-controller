@@ -15,8 +15,8 @@
     {
       "customType": "regex",
       "description": "Pinned Node/npm toolchain for CI without changing HAProxy runtime libraries.",
-      "fileMatch": [
-        "^\\.gitlab/ci/build-pins\\.yml$"
+      "managerFilePatterns": [
+        "/^\\.gitlab/ci/build-pins\\.yml$/"
       ],
       "matchStrings": [
         "NODE_BUILD_IMAGE:\\s*\"node:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
@@ -28,9 +28,9 @@
     {
       "customType": "regex",
       "description": "HAProxy patch tags and optional digests in dev manifests and CI bases, updated within each supported series alongside the chart.",
-      "fileMatch": [
-        "^scripts/dev-env-assets/haproxy-.*\\.yaml$",
-        "^\\.gitlab/ci/build-pins\\.yml$"
+      "managerFilePatterns": [
+        "/^scripts/dev-env-assets/haproxy-.*\\.yaml$/",
+        "/^\\.gitlab/ci/build-pins\\.yml$/"
       ],
       "matchStrings": [
         "haproxytech/haproxy-debian:(?<currentValue>(?<seriesMajor>\\d+)\\.(?<seriesMinor>\\d+)\\.\\d+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?"
@@ -43,8 +43,8 @@
     {
       "customType": "regex",
       "description": "HAProxy patch versions in charts/haptic/values.yaml. Each entry's series (captured from the YAML key) is baked into a per-dep regex versioning scheme, so Renovate only considers patches within the same series. Adding or removing a series requires no renovate.json change.",
-      "fileMatch": [
-        "^charts/haptic/values\\.yaml$"
+      "managerFilePatterns": [
+        "/^charts/haptic/values\\.yaml$/"
       ],
       "matchStrings": [
         "# renovate:\\s*datasource=docker\\s+depName=haproxytech/haproxy-debian[^\\n]*\\n\\s*\"(?<seriesMajor>\\d+)\\.(?<seriesMinor>\\d+)\":\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
@@ -57,8 +57,8 @@
     {
       "customType": "regex",
       "description": "SPOA hub bundle versions in versions-spoa.env. Each entry has a `# renovate:` comment naming the upstream GitLab Generic Package, optionally followed by free-form `#` notes documenting the bump, then a `<NAME>_VERSION=\"vX.Y.Z\"` assignment. The intermediate `(?:#[^\\n]*\\n)*` group allows any number of comment lines between the renovate directive and the assignment so the file stays readable as the metric set + behaviour notes grow. The shipped customManagers:gitlabPipelineVersions preset only matches .gitlab-ci.yml so we need a dedicated manager for this file.",
-      "fileMatch": [
-        "^versions-spoa\\.env$"
+      "managerFilePatterns": [
+        "/^versions-spoa\\.env$/"
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[a-z-]+) packageName=(?<packageName>\\S+) registryUrl=(?<registryUrl>\\S+) depName=(?<depName>\\S+)\\s*\\n(?:#[^\\n]*\\n)*[A-Z_]+_VERSION=\"(?<currentValue>[^\"]+)\""
@@ -67,8 +67,8 @@
     {
       "customType": "regex",
       "description": "Vector sidecar image tag in charts/haptic/values.yaml. The tag carries a distro suffix (e.g. 0.57.0-debian), so the versioning scheme captures the semver part and keeps the suffix out of the comparison; without it Renovate treats the whole string as an unparseable version and never proposes a bump. The `# renovate:` comment must sit directly above the `tag:` line.",
-      "fileMatch": [
-        "^charts/haptic/values\\.yaml$"
+      "managerFilePatterns": [
+        "/^charts/haptic/values\\.yaml$/"
       ],
       "matchStrings": [
         "# renovate:\\s*datasource=docker\\s+depName=timberio/vector[^\\n]*\\n\\s*tag:\\s*\"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+-[a-z]+)\""
@@ -81,12 +81,12 @@
     {
       "customType": "regex",
       "description": "Varnish image tag, in every file that pins one. The value is a bare `image: <repo>:<tag>` string, which Renovate's built-in helm-values manager does not recognise (it looks for an image.repository + image.tag pair), so this pin needs an explicit manager or it is never bumped. All five pins must move together: values.yaml is what deploys, preflight.go is the varnishd that compiles the VCL in the gate, and constants.go is the image e2e preloads into kind. Bumping values.yaml alone left the others two majors behind on an EOL release. The pattern matches a `renovate:` comment line followed by the pin on the next line, in any file type — keep them adjacent.",
-      "fileMatch": [
-        "^charts/haptic/values\\.yaml$",
-        "^charts/haptic/charts/haptic-annotations/_index\\.yaml$",
-        "^charts/haptic/charts/haptic-annotations/70-caching\\.yaml$",
-        "^cmd/haptic/preflight\\.go$",
-        "^tests/e2e/constants\\.go$"
+      "managerFilePatterns": [
+        "/^charts/haptic/values\\.yaml$/",
+        "/^charts/haptic/charts/haptic-annotations/_index\\.yaml$/",
+        "/^charts/haptic/charts/haptic-annotations/70-caching\\.yaml$/",
+        "/^cmd/haptic/preflight\\.go$/",
+        "/^tests/e2e/constants\\.go$/"
       ],
       "matchStrings": [
         "renovate:\\s*datasource=docker\\s+depName=varnish[^\\n]*\\n[^\\n]*varnish:(?<currentValue>[0-9]+\\.[0-9]+(\\.[0-9]+)?)"
@@ -98,11 +98,11 @@
     {
       "customType": "regex",
       "description": "Valkey image tag, in every file that pins one, for the same reason as the Varnish manager above: values.yaml was bumped to 9-alpine while the annotation-library default, its snippet fallback, and the e2e preload stayed on 8-alpine. Same comment-anchored pattern — a `renovate:` line immediately above the pin.",
-      "fileMatch": [
-        "^charts/haptic/values\\.yaml$",
-        "^charts/haptic/charts/haptic-annotations/_index\\.yaml$",
-        "^charts/haptic/charts/haptic-annotations/80-rate-limit-shared\\.yaml$",
-        "^tests/e2e/constants\\.go$"
+      "managerFilePatterns": [
+        "/^charts/haptic/values\\.yaml$/",
+        "/^charts/haptic/charts/haptic-annotations/_index\\.yaml$/",
+        "/^charts/haptic/charts/haptic-annotations/80-rate-limit-shared\\.yaml$/",
+        "/^tests/e2e/constants\\.go$/"
       ],
       "matchStrings": [
         "renovate:\\s*datasource=docker\\s+depName=valkey/valkey[^\\n]*\\n[^\\n]*valkey/valkey:(?<currentValue>[0-9]+(\\.[0-9]+)*-alpine)"
@@ -115,8 +115,8 @@
     {
       "customType": "regex",
       "description": "Varnish pin as DOCUMENTED in the chart values reference — same reason as the Valkey entry below.",
-      "fileMatch": [
-        "^docs/site/docs/reference\\.md$"
+      "managerFilePatterns": [
+        "/^docs/site/docs/reference\\.md$/"
       ],
       "matchStrings": [
         "\\|\\s*`varnish:(?<currentValue>[0-9]+(\\.[0-9]+)*)`\\s*\\|"
@@ -128,8 +128,8 @@
     {
       "customType": "regex",
       "description": "Valkey pin as DOCUMENTED in the chart values reference. reference.md is hand-maintained and check-values-docs.sh fails the build when a documented default drifts from values.yaml, so a bot bump that touched only values.yaml reddened every renovate MR until the row was edited by hand (!1515). Matched on the table cell rather than a `renovate:` comment anchor, because the generated-looking rows carry no comments.",
-      "fileMatch": [
-        "^docs/site/docs/reference\\.md$"
+      "managerFilePatterns": [
+        "/^docs/site/docs/reference\\.md$/"
       ],
       "matchStrings": [
         "\\|\\s*`valkey/valkey:(?<currentValue>[0-9]+(\\.[0-9]+)*-alpine)`\\s*\\|"

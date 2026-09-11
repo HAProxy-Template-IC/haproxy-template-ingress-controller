@@ -28,6 +28,23 @@ def dependency_name(template, captures):
     return result
 
 
+def file_matchers(manager):
+    if "fileMatch" in manager:
+        raise ValueError("image pin managers must migrate fileMatch to managerFilePatterns")
+    matchers = []
+    for pattern in manager.get("managerFilePatterns", []):
+        match = re.fullmatch(r"/(.+)/(i?)", pattern)
+        if not match:
+            raise ValueError("image pin managerFilePatterns must use slash-delimited regular expressions")
+        try:
+            matchers.append(re.compile(match[1], re.IGNORECASE if match[2] else 0))
+        except re.error as error:
+            raise ValueError(f"invalid image pin file pattern {pattern!r}: {error}") from error
+    if not matchers:
+        raise ValueError("image pin manager has no managerFilePatterns")
+    return matchers
+
+
 def collect_pins(managers, paths, read_text):
     pins = collections.defaultdict(lambda: collections.defaultdict(set))
     for manager in managers:
@@ -35,7 +52,7 @@ def collect_pins(managers, paths, read_text):
         if not template:
             continue
         patterns = [re.compile(to_python(s)) for s in manager.get("matchStrings", [])]
-        matchers = [re.compile(s) for s in manager.get("fileMatch", [])]
+        matchers = file_matchers(manager)
         matched_versions = 0
         for path in paths:
             if not any(matcher.search(path) for matcher in matchers):

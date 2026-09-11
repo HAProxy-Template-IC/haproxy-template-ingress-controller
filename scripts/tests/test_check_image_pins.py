@@ -62,6 +62,33 @@ class CheckImagePinsTests(unittest.TestCase):
     def test_static_dependency_name(self):
         self.assertEqual(CHECKER.dependency_name("varnish", {}), "varnish")
 
+    def test_file_patterns_preserve_anchored_regex_matching(self):
+        matcher = CHECKER.file_matchers({"managerFilePatterns": [r"/^scripts/dev-env-assets/haproxy-.*\.yaml$/"]})[0]
+        self.assertIsNotNone(matcher.search("scripts/dev-env-assets/haproxy-production.yaml"))
+        self.assertIsNone(matcher.search("old/scripts/dev-env-assets/haproxy-production.yaml"))
+        self.assertIsNone(matcher.search("scripts/dev-env-assets/haproxy-production.yaml.bak"))
+
+    def test_file_patterns_support_explicit_case_insensitivity(self):
+        matcher = CHECKER.file_matchers({"managerFilePatterns": [r"/^Dockerfile$/i"]})[0]
+        self.assertIsNotNone(matcher.search("DOCKERFILE"))
+        sensitive = CHECKER.file_matchers({"managerFilePatterns": [r"/^Dockerfile$/"]})[0]
+        self.assertIsNone(sensitive.search("DOCKERFILE"))
+
+    def test_unsupported_or_missing_file_patterns_fail_closed(self):
+        cases = [{}, {"managerFilePatterns": []}, {"fileMatch": ["^Dockerfile$"]}]
+        cases.extend({"managerFilePatterns": [pattern]} for pattern in (
+            "*.yaml", "!/^Dockerfile$/", "^Dockerfile$", "/^Dockerfile$/g", "/[/", "//"))
+        for manager in cases:
+            with self.subTest(manager=manager), self.assertRaises(ValueError):
+                CHECKER.file_matchers(manager)
+
+    def test_all_repo_managers_use_migrated_regex_patterns(self):
+        managers = json.loads((ROOT / "renovate.json").read_text())["customManagers"]
+        for manager in managers:
+            with self.subTest(manager=manager["description"]):
+                self.assertNotIn("fileMatch", manager)
+                self.assertTrue(CHECKER.file_matchers(manager))
+
     def test_manager_matching_nothing_fails(self):
         self.files.pop("charts/haptic/values.yaml")
         with self.assertRaisesRegex(ValueError, "matched no version pins"):
