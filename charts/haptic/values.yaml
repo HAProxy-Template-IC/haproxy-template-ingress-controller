@@ -1877,13 +1877,12 @@ cache:
     # renovate: datasource=docker depName=varnish
     image: varnish:9.0
     imagePullPolicy: IfNotPresent
-    # -s malloc,<size> — size at roughly 75% of the pod memory limit (Varnish
-    # adds ~1 KB/object of management overhead). OSS Varnish is RAM-only.
+    # Object storage only; budget shared logs, VCL, and process overhead separately.
     malloc: 256m
     # Pod resources. A CPU request is REQUIRED for the autoscaling HPA to
     # compute utilization (a `Utilization` target is a percentage of the
-    # request). Keep the memory limit above `malloc` plus Varnish's overhead
-    # (default malloc 256m ≈ 67% of the 384Mi limit).
+    # request). Include the tmpfs workdir in this limit: shared logs default to
+    # 80 MiB, in addition to malloc storage, VCL, and process/object overhead.
     resources:
       requests:
         cpu: 100m

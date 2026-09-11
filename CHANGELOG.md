@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Fixed
 
 - Routes without plaintext listeners no longer generate an unbound HTTP TCP frontend; internal HTTP routing and validation remain enabled.
+- Varnish uses a writable memory-backed workdir for shared logs, statistics, and compiled VCL without adding container capabilities.
 
 ## [0.2.0-alpha.3] - 2026-09-11
 

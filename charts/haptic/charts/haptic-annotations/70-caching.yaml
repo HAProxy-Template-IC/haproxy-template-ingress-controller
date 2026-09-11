@@ -813,6 +813,8 @@ k8sResources:
             annotations:
               haproxy-haptic.org/vcl-checksum: "{{ vclHash }}"
           spec:
+            securityContext:
+              fsGroup: 1000
             affinity:
               podAntiAffinity:
                 preferredDuringSchedulingIgnoredDuringExecution:
@@ -836,7 +838,7 @@ k8sResources:
                 image: {{ img }}
                 imagePullPolicy: {{ imagePullPolicy }}
                 command: ["varnishd"]
-                args: ["-F", "-a", ":6081", "-f", "/etc/varnish/default.vcl", "-s", "malloc,{{ malloc }}"]
+                args: ["-F", "-a", ":6081", "-n", "/var/lib/varnish/varnishd", "-f", "/etc/varnish/default.vcl", "-s", "malloc,{{ malloc }}"]
                 resources:
                   requests:
                     # A CPU request is required for the autoscaling HPA to compute
@@ -851,6 +853,8 @@ k8sResources:
                 volumeMounts:
                   - name: vcl
                     mountPath: /etc/varnish
+                  - name: varnish-workdir
+                    mountPath: /var/lib/varnish
                 readinessProbe:
                   httpGet:
                     path: /.well-known/haptic-cache-ready
@@ -873,6 +877,9 @@ k8sResources:
               - name: vcl
                 configMap:
                   name: {{ vSvc }}-vcl
+              - name: varnish-workdir
+                emptyDir:
+                  medium: Memory
       {%- if autoscaling == "true" %}
       {%- var minR = extraContext | dig("cache", "varnish", "autoscaling", "minReplicas") | fallback("2") | tostring() %}
       {%- var maxR = extraContext | dig("cache", "varnish", "autoscaling", "maxReplicas") | fallback("6") | tostring() %}

@@ -132,8 +132,8 @@ A `pre-install`/`pre-upgrade` hook Job renders the chart embedded in the control
 | `cache.varnish.replicas` | int | `2` | Number of Varnish cache shards |
 | `cache.varnish.image` | string | `varnish:9.0` | Varnish container image — stock upstream, since the loopback topology needs no custom build. Pin to a digest in production |
 | `cache.varnish.imagePullPolicy` | string | `IfNotPresent` | Kubernetes pull policy for the Varnish image (`Always`, `IfNotPresent`, or `Never`) |
-| `cache.varnish.malloc` | string | `256m` | Varnish `-s malloc,<size>` cache size per shard; set to roughly 75% of the pod memory limit |
-| `cache.varnish.resources` | object | cpu `100m` / memory `384Mi` | Varnish pod resource requests and limits. A CPU request is required for autoscaling (the HPA's `Utilization` target is a percentage of the request); keep the memory limit above `malloc` plus overhead |
+| `cache.varnish.malloc` | string | `256m` | Varnish `-s malloc,<size>` object storage per shard; excludes shared logs, compiled configuration, and process/object overhead |
+| `cache.varnish.resources` | object | cpu `100m` / memory `384Mi` | Varnish pod resource requests and limits. A CPU request is required for autoscaling. Budget `malloc`, the memory-backed working directory (including the default 80 MiB shared log), compiled configuration, and process/object overhead |
 | `cache.varnish.podDisruptionBudget` | object | enabled `true`, `maxUnavailable` `1` | PodDisruptionBudget settings for the Varnish shards. Pods also prefer separate nodes and use a soft hostname topology spread, so the default still runs on single-node clusters |
 | `cache.varnish.networkPolicy.enabled` | bool | `true` | Emit a NetworkPolicy that only allows this release's HAProxy pods to reach Varnish and only allows Varnish egress to DNS plus this release's HAProxy HTTP origin |
 | `cache.varnish.autoscaling.enabled` | bool | `false` | Autoscale the Varnish tier with a HorizontalPodAutoscaler. When on, the HPA owns the replica count (the static `replicas` is ignored) |

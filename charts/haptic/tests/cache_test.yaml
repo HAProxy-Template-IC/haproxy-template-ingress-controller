@@ -7,6 +7,14 @@ templates:
   - varnish-networkpolicy.yaml
 
 tests:
+  - it: should reject an unsupported memory-lock capability setting
+    template: haproxytemplateconfig.yaml
+    set:
+      cache.varnish.lockSharedMemory: true
+    asserts:
+      - failedTemplate:
+          errorMessage: 'cache.varnish contains unknown field "lockSharedMemory".'
+
   - it: should reject the former controller-owned cache path
     template: haproxytemplateconfig.yaml
     set:
