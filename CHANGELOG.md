@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Incremental template batches retain optimized dispatch with large entrypoint sets instead of exceeding compiler register or function limits.
 
 - Templates can append nil values and nil spreads without compiler or runtime panics.
+- Incremental cache publication no longer reports false revision conflicts for unconsumed resource inputs.
 
 ### Security
 
@@ -43,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BackendTLSPolicy applies to GRPCRoute backends targeted by port name and re-encrypts Terminate-listener TLSRoute backends; TLS h2 backends negotiate `alpn h2`.
 - The fail-closed 503 for a BackendTLSPolicy without a resolvable CA is emitted after the backend's other request rules, removing HAProxy's dead-rule warning.
 - TLSRoute rules attached to both a Terminate and a Passthrough listener get one backend per mode, so both legs are served and only the Terminate leg re-encrypts; a rule attached to several listeners on different ports is dispatched on each of them.
+- Gateway listeners retain same-namespace TLS certificates when the ReferenceGrant API is absent; cross-namespace certificates still require a grant.
+- Gateway frontend mTLS resolves CAs only from their referenced namespace with a matching cross-namespace grant; local validation remains active when the ReferenceGrant API is absent.
+- Gateway frontend mTLS status matches Secret CA data handling and reports invalid references even when another CA remains usable.
+- Gateway frontend mTLS honors per-port overrides even when their CA is unresolved or their TLS configuration is intentionally empty.
 - Routes without plaintext listeners no longer generate an unbound HTTP TCP frontend; internal HTTP routing and validation remain enabled.
 - Varnish uses a writable memory-backed workdir for shared logs, statistics, and compiled VCL without adding container capabilities.
 

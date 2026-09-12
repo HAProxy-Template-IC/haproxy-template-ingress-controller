@@ -1,0 +1,354 @@
+_fx:
+  certificate: &frontendReferenceCA |
+      -----BEGIN CERTIFICATE-----
+      MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
+      BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
+      MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+      AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
+      4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
+      ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
+      DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
+      06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
+      6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
+      DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
+      NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
+      3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
+      nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
+      IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
+      kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
+      Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
+      hJoZ+gyfZqGArrz3WVM9
+      -----END CERTIFICATE-----
+  fixtures: &frontendReferenceFixtures
+    gatewayclasses:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GatewayClass
+        metadata: {name: haptic}
+        spec: {controllerName: haproxy-haptic.org/controller}
+    gateways:
+      - &frontendReferenceGateway
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata: {name: mtls-references, namespace: default, generation: 1}
+        spec: &frontendReferenceGatewaySpec
+          gatewayClassName: haptic
+          tls:
+            frontend:
+              default:
+                validation:
+                  mode: AllowValidOnly
+                  caCertificateRefs:
+                    - {group: "", kind: ConfigMap, name: client-ca, namespace: ca-system}
+          listeners:
+            - name: secure
+              protocol: HTTPS
+              port: 443
+              hostname: secure.example.org
+              tls:
+                mode: Terminate
+                certificateRefs: [{kind: Secret, name: shared-tls}]
+      - &frontendReferenceHealthyGateway
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata: {name: mtls-healthy, namespace: default, generation: 1}
+        spec:
+          gatewayClassName: haptic
+          listeners:
+            - name: healthy
+              protocol: HTTPS
+              port: 443
+              hostname: healthy.example.org
+              tls:
+                mode: Terminate
+                certificateRefs: [{kind: Secret, name: shared-tls}]
+    services:
+      - apiVersion: v1
+        kind: Service
+        metadata: {name: mtls-echo, namespace: default}
+        spec:
+          ports: [{port: 80, targetPort: 8080}]
+    httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata: {name: mtls-reference-route, namespace: default, generation: 1}
+        spec:
+          parentRefs: [{name: mtls-references, sectionName: secure}]
+          hostnames: [secure.example.org]
+          rules:
+            - backendRefs: [{name: mtls-echo, port: 80}]
+  grant: &frontendReferenceGrant
+    - apiVersion: gateway.networking.k8s.io/v1beta1
+      kind: ReferenceGrant
+      metadata: {name: allow-gateway-ca, namespace: ca-system}
+      spec:
+        from: [{group: gateway.networking.k8s.io, kind: Gateway, namespace: default}]
+        to: [{group: "", kind: ConfigMap, name: client-ca}]
+
+validationTests:
+  test-gateway-frontend-mtls-reference-secret-fallback-status:
+    requires: [gatewayclasses, gateways, configmaps, secrets, referencegrants]
+    requiresFields: [gateways.spec.tls.frontend]
+    description: Secret CA status matches the supported tls.crt fallback.
+    extraContext: {controllerName: haproxy-haptic.org/controller, controllerNamespace: haptic-system}
+    fixtures:
+      <<: *frontendReferenceFixtures
+      gateways:
+        - <<: *frontendReferenceGateway
+          spec:
+            <<: *frontendReferenceGatewaySpec
+            tls:
+              frontend:
+                default:
+                  validation:
+                    mode: AllowValidOnly
+                    caCertificateRefs: [{group: "", kind: Secret, name: secret-ca}]
+        - *frontendReferenceHealthyGateway
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {name: secret-ca, namespace: default}
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:[0-9]+ ssl crt-list \S+/gw-default-mtls-references-secure-crtlist\.txt'
+      - type: contains
+        target: crt-list:gw-default-mtls-references-secure-crtlist.txt
+        pattern: 'ca-file \S+ verify required'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"status":"True","type":"Accepted"'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"status":"True","type":"ResolvedRefs"'
+      - type: not_contains
+        target: status:default/mtls-references:rendered
+        pattern: '"reason":"(NoValidCACertificate|InvalidCACertificateRef)"'
+
+  test-gateway-frontend-mtls-reference-secret-missing-keys-status:
+    requires: [gatewayclasses, gateways, configmaps, secrets, referencegrants]
+    requiresFields: [gateways.spec.tls.frontend]
+    description: A Secret CA without ca.crt or tls.crt is reported as having no CA data.
+    extraContext: {controllerName: haproxy-haptic.org/controller, controllerNamespace: haptic-system}
+    fixtures:
+      <<: *frontendReferenceFixtures
+      gateways:
+        - <<: *frontendReferenceGateway
+          spec:
+            <<: *frontendReferenceGatewaySpec
+            tls:
+              frontend:
+                default:
+                  validation:
+                    mode: AllowValidOnly
+                    caCertificateRefs: [{group: "", kind: Secret, name: secret-ca}]
+        - *frontendReferenceHealthyGateway
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {name: secret-ca, namespace: default}
+          data: {tls.key: dW51c2Vk}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"reason":"InvalidCACertificateRef","status":"False","type":"ResolvedRefs"'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: 'Frontend CA Secret default/secret-ca has no CA data\.'
+      - type: not_contains
+        target: status:default/mtls-references:rendered
+        pattern: 'does not exist'
+
+  test-gateway-frontend-mtls-reference-multiple-failures-counted:
+    requires: [gatewayclasses, gateways, configmaps, secrets, referencegrants]
+    requiresFields: [gateways.spec.tls.frontend]
+    description: The status names the highest-precedence failure and counts the other failing CA references.
+    extraContext: {controllerName: haproxy-haptic.org/controller, controllerNamespace: haptic-system}
+    fixtures:
+      <<: *frontendReferenceFixtures
+      gateways:
+        - <<: *frontendReferenceGateway
+          spec:
+            <<: *frontendReferenceGatewaySpec
+            tls:
+              frontend:
+                default:
+                  validation:
+                    mode: AllowValidOnly
+                    caCertificateRefs:
+                      - {group: "", kind: ConfigMap, name: missing-ca}
+                      - {group: "", kind: Deployment, name: wrong-kind}
+                      - {group: "", kind: ConfigMap, name: valid-ca}
+        - *frontendReferenceHealthyGateway
+      configmaps:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: {name: valid-ca, namespace: default}
+          data: {ca.crt: *frontendReferenceCA}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"reason":"InvalidCACertificateKind","status":"False","type":"ResolvedRefs"'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '1 other CA reference failed as well\.'
+
+  test-gateway-frontend-mtls-reference-mixed-validity-status:
+    requires: [gatewayclasses, gateways, configmaps, secrets, referencegrants]
+    requiresFields: [gateways.spec.tls.frontend]
+    description: A valid CA keeps the listener accepted but does not hide an invalid reference.
+    extraContext: {controllerName: haproxy-haptic.org/controller, controllerNamespace: haptic-system}
+    fixtures:
+      <<: *frontendReferenceFixtures
+      gateways:
+        - <<: *frontendReferenceGateway
+          spec:
+            <<: *frontendReferenceGatewaySpec
+            tls:
+              frontend:
+                default:
+                  validation:
+                    mode: AllowValidOnly
+                    caCertificateRefs:
+                      - {group: "", kind: ConfigMap, name: missing-ca}
+                      - {group: "", kind: ConfigMap, name: valid-ca}
+        - *frontendReferenceHealthyGateway
+      configmaps:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: {name: valid-ca, namespace: default}
+          data: {ca.crt: *frontendReferenceCA}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:[0-9]+ ssl crt-list \S+/gw-default-mtls-references-secure-crtlist\.txt'
+      - type: contains
+        target: crt-list:gw-default-mtls-references-secure-crtlist.txt
+        pattern: 'ca-file \S+ verify required'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"status":"True","type":"Accepted"'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"reason":"InvalidCACertificateRef","status":"False","type":"ResolvedRefs"'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: 'missing-ca'
+      - type: not_contains
+        target: status:default/mtls-references:rendered
+        pattern: '"reason":"NoValidCACertificate"'
+
+  test-gateway-frontend-mtls-reference-without-grant-rejects-local-decoy:
+    requires: [gatewayclasses, gateways, configmaps, secrets, referencegrants]
+    requiresFields: [gateways.spec.tls.frontend]
+    description: A local CA cannot authorize a cross-namespace reference without a grant.
+    extraContext: {controllerName: haproxy-haptic.org/controller, controllerNamespace: haptic-system}
+    fixtures:
+      <<: *frontendReferenceFixtures
+      configmaps:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: {name: client-ca, namespace: default}
+          data: {ca.crt: *frontendReferenceCA}
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: {name: client-ca, namespace: ca-system}
+          data: {ca.crt: *frontendReferenceCA}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:[0-9]+ ssl crt-list \S+/gw-default-mtls-healthy-healthy-crtlist\.txt'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'gw-default-mtls-references-secure-crtlist\.txt'
+      - type: not_exists
+        target: crt-list:gw-default-mtls-references-secure-crtlist.txt
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"reason":"RefNotPermitted"'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"reason":"NoValidCACertificate"'
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: 'secure\.example\.org'
+
+  test-gateway-frontend-mtls-reference-with-grant-uses-remote-ca:
+    requires: [gatewayclasses, gateways, configmaps, secrets, referencegrants]
+    requiresFields: [gateways.spec.tls.frontend]
+    description: A permitted remote CA works without a same-named local object.
+    extraContext: {controllerName: haproxy-haptic.org/controller, controllerNamespace: haptic-system}
+    fixtures:
+      <<: *frontendReferenceFixtures
+      referencegrants: *frontendReferenceGrant
+      configmaps:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: {name: client-ca, namespace: ca-system}
+          data: {ca.crt: *frontendReferenceCA}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:[0-9]+ ssl crt-list \S+/gw-default-mtls-healthy-healthy-crtlist\.txt'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:[0-9]+ ssl crt-list \S+/gw-default-mtls-references-secure-crtlist\.txt'
+      - type: contains
+        target: crt-list:gw-default-mtls-references-secure-crtlist.txt
+        pattern: 'ca-file \S+ verify required'
+      - type: not_contains
+        target: status:default/mtls-references:rendered
+        pattern: '"status":"False","type":"(Accepted|ResolvedRefs|Programmed)"'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"status":"True","type":"Accepted"'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"status":"True","type":"ResolvedRefs"'
+      - type: contains
+        target: map:path-prefix.map
+        pattern: 'secure\.example\.org'
+
+  test-gateway-frontend-mtls-reference-empty-remote-rejects-local-decoy:
+    requires: [gatewayclasses, gateways, configmaps, secrets, referencegrants]
+    requiresFields: [gateways.spec.tls.frontend]
+    description: An empty remote CA cannot be replaced by a same-named local CA.
+    extraContext: {controllerName: haproxy-haptic.org/controller, controllerNamespace: haptic-system}
+    fixtures:
+      <<: *frontendReferenceFixtures
+      referencegrants: *frontendReferenceGrant
+      configmaps:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: {name: client-ca, namespace: default}
+          data: {ca.crt: *frontendReferenceCA}
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: {name: client-ca, namespace: ca-system}
+          data: {ca.crt: ""}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:[0-9]+ ssl crt-list \S+/gw-default-mtls-healthy-healthy-crtlist\.txt'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'gw-default-mtls-references-secure-crtlist\.txt'
+      - type: not_exists
+        target: crt-list:gw-default-mtls-references-secure-crtlist.txt
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"reason":"InvalidCACertificateRef"'
+      - type: contains
+        target: status:default/mtls-references:rendered
+        pattern: '"reason":"NoValidCACertificate"'
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: 'secure\.example\.org'

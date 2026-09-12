@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/incremental/internal/orderedset"
@@ -357,6 +358,9 @@ func (s *Session) prepareReplacementEntries() (
 	inputs = s.inputChanges
 	if inputs == nil {
 		inputs = map[InputKey]inputEntry{}
+	} else if s.graph.options.RetireUnreferencedInputs {
+		// Retirement must preserve the transaction snapshots used by the commit verifier.
+		inputs = maps.Clone(inputs)
 	}
 	nodes = s.nodeChanges
 	if nodes == nil {

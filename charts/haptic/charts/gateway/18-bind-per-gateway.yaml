@@ -43,17 +43,7 @@ templateSnippets:
   #     through `frontend ssl-tcp`. TLS-Terminate non-default ports
   #     use `frontends-600-gateway-tls-listener`.
   #
-  # Naming this `https-bind-extra-100-...` so it sorts AFTER the
-  # existing `https-bind-extra-050-gateway-multi-port-bind` (which
-  # emits `bind *:<listener-port>` for non-default listener ports
-  # using the chart-static crt-list). The two coexist:
-  #   * Pinned-IP Gateways (`spec.addresses` set) use the per-IP
-  #     Service from `gateway-static-addresses`, whose targetPort =
-  #     listener-port → traffic lands on the
-  #     `https-bind-extra-050` bind.
-  #   * Non-pinned HTTPS Gateways use the per-Gateway Service from
-  #     phase 3, whose targetPort = allocated pod port → traffic
-  #     lands on this bind.
+  # Pinned-IP and dynamically addressed Services use the same isolated pod ports.
   # ============================================================================
 
   https-bind-extra-100-per-gateway:
@@ -94,18 +84,7 @@ templateSnippets:
         {%- for _, listener := range incremental_values("gateway-listener-state", "listeners") %}
           {%- var gwNs = dig_string(listener, "", "gatewayNamespace") %}
           {%- var gwName = dig_string(listener, "", "gatewayName") %}
-          {#- Pinned-IP Gateways (spec.addresses set) take the
-              gateway-static-addresses path, NOT phase-3's
-              per-Gateway Service. Phase 1's allocator skips them
-              too, so allocations[allocKey] would miss and the
-              bind below would fall back to lPort — colliding with
-              the chart-static `https-bind-extra-050-gateway-multi-
-              port-bind` emission that already serves non-default
-              ports for pinned Gateways. Skip the whole Gateway
-              here, mirroring phase 3's gate at
-              17-per-gateway-services.yaml. -#}
-          {%- if gwNs != "" && gwName != "" &&
-            tostring(dig(listener, "gatewayHasAddresses") | fallback(false)) != "true" %}
+          {%- if gwNs != "" && gwName != "" %}
               {%- if dig_string(listener, "", "protocol") == "HTTPS" %}
                 {%- var lName = dig_string(listener, "", "name") %}
                 {%- var lPort = toint(dig(listener, "port") | fallback(0)) %}
@@ -180,10 +159,6 @@ templateSnippets:
   # listener-isolation contract.
   #
   # Skipped:
-  #   * Pinned-IP Gateways (`spec.addresses` set) — they take the
-  #     gateway-static-addresses path (targetPort = listenerPort →
-  #     chart-static bind). Phase 1's allocator skips them, mirroring
-  #     phase 3's gate.
   #   * Non-HTTP listeners (HTTPS handled above; TLS via ssl-tcp /
   #     frontends-600).
   #
@@ -199,8 +174,7 @@ templateSnippets:
         {%- for _, listener := range incremental_values("gateway-listener-state", "listeners") %}
           {%- var gwNs = dig_string(listener, "", "gatewayNamespace") %}
           {%- var gwName = dig_string(listener, "", "gatewayName") %}
-          {%- if gwNs != "" && gwName != "" &&
-            tostring(dig(listener, "gatewayHasAddresses") | fallback(false)) != "true" %}
+          {%- if gwNs != "" && gwName != "" %}
               {%- if dig_string(listener, "", "protocol") == "HTTP" %}
                 {%- var lName = dig_string(listener, "", "name") %}
                 {%- var lPort = toint(dig(listener, "port") | fallback(0)) %}

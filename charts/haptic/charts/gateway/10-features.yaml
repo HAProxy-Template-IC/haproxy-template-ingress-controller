@@ -105,11 +105,11 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
-  gateway-tls-certificates-100-gateway:
-    requires: [gateways, referencegrants, secrets]
+  gateway-tls-permissions-100-gateway:
+    requires: [gateways, referencegrants]
     incremental:
       source: gateways
-      group: gateway-tls-certificates
+      group: gateway-tls-permissions
       effects: [publishValue]
     template: |-
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
@@ -118,6 +118,36 @@ templateSnippets:
         var name = dig_string(item, "", "metadata", "name")
         var gateway = resources.gateways.GetSingle(namespace, name)
         if gateway != nil {
+          var permissions = map[string]any{}
+          for _, listener := range gateway.Spec.Listeners {
+            if listener.Tls.Mode != "" && listener.Tls.Mode != "Terminate" { continue }
+            for _, ref := range listener.Tls.CertificateRefs {
+              if ref.Kind != "" && ref.Kind != "Secret" { continue }
+              if ref.Namespace == "" || ref.Namespace == namespace { continue }
+              if ReferenceGrantPermitted("gateway.networking.k8s.io", "Gateway", namespace,
+                "", "Secret", ref.Namespace, ref.Name) == "true" {
+                permissions[ref.Namespace + "/" + ref.Name] = true
+              }
+            }
+          }
+          show shared.Publish("permissions", namespace + "/" + name, permissions)
+        }
+      %%}
+
+  gateway-tls-certificates-100-gateway:
+    requires: [gateways, secrets]
+    incremental:
+      source: gateways
+      group: gateway-tls-certificates
+      optionalConsumes: [gateway-tls-permissions]
+      effects: [publishValue]
+    template: |-
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil {
+          var permissions, _ = shared.Select("gateway-tls-permissions", "permissions", namespace + "/" + name)
           for listenerIndex, listener := range gateway.Spec.Listeners {
             var tlsMode = listener.Tls.Mode
             if tlsMode != "" && tlsMode != "Terminate" { continue }
@@ -128,9 +158,7 @@ templateSnippets:
               var secretName = certificateRef.Name
               var secretNamespace = certificateRef.Namespace
               if secretNamespace == "" { secretNamespace = namespace }
-              if secretNamespace != namespace && ReferenceGrantPermitted(
-                "gateway.networking.k8s.io", "Gateway", namespace,
-                "", "Secret", secretNamespace, secretName) != "true" {
+              if secretNamespace != namespace && dig_string(permissions, "false", secretNamespace + "/" + secretName) != "true" {
                 continue
               }
               var occurrenceKey = namespace + "/" + name + "/" +
@@ -162,8 +190,9 @@ templateSnippets:
       %%}
 
   util-aggregate-gateway-cert-metadata:
-    requires: [gateways, referencegrants]
+    requires: [gateways, secrets]
     template: |
+      {{- render "gateway-tls-permissions-100-gateway" default "" -}}
       {{- render "gateway-tls-certificates-100-gateway" -}}
       {%%
         var _, _ = shared.ComputeIfAbsent("gatewayCertAggregates", func() any {
@@ -201,7 +230,7 @@ templateSnippets:
       %%}
 
   features-100-gateway-tls:
-    requires: [gateways, referencegrants, secrets]
+    requires: [gateways, secrets]
     template: |
       {# Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
       {# Dynamically generates certificate files using fileRegistry.Register() #}
@@ -268,12 +297,57 @@ templateSnippets:
         %%}
       {%- end %}
 
+  global-settings-002-gateway-frontend-mtls:
+    requires: [configmaps, gateways, secrets]
+    template: |-
+      {{- render "gateway-frontend-ca-permissions-100-gateway" default "" -}}
+      {{- render "gateway-frontend-mtls-100-gateway" -}}
+
+  gateway-frontend-ca-permissions-100-gateway:
+    requires: [gateways, referencegrants]
+    incremental:
+      source: gateways
+      whenAnyPathExists: [spec.tls.frontend]
+      group: gateway-frontend-ca-permissions
+      effects: [publishValue]
+    template: |-
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil {
+          var validations = []any{dig(gateway, "spec", "tls", "frontend", "default", "validation")}
+          for _, entry := range toSlice(dig(gateway, "spec", "tls", "frontend", "perPort")) {
+            var validation = dig(entry, "tls", "validation")
+            if validation != nil { validations = append(validations, validation) }
+          }
+          var permissions = map[string]any{}
+          for _, validation := range validations {
+            for _, ref := range toSlice(dig(validation, "caCertificateRefs")) {
+              var refNamespace = dig_string(ref, namespace, "namespace")
+              if refNamespace == "" || refNamespace == namespace { continue }
+              var refGroup = dig_string(ref, "", "group")
+              var refKind = dig_string(ref, "", "kind")
+              var refName = dig_string(ref, "", "name")
+              if (refGroup != "" && refGroup != "core") || (refKind != "ConfigMap" && refKind != "Secret") { continue }
+              if ReferenceGrantPermitted("gateway.networking.k8s.io", "Gateway", namespace,
+                "", refKind, refNamespace, refName) == "true" {
+                permissions[refKind + "/" + refNamespace + "/" + refName] = true
+              }
+            }
+          }
+          show shared.Publish("permissions", namespace + "/" + name, permissions)
+        }
+      %%}
+
   gateway-frontend-mtls-100-gateway:
     requires: [configmaps, gateways, secrets]
     incremental:
       source: gateways
       whenAnyPathExists: [spec.tls.frontend]
       group: gateway-frontend-mtls
+      optionalConsumes: [gateway-frontend-ca-permissions]
       effects: [publishValue]
     template: |-
       {%%
@@ -281,36 +355,94 @@ templateSnippets:
         var name = dig_string(item, "", "metadata", "name")
         var gateway = resources.gateways.GetSingle(namespace, name)
         if gateway != nil {
-          var resolveValidation = func(validation any) any {
-            if validation == nil { return nil }
+          var permissions, _ = shared.Select("gateway-frontend-ca-permissions", "permissions", namespace + "/" + name)
+          var resolveValidation = func(validation any) (any, any) {
+            if validation == nil { return nil, nil }
             var refs = toSlice(dig(validation, "caCertificateRefs"))
-            if refs == nil { return nil }
+            if len(refs) == 0 { return nil, nil }
             var verifyMode = "required"
             if dig_string(validation, "AllowValidOnly", "mode") == "AllowInsecureFallback" {
               verifyMode = "optional"
             }
             var parts = []any{}
+            var failures = map[string]string{}
+            var failing = 0
+            var recordFailure = func(reason string, message string) {
+              failing = failing + 1
+              if failures[reason] == "" { failures[reason] = message }
+            }
             for _, ref := range refs {
               var refGroup = dig_string(ref, "", "group")
               var refKind = dig_string(ref, "", "kind")
               var refName = dig_string(ref, "", "name")
-              if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
-                var cm = resources.configmaps.GetSingle(namespace, refName)
-                if cm != nil && cm.Data["ca.crt"] != "" {
-                  parts = append(parts, cm.Data["ca.crt"])
-                }
-              } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
-                var secret = resources.secrets.GetSingle(namespace, refName)
-                if secret == nil { continue }
-                var encoded = secret.Data["ca.crt"]
-                if encoded == "" { encoded = secret.Data["tls.crt"] }
-                if encoded == "" { continue }
-                var decoded, decodeErr = b64decode(encoded)
-                if decodeErr == nil { parts = append(parts, decoded) }
+              var refNamespace = dig_string(ref, namespace, "namespace")
+              if refNamespace == "" { refNamespace = namespace }
+              var reference = refKind + " " + refNamespace + "/" + refName
+              if (refGroup != "" && refGroup != "core") || (refKind != "ConfigMap" && refKind != "Secret") {
+                recordFailure("InvalidCACertificateKind", "Frontend CA " + reference + " uses unsupported group/kind " +
+                  refGroup + "/" + refKind + ". It cannot supply client trust. Use a core ConfigMap or Secret.")
+                continue
               }
+              if refName == "" {
+                recordFailure("InvalidCACertificateRef", "Frontend CA " + reference +
+                  " has no name and cannot be resolved. Set the referenced object's name.")
+                continue
+              }
+              if refNamespace != namespace && dig_string(permissions, "false", refKind + "/" + refNamespace + "/" + refName) != "true" {
+                recordFailure("RefNotPermitted", "Frontend CA " + reference +
+                  " is not permitted for this Gateway. Client validation cannot use it. Add a matching ReferenceGrant in " + refNamespace + ".")
+                continue
+              }
+              var content = ""
+              var found = false
+              if refKind == "ConfigMap" {
+                var cm = resources.configmaps.GetSingle(refNamespace, refName)
+                if cm != nil {
+                  found = true
+                  content = cm.Data["ca.crt"]
+                }
+              } else {
+                var secret = resources.secrets.GetSingle(refNamespace, refName)
+                if secret != nil {
+                  found = true
+                  var encoded = secret.Data["ca.crt"]
+                  if encoded == "" { encoded = secret.Data["tls.crt"] }
+                  var decoded, decodeErr = b64decode(encoded)
+                  if decodeErr != nil {
+                    recordFailure("InvalidCACertificateRef", "Frontend CA " + reference +
+                      " contains invalid base64 and cannot supply client trust. Base64-encode its CA certificate data.")
+                    continue
+                  }
+                  content = decoded
+                }
+              }
+              if !found {
+                recordFailure("InvalidCACertificateRef", "Frontend CA " + reference +
+                  " does not exist. Client validation cannot use it. Create the referenced object.")
+                continue
+              }
+              if content == "" {
+                recordFailure("InvalidCACertificateRef", "Frontend CA " + reference +
+                  " has no CA data. Client validation cannot use it. Supply non-empty ca.crt in its data.")
+                continue
+              }
+              parts = append(parts, content)
             }
-            if len(parts) == 0 { return nil }
-            return map[string]any{"bundle": join(parts, "\n"), "verifyMode": verifyMode}
+            var status any = nil
+            for _, reason := range []string{"InvalidCACertificateKind", "RefNotPermitted", "InvalidCACertificateRef"} {
+              if failures[reason] == "" { continue }
+              // One reason per condition, so name how many other references failed too.
+              var message = failures[reason]
+              if failing > 1 {
+                var others = tostring(failing - 1) + " other CA reference"
+                if failing > 2 { others = others + "s" }
+                message = message + " " + others + " failed as well."
+              }
+              status = map[string]any{"hasValid": len(parts) > 0, "reason": reason, "message": message}
+              break
+            }
+            if len(parts) == 0 { return nil, status }
+            return map[string]any{"bundle": join(parts, "\n"), "verifyMode": verifyMode}, status
           }
           var detachValidation = func(validation any) any {
             if validation == nil { return nil }
@@ -346,11 +478,13 @@ templateSnippets:
                 "validation": detachValidation(validation),
               },
             })
+            var resolution, status = resolveValidation(validation)
             perPortResolutions = append(perPortResolutions, map[string]any{
-              "port": port, "resolution": resolveValidation(validation),
+              "port": port, "resolution": resolution, "status": status,
             })
           }
           var defaultValidation = dig(gateway, "spec", "tls", "frontend", "default", "validation")
+          var defaultResolution, defaultStatus = resolveValidation(defaultValidation)
           show shared.Publish("gateways", namespace + "/" + name, map[string]any{
             "namespace": namespace,
             "name": name,
@@ -361,18 +495,20 @@ templateSnippets:
           show shared.Publish("resolutions", namespace + "/" + name, map[string]any{
             "namespace": namespace,
             "name": name,
-            "default": resolveValidation(defaultValidation),
+            "default": defaultResolution,
+            "defaultStatus": defaultStatus,
             "perPort": perPortResolutions,
           })
         }
       %%}
 
   features-110-gateway-frontend-mtls:
-    requires: [configmaps, gateways, referencegrants, secrets]
+    requires: [configmaps, gateways, secrets]
     template: |
       {%- import "util-resource-helpers" for ListenerKey -%}
       {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
       {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "gateway-frontend-ca-permissions-100-gateway" default "" -}}
       {{- render "gateway-frontend-mtls-100-gateway" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {#- Self-seed the two gateway-owned mTLS shared-state keys before the
@@ -434,6 +570,13 @@ templateSnippets:
               defaultMode = dig_string(defaultResolution, "", "verifyMode")
             }
           }
+          var perPortValidations = map[int]any{}
+          for _, entry := range toSlice(dig(gateway, "perPort")) {
+            var port = toint(dig(entry, "port") | fallback(0))
+            if port > 0 {
+              perPortValidations[port] = dig(entry, "tls", "validation")
+            }
+          }
           var perPortResolved = map[int][]string{}
           for _, entry := range toSlice(dig(resolution, "perPort")) {
             var port = toint(dig(entry, "port") | fallback(0))
@@ -473,35 +616,21 @@ templateSnippets:
             }
             var listenerPort = toint(listener | dig("port") | fallback(0))
             var listenerName = tostring(listener | dig("name") | fallback(""))
-            // Decide which validation block applies to this listener:
-            // per-port override if present, otherwise the gateway-level
-            // default. A listener with no validation configured (neither
-            // default nor per-port) is unaffected and never gets blocked.
             var hadValidationConfig = false
             var caPath = ""
             var verifyMode = ""
-            var override, hasOverride = perPortResolved[listenerPort]
+            var validation, hasOverride = perPortValidations[listenerPort]
             if hasOverride {
-              caPath = override[0]
-              verifyMode = override[1]
-              hadValidationConfig = true
+              hadValidationConfig = validation != nil
+              if override, resolved := perPortResolved[listenerPort]; resolved {
+                caPath = override[0]
+                verifyMode = override[1]
+              }
             } else if defaultValidation != nil {
               caPath = defaultPath
               verifyMode = defaultMode
               hadValidationConfig = true
             }
-            // Per-port validation overrides default; if the listener
-            // had per-port set explicitly we ignore the default entirely
-            // (perPortResolved already encodes "this port has a
-            // configured override"). The same applies if the listener
-            // had only a default — the resolveValidation call returned
-            // ("", "") for unresolvable refs, which is what we detect
-            // here.
-            //
-            // GatewayFrontendInvalidDefaultClientCertificateValidation:
-            // a listener with validation configured but no resolvable
-            // CA must be blocked from binding so HAProxy doesn't
-            // present the chart's default cert and answer handshakes.
             if hadValidationConfig && (caPath == "" || verifyMode == "") {
               if listenerName != "" {
                 mtlsBlockedListeners[ListenerKey(gwNs, gwName, listenerName)] = true
