@@ -26,21 +26,26 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 const (
-	gatewayTypedAccessComponent        = "global-settings-001-typed-access-smoke"
-	gatewayListenerStateComponent      = "gateway-listener-state-100-gateway"
-	gatewayTLSCertificateComponent     = "gateway-tls-certificates-100-gateway"
-	gatewayFrontendMTLSComponent       = "gateway-frontend-mtls-100-gateway"
-	gatewayListenerSetPortsComponent   = "gateway-listenerset-service-ports-100-listenerset"
-	gatewayRouteCandidateGRPCComponent = "gateway-route-candidates-200-grpc"
+	gatewayTypedAccessComponent           = "global-settings-001-typed-access-smoke"
+	gatewayListenerStateComponent         = "gateway-listener-state-100-gateway"
+	gatewayTLSCertificateComponent        = "gateway-tls-certificates-100-gateway"
+	gatewayTLSPermissionsComponent        = "gateway-tls-permissions-100-gateway"
+	gatewayFrontendMTLSComponent          = "gateway-frontend-mtls-100-gateway"
+	gatewayFrontendCAPermissionsComponent = "gateway-frontend-ca-permissions-100-gateway"
+	gatewayListenerSetPortsComponent      = "gateway-listenerset-service-ports-100-listenerset"
+	gatewayRouteCandidateGRPCComponent    = "gateway-route-candidates-200-grpc"
 )
 
 const gatewayFeaturePublicationRoot = `{{- render "global-settings-001-typed-access-smoke" -}}
 {{- render "gateway-listener-state-100-gateway" -}}
+{{- render "gateway-tls-permissions-100-gateway" default "" -}}
 {{- render "gateway-tls-certificates-100-gateway" -}}
+{{- render "gateway-frontend-ca-permissions-100-gateway" -}}
 {{- render "gateway-frontend-mtls-100-gateway" -}}
 {{- render "gateway-listenerset-service-ports-100-listenerset" -}}
 {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
@@ -60,7 +65,9 @@ const gatewayFeaturePublicationRoot = `{{- render "global-settings-001-typed-acc
 
 const gatewayFeatureProjectionRoot = `{{- render "global-settings-001-typed-access-smoke" -}}
 {{- render "gateway-listener-state-100-gateway" -}}
+{{- render "gateway-tls-permissions-100-gateway" default "" -}}
 {{- render "gateway-tls-certificates-100-gateway" -}}
+{{- render "gateway-frontend-ca-permissions-100-gateway" -}}
 {{- render "gateway-frontend-mtls-100-gateway" -}}
 {{- render "gateway-listenerset-service-ports-100-listenerset" -}}
 {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
@@ -76,7 +83,9 @@ const gatewayFeatureProjectionRoot = `{{- render "global-settings-001-typed-acce
 # grpc-routes={{ incremental_values("gateway-route-candidates", "presence-grpc") | toJSON() }}`
 
 const gatewayFeatureResolutionRoot = `{{- render "global-settings-001-typed-access-smoke" -}}
+{{- render "gateway-tls-permissions-100-gateway" default "" -}}
 {{- render "gateway-tls-certificates-100-gateway" -}}
+{{- render "gateway-frontend-ca-permissions-100-gateway" -}}
 {{- render "gateway-frontend-mtls-100-gateway" -}}
 {{- render "gateway-listener-state-100-gateway" -}}
 {{- render "gateway-listenerset-service-ports-100-listenerset" -}}
@@ -397,7 +406,7 @@ func TestGatewayFeatureResourceDependenciesAreExactAndDetectABA(t *testing.T) {
 	}}
 	fixture.addGateway(t, gateway)
 	addGatewayFeatureSecret(t, fixture, gatewayFeatureTLSSecret("server-cert", "CERT-A", "KEY-A", nil))
-	addGatewayFeatureConfigMap(t, fixture, gatewayFeatureCAConfigMap("client-ca", "CA-A", nil))
+	addGatewayFeatureConfigMap(t, fixture, gatewayFeatureCAConfigMap("client-ca", "CA-A"))
 
 	cold := renderGatewayFeatureDependenciesAndCommit(t, fixture)
 	assert.Contains(t, cold.HAProxyConfig, "CERT-A")
@@ -411,7 +420,7 @@ func TestGatewayFeatureResourceDependenciesAreExactAndDetectABA(t *testing.T) {
 	assertGatewayFeatureExecutions(t, fixture, gatewayFrontendMTLSComponent, "gateways", "subject", 1)
 
 	addGatewayFeatureSecret(t, fixture, gatewayFeatureTLSSecret("unrelated", "CERT-X", "KEY-X", nil))
-	addGatewayFeatureConfigMap(t, fixture, gatewayFeatureCAConfigMap("unrelated", "CA-X", nil))
+	addGatewayFeatureConfigMap(t, fixture, gatewayFeatureCAConfigMap("unrelated", "CA-X"))
 	unrelated := renderGatewayFeatureDependenciesAndCommit(t, fixture)
 	assert.Equal(t, cold.HAProxyConfig, unrelated.HAProxyConfig)
 	assertGatewayFeatureExecutions(t, fixture, gatewayTLSCertificateComponent, "gateways", "subject", 1)
@@ -431,7 +440,7 @@ func TestGatewayFeatureResourceDependenciesAreExactAndDetectABA(t *testing.T) {
 	assert.NotContains(t, certificateChanged.HAProxyConfig, "CERT-A")
 	assertGatewayFeatureExecutions(t, fixture, gatewayTLSCertificateComponent, "gateways", "subject", 3)
 
-	updateGatewayFeatureConfigMap(t, fixture, gatewayFeatureCAConfigMap("client-ca", "CA-B", nil))
+	updateGatewayFeatureConfigMap(t, fixture, gatewayFeatureCAConfigMap("client-ca", "CA-B"))
 	caChanged := renderGatewayFeatureDependenciesAndCommit(t, fixture)
 	assert.Contains(t, caChanged.HAProxyConfig, "CA-B")
 	assert.NotContains(t, caChanged.HAProxyConfig, "CA-A")
@@ -536,52 +545,58 @@ func newGatewayFeaturePublicationFixture(t *testing.T) *gatewayRouteAnalysisFixt
 
 func newGatewayFeaturePublicationFixtureWithRoot(t *testing.T, root string) *gatewayRouteAnalysisFixture {
 	t.Helper()
-	fixture := newGatewayRouteAnalysisFixtureWithTemplates(
-		t, loadGatewayHostMapSnippets(t, gatewayHostMapChartRoot(t), map[string][]string{
-			"gateway/05-typed-access-smoke.yaml": {gatewayTypedAccessComponent},
-			"gateway/10-features.yaml": {
-				gatewayListenerStateComponent,
-				gatewayTLSCertificateComponent,
-				gatewayFrontendMTLSComponent,
-				gatewayListenerSetPortsComponent,
-			},
-			"gateway/15-pod-port-allocator.yaml": {
-				"util-gateway-pod-port-allocation",
-				"util-gateway-pod-port-bindings",
-				"gateway-pod-port-candidates-100-gateway",
-				"gateway-pod-port-allocations-200-leader",
-			},
-			"gateway/20-route-analysis.yaml": {
-				"util-gateway-route-effective-hosts-incremental",
-				"util-publish-gateway-route-candidates",
-				gatewayRouteCandidateHTTPComponent,
-				gatewayRouteCandidateGRPCComponent,
-				"util-listenerset-routing-gate",
-			},
-			"gateway/21-route-helpers.yaml": {
-				"util-resource-helpers",
-				"util-hostname-intersect-gateway",
-				"util-reference-grant-permitted",
-				"util-gw-mtls-blocked-value",
-			},
-			"gateway/40-maps-host.yaml": {
-				"map-hostvalues-479-gateway-listenersets-empty",
-				"map-hostvalues-480-gateway-listenersets",
-				"map-hostvalues-490-gateway-port-scopes",
-				"gateway-host-port-scopes-100-gateway",
-			},
-		}),
-		root,
-	)
+	fixture := newGatewayRouteAnalysisFixtureWithTemplates(t, loadGatewayFeaturePublicationSnippets(t), root)
 	fixture.config.TemplatingSettings.ExtraContext["perGatewayPodPortRange"] = 4096
 	fixture.config.TemplatingSettings.ExtraContext["failAfterGatewayFeatures"] = false
 	return fixture
+}
+
+func loadGatewayFeaturePublicationSnippets(t *testing.T) map[string]config.TemplateSnippet {
+	t.Helper()
+	return loadGatewayHostMapSnippets(t, gatewayHostMapChartRoot(t), map[string][]string{
+		"gateway/05-typed-access-smoke.yaml": {gatewayTypedAccessComponent},
+		"gateway/10-features.yaml": {
+			gatewayListenerStateComponent,
+			gatewayTLSPermissionsComponent,
+			gatewayTLSCertificateComponent,
+			gatewayFrontendMTLSComponent,
+			gatewayFrontendCAPermissionsComponent,
+			"features-110-gateway-frontend-mtls",
+			gatewayListenerSetPortsComponent,
+		},
+		"gateway/15-pod-port-allocator.yaml": {
+			"util-gateway-pod-port-allocation",
+			"util-gateway-pod-port-bindings",
+			"gateway-pod-port-candidates-100-gateway",
+			"gateway-pod-port-allocations-200-leader",
+		},
+		"gateway/20-route-analysis.yaml": {
+			"util-gateway-route-effective-hosts-incremental",
+			"util-publish-gateway-route-candidates",
+			gatewayRouteCandidateHTTPComponent,
+			gatewayRouteCandidateGRPCComponent,
+			"util-listenerset-routing-gate",
+		},
+		"gateway/21-route-helpers.yaml": {
+			"util-resource-helpers",
+			"util-hostname-intersect-gateway",
+			"util-reference-grant-permitted",
+			"util-gw-mtls-blocked-value",
+		},
+		"gateway/40-maps-host.yaml": {
+			"map-hostvalues-479-gateway-listenersets-empty",
+			"map-hostvalues-480-gateway-listenersets",
+			"map-hostvalues-490-gateway-port-scopes",
+			"gateway-host-port-scopes-100-gateway",
+		},
+	})
 }
 
 func gatewayFeatureAlwaysActiveComponents() []string {
 	return []string{
 		gatewayTypedAccessComponent,
 		gatewayListenerStateComponent,
+		gatewayTLSPermissionsComponent,
 		gatewayTLSCertificateComponent,
 	}
 }
@@ -657,13 +672,9 @@ func updateGatewayFeatureConfigMap(t *testing.T, fixture *gatewayRouteAnalysisFi
 	require.NoError(t, fixture.configMaps.Update(resource, []string{"default", name}))
 }
 
-func gatewayFeatureCAConfigMap(name, certificate string, labels map[string]any) map[string]any {
-	metadata := map[string]any{"namespace": "default", "name": name}
-	if labels != nil {
-		metadata["labels"] = labels
-	}
+func gatewayFeatureCAConfigMap(name, certificate string) map[string]any {
 	return map[string]any{
-		"apiVersion": "v1", "kind": "ConfigMap", "metadata": metadata,
+		"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": "default", "name": name},
 		"data": map[string]any{"ca.crt": certificate},
 	}
 }

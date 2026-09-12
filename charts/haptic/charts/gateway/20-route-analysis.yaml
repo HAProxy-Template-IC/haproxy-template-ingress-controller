@@ -272,7 +272,7 @@ templateSnippets:
       source: httproutes
       root: gateway-http-route-pre-analysis
       group: gateway-route-candidates
-      consumes: [gateway-host-port-scopes]
+      consumes: [gateway-host-port-scopes, gateway-frontend-mtls]
       optionalConsumes: [gateway-host-listenersets]
       effects: [publishValue]
     template: |
@@ -285,7 +285,7 @@ templateSnippets:
     incremental:
       source: grpcroutes
       group: gateway-route-candidates
-      consumes: [gateway-host-port-scopes]
+      consumes: [gateway-host-port-scopes, gateway-frontend-mtls]
       optionalConsumes: [gateway-host-listenersets]
       effects: [publishValue]
     template: |

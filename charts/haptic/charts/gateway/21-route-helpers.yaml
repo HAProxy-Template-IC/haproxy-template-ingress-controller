@@ -292,48 +292,30 @@ templateSnippets:
           return
         }
         var gwNs = gw.Metadata.Namespace
+        var resolutions, _ = shared.Select("gateway-frontend-mtls", "resolutions", gwNs + "/" + gw.Metadata.Name)
         var defaultValidation = dig(gw, "spec", "tls", "frontend", "default", "validation")
         var perPortValidations = map[int]any{}
         for _, pp := range dig(gw, "spec", "tls", "frontend", "perPort") | toSlice() {
           var p = toint(dig(pp, "port") | fallback(0))
-          if p > 0 && dig(pp, "tls", "validation") != nil {
+          if p > 0 {
             perPortValidations[p] = dig(pp, "tls", "validation")
           }
         }
-        var resolveValidation = func(validation any) bool {
-          var refs = dig(validation, "caCertificateRefs") | toSlice()
-          if len(refs) == 0 {
-            return false
-          }
-          for _, ref := range refs {
-            var refKind = tostring(dig(ref, "kind") | fallback(""))
-            var refGroup = tostring(dig(ref, "group") | fallback(""))
-            var refName = tostring(dig(ref, "name") | fallback(""))
-            var refNs = tostring(dig(ref, "namespace") | fallback(gwNs))
-            if refName == "" || (refGroup != "" && refGroup != "core") {
-              continue
-            }
-            if refKind == "ConfigMap" {
-              if resources.configmaps.GetSingle(refNs, refName) != nil {
-                return true
-              }
-            } else if refKind == "Secret" {
-              if resources.secrets.GetSingle(refNs, refName) != nil {
-                return true
-              }
-            }
-          }
-          return false
+        var perPortResolutions = map[int]any{}
+        for _, entry := range toSlice(dig(resolutions, "perPort")) {
+          perPortResolutions[toint(dig(entry, "port") | fallback(0))] = dig(entry, "resolution")
         }
         for _, listener := range gw.Spec.Listeners {
           if listener.Protocol != "HTTPS" && listener.Protocol != "TLS" {
             continue
           }
-          var validation any = perPortValidations[toint(listener.Port)]
-          if validation == nil {
+          var validation, hasOverride = perPortValidations[toint(listener.Port)]
+          var resolution = perPortResolutions[toint(listener.Port)]
+          if !hasOverride {
             validation = defaultValidation
+            resolution = dig(resolutions, "default")
           }
-          if validation != nil && !resolveValidation(validation) {
+          if validation != nil && resolution == nil {
             blocked[listener.Name] = true
           }
         }

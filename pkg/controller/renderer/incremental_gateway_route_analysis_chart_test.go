@@ -43,7 +43,10 @@ const (
 	gatewayRouteAnalysisBaselineEnv    = "HAPTIC_GATEWAY_ROUTE_ANALYSIS_BASELINE"
 )
 
-const gatewayRouteAnalysisRoot = `{{ render "map-path-exact-500-gateway" -}}
+const gatewayFrontendMTLSResolutionRoot = `{{- render "gateway-frontend-ca-permissions-100-gateway" -}}
+{{- render "gateway-frontend-mtls-100-gateway" -}}`
+
+const gatewayRouteAnalysisRoot = gatewayFrontendMTLSResolutionRoot + `{{ render "map-path-exact-500-gateway" -}}
 {%- if tostring(extraContext | dig("failAfterRouteAnalysis") | fallback(false)) == "true" -%}
 {{ fail("forced failure after gateway route analysis") }}
 {%- end -%}`
@@ -310,7 +313,7 @@ func TestGatewayRouteAnalysisColdMatchesDetachedHEAD(t *testing.T) {
 	}
 
 	current := newGatewayRouteAnalysisFixtureWithTemplates(
-		t, loadGatewayRouteAnalysisSnippets(t), gatewayRouteAnalysisDifferentialRoot)
+		t, loadGatewayRouteAnalysisSnippets(t), gatewayFrontendMTLSResolutionRoot+gatewayRouteAnalysisDifferentialRoot)
 	legacy := newGatewayRouteAnalysisFixtureWithTemplates(
 		t, loadGatewayRouteAnalysisLegacySnippets(t, baselineRoot), gatewayRouteAnalysisDifferentialRoot)
 	populateGatewayRouteAnalysisDifferentialFixture(t, current)
@@ -426,6 +429,10 @@ func loadGatewayRouteAnalysisSnippets(t *testing.T) map[string]config.TemplateSn
 	return loadGatewayHostMapSnippets(t, gatewayHostMapChartRoot(t), map[string][]string{
 		"base/library.yaml": {
 			"util-host-key", "util-webhook-reject-or-warn",
+		},
+		"gateway/10-features.yaml": {
+			gatewayFrontendCAPermissionsComponent,
+			gatewayFrontendMTLSComponent,
 		},
 		"gateway/15-pod-port-allocator.yaml": {
 			"util-gateway-pod-port-allocation",

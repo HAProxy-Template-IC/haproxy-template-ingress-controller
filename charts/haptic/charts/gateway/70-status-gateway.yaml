@@ -222,6 +222,7 @@ templateSnippets:
     incremental:
       bindingsTemplate: '{{- render "util-gateway-status-bindings" -}}'
       group: gateway-service-resources
+      consumes: [gateway-host-port-scopes]
       effects: [publishValue]
     template: |-
       {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
@@ -255,8 +256,18 @@ templateSnippets:
               var port = toint(listener.Port)
               if port <= 0 || seenPorts[port] { continue }
               seenPorts[port] = true
+              var targetPort = port
+              if listener.Protocol == "HTTP" || listener.Protocol == "HTTPS" {
+                var selectedPort, found = shared.Select("gateway-host-port-scopes", "ports",
+                  namespace + "/" + name + ":" + tostring(port))
+                if !found {
+                  fail("Gateway " + namespace + "/" + name + " listener " + listener.Name +
+                    " has no isolated pod port. Traffic cannot be routed. Check perGatewayPodPortRange.")
+                }
+                targetPort = toint(selectedPort)
+              }
               ports = append(ports, map[string]any{
-                "name": "p" + tostring(port), "port": port, "targetPort": port, "protocol": "TCP",
+                "name": "p" + tostring(port), "port": port, "targetPort": targetPort, "protocol": "TCP",
               })
             }
             if len(ports) > 0 {
@@ -351,6 +362,7 @@ templateSnippets:
             var nsStr = gateway.Metadata.Namespace
             var nameStr = gateway.Metadata.Name
             var generation = gateway.Metadata.Generation
+            var frontendMTLSResolution, _ = shared.Select("gateway-frontend-mtls", "resolutions", nsStr + "/" + nameStr)
 
 
             // Static-addresses handling (per Gateway).
@@ -694,22 +706,9 @@ templateSnippets:
                     }
                   }
                 }
-              // Validate frontend client-cert validation refs for HTTPS
-              // listeners. Implements the listener-status side of
-              // GatewayFrontendInvalidDefaultClientCertificateValidation:
-              // if spec.tls.frontend.default.validation (or the perPort
-              // override matching this listener's port) carries
-              // caCertificateRefs that all fail to resolve, the spec
-              // requires:
-              //   ResolvedRefs=False/InvalidCACertificateRef
-              //   Accepted=False/NoValidCACertificate
-              // These are mutually exclusive with the InvalidCertificateRef
-              // reason the chart already sets for frontend cert failures
-              // (above). InvalidCertificateRef wins when both apply since
-              // the listener can't bind without a server cert at all.
               var hasNoValidFrontendCA = false
-              var feFailReason = "InvalidCACertificateRef"
-              var feFailMessage = "Frontend client-cert validation caCertificateRefs are all unresolvable"
+              var feFailReason = ""
+              var feFailMessage = ""
               var listenerAcceptedStatus = "True"
               var listenerAcceptedReason = "Accepted"
               var listenerAcceptedMessage = "Listener accepted"
@@ -730,111 +729,16 @@ templateSnippets:
               }
               if listenerAcceptedStatus == "True" && protocol == "HTTPS" && resolvedRefsStatus == "True" {
                 var listenerPort = toint(listener.Port)
-                var feValidation any = nil
-                // dig() outer presence check distinguishes "TLS frontend
-                // block absent" from "present but zero" — the former
-                // short-circuits, the latter falls through with a nil
-                // feValidation so downstream validation-resolvability
-                // checks no-op.
-                if dig(gateway, "spec", "tls", "frontend") != nil {
-                  // Dig-only: spec.tls newer than the oldest resolvable
-                  // Gateway schema (typed access would not compile there).
-                  if dig(gateway, "spec", "tls", "frontend", "default", "validation") != nil {
-                    feValidation = dig(gateway, "spec", "tls", "frontend", "default", "validation")
-                  }
-                  for _, pp := range dig(gateway, "spec", "tls", "frontend", "perPort") | toSlice() {
-                    if toint(dig(pp, "port") | fallback(0)) == listenerPort {
-                      if dig(pp, "tls", "validation") != nil {
-                        feValidation = dig(pp, "tls", "validation")
-                      }
-                      break
-                    }
-                  }
+                var frontendCAStatus = dig(frontendMTLSResolution, "defaultStatus")
+                for _, entry := range toSlice(dig(frontendMTLSResolution, "perPort")) {
+                  if toint(dig(entry, "port") | fallback(0)) != listenerPort { continue }
+                  frontendCAStatus = dig(entry, "status")
+                  break
                 }
-                if feValidation != nil {
-                  var feRefs = dig(feValidation, "caCertificateRefs") | toSlice()
-                  if feRefs != nil && len(feRefs) > 0 {
-                    var feHasValid = false
-                    // Per-ref failure tracking. Spec precedence on the
-                    // ResolvedRefs reason when no ref resolves:
-                    //   InvalidCACertificateKind  (group/kind unsupported)
-                    //   RefNotPermitted           (cross-ns, no RG)
-                    //   InvalidCACertificateRef   (nonexistent / malformed)
-                    // The first match wins; conformance
-                    // GatewayInvalidFrontendClientCertificateValidation
-                    // sets up listeners exhibiting each failure mode and
-                    // verifies the listener's ResolvedRefs reason.
-                    var sawInvalidKind = false
-                    var sawRefNotPermitted = false
-                    var sawInvalidCARef = false
-                    for _, ref := range feRefs {
-                      var refGroup = tostring(dig(ref, "group") | fallback(""))
-                      var refKind = tostring(dig(ref, "kind") | fallback(""))
-                      var refName = tostring(dig(ref, "name") | fallback(""))
-                      var refNs = tostring(dig(ref, "namespace") | fallback(nsStr))
-                      // Only core-group ConfigMap and Secret are supported
-                      // by the chart for frontend CA refs.
-                      if (refGroup != "" && refGroup != "core") || (refKind != "ConfigMap" && refKind != "Secret") {
-                        sawInvalidKind = true
-                        continue
-                      }
-                      if refName == "" {
-                        sawInvalidCARef = true
-                        continue
-                      }
-                      // Cross-namespace ref needs a ReferenceGrant in the
-                      // ref's target namespace allowing the Gateway in
-                      // gateway.namespace to point at this Kind/name.
-                      if refNs != nsStr {
-                        if ReferenceGrantPermitted(
-                          "gateway.networking.k8s.io", "Gateway", nsStr,
-                          "", refKind, refNs, refName) != "true" {
-                          sawRefNotPermitted = true
-                          continue
-                        }
-                      }
-                      if refKind == "ConfigMap" {
-                        var cm = resources.configmaps.GetSingle(refNs, refName)
-                        if cm == nil {
-                          sawInvalidCARef = true
-                          continue
-                        }
-                        var caCrt = cm.Data["ca.crt"]
-                        if caCrt == "" {
-                          sawInvalidCARef = true
-                          continue
-                        }
-                        feHasValid = true
-                      } else {
-                        var sec = resources.secrets.GetSingle(refNs, refName)
-                        if sec == nil {
-                          sawInvalidCARef = true
-                          continue
-                        }
-                        // sec is typed *resources.secrets.T —
-                        // sec.Data is map[string]string directly.
-                        var caCrt, ok = sec.Data["ca.crt"]
-                        if !ok || caCrt == "" {
-                          sawInvalidCARef = true
-                          continue
-                        }
-                        feHasValid = true
-                      }
-                    }
-                    if !feHasValid {
-                      hasNoValidFrontendCA = true
-                      if sawInvalidKind {
-                        feFailReason = "InvalidCACertificateKind"
-                        feFailMessage = "Frontend client-cert validation caCertificateRef uses an unsupported group/kind"
-                      } else if sawRefNotPermitted {
-                        feFailReason = "RefNotPermitted"
-                        feFailMessage = "Frontend client-cert validation caCertificateRef crosses namespaces without a matching ReferenceGrant"
-                      } else if sawInvalidCARef {
-                        feFailReason = "InvalidCACertificateRef"
-                        feFailMessage = "Frontend client-cert validation caCertificateRefs are all unresolvable"
-                      }
-                    }
-                  }
+                if frontendCAStatus != nil {
+                  hasNoValidFrontendCA = dig_string(frontendCAStatus, "false", "hasValid") != "true"
+                  feFailReason = dig_string(frontendCAStatus, "", "reason")
+                  feFailMessage = dig_string(frontendCAStatus, "", "message")
                 }
               }
 
@@ -850,13 +754,15 @@ templateSnippets:
                 resolvedRefsStatus = "False"
                 resolvedRefsReason = "InvalidCertificateRef"
                 resolvedRefsMessage = "Listener references unsupported, missing, or malformed Secret"
-              } else if hasNoValidFrontendCA {
+              } else if feFailReason != "" {
                 resolvedRefsStatus = "False"
                 resolvedRefsReason = feFailReason
                 resolvedRefsMessage = feFailMessage
-                listenerAcceptedStatus = "False"
-                listenerAcceptedReason = "NoValidCACertificate"
-                listenerAcceptedMessage = feFailMessage
+                if hasNoValidFrontendCA {
+                  listenerAcceptedStatus = "False"
+                  listenerAcceptedReason = "NoValidCACertificate"
+                  listenerAcceptedMessage = feFailMessage
+                }
               }
 
               var attached = shared.Count("gateway-route-attachments",
@@ -1332,6 +1238,7 @@ templateSnippets:
       bindingsTemplate: '{{- render "util-gateway-status-bindings" -}}'
       group: gateway-status
       consumes:
+        - gateway-frontend-mtls
         - gateway-route-attachments
         - gateway-status-addresses
       optionalConsumes:
@@ -1347,6 +1254,8 @@ templateSnippets:
   status-patches-200-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |-
+      {{- render "gateway-frontend-ca-permissions-100-gateway" default "" -}}
+      {{- render "gateway-frontend-mtls-100-gateway" -}}
       {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
       {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
       {{- render "gateway-route-attachments-100-http" -}}
