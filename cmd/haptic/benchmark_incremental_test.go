@@ -405,6 +405,27 @@ func BenchmarkBundledChartHTTPRouteIncrementalRenderService(b *testing.B) {
 	}
 }
 
+// The route count stays fixed while the Gateway fleet grows, so a growing cost
+// for the same unrelated one-route change is the per-Gateway/listener work of
+// the root snippets (gateway/18-bind-per-gateway and friends), not route work.
+func BenchmarkBundledChartHTTPRouteGatewayTopology(b *testing.B) {
+	suspendIncrementalBenchmarkAllocationProfilingForSetup(b)
+	cfg, setup, logger, cleanup := bundledChartSetup(b)
+	b.Cleanup(cleanup)
+	const routes = 1000
+	for _, gateways := range []int{1, 10, 50} {
+		topology := benchTopology{gateways: gateways, listeners: 2}
+		b.Run(fmt.Sprintf("routes=%d/gateways=%d/one-change", routes, gateways), func(b *testing.B) {
+			fixtures := benchGatewayTopologyFixtures(cfg, routes, topology)
+			benchmarkBundledHTTPRouteChangesWithFixtures(b, cfg, setup, logger, fixtures, func(iteration int) benchChange {
+				resource := benchTopologyHTTPRouteContent("route-0", "svc-0", 0)
+				resource["spec"].(map[string]any)["hostnames"] = []any{fmt.Sprintf("route-0-v%d.gw0-l0.example.com", iteration)}
+				return benchChange{store: "httproutes", resource: resource, keys: []string{"default", "route-0"}}
+			})
+		})
+	}
+}
+
 func BenchmarkBundledChartHTTPRouteColdIncrementalRenderer(b *testing.B) {
 	cfg, setup, logger, cleanup := bundledChartSetup(b)
 	b.Cleanup(cleanup)
@@ -1059,7 +1080,21 @@ func benchmarkBundledHTTPRouteChanges(
 	nextChange func(iteration int) benchChange,
 ) {
 	b.Helper()
-	storeMap, err := createStoresForBenchmark(cfg, setup.Engine, benchHTTPRouteScaleFixturesShaped(cfg, routes, shape))
+	benchmarkBundledHTTPRouteChangesWithFixtures(
+		b, cfg, setup, logger, benchHTTPRouteScaleFixturesShaped(cfg, routes, shape), nextChange,
+	)
+}
+
+func benchmarkBundledHTTPRouteChangesWithFixtures(
+	b *testing.B,
+	cfg *config.Config,
+	setup *ValidationSetup,
+	logger *slog.Logger,
+	fixtures map[string][]any,
+	nextChange func(iteration int) benchChange,
+) {
+	b.Helper()
+	storeMap, err := createStoresForBenchmark(cfg, setup.Engine, fixtures)
 	require.NoError(b, err)
 	engine := newIncrementalBenchmarkCountingEngine(b, setup.Engine)
 	lifecycle := newIncrementalBenchmarkCacheLifecycle(nil)
@@ -2929,6 +2964,67 @@ func benchHTTPRouteScaleFixturesShaped(cfg *config.Config, routes int, shape ben
 		"endpoints":  endpoints,
 	}
 	return testrunner.MergeFixtures(cfg.ValidationTests["_global"].Fixtures, fixtures)
+}
+
+// benchTopology sizes the Gateway fleet a route set attaches to.
+type benchTopology struct {
+	gateways  int
+	listeners int
+}
+
+func benchGatewayTopologyFixtures(cfg *config.Config, routes int, topology benchTopology) map[string][]any {
+	gateways := make([]any, 0, topology.gateways)
+	for index := range topology.gateways {
+		gateways = append(gateways, benchGatewayTopologyContent(index, topology.listeners))
+	}
+	services := make([]any, 0, routes)
+	httpRoutes := make([]any, 0, routes)
+	endpoints := make([]any, 0, routes*2)
+	for index := range routes {
+		service := fmt.Sprintf("svc-%d", index)
+		services = append(services, benchServiceContent(service))
+		httpRoutes = append(httpRoutes, benchTopologyHTTPRouteContent(fmt.Sprintf("route-%d", index), service, index%topology.gateways))
+		endpoints = append(endpoints,
+			benchEndpointSliceContent(service, index, 0),
+			benchEndpointSliceContent(service, index, 1),
+		)
+	}
+	fixtures := map[string][]any{
+		"services":   services,
+		"gateways":   gateways,
+		"httproutes": httpRoutes,
+		"endpoints":  endpoints,
+	}
+	return testrunner.MergeFixtures(cfg.ValidationTests["_global"].Fixtures, fixtures)
+}
+
+// Every listener carries its own hostname pattern, so each one is a distinct
+// listener-state entry; routes attach to listener 0 of their Gateway only.
+func benchGatewayTopologyContent(index, listeners int) map[string]any {
+	specListeners := make([]any, 0, listeners)
+	for listener := range listeners {
+		specListeners = append(specListeners, map[string]any{
+			"name": fmt.Sprintf("http-%d", listener), "port": int64(80 + listener), "protocol": "HTTP",
+			"hostname": fmt.Sprintf("*.gw%d-l%d.example.com", index, listener),
+		})
+	}
+	return map[string]any{
+		"apiVersion": "gateway.networking.k8s.io/v1",
+		"kind":       "Gateway",
+		"metadata":   map[string]any{"name": fmt.Sprintf("gw-%d", index), "namespace": "default"},
+		"spec": map[string]any{
+			"gatewayClassName": "haproxy",
+			"listeners":        specListeners,
+		},
+	}
+}
+
+func benchTopologyHTTPRouteContent(name, service string, gateway int) map[string]any {
+	resource := benchHTTPRouteContentShaped(name, service, benchRoutePlain)
+	spec := resource["spec"].(map[string]any)
+	spec["parentRefs"] = []any{map[string]any{"name": fmt.Sprintf("gw-%d", gateway), "namespace": "default"}}
+	spec["hostnames"] = []any{fmt.Sprintf("%s.gw%d-l0.example.com", name, gateway)}
+	return resource
 }
 
 func benchGatewayContent() map[string]any {
