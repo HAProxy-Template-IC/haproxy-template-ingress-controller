@@ -29,6 +29,11 @@ import (
 // The client sets Accept-Encoding manually so Go's transport does not
 // transparently decompress (it only does that for the header it adds itself),
 // leaving Content-Encoding: gzip visible on the response.
+//
+// TestHapticCompressionDefault covers the governance default (no annotation),
+// TestHapticCompressionOptOut the opt-out: no compression, and the origin still
+// sees the client's Accept-Encoding because the gate is the backend's profile,
+// not a request rewrite.
 func TestHapticCompression(t *testing.T) {
 	t.Parallel()
 	RunSimpleIngressTest(t, &SimpleIngressTest{
@@ -47,6 +52,58 @@ func TestHapticCompression(t *testing.T) {
 					httpclient.New(t).GET(host, "/").
 						WithHeader("Accept-Encoding", "gzip").
 						ExpectHeader(t, "Content-Encoding", "gzip")
+				},
+			},
+		},
+	})
+}
+
+func TestHapticCompressionDefault(t *testing.T) {
+	t.Parallel()
+	RunSimpleIngressTest(t, &SimpleIngressTest{
+		Description: "Ingress: response compression is on without any annotation",
+		Host:        "ingress-haptic-compression-default.localdev.me",
+		Assess: []SimpleIngressAssertion{
+			{
+				Name: "the governance default gzips a JSON response",
+				Check: func(t *testing.T, host string) {
+					t.Helper()
+					httpclient.New(t).GET(host, "/").
+						WithHeader("Accept-Encoding", "gzip").
+						ExpectHeader(t, "Content-Encoding", "gzip")
+				},
+			},
+		},
+	})
+}
+
+func TestHapticCompressionOptOut(t *testing.T) {
+	t.Parallel()
+	RunSimpleIngressTest(t, &SimpleIngressTest{
+		Description: "Ingress: compress-enable false leaves the response and the origin's Accept-Encoding alone",
+		Host:        "ingress-haptic-compression-optout.localdev.me",
+		Annotations: map[string]string{
+			"haproxy-haptic.org/compress-enable": "false",
+		},
+		Assess: []SimpleIngressAssertion{
+			{
+				Name: "no Content-Encoding on the response",
+				Check: func(t *testing.T, host string) {
+					t.Helper()
+					httpclient.New(t).GET(host, "/").
+						WithHeader("Accept-Encoding", "gzip").
+						ExpectMatching(t, "200 without Content-Encoding", func(resp *httpclient.Response) bool {
+							return resp.Status == 200 && resp.Header.Get("Content-Encoding") == ""
+						})
+				},
+			},
+			{
+				Name: "the origin still sees the client's Accept-Encoding",
+				Check: func(t *testing.T, host string) {
+					t.Helper()
+					httpclient.New(t).GET(host, "/").
+						WithHeader("Accept-Encoding", "gzip").
+						ExpectEchoHeader(t, "Accept-Encoding", "gzip")
 				},
 			},
 		},

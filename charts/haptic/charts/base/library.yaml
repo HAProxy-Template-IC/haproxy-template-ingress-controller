@@ -1267,6 +1267,29 @@ templateSnippets:
         }
         return ds
       } -%}
+      {#- A directive valid in a named defaults whose value is shared by every
+          route that sets it belongs in the content-addressed profile, not in the
+          backend: two routes with the same setting then share one section and
+          neither makes its backend structural. Rules (http-request ...), tables
+          and filters stay in the body: a rule set is per route by construction,
+          and HAProxy refuses `filter` in a defaults. -#}
+      {%- var ProfileDirective = func(line string) bool {
+        for _, prefix := range []string{"timeout ", "fullconn ", "retries ", "retry-on ",
+            "compression ", "cookie ", "dynamic-cookie-key ", "option httpchk", "http-check "} {
+          if hasPrefix(line, prefix) {
+            return true
+          }
+        }
+        return false
+      } -%}
+      {%- var HasPrefixed = func(lines []any, prefix string) bool {
+        for _, line := range lines {
+          if hasPrefix(tostring(line), prefix) {
+            return true
+          }
+        }
+        return false
+      } -%}
       {%- var PrepareBackend = func(spec map[string]any) (map[string]any, string) {
           var name = tostring(spec | dig("name") | fallback(""))
 
@@ -1288,8 +1311,50 @@ templateSnippets:
           }
           spec["hashType"] = hashType
 
-          // mode / balance / hash-type / default-server and the shared directive
-          // lines live in a content-addressed `defaults haptic-be-<hash>`; two
+          // The rendered body lines are sorted by what they mean to the plan:
+          // a `#` line is a comment (recorded so a change explains the text,
+          // never shaping), a ProfileDirective joins the profile, and only the
+          // rest is body, which is what keeps a backend structural.
+          var headerComments = []any{}
+          var comments = []any{}
+          for _, comment := range toSlice(spec["comments"]) {
+            headerComments = append(headerComments, tostring(comment))
+            comments = append(comments, tostring(comment))
+          }
+          var profileLines = []any{}
+          for _, line := range toSlice(spec["profile"]) {
+            profileLines = append(profileLines, tostring(line))
+          }
+          var body = []any{}
+          var section = []any{}
+          for _, lineAny := range toSlice(spec["body"]) {
+            var line = trimSpace(tostring(lineAny))
+            if line == "" {
+              continue
+            }
+            if hasPrefix(line, "#") {
+              comments = append(comments, line)
+              section = append(section, line)
+            } else if ProfileDirective(line) {
+              profileLines = append(profileLines, line)
+            } else {
+              body = append(body, line)
+              section = append(section, line)
+            }
+          }
+          // Compression inherited from the profile next to another filter needs
+          // the compression filter declared explicitly, and first, so a
+          // bandwidth limit meters the compressed bytes (HAProxy: "require an
+          // explicit filter declaration to use HTTP compression").
+          if HasPrefixed(profileLines, "compression ") && HasPrefixed(body, "filter ") && !HasPrefixed(body, "filter compression") {
+            body = append([]any{"filter compression"}, body...)
+            section = append([]any{"filter compression"}, section...)
+          }
+          spec["comments"] = comments
+          spec["body"] = body
+
+          // mode / balance / hash-type / default-server and the profile lines
+          // live in a content-addressed `defaults haptic-be-<hash>`; two
           // backends of the same shape get the same profile and one section,
           // which is what lets a route be added at runtime without a reload.
           var profileName, perr = planRegistry.Profile(map[string]any{
@@ -1297,17 +1362,15 @@ templateSnippets:
             "balance":       spec["balance"],
             "hashType":      hashType,
             "defaultServer": spec["defaultServer"],
-            "profile":       spec["profile"],
+            "profile":       profileLines,
           })
           if perr != nil {
             fail(perr.Error())
           }
 
-          // The section is `from <profile>` + guid + body + servers. `body`
-          // (stick-table, filter, raw injections) keeps the backend structural;
-          // an empty body is dynamic-eligible. The author may force the shape
+          // The section is `from <profile>` + guid + body + servers; an empty
+          // body is dynamic-eligible. The author may force the shape
           // (unix-socket servers, base's own backends).
-          var body = toSlice(spec["body"])
           if spec["shape"] == nil {
             if len(body) == 0 {
               spec["shape"] = "dynamic"
@@ -1325,14 +1388,14 @@ templateSnippets:
           }
 
           var lines = []any{}
-          for _, comment := range toSlice(spec["comments"]) {
+          for _, comment := range headerComments {
             lines = append(lines, tostring(comment))
           }
           lines = append(lines, "backend " + name + " from " + profileName)
           if guid := tostring(spec | dig("guid") | fallback("")); guid != "" {
             lines = append(lines, "    guid " + guid)
           }
-          for _, line := range body {
+          for _, line := range section {
             lines = append(lines, "    " + tostring(line))
           }
           for _, server := range toSlice(spec["servers"]) {

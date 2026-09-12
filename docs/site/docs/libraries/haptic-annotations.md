@@ -155,6 +155,16 @@ response that already carries `Content-Encoding`, one whose `Cache-Control` says
 anything the client didn't advertise support for in `Accept-Encoding`. It adds
 `Vary: Accept-Encoding` itself, so a shared cache in front stays correct.
 
+The compression filter is declared once per HTTP frontend; a route's algorithm
+and type list are inherited by its backend from the shared `defaults` profile,
+which HAProxy consults ahead of any setting on the frontend. So compression adds
+no line to the backend section, and on HAProxy 3.4 a route with compression on
+is added and removed over the runtime API without a reload, like a route without
+it (see [Reload-free route changes](../operations/performance.md#reload-free-route-changes)).
+An Ingress that opts out has no compression settings at all: HAProxy leaves its
+request and response untouched, so its origin still receives the client's
+`Accept-Encoding` and may compress on its own.
+
 Compression runs before the bandwidth limiter, so a `download-bandwidth-limit` on a compressed route meters the compressed bytes that go on the wire, not the larger uncompressed response.
 
 !!! warning "Compressing HTTPS responses re-opens BREACH"
