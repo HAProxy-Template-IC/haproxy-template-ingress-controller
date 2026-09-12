@@ -442,6 +442,45 @@ validationTests:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
       - { type: haproxy_valid }
+      - { type: contains, target: events, pattern: "GovernanceViolation networking.k8s.io/v1 Ingress default/audit-tier:" }
+
+  test-governance-audit-records-every-violator:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
+    description: Every violating resource gets its own GovernanceViolation Event; admission surfaces only the subject's.
+    extraContext:
+      governance:
+        enabled: true
+        rules:
+          main:
+            enabled: true
+            resource: ingresses
+            path: metadata.labels['tier']
+            required: true
+            enforcement: audit
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: has-tier, labels: { tier: gold } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: has-tier.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: other-no-tier, labels: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: other-no-tier.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: haproxy_valid }
+      - { type: contains, target: events, pattern: "GovernanceViolation networking.k8s.io/v1 Ingress default/other-no-tier:" }
+      - { type: not_contains, target: events, pattern: "default/has-tier" }
 
   test-governance-exempt-namespace:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
