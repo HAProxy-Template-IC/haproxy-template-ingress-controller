@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -123,18 +124,19 @@ func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, nam
 		"resource_types", subjectAliases,
 		"duration_ms", result.DurationMs)
 
-	// Surface template-recorded Warning events as admission warnings so the
-	// operator sees consequences at apply time (kubectl prints them) instead
-	// of only in Events afterwards — e.g. a route that will fail closed with
-	// 503 under the proposed state. PipelineResult is nil on the admitted-
-	// via-baseline path, where no proposed-state render (and no event set)
-	// exists.
+	// Surface the Warning events templates recorded on the object under
+	// admission (kubectl prints them) instead of only in Events afterwards.
+	// Events on other objects stay in their own Event streams: a render replays
+	// every cached item's events, so listing them here named every violator
+	// cluster-wide (#225). PipelineResult is nil on the admitted-via-baseline
+	// path, where no proposed-state render exists.
 	if pipelineResult != nil {
 		renderedEvents, err := pipelineResult.MaterializeEvents()
 		if err != nil {
 			return false, fmt.Sprintf("reading rendered warnings: %v", err), warnings
 		}
-		warnings = append(warnings, formatRenderedEventWarnings(renderedEvents)...)
+		subject := eventSubject{kind: gvk[strings.LastIndex(gvk, ".")+1:], namespace: namespace, name: name}
+		warnings = append(warnings, formatRenderedEventWarnings(renderedEvents, subject)...)
 	}
 
 	return true, "", warnings
@@ -145,13 +147,23 @@ func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, nam
 // cluster-wide breakage can't bloat every AdmissionReview.
 const maxEventWarnings = 10
 
-// formatRenderedEventWarnings renders template-recorded Warning events as
-// human-readable admission warning strings, capped at maxEventWarnings.
-func formatRenderedEventWarnings(events []templating.RenderedEvent) []string {
+// eventSubject identifies the object under admission.
+type eventSubject struct {
+	kind, namespace, name string
+}
+
+func (s eventSubject) matches(e *templating.RenderedEvent) bool {
+	return e.Kind == s.kind && e.Namespace == s.namespace && e.Name == s.name
+}
+
+// formatRenderedEventWarnings renders the Warning events recorded on the
+// subject as admission warning strings, capped at maxEventWarnings.
+func formatRenderedEventWarnings(events []templating.RenderedEvent, subject eventSubject) []string {
 	var out []string
 	suppressed := 0
-	for _, e := range events {
-		if e.Type != templating.EventTypeWarning {
+	for i := range events {
+		e := &events[i]
+		if e.Type != templating.EventTypeWarning || !subject.matches(e) {
 			continue
 		}
 		if len(out) >= maxEventWarnings {

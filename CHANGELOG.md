@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Admission warnings report only the template-recorded events on the resource being admitted; events on other resources, such as governance audit violations elsewhere in the cluster, stay in their own Kubernetes Events.
 - Runtime and file-only updates are re-diffed if a paced HAProxy reload changes their worker baseline, preventing missed routing-map updates.
 
 ### Changed

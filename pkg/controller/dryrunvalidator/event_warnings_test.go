@@ -24,27 +24,39 @@ import (
 )
 
 func TestFormatRenderedEventWarnings(t *testing.T) {
+	app := eventSubject{kind: "Ingress", namespace: "default", name: "app"}
+
 	t.Run("warnings formatted, normals skipped", func(t *testing.T) {
 		out := formatRenderedEventWarnings([]templating.RenderedEvent{
 			{Type: templating.EventTypeWarning, Reason: "WafPermissionDenied", Kind: "Ingress", Namespace: "default", Name: "app", Message: "allowCustomRules=false"},
 			{Type: "Normal", Reason: "Synced", Kind: "Ingress", Namespace: "default", Name: "app", Message: "ok"},
-		})
+		}, app)
 		assert.Equal(t, []string{"WafPermissionDenied on Ingress default/app: allowCustomRules=false"}, out)
+	})
+
+	t.Run("events on other objects are not surfaced", func(t *testing.T) {
+		out := formatRenderedEventWarnings([]templating.RenderedEvent{
+			{Type: templating.EventTypeWarning, Reason: "GovernanceViolation", Kind: "Ingress", Namespace: "default", Name: "app", Message: "m"},
+			{Type: templating.EventTypeWarning, Reason: "GovernanceViolation", Kind: "Ingress", Namespace: "other", Name: "app", Message: "m"},
+			{Type: templating.EventTypeWarning, Reason: "GovernanceViolation", Kind: "Ingress", Namespace: "default", Name: "sibling", Message: "m"},
+			{Type: templating.EventTypeWarning, Reason: "GovernanceViolation", Kind: "HTTPRoute", Namespace: "default", Name: "app", Message: "m"},
+		}, app)
+		assert.Equal(t, []string{"GovernanceViolation on Ingress default/app: m"}, out)
 	})
 
 	t.Run("cluster-scoped subject has no namespace prefix", func(t *testing.T) {
 		out := formatRenderedEventWarnings([]templating.RenderedEvent{
 			{Type: templating.EventTypeWarning, Reason: "R", Kind: "GatewayClass", Name: "haptic", Message: "m"},
-		})
+		}, eventSubject{kind: "GatewayClass", name: "haptic"})
 		assert.Equal(t, []string{"R on GatewayClass haptic: m"}, out)
 	})
 
 	t.Run("capped with suppression summary", func(t *testing.T) {
 		var events []templating.RenderedEvent
 		for i := 0; i < maxEventWarnings+3; i++ {
-			events = append(events, templating.RenderedEvent{Type: templating.EventTypeWarning, Reason: "R", Kind: "Ingress", Namespace: "ns", Name: fmt.Sprintf("app-%d", i), Message: "m"})
+			events = append(events, templating.RenderedEvent{Type: templating.EventTypeWarning, Reason: "R", Kind: "Ingress", Namespace: "default", Name: "app", Message: fmt.Sprintf("m%d", i)})
 		}
-		out := formatRenderedEventWarnings(events)
+		out := formatRenderedEventWarnings(events, app)
 		assert.Len(t, out, maxEventWarnings+1)
 		assert.Contains(t, out[maxEventWarnings], "3 more warnings")
 	})
