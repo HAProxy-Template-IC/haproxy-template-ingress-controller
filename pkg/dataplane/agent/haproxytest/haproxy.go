@@ -42,6 +42,10 @@ type Model struct {
 	CRLFiles            map[string]string
 	CRTLists            map[string][]string
 
+	// ProbeConnections and TrafficConnections are the conn_tot counters of
+	// the `status` and `http-tcp` frontends that `show stat` reports.
+	ProbeConnections   uint64
+	TrafficConnections uint64
 	// ReloadFails makes the master `reload` answer Success=0.
 	ReloadFails bool
 	// ReloadLog is the startup log a reload returns.

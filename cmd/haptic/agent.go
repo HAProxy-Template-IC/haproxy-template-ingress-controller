@@ -47,6 +47,10 @@ var (
 	agentWorkerSocket      string
 	agentListen            string
 	agentMetricsListen     string
+	agentDrainSocket       string
+	agentDrainQuietPeriod  time.Duration
+	agentDrainMaxWait      time.Duration
+	agentDrainIgnore       []string
 	agentStateFile         string
 	agentReloadIntervalMin time.Duration
 	agentReloadTimeout     time.Duration
@@ -89,6 +93,14 @@ func init() {
 		"Address the apply and state API listens on")
 	agentCmd.Flags().StringVar(&agentMetricsListen, "metrics-listen", ":9101",
 		"Address the Prometheus endpoint listens on; empty disables it")
+	agentCmd.Flags().StringVar(&agentDrainSocket, "drain-socket", "haptic-drain.sock",
+		"Unix socket (relative to --base-dir) serving GET /drain for the pod's preStop hook; empty disables it")
+	agentCmd.Flags().DurationVar(&agentDrainQuietPeriod, "drain-quiet-period", server.DefaultDrainQuietPeriod,
+		"The drain ends once the traffic frontends accepted no new connection for this long")
+	agentCmd.Flags().DurationVar(&agentDrainMaxWait, "drain-max-wait", server.DefaultDrainMaxWait,
+		"Upper bound of one drain; keep it inside the pod's termination grace period together with hard-stop-after")
+	agentCmd.Flags().StringSliceVar(&agentDrainIgnore, "drain-ignore-frontend", nil,
+		"Frontends whose connections do not count as traffic for the drain (probes, scrapes)")
 	agentCmd.Flags().StringVar(&agentStateFile, "state-file", ".haptic-agent.json",
 		"Name of the agent's state file inside --base-dir")
 	agentCmd.Flags().DurationVar(&agentReloadIntervalMin, "reload-interval-min", 5*time.Second,
@@ -115,19 +127,23 @@ func runAgent(_ *cobra.Command, _ []string) error {
 
 	registry := prometheus.NewRegistry()
 	agent, err := server.New(ctx, &server.Config{
-		BaseDir:           agentBaseDir,
-		ConfigFile:        agentConfigFile,
-		MasterSocket:      resolveSocket(agentBaseDir, agentMasterSocket),
-		WorkerSocket:      resolveSocket(agentBaseDir, agentWorkerSocket),
-		StateFile:         agentStateFile,
-		Listen:            agentListen,
-		ReloadIntervalMin: agentReloadIntervalMin,
-		ReloadTimeout:     agentReloadTimeout,
-		Username:          username,
-		Password:          password,
-		AgentVersion:      version,
-		Logger:            logger,
-		Registry:          registry,
+		BaseDir:              agentBaseDir,
+		ConfigFile:           agentConfigFile,
+		MasterSocket:         resolveSocket(agentBaseDir, agentMasterSocket),
+		WorkerSocket:         resolveSocket(agentBaseDir, agentWorkerSocket),
+		StateFile:            agentStateFile,
+		Listen:               agentListen,
+		ReloadIntervalMin:    agentReloadIntervalMin,
+		ReloadTimeout:        agentReloadTimeout,
+		Username:             username,
+		Password:             password,
+		AgentVersion:         version,
+		Logger:               logger,
+		Registry:             registry,
+		DrainSocket:          drainSocketPath(agentBaseDir, agentDrainSocket),
+		DrainQuietPeriod:     agentDrainQuietPeriod,
+		DrainMaxWait:         agentDrainMaxWait,
+		DrainIgnoreFrontends: agentDrainIgnore,
 	})
 	if err != nil {
 		return err
@@ -150,6 +166,14 @@ func runAgent(_ *cobra.Command, _ []string) error {
 
 // resolveSocket lets the flags name sockets relative to the tree the agent
 // owns, which is where the chart mounts them.
+// drainSocketPath keeps an empty flag empty, which disables the drain socket.
+func drainSocketPath(baseDir, socket string) string {
+	if socket == "" {
+		return ""
+	}
+	return resolveSocket(baseDir, socket)
+}
+
 func resolveSocket(baseDir, socket string) string {
 	if filepath.IsAbs(socket) {
 		return socket
