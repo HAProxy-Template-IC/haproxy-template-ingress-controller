@@ -109,7 +109,9 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 		dumpCommand(t, dumpDir, "haproxy-container-states.txt",
 			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"get", "pods", "-l", LabelSelectorHAProxy, "-o",
-			"jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{range .status.containerStatuses[*]}"+
+			"jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{range .status.initContainerStatuses[*]}"+
+				"  {.name}{\"\\tready=\"}{.ready}{\"\\trestarts=\"}{.restartCount}"+
+				"{\"\\tlastState=\"}{.lastState}{\"\\tsidecar\\n\"}{end}{range .status.containerStatuses[*]}"+
 				"  {.name}{\"\\tready=\"}{.ready}{\"\\trestarts=\"}{.restartCount}"+
 				"{\"\\tlastState=\"}{.lastState}{\"\\n\"}{end}{end}")
 

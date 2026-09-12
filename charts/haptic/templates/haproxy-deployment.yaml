@@ -87,7 +87,6 @@ spec:
       {{- if $podSpec.shareProcessNamespace }}
       shareProcessNamespace: true
       {{- end }}
-      {{- if or $haproxy.initContainers $spoaHubEnabled $vectorEnabled }}
       initContainers:
         {{- if $vectorEnabled }}
         # Seed the config before the Vector sidecar starts.
@@ -140,7 +139,320 @@ spec:
         {{- with $haproxy.initContainers }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
+        # Native sidecars (restartPolicy: Always): started before HAProxy in
+        # this order and stopped in reverse only after HAProxy exited, so the
+        # log shipper, the SPOE hub and the agent's drain socket outlive its
+        # drain and soft stop. Operator sidecars (haproxy.sidecars) stay regular
+        # containers.
+        {{- if $vectorEnabled }}
+        {{- $vector := .Values.vector }}
+        # Vector sidecar: receives the HAProxy access log over a UNIX datagram
+        # socket, derives the request metrics from it, and re-exports the hub's
+        # Prometheus metrics with its own. HAProxy's exporter is scraped directly.
+        - name: vector
+          restartPolicy: Always
+          image: {{ include "haptic.vector.image" . }}
+          imagePullPolicy: {{ $vector.image.pullPolicy }}
+          env:
+            # Vector links plain glibc malloc (no jemalloc — verified against
+            # 0.57.0), so it gets glibc's default of up to 8 x ncores per-thread
+            # arenas, and freed chunks stay in whichever arena they came from
+            # rather than going back to the OS — peak RSS grows with arena count.
+            # Measured on an 825-backend fleet: ARENA_MAX=2 bought ~11% of the
+            # peak for a little allocator contention across the worker threads.
+            - name: MALLOC_ARENA_MAX
+              value: "2"
+          # Vector does not unlink its UNIX socket after an exit, so each child
+          # start removes the stale path before binding it again.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              _child_name='Vector'
+              _child_impact='access-log and merged-metric export are unavailable'
+              _child_health() {
+                if ! command -v grep >/dev/null 2>&1; then
+                  return 2
+                fi
+                if ! grep -q '^[[:space:]]*type:[[:space:]]*prometheus_exporter' /etc/haproxy/general/vector.yaml; then
+                  return 2
+                fi
+                if timeout "$_watch_timeout_seconds" /usr/bin/bash -c '
+                  exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 1
+                  printf "HEAD /metrics HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3
+                  IFS= read -r _status <&3 || exit 1
+                  case "$_status" in HTTP/*) exit 0;; *) exit 1;; esac
+                ' child-health {{ $vector.metricsPort | int }}; then
+                  return 0
+                fi
+                return 1
+              }
+              {{ include "haptic.childSupervisor.shellFunctions" . | nindent 14 }}
+
+              _backoff=1
+              while true; do
+                rm -f '{{ $vector.socketPath }}'
+                # The config can be pruned until the first leader reconcile.
+                _waited=0
+                while [ ! -s /etc/haproxy/general/vector.yaml ]; do
+                  if [ "$_waited" -lt 30 ]; then
+                    echo "waiting for /etc/haproxy/general/vector.yaml (not pushed yet; ${_waited}s)"
+                  else
+                    echo "WARNING: still no /etc/haproxy/general/vector.yaml after ${_waited}s — access-log export is unavailable. Check the controller is Ready and holds the leader lease."
+                  fi
+                  _waited=$((_waited + 2))
+                  sleep 2
+                done
+
+                _child_started_epoch_seconds=$(date +%s)
+                /usr/bin/vector --watch-config --watch-config-method poll --watch-config-poll-interval-seconds 2 --config /etc/haproxy/general/vector.yaml &
+                _child_pid=$!
+                _start_watchdog
+                # The socket proves the watcher is armed; HUP closes the preceding read/watch race.
+                _sync_waited=0
+                while [ ! -S '{{ $vector.socketPath }}' ] && [ "$_sync_waited" -lt "$_watch_startup_grace_seconds" ]; do
+                  if ! kill -0 "$_child_pid" 2>/dev/null; then
+                    break
+                  fi
+                  sleep 1
+                  _sync_waited=$((_sync_waited + 1))
+                done
+                if [ -S '{{ $vector.socketPath }}' ] && kill -0 "$_child_pid" 2>/dev/null; then
+                  kill -HUP "$_child_pid"
+                fi
+                wait "$_child_pid"
+                _status=$?
+                _stop_watchdog
+                _child_pid=
+                _child_runtime_seconds=$(( $(date +%s) - _child_started_epoch_seconds ))
+                if [ "$_child_runtime_seconds" -ge 60 ]; then
+                  _backoff=1
+                fi
+                echo "WARNING: Vector exited with status ${_status}; access-log and merged-metric export are unavailable; restarting in ${_backoff}s"
+                sleep "$_backoff"
+                if [ "$_backoff" -lt 30 ]; then
+                  _backoff=$((_backoff * 2))
+                  if [ "$_backoff" -gt 30 ]; then _backoff=30; fi
+                fi
+              done
+          ports:
+            - name: vector-metrics
+              containerPort: {{ $vector.metricsPort | int }}
+              protocol: TCP
+            {{- if include "haptic.vector.sizeExporterEnabled" . }}
+            - name: vector-sizes
+              containerPort: {{ $vector.sizeMetricsPort | int }}
+              protocol: TCP
+            {{- end }}
+          securityContext:
+            {{- toYaml $vector.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml $vector.resources | nindent 12 }}
+          volumeMounts:
+            # Whole-volume mount, NOT `subPath` — kubelet implements subPath as an
+            # isolated bind-mount that does not propagate inotify events, so
+            # --watch-config would never fire and vector would sit on the bootstrap
+            # config forever. Same trap as the spoa-hub's file-watch, documented
+            # at length in its volumeMounts above.
+            - name: general-storage
+              mountPath: /etc/haproxy/general
+              readOnly: true
+            - name: vector-socket
+              mountPath: {{ include "haptic.vector.socketDir" . }}
+            # data_dir. Vector requires it to be writable even when no sink uses
+            # disk buffering.
+            - name: vector-data
+              mountPath: /var/lib/vector
+            # readOnlyRootFilesystem:true, so give it a writable scratch dir.
+            - name: vector-tmp
+              mountPath: /tmp
+            {{- with $vector.extraVolumeMounts }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+        {{- end }}
+        {{- if $spoaHubEnabled }}
+        {{- $spoaHub := .Values.spoaHub }}
+        # SPOA hub sidecar — bundles the haproxy-spoa-hub binary plus the
+        # plugin .so files. Conditional on at least one plugin being
+        # enabled. Communicates with HAProxy over /run/spoa/hub.sock.
+        - name: spoa-hub
+          restartPolicy: Always
+          image: {{ include "haptic.spoaHub.image" . }}
+          imagePullPolicy: {{ $spoaHub.image.pullPolicy }}
+          env:
+            {{- include "haptic.spoaHub.goRuntimeEnv" (dict "root" $ "resources" $spoaHub.resources) | nindent 12 }}
+          {{- $metricsPort := include "haptic.spoaHub.metricsPort" $ }}
+          {{- if $metricsPort }}
+          ports:
+            - name: metrics
+              containerPort: {{ $metricsPort }}
+              protocol: TCP
+          {{- end }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              _child_name='SPOA hub'
+              _child_impact='SPOA processing is unavailable'
+              _child_health() {
+                timeout "$_watch_timeout_seconds" /usr/bin/bash -c '
+                    exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 2
+                    printf "GET /spoa-hub-child-health HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3
+                    IFS= read -r _status <&3 || exit 1
+                    case "$_status" in
+                      HTTP/*" 204 "*) exit 0;;
+                      HTTP/*" 424 "*) exit 1;;
+                      *) exit 2;;
+                    esac
+                  ' child-health {{ $ports.stats }}
+                _probe_status=$?
+                case "$_probe_status" in
+                  0) return 0;;
+                  1) return 1;;
+                  *) return 2;;
+                esac
+              }
+              {{ include "haptic.childSupervisor.shellFunctions" . | nindent 14 }}
+
+              _backoff=1
+              while true; do
+                _child_started_epoch_seconds=$(date +%s)
+                /usr/local/bin/haproxy-spoa-hub --config /etc/haproxy/general/spoa-hub-config.toml &
+                _child_pid=$!
+                _start_watchdog
+                wait "$_child_pid"
+                _status=$?
+                _stop_watchdog
+                _child_pid=
+                _child_runtime_seconds=$(( $(date +%s) - _child_started_epoch_seconds ))
+                if [ "$_child_runtime_seconds" -ge 60 ]; then
+                  _backoff=1
+                fi
+                echo "WARNING: SPOA hub exited with status ${_status}; SPOA processing is unavailable; restarting in ${_backoff}s"
+                sleep "$_backoff"
+                if [ "$_backoff" -lt 30 ]; then
+                  _backoff=$((_backoff * 2))
+                  if [ "$_backoff" -gt 30 ]; then _backoff=30; fi
+                fi
+              done
+          securityContext:
+            {{- toYaml $spoaHub.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml $spoaHub.resources | nindent 12 }}
+          volumeMounts:
+            # ONLY the narrow general-storage volume — NOT
+            # haproxy-runtime. The hub needs to see the rendered
+            # spoa-hub-config.toml that the agent writes
+            # (and the bootstrap initContainer seeded), but it has
+            # no business reading SSL private keys or backend maps
+            # from haproxy-runtime/{ssl,maps,errors,…}. By splitting
+            # general/ into its own emptyDir and mounting only that
+            # here, the spoa-hub container's blast radius is the
+            # config file alone.
+            #
+            # We deliberately do NOT use `subPath: general` on a
+            # haproxy-runtime mount — kubelet implements subPath as
+            # an isolated bind-mount that does NOT propagate inotify
+            # events from the source side. The hub binary relies on
+            # file-watch on the parent of `--config` to survive
+            # atomic-rename writes; through a subPath mount that
+            # watch never fires and the hub stays on the bootstrap
+            # config forever, silently breaking per-Ingress
+            # modsecurity-snippet enforcement. A separate-volume
+            # overlay (mounted on haproxy + agent at the same
+            # path) gives both narrow scope AND working inotify.
+            - name: general-storage
+              mountPath: /etc/haproxy/general
+              readOnly: true
+            - name: spoa-socket
+              mountPath: /run/spoa
+            # The spoa-hub container runs with readOnlyRootFilesystem:true.
+            # Some plugins (e.g. coraza's filesystem-access verifier) need a
+            # writable scratch directory at startup; the hub also keeps a
+            # short-lived audit-log spool there for some plugin
+            # configurations. A small emptyDir mounted at /tmp gives them a
+            # place to write without weakening the container's read-only
+            # root filesystem. Memory-backed because the contents are
+            # ephemeral and tiny — no need for disk-backed storage.
+            - name: spoa-hub-tmp
+              mountPath: /tmp
+            {{- with $spoaHub.extraVolumeMounts }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+        {{- end }}
+        # HAPTIC agent sidecar — owns this pod's file tree and its HAProxy
+        # runtime socket. It runs from the controller image, so the two always
+        # speak the same wire contract.
+        - name: agent
+          restartPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            # Shares the volume group with HAProxy; the agent writes the tree
+            # HAProxy reads.
+            runAsUser: {{ $haproxyUid }}
+          image: {{ include "haptic.controller.image" . }}
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          args:
+            - agent
+            - --base-dir={{ dir $dataplaneConfig.mapsDir }}
+            - --config={{ base $dataplaneConfig.configFile }}
+            - --master-socket=haproxy-master.sock
+            - --worker-socket=haproxy-worker.sock
+            - --listen=:{{ $ports.dataplane }}
+            - --metrics-listen=:{{ $ports.agentMetrics }}
+            - --drain-socket={{ if $haproxy.drain.enabled }}haptic-drain.sock{{ end }}
+            - --drain-quiet-period={{ int $haproxy.drain.quietPeriodSeconds }}s
+            - --drain-max-wait={{ int $haproxy.drain.maxWaitSeconds }}s
+            - --drain-ignore-frontend=status
+            {{- with $dataplaneConfig.minDeploymentInterval }}
+            - --reload-interval-min={{ . }}
+            {{- end }}
+            {{- with $dataplaneConfig.reloadVerificationTimeout }}
+            - --reload-timeout={{ . }}
+            {{- end }}
+          env:
+            {{- range $env := list (dict "name" "DATAPLANE_USERNAME" "key" "dataplane_username") (dict "name" "DATAPLANE_PASSWORD" "key" "dataplane_password") }}
+            - name: {{ $env.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialsSecretName }}
+                  key: {{ $env.key }}
+            {{- end }}
+            - name: LOG_LEVEL
+              value: {{ $agent.logLevel | default "info" | quote }}
+            {{- include "haptic.agent.autoGomaxprocs" $agent | nindent 12 }}
+            {{- with $agent.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: dataplane
+              containerPort: {{ $ports.dataplane }}
+              protocol: TCP
+            - name: agent-metrics
+              containerPort: {{ $ports.agentMetrics }}
+              protocol: TCP
+          # No startupProbe: kubelet starts HAProxy only once a sidecar's
+          # startup probe passes, and the agent's /readyz waits for HAProxy's
+          # sockets. No readinessProbe: pod readiness belongs to HAProxy's own
+          # /ready, and tying it to the agent would drain traffic off a pod
+          # that is still serving.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: dataplane
+            periodSeconds: 10
+          volumeMounts:
+            - name: haproxy-runtime
+              mountPath: /etc/haproxy
+            # general-storage overlay — same shape as the haproxy container's
+            # mount, so files the agent writes under general/ land in the narrow
+            # volume the spoa-hub and vector sidecars read.
+            - name: general-storage
+              mountPath: /etc/haproxy/general
+          resources:
+            {{- toYaml $agent.resources | nindent 12 }}
       securityContext:
         runAsNonRoot: true
         runAsUser: {{ $haproxyUid }}
@@ -272,326 +584,6 @@ spec:
           resources:
             {{- toYaml $haproxy.resources | nindent 12 }}
 
-        # HAPTIC agent sidecar — owns this pod's file tree and its HAProxy
-        # runtime socket. It runs from the controller image, so the two always
-        # speak the same wire contract.
-        - name: agent
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            # Shares the volume group with HAProxy; the agent writes the tree
-            # HAProxy reads.
-            runAsUser: {{ $haproxyUid }}
-          image: {{ include "haptic.controller.image" . }}
-          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
-          args:
-            - agent
-            - --base-dir={{ dir $dataplaneConfig.mapsDir }}
-            - --config={{ base $dataplaneConfig.configFile }}
-            - --master-socket=haproxy-master.sock
-            - --worker-socket=haproxy-worker.sock
-            - --listen=:{{ $ports.dataplane }}
-            - --metrics-listen=:{{ $ports.agentMetrics }}
-            - --drain-socket={{ if $haproxy.drain.enabled }}haptic-drain.sock{{ end }}
-            - --drain-quiet-period={{ int $haproxy.drain.quietPeriodSeconds }}s
-            - --drain-max-wait={{ int $haproxy.drain.maxWaitSeconds }}s
-            - --drain-ignore-frontend=status
-            {{- with $dataplaneConfig.minDeploymentInterval }}
-            - --reload-interval-min={{ . }}
-            {{- end }}
-            {{- with $dataplaneConfig.reloadVerificationTimeout }}
-            - --reload-timeout={{ . }}
-            {{- end }}
-          {{- if $haproxy.drain.enabled }}
-          # kubelet stops all containers at once; this hook keeps the agent, and
-          # with it the drain socket, alive until the HAProxy container's drain ended.
-          lifecycle:
-            preStop:
-              exec:
-                command: ["/usr/local/bin/haptic", "agent", "drain", "--socket", "{{ dir $dataplaneConfig.mapsDir }}/haptic-drain.sock", "--timeout", "{{ add (int $haproxy.drain.maxWaitSeconds) 5 }}s"]
-          {{- end }}
-          env:
-            {{- range $env := list (dict "name" "DATAPLANE_USERNAME" "key" "dataplane_username") (dict "name" "DATAPLANE_PASSWORD" "key" "dataplane_password") }}
-            - name: {{ $env.name }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $credentialsSecretName }}
-                  key: {{ $env.key }}
-            {{- end }}
-            - name: LOG_LEVEL
-              value: {{ $agent.logLevel | default "info" | quote }}
-            {{- include "haptic.agent.autoGomaxprocs" $agent | nindent 12 }}
-            {{- with $agent.extraEnv }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-          ports:
-            - name: dataplane
-              containerPort: {{ $ports.dataplane }}
-              protocol: TCP
-            - name: agent-metrics
-              containerPort: {{ $ports.agentMetrics }}
-              protocol: TCP
-          # /readyz reports that both HAProxy sockets answer and the tree is
-          # hashed; /healthz only that the process serves. No readinessProbe:
-          # pod readiness belongs to HAProxy's own /ready, and tying it to the
-          # agent would drain traffic off a pod that is still serving.
-          startupProbe:
-            httpGet:
-              path: /readyz
-              port: dataplane
-            periodSeconds: 2
-            failureThreshold: 60
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: dataplane
-            periodSeconds: 10
-          volumeMounts:
-            - name: haproxy-runtime
-              mountPath: /etc/haproxy
-            # general-storage overlay — same shape as the haproxy container's
-            # mount, so files the agent writes under general/ land in the narrow
-            # volume the spoa-hub and vector sidecars read.
-            - name: general-storage
-              mountPath: /etc/haproxy/general
-          resources:
-            {{- toYaml $agent.resources | nindent 12 }}
-
-        {{- if $spoaHubEnabled }}
-        {{- $spoaHub := .Values.spoaHub }}
-        # SPOA hub sidecar — bundles the haproxy-spoa-hub binary plus the
-        # plugin .so files. Conditional on at least one plugin being
-        # enabled. Communicates with HAProxy over /run/spoa/hub.sock.
-        - name: spoa-hub
-          image: {{ include "haptic.spoaHub.image" . }}
-          imagePullPolicy: {{ $spoaHub.image.pullPolicy }}
-          env:
-            {{- include "haptic.spoaHub.goRuntimeEnv" (dict "root" $ "resources" $spoaHub.resources) | nindent 12 }}
-          {{- $metricsPort := include "haptic.spoaHub.metricsPort" $ }}
-          {{- if $metricsPort }}
-          ports:
-            - name: metrics
-              containerPort: {{ $metricsPort }}
-              protocol: TCP
-          {{- end }}
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              _child_name='SPOA hub'
-              _child_impact='SPOA processing is unavailable'
-              _child_health() {
-                timeout "$_watch_timeout_seconds" /usr/bin/bash -c '
-                    exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 2
-                    printf "GET /spoa-hub-child-health HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3
-                    IFS= read -r _status <&3 || exit 1
-                    case "$_status" in
-                      HTTP/*" 204 "*) exit 0;;
-                      HTTP/*" 424 "*) exit 1;;
-                      *) exit 2;;
-                    esac
-                  ' child-health {{ $ports.stats }}
-                _probe_status=$?
-                case "$_probe_status" in
-                  0) return 0;;
-                  1) return 1;;
-                  *) return 2;;
-                esac
-              }
-              {{ include "haptic.childSupervisor.shellFunctions" . | nindent 14 }}
-
-              _backoff=1
-              while true; do
-                _child_started_epoch_seconds=$(date +%s)
-                /usr/local/bin/haproxy-spoa-hub --config /etc/haproxy/general/spoa-hub-config.toml &
-                _child_pid=$!
-                _start_watchdog
-                wait "$_child_pid"
-                _status=$?
-                _stop_watchdog
-                _child_pid=
-                _child_runtime_seconds=$(( $(date +%s) - _child_started_epoch_seconds ))
-                if [ "$_child_runtime_seconds" -ge 60 ]; then
-                  _backoff=1
-                fi
-                echo "WARNING: SPOA hub exited with status ${_status}; SPOA processing is unavailable; restarting in ${_backoff}s"
-                sleep "$_backoff"
-                if [ "$_backoff" -lt 30 ]; then
-                  _backoff=$((_backoff * 2))
-                  if [ "$_backoff" -gt 30 ]; then _backoff=30; fi
-                fi
-              done
-          securityContext:
-            {{- toYaml $spoaHub.securityContext | nindent 12 }}
-          resources:
-            {{- toYaml $spoaHub.resources | nindent 12 }}
-          volumeMounts:
-            # ONLY the narrow general-storage volume — NOT
-            # haproxy-runtime. The hub needs to see the rendered
-            # spoa-hub-config.toml that the agent writes
-            # (and the bootstrap initContainer seeded), but it has
-            # no business reading SSL private keys or backend maps
-            # from haproxy-runtime/{ssl,maps,errors,…}. By splitting
-            # general/ into its own emptyDir and mounting only that
-            # here, the spoa-hub container's blast radius is the
-            # config file alone.
-            #
-            # We deliberately do NOT use `subPath: general` on a
-            # haproxy-runtime mount — kubelet implements subPath as
-            # an isolated bind-mount that does NOT propagate inotify
-            # events from the source side. The hub binary relies on
-            # file-watch on the parent of `--config` to survive
-            # atomic-rename writes; through a subPath mount that
-            # watch never fires and the hub stays on the bootstrap
-            # config forever, silently breaking per-Ingress
-            # modsecurity-snippet enforcement. A separate-volume
-            # overlay (mounted on haproxy + agent at the same
-            # path) gives both narrow scope AND working inotify.
-            - name: general-storage
-              mountPath: /etc/haproxy/general
-              readOnly: true
-            - name: spoa-socket
-              mountPath: /run/spoa
-            # The spoa-hub container runs with readOnlyRootFilesystem:true.
-            # Some plugins (e.g. coraza's filesystem-access verifier) need a
-            # writable scratch directory at startup; the hub also keeps a
-            # short-lived audit-log spool there for some plugin
-            # configurations. A small emptyDir mounted at /tmp gives them a
-            # place to write without weakening the container's read-only
-            # root filesystem. Memory-backed because the contents are
-            # ephemeral and tiny — no need for disk-backed storage.
-            - name: spoa-hub-tmp
-              mountPath: /tmp
-            {{- with $spoaHub.extraVolumeMounts }}
-            {{- tpl (toYaml .) $ | nindent 12 }}
-            {{- end }}
-        {{- end }}
-        {{- if $vectorEnabled }}
-        {{- $vector := .Values.vector }}
-        # Vector sidecar: receives the HAProxy access log over a UNIX datagram
-        # socket, derives the request metrics from it, and re-exports the hub's
-        # Prometheus metrics with its own. HAProxy's exporter is scraped directly.
-        - name: vector
-          image: {{ include "haptic.vector.image" . }}
-          imagePullPolicy: {{ $vector.image.pullPolicy }}
-          env:
-            # Vector links plain glibc malloc (no jemalloc — verified against
-            # 0.57.0), so it gets glibc's default of up to 8 x ncores per-thread
-            # arenas, and freed chunks stay in whichever arena they came from
-            # rather than going back to the OS — peak RSS grows with arena count.
-            # Measured on an 825-backend fleet: ARENA_MAX=2 bought ~11% of the
-            # peak for a little allocator contention across the worker threads.
-            - name: MALLOC_ARENA_MAX
-              value: "2"
-          # Vector does not unlink its UNIX socket after an exit, so each child
-          # start removes the stale path before binding it again.
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              _child_name='Vector'
-              _child_impact='access-log and merged-metric export are unavailable'
-              _child_health() {
-                if ! command -v grep >/dev/null 2>&1; then
-                  return 2
-                fi
-                if ! grep -q '^[[:space:]]*type:[[:space:]]*prometheus_exporter' /etc/haproxy/general/vector.yaml; then
-                  return 2
-                fi
-                if timeout "$_watch_timeout_seconds" /usr/bin/bash -c '
-                  exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 1
-                  printf "HEAD /metrics HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3
-                  IFS= read -r _status <&3 || exit 1
-                  case "$_status" in HTTP/*) exit 0;; *) exit 1;; esac
-                ' child-health {{ $vector.metricsPort | int }}; then
-                  return 0
-                fi
-                return 1
-              }
-              {{ include "haptic.childSupervisor.shellFunctions" . | nindent 14 }}
-
-              _backoff=1
-              while true; do
-                rm -f '{{ $vector.socketPath }}'
-                # The config can be pruned until the first leader reconcile.
-                _waited=0
-                while [ ! -s /etc/haproxy/general/vector.yaml ]; do
-                  if [ "$_waited" -lt 30 ]; then
-                    echo "waiting for /etc/haproxy/general/vector.yaml (not pushed yet; ${_waited}s)"
-                  else
-                    echo "WARNING: still no /etc/haproxy/general/vector.yaml after ${_waited}s — access-log export is unavailable. Check the controller is Ready and holds the leader lease."
-                  fi
-                  _waited=$((_waited + 2))
-                  sleep 2
-                done
-
-                _child_started_epoch_seconds=$(date +%s)
-                /usr/bin/vector --watch-config --watch-config-method poll --watch-config-poll-interval-seconds 2 --config /etc/haproxy/general/vector.yaml &
-                _child_pid=$!
-                _start_watchdog
-                # The socket proves the watcher is armed; HUP closes the preceding read/watch race.
-                _sync_waited=0
-                while [ ! -S '{{ $vector.socketPath }}' ] && [ "$_sync_waited" -lt "$_watch_startup_grace_seconds" ]; do
-                  if ! kill -0 "$_child_pid" 2>/dev/null; then
-                    break
-                  fi
-                  sleep 1
-                  _sync_waited=$((_sync_waited + 1))
-                done
-                if [ -S '{{ $vector.socketPath }}' ] && kill -0 "$_child_pid" 2>/dev/null; then
-                  kill -HUP "$_child_pid"
-                fi
-                wait "$_child_pid"
-                _status=$?
-                _stop_watchdog
-                _child_pid=
-                _child_runtime_seconds=$(( $(date +%s) - _child_started_epoch_seconds ))
-                if [ "$_child_runtime_seconds" -ge 60 ]; then
-                  _backoff=1
-                fi
-                echo "WARNING: Vector exited with status ${_status}; access-log and merged-metric export are unavailable; restarting in ${_backoff}s"
-                sleep "$_backoff"
-                if [ "$_backoff" -lt 30 ]; then
-                  _backoff=$((_backoff * 2))
-                  if [ "$_backoff" -gt 30 ]; then _backoff=30; fi
-                fi
-              done
-          ports:
-            - name: vector-metrics
-              containerPort: {{ $vector.metricsPort | int }}
-              protocol: TCP
-            {{- if include "haptic.vector.sizeExporterEnabled" . }}
-            - name: vector-sizes
-              containerPort: {{ $vector.sizeMetricsPort | int }}
-              protocol: TCP
-            {{- end }}
-          securityContext:
-            {{- toYaml $vector.securityContext | nindent 12 }}
-          resources:
-            {{- toYaml $vector.resources | nindent 12 }}
-          volumeMounts:
-            # Whole-volume mount, NOT `subPath` — kubelet implements subPath as an
-            # isolated bind-mount that does not propagate inotify events, so
-            # --watch-config would never fire and vector would sit on the bootstrap
-            # config forever. Same trap as the spoa-hub's file-watch, documented
-            # at length in its volumeMounts above.
-            - name: general-storage
-              mountPath: /etc/haproxy/general
-              readOnly: true
-            - name: vector-socket
-              mountPath: {{ include "haptic.vector.socketDir" . }}
-            # data_dir. Vector requires it to be writable even when no sink uses
-            # disk buffering.
-            - name: vector-data
-              mountPath: /var/lib/vector
-            # readOnlyRootFilesystem:true, so give it a writable scratch dir.
-            - name: vector-tmp
-              mountPath: /tmp
-            {{- with $vector.extraVolumeMounts }}
-            {{- tpl (toYaml .) $ | nindent 12 }}
-            {{- end }}
-        {{- end }}
         {{- with $haproxy.sidecars }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}

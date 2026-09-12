@@ -54,7 +54,7 @@ func resolveAccessLogContainer(ctx context.Context, t *testing.T) string {
 			kubeconfigFlag, kubeconfigPath,
 			"-n", ControllerNamespace,
 			"get", "pod", pods[0],
-			"-o", `jsonpath={.spec.containers[*].name}`,
+			"-o", `jsonpath={.spec.initContainers[*].name} {.spec.containers[*].name}`,
 		)
 		var stdout bytes.Buffer
 		cmd.Stdout = &stdout

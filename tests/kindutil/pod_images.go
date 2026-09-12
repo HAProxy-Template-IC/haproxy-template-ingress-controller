@@ -5,17 +5,20 @@ package kindutil
 
 import (
 	"fmt"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 )
 
-// ValidatePodContainerImages requires each named container and checks every replica.
+// ValidatePodContainerImages requires each named container, sidecar or regular,
+// and checks every replica.
 func ValidatePodContainerImages(pods []corev1.Pod, expected map[string]string) error {
 	seen := make(map[string]bool, len(expected))
 	for podIndex := range pods {
 		pod := &pods[podIndex]
-		for containerIndex := range pod.Spec.Containers {
-			container := &pod.Spec.Containers[containerIndex]
+		containers := slices.Concat(pod.Spec.InitContainers, pod.Spec.Containers)
+		for containerIndex := range containers {
+			container := &containers[containerIndex]
 			image, checked := expected[container.Name]
 			if !checked {
 				continue

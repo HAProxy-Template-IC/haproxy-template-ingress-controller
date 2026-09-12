@@ -124,6 +124,19 @@ def unique_by_name(containers: list, owner: str) -> dict[str, dict]:
     return result
 
 
+def with_sidecars(parent: dict, key: str, owner: str) -> list:
+    """Native sidecars (the init list) ahead of the regular entries; a missing or
+    malformed regular list is left for unique_by_name to report."""
+    init_key = "init" + key[0].upper() + key[1:]
+    regular = parent.get(key)
+    sidecars = parent.get(init_key)
+    if sidecars is None or not isinstance(regular, list):
+        return regular
+    if not isinstance(sidecars, list):
+        fail("topology", f"{owner} {init_key} must be a list")
+    return sidecars + regular
+
+
 def script_for(container: dict, owner: str) -> str:
     if container.get("command") != ["/bin/sh", "-c"]:
         fail("topology", f"{owner} must use command ['/bin/sh', '-c']")
@@ -182,7 +195,8 @@ def extract_topology(workloads: dict, pods: dict) -> dict:
     template_spec = deployment.get("spec", {}).get("template", {}).get("spec", {})
     process_namespace_is_private(template_spec, "load-balancer Deployment template")
     template_containers = unique_by_name(
-        template_spec.get("containers"), "load-balancer Deployment template"
+        with_sidecars(template_spec, "containers", "load-balancer Deployment template"),
+        "load-balancer Deployment template",
     )
 
     supervised = {}
@@ -247,7 +261,9 @@ def extract_topology(workloads: dict, pods: dict) -> dict:
             fail("topology", f"duplicate load-balancer pod {pod_name}")
         seen_pods.add(pod_name)
         process_namespace_is_private(pod.get("spec", {}), f"pod {pod_name}")
-        pod_containers = unique_by_name(pod.get("spec", {}).get("containers"), f"pod {pod_name}")
+        pod_containers = unique_by_name(
+            with_sidecars(pod.get("spec", {}), "containers", f"pod {pod_name}"), f"pod {pod_name}"
+        )
         for name, container in pod_containers.items():
             args = container.get("args") or []
             script = args[0] if len(args) == 1 and isinstance(args[0], str) else ""
@@ -256,7 +272,8 @@ def extract_topology(workloads: dict, pods: dict) -> dict:
             if name in CHILDREN and name not in supervised:
                 fail("topology", f"pod {pod_name} has unexpected supervised container {name}")
         statuses = unique_by_name(
-            pod.get("status", {}).get("containerStatuses"), f"pod {pod_name} statuses"
+            with_sidecars(pod.get("status", {}), "containerStatuses", f"pod {pod_name} statuses"),
+            f"pod {pod_name} statuses",
         )
         for name, expected in supervised.items():
             if name not in pod_containers or name not in statuses:

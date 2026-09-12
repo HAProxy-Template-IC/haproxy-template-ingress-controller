@@ -41,7 +41,8 @@ tpl = None
 vector_images = set()
 for d in yaml.safe_load_all((work / "render.yaml").read_text()):
     if d and d.get("kind") == "Deployment":
-        for container in d["spec"]["template"]["spec"].get("containers", []):
+        spec = d["spec"]["template"]["spec"]
+        for container in spec.get("initContainers", []) + spec.get("containers", []):
             if container.get("name") == "vector":
                 vector_images.add(container.get("image"))
     # Either kind: the transform lives in its own snippet so Helm can drop it

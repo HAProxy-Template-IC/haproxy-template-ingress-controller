@@ -378,6 +378,10 @@ func (f *gatewayMTLSFixture) assertBind(ctx context.Context, t *testing.T, pod *
 		require.True(t, container.Ready, "%s/%s", pod.Name, container.Name)
 		require.Zero(t, container.RestartCount, "%s/%s", pod.Name, container.Name)
 	}
+	for index := range current.Status.InitContainerStatuses {
+		container := &current.Status.InitContainerStatuses[index]
+		require.Zero(t, container.RestartCount, "%s/%s", pod.Name, container.Name)
+	}
 	config, err := readFileFromHAProxyPod(ctx, pod.Name, "/etc/haproxy/haproxy.cfg")
 	require.NoError(t, err)
 	require.NotEmpty(t, config)

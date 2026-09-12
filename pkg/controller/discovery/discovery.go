@@ -86,9 +86,9 @@ func traceIf(logger *slog.Logger, msg string, args ...any) {
 // Ready: HAProxy's readiness probe only turns 200 after the first apply lands,
 // so gating discovery on it would never admit a fresh pod.
 func agentContainerRunning(pod *unstructured.Unstructured, logger *slog.Logger) bool {
-	statuses, found, err := unstructured.NestedSlice(pod.Object, "status", "containerStatuses")
-	if err != nil || !found {
-		traceIf(logger, "No containerStatuses found in pod status", "pod", pod.GetName(), "error", err)
+	statuses, err := containerStatuses(pod)
+	if err != nil || len(statuses) == 0 {
+		traceIf(logger, "No container statuses found in pod status", "pod", pod.GetName(), "error", err)
 		return false
 	}
 	for _, entry := range statuses {
@@ -105,9 +105,23 @@ func agentContainerRunning(pod *unstructured.Unstructured, logger *slog.Logger) 
 		logContainerStatus(logger, pod.GetName(), name, status, running)
 		return running
 	}
-	traceIf(logger, "Agent container not found in containerStatuses",
+	traceIf(logger, "Agent container not found in pod status",
 		"pod", pod.GetName(), "expected_container", agentContainerName)
 	return false
+}
+
+// containerStatuses returns the pod's sidecar (initContainerStatuses) and
+// regular container statuses; the chart runs the agent as a native sidecar.
+func containerStatuses(pod *unstructured.Unstructured) ([]any, error) {
+	sidecars, _, err := unstructured.NestedSlice(pod.Object, "status", "initContainerStatuses")
+	if err != nil {
+		return nil, err
+	}
+	regular, _, err := unstructured.NestedSlice(pod.Object, "status", "containerStatuses")
+	if err != nil {
+		return nil, err
+	}
+	return append(sidecars, regular...), nil
 }
 
 // logContainerStatus logs detailed container status for debugging. When
@@ -286,12 +300,9 @@ func (d *Discovery) evaluatePod(
 }
 
 func extractPodRuntimeID(pod *unstructured.Unstructured) (string, error) {
-	statuses, found, err := unstructured.NestedSlice(pod.Object, "status", "containerStatuses")
+	statuses, err := containerStatuses(pod)
 	if err != nil {
 		return "", fmt.Errorf("reading container statuses: %w", err)
-	}
-	if !found {
-		return "", nil
 	}
 
 	runtimes := make([]string, 0, len(statuses))

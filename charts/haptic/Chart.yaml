@@ -2,6 +2,10 @@ apiVersion: v2
 name: haptic
 description: HAPTIC - HAProxy Template Ingress Controller
 type: application
+# The HAProxy pod's helper containers are native sidecars (initContainers with
+# restartPolicy: Always), GA in 1.33: they start before HAProxy and are stopped
+# only after it exited, so the drain socket, SPOE and log shipping outlive it.
+kubeVersion: ">=1.33.0-0"
 version: 0.2.0-alpha.3
 appVersion: "0.2.0-alpha.3"
 # Template libraries are packaged as conditional subcharts so a release only

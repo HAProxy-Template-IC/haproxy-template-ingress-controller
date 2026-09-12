@@ -679,8 +679,8 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 | `haproxy.podSpec.tolerations` | list | `[]` | Tolerations |
 | `haproxy.podSpec.affinity` | map | `{}` | Affinity rules |
 | `haproxy.podSpec.podSecurityContext` | map | See values.yaml | Pod-level security context (seccomp, sysctls). UIDs auto-derived from `haproxy.enterprise.enabled` |
-| `haproxy.sidecars` | list | `[]` | Additional sidecar containers for HAProxy pod |
-| `haproxy.initContainers` | list | `[]` | Init containers for HAProxy pod |
+| `haproxy.sidecars` | list | `[]` | Extra containers for the HAProxy pod, run as regular containers that stop together with HAProxy; the bundled agent, SPOA hub and Vector are native sidecars that outlive it |
+| `haproxy.initContainers` | list | `[]` | Init containers for the HAProxy pod, run after the bundled bootstrap copies and before the native sidecars |
 | `haproxy.extraVolumes` | list | `[]` | Extra volumes for HAProxy pod |
 | `haproxy.extraVolumeMounts` | list | `[]` | Extra volume mounts for HAProxy container |
 | `haproxy.extraEnv` | list | `[]` | Extra env vars for the HAProxy container |
@@ -740,10 +740,10 @@ so the controller and the agent can't disagree.
 
 Agent credentials are the top-level `credentials.dataplane.*` section — see [Credentials](#credentials) above.
 
-The agent's probes are fixed: `startupProbe` on `/readyz` and `livenessProbe` on
-`/healthz`. `/readyz` means "the agent can accept applies" and stays true after
-a rejected apply, because a pod that can't be applied to is exactly the pod the
-next apply has to reach.
+The agent's only probe is a fixed `livenessProbe` on `/healthz`. Its `/readyz`
+means "the agent can accept applies" and stays true after a rejected apply,
+because a pod that can't be applied to is exactly the pod the next apply has to
+reach.
 
 ## HAProxy tuning
 
@@ -754,9 +754,9 @@ next apply has to reach.
 | `haproxy.shmStats.path` | string | `/dev/shm/haproxy-stats` | Path to the shared-memory stats file |
 | `haproxy.shmStats.maxObjects` | int | `50000` | Maximum object count in the shm-stats file. Each frontend, backend, listen, and server counts as one object — pick a value with headroom; HAProxy can't resize the file on reload |
 | `haproxy.shmStats.shmSizeLimit` | string | `""` | `/dev/shm` emptyDir size limit. Empty auto-calculates from `maxObjects` (~4 KB/object + 10% overhead, rounded to MiB) |
-| `haproxy.drain.enabled` | bool | `true` | Hold the HAProxy and agent containers' `preStop` hooks on the agent's drain socket until no new connection has reached the pod for `quietPeriodSeconds` (kube-proxy has stopped routing to it); only then does kubelet's SIGUSR1 run HAProxy's own soft stop |
+| `haproxy.drain.enabled` | bool | `true` | Hold the HAProxy container's `preStop` hook on the agent's drain socket until no new connection has reached the pod for `quietPeriodSeconds` (kube-proxy has stopped routing to it); only then does kubelet's SIGUSR1 run HAProxy's own soft stop |
 | `haproxy.drain.quietPeriodSeconds` | int | `2` | The drain ends once the traffic frontends accepted no new connection for this many seconds |
-| `haproxy.drain.maxWaitSeconds` | int | `10` | Upper bound of the drain in seconds; with `extraContext.hardStopAfter` it must fit in `terminationGracePeriodSeconds` |
+| `haproxy.drain.maxWaitSeconds` | int | `10` | Upper bound of the drain in seconds; with `extraContext.hardStopAfter` and the sidecars' shutdown it must fit in `terminationGracePeriodSeconds` |
 | `haproxy.lifecycle` | map | `{}` | Container lifecycle hooks for the HAProxy container (`preStop`, `postStart`); when set they replace the drain hook |
 | `haproxy.updateStrategy.type` | string | `RollingUpdate` | HAProxy Deployment update strategy |
 | `haproxy.updateStrategy.rollingUpdate.maxSurge` | int/string | `1` | Maximum surge during rolling updates |

@@ -208,7 +208,7 @@ func prepareVectorRecoveryRoute(ctx context.Context, t *testing.T, cfg *envconf.
 func exerciseVectorChildRecovery(ctx context.Context, t *testing.T, pod, host, availabilityPath string) context.Context {
 	t.Helper()
 	beforeRestarts, err := podJSONPath(ctx, pod,
-		`{.status.containerStatuses[?(@.name=="vector")].restartCount}`)
+		`{.status.initContainerStatuses[?(@.name=="vector")].restartCount}`)
 	if err != nil {
 		t.Fatalf("reading vector restartCount: %v", err)
 	}
@@ -247,7 +247,7 @@ func exerciseVectorChildRecovery(ctx context.Context, t *testing.T, pod, host, a
 	childRecovered = true
 
 	afterRestarts, err := podJSONPath(ctx, pod,
-		`{.status.containerStatuses[?(@.name=="vector")].restartCount}`)
+		`{.status.initContainerStatuses[?(@.name=="vector")].restartCount}`)
 	if err != nil {
 		t.Fatalf("reading vector restartCount after child recovery: %v", err)
 	}

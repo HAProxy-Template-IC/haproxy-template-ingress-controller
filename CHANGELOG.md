@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Changed
 
+- The HAProxy pod's agent, SPOA hub and Vector run as native sidecars (`initContainers` with `restartPolicy: Always`): they start before HAProxy and are stopped only after it exited, so the drain socket, SPOE verdicts and log shipping outlive HAProxy's drain and soft stop. The agent's `/readyz` startup probe is gone (kubelet would wait for it before starting HAProxy) and the controller's pod discovery reads sidecar container statuses. The chart now requires Kubernetes 1.33.
 - Gateway per-listener work (frontend client-certificate policies, HTTP binds, extra listener-port binds, Service ports, bind flags, and pod-port map lines) is computed once per Gateway and replayed for unrelated changes instead of being recomputed for every Gateway on every render.
 
 #### Fixed

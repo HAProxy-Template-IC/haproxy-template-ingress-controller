@@ -12,20 +12,27 @@ import (
 
 func TestValidatePodContainerImages(t *testing.T) {
 	for _, test := range []struct {
-		name   string
-		images []string
-		valid  bool
+		name    string
+		images  []string
+		sidecar bool
+		valid   bool
 	}{
 		{name: "all replicas", images: []string{"chart:v1", "chart:v1"}, valid: true},
 		{name: "missing container"},
 		{name: "wrong image", images: []string{"chart:v2"}},
 		{name: "one wrong replica", images: []string{"chart:v1", "chart:v2"}},
+		{name: "sidecar", images: []string{"chart:v1"}, sidecar: true, valid: true},
+		{name: "wrong sidecar image", images: []string{"chart:v2"}, sidecar: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			pods := make([]corev1.Pod, len(test.images))
 			for index, image := range test.images {
-				pods[index].Spec.Containers = []corev1.Container{
-					{Name: "checked", Image: image}, {Name: "unrelated", Image: "other:v2"},
+				checked := corev1.Container{Name: "checked", Image: image}
+				pods[index].Spec.Containers = []corev1.Container{{Name: "unrelated", Image: "other:v2"}}
+				if test.sidecar {
+					pods[index].Spec.InitContainers = []corev1.Container{checked}
+				} else {
+					pods[index].Spec.Containers = append(pods[index].Spec.Containers, checked)
 				}
 			}
 			err := ValidatePodContainerImages(pods, map[string]string{"checked": "chart:v1"})

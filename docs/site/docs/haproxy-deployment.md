@@ -10,14 +10,16 @@ and Vector processes inside their sidecar containers: a child exit or repeated
 failed health check leaves HAProxy running while the supervisor restarts only
 that child, with a backoff capped at 30 seconds.
 
-Two probes decide whether a pod takes traffic. HAProxy's `/ready` endpoint on the
-stats port is the pod's readiness probe: it answers 503 under the bootstrap
-config and 200 once a rendered config is running. The agent's `/readyz` is a
-startup probe only — it means "the agent can accept applies," and it stays true
-after an apply the agent rejected, because a pod that can't be applied to is
-exactly the pod the next apply has to reach. Kubernetes still marks the pod
-NotReady while a container isn't running, and probes on user-supplied sidecars
-still apply.
+HAProxy's `/ready` endpoint on the stats port is the pod's readiness probe: it
+answers 503 under the bootstrap config and 200 once a rendered config is
+running. The agent, the SPOA hub and Vector are native sidecars (init containers
+with `restartPolicy: Always`): the kubelet starts them before HAProxy and stops
+them only after HAProxy has exited, so they outlive its drain and soft stop. The
+agent's only probe is a liveness probe on `/healthz`. Its `/readyz` means "the
+agent can accept applies" and stays true after an apply the agent rejected,
+because a pod that can't be applied to is exactly the pod the next apply has to
+reach. Kubernetes still marks the pod NotReady while a container isn't running,
+and probes on user-supplied sidecars still apply.
 
 The watchdog uses `/usr/bin/bash` and `timeout`, which the default images provide.
 With a custom sidecar image missing either command, the supervisor logs a warning
@@ -198,7 +200,7 @@ The default keeps `/healthz` returning 200 on the stats port and `/ready` return
 
 Here is what a fresh pod does, step by step:
 
-1. The HAProxy container copies the bootstrap config and starts the master process. `/ready` answers 503, so the pod takes no traffic.
+1. The kubelet starts the sidecars, then the HAProxy container copies the bootstrap config and starts the master process. `/ready` answers 503, so the pod takes no traffic.
 2. The agent waits for the sockets, hashes the tree, loads its state file and builds its inventory, then serves `/readyz`.
 3. The controller's discovery admits the pod once `GET /v1/state` answers, and sends the complete file set with a reload — the pod has no baseline it could diff against.
 4. The agent writes every auxiliary file, the configuration last, and reloads. The master reports success only once the new worker has parsed the config and bound its listeners.
@@ -760,12 +762,6 @@ spec:
         volumeMounts:
         - name: haproxy-config
           mountPath: /etc/haproxy
-        startupProbe:
-          httpGet:
-            path: /readyz
-            port: 5555
-          periodSeconds: 2
-          failureThreshold: 60
         livenessProbe:
           httpGet:
             path: /healthz
