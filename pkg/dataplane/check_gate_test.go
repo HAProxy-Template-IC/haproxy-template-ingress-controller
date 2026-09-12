@@ -88,8 +88,11 @@ func TestCheckGate_DutyCycleSpacesRunStarts(t *testing.T) {
 	const interval = 60 * time.Millisecond
 	gate := NewCheckGate(interval)
 
-	require.NoError(t, gate.enter(t.Context()))
+	// Sampled BEFORE enter, not after: the gate stamps its next start from
+	// inside enter, so a first read taken afterwards is already past that
+	// stamp and the second run lands a scheduling hiccup short of interval.
 	first := time.Now()
+	require.NoError(t, gate.enter(t.Context()))
 	gate.leave()
 
 	require.NoError(t, gate.enter(t.Context()))
