@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"strconv"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/scriggo"
@@ -156,24 +155,11 @@ func incrementalSourceTransactionSource(entryPoints []string) string {
 		incrementalSourceIndexName + "]; " + incrementalSourceChildOffsetName + "++ %}{% " +
 		incrementalSourceFiberBoundaryName + ".BeginChild(" + incrementalSourceIndexName + ", " +
 		incrementalSourceChildIndexesName + "[" + incrementalSourceChildOffsetName + "]) %}")
-	writeIncrementalSourceTransactionLane(&source, entryPoints, 0, len(entryPoints))
+	writeIncrementalLaneDispatch(&source, entryPoints,
+		incrementalSourceChildLanesName+"["+incrementalSourceChildOffsetName+"]", 0, len(entryPoints))
 	source.WriteString("{% " + incrementalSourceFiberBoundaryName + ".EndChild(" + incrementalSourceIndexName + ", " +
 		incrementalSourceChildIndexesName + "[" + incrementalSourceChildOffsetName + "]) %}{% end %}{% " +
 		incrementalVectorBoundaryName + ".End(" + incrementalSourceIndexName + ") %}{% end %}{% " +
 		incrementalVectorRuntimeName + ".EndWave(" + incrementalVectorCarrierWaveName + ") %}{% end %}")
 	return source.String()
-}
-
-func writeIncrementalSourceTransactionLane(source *strings.Builder, entryPoints []string, start, end int) {
-	if end-start == 1 {
-		source.WriteString("{{ render " + strconv.Quote(entryPoints[start]) + " }}")
-		return
-	}
-	middle := start + (end-start)/2
-	source.WriteString("{% if " + incrementalSourceChildLanesName + "[" +
-		incrementalSourceChildOffsetName + "] < " + strconv.Itoa(middle) + " %}")
-	writeIncrementalSourceTransactionLane(source, entryPoints, start, middle)
-	source.WriteString("{% else %}")
-	writeIncrementalSourceTransactionLane(source, entryPoints, middle, end)
-	source.WriteString("{% end %}")
 }

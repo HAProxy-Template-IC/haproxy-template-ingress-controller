@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Incremental template batches retain optimized dispatch with large entrypoint sets instead of exceeding compiler register or function limits.
+
 - Templates can append nil values and nil spreads without compiler or runtime panics.
 
 ### Security

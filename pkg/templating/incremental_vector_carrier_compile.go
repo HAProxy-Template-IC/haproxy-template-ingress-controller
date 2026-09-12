@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/scriggo"
@@ -303,16 +302,8 @@ func incrementalVectorCarrierSource(entryPoints []string) string {
 	for _, name := range incrementalVectorBaseBindingNames {
 		source.WriteString("{% _ = " + name + " %}")
 	}
-	for lane, templateName := range entryPoints {
-		if lane == 0 {
-			source.WriteString("{% if ")
-		} else {
-			source.WriteString("{% else if ")
-		}
-		source.WriteString(incrementalVectorCarrierLaneName + " == " + strconv.Itoa(lane) + " %}")
-		source.WriteString("{{ render " + strconv.Quote(templateName) + " }}")
-	}
-	source.WriteString("{% end %}{% " + incrementalVectorBoundaryName + ".End(" +
+	writeIncrementalLaneDispatch(&source, entryPoints, incrementalVectorCarrierLaneName, 0, len(entryPoints))
+	source.WriteString("{% " + incrementalVectorBoundaryName + ".End(" +
 		incrementalVectorIndexName + ") %}{% end %}{% " + incrementalVectorRuntimeName +
 		".EndWave(" + incrementalVectorCarrierWaveName + ") %}{% end %}")
 	return source.String()
