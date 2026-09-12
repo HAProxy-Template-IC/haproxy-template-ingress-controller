@@ -7,25 +7,25 @@ tests:
     template: haproxy-deployment.yaml
     asserts:
       - contains:
-          path: spec.template.spec.containers
+          path: spec.template.spec.initContainers
           content:
             name: vector
           any: true
       - isNull:
-          path: spec.template.spec.containers[?(@.name=="vector")].readinessProbe
+          path: spec.template.spec.initContainers[?(@.name=="vector")].readinessProbe
       - isNull:
-          path: spec.template.spec.containers[?(@.name=="vector")].livenessProbe
+          path: spec.template.spec.initContainers[?(@.name=="vector")].livenessProbe
       # Whole-volume mount, never subPath: kubelet implements subPath as an
       # isolated bind-mount that does not propagate inotify, so --watch-config
       # would never fire and the sidecar would keep its bootstrap config.
       - contains:
-          path: spec.template.spec.containers[?(@.name=="vector")].volumeMounts
+          path: spec.template.spec.initContainers[?(@.name=="vector")].volumeMounts
           content:
             name: general-storage
             mountPath: /etc/haproxy/general
             readOnly: true
       - contains:
-          path: spec.template.spec.containers[?(@.name=="vector")].volumeMounts
+          path: spec.template.spec.initContainers[?(@.name=="vector")].volumeMounts
           content:
             name: vector-socket
             mountPath: /run/vector
@@ -35,10 +35,10 @@ tests:
     asserts:
       # The socket survives a Vector child exit on the shared emptyDir.
       - equal:
-          path: spec.template.spec.containers[?(@.name=="vector")].command
+          path: spec.template.spec.initContainers[?(@.name=="vector")].command
           value: ["/bin/sh", "-c"]
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           # (?m) so the anchors bind to a LINE — args[0] is a multi-line script
           # and Go's ^/$ would otherwise mean start/end of the whole string.
           # Quoted: the path is interpolated into a shell script. The charset
@@ -50,49 +50,49 @@ tests:
       # treats a missing --config as fatal — which turned into CrashLoopBackOff
       # whose backoff outlasted the config actually arriving.
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: '(?m)^  while \[ ! -s /etc/haproxy/general/vector\.yaml \]; do$'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: '(?m)^  /usr/bin/vector --watch-config --watch-config-method poll --watch-config-poll-interval-seconds 2 --config /etc/haproxy/general/vector\.yaml &$'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: '(?m)^  while \[ ! -S ''/run/vector/haproxy\.sock'' \] && \[ "\$_sync_waited" -lt "\$_watch_startup_grace_seconds" \]; do$'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: '(?m)^    kill -HUP "\$_child_pid"$'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: 'trap _shutdown TERM INT'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: 'grep -q .*prometheus_exporter'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: 'HEAD /metrics HTTP/1\.0'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: '_watch_child "\$_child_pid" &'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: '(?s)_watch_startup_grace_seconds=120.*_health_seen=0.*if \[ "\$_health_seen" -eq 1 \] \|\| \[ "\$_watch_runtime_seconds" -ge "\$_watch_startup_grace_seconds" \]'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: 'kill -TERM "\$_watched_pid"'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: 'kill -KILL "\$_watched_pid"'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: 'access-log and merged-metric export are unavailable; restarting in \$\{_backoff\}s'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: '_child_runtime_seconds=\$\(\( \$\(date \+%s\) - _child_started_epoch_seconds \)\)'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: 'if \[ "\$_child_runtime_seconds" -ge 60 \]; then\s+_backoff=1'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="vector")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="vector")].args[0]
           pattern: 'if \[ "\$_backoff" -gt 30 \]; then _backoff=30; fi'
 
   - it: should give the haproxy container write access to the log socket
@@ -112,7 +112,7 @@ tests:
       vector.enabled: false
     asserts:
       - notContains:
-          path: spec.template.spec.containers
+          path: spec.template.spec.initContainers
           content:
             name: vector
           any: true
@@ -123,13 +123,13 @@ tests:
       # prometheus-operator only builds targets from DECLARED container ports, so
       # an undeclared one is silently never scraped.
       - contains:
-          path: spec.template.spec.containers[?(@.name=="vector")].ports
+          path: spec.template.spec.initContainers[?(@.name=="vector")].ports
           content:
             name: vector-metrics
             containerPort: 9598
             protocol: TCP
       - contains:
-          path: spec.template.spec.containers[?(@.name=="vector")].ports
+          path: spec.template.spec.initContainers[?(@.name=="vector")].ports
           content:
             name: vector-sizes
             containerPort: 9599
@@ -142,14 +142,14 @@ tests:
       vector.requestMetrics.metrics.response_size: false
     asserts:
       - notContains:
-          path: spec.template.spec.containers[?(@.name=="vector")].ports
+          path: spec.template.spec.initContainers[?(@.name=="vector")].ports
           content:
             name: vector-sizes
             containerPort: 9599
             protocol: TCP
       # The primary port is unaffected.
       - contains:
-          path: spec.template.spec.containers[?(@.name=="vector")].ports
+          path: spec.template.spec.initContainers[?(@.name=="vector")].ports
           content:
             name: vector-metrics
             containerPort: 9598

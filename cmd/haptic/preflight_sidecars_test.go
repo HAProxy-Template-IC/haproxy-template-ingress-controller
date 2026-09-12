@@ -70,6 +70,16 @@ func TestCollectSidecarConfigsPreservesVariants(t *testing.T) {
 	assert.Equal(t, configs, again)
 }
 
+func TestCollectSidecarConfigsFindsNativeSidecars(t *testing.T) {
+	t.Setenv("HAPTIC_VECTOR_IMAGE", "")
+	t.Setenv("HAPTIC_VARNISH_IMAGE", "")
+	manifests := vectorManifests("vector:chart-test")
+	manifests["deployment"] = strings.Replace(manifests["deployment"], "containers:", "initContainers:", 1)
+	configs, err := collectSidecarConfigs(manifests, sidecarResults())
+	require.NoError(t, err)
+	assert.Equal(t, "vector:chart-test", configs[0].image)
+}
+
 func TestCollectSidecarConfigsRejectsUnverifiableImages(t *testing.T) {
 	tests := []struct {
 		name   string

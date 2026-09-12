@@ -1803,14 +1803,14 @@ verify_spoa_bundle() {
     local pods="${evidence}/spoa-bundle-${phase}-pods.json"
     kubectl get pods -n "$RELEASE_NAMESPACE" -o json > "$pods"
     jq -e --arg image "$chart_image" '
-        [.items[] | .spec.containers[] | select(.name == "spoa-hub" or .name == "validators")] as $containers |
+        [.items[] | (.spec.initContainers[]?, .spec.containers[]) | select(.name == "spoa-hub" or .name == "validators")] as $containers |
         any($containers[]; .name == "spoa-hub") and any($containers[]; .name == "validators") and
         all($containers[]; .image == $image) and
-        all(.items[] | select(any(.spec.containers[]; .name == "spoa-hub" or .name == "validators"));
+        all(.items[] | select(any((.spec.initContainers[]?, .spec.containers[]); .name == "spoa-hub" or .name == "validators"));
           .metadata.deletionTimestamp == null) and
         all(.items[]; . as $pod |
-          all(.spec.containers[] | select(.name == "spoa-hub" or .name == "validators");
-            .name as $name | any($pod.status.containerStatuses[]?;
+          all((.spec.initContainers[]?, .spec.containers[]) | select(.name == "spoa-hub" or .name == "validators");
+            .name as $name | any(($pod.status.initContainerStatuses[]?, $pod.status.containerStatuses[]?);
               .name == $name and .ready == true and (.imageID | length) > 0)))
     ' "$pods" >/dev/null || die "SPOA pods do not identify the ready chart bundle; inspect ${pods}"
     local pod container actual
@@ -1820,7 +1820,7 @@ verify_spoa_bundle() {
             sh -ec "$checksum_command" > "$actual"
         cmp "${evidence}/spoa-bundle-expected.sha256" "$actual" || \
             die "SPOA bundle bytes differ in ${pod}/${container}; redeploy the chart-selected image"
-    done < <(jq -r '.items[] | .metadata.name as $pod | .spec.containers[] |
+    done < <(jq -r '.items[] | .metadata.name as $pod | (.spec.initContainers[]?, .spec.containers[]) |
         select(.name == "spoa-hub" or .name == "validators") | [$pod, .name] | @tsv' "$pods")
 }
 
@@ -1952,7 +1952,8 @@ configure_haptic() {
           select(.metadata.labels["app.kubernetes.io/component"] == "controller" or
                  .metadata.labels["app.kubernetes.io/component"] == "loadbalancer")] as $pods |
         ($pods | length) > 0 and
-        all($pods[]; all(.spec.containers[]; ((.resources.limits.memory? // "") == "") and
+        all($pods[]; all(((.spec.initContainers[]? | select(.restartPolicy == "Always")), .spec.containers[]);
+                         ((.resources.limits.memory? // "") == "") and
                                              ((.resources.limits.cpu? // "") == "") and
                                              all(.env[]?; .name != "GOMEMLIMIT")))
     ' "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json" >/dev/null || \
@@ -1964,7 +1965,8 @@ configure_haptic() {
                  .metadata.labels["app.kubernetes.io/component"] == "loadbalancer") |
           {namespace: .metadata.namespace, pod: .metadata.name,
            component: .metadata.labels["app.kubernetes.io/component"],
-           containers: [.spec.containers[] | {name, resources, env: [.env[]? | select(.name == "GOMEMLIMIT")]}]}]
+           containers: [((.spec.initContainers[]? | select(.restartPolicy == "Always")), .spec.containers[]) |
+             {name, resources, env: [.env[]? | select(.name == "GOMEMLIMIT")]}]}]
     ' "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json" > "${BENCH_OUTPUT_DIR}/cluster/resource-methodology.json"
     verify_controller_runtime_identity
     record_event haptic-configured
@@ -2270,11 +2272,13 @@ extract_haptic_identities() {
           select(.metadata.labels["app.kubernetes.io/instance"] == "haptic") |
           select(.metadata.labels["app.kubernetes.io/component"] == "controller" or
                  .metadata.labels["app.kubernetes.io/component"] == "loadbalancer") |
+          [.spec.initContainers[]? | select(.restartPolicy == "Always") | .name] as $sidecars |
           {namespace: .metadata.namespace,
            name: .metadata.name,
            uid: .metadata.uid,
            component: .metadata.labels["app.kubernetes.io/component"],
-           containers: [.status.containerStatuses[]? |
+           containers: [((.status.initContainerStatuses[]? | select(.name | IN($sidecars[]))),
+                         .status.containerStatuses[]?) |
              {name, image, imageID, containerID, restartCount, ready}] | sort_by(.name)}] |
         sort_by(.namespace, .name)
     ' "$pods_json" > "$output"
@@ -2291,7 +2295,7 @@ extract_haptic_identities() {
 agent_port() {
     local pods_json="$1" pod="$2" port_name="$3"
     jq -er --arg pod "$pod" --arg port_name "$port_name" '
-        [.items[] | select(.metadata.name == $pod) | .spec.containers[] |
+        [.items[] | select(.metadata.name == $pod) | (.spec.initContainers[]?, .spec.containers[]) |
          select(.name == "agent") | .ports[]? |
          select(.name == $port_name and .protocol == "TCP") | .containerPort] |
         if length == 1 and (.[0] | type == "number" and . == floor and . > 0 and . <= 65535)

@@ -31,29 +31,25 @@ tests:
       appVersion: 9.8.7-test
     asserts:
       - equal:
-          path: spec.template.spec.containers[?(@.name=="agent")].image
+          path: spec.template.spec.initContainers[?(@.name=="agent")].image
           value: registry.gitlab.com/haproxy-haptic/haptic:9.8.7-test-haproxy3.4
       - isNull:
-          path: spec.template.spec.containers[?(@.name=="agent")].command
+          path: spec.template.spec.initContainers[?(@.name=="agent")].command
       - isNull:
-          path: spec.template.spec.containers[?(@.name=="agent")].readinessProbe
+          path: spec.template.spec.initContainers[?(@.name=="agent")].readinessProbe
+      - isNull:
+          path: spec.template.spec.initContainers[?(@.name=="agent")].startupProbe
       - equal:
-          path: spec.template.spec.containers[?(@.name=="agent")].startupProbe.httpGet.path
-          value: /readyz
-      - equal:
-          path: spec.template.spec.containers[?(@.name=="agent")].startupProbe.httpGet.port
-          value: dataplane
-      - equal:
-          path: spec.template.spec.containers[?(@.name=="agent")].livenessProbe.httpGet.path
+          path: spec.template.spec.initContainers[?(@.name=="agent")].livenessProbe.httpGet.path
           value: /healthz
       - equal:
-          path: spec.template.spec.containers[?(@.name=="agent")].livenessProbe.httpGet.port
+          path: spec.template.spec.initContainers[?(@.name=="agent")].livenessProbe.httpGet.port
           value: dataplane
 
   - it: should point the agent at the tree and sockets the HAProxy container creates
     asserts:
       - equal:
-          path: spec.template.spec.containers[?(@.name=="agent")].args
+          path: spec.template.spec.initContainers[?(@.name=="agent")].args
           value:
             - agent
             - --base-dir=/etc/haproxy
@@ -76,10 +72,10 @@ tests:
       controller.config.dataplane.reloadVerificationTimeout: 20s
     asserts:
       - contains:
-          path: spec.template.spec.containers[?(@.name=="agent")].args
+          path: spec.template.spec.initContainers[?(@.name=="agent")].args
           content: --reload-interval-min=2s
       - contains:
-          path: spec.template.spec.containers[?(@.name=="agent")].args
+          path: spec.template.spec.initContainers[?(@.name=="agent")].args
           content: --reload-timeout=20s
 
   - it: should read the agent credentials from the shared Secret and log at the configured level
@@ -87,7 +83,7 @@ tests:
       haproxy.agent.logLevel: debug
     asserts:
       - contains:
-          path: spec.template.spec.containers[?(@.name=="agent")].env
+          path: spec.template.spec.initContainers[?(@.name=="agent")].env
           content:
             name: DATAPLANE_USERNAME
             valueFrom:
@@ -95,7 +91,7 @@ tests:
                 name: RELEASE-NAME-haptic-credentials
                 key: dataplane_username
       - contains:
-          path: spec.template.spec.containers[?(@.name=="agent")].env
+          path: spec.template.spec.initContainers[?(@.name=="agent")].env
           content:
             name: LOG_LEVEL
             value: "debug"
@@ -103,13 +99,13 @@ tests:
   - it: should expose the agent metrics port under the name the PodMonitor scrapes
     asserts:
       - contains:
-          path: spec.template.spec.containers[?(@.name=="agent")].ports
+          path: spec.template.spec.initContainers[?(@.name=="agent")].ports
           content:
             name: agent-metrics
             containerPort: 5557
             protocol: TCP
       - contains:
-          path: spec.template.spec.containers[?(@.name=="agent")].ports
+          path: spec.template.spec.initContainers[?(@.name=="agent")].ports
           content:
             name: dataplane
             containerPort: 5555
@@ -154,16 +150,16 @@ tests:
             name: dataplane-tmp
             emptyDir: {}
       - lengthEqual:
-          path: spec.template.spec.containers[?(@.name=="agent")].volumeMounts
+          path: spec.template.spec.initContainers[?(@.name=="agent")].volumeMounts
           count: 2
 
   - it: should drop all capabilities for the agent container
     asserts:
       - contains:
-          path: spec.template.spec.containers[?(@.name=="agent")].securityContext.capabilities.drop
+          path: spec.template.spec.initContainers[?(@.name=="agent")].securityContext.capabilities.drop
           content: ALL
       - equal:
-          path: spec.template.spec.containers[?(@.name=="agent")].securityContext.readOnlyRootFilesystem
+          path: spec.template.spec.initContainers[?(@.name=="agent")].securityContext.readOnlyRootFilesystem
           value: true
 
   # The agent binds nothing privileged, so it never needs the capability the
@@ -173,9 +169,9 @@ tests:
       haproxy.enterprise.enabled: true
     asserts:
       - isNull:
-          path: spec.template.spec.containers[?(@.name=="agent")].securityContext.capabilities.add
+          path: spec.template.spec.initContainers[?(@.name=="agent")].securityContext.capabilities.add
       - equal:
-          path: spec.template.spec.containers[?(@.name=="agent")].securityContext.runAsUser
+          path: spec.template.spec.initContainers[?(@.name=="agent")].securityContext.runAsUser
           value: 1000
       - contains:
           path: spec.template.spec.containers[0].securityContext.capabilities.add
@@ -191,7 +187,7 @@ tests:
           memory: 128Mi
     asserts:
       - equal:
-          path: spec.template.spec.containers[?(@.name=="agent")].resources.requests.cpu
+          path: spec.template.spec.initContainers[?(@.name=="agent")].resources.requests.cpu
           value: 100m
 
   # The pod pulls the HAPTIC image now, so a private-registry install must not
@@ -279,41 +275,41 @@ tests:
       spoaHub.hub.metricsAddr: "0.0.0.0:9095"
     asserts:
       - equal:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].command
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].command
           value: ["/bin/sh", "-c"]
       - isNull:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].readinessProbe
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].readinessProbe
       - isNull:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].livenessProbe
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].livenessProbe
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: '(?m)^  /usr/local/bin/haproxy-spoa-hub --config /etc/haproxy/general/spoa-hub-config\.toml &$'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: 'GET /spoa-hub-child-health HTTP/1\.0'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: "' child-health 8404"
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: 'HTTP/\*" 424 "\*\) exit 1'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: '_watch_child "\$_child_pid" &'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: 'kill -KILL "\$_watched_pid"'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: 'SPOA processing is unavailable; restarting in \$\{_backoff\}s'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: '_child_runtime_seconds=\$\(\( \$\(date \+%s\) - _child_started_epoch_seconds \)\)'
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: 'if \[ "\$_child_runtime_seconds" -ge 60 \]; then\s+_backoff=1'
       - contains:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].ports
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].ports
           content:
             name: metrics
             containerPort: 9095
@@ -325,10 +321,10 @@ tests:
       haproxy.ports.stats: 9999
     asserts:
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: "' child-health 9999"
       - notMatchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: '/dev/tcp/127\.0\.0\.1/8404'
 
   - it: should omit the sidecar metrics port when metricsAddr is empty
@@ -337,9 +333,9 @@ tests:
       spoaHub.hub.metricsAddr: ""
     asserts:
       - notExists:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].ports
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].ports
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name=="spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: 'GET /spoa-hub-child-health HTTP/1\.0'
 
   - it: should set replica count from values
@@ -473,17 +469,16 @@ tests:
           path: spec.template.spec.containers[0].lifecycle.preStop.exec.command
           value: ["curl", "-sS", "--connect-timeout", "2", "--max-time", "15", "--unix-socket", "/etc/haproxy/haptic-drain.sock", "http://drain/drain"]
       - contains:
-          path: spec.template.spec.containers[1].args
+          path: spec.template.spec.initContainers[?(@.name=="agent")].args
           content: --drain-socket=haptic-drain.sock
       - contains:
-          path: spec.template.spec.containers[1].args
+          path: spec.template.spec.initContainers[?(@.name=="agent")].args
           content: --drain-quiet-period=2s
       - contains:
-          path: spec.template.spec.containers[1].args
+          path: spec.template.spec.initContainers[?(@.name=="agent")].args
           content: --drain-ignore-frontend=status
-      - equal:
-          path: spec.template.spec.containers[1].lifecycle.preStop.exec.command
-          value: ["/usr/local/bin/haptic", "agent", "drain", "--socket", "/etc/haproxy/haptic-drain.sock", "--timeout", "15s"]
+      - isNull:
+          path: spec.template.spec.initContainers[?(@.name=="agent")].lifecycle
 
   - it: should render no hook and no drain socket when the drain is disabled
     set:
@@ -492,9 +487,9 @@ tests:
       - isNull:
           path: spec.template.spec.containers[0].lifecycle
       - isNull:
-          path: spec.template.spec.containers[1].lifecycle
+          path: spec.template.spec.initContainers[?(@.name=="agent")].lifecycle
       - contains:
-          path: spec.template.spec.containers[1].args
+          path: spec.template.spec.initContainers[?(@.name=="agent")].args
           content: --drain-socket=
 
   # Termination grace period

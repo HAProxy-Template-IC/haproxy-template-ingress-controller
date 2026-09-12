@@ -27,7 +27,7 @@ tests:
       controller.templateLibraries.gateway.enabled: false
     asserts:
       - notContains:
-          path: spec.template.spec.containers
+          path: spec.template.spec.initContainers
           content:
             name: spoa-hub
           any: true
@@ -58,7 +58,7 @@ tests:
       spoaHub.plugins.fingerprinting.enabled: true
     asserts:
       - contains:
-          path: spec.template.spec.containers
+          path: spec.template.spec.initContainers
           content:
             name: spoa-hub
           any: true
@@ -157,14 +157,14 @@ tests:
       spoaHub.plugins.fingerprinting.enabled: true
     asserts:
       - contains:
-          path: spec.template.spec.containers[?(@.name == "spoa-hub")].volumeMounts
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].volumeMounts
           content:
             name: general-storage
             mountPath: /etc/haproxy/general
             readOnly: true
           any: true
       - notContains:
-          path: spec.template.spec.containers[?(@.name == "spoa-hub")].volumeMounts
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].volumeMounts
           content:
             name: spoa-hub-bootstrap
           any: true
@@ -173,7 +173,7 @@ tests:
       # high-value content the hub has no business reading. The narrow
       # general-storage overlay above gives it just the config file.
       - notContains:
-          path: spec.template.spec.containers[?(@.name == "spoa-hub")].volumeMounts
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].volumeMounts
           content:
             name: haproxy-runtime
           any: true
@@ -184,7 +184,7 @@ tests:
       spoaHub.plugins.fingerprinting.enabled: true
     asserts:
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name == "spoa-hub")].args[0]
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].args[0]
           pattern: '/usr/local/bin/haproxy-spoa-hub --config /etc/haproxy/general/spoa-hub-config\.toml'
 
   - it: should render the spoa-hub ConfigMap when a plugin is enabled
@@ -551,7 +551,7 @@ tests:
       spoaHub.plugins.fingerprinting.enabled: true
     asserts:
       - notContains:
-          path: spec.template.spec.containers
+          path: spec.template.spec.initContainers
           content:
             name: spoa-hub
           any: true
@@ -562,7 +562,7 @@ tests:
       spoaHub.enabled: true
     asserts:
       - contains:
-          path: spec.template.spec.containers
+          path: spec.template.spec.initContainers
           content:
             name: spoa-hub
           any: true
@@ -573,7 +573,7 @@ tests:
       spoaHub.plugins.fingerprinting.enabled: true
     asserts:
       - matchRegex:
-          path: spec.template.spec.containers[?(@.name == "spoa-hub")].image
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].image
           pattern: 'registry\.gitlab\.com/haproxy-haptic/haptic/spoa-hub:\d+\.\d+\.\d+'
 
   - it: should respect spoaHub.image.tag override
@@ -583,7 +583,7 @@ tests:
       spoaHub.image.tag: "v0.9.9-test"
     asserts:
       - equal:
-          path: spec.template.spec.containers[?(@.name == "spoa-hub")].image
+          path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].image
           value: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:v0.9.9-test
 
   - it: should render the SPOP listener with the configured socketPath

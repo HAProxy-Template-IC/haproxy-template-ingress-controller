@@ -311,7 +311,7 @@ cleanup_failed_deployment() {
     # Delete pods stuck in ImagePullBackOff or CrashLoopBackOff
     debug "Removing stuck pods..."
     kubectl -n "$CTRL_NAMESPACE" get pods -o json 2>/dev/null | \
-        jq -r '.items[] | select(.status.containerStatuses[]? | .state.waiting? | .reason? | test("ImagePullBackOff|CrashLoopBackOff|ErrImagePull")) | .metadata.name' | \
+        jq -r '.items[] | select((.status.initContainerStatuses[]?, .status.containerStatuses[]?) | .state.waiting? | .reason? | test("ImagePullBackOff|CrashLoopBackOff|ErrImagePull")) | .metadata.name' | \
         xargs -r kubectl -n "$CTRL_NAMESPACE" delete pod 2>/dev/null || true
 
     # Rollback Helm release if it exists and has previous revisions

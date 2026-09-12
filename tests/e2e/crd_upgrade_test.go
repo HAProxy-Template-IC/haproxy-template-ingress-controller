@@ -86,6 +86,9 @@ func controllerPodFingerprint(ctx context.Context, dc *debugClient) (map[string]
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		var restarts int32
+		for index := range p.Status.InitContainerStatuses {
+			restarts += p.Status.InitContainerStatuses[index].RestartCount
+		}
 		for index := range p.Status.ContainerStatuses {
 			restarts += p.Status.ContainerStatuses[index].RestartCount
 		}

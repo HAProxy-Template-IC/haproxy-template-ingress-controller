@@ -136,8 +136,9 @@ func collectVectorConfigs(objects []sidecarManifest, test *testrunner.TestResult
 		images := map[string]bool{}
 		for i := range objects {
 			if spec := objects[i].pod; spec != nil {
-				for j := range spec.Containers {
-					container := &spec.Containers[j]
+				containers := slices.Concat(spec.InitContainers, spec.Containers)
+				for j := range containers {
+					container := &containers[j]
 					if container.Name == vectorSidecar {
 						images[container.Image] = true
 					}
@@ -193,8 +194,9 @@ func configMapImages(objects []sidecarManifest, configMap *sidecarManifest, cont
 		if spec == nil || object.Metadata.Namespace != configMap.Metadata.Namespace {
 			continue
 		}
-		for j := range spec.Containers {
-			container := &spec.Containers[j]
+		containers := slices.Concat(spec.InitContainers, spec.Containers)
+		for j := range containers {
+			container := &containers[j]
 			if container.Name == containerName && mountsConfigMap(spec, container, configMap.Metadata.Name) {
 				images[container.Image] = true
 			}

@@ -8,7 +8,7 @@ The Helm chart is the supported way to install HAPTIC. A default install deploys
 
 ## Prerequisites
 
-- Kubernetes 1.21+ (the default `PodDisruptionBudget` uses `policy/v1` and the controller watches `discovery.k8s.io/v1` EndpointSlices)
+- Kubernetes 1.33+ (the HAProxy pod's agent, SPOA hub and Vector run as native sidecars, which reached GA in 1.33; the chart's `kubeVersion` enforces it)
 - Helm 3.8+ (the `oci://` chart reference needs OCI registry support, generally available since Helm 3.8)
 
 !!! note

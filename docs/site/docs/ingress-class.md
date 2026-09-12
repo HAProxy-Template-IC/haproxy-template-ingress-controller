@@ -1,6 +1,6 @@
 # IngressClass
 
-The [HAPTIC Helm chart](deploying-with-helm.md) automatically creates an IngressClass resource when the ingress library is enabled and the cluster exposes `networking.k8s.io/v1/IngressClass` (available since Kubernetes 1.19, below the chart's 1.21 minimum).
+The [HAPTIC Helm chart](deploying-with-helm.md) automatically creates an IngressClass resource when the ingress library is enabled and the cluster exposes `networking.k8s.io/v1/IngressClass` (available since Kubernetes 1.19, below the chart's 1.33 minimum).
 
 ## Configuration
 
@@ -72,7 +72,7 @@ IngressClass is created only when both of the following are true:
 1. `ingressClass.enabled: true` (default)
 2. `controller.templateLibraries.ingress.enabled: true` (default)
 
-A third, internal condition — the chart checks that the `networking.k8s.io/v1/IngressClass` API exists — always holds on a supported (1.21+) cluster, since IngressClass reached v1 in Kubernetes 1.19.
+A third, internal condition — the chart checks that the `networking.k8s.io/v1/IngressClass` API exists — always holds on a supported (1.33+) cluster, since IngressClass reached v1 in Kubernetes 1.19.
 
 ## Multi-controller environments
 

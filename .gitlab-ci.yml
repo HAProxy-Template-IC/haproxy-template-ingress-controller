@@ -1904,7 +1904,7 @@ test-acceptance:
           echo "=== vector: $pod (previous) ===" >> debug-logs/_suite/vector.log
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c vector --previous >> debug-logs/_suite/vector.log 2>&1 || true
           echo "=== container states: $pod ===" >> debug-logs/_suite/container-states.log
-          kubectl -n ${CTRL_NAMESPACE} get pod "$pod" -o jsonpath='{range .status.containerStatuses[*]}{.name}{"\t ready="}{.ready}{"\t restarts="}{.restartCount}{"\t "}{.lastState}{"\n"}{end}' >> debug-logs/_suite/container-states.log 2>&1 || true
+          kubectl -n ${CTRL_NAMESPACE} get pod "$pod" -o jsonpath='{range .status.initContainerStatuses[*]}{.name}{"\t sidecar ready="}{.ready}{"\t restarts="}{.restartCount}{"\t "}{.lastState}{"\n"}{end}{range .status.containerStatuses[*]}{.name}{"\t ready="}{.ready}{"\t restarts="}{.restartCount}{"\t "}{.lastState}{"\n"}{end}' >> debug-logs/_suite/container-states.log 2>&1 || true
         done
 
         # Deployed haproxy.cfg + auxiliary files (SPOE pipeline + auth-url

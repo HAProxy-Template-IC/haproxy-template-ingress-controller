@@ -75,11 +75,18 @@ func TestAgentContainerRunning(t *testing.T) {
 	tests := []struct {
 		name     string
 		statuses []map[string]any
+		sidecar  bool
 		want     bool
 	}{
 		{
 			name:     "agent running",
 			statuses: []map[string]any{buildContainerStatus(agentContainerName, true, "running")},
+			want:     true,
+		},
+		{
+			name:     "agent running as a native sidecar",
+			statuses: []map[string]any{buildContainerStatus(agentContainerName, true, "running")},
+			sidecar:  true,
 			want:     true,
 		},
 		{
@@ -112,6 +119,11 @@ func TestAgentContainerRunning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pod := buildPod("test-pod", tt.statuses, "10.0.0.1", "Running")
+			if tt.sidecar {
+				sidecars, _, _ := unstructured.NestedSlice(pod.Object, "status", "containerStatuses")
+				unstructured.RemoveNestedField(pod.Object, "status", "containerStatuses")
+				assert.NoError(t, unstructured.SetNestedSlice(pod.Object, sidecars, "status", "initContainerStatuses"))
+			}
 			assert.Equal(t, tt.want, agentContainerRunning(pod, nil))
 		})
 	}
