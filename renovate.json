@@ -245,6 +245,19 @@
       ],
       "matchCurrentValue": "must-be-supplied",
       "enabled": false
+    },
+    {
+      "description": "k8s.io/kube-openapi has no tagged releases and must move with the k8s.io/apimachinery release that adopts it: a lone digest bump pulled structured-merge-diff/v7 while apimachinery v0.37.0 compiles against v6 and broke build, lint, and test (!1801). The kubernetes group's go mod tidy raises it when apimachinery moves.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchPackageNames": [
+        "k8s.io/kube-openapi"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
+      "enabled": false
     }
   ]
 }
