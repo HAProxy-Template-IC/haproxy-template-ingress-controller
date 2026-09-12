@@ -288,13 +288,15 @@ func (s *Session) Apply(ctx context.Context, decision deployplan.Decision) *api.
 	// and drops every op — so the suite would assert runtime behaviour it never
 	// asked for.
 	manifest := &api.Manifest{
-		IdentityVersion:       api.ExactIdentityVersion,
-		PlanID:                plan.ID,
-		PlanSchemaVersion:     plan.SchemaVersion,
-		Token:                 api.Token{LeaderEpoch: s.epoch, RenderSeq: s.seq},
-		ExpectedPrevPlanID:    s.appliedID,
-		ExpectedPrevPlanProof: s.appliedProof,
-		ExpectedPrevToken:     s.token,
+		IdentityVersion:            api.ExactIdentityVersion,
+		PlanID:                     plan.ID,
+		PlanSchemaVersion:          plan.SchemaVersion,
+		Token:                      api.Token{LeaderEpoch: s.epoch, RenderSeq: s.seq},
+		ExpectedPrevPlanID:         s.appliedID,
+		ExpectedPrevPlanProof:      s.appliedProof,
+		ExpectedPrevToken:          s.token,
+		ExpectedWorkerOpsPlanID:    s.workerOps,
+		ExpectedWorkerOpsPlanProof: s.workerOpsProof,
 		// Every apply this suite makes reached HAProxy, so the plan the pod
 		// already holds is the newest one that passed validation.
 		ValidatedPlanID:    s.appliedID,
@@ -305,8 +307,6 @@ func (s *Session) Apply(ctx context.Context, decision deployplan.Decision) *api.
 		Mode:               decision.Mode,
 	}
 	if len(manifest.InPlaceOps) > 0 {
-		manifest.ExpectedWorkerOpsPlanID = s.workerOps
-		manifest.ExpectedWorkerOpsPlanProof = s.workerOpsProof
 		manifest.WorkerOpsPlanID = decision.WorkerPlan.ID
 	}
 

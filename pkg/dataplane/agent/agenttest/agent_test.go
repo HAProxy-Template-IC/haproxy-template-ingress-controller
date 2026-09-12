@@ -87,6 +87,9 @@ func applyExact(
 	if m.ExpectedPrevPlanID == state.AppliedPlanID {
 		m.ExpectedPrevPlanProof = state.AppliedPlanProof
 	}
+	if m.ExpectedWorkerOpsPlanID == "" && m.Mode == api.ModeAuto {
+		m.ExpectedWorkerOpsPlanID = state.WorkerOpsPlanID
+	}
 	if m.ExpectedWorkerOpsPlanID == state.WorkerOpsPlanID {
 		m.ExpectedWorkerOpsPlanProof = state.WorkerOpsPlanProof
 	}

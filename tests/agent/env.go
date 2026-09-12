@@ -40,28 +40,35 @@ const (
 // mode and an agent container, sharing the config mount, with general/ on a
 // mount of its own.
 type env struct {
-	t          *testing.T
-	image      string
-	configVol  string
-	generalVol string
-	haproxy    string
-	agent      string
-	client     *client.Client
-	http       *http.Client
+	t              *testing.T
+	image          string
+	configVol      string
+	generalVol     string
+	haproxy        string
+	agent          string
+	client         *client.Client
+	http           *http.Client
+	reloadInterval time.Duration
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWithReloadInterval(t, time.Second)
+}
+
+func newEnvWithReloadInterval(t *testing.T, reloadInterval time.Duration) *env {
+	t.Helper()
 	image := requireAgentImage(t)
 	name := containerName(t)
 	e := &env{
-		t:          t,
-		image:      image,
-		configVol:  name + "-cfg",
-		generalVol: name + "-general",
-		haproxy:    name + "-haproxy",
-		agent:      name + "-agent",
-		http:       &http.Client{Timeout: 10 * time.Second},
+		t:              t,
+		image:          image,
+		configVol:      name + "-cfg",
+		generalVol:     name + "-general",
+		haproxy:        name + "-haproxy",
+		agent:          name + "-agent",
+		http:           &http.Client{Timeout: 10 * time.Second},
+		reloadInterval: reloadInterval,
 	}
 	t.Cleanup(e.teardown)
 	e.createVolumes()
@@ -147,7 +154,7 @@ func (e *env) startAgent() {
 		"--master-socket", "haproxy-master.sock",
 		"--worker-socket", "haproxy-worker.sock",
 		"--listen", ":"+strconv.Itoa(agentPort),
-		"--reload-interval-min", "1s",
+		"--reload-interval-min", e.reloadInterval.String(),
 		"--state-file", ".haptic-agent.json",
 		"--metrics-listen", ":"+strconv.Itoa(metricsPort))...)
 

@@ -135,6 +135,10 @@ func readManifest(reader *multipart.Reader) (*api.Manifest, error) {
 	if err := validateManifest(manifest); err != nil {
 		return nil, err
 	}
+	if manifest.Mode == api.ModeAuto && manifest.ExpectedWorkerOpsPlanProof == "" && len(manifest.InPlaceOps) == 0 {
+		manifest.Mode = api.ModeReload
+		manifest.Ops = nil
+	}
 	return manifest, nil
 }
 
@@ -238,16 +242,9 @@ func validateEnumeratedMode(mode string) error {
 	return fmt.Errorf("unknown mode %q", mode)
 }
 
-// fence is the write gate. The ops were composed against a baseline; if this
-// pod is not on it, or a newer leader has spoken, nothing is written. The
-// in-place batch has its own baseline, the worker's: when the batch is going
-// to run — a reload is pending, or this apply asks for one the window makes
-// the pod pace — and the worker moved on since the controller looked (its
-// pacer fired), the whole apply is refused so the caller re-diffs against the
-// worker as it is now. Everything up to activate runs under the apply lock,
-// so what the fence sees is what the batch would meet.
 const reasonPrevMismatch = "prev_mismatch"
 
+// The apply lock keeps the worker baseline fixed from this gate through activation.
 func (s *Server) fence(m *api.Manifest) *api.Conflict {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -272,8 +269,8 @@ func (s *Server) fence(m *api.Manifest) *api.Conflict {
 	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode == api.ModeReload &&
 		s.state.AppliedPlanProof != "" && m.ExpectedPrevPlanProof != s.state.AppliedPlanProof:
 		reason = reasonPrevMismatch
-	case s.inPlaceWillRunLocked(m) && (m.ExpectedWorkerOpsPlanID != s.state.WorkerOpsPlanID ||
-		m.ExpectedWorkerOpsPlanProof == "" || m.ExpectedWorkerOpsPlanProof != s.state.WorkerOpsPlanProof):
+	case (m.Mode == api.ModeAuto || s.inPlaceWillRunLocked(m)) && !samePlanRef(
+		m.ExpectedWorkerOpsPlanID, m.ExpectedWorkerOpsPlanProof, s.state.WorkerOpsPlanID, s.state.WorkerOpsPlanProof):
 		reason = "worker_ops_mismatch"
 	}
 	if reason == "" {

@@ -298,6 +298,27 @@ func TestApply_MapContentChangeIsFileOnly(t *testing.T) {
 	require.Len(t, applies, 2)
 	assert.Equal(t, api.ResultFileOnly, applies[1].Result.Mode)
 	assert.Contains(t, applies[1].Parts, "maps/host.map")
+	assert.Equal(t, applies[0].Result.WorkerOpsPlanID, applies[1].Manifest.ExpectedWorkerOpsPlanID)
+	assert.Equal(t, applies[0].Result.WorkerOpsPlanProof, applies[1].Manifest.ExpectedWorkerOpsPlanProof)
+}
+
+func TestApply_AgentWithoutWorkerFenceReceivesFullReload(t *testing.T) {
+	agent := agenttest.New(t, agenttest.WithoutWorkerFence())
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+	plan1, config1, aux1 := renderFor("plan-1", "10.0.0.1", mapEntry)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	plan2, config2, aux2 := renderFor("plan-2", "10.0.0.2", mapEntry)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	require.Equal(t, 1, completed.Succeeded)
+	applies := agent.Applies()
+	require.Len(t, applies, 2)
+	require.Equal(t, api.ModeReload, applies[1].Manifest.Mode)
+	require.Empty(t, applies[1].Manifest.Ops)
+	require.Empty(t, applies[1].Manifest.InPlaceOps)
+	require.Len(t, applies[1].Parts, 2)
+	require.Equal(t, api.ResultReload, applies[1].Result.Mode)
 }
 
 // Re-applying the same render changes nothing on the pod.

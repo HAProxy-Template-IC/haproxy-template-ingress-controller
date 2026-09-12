@@ -87,14 +87,12 @@ type Manifest struct {
 	ExpectedPrevPlanID    string `json:"expected_prev_plan_id"`
 	ExpectedPrevPlanProof string `json:"expected_prev_plan_proof,omitempty"`
 	ExpectedPrevToken     Token  `json:"expected_prev_token"`
-	// ExpectedWorkerOpsPlanID guards InPlaceOps; WorkerOpsPlanID is what the
-	// pod records once they ran: the id of the worker's plan with exactly those
-	// ops applied, which the controller can reproduce. It is not PlanID — the
-	// in-place subset never brings the worker all the way to the render.
+	// Automatic applies and executable InPlaceOps require this exact worker baseline.
 	ExpectedWorkerOpsPlanID    string `json:"expected_worker_ops_plan_id,omitempty"`
 	ExpectedWorkerOpsPlanProof string `json:"expected_worker_ops_plan_proof,omitempty"`
-	WorkerOpsPlanID            string `json:"worker_ops_plan_id,omitempty"`
-	WorkerOpsPlanProof         string `json:"worker_ops_plan_proof,omitempty"`
+	// WorkerOpsPlanID names the partial plan after InPlaceOps, not the desired render.
+	WorkerOpsPlanID    string `json:"worker_ops_plan_id,omitempty"`
+	WorkerOpsPlanProof string `json:"worker_ops_plan_proof,omitempty"`
 	// ValidatedPlanID is the newest plan the controller's haproxy -c passed;
 	// the agent promotes its rollback baseline when it equals the applied plan.
 	ValidatedPlanID    string `json:"validated_plan_id,omitempty"`
@@ -140,7 +138,8 @@ type FilePatch struct {
 
 // Features an agent advertises in its state beyond the op kinds it executes.
 const (
-	FeatureFilePatch = "file_patch" // accepts File.Patch
+	FeatureFilePatch   = "file_patch" // accepts File.Patch
+	FeatureWorkerFence = "worker_fence"
 )
 
 // Op kinds the agent executes. Unknown kinds are refused and the apply falls
