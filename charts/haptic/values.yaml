@@ -1714,11 +1714,12 @@ haproxy:
   sidecars: []
   # - name: log-shipper
   #   image: fluent/fluent-bit:latest
-  # Container lifecycle hooks for HAProxy container
-  lifecycle: {}
-  # preStop:
-  #   exec:
-  #     command: ["/bin/sh", "-c", "sleep 30"]
+  # Container lifecycle hooks for the HAProxy container. The preStop sleep keeps a
+  # terminating pod accepting connections until kube-proxy stops routing to it.
+  lifecycle:
+    preStop:
+      exec:
+        command: ["sleep", "5"]
   # Deployment update strategy
   updateStrategy:
     type: RollingUpdate

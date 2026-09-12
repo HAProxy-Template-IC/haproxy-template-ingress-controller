@@ -248,8 +248,13 @@ func (r *probeRecorder) snapshotFailures() []probeFailure {
 // the test doesn't hammer the kind NodePort gratuitously.
 func runProbeLoop(ctx context.Context, t *testing.T, host string, rec *probeRecorder) {
 	t.Helper()
+	runProbeLoopEvery(ctx, t, host, rec, 200*time.Millisecond)
+}
+
+func runProbeLoopEvery(ctx context.Context, t *testing.T, host string, rec *probeRecorder, interval time.Duration) {
+	t.Helper()
 	hc := httpclient.New(t)
-	ticker := time.NewTicker(200 * time.Millisecond)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
