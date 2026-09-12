@@ -33,6 +33,26 @@ func TestAppendIsTheGoBuiltin(t *testing.T) {
 			template: `{% var a = []string{"x"} %}{{ join(append(a, "y"), ",") }}`,
 			want:     "x,y",
 		},
+		{
+			name:     "nil interface variable",
+			template: `{% var a = []any{1} %}{% var v any %}{% a = append(a, v) %}{{ len(a) }}:{{ a[1] == nil }}`,
+			want:     "2:true",
+		},
+		{
+			name:     "nil native result",
+			template: `{% var a = []any{1} %}{% a = append(a, dig(map[string]any{}, "missing")) %}{{ len(a) }}:{{ a[1] == nil }}`,
+			want:     "2:true",
+		},
+		{
+			name:     "nil literal",
+			template: `{% var a = []any{1} %}{% a = append(a, nil) %}{{ len(a) }}:{{ a[1] == nil }}`,
+			want:     "2:true",
+		},
+		{
+			name:     "nil spread",
+			template: `{% var a = []any{1} %}{{ len(append(a, nil...)) }}`,
+			want:     "1",
+		},
 	}
 
 	for _, tt := range tests {
