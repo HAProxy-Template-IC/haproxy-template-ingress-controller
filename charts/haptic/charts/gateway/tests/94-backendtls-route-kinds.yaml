@@ -393,9 +393,9 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: 'backend gtw_tls_gateway-conformance-infra_tls-route_0 from [^\n]*\n  guid [^\n]*\n  tcp-request content reject'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'default-server check ssl'}
 
-  test-backendtlspolicy-tlsroute-mixed-listeners-still-reencrypt:
+  test-backendtlspolicy-tlsroute-mixed-listeners-split-per-mode:
     requires: [backendtlspolicies, gatewayclasses, gateways, httproutes, tlsroutes]
-    description: A rule attached to both a Terminate and a Passthrough listener shares one backend; it re-encrypts, so the Passthrough leg fails closed rather than the Terminate leg sending plaintext to a TLS backend.
+    description: A rule attached to both a Terminate and a Passthrough listener gets one backend per mode; only the Terminate leg re-encrypts through the policy.
     fixtures:
       gatewayclasses: *gatewayclassesHaptic
       gateways: *gatewaysGwTlsMixed
@@ -408,5 +408,10 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - {type: contains, target: haproxy.cfg, pattern: 'backend gtw_tls_gateway-conformance-infra_tls-route_0'}
+      - {type: contains, target: haproxy.cfg, pattern: 'backend gtw_tls_gateway-conformance-infra_tls-route_0_terminate from haptic-be-'}
+      - {type: contains, target: haproxy.cfg, pattern: 'backend gtw_tls_gateway-conformance-infra_tls-route_0_passthrough from haptic-be-'}
       - {type: contains, target: haproxy.cfg, pattern: *reencryptDefaultServer}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^defaults haptic-be-[0-9a-f]+ from haptic-base\n  mode tcp\n  default-server check$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-8443$\n(?:  [^\n]*\n|\n)*?  use_backend gtw_tls_gateway-conformance-infra_tls-route_0_terminate if \{ ssl_fc_sni -m str tls\.example\.com \}$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-9443$\n(?:  [^\n]*\n|\n)*?  use_backend gtw_tls_gateway-conformance-infra_tls-route_0_passthrough if \{ req_ssl_sni -m str tls\.example\.com \}$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'backend gtw_tls_gateway-conformance-infra_tls-route_0 from'}

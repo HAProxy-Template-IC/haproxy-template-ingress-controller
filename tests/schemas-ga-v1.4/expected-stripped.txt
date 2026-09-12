@@ -14,7 +14,7 @@
 # stripped set to match this file EXACTLY (a newly-stripped test or a
 # whose `requires` names an unserved resource and every test whose
 test-backendtlspolicy-ancestor-from-tlsroute
-test-backendtlspolicy-tlsroute-mixed-listeners-still-reencrypt
+test-backendtlspolicy-tlsroute-mixed-listeners-split-per-mode
 test-backendtlspolicy-tlsroute-passthrough-forwards-client-tls
 test-backendtlspolicy-tlsroute-terminate-reencrypts
 test-backendtlspolicy-tlsroute-terminate-unresolvable-ca-rejects
@@ -65,6 +65,7 @@ test-tlsroute-invalid-backend-kind-no-attach
 test-tlsroute-invalid-backend-rejects-on-chart-static
 test-tlsroute-invalid-backend-rejects-on-frontend
 test-tlsroute-no-tls-listener
+test-tlsroute-same-sni-on-two-passthrough-ports
 test-tlsroute-passthrough-basic
 test-tlsroute-passthrough-nondefault-port-frontend
 test-tlsroute-section-name-no-match

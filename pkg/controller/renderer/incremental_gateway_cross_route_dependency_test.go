@@ -79,9 +79,12 @@ for ruleIndex := range toSlice(dig(item, "spec", "rules")) {
   if name == "" || len(hostnames) == 0 { continue }
   var definitionKey = "1/tls/" + namespace + "/" + name + "/" + fixed(ruleIndex)
   show shared.Publish("definitions", definitionKey, map[string]any{
-    "name": "gtw_tls_" + namespace + "_" + name + "_" + tostring(ruleIndex),
     "invalid": false,
     "rank": definitionKey + "/" + tostring(hostnames[0]),
+    "backends": []any{map[string]any{
+      "name": "gtw_tls_" + namespace + "_" + name + "_" + tostring(ruleIndex),
+      "terminate": false,
+    }},
   })
 }
 %%}`

@@ -953,45 +953,46 @@ templateSnippets:
           if refPort == 0 { refPort = 443 }
           var refNamespace = dig_string(backendRef, namespace, "namespace")
           if refNamespace == "" { refNamespace = namespace }
-          var backendName = dig_string(definition, "", "name")
           var rank = dig_string(definition, definitionKey, "rank")
-          var servers = BackendServersResult(
-            refName, 0, refPort, nil, nil, backendName, refNamespace)
-          var defaultServer = []any{map[string]any{"name": "check"}}
-          var body = []any{}
-          // A Terminate listener hands the backend plaintext, so a BackendTLSPolicy
-          // re-encrypts here; a Passthrough listener forwards the client's TLS untouched.
-          if dig(definition, "terminate") == true {
-            var btls = ResolveBackendTLS(refNamespace, refName, refPort)
-            if btls["found"] == true {
-              var caPath = ""
-              if tostring(btls["caBundle"]) != "" {
-                var caFilename = tostring(btls["caFilename"])
-                files = append(files, map[string]any{
-                  "type": "ca-file", "filename": caFilename, "content": tostring(btls["caBundle"]),
-                })
-                caPath = caFilename
-                if tostring(props["fileDir"]) != "" { caPath = tostring(props["fileDir"]) + "/" + caFilename }
-              } else if btls["systemCA"] == true {
-                caPath = "@system-ca"
-              }
-              if caPath == "" {
-                body = append(body, "tcp-request content reject")
-              } else {
-                var flags = []any{"ssl"}
-                if caPath != "@system-ca" { flags = append(flags, "ca-file " + caPath) }
-                flags = append(flags, "verify required")
-                if tostring(btls["hostname"]) != "" {
-                  flags = append(flags, "sni str(" + tostring(btls["hostname"]) + ")")
+          for _, backendAny := range toSlice(dig(definition, "backends")) {
+            var backendName = dig_string(backendAny, "", "name")
+            var servers = BackendServersResult(
+              refName, 0, refPort, nil, nil, backendName, refNamespace)
+            var defaultServer = []any{map[string]any{"name": "check"}}
+            var body = []any{}
+            // A Terminate listener hands the backend plaintext, so a BackendTLSPolicy
+            // re-encrypts here; a Passthrough listener forwards the client's TLS untouched.
+            if dig(backendAny, "terminate") == true {
+              var btls = ResolveBackendTLS(refNamespace, refName, refPort)
+              if btls["found"] == true {
+                var caPath = ""
+                if tostring(btls["caBundle"]) != "" {
+                  var caFilename = tostring(btls["caFilename"])
+                  files = append(files, map[string]any{
+                    "type": "ca-file", "filename": caFilename, "content": tostring(btls["caBundle"]),
+                  })
+                  caPath = caFilename
+                  if tostring(props["fileDir"]) != "" { caPath = tostring(props["fileDir"]) + "/" + caFilename }
+                } else if btls["systemCA"] == true {
+                  caPath = "@system-ca"
                 }
-                if tostring(btls["verifyHost"]) != "" {
-                  flags = append(flags, "verifyhost " + tostring(btls["verifyHost"]))
+                if caPath == "" {
+                  body = append(body, "tcp-request content reject")
+                } else {
+                  var flags = []any{"ssl"}
+                  if caPath != "@system-ca" { flags = append(flags, "ca-file " + caPath) }
+                  flags = append(flags, "verify required")
+                  if tostring(btls["hostname"]) != "" {
+                    flags = append(flags, "sni str(" + tostring(btls["hostname"]) + ")")
+                  }
+                  if tostring(btls["verifyHost"]) != "" {
+                    flags = append(flags, "verifyhost " + tostring(btls["verifyHost"]))
+                  }
+                  for _, kw := range FlagsToKeywordArgs(flags) { defaultServer = append(defaultServer, kw) }
                 }
-                for _, kw := range FlagsToKeywordArgs(flags) { defaultServer = append(defaultServer, kw) }
               }
-            }
           }
-          show shared.Publish("specs", rank, map[string]any{
+          show shared.Publish("specs", rank + "/" + backendName, map[string]any{
             "backend": map[string]any{
               "name": backendName,
               "guid": make_guid("be", backendName),
@@ -1008,6 +1009,7 @@ templateSnippets:
               "portName": servers["portName"],
             },
           })
+          }
         }
         if len(files) > 0 {
           show shared.Publish("effects", "tls/" + namespace + "/" + routeName, map[string]any{"files": files})

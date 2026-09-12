@@ -402,6 +402,48 @@ validationTests:
         target: haproxy.cfg
         pattern: 'use_backend gtw_tls_default_tls-app_0 if \{ req_ssl_sni -m str abc\.example\.com \}'
       - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+tcp-request content reject if !allowed_sni$'}
+  test-tlsroute-same-sni-on-two-passthrough-ports:
+    requires: [gateways, tlsroutes]
+    description: A rule attached to two Passthrough listeners on different ports keeps its single backend and is dispatched on both per-port frontends.
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gw-tlsroute-two-ports, namespace: default, generation: 1}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls-6443
+                protocol: TLS
+                port: 6443
+                hostname: "*.example.com"
+                allowedRoutes: {namespaces: {from: Same}, kinds: [{kind: TLSRoute}]}
+                tls: {mode: Passthrough}
+              - name: tls-7443
+                protocol: TLS
+                port: 7443
+                hostname: "*.example.com"
+                allowedRoutes: {namespaces: {from: Same}, kinds: [{kind: TLSRoute}]}
+                tls: {mode: Passthrough}
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata: *metadataTlsApp
+          spec:
+            parentRefs:
+              - name: gw-tlsroute-two-ports
+            hostnames:
+              - abc.example.com
+            rules: *rulesTcpBackend8443
+      services: *servicesServiceTcpBackend
+    assertions:
+      - type: haproxy_valid
+
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-6443$\n(?:  [^\n]*\n|\n)*?  use_backend gtw_tls_default_tls-app_0 if \{ req_ssl_sni -m str abc\.example\.com \}$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-7443$\n(?:  [^\n]*\n|\n)*?  use_backend gtw_tls_default_tls-app_0 if \{ req_ssl_sni -m str abc\.example\.com \}$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'gtw_tls_default_tls-app_0_'}
+
   test-tlsroute-passthrough-basic:
     requires: [gateways, tlsroutes]
     description: "TLSRoute attached to a TLS Passthrough listener emits a TCP-mode backend named gtw_tls_<ns>_<route>_<rule> and a SNI-keyed use_backend rule on the ssl-tcp frontend."
