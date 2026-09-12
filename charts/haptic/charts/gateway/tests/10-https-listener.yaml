@@ -208,6 +208,46 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "frontend https"}
       - {type: contains, target: haproxy.cfg, pattern: "bind .*:443.*ssl crt-list"}
 
+  test-gateway-https-listener-cross-namespace-cert-without-grant-no-bind:
+    requires: [gatewayclasses, gateways, referencegrants, secrets]
+    description: A cross-namespace certificateRef without a ReferenceGrant gets no per-listener bind or crt-list, even when a permitted Gateway resolved the same Secret.
+    fixtures:
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: permitted-gw, namespace: default}
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: https
+                protocol: HTTPS
+                port: 8443
+                hostname: permitted.example.com
+                tls: {mode: Terminate, certificateRefs: [{kind: Secret, name: shared-tls}]}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: intruder-gw, namespace: tenant}
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: https
+                protocol: HTTPS
+                port: 8443
+                hostname: intruder.example.com
+                tls: {mode: Terminate, certificateRefs: [{kind: Secret, name: shared-tls, namespace: default}]}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: status:tenant/intruder-gw:rendered
+        pattern: '"reason":"RefNotPermitted"'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'crt-list \S+/gw-default-permitted-gw-https-crtlist\.txt'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'gw-tenant-intruder-gw-https-crtlist'
+
   test-gateway-https-misdirected-listener-claim-maps:
     requires: [gatewayclasses, gateways]
     description: HTTPS listener hostnames are emitted as listener-claim maps and the misdirected directive references them

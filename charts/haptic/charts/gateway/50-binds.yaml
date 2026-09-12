@@ -13,6 +13,52 @@ templateSnippets:
   #
   # ListenerSet admission comes from gateway-host-listenersets.
   # ----------------------------------------------------------------------------
+  # Listener ports per protocol, published per Gateway (own listeners first, then
+  # admitted ListenerSets by rank) so the winner per port is the oldest claim and
+  # an unrelated change replays the cached claims (#226).
+  gateway-listener-ports-100-gateway:
+    requires: [gateways]
+    incremental:
+      source: gateways
+      group: gateway-listener-ports
+      optionalConsumes: [gateway-host-listenersets]
+      effects: [publishValue]
+    template: |-
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil {
+          var gatewayKey = namespace + "/" + name
+          var fixed = func(value int) string {
+            var encoded = tostring(value)
+            var zeroes = "0000000000"
+            if len(encoded) >= len(zeroes) { return encoded }
+            return zeroes[:len(zeroes)-len(encoded)] + encoded
+          }
+          var claim = func(protocol string, port int, rank string) {
+            if protocol == "" { protocol = "HTTP" }
+            if port > 0 {
+              _ = shared.PublishRanked(protocol, tostring(port), rank, port)
+            }
+          }
+          for listenerIndex, listener := range gateway.Spec.Listeners {
+            claim(listener.Protocol, toint(listener.Port), gatewayKey + "\x000\x00" + fixed(listenerIndex))
+          }
+          var listenerSets = shared.SelectValues("gateway-host-listenersets",
+            "gateway\x00" + namespace + "\x00" + name)
+          listenerSets = listenerSets | sort_by([]string{"$.rank"})
+          for _, listenerSet := range listenerSets {
+            if tostring(dig(listenerSet, "accepted") | fallback(false)) != "true" { continue }
+            for _, listener := range toSlice(dig(listenerSet, "candidates")) {
+              claim(dig_string(listener, "", "protocol"), toint(dig(listener, "port") | fallback(0)),
+                gatewayKey + "\x001\x00" + dig_string(listenerSet, "", "rank") + "\x00" +
+                fixed(toint(dig(listener, "index") | fallback(0))))
+            }
+          }
+        }
+      %%}
+
   util-gateway-extra-port-binds:
     requires: [gateways, referencegrants]
     template: |
@@ -21,45 +67,14 @@ templateSnippets:
         {%- for _, p := range seenInitial %}
           {%- seen[p] = true %}
         {%- end %}
-        {%%
-          var fixed = func(value int) string {
-            var encoded = tostring(value)
-            var zeroes = "0000000000"
-            if len(encoded) >= len(zeroes) { return encoded }
-            return zeroes[:len(zeroes)-len(encoded)] + encoded
-          }
-          var listeners = []any{}
-          for _, listener := range incremental_values("gateway-listener-state", "listeners") {
-            listeners = append(listeners, merge(listener, map[string]any{"rank":
-              dig_string(listener, "", "gatewayNamespace") + "/" +
-              dig_string(listener, "", "gatewayName") + "\x000\x00" +
-              fixed(toint(dig(listener, "listenerIndex") | fallback(0))),
-            }))
-          }
-          for _, listenerSet := range incremental_values("gateway-host-listenersets", "listenersets") {
-            if tostring(dig(listenerSet, "accepted") | fallback(false)) != "true" { continue }
-            for _, listener := range toSlice(dig(listenerSet, "candidates")) {
-              listeners = append(listeners, merge(listener, map[string]any{
-                "gatewayNamespace": dig_string(listenerSet, "", "gatewayNamespace"),
-                "gatewayName": dig_string(listenerSet, "", "gatewayName"),
-                "rank": dig_string(listenerSet, "", "gatewayNamespace") + "/" +
-                  dig_string(listenerSet, "", "gatewayName") + "\x001\x00" +
-                  dig_string(listenerSet, "", "rank") + "\x00" +
-                  fixed(toint(dig(listener, "index") | fallback(0))),
-              }))
-            }
-          }
-          listeners = listeners | sort_by([]string{"$.rank"})
-        %%}
-        {%- for _, listener := range listeners %}
-          {%- var listenerProtocol = dig_string(listener, "HTTP", "protocol") %}
-          {%- if listenerProtocol == "" %}{%- listenerProtocol = "HTTP" %}{%- end %}
-          {%- if listenerProtocol == protocol %}
-            {%- var port = toint(dig(listener, "port") | fallback(0)) %}
-            {%- if port > 0 && !seen[port] %}
-              {%- seen[port] = true %}
+        {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+        {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+        {{- render "gateway-listener-ports-100-gateway" -}}
+        {%- for _, claimed := range incremental_values("gateway-listener-ports", protocol) %}
+          {%- var port = toint(claimed) %}
+          {%- if port > 0 && !seen[port] %}
+            {%- seen[port] = true %}
       bind *:{{ port }}{{ sslOptionsSuffix }}
-            {%- end %}
           {%- end %}
         {%- end %}
       {%- end %}

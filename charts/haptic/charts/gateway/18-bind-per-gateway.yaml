@@ -24,20 +24,13 @@ templateSnippets:
   #     listener RST at the pod boundary — which is what
   #     GatewayFrontendInvalidDefaultClientCertificateValidation
   #     requires.
-  #   * Listeners whose `tls.certificateRefs[0]` failed to resolve
-  #     (Secret missing, malformed, or wrong group/kind). The chart's
-  #     existing `features-100-gateway-tls` skips registering such
-  #     certs (they don't appear in `gf.tlsCertificates`), and phase 2
-  #     follows suit by skipping the per-listener crt-list emission.
-  #     Phase 4 mirrors the same gate so the bind never references a
-  #     non-existent crt-list file (which would fail HAProxy parse and
-  #     abort the entire reconcile, leaving every Gateway in the
-  #     cluster stuck at observedGeneration=0). Same observable
-  #     behaviour as the mTLS-blocked branch: the listener has no
-  #     bind, so connections to it land on no socket — the
-  #     `GatewayInvalidTLSConfiguration` conformance contract is that
-  #     `Programmed=False / Invalid` with no traffic acceptance,
-  #     which is exactly what dropping the bind achieves.
+  #   * Listeners whose `tls.certificateRefs[0]` did not resolve for
+  #     this Gateway (Secret missing, malformed, wrong group/kind, or
+  #     no ReferenceGrant). Phase 2 emits no crt-list for them and the
+  #     bind must not reference a file that does not exist; the
+  #     listener has no socket, which is what the
+  #     `GatewayInvalidTLSConfiguration` contract (`Programmed=False`,
+  #     no traffic) requires.
   #   * Non-HTTPS listeners. HTTP listeners flow through the chart-
   #     static `bind *:<httpPort>` path. TLS-Passthrough flows
   #     through `frontend ssl-tcp`. TLS-Terminate non-default ports
@@ -50,89 +43,17 @@ templateSnippets:
     requires: [gateways]
     template: |
       {%- import "util-ssl-bind-options-for-crtlist" for SSLBindOptionsForCrtlist %}
-      {%- import "util-gateway-listener-tls-options" for TLSOptionsSuffix, TLSOptionsInjection %}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn %}
-      {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
-      {%- import "util-resource-helpers" for
-          ResourceNamespace, ResourceName,
-          ListenerKey, ListenerProtocol, ListenerName,
-          ResolveCertRefKey %}
       {{ render "util-gateway-pod-port-allocator" -}}
-      {{ render "util-tls-cert-by-secret" -}}
-      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {#- comma-ok: the producer (features-110-gateway-frontend-mtls) may be
-          stripped on clusters without its required kinds; nil map reads are
-          safe and mean "no mTLS config resolved". -#}
-      {%- var mtlsBlocked, _ = gf["mtlsBlockedListeners"].(map[string]any) %}
-      {%- var perListenerMTLS, _ = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
-      {#- Same cert-resolvability gate phase 2 (16-crtlist-per-listener)
-          uses: drop the bind when the listener's cert ref didn't
-          resolve. Without this gate, the bind references a crt-list
-          file phase 2 never emitted (because
-          `features-100-gateway-tls` skipped the missing/malformed
-          Secret), HAProxy's parser errors on the missing file, and
-          the entire reconcile aborts in semantic validation — taking
-          the status patches for every Gateway in the cluster down
-          with it. -#}
-      {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
-      {%- var gatewayResources = map[string]any{} -%}
-      {%- for _, gatewayResource := range incremental_values("gateway-listener-state", "resources") -%}
-        {%- gatewayResources[dig_string(gatewayResource, "", "metadata", "namespace") + "/" +
-          dig_string(gatewayResource, "", "metadata", "name")] = gatewayResource -%}
-      {%- end -%}
-        {%- for _, listener := range incremental_values("gateway-listener-state", "listeners") %}
-          {%- var gwNs = dig_string(listener, "", "gatewayNamespace") %}
-          {%- var gwName = dig_string(listener, "", "gatewayName") %}
-          {%- if gwNs != "" && gwName != "" %}
-              {%- if dig_string(listener, "", "protocol") == "HTTPS" %}
-                {%- var lName = dig_string(listener, "", "name") %}
-                {%- var lPort = toint(dig(listener, "port") | fallback(0)) %}
-                {%- var isBlocked = mtlsBlocked[ListenerKey(gwNs, gwName, lName)] != nil %}
-                {#- Does the listener's cert ref resolve? Same path
-                    phase 2 walks: take the FIRST entry of
-                    `tls.certificateRefs`, look it up by
-                    `<crNs>/<crName>` in the shared cert registry.
-                    Missing → phase 2 skipped emission → we must too. -#}
-                {%- var certKey = ResolveCertRefKey(listener, gwNs) %}
-                {%- var certResolved = certKey != "" && certBySecret[certKey] != nil %}
-                {%- if lName != "" && lPort > 0 && !isBlocked && certResolved %}
-                  {%- var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort) %}
-                  {%- var podPort = lPort %}
-                  {%- if val, ok := allocations[allocKey]; ok %}
-                    {%- podPort = toint(val) %}
-                  {%- end %}
-                  {%- var crtlist = CrtlistName(gwNs, gwName, lName) %}
-                  {#- AllowInsecureFallback (verify_mode == "optional"):
-                      complete the TLS handshake even when the client
-                      cert fails CA validation (the Gateway-API spec
-                      requires this; HAProxy's default `verify
-                      optional` behaviour aborts on validation
-                      failure). The lift comes from bind-scope
-                      `ca-ignore-err all crt-ignore-err all`. With
-                      per-listener binds these flags are scoped to ONE
-                      Gateway listener, so a sibling listener that
-                      wants strict `verify required` keeps its
-                      strictness intact. -#}
-                  {%- var ignoreErrSuffix = "" %}
-                  {%- var mtlsCfg = perListenerMTLS[gwNs + "/" + gwName + "/" + lName] %}
-                  {%- if mtlsCfg != nil %}
-                    {%- var cfg = mtlsCfg.(map[string]any) %}
-                    {%- if tostring(cfg["verify_mode"]) == "optional" %}
-                      {%- ignoreErrSuffix = " ca-ignore-err all crt-ignore-err all" %}
-                    {%- end %}
-                  {%- end %}
-                  {%- var tlsInj = TLSOptionsInjection(listener) %}
-                  {%- if tlsInj != "" %}
-                    {%- var gw = gatewayResources[gwNs + "/" + gwName] %}
-                    {{- WebhookRejectOrWarn(gw, "InvalidTLSOptions", "Gateway " + gwNs + "/" + gwName + " listener " + lName + " has a tls.options value containing " + tlsInj + ", which would break out of the bind directive; the listener is not applied. Remove whitespace, quotes and control characters from the TLS min/max-version and cipher-suites values.") -}}
-                    {%- continue %}
-                  {%- end %}
-      bind *:{{ podPort }}{{ SSLBindOptionsForCrtlist(crtlist) }}{{ ignoreErrSuffix }}{{ TLSOptionsSuffix(listener) }}
-                {%- end %}
-              {%- end %}
-          {%- end %}
+      {{- render "gateway-https-listeners-100-gateway" -}}
+      {%- for _, entry := range incremental_values("gateway-https-listeners", "listeners") %}
+        {%- var injection = dig_string(entry, "", "injection") %}
+        {%- if injection != "" %}
+          {{- WebhookRejectOrWarn(dig(entry, "gateway"), "InvalidTLSOptions", "Gateway " + dig_string(entry, "", "gatewayNamespace") + "/" + dig_string(entry, "", "gatewayName") + " listener " + dig_string(entry, "", "listenerName") + " has a tls.options value containing " + injection + ", which would break out of the bind directive; the listener is not applied. Remove whitespace, quotes and control characters from the TLS min/max-version and cipher-suites values.") -}}
+          {%- continue %}
         {%- end %}
+      bind *:{{ toint(dig(entry, "podPort")) }}{{ SSLBindOptionsForCrtlist(dig_string(entry, "", "crtlist")) }}{{ dig_string(entry, "", "ignoreErr") }}{{ dig_string(entry, "", "tlsSuffix") }}
+      {%- end %}
 
   # ============================================================================
   # Per-Gateway HTTP bind emission (HTTP sibling of the HTTPS bind above)
@@ -165,34 +86,45 @@ templateSnippets:
   # Sorts AFTER `http-bind-extra-050-gateway-multi-port-bind` (which
   # binds non-default HTTP *listener* ports for pinned/static paths).
   # ============================================================================
+  # One `bind` line per (Gateway, HTTP listener port), published per Gateway so an
+  # unrelated change replays the cached lines instead of re-walking every listener (#226).
+  gateway-http-binds-100-gateway:
+    requires: [gateways]
+    incremental:
+      source: gateways
+      group: gateway-http-binds
+      consumes: [gateway-pod-port-allocations]
+      effects: [publishValue]
+    template: |-
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil && namespace != "" && name != "" {
+          var gatewayKey = namespace + "/" + name
+          var seenPort = map[int]bool{}
+          var binds = ""
+          for _, listener := range gateway.Spec.Listeners {
+            var listenerPort = toint(listener.Port)
+            if listener.Protocol != "HTTP" || listener.Name == "" || listenerPort <= 0 || seenPort[listenerPort] {
+              continue
+            }
+            seenPort[listenerPort] = true
+            var podPort = listenerPort
+            var allocated, found = shared.Select("gateway-pod-port-allocations", "ports",
+              gatewayKey + ":" + listener.Name + ":" + tostring(listenerPort))
+            if found { podPort = toint(allocated) }
+            binds = binds + "\nbind *:" + tostring(podPort)
+          }
+          if binds != "" {
+            show shared.PublishRanked("binds", gatewayKey, gatewayKey, binds)
+          }
+        }
+      %%}
+
   http-bind-extra-100-per-gateway:
     requires: [gateways]
     template: |
       {{ render "util-gateway-pod-port-allocator" -}}
-      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
-      {%- var seenPortsByGateway = map[string]map[int]bool{} %}
-        {%- for _, listener := range incremental_values("gateway-listener-state", "listeners") %}
-          {%- var gwNs = dig_string(listener, "", "gatewayNamespace") %}
-          {%- var gwName = dig_string(listener, "", "gatewayName") %}
-          {%- if gwNs != "" && gwName != "" %}
-              {%- if dig_string(listener, "", "protocol") == "HTTP" %}
-                {%- var lName = dig_string(listener, "", "name") %}
-                {%- var lPort = toint(dig(listener, "port") | fallback(0)) %}
-                {%- var gatewayKey = gwNs + "/" + gwName %}
-                {%- var seenPort = seenPortsByGateway[gatewayKey] %}
-                {%- if seenPort == nil %}
-                  {%- seenPort = map[int]bool{} %}
-                  {%- seenPortsByGateway[gatewayKey] = seenPort %}
-                {%- end %}
-                {%- if lName != "" && lPort > 0 && !seenPort[lPort] %}
-                  {%- seenPort[lPort] = true %}
-                  {%- var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort) %}
-                  {%- var podPort = lPort %}
-                  {%- if val, ok := allocations[allocKey]; ok %}
-                    {%- podPort = toint(val) %}
-                  {%- end %}
-      bind *:{{ podPort }}
-                {%- end %}
-              {%- end %}
-          {%- end %}
-        {%- end %}
+      {{- render "gateway-http-binds-100-gateway" -}}
+      {{- incremental_ranked_text_fragment_join("gateway-http-binds", "binds", "") }}

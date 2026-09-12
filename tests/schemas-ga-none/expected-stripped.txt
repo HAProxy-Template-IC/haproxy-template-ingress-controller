@@ -56,6 +56,7 @@ test-gateway-header-name-shared-across-routes
 test-gateway-http-listener-isolation
 test-gateway-httproute-ssl-passthrough
 test-gateway-https-listener-dual-cert
+test-gateway-https-listener-cross-namespace-cert-without-grant-no-bind
 test-gateway-https-listener-mtls-unresolved-ca-no-bind
 test-gateway-https-listener-mtls-unresolved-ca-status-conditions
 test-gateway-https-listener-with-invalid-cert-no-bind

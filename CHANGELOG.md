@@ -36,8 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `RequestRedirect` and `URLRewrite` filters on HTTPRoute `backendRefs` apply per backend; a rule-level filter of the same type takes precedence.
 
+#### Changed
+
+- Gateway per-listener work (frontend client-certificate policies, HTTP binds, extra listener-port binds, Service ports, bind flags, and pod-port map lines) is computed once per Gateway and replayed for unrelated changes instead of being recomputed for every Gateway on every render.
+
 #### Fixed
 
+- A Gateway HTTPS listener whose certificateRef is not permitted by a ReferenceGrant no longer binds or emits a crt-list; the data plane now follows the listener's own ResolvedRefs verdict instead of a cluster-wide certificate index.
 - HAProxy pods keep accepting connections for 5 s after termination starts (`haproxy.lifecycle.preStop`), so a pod deletion or rolling update no longer refuses connections while kube-proxy still routes to the pod.
 - Gateway names longer than 63 bytes no longer stall status publication for every Gateway: the per-Gateway Service label and the derived certificate file names are hash-bounded to their limits.
 - BackendTLSPolicy status lists the Gateways of consuming GRPCRoutes and TLSRoutes, not only HTTPRoutes, and matches consumers by the backendRef namespace.
