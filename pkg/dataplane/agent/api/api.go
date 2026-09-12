@@ -33,6 +33,9 @@ const (
 	PathPlan    = "/v1/plan"
 	PathHealthz = "/healthz"
 	PathReadyz  = "/readyz"
+	// PathDrain is served on the drain unix socket only: it holds the preStop
+	// hook until the worker sees no new connection for the quiet period.
+	PathDrain = "/drain"
 )
 
 // PlanStored answers a PUT of the plan blob: the plan the blob now describes,

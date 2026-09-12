@@ -63,6 +63,9 @@ type options struct {
 	reloadIntervalMin time.Duration
 	baseDir           string
 	model             *haproxytest.HAProxy
+	drainSocket       string
+	drainQuietPeriod  time.Duration
+	drainMaxWait      time.Duration
 }
 
 func newHarness(tb testing.TB, opts ...func(*options)) *harness {
@@ -81,18 +84,22 @@ func newHarness(tb testing.TB, opts ...func(*options)) *harness {
 	t.Cleanup(cancel)
 
 	agent, err := server.New(ctx, &server.Config{
-		BaseDir:           settings.baseDir,
-		ConfigFile:        configPath,
-		MasterSocket:      model.MasterSocket(),
-		WorkerSocket:      model.WorkerSocket(),
-		StateFile:         ".haptic-agent.json",
-		Listen:            "127.0.0.1:0",
-		ReloadIntervalMin: settings.reloadIntervalMin,
-		Username:          testUser,
-		Password:          testPassword,
-		AgentVersion:      "test",
-		Logger:            slog.New(slog.DiscardHandler),
-		Registry:          registry,
+		BaseDir:              settings.baseDir,
+		ConfigFile:           configPath,
+		MasterSocket:         model.MasterSocket(),
+		WorkerSocket:         model.WorkerSocket(),
+		StateFile:            ".haptic-agent.json",
+		Listen:               "127.0.0.1:0",
+		ReloadIntervalMin:    settings.reloadIntervalMin,
+		Username:             testUser,
+		Password:             testPassword,
+		AgentVersion:         "test",
+		Logger:               slog.New(slog.DiscardHandler),
+		Registry:             registry,
+		DrainSocket:          settings.drainSocket,
+		DrainQuietPeriod:     settings.drainQuietPeriod,
+		DrainMaxWait:         settings.drainMaxWait,
+		DrainIgnoreFrontends: []string{"status"},
 	})
 	require.NoError(t, err)
 
@@ -124,6 +131,10 @@ func withReloadInterval(d time.Duration) func(*options) {
 
 func withBaseDir(dir string) func(*options) {
 	return func(o *options) { o.baseDir = dir }
+}
+
+func withDrain(socket string, quiet, bound time.Duration) func(*options) {
+	return func(o *options) { o.drainSocket, o.drainQuietPeriod, o.drainMaxWait = socket, quiet, bound }
 }
 
 func withModel(model *haproxytest.HAProxy) func(*options) {

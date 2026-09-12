@@ -31,6 +31,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/cli"
@@ -64,6 +65,15 @@ type Config struct {
 	AgentVersion  string
 	Logger        *slog.Logger
 	Registry      *prometheus.Registry
+	// DrainSocket is the unix socket path of GET /drain; empty disables it.
+	DrainSocket string
+	// DrainQuietPeriod ends the drain once no traffic frontend accepted a new
+	// connection for this long; DrainMaxWait bounds the whole drain.
+	DrainQuietPeriod time.Duration
+	DrainMaxWait     time.Duration
+	// DrainIgnoreFrontends names frontends whose connections are not traffic
+	// (probes, scrapes); the chart passes its status frontend.
+	DrainIgnoreFrontends []string
 }
 
 // Server owns the tree, the runtime plumbing and the apply state machine.
@@ -92,6 +102,15 @@ type Server struct {
 	// baselineInvalidations counts how often the running worker became
 	// unexplained, so an apply can tell whether one happened underneath it.
 	baselineInvalidations uint64
+
+	// drainCounter reads the traffic frontends' accepted-connection total;
+	// drainPoll is how often the drain re-reads it. Both containers' preStop
+	// hooks call /drain at the same time, so drainFlight shares one run and
+	// drainStop ends it when the agent shuts down.
+	drainCounter func(ignore map[string]bool) (uint64, error)
+	drainPoll    time.Duration
+	drainFlight  singleflight.Group
+	drainStop    chan struct{}
 	// appliedPlan is the opaque blob of the plan the pod applied; the state
 	// file names the plan it belongs to, so a stale one is never handed out.
 	appliedPlan []byte
@@ -130,7 +149,16 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	if cfg.ReloadTimeout < 0 || cfg.ReloadTimeout > DefaultReloadTimeout {
 		return nil, fmt.Errorf("--reload-timeout must be between 0 and %s, got %s", DefaultReloadTimeout, cfg.ReloadTimeout)
 	}
-	store, err := files.NewStore(cfg.BaseDir, cfg.Logger, cfg.MasterSocket, cfg.WorkerSocket)
+	if err := validateDrain(cfg); err != nil {
+		return nil, err
+	}
+	// The drain socket lives in the tree the store owns, like the runtime
+	// sockets; reserving it keeps the store from treating it as a stray file.
+	reserved := []string{cfg.MasterSocket, cfg.WorkerSocket}
+	if cfg.DrainSocket != "" {
+		reserved = append(reserved, cfg.DrainSocket)
+	}
+	store, err := files.NewStore(cfg.BaseDir, cfg.Logger, reserved...)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +180,10 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 		metrics:    metrics,
 		states:     newStateStore(store.BaseDir(), cfg.StateFile),
 		reloadWake: make(chan struct{}, 1),
+		drainPoll:  drainPollInterval,
+		drainStop:  make(chan struct{}),
 	}
+	s.drainCounter = runtimeClient.FrontendConnections
 	if s.state, err = s.states.load(); err != nil {
 		return nil, err
 	}
@@ -196,6 +227,9 @@ func (s *Server) Start(ctx context.Context) error {
 	group.Go(func() error { return s.deferrals.Start(groupCtx) })
 	group.Go(func() error { return s.pacer(groupCtx) })
 	group.Go(func() error { return s.initialise(groupCtx) })
+	if s.cfg.DrainSocket != "" {
+		group.Go(func() error { return s.serveDrain(groupCtx) })
+	}
 	group.Go(func() error {
 		if err := s.http.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err

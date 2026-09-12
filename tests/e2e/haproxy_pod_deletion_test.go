@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
@@ -18,14 +20,17 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
 
-// The probe goes through the Service, so it exercises the window between a
-// pod's termination and kube-proxy dropping its endpoint; the chart's preStop
-// sleep keeps the listeners open across it (#224). Serial: it takes a replica
-// out of the fleet and waits for the fleet to settle before returning.
+// Deleting a pod runs the chart's drain hook and then HAProxy's own soft stop:
+// the agent holds the hook until no new connection reaches the pod, the pod's
+// listeners stay open for that time, a request in flight on the deleted pod
+// completes, and the probe stream through the Service stays clean. kube-proxy
+// in kind drops the endpoint faster than the probe can catch, so the
+// endpoint-deprogramming race itself does not reproduce here. Serial: it takes
+// a replica out of the fleet and waits for the fleet to settle before returning.
 func TestHAProxyPodDeletionZeroDowntime(t *testing.T) {
 	const host = "haproxy-pod-deletion.localdev.me"
-	feature := features.New("HAProxy: deleting a pod refuses no connection").
-		Assess("the probe stream stays clean across the deletion", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	feature := features.New("HAProxy: deleting a pod drains and soft-stops").
+		Assess("the drain holds the listeners, the request in flight completes and the probe stream stays clean", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			t.Helper()
 			client, err := cfg.NewClient()
 			require.NoError(t, err)
@@ -59,12 +64,23 @@ func TestHAProxyPodDeletionZeroDowntime(t *testing.T) {
 			t.Cleanup(finish)
 
 			time.Sleep(2 * time.Second)
+			inFlight := holdRequestOnPod(ctx, victim, host)
 			deleted := time.Now()
 			require.NoError(t, clientset.CoreV1().Pods(ControllerNamespace).Delete(ctx, victim, metav1.DeleteOptions{}))
 			served := servedAfterDeletion(ctx, victim, deleted)
-			require.GreaterOrEqualf(t, served, 4*time.Second,
-				"%s stopped answering %s after its deletion; the preStop sleep must keep its listeners open", victim, served)
+			// The chart's quiet period is 2 s: with nothing routed to the pod any
+			// more, the drain hook holds the listeners for at least that long.
+			require.GreaterOrEqualf(t, served, 1500*time.Millisecond,
+				"%s stopped answering %s after its deletion; the drain hook must hold its listeners open", victim, served)
+			select {
+			case result := <-inFlight:
+				require.NoErrorf(t, result.err, "the request in flight on %s during its deletion was cut (%s)", victim, result.status)
+				require.Equalf(t, "200", result.status, "the request in flight on %s during its deletion did not complete", victim)
+			case <-time.After(40 * time.Second):
+				t.Fatalf("the request in flight on %s during its deletion never returned", victim)
+			}
 			waitForPodGone(ctx, t, clientset, victim)
+			requireNoFailedPreStopHook(ctx, t, clientset, victim)
 			require.NoError(t, waitForDeploymentRolloutComplete(ctx, client, ControllerNamespace, HAProxyDeploymentName, 2*time.Minute))
 			settled := waitForQuietFleet(ctx, t, clientset)
 			require.Len(t, settled, len(pods))
@@ -82,12 +98,49 @@ func TestHAProxyPodDeletionZeroDowntime(t *testing.T) {
 	testEnv.Test(t, feature)
 }
 
+type heldRequest struct {
+	status string
+	err    error
+}
+
+// holdRequestOnPod opens a request on the pod's own listener whose backend
+// answers 8 s later, after the drain has ended, so the response arrives only
+// if the soft stop keeps the established connection alive. Established before
+// the deletion is issued.
+func holdRequestOnPod(ctx context.Context, pod, host string) <-chan heldRequest {
+	done := make(chan heldRequest, 1)
+	go func() {
+		out, err := execInHAProxyPod(ctx, pod, "haproxy", "curl",
+			"-sS", "--connect-timeout", "2", "--max-time", "30",
+			"-o", "/dev/null", "-w", "%{http_code}",
+			"-H", "Host: "+host, "http://127.0.0.1/?echo_time=8000")
+		done <- heldRequest{status: strings.TrimSpace(out), err: err}
+	}()
+	time.Sleep(time.Second)
+	return done
+}
+
+// requireNoFailedPreStopHook fails when kubelet recorded that the drain hook
+// failed or timed out on the deleted pod.
+func requireNoFailedPreStopHook(ctx context.Context, t *testing.T, cs kubernetes.Interface, pod string) {
+	t.Helper()
+	events, err := cs.CoreV1().Events(ControllerNamespace).List(ctx, metav1.ListOptions{
+		FieldSelector: fields.AndSelectors(
+			fields.OneTermEqualSelector("involvedObject.name", pod),
+			fields.OneTermEqualSelector("reason", "FailedPreStopHook"),
+		).String(),
+	})
+	require.NoError(t, err)
+	for i := range events.Items {
+		t.Errorf("the drain hook failed on %s: %s", pod, events.Items[i].Message)
+	}
+}
+
 // servedAfterDeletion polls the deleted pod's own stats port and returns how
-// long it kept answering, up to the preStop budget it must cover. This is the
-// deterministic half: kube-proxy in kind drops the endpoint faster than the
-// Service probe can catch, so the race itself does not reproduce there.
+// long it kept answering, up to the drain bound. The stats frontend is not
+// traffic for the drain, so this polling does not extend it.
 func servedAfterDeletion(ctx context.Context, pod string, deleted time.Time) time.Duration {
-	for time.Since(deleted) < 5*time.Second {
+	for time.Since(deleted) < 12*time.Second {
 		callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		_, err := apiProxyGet(callCtx, pod, HAProxyStatsPort, "metrics")
 		cancel()

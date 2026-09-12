@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Fixed
 
 - A Gateway HTTPS listener whose certificateRef is not permitted by a ReferenceGrant no longer binds or emits a crt-list; the data plane now follows the listener's own ResolvedRefs verdict instead of a cluster-wide certificate index.
-- HAProxy pods keep accepting connections for 5 s after termination starts (`haproxy.lifecycle.preStop`), so a pod deletion or rolling update no longer refuses connections while kube-proxy still routes to the pod.
+- HAProxy pods drain before their soft stop: the agent's preStop hook (`haproxy.drain`) holds termination until no new connection has reached the pod for `quietPeriodSeconds` (bounded by `maxWaitSeconds`), so a pod deletion or rolling update no longer refuses the connections kube-proxy still routes to it; HAProxy's own SIGUSR1 soft stop then finishes the established ones.
 - Gateway names longer than 63 bytes no longer stall status publication for every Gateway: the per-Gateway Service label and the derived certificate file names are hash-bounded to their limits.
 - BackendTLSPolicy status lists the Gateways of consuming GRPCRoutes and TLSRoutes, not only HTTPRoutes, and matches consumers by the backendRef namespace.
 - BackendTLSPolicy applies to GRPCRoute backends targeted by port name and re-encrypts Terminate-listener TLSRoute backends; TLS h2 backends negotiate `alpn h2`.

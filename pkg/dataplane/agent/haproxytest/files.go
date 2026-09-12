@@ -286,8 +286,19 @@ func (h *HAProxy) show(rest, _ string) reply {
 		return h.showSSL(args)
 	case "servers":
 		return h.showServers(args)
+	case "stat":
+		return h.showStat()
 	}
 	return failure("Unknown command 'show %s'.", object)
+}
+
+// showStat answers the frontend rows the drain reads: a probe frontend and one
+// traffic frontend whose accepted-connection counter tests advance.
+func (h *HAProxy) showStat() reply {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return dump(fmt.Sprintf("# pxname,svname,conn_tot,\nstatus,FRONTEND,%d,\nhttp-tcp,FRONTEND,%d,\n",
+		h.m.ProbeConnections, h.m.TrafficConnections))
 }
 
 func (h *HAProxy) showMap(path string) reply {

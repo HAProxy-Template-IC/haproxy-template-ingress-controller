@@ -258,9 +258,16 @@ spec:
               port: stats
             initialDelaySeconds: 5
             periodSeconds: 5
-          {{- with $haproxy.lifecycle }}
+          {{- if $haproxy.lifecycle }}
           lifecycle:
-            {{- toYaml . | nindent 12 }}
+            {{- toYaml $haproxy.lifecycle | nindent 12 }}
+          {{- else if $haproxy.drain.enabled }}
+          # The agent answers once no new connection reaches the pod; only then
+          # does kubelet's SIGUSR1 run HAProxy's own soft stop.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["curl", "-sS", "--connect-timeout", "2", "--max-time", "{{ add (int $haproxy.drain.maxWaitSeconds) 5 }}", "--unix-socket", "{{ dir $dataplaneConfig.mapsDir }}/haptic-drain.sock", "http://drain/drain"]
           {{- end }}
           resources:
             {{- toYaml $haproxy.resources | nindent 12 }}
@@ -288,12 +295,24 @@ spec:
             - --worker-socket=haproxy-worker.sock
             - --listen=:{{ $ports.dataplane }}
             - --metrics-listen=:{{ $ports.agentMetrics }}
+            - --drain-socket={{ if $haproxy.drain.enabled }}haptic-drain.sock{{ end }}
+            - --drain-quiet-period={{ int $haproxy.drain.quietPeriodSeconds }}s
+            - --drain-max-wait={{ int $haproxy.drain.maxWaitSeconds }}s
+            - --drain-ignore-frontend=status
             {{- with $dataplaneConfig.minDeploymentInterval }}
             - --reload-interval-min={{ . }}
             {{- end }}
             {{- with $dataplaneConfig.reloadVerificationTimeout }}
             - --reload-timeout={{ . }}
             {{- end }}
+          {{- if $haproxy.drain.enabled }}
+          # kubelet stops all containers at once; this hook keeps the agent, and
+          # with it the drain socket, alive until the HAProxy container's drain ended.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/usr/local/bin/haptic", "agent", "drain", "--socket", "{{ dir $dataplaneConfig.mapsDir }}/haptic-drain.sock", "--timeout", "{{ add (int $haproxy.drain.maxWaitSeconds) 5 }}s"]
+          {{- end }}
           env:
             {{- range $env := list (dict "name" "DATAPLANE_USERNAME" "key" "dataplane_username") (dict "name" "DATAPLANE_PASSWORD" "key" "dataplane_password") }}
             - name: {{ $env.name }}

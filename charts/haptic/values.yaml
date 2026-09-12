@@ -1714,12 +1714,20 @@ haproxy:
   sidecars: []
   # - name: log-shipper
   #   image: fluent/fluent-bit:latest
-  # Container lifecycle hooks for the HAProxy container. The preStop sleep keeps a
-  # terminating pod accepting connections until kube-proxy stops routing to it.
-  lifecycle:
-    preStop:
-      exec:
-        command: ["sleep", "5"]
+  # Termination: kubelet stops HAProxy with SIGUSR1, HAProxy's own soft stop
+  # (listeners unbind, in-flight connections finish, hardStopAfter caps the
+  # drain). Before that signal both the HAProxy and the agent container hold
+  # their preStop hook on the agent's drain socket until no new connection has
+  # reached the pod for quietPeriodSeconds, which is when kube-proxy has stopped
+  # routing to it, and never longer than maxWaitSeconds. maxWaitSeconds plus
+  # hardStopAfter must fit in terminationGracePeriodSeconds.
+  drain:
+    enabled: true
+    quietPeriodSeconds: 2
+    maxWaitSeconds: 10
+  # Container lifecycle hooks for the HAProxy container; when set they replace
+  # the drain hook.
+  lifecycle: {}
   # Deployment update strategy
   updateStrategy:
     type: RollingUpdate
