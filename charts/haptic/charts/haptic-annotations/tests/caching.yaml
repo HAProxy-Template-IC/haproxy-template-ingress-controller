@@ -178,7 +178,9 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "timeout server 2000ms"}
       - type: contains
         target: haproxy.cfg
-        pattern: "(?ms)^backend varnish_cache from haptic-be-\\w+$.*?timeout server 0$"
+        # `timeout server 0` is a defaults-eligible directive, so base carries it in
+        # the cache backend's profile rather than in its section.
+        pattern: "(?ms)^defaults haptic-be-\\w+ from haptic-base$(?:\\n[ \\t]+[^\\n]*)*?\\n[ \\t]+timeout server 0$"
       - {type: contains, target: haproxy.cfg, pattern: "retries 1"}
       - {type: contains, target: haproxy.cfg, pattern: "retry-on conn-failure empty-response response-timeout 425"}
       - {type: contains, target: haproxy.cfg, pattern: "option redispatch 1"}

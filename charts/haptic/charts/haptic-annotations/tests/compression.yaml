@@ -19,8 +19,9 @@ _fx:
 validationTests:
   test-haptic-compression:
     description: >-
-      compress-enable emits backend compression directives with the configured
-      algorithm and MIME type list.
+      compress-enable puts the configured algorithm and MIME type list in the
+      backend's profile; the filter is on the frontend and the backend section
+      stays plain (dynamic on 3.4).
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -41,6 +42,13 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "compression algo gzip"}
       - {type: contains, target: haproxy.cfg, pattern: "compression type text/html application/json"}
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^frontend http_frontend$(?:\n(?:[ \t]+[^\n]*)?)*?\n[ \t]+filter compression$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$(?:\n[ \t]+[^\n]*)*?\n[ \t]+compression algo gzip$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$(?:\n[ \t]+[^\n]*)*?\n[ \t]+compression type text/html application/json$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_gz-ingress_svc_echo_80 from haptic-be-\w+$\n[ \t]+guid [^\n]+\n(?:[ \t]+#[^\n]*\n)*[ \t]+server '}
+      # No filter in the backend: the frontend's filter compresses through the
+      # profile's settings, so nothing here keeps the backend structural.
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^[ \t]+filter compression$\n(?:[ \t]+[^\n]*\n)*?[ \t]+compression algo'}
 
   test-haptic-compression-governance-default:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
@@ -61,6 +69,8 @@ validationTests:
       - { type: contains, target: haproxy.cfg, pattern: 'backend default_gz-default_svc_echo_80' }
       - { type: contains, target: haproxy.cfg, pattern: 'compression algo gzip' }
       - { type: contains, target: haproxy.cfg, pattern: 'filter compression' }
+      # The default route is plain: on 3.4 it is added and removed at runtime.
+      - { type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_gz-default_svc_echo_80 from haptic-be-\w+$\n[ \t]+guid [^\n]+\n(?:[ \t]+#[^\n]*\n)*[ \t]+server ' }
 
   test-haptic-compression-governance-optout:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
@@ -87,6 +97,10 @@ validationTests:
       # RE2, which has no lookahead to stop it at the next `backend` line, so
       # `.*?^  compression algo` would happily match a LATER backend's block.
       - { type: not_contains, target: haproxy.cfg, pattern: '# haptic/compression \(default/gz-optout\)' }
+      # The only Ingress opts out, so no profile carries compression settings; the
+      # frontend filter is still declared and stays inert for this route.
+      - { type: not_contains, target: haproxy.cfg, pattern: 'compression algo' }
+      - { type: contains, target: haproxy.cfg, pattern: '(?ms)^frontend http_frontend$(?:\n(?:[ \t]+[^\n]*)?)*?\n[ \t]+filter compression$' }
 
   test-haptic-compression-governance-deterministic:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'

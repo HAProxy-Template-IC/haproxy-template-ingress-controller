@@ -467,6 +467,26 @@ Not every extension point inherits the caller's locals — this is the most comm
 {%- end %}
 ```
 
+**What a backend directive costs — the three lanes.** Base's `PrepareBackend`
+sorts every line a `backend-directives-*` snippet renders before it decides a
+backend's shape (`charts/haptic/charts/base/library.yaml`, `ProfileDirective`):
+
+| Lane | What lands there | Reload cost on HAProxy 3.4 |
+|---|---|---|
+| Comment (`# ...`) | Recorded on the plan record so a change explains the text | none, never shapes the backend |
+| Profile | `timeout *`, `fullconn`, `retries`, `retry-on`, `compression *`, `cookie`, `dynamic-cookie-key`, `option httpchk`, `http-check`; also `serverOpts["profile"]`, `balance`, `hashType` | none while a profile with the same values exists; the first route with a new combination reloads once to add it |
+| Body | everything else: `filter`, `stick-table`, `http-request`/`http-response` rules, `acl`, raw injections | the backend is structural: add and remove reload |
+
+`serverOpts["flags"]` (`default-server` keywords `add server` accepts) and the
+per-backend maps (`backend-timeouts.map`, `ing-reshdr.map`) are runtime-only.
+So before a new snippet emits a line, ask which lane it lands in: a setting HAProxy
+accepts in a `defaults` section costs nothing, a map-driven uniform line costs
+nothing, and a per-route rule costs the route its dynamic shape. A `filter`
+cannot live in a defaults, which is why compression's filter sits on the
+frontends (`frontend-filters-110-haptic-compression-filter`) while its settings
+ride the profile; a body that declares another filter next to inherited
+compression gets `filter compression` prepended by base.
+
 ### Snippet Priority Numbering
 
 Snippets use numeric prefixes (e.g., `backends-500-ingress`) to control execution order within `render_glob` patterns. Lower numbers execute first.

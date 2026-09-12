@@ -115,6 +115,10 @@ func TestIngressRouteAddRemoveIsReloadFree(t *testing.T) {
 
 				applyIngressFilteredRoute(ctx, t, namespace, cycleName, cycleHost, cycleSvc, want)
 				latency := waitForRouteServing(ctx, t, cs, http, cycleHost, "/", respHeader, want)
+				// The runtime-added backend inherits the default compression from
+				// its profile: the route is dynamic and still compresses.
+				http.GET(cycleHost, "/").WithHeader("Accept-Encoding", "gzip").
+					ExpectHeader(t, "Content-Encoding", "gzip")
 
 				entries := mapEntriesFrom(showMap(ctx, t, cs, "maps/ing-reshdr.map"))
 				assertMapHasValue(t, entries, want, "maps/ing-reshdr.map")
@@ -264,16 +268,14 @@ func waitBackendRuntime(ctx context.Context, t *testing.T, cs kubernetes.Interfa
 
 // ingressFilterAnnotations are the haproxytech per-route directives C13 moved
 // onto the runtime lane: a response header that lands in a backend-keyed map,
-// and a server timeout that lands in the shared profile. Compression is turned
-// off: haptic-annotations enables it by default, and a compression `filter`
-// cannot live in a named defaults, so it makes the backend structural — a route
-// that carries it reloads on add/remove by design (appendix §E). The dynamic
-// lane this suite proves is for backends whose body is empty.
+// and a server timeout that lands in the shared profile. Compression stays at
+// its default (on): the compression filter is on the frontend and the route's
+// algorithm and types are inherited from the shared profile (#230), so the
+// backend body stays empty and the cycle proves the default route is dynamic.
 func ingressFilterAnnotations(respValue string) map[string]string {
 	return map[string]string{
-		"haproxy.org/response-set-header":    reloadFreeRespHeader + " " + respValue,
-		"haproxy.org/timeout-server":         "30s",
-		"haproxy-haptic.org/compress-enable": "false",
+		"haproxy.org/response-set-header": reloadFreeRespHeader + " " + respValue,
+		"haproxy.org/timeout-server":      "30s",
 	}
 }
 
@@ -292,7 +294,6 @@ metadata:
   annotations:
     haproxy.org/response-set-header: "%s %s"
     haproxy.org/timeout-server: "30s"
-    haproxy-haptic.org/compress-enable: "false"
 spec:
   ingressClassName: haptic
   rules:
