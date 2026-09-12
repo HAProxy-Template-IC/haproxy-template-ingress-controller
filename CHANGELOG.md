@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Configuration assembly reuses unchanged document subtrees when fragments are added or removed, reducing allocations.
 
+### Fixed
+
+- Templates can append nil values and nil spreads without compiler or runtime panics.
+
 ### Security
 
 - SPOA plugin signature verification now requires the exact pinned release tag, not any tag from the upstream project.
