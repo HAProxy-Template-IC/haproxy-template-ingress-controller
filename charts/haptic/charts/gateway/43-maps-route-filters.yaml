@@ -212,6 +212,69 @@ templateSnippets:
               publishLine(bucket[:3], keyPrefix + "|del|" + toLower(headerName) + " 1")
             }
           }
+          var publishRedirect = func(filter any, key string) {
+            var redirect = dig(filter, "requestRedirect")
+            if redirect == nil { return }
+            var code = toint(dig(redirect, "statusCode") | fallback(302))
+            if !redirectCodes[tostring(code)] {
+              _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect statusCode is " + tostring(code) + "; the redirect is not applied. Use 301, 302, 303, 307 or 308.")
+              return
+            }
+            var scheme = dig_string(redirect, "", "scheme")
+            if scheme != "" && scheme != "http" && scheme != "https" {
+              _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect scheme is '" + scheme + "'; the redirect is not applied. Use http or https.")
+              return
+            }
+            var host = dig_string(redirect, "", "hostname")
+            if host != "" && !hostOk(host) {
+              _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect hostname '" + host + "' is not a DNS name; the redirect is not applied. Use letters, digits, '-' and '.'.")
+              return
+            }
+            var port = dig_string(redirect, "", "port")
+            if port != "" && (toint(port) < 1 || toint(port) > 65535) {
+              _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect port " + port + " is outside 1-65535; the redirect is not applied.")
+              return
+            }
+            var portPart = ""
+            if port == "" && scheme == "" {
+              portPart = "L"
+            } else if port != "" {
+              var isDefault = (port == "80" && (scheme == "" || scheme == "http")) ||
+                (port == "443" && (scheme == "" || scheme == "https"))
+              if !isDefault { portPart = ":" + port }
+            }
+            var pathSpec = pathFields(dig(redirect, "path"), representative)
+            if dig_string(pathSpec, "", "bad") == "cntrl" {
+              _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect path contains a control character, which would break the redirect target; the redirect is not applied.")
+              return
+            }
+            if dig_string(pathSpec, "", "bad") == "regex" {
+              _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " uses RequestRedirect ReplacePrefixMatch on a RegularExpression path match, which has no prefix to replace; the redirect is not applied. Match on a PathPrefix, or use ReplaceFullPath.")
+              return
+            }
+            publishLine("redirect", key + " " + tostring(code) + "|" + scheme + "|" +
+              queryEscape(host) + "|" + portPart + "|" + dig_string(pathSpec, "", "packed"))
+          }
+          var publishRewrite = func(filter any, key string) {
+            var rewrite = dig(filter, "urlRewrite")
+            if rewrite == nil { return }
+            var host = dig_string(rewrite, "", "hostname")
+            if host != "" && !hostOk(host) {
+              _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + namespace + "/" + name + " URLRewrite hostname '" + host + "' is not a DNS name; the rewrite is not applied. Use letters, digits, '-' and '.'.")
+              return
+            }
+            var pathSpec = pathFields(dig(rewrite, "path"), representative)
+            if dig_string(pathSpec, "", "bad") == "cntrl" {
+              _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + namespace + "/" + name + " URLRewrite path contains a control character, which would break the rewritten path; the rewrite is not applied.")
+              return
+            }
+            if dig_string(pathSpec, "", "bad") == "regex" {
+              _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + namespace + "/" + name + " uses URLRewrite ReplacePrefixMatch on a RegularExpression path match, which has no prefix to replace; the rewrite is not applied. Match on a PathPrefix, or use ReplaceFullPath.")
+              return
+            }
+            publishLine("urlrewrite", key + " " + queryEscape(host) + "|" +
+              dig_string(pathSpec, "", "packed"))
+          }
           var mirrorTargets = []any{}
           var mirrorPercentages = map[string]bool{}
           for _, filter := range filters {
@@ -221,66 +284,9 @@ templateSnippets:
             } else if filterType == "ResponseHeaderModifier" {
               publishModifiers(dig(filter, "responseHeaderModifier"), routeID, "res-rule")
             } else if filterType == "RequestRedirect" && routeKind == "HTTPRoute" {
-              var redirect = dig(filter, "requestRedirect")
-              if redirect == nil { continue }
-              var code = toint(dig(redirect, "statusCode") | fallback(302))
-              if !redirectCodes[tostring(code)] {
-                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect statusCode is " + tostring(code) + "; the redirect is not applied. Use 301, 302, 303, 307 or 308.")
-                continue
-              }
-              var scheme = dig_string(redirect, "", "scheme")
-              if scheme != "" && scheme != "http" && scheme != "https" {
-                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect scheme is '" + scheme + "'; the redirect is not applied. Use http or https.")
-                continue
-              }
-              var host = dig_string(redirect, "", "hostname")
-              if host != "" && !hostOk(host) {
-                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect hostname '" + host + "' is not a DNS name; the redirect is not applied. Use letters, digits, '-' and '.'.")
-                continue
-              }
-              var port = dig_string(redirect, "", "port")
-              if port != "" && (toint(port) < 1 || toint(port) > 65535) {
-                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect port " + port + " is outside 1-65535; the redirect is not applied.")
-                continue
-              }
-              var portPart = ""
-              if port == "" && scheme == "" {
-                portPart = "L"
-              } else if port != "" {
-                var isDefault = (port == "80" && (scheme == "" || scheme == "http")) ||
-                  (port == "443" && (scheme == "" || scheme == "https"))
-                if !isDefault { portPart = ":" + port }
-              }
-              var pathSpec = pathFields(dig(redirect, "path"), representative)
-              if dig_string(pathSpec, "", "bad") == "cntrl" {
-                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " RequestRedirect path contains a control character, which would break the redirect target; the redirect is not applied.")
-                continue
-              }
-              if dig_string(pathSpec, "", "bad") == "regex" {
-                _ = WebhookRejectOrWarn(route, "InvalidRedirect", "HTTPRoute " + namespace + "/" + name + " uses RequestRedirect ReplacePrefixMatch on a RegularExpression path match, which has no prefix to replace; the redirect is not applied. Match on a PathPrefix, or use ReplaceFullPath.")
-                continue
-              }
-              publishLine("redirect", routeID + " " + tostring(code) + "|" + scheme + "|" +
-                queryEscape(host) + "|" + portPart + "|" + dig_string(pathSpec, "", "packed"))
+              publishRedirect(filter, routeID)
             } else if filterType == "URLRewrite" && routeKind == "HTTPRoute" {
-              var rewrite = dig(filter, "urlRewrite")
-              if rewrite == nil { continue }
-              var host = dig_string(rewrite, "", "hostname")
-              if host != "" && !hostOk(host) {
-                _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + namespace + "/" + name + " URLRewrite hostname '" + host + "' is not a DNS name; the rewrite is not applied. Use letters, digits, '-' and '.'.")
-                continue
-              }
-              var pathSpec = pathFields(dig(rewrite, "path"), representative)
-              if dig_string(pathSpec, "", "bad") == "cntrl" {
-                _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + namespace + "/" + name + " URLRewrite path contains a control character, which would break the rewritten path; the rewrite is not applied.")
-                continue
-              }
-              if dig_string(pathSpec, "", "bad") == "regex" {
-                _ = WebhookRejectOrWarn(route, "InvalidURLRewrite", "HTTPRoute " + namespace + "/" + name + " uses URLRewrite ReplacePrefixMatch on a RegularExpression path match, which has no prefix to replace; the rewrite is not applied. Match on a PathPrefix, or use ReplaceFullPath.")
-                continue
-              }
-              publishLine("urlrewrite", routeID + " " + queryEscape(host) + "|" +
-                dig_string(pathSpec, "", "packed"))
+              publishRewrite(filter, routeID)
             } else if filterType == "RequestMirror" {
               var mirror = dig(filter, "requestMirror")
               var backendRef = dig(mirror, "backendRef")
@@ -381,6 +387,10 @@ templateSnippets:
                 publishModifiers(dig(filter, "requestHeaderModifier"), backendKey, "req-be")
               } else if filterType == "ResponseHeaderModifier" {
                 publishModifiers(dig(filter, "responseHeaderModifier"), backendKey, "res-be")
+              } else if filterType == "RequestRedirect" && routeKind == "HTTPRoute" {
+                publishRedirect(filter, backendKey)
+              } else if filterType == "URLRewrite" && routeKind == "HTTPRoute" {
+                publishRewrite(filter, backendKey)
               }
             }
           }
@@ -469,8 +479,8 @@ templateSnippets:
           return map[string]any{
             "reqPath": RegisterGatewayRouteMap("gw-reqhdr.map", "# <rule_id>[|<backend>]|set|add|del|<header> -> URL-encoded value", "req"),
             "resPath": RegisterGatewayRouteMap("gw-reshdr.map", "# <rule_id>[|<backend>]|set|add|del|<header> -> URL-encoded value", "res"),
-            "redirectPath": RegisterGatewayRouteMap("gw-redirect.map", "# <rule_id> -> code|scheme|host|port|pathmode|pfxlen|path", "redirect"),
-            "urlrewritePath": RegisterGatewayRouteMap("gw-urlrewrite.map", "# <rule_id> -> host|pathmode|pfxlen|path", "urlrewrite"),
+            "redirectPath": RegisterGatewayRouteMap("gw-redirect.map", "# <rule_id>[|<backend>] -> code|scheme|host|port|pathmode|pfxlen|path", "redirect"),
+            "urlrewritePath": RegisterGatewayRouteMap("gw-urlrewrite.map", "# <rule_id>[|<backend>] -> host|pathmode|pfxlen|path", "urlrewrite"),
             "timeoutPath": RegisterGatewayRouteMap("gw-timeout.map", "# <rule_id> -> backend request timeout in ms", "timeout"),
             "mirrorPath": RegisterGatewayRouteMap("gw-mirror.map", "# <rule_id> -> scheme|host:port|timeout_ms|retries;... (URL-encoded)", "mirror"),
             "mirrorPctPath": RegisterGatewayRouteMap("gw-mirror-pct.map", "# <rule_id> -> mirror sampling percentage", "mirror-pct"),
@@ -526,6 +536,8 @@ templateSnippets:
       {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
       {%- var debug = extraContext | dig("diagnostics", "routingHeaders", "enabled") | fallback(false) %}
       # gateway/frontend-filters-gateway-redirect
+      {# The backendRef-level entry is read first so a rule-level entry, read last, overrides it. #}
+      http-request set-var(txn.gw_redir) var(txn.gw_rule_id),concat(|,txn.backend_name,),map({{ redirMap }}) if { var(txn.gw_rule_id),concat(|,txn.backend_name,),map({{ redirMap }}) -m found }
       http-request set-var(txn.gw_redir) var(txn.gw_rule_id),map({{ redirMap }}) if { var(txn.gw_rule_id),map({{ redirMap }}) -m found }
       {# Spec: an unset spec.scheme MUST keep the request's scheme, not downgrade. #}
       http-request set-var(txn.gw_redir_scheme) var(txn.gw_redir),field(2,|) if { var(txn.gw_redir) -m found }
@@ -567,6 +579,7 @@ templateSnippets:
       {%- end %}
       {%- var rwMap = tostring(gwm["urlrewritePath"]) %}
       # gateway/frontend-filters-gateway-urlrewrite
+      http-request set-var(txn.gw_rw) var(txn.gw_rule_id),concat(|,txn.backend_name,),map({{ rwMap }}) if { var(txn.gw_rule_id),concat(|,txn.backend_name,),map({{ rwMap }}) -m found }
       http-request set-var(txn.gw_rw) var(txn.gw_rule_id),map({{ rwMap }}) if { var(txn.gw_rule_id),map({{ rwMap }}) -m found }
       http-request set-header Host %[var(txn.gw_rw),field(1,|),url_dec(1)] if { var(txn.gw_rw) -m found } !{ var(txn.gw_rw),field(1,|) -m len 0 }
       http-request set-var(txn.gw_pfxlen) var(txn.gw_rw),field(3,|),add(0) if { var(txn.gw_rw),field(2,|) -m str P } !{ var(txn.gw_rw),field(3,|) -m str M }

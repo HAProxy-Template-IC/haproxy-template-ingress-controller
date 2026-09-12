@@ -14,14 +14,26 @@
 # strips atomically together with its tests via resource-level requires;
 # the base/ingress suite must pass untouched.
 # whose `requires` names an unserved resource and every test whose
+test-backendtlspolicy-ancestor-deduplicated-across-route-kinds
+test-backendtlspolicy-ancestor-falls-back-to-target-without-routes
+test-backendtlspolicy-ancestor-follows-backend-ref-namespace
+test-backendtlspolicy-ancestor-from-grpcroute
+test-backendtlspolicy-ancestor-from-tlsroute
 test-backendtlspolicy-compiles
+test-backendtlspolicy-grpcroute-port-name-reencrypts
 test-backendtlspolicy-invalid-ca-cert-ref-rejects
 test-backendtlspolicy-no-san-hostname-drives-both
 test-backendtlspolicy-san-hostname-drives-verifyhost
 test-backendtlspolicy-status-transition-time-preserved
-test-gateway-backend-service-map-incremental-group
+test-backendtlspolicy-tlsroute-mixed-listeners-still-reencrypt
+test-backendtlspolicy-tlsroute-passthrough-forwards-client-tls
+test-backendtlspolicy-tlsroute-terminate-reencrypts
+test-backendtlspolicy-tlsroute-terminate-unresolvable-ca-rejects
+test-gateway-backend-client-cert-file-name-bounded-for-maximum-length-gateway-name
 test-gateway-backend-client-cert-shape
+test-gateway-backend-service-map-incremental-group
 test-gateway-bind-per-gateway-shape
+test-gateway-crtlist-name-bounded-for-maximum-length-gateway-name
 test-gateway-crtlist-per-listener-shapes
 test-gateway-frontend-client-cert-default-line-verify
 test-gateway-frontend-client-cert-insecure-fallback-default-line
@@ -58,6 +70,7 @@ test-gateway-multi-prefix-path-control-char-reconcile-warns-and-skips
 test-gateway-multi-prefix-path-quote-reconcile-warns-and-skips
 test-gateway-multi-prefix-path-quote-rejected
 test-gateway-multi-prefix-without-rewrite-has-no-fallback
+test-gateway-name-maximum-length-labels-bounded
 test-gateway-per-gateway-services-shape
 test-gateway-pod-port-allocator-churn-keeps-incumbent-ports
 test-gateway-pod-port-allocator-churn-keeps-incumbent-ports-after-delete
@@ -102,7 +115,9 @@ test-httproute-all-matchers
 test-httproute-backend-header-value-injection-admission-rejected
 test-httproute-backend-header-value-injection-reconcile-warns-and-skips
 test-httproute-backend-request-header-modifier
+test-httproute-backend-request-redirect
 test-httproute-backend-response-header-modifier
+test-httproute-backend-url-rewrite
 test-httproute-cors-allow-through
 test-httproute-cors-expose-header-percent-escaped
 test-httproute-cors-filter

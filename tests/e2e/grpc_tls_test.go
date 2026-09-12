@@ -24,7 +24,7 @@ import (
 
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
-	pb "sigs.k8s.io/gateway-api/conformance/echo-basic/grpcechoserver"
+	pb "sigs.k8s.io/gateway-api-conformance-images/echo-basic/grpcechoserver"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/grpcclient"
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"

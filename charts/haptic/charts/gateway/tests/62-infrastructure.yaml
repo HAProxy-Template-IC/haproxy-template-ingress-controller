@@ -179,3 +179,28 @@ validationTests:
               - {name: http, port: 80, protocol: HTTP}
     assertions:
       - type: haproxy_valid
+
+  test-gateway-name-maximum-length-labels-bounded:
+    requires: [gateways]
+    requiresFields: [gateways.spec.infrastructure]
+    description: "A 253-byte Gateway name (the Kubernetes maximum) still applies: the emitted Services carry a gateway-name label bounded to 63 bytes with a hash suffix instead of the raw name the apiserver would refuse."
+    extraContext: *extracontextHapticSystem
+    fixtures:
+      controller_services: *controllerServicesService
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway-name-maximum-length-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, namespace: gateway-conformance-infra, generation: 1}
+          spec:
+            gatewayClassName: haproxy
+            infrastructure: {labels: {team: platform}}
+            listeners: *listenersHttp8080
+    assertions:
+      - type: haproxy_valid
+
+      - {type: contains, target: "k8s:gateway-infrastructure-propagation", pattern: 'name: gw-gateway-conformance-infra-gateway-name-maximum-leng-fcff1947'}
+      - {type: contains, target: "k8s:gateway-infrastructure-propagation", pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-name-maximum-length-aaaaaaaaaaaaaaaaaaaaaaaaaa-29a63d6e'}
+      - {type: not_contains, target: "k8s:gateway-infrastructure-propagation", pattern: 'gateway-name: gateway-name-maximum-length-a{27}'}
+      - {type: contains, target: "k8s:gateway-static-addresses", pattern: 'name: gw-gateway-conformance-infra-gateway-name-maximum-leng-fcff1947'}
+      - {type: contains, target: "k8s:gateway-static-addresses", pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-name-maximum-length-aaaaaaaaaaaaaaaaaaaaaaaaaa-29a63d6e'}
+      - {type: not_contains, target: "k8s:gateway-static-addresses", pattern: 'gateway-name: gateway-name-maximum-length-a{27}'}

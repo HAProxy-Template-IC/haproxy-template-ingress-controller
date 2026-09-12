@@ -13,6 +13,12 @@
 # standard). Field strips: HTTPRoute CORS (standard since v1.6) and Gateway
 # stripped set to match this file EXACTLY (a newly-stripped test or a
 # whose `requires` names an unserved resource and every test whose
+test-backendtlspolicy-ancestor-from-tlsroute
+test-backendtlspolicy-tlsroute-mixed-listeners-still-reencrypt
+test-backendtlspolicy-tlsroute-passthrough-forwards-client-tls
+test-backendtlspolicy-tlsroute-terminate-reencrypts
+test-backendtlspolicy-tlsroute-terminate-unresolvable-ca-rejects
+test-gateway-backend-client-cert-file-name-bounded-for-maximum-length-gateway-name
 test-gateway-backend-client-cert-shape
 test-gateway-bind-per-gateway-shape
 test-gateway-crtlist-per-listener-shapes

@@ -89,6 +89,7 @@ func TestGatewaySchemaStrippedRootKeepsOnlyServedSourceComponents(t *testing.T) 
 			"backenditems-501-gateway-ssl-passthrough-http",
 			"backenditems-501-gateway-ssl-passthrough-tls",
 			"backends-501-gateway-ssl-passthrough",
+			"backendtlsvalues-490-gateway",
 		},
 	})
 	root := snippets["backends-501-gateway-ssl-passthrough"]
@@ -101,25 +102,31 @@ func TestGatewaySchemaStrippedRootKeepsOnlyServedSourceComponents(t *testing.T) 
 	assert.Contains(t, root.Template, `render_glob "backenditems-501-gateway-ssl-passthrough-*"`)
 	cfg := &config.Config{
 		WatchedResources: map[string]config.WatchedResource{
-			"endpoints":       {APIVersion: "v1", Resources: "endpointslices"},
-			"gateways":        {APIVersion: "v1", Resources: "gateways"},
-			"httproutes":      {APIVersion: "v1", Resources: "httproutes"},
-			"namespaces":      {APIVersion: "v1", Resources: "namespaces"},
-			"referencegrants": {APIVersion: "v1", Resources: "referencegrants"},
-			"services":        {APIVersion: "v1", Resources: "services"},
-			"tlsroutes":       {APIVersion: "v1", Resources: "tlsroutes", Optional: true},
+			"backendtlspolicies": {APIVersion: "gateway.networking.k8s.io/v1", Resources: "backendtlspolicies"},
+			"configmaps":         {APIVersion: "v1", Resources: "configmaps"},
+			"endpoints":          {APIVersion: "v1", Resources: "endpointslices"},
+			"gateways":           {APIVersion: "v1", Resources: "gateways"},
+			"httproutes":         {APIVersion: "v1", Resources: "httproutes"},
+			"namespaces":         {APIVersion: "v1", Resources: "namespaces"},
+			"referencegrants":    {APIVersion: "v1", Resources: "referencegrants"},
+			"secrets":            {APIVersion: "v1", Resources: "secrets"},
+			"services":           {APIVersion: "v1", Resources: "services"},
+			"tlsroutes":          {APIVersion: "v1", Resources: "tlsroutes", Optional: true},
 		},
 		TemplateSnippets: snippets,
 	}
 	require.NoError(t, config.ValidateTemplateStructure(cfg))
 
 	effective, resolution, err := config.ResolveEffective(cfg, gatewayRootServedResources{
-		"endpointslices":  true,
-		"gateways":        true,
-		"httproutes":      true,
-		"namespaces":      true,
-		"referencegrants": true,
-		"services":        true,
+		"backendtlspolicies": true,
+		"configmaps":         true,
+		"endpointslices":     true,
+		"gateways":           true,
+		"httproutes":         true,
+		"namespaces":         true,
+		"referencegrants":    true,
+		"secrets":            true,
+		"services":           true,
 	}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{

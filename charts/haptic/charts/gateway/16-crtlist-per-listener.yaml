@@ -27,11 +27,12 @@ templateSnippets:
 
   util-gateway-listener-crtlist-name:
     template: >-
+      {%- import "util-bounded-name" for BoundedName -%}
       {%- macro CrtlistName(gwNs string, gwName string, listenerName string) string %}
         {#- Single dot for the extension only: sanitizeStorageName (filters.go)
             turns interior dots into underscores, and a `crt-list:<name>` lookup
             must match what the registry stored. -#}
-        {{- "gw-" + gwNs + "-" + gwName + "-" + listenerName + "-crtlist.txt" -}}
+        {{- BoundedName("gw-" + gwNs + "-" + gwName + "-" + listenerName, 243) + "-crtlist.txt" -}}
       {%- end %}
 
   features-160-gateway-crtlist-per-listener:

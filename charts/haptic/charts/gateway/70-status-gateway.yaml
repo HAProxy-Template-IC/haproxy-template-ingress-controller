@@ -225,13 +225,14 @@ templateSnippets:
       effects: [publishValue]
     template: |-
       {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
+      {%- import "util-bounded-name" for BoundedName -%}
       {%%
         var namespace = dig_string(item, "", "metadata", "namespace")
         var name = dig_string(item, "", "metadata", "name")
         var gateway = resources.gateways.GetSingle(namespace, name)
         if gateway != nil {
           var labels = map[string]any{
-            "gateway.networking.k8s.io/gateway-name": name,
+            "gateway.networking.k8s.io/gateway-name": BoundedName(name, 63),
             "gateway.networking.k8s.io/gateway-namespace": namespace,
           }
           var annotations = map[string]any{}

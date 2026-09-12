@@ -30,6 +30,53 @@ templateSnippets:
         }
       %%}
 
+  util-publish-gateway-backendtlspolicy-route-ancestors:
+    template: |-
+      {%- macro PublishGatewayBackendTLSPolicyRouteAncestors(route any, routeKind string) -%}
+      {%%
+        var routeNamespace = dig_string(route, "", "metadata", "namespace")
+        var routeName = dig_string(route, "", "metadata", "name")
+        var fixed = func(value int) string {
+          var encoded = tostring(value)
+          var zeroes = "0000000000"
+          if len(encoded) >= len(zeroes) { return encoded }
+          return zeroes[:len(zeroes)-len(encoded)] + encoded
+        }
+        var serviceCells = map[string]bool{}
+        for _, rule := range toSlice(dig(route, "spec", "rules")) {
+          for _, backendRef := range toSlice(dig(rule, "backendRefs")) {
+            var backendGroup = dig_string(backendRef, "", "group")
+            var backendKind = dig_string(backendRef, "", "kind")
+            if backendKind == "" { backendKind = "Service" }
+            if (backendGroup != "" && backendGroup != "core") || backendKind != "Service" { continue }
+            var backendNamespace = dig_string(backendRef, "", "namespace")
+            if backendNamespace == "" { backendNamespace = routeNamespace }
+            serviceCells["service\x00" + backendNamespace + "\x00" + dig_string(backendRef, "", "name")] = true
+          }
+        }
+        for _, cell := range keys(serviceCells) {
+          for parentIndex, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
+            var parentGroup = dig_string(parentRef, "", "group")
+            if parentGroup == "" { parentGroup = "gateway.networking.k8s.io" }
+            var parentKind = dig_string(parentRef, "", "kind")
+            if parentKind == "" { parentKind = "Gateway" }
+            if parentGroup != "gateway.networking.k8s.io" || parentKind != "Gateway" { continue }
+            var gatewayNamespace = dig_string(parentRef, "", "namespace")
+            if gatewayNamespace == "" { gatewayNamespace = routeNamespace }
+            var gatewayName = dig_string(parentRef, "", "name")
+            var rank = routeKind + "/" + routeNamespace + "/" + routeName + "\x00" + fixed(parentIndex)
+            show shared.Publish(cell, rank, map[string]any{
+              "rank": rank,
+              "key": "Gateway/" + gatewayNamespace + "/" + gatewayName,
+              "namespace": gatewayNamespace,
+              "name": gatewayName,
+              "namespaceSpecified": dig_string(parentRef, "", "namespace") != "",
+            })
+          }
+        }
+      %%}
+      {%- end macro -%}
+
   gateway-backendtlspolicy-route-ancestors-100:
     requires: [backendtlspolicies, httproutes]
     incremental:
@@ -38,52 +85,28 @@ templateSnippets:
       group: gateway-backendtlspolicy-route-ancestors
       effects: [publishValue]
     template: |-
-      {%%
-        var route = item
-        var routeNamespace = dig_string(route, "", "metadata", "namespace")
-        var routeName = dig_string(route, "", "metadata", "name")
-        if route != nil {
-          var fixed = func(value int) string {
-            var encoded = tostring(value)
-            var zeroes = "0000000000"
-            if len(encoded) >= len(zeroes) { return encoded }
-            return zeroes[:len(zeroes)-len(encoded)] + encoded
-          }
-          var serviceNames = map[string]bool{}
-          for _, rule := range toSlice(dig(route, "spec", "rules")) {
-            for _, backendRef := range toSlice(dig(rule, "backendRefs")) {
-            var backendKind = dig_string(backendRef, "", "kind")
-            if backendKind == "" { backendKind = "Service" }
-            if backendKind == "Service" {
-              serviceNames[dig_string(backendRef, "", "name")] = true
-            }
-            }
-          }
-          for serviceName := range serviceNames {
-            for parentIndex, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
-              var parentGroup = dig_string(parentRef, "", "group")
-              if parentGroup == "" { parentGroup = "gateway.networking.k8s.io" }
-              var parentKind = dig_string(parentRef, "", "kind")
-              if parentKind == "" { parentKind = "Gateway" }
-              if parentGroup != "gateway.networking.k8s.io" || parentKind != "Gateway" {
-                continue
-              }
-              var gatewayNamespace = dig_string(parentRef, "", "namespace")
-              if gatewayNamespace == "" { gatewayNamespace = routeNamespace }
-              var gatewayName = dig_string(parentRef, "", "name")
-              var rank = routeNamespace + "/" + routeName + "\x00" + fixed(parentIndex)
-              show shared.Publish("service\x00" + routeNamespace + "\x00" + serviceName,
-                rank, map[string]any{
-                  "rank": rank,
-                  "key": "Gateway/" + gatewayNamespace + "/" + gatewayName,
-                  "namespace": gatewayNamespace,
-                  "name": gatewayName,
-                  "namespaceSpecified": dig_string(parentRef, "", "namespace") != "",
-                })
-            }
-          }
-        }
-      %%}
+      {%- import "util-publish-gateway-backendtlspolicy-route-ancestors" for PublishGatewayBackendTLSPolicyRouteAncestors -%}
+      {%- if item != nil -%}{{- PublishGatewayBackendTLSPolicyRouteAncestors(item, "HTTPRoute") -}}{%- end -%}
+
+  gateway-backendtlspolicy-route-ancestors-200-grpc:
+    requires: [backendtlspolicies, grpcroutes]
+    incremental:
+      source: grpcroutes
+      group: gateway-backendtlspolicy-route-ancestors
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-backendtlspolicy-route-ancestors" for PublishGatewayBackendTLSPolicyRouteAncestors -%}
+      {%- if item != nil -%}{{- PublishGatewayBackendTLSPolicyRouteAncestors(item, "GRPCRoute") -}}{%- end -%}
+
+  gateway-backendtlspolicy-route-ancestors-300-tls:
+    requires: [backendtlspolicies, tlsroutes]
+    incremental:
+      source: tlsroutes
+      group: gateway-backendtlspolicy-route-ancestors
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-backendtlspolicy-route-ancestors" for PublishGatewayBackendTLSPolicyRouteAncestors -%}
+      {%- if item != nil -%}{{- PublishGatewayBackendTLSPolicyRouteAncestors(item, "TLSRoute") -}}{%- end -%}
 
   util-generate-backendtlspolicy-status-patch:
     requires: [backendtlspolicies]
@@ -279,4 +302,6 @@ templateSnippets:
     template: |-
       {{- render "gateway-backendtlspolicy-targets-100" -}}
       {{- render "gateway-backendtlspolicy-route-ancestors-100" -}}
+      {{- render "gateway-backendtlspolicy-route-ancestors-200-grpc" default "" -}}
+      {{- render "gateway-backendtlspolicy-route-ancestors-300-tls" default "" -}}
       {{- render "gateway-backendtlspolicy-status-100" -}}

@@ -63,7 +63,7 @@ The Gateway API library hooks into these extension points from base.yaml. Snippe
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-500-gateway` | Method, header, and query-parameter matchers |
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-900-path-match` | Final path-match backend-selection logic |
 | `features-*` | `features-500-gateway-route-maps` | Builds every per-route filter map (headers, redirect, URL-rewrite, prefix-length) |
-| `frontend-filters-*` | `frontend-filters-495-gateway-route-filters` | Emits the static lines that read those maps: `RequestHeaderModifier`/`ResponseHeaderModifier` (rule- and backendRef-level), `RequestRedirect`, `URLRewrite`, and the per-match prefix length a multi-prefix `ReplacePrefixMatch` rule needs |
+| `frontend-filters-*` | `frontend-filters-495-gateway-route-filters` | Emits the static lines that read those maps: `RequestHeaderModifier`/`ResponseHeaderModifier`/`RequestRedirect`/`URLRewrite` (rule- and backendRef-level) and the per-match prefix length a multi-prefix `ReplacePrefixMatch` rule needs |
 | `http-bind-extra-*` | `http-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port>` per non-default Gateway HTTP listener port (skips chart-static `httpPort` and `httpsPort` to avoid duplicate-bind errors) |
 | `https-bind-extra-*` | `https-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port> ssl crt-list ...` per non-default Gateway HTTPS listener port (skips chart-static `httpsPort` and `httpPort` to avoid duplicate-bind errors); reuses `util-ssl-bind-options` so the SSL handshake matches the chart-static HTTPS bind |
 | `frontends-*` | `frontends-600-gateway-tls-listener` | One `mode tcp` frontend per Gateway TLS listener port — SNI dispatch for TLSRoutes, with an `ssl crt-list` bind for `Terminate` listeners |
@@ -738,7 +738,7 @@ deploy without a reload.
 | `backendRefs[].namespace` | ⚠️ Partial | Not explicitly handled, likely defaults to route namespace |
 | `backendRefs[].port` | ✅ Supported | Service port number |
 | `backendRefs[].weight` | ✅ Supported | Traffic splitting with weighted distribution |
-| `backendRefs[].filters[]` | ⚠️ Partial | `RequestHeaderModifier` and `ResponseHeaderModifier` emitted per-backend (rule-scoped via `gw_rule_id`); other filter types not handled at the `backendRef` level |
+| `backendRefs[].filters[]` | ⚠️ Partial | `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite` emitted per-backend (keyed by `gw_rule_id` and backend name); `RequestMirror` and `ExtensionRef` not handled at the `backendRef` level |
 | Multiple backends | ✅ Supported | Weighted traffic splitting using MULTIBACKEND qualifier |
 | Single backend | ✅ Supported | Optimized with BACKEND qualifier (avoids weighted logic) |
 | Omitted weight | ✅ Supported | Defaults to weight 1 |
@@ -926,7 +926,7 @@ spec:
 
 ## TLSRoute support
 
-TLSRoute routes TLS connections by SNI. Depending on the listener's TLS mode, HAProxy either forwards the still-encrypted stream to the backend (`tls.mode: Passthrough`) or terminates TLS and forwards the decrypted stream (`tls.mode: Terminate`).
+TLSRoute routes TLS connections by SNI. Depending on the listener's TLS mode, HAProxy either forwards the still-encrypted stream to the backend (`tls.mode: Passthrough`) or terminates TLS and forwards the decrypted stream (`tls.mode: Terminate`). With a `Terminate` listener, a BackendTLSPolicy on the backend Service re-encrypts that stream toward the backend with the policy's CA, SNI, and hostname verification; with `Passthrough`, the client's TLS session reaches the backend unchanged, so the policy doesn't apply. A rule attached to listeners of both modes shares one backend and re-encrypts, so its `Passthrough` leg fails instead of the `Terminate` leg sending plaintext.
 
 ### Example: passthrough Gateway and TLSRoute
 
@@ -1237,6 +1237,8 @@ HAPTIC emits a `LoadBalancer` Service named `gw-platform-edge-203-0-113-5` in th
 kubectl get svc -n haptic -l gateway.networking.k8s.io/gateway-name=edge
 ```
 
+A Gateway name longer than 63 bytes doesn't fit a label value, so the label then holds the first 54 bytes of the name, a hyphen, and the first 8 hex characters of the name's SHA-256.
+
 Once MetalLB (or your cloud load balancer) allocates the IP, it appears in the Gateway's `status.addresses`. Listing several `spec.addresses[]` entries emits one Service per IP; an IP that can't be allocated is left out of `status.addresses` while the usable ones still bind.
 
 ## Features summary
@@ -1303,7 +1305,7 @@ TLSRoute and TCPRoute status is written on the `deployed` outcome only (see thei
 **Not implemented:**
 
 1. **ExtensionRef filter** — the general custom-filter extension mechanism (planned as the Gateway API equivalent of Ingress annotations). One narrow internal use exists: an `ExtensionRef` selecting SSL passthrough is honored.
-2. **Per-backend filters** (`backendRefs[].filters[]`) beyond the header modifiers — `RequestHeaderModifier` and `ResponseHeaderModifier` on a `backendRef` **are** honored, keyed by rule id and backend (see `test-httproute-backend-request-header-modifier` and `test-httproute-backend-response-header-modifier`). The other filter types (RequestRedirect, URLRewrite, RequestMirror) apply at the rule level only.
+2. **Per-backend `RequestMirror`** — `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite` on a `backendRef` **are** honored, keyed by rule id and backend (see `test-httproute-backend-request-header-modifier` and `test-httproute-backend-request-redirect`); a rule-level `RequestRedirect` or `URLRewrite` takes precedence over a backend-level one. `RequestMirror` applies at the rule level only.
 3. **Listener-specific HTTP route isolation** — `sectionName` drives `attachedRoutes` status counting, but HTTP/HTTPS routing itself isn't isolated per listener. (TLSRoute and TCPRoute do route per listener; see their sections.)
 
 **Reloads even though the filter itself is map-driven:**

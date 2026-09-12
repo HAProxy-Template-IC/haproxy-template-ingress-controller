@@ -76,6 +76,14 @@ templateSnippets:
       {%- end -%}
       {%- end macro -%}
 
+  util-bounded-name:
+    template: |
+      {# Over-long values keep an 8-char hash of the full value so distinct inputs stay
+          distinct; 63 is the label-value limit, 255 the file-name limit. #}
+      {%- macro BoundedName(value string, limit int) string -%}
+      {%- if len(value) <= limit -%}{{- value -}}{%- else -%}{{- value[0:limit-9] + "-" + sha256(value)[0:8] -}}{%- end -%}
+      {%- end macro -%}
+
   util-condition-transition-time:
     template: |
       {# Gateway-API status paths live here, not in the resource-agnostic transitionTime() filter
