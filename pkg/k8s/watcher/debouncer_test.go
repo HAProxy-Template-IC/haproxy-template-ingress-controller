@@ -679,9 +679,12 @@ func TestDebouncer_LeadingEdge_RefractoryPeriod(t *testing.T) {
 	firstCallbackDelay := times[0].Sub(startTime)
 	assert.Less(t, firstCallbackDelay, 100*time.Millisecond, "first callback should be immediate")
 
-	// Second callback should fire after refractory period expires
-	timeBetweenCallbacks := times[1].Sub(times[0])
-	assert.GreaterOrEqual(t, timeBetweenCallbacks, 50*time.Millisecond, "second callback should wait for refractory period")
+	// Measured from startTime, not from times[0]: the debouncer stamps
+	// lastFired before invoking the callback that records times[0], so a
+	// times[0]-relative bound is short by that gap and has to be slackened to
+	// survive. startTime precedes the stamp, so the full interval holds.
+	assert.GreaterOrEqual(t, times[1].Sub(startTime), 100*time.Millisecond,
+		"second callback should wait for refractory period")
 }
 
 func TestDebouncer_LeadingEdge_NoRecentActivity(t *testing.T) {
