@@ -754,7 +754,7 @@ next apply has to reach.
 | `haproxy.shmStats.path` | string | `/dev/shm/haproxy-stats` | Path to the shared-memory stats file |
 | `haproxy.shmStats.maxObjects` | int | `50000` | Maximum object count in the shm-stats file. Each frontend, backend, listen, and server counts as one object — pick a value with headroom; HAProxy can't resize the file on reload |
 | `haproxy.shmStats.shmSizeLimit` | string | `""` | `/dev/shm` emptyDir size limit. Empty auto-calculates from `maxObjects` (~4 KB/object + 10% overhead, rounded to MiB) |
-| `haproxy.lifecycle` | map | `{}` | Container lifecycle hooks for the HAProxy container (`preStop`, `postStart`) |
+| `haproxy.lifecycle` | map | `{preStop: {exec: {command: [sleep, "5"]}}}` | Container lifecycle hooks for the HAProxy container (`preStop`, `postStart`). The default `preStop` sleep keeps a terminating pod accepting connections until kube-proxy stops routing to it; `{}` disables it |
 | `haproxy.updateStrategy.type` | string | `RollingUpdate` | HAProxy Deployment update strategy |
 | `haproxy.updateStrategy.rollingUpdate.maxSurge` | int/string | `1` | Maximum surge during rolling updates |
 | `haproxy.updateStrategy.rollingUpdate.maxUnavailable` | int/string | `0` | Maximum unavailable during rolling updates |
