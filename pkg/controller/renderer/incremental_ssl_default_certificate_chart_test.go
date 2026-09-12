@@ -215,6 +215,8 @@ func TestMigratedChartRootsDoNotReadWatchedResourcesDirectly(t *testing.T) {
 		"gateway/10-features.yaml": {
 			"util-aggregate-gateway-cert-metadata",
 			"features-100-gateway-tls",
+			"util-gateway-listener-mtls-bindings",
+			"gateway-listener-mtls-100-gateway",
 			"features-110-gateway-frontend-mtls",
 			"features-140-gateway-service-extra-ports",
 			"features-141-listenerset-service-extra-ports",

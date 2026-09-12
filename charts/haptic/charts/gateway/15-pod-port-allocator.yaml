@@ -296,6 +296,38 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
+  # One map line per allocated pod port, published per Gateway in allocation-key
+  # order so an unrelated change replays the cached lines (#226).
+  gateway-pod-port-map-lines-100-gateway:
+    requires: [gateways]
+    incremental:
+      source: gateways
+      group: gateway-pod-port-map-lines
+      consumes: [gateway-pod-port-allocations]
+      effects: [publishValue]
+    template: |-
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var gateway = resources.gateways.GetSingle(namespace, name)
+        if gateway != nil {
+          var gatewayKey = namespace + "/" + name
+          for _, listener := range gateway.Spec.Listeners {
+            var listenerPort = toint(listener.Port)
+            if (listener.Protocol != "HTTP" && listener.Protocol != "HTTPS") || listener.Name == "" || listenerPort <= 0 {
+              continue
+            }
+            var allocationKey = gatewayKey + ":" + listener.Name + ":" + tostring(listenerPort)
+            var allocated, found = shared.Select("gateway-pod-port-allocations", "ports", allocationKey)
+            if !found { continue }
+            var podPort = tostring(toint(allocated))
+            show shared.PublishRanked("pod-listener-port", podPort, allocationKey, podPort + " " + podPort + "\n")
+            show shared.PublishRanked("pod-gw-listener-port", podPort, allocationKey,
+              podPort + " " + tostring(listenerPort) + "\n")
+          }
+        }
+      %%}
+
   # Pod-port → listener-port map. The companion snippet
   # `frontend-routing-listener-port-100-gateway` (below) plugs this map
   # into base.yaml's listener-port translation extension point, so a
@@ -314,48 +346,15 @@ templateSnippets:
     requires: [gateways]
     template: |
       {{ render "util-gateway-pod-port-allocator" -}}
-      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
-      {%- var keys = []any{} %}
-      {%- for k := range allocations %}
-        {%- keys = append(keys, k) %}
-      {%- end %}
-      {%- var sortedKeys = sort_strings(keys) %}
-      {%- var seenPod = map[string]bool{} %}
-      {%- var lines = []string{} %}
-      {%- for _, key := range sortedKeys %}
-        {#- Identity map: `<podPort> <podPort>`. A request landing on a
-            per-Gateway bind (dst_port = the unique pod port) keeps
-            listener_port = pod port, so the host.map / path-map keys —
-            which this refactor scopes by the SAME per-Gateway pod port
-            (gateway-host-port-scopes-100-gateway) — resolve to that
-            Gateway only. A
-            no-hostname listener on one Gateway can no longer catch
-            another Gateway's hosts via the shared `:<listenerPort>`
-            fallback (the GatewayHTTPListenerIsolation leak). Pinned /
-            chart-static binds have no allocation, so their dst_port
-            misses this map and falls through to base's default
-            (`listener_port = dst_port = listenerPort`) — correct, since
-            their keys stay listener-port-scoped. -#}
-        {%- var keyStr = tostring(key) %}
-        {%- var podPort = tostring(allocations[keyStr]) %}
-        {%- if !seenPod[podPort] %}
-          {%- seenPod[podPort] = true %}
-          {%- lines = append(lines, podPort + " " + podPort) %}
-        {%- end %}
-      {%- end %}
-      {#- This map must exist on the pod: the companion `frontend-routing-listener-port-100-gateway`
-          snippet below references this map unconditionally whenever
-          the gateway library is loaded — so we always need a
-          registered file. Emit a single comment line when there are
-          no allocations: HAProxy treats `# ...` as a comment, the map
-          stays effectively empty, and the `map(...) -m found`
-          predicate falls through to base.yaml's default
-          (`listener_port = dst_port`) on every lookup — the right
-          behaviour for chart-static binds. -#}
-      {%- var content = "" %}
-      {%- if len(lines) > 0 %}
-        {%- content = join(lines, "\n") + "\n" %}
-      {%- else %}
+      {{- render "gateway-pod-port-map-lines-100-gateway" -}}
+      {#- Identity map: a per-Gateway bind keeps listener_port = pod port, so the
+          host.map / path-map keys scoped by that pod port resolve to that Gateway
+          only (GatewayHTTPListenerIsolation). Chart-static binds miss the map and
+          fall through to base's default. -#}
+      {%- var content = itea; using %}{{ incremental_ranked_text_fragment_join("gateway-pod-port-map-lines", "pod-listener-port", "") }}{%- end using %}
+      {#- frontend-routing-listener-port-100-gateway references this map
+          unconditionally, so it must exist even without allocations. -#}
+      {%- if content == "" %}
         {%- content = "# no per-Gateway pod-port allocations\n" %}
       {%- end %}
       {%- var _, regErr = fileRegistry.Register("map", "pod-listener-port.map", content) %}
@@ -408,28 +407,9 @@ templateSnippets:
     requires: [gateways]
     template: |
       {{ render "util-gateway-pod-port-allocator" -}}
-      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
-      {%- var keys = []any{} %}
-      {%- for k := range allocations %}
-        {%- keys = append(keys, k) %}
-      {%- end %}
-      {%- var sortedKeys = sort_strings(keys) %}
-      {%- var seenPod = map[string]bool{} %}
-      {%- var lines = []string{} %}
-      {%- for _, key := range sortedKeys %}
-        {%- var keyStr = tostring(key) %}
-        {%- var podPort = tostring(allocations[keyStr]) %}
-        {%- if !seenPod[podPort] %}
-          {%- seenPod[podPort] = true %}
-          {%- var parts = split(keyStr, ":") %}
-          {%- var listenerPort = tostring(parts[len(parts)-1]) %}
-          {%- lines = append(lines, podPort + " " + listenerPort) %}
-        {%- end %}
-      {%- end %}
-      {%- var content = "" %}
-      {%- if len(lines) > 0 %}
-        {%- content = join(lines, "\n") + "\n" %}
-      {%- else %}
+      {{- render "gateway-pod-port-map-lines-100-gateway" -}}
+      {%- var content = itea; using %}{{ incremental_ranked_text_fragment_join("gateway-pod-port-map-lines", "pod-gw-listener-port", "") }}{%- end using %}
+      {%- if content == "" %}
         {%- content = "# no per-Gateway pod-port allocations\n" %}
       {%- end %}
       {%- var _, regErr = fileRegistry.Register("map", "pod-gw-listener-port.map", content) %}

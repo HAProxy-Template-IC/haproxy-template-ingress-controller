@@ -561,6 +561,8 @@ func loadGatewayFeaturePublicationSnippets(t *testing.T) map[string]config.Templ
 			gatewayTLSCertificateComponent,
 			gatewayFrontendMTLSComponent,
 			gatewayFrontendCAPermissionsComponent,
+			"util-gateway-listener-mtls-bindings",
+			"gateway-listener-mtls-100-gateway",
 			"features-110-gateway-frontend-mtls",
 			gatewayListenerSetPortsComponent,
 		},
