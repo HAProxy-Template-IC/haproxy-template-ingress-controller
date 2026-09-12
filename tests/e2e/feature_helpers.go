@@ -27,12 +27,14 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 )
 
+const nginxIngressLibrary = "nginxIngress"
+
 // vendorPrefixes maps a vendor annotation prefix to the chart template-library
 // flag that must be enabled for those annotations to take effect.
 var vendorPrefixes = map[string]string{
 	"haproxy.org/":                 "haproxytech",
 	"haproxy-ingress.github.io/":   "haproxyIngress",
-	"nginx.ingress.kubernetes.io/": "nginxIngress",
+	"nginx.ingress.kubernetes.io/": nginxIngressLibrary,
 }
 
 // enabledVendorLibraries reports which vendor annotation libraries the running
@@ -45,9 +47,21 @@ var vendorPrefixes = map[string]string{
 // constant.
 func enabledVendorLibraries() map[string]bool {
 	if os.Getenv("HAPTIC_E2E_PROFILE") == "conformance" {
-		return map[string]bool{"nginxIngress": true}
+		return map[string]bool{nginxIngressLibrary: true}
 	}
-	return map[string]bool{"haproxytech": true, "haproxyIngress": true, "nginxIngress": true}
+	return map[string]bool{"haproxytech": true, "haproxyIngress": true, nginxIngressLibrary: true}
+}
+
+func annotationVendorLibrary(annotations map[string]string) string {
+	library := ""
+	for key := range annotations {
+		for prefix, name := range vendorPrefixes {
+			if strings.HasPrefix(key, prefix) {
+				library = name
+			}
+		}
+	}
+	return library
 }
 
 // RequireVendorLibrary skips the test unless the named vendor library
@@ -176,7 +190,7 @@ type SimpleIngressAssertion struct {
 // testEnv. Pass `t` from the outer Test* function. Internally creates
 // a per-test namespace, deploys an echo-server, applies the Ingress,
 // and runs each assertion as a feature `Assess` block.
-func RunSimpleIngressTest(t *testing.T, sit SimpleIngressTest) {
+func RunSimpleIngressTest(t *testing.T, sit *SimpleIngressTest) {
 	t.Helper()
 	if len(sit.Assess) == 0 {
 		t.Fatalf("RunSimpleIngressTest %q: at least one assertion required", sit.Description)
@@ -186,6 +200,7 @@ func RunSimpleIngressTest(t *testing.T, sit SimpleIngressTest) {
 
 	feature := features.New(sit.Description).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -211,7 +226,7 @@ func RunSimpleIngressTest(t *testing.T, sit SimpleIngressTest) {
 			if sit.TLSSecretName != "" {
 				NewTLSSecret(ctx, t, client, ns, sit.TLSSecretName, []string{sit.Host})
 			}
-			NewIngress(ctx, t, client, ns, spec)
+			NewIngress(ctx, t, client, ns, &spec)
 			// Wait for the Ingress to actually deploy before asserting, instead
 			// of racing the deploy with the HTTP client's flat retry budget. The
 			// waiter returns as soon as the config is live and fails loud if the
@@ -222,8 +237,8 @@ func RunSimpleIngressTest(t *testing.T, sit SimpleIngressTest) {
 		})
 
 	for _, a := range sit.Assess {
-		a := a
 		feature = feature.Assess(a.Name, func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			a.Check(t, sit.Host)
 			return ctx
 		})

@@ -40,7 +40,7 @@ import (
 // auth-url annotation wiring, and the httpclient retry-with-401-tolerance
 // are all working.
 func TestIngressExternalAuth(t *testing.T) {
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	t.Parallel()
 
 	const (
@@ -50,6 +50,7 @@ func TestIngressExternalAuth(t *testing.T) {
 
 	feature := features.New("Ingress: SPOA hub external-auth").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -64,7 +65,7 @@ func TestIngressExternalAuth(t *testing.T) {
 			// same-namespace).
 			authBase := "http://auth-server." + SharedFixturesNamespace + ".svc:80"
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-auth-allow",
 				Host:           hostAllow,
 				Path:           "/",
@@ -74,7 +75,7 @@ func TestIngressExternalAuth(t *testing.T) {
 					"nginx.ingress.kubernetes.io/auth-url": authBase + "/allow",
 				},
 			})
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-auth-deny",
 				Host:           hostDeny,
 				Path:           "/",
@@ -87,10 +88,12 @@ func TestIngressExternalAuth(t *testing.T) {
 			return ctx
 		}).
 		Assess("auth-allowed.localdev.me passes through to the backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(hostAllow, "/").ExpectOK(t)
 			return ctx
 		}).
 		Assess("auth-denied.localdev.me is blocked with 401", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(hostDeny, "/").ExpectStatus(t, http.StatusUnauthorized)
 			return ctx
 		}).

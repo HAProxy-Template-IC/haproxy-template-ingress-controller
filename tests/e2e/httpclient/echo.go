@@ -89,42 +89,29 @@ func parseEchoBody(body []byte) *EchoBody {
 		Headers: map[string]string{},
 	}
 
-	if hostBlock, ok := raw["host"].(map[string]any); ok {
-		if v, ok := hostBlock["hostname"].(string); ok {
-			echo.Host = v
-		}
-	}
-	if v, ok := httpBlock["method"].(string); ok {
-		echo.Method = v
-	}
-	if v, ok := httpBlock["originalUrl"].(string); ok {
-		echo.Path = v
-	}
-	if reqBlock, ok := raw["request"].(map[string]any); ok {
-		if hdrs, ok := reqBlock["headers"].(map[string]any); ok {
-			for k, v := range hdrs {
-				lower := strings.ToLower(k)
-				switch val := v.(type) {
-				case string:
-					echo.Headers[lower] = val
-				case []any:
-					if len(val) > 0 {
-						if s, ok := val[0].(string); ok {
-							echo.Headers[lower] = s
-						}
-					}
-				}
+	hostBlock, _ := raw["host"].(map[string]any)
+	echo.Host, _ = hostBlock["hostname"].(string)
+	echo.Method, _ = httpBlock["method"].(string)
+	echo.Path, _ = httpBlock["originalUrl"].(string)
+	reqBlock, _ := raw["request"].(map[string]any)
+	headers, _ := reqBlock["headers"].(map[string]any)
+	for name, value := range headers {
+		lower := strings.ToLower(name)
+		switch val := value.(type) {
+		case string:
+			echo.Headers[lower] = val
+		case []any:
+			if len(val) == 0 {
+				continue
+			}
+			if first, ok := val[0].(string); ok {
+				echo.Headers[lower] = first
 			}
 		}
 	}
-	if env, ok := raw["environment"].(map[string]any); ok {
-		if v, ok := env["ENVIRONMENT"].(string); ok {
-			echo.Environment = v
-		}
-		if v, ok := env["HOSTNAME"].(string); ok {
-			echo.PodHostname = v
-		}
-	}
+	environment, _ := raw["environment"].(map[string]any)
+	echo.Environment, _ = environment["ENVIRONMENT"].(string)
+	echo.PodHostname, _ = environment["HOSTNAME"].(string)
 
 	return echo
 }

@@ -55,6 +55,7 @@ func TestIngressHostRenameMapOnly(t *testing.T) {
 
 	feature := features.New("Ingress: host rename is a reload-free map replace").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -62,7 +63,7 @@ func TestIngressHostRenameMapOnly(t *testing.T) {
 			ns = NamespaceForTest(ctx, t, client)
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           ingressName,
 				Host:           hostA,
 				BackendService: backend.Service,
@@ -71,6 +72,7 @@ func TestIngressHostRenameMapOnly(t *testing.T) {
 			return ctx
 		}).
 		Assess("original host routes to echo-server", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			resp := httpclient.New(t).GET(hostA, "/").ExpectOK(t)
 			if resp.Echo == nil {
 				t.Fatalf("expected echo-server body on %s, got %d bytes", hostA, len(resp.Body))
@@ -78,6 +80,7 @@ func TestIngressHostRenameMapOnly(t *testing.T) {
 			return ctx
 		}).
 		Assess("rename host: new host routes, old host no longer served (map replace, not append)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)

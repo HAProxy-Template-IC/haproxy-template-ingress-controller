@@ -30,7 +30,7 @@ import (
 // status code per annotation.
 func TestIngressNginxTemporalRedirect(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: nginx.ingress.kubernetes.io/temporal-redirect",
 		Host:        "ingress-temporal-redirect.localdev.me",
 		Annotations: map[string]string{
@@ -39,6 +39,7 @@ func TestIngressNginxTemporalRedirect(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "any request returns redirect to configured location",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				httpclient.New(t).GET(host, "/some/path").ExpectRedirect(t, "https://example.com/temp")
 			},
 		}},
@@ -51,7 +52,7 @@ func TestIngressNginxTemporalRedirect(t *testing.T) {
 // frontend-filters flow.
 func TestIngressHaproxyRedirectTo(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: haproxy-ingress.github.io/redirect-to",
 		Host:        "ingress-haproxy-redirect-to.localdev.me",
 		Annotations: map[string]string{
@@ -61,6 +62,7 @@ func TestIngressHaproxyRedirectTo(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "request redirects to configured Location with code 302",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectStatus(t, 302)
 				if got := resp.Header.Get("Location"); got != "https://example.com/relocated" {
 					t.Fatalf("expected Location https://example.com/relocated, got %q", got)

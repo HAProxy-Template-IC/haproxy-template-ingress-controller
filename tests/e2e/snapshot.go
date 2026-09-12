@@ -45,6 +45,7 @@ func failureSnapshotter() httpclient.PollTimeoutSnapshot {
 		snapped = map[string]bool{}
 	)
 	return func(t *testing.T, description string, _ *httpclient.Response, _ error) {
+		t.Helper()
 		mu.Lock()
 		if snapped[t.Name()] {
 			mu.Unlock()
@@ -74,7 +75,7 @@ func failureSnapshotter() httpclient.PollTimeoutSnapshot {
 		// the controller PRODUCED, before the apply
 		// translated it into incremental ops.
 		dumpCommand(t, out, "haproxycfg.yaml",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"get", "haproxycfg", "-o", "yaml")
 
 		// The haproxy pod's /etc/haproxy directory tree — what

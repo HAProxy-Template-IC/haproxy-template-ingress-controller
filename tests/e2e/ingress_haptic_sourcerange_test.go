@@ -57,6 +57,7 @@ func TestHapticSourceRange(t *testing.T) {
 
 	feature := features.New("Ingress: source-IP allow/deny via haproxy-haptic.org").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -67,7 +68,7 @@ func TestHapticSourceRange(t *testing.T) {
 
 			// Deny-all Ingress: 0.0.0.0/0 matches every client, so the
 			// host-scoped "http-request deny if <host> <acl>" fires for all.
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-deny",
 				Host:           denyHost,
 				BackendService: backend.Service,
@@ -79,7 +80,7 @@ func TestHapticSourceRange(t *testing.T) {
 
 			// Allow-all Ingress: 0.0.0.0/0 matches every client, so the
 			// host-scoped "http-request deny if <host> !<acl>" never fires.
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-allow",
 				Host:           allowHost,
 				BackendService: backend.Service,
@@ -91,10 +92,12 @@ func TestHapticSourceRange(t *testing.T) {
 			return ctx
 		}).
 		Assess("denylist 0.0.0.0/0 rejects any client with 403", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(denyHost, "/").ExpectStatus(t, http.StatusForbidden)
 			return ctx
 		}).
 		Assess("allowlist 0.0.0.0/0 admits any client with 200", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(allowHost, "/").ExpectOK(t)
 			return ctx
 		}).

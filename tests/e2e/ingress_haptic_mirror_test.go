@@ -33,7 +33,7 @@ import (
 // HTTP response HAProxy discards.
 func readEchoPodLogs(ctx context.Context, namespace, labelSelector string) (string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", namespace,
 		"logs", "-l", labelSelector, "-c", "server", "--tail=2000",
 	)
@@ -85,6 +85,7 @@ func TestHapticMirrorTarget(t *testing.T) {
 
 	feature := features.New("Ingress: haproxy-haptic.org/mirror-target copies matching requests to the mirror backend").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -100,7 +101,7 @@ func TestHapticMirrorTarget(t *testing.T) {
 			// the live request path/query is re-attached by the plugin.
 			mirrorTarget := fmt.Sprintf("http://%s.%s.svc.cluster.local", mirror.Service, ns)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-primary",
 				Host:           mirrorHost,
 				BackendService: primary.Service,
@@ -165,6 +166,7 @@ func TestHapticMirrorTarget(t *testing.T) {
 			return ctx
 		}).
 		Assess("matching request mirrored, non-matching host not mirrored", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// Conditions are verified in Setup where the namespace/backends are
 			// in scope; this Assess keeps the feature wiring aligned with the
 			// rest of the suite (see spoa_hub_reload_test.go for the pattern).

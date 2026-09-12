@@ -248,14 +248,14 @@ func newSharedTransport(nodeIP string, httpsPort int) *http.Transport {
 // installed and the CA pinned. Used by Request.Do when WithClientCert was
 // set; it is built per-request rather than shared because each test gets
 // its own cert/CA pair.
-func transportForClientCert(nodeIP string, httpsPort int, clientCert tls.Certificate, ca []byte) (*http.Transport, error) {
+func transportForClientCert(nodeIP string, httpsPort int, clientCert *tls.Certificate, ca []byte) (*http.Transport, error) {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(ca) {
 		return nil, errors.New("failed to parse CA PEM")
 	}
 	t := newSharedTransport(nodeIP, httpsPort)
 	t.TLSClientConfig = &tls.Config{
-		Certificates: []tls.Certificate{clientCert},
+		Certificates: []tls.Certificate{*clientCert},
 		RootCAs:      pool,
 		MinVersion:   tls.VersionTLS12,
 	}

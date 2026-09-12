@@ -33,7 +33,7 @@ import (
 // TLS Ingress and probes via HTTPS.
 func TestHapticHSTS(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description:   "Ingress: HSTS via haproxy-haptic.org",
 		Host:          "ingress-haptic-hsts.localdev.me",
 		TLSSecretName: "haptic-hsts-tls",
@@ -46,6 +46,7 @@ func TestHapticHSTS(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "HTTPS response carries Strict-Transport-Security with all three HSTS components",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).HTTPS(host, "/").ExpectOK(t)
 				sts := resp.Header.Get("Strict-Transport-Security")
 				if sts == "" {

@@ -37,6 +37,7 @@ func TestHTTPRoutePaths(t *testing.T) {
 
 	feature := features.New("HTTPRoute: path matching variants").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -47,7 +48,7 @@ func TestHTTPRoutePaths(t *testing.T) {
 			NewGateway(ctx, t, ns, "test-gateway")
 			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
-			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
+			NewHTTPRoute(ctx, t, ns, &HTTPRouteSpec{
 				Name:        "echo-paths",
 				GatewayName: "test-gateway",
 				Hostnames:   []string{host},
@@ -73,14 +74,17 @@ func TestHTTPRoutePaths(t *testing.T) {
 			return ctx
 		}).
 		Assess("Exact /exact matches", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/exact").ExpectOK(t)
 			return ctx
 		}).
 		Assess("PathPrefix /api matches", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api/test").ExpectOK(t)
 			return ctx
 		}).
 		Assess("Catch-all / matches", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectOK(t)
 			return ctx
 		}).
@@ -107,6 +111,7 @@ func TestHTTPRouteMethods(t *testing.T) {
 
 	feature := features.New("HTTPRoute: method matching").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -118,7 +123,7 @@ func TestHTTPRouteMethods(t *testing.T) {
 			NewGateway(ctx, t, ns, "test-gateway")
 			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
-			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
+			NewHTTPRoute(ctx, t, ns, &HTTPRouteSpec{
 				Name:        "echo-methods",
 				GatewayName: "test-gateway",
 				Hostnames:   []string{host},
@@ -144,10 +149,12 @@ func TestHTTPRouteMethods(t *testing.T) {
 			return ctx
 		}).
 		Assess("GET /api routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("POST /api routes to default backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api").WithMethod("POST").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
@@ -165,6 +172,7 @@ func TestHTTPRouteHeaders(t *testing.T) {
 
 	feature := features.New("HTTPRoute: header matching").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -176,7 +184,7 @@ func TestHTTPRouteHeaders(t *testing.T) {
 			NewGateway(ctx, t, ns, "test-gateway")
 			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
-			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
+			NewHTTPRoute(ctx, t, ns, &HTTPRouteSpec{
 				Name:        "echo-headers",
 				GatewayName: "test-gateway",
 				Hostnames:   []string{host},
@@ -201,11 +209,13 @@ func TestHTTPRouteHeaders(t *testing.T) {
 			return ctx
 		}).
 		Assess("Request with X-Api-Version: v2 routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api").
 				WithHeader("X-Api-Version", "v2").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("Request without header falls through to default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
@@ -221,6 +231,7 @@ func TestHTTPRouteQuery(t *testing.T) {
 
 	feature := features.New("HTTPRoute: query parameter matching").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -232,7 +243,7 @@ func TestHTTPRouteQuery(t *testing.T) {
 			NewGateway(ctx, t, ns, "test-gateway")
 			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
-			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
+			NewHTTPRoute(ctx, t, ns, &HTTPRouteSpec{
 				Name:        "echo-query",
 				GatewayName: "test-gateway",
 				Hostnames:   []string{host},
@@ -257,10 +268,12 @@ func TestHTTPRouteQuery(t *testing.T) {
 			return ctx
 		}).
 		Assess("Request with ?version=beta routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api?version=beta").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("Request without query falls through to default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).

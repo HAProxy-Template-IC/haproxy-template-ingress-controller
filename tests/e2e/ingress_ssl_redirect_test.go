@@ -29,7 +29,7 @@ import (
 // the Location header carries the https:// scheme.
 func TestIngressSSLRedirect(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: ssl-redirect annotation",
 		Host:        "ingress-ssl-redirect.localdev.me",
 		Annotations: map[string]string{
@@ -40,6 +40,7 @@ func TestIngressSSLRedirect(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "HTTP request returns 301 with https:// Location",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectStatus(t, 301)
 				loc := resp.Header.Get("Location")
 				if !strings.HasPrefix(loc, "https://") {

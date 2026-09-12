@@ -83,7 +83,7 @@ func createNginxAuthSecret(ctx context.Context, t *testing.T, client klient.Clie
 // independent annotation parsing.
 func TestIngressBasicAuthHaproxyIngress(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HTTP Basic auth via haproxy-ingress.github.io",
 		Host:        "ingress-hi-basic-auth.localdev.me",
 		Annotations: map[string]string{
@@ -92,18 +92,21 @@ func TestIngressBasicAuthHaproxyIngress(t *testing.T) {
 			"haproxy-ingress.github.io/auth-realm":  "Echo-Server-Protected",
 		},
 		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+			t.Helper()
 			createBasicAuthSecret(ctx, t, client, namespace)
 		},
 		Assess: []SimpleIngressAssertion{
 			{
 				Name: "returns 401 without credentials",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},
 			{
 				Name: "returns 200 with admin:admin credentials",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					resp := httpclient.New(t).GET(host, "/").WithBasicAuth("admin", "admin").ExpectOK(t)
 					if resp.Echo == nil {
 						t.Fatalf("expected echo-server JSON after auth, got status=%d", resp.Status)
@@ -120,7 +123,7 @@ func TestIngressBasicAuthHaproxyIngress(t *testing.T) {
 // independent annotation parsing.
 func TestIngressBasicAuthNginx(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HTTP Basic auth via nginx.ingress.kubernetes.io",
 		Host:        "ingress-nginx-basic-auth.localdev.me",
 		Annotations: map[string]string{
@@ -129,6 +132,7 @@ func TestIngressBasicAuthNginx(t *testing.T) {
 			"nginx.ingress.kubernetes.io/auth-realm":  "Echo-Server-Protected",
 		},
 		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+			t.Helper()
 			// nginx.ingress's auth-secret expects htpasswd format under
 			// the `auth` data key, not the haproxy.org username-keyed shape.
 			createNginxAuthSecret(ctx, t, client, namespace)
@@ -137,12 +141,14 @@ func TestIngressBasicAuthNginx(t *testing.T) {
 			{
 				Name: "returns 401 without credentials",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},
 			{
 				Name: "returns 200 with admin:admin credentials",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					resp := httpclient.New(t).GET(host, "/").WithBasicAuth("admin", "admin").ExpectOK(t)
 					if resp.Echo == nil {
 						t.Fatalf("expected echo-server JSON after auth, got status=%d", resp.Status)

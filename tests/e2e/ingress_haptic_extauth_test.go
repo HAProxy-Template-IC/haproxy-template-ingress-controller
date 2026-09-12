@@ -47,6 +47,7 @@ func TestHapticExternalAuth(t *testing.T) {
 
 	feature := features.New("Ingress: haptic external-auth (haproxy-haptic.org/auth-url)").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -60,7 +61,7 @@ func TestHapticExternalAuth(t *testing.T) {
 			// backend (which would require same-namespace).
 			authBase := "http://auth-server." + SharedFixturesNamespace + ".svc:80"
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-haptic-auth-allow",
 				Host:           hostAllow,
 				Path:           "/",
@@ -70,7 +71,7 @@ func TestHapticExternalAuth(t *testing.T) {
 					"haproxy-haptic.org/auth-url": authBase + "/allow",
 				},
 			})
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-haptic-auth-deny",
 				Host:           hostDeny,
 				Path:           "/",
@@ -83,10 +84,12 @@ func TestHapticExternalAuth(t *testing.T) {
 			return ctx
 		}).
 		Assess("allow host passes through to the backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(hostAllow, "/").ExpectOK(t)
 			return ctx
 		}).
 		Assess("deny host is blocked with 401", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(hostDeny, "/").ExpectStatus(t, http.StatusUnauthorized)
 			return ctx
 		}).

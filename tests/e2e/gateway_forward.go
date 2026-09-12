@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -93,7 +94,7 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 	// the first refused upstream connection as "lost connection to pod"
 	// and exits, so a tunnel opened before the bind exists dies on the
 	// test's first probe.
-	if out, err := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	if out, err := exec.CommandContext(ctx, "kubectl", kubeconfigFlag, kubeconfigPath,
 		"-n", gatewayNamespace, "wait", "--for=condition=Programmed",
 		"gateway/"+gatewayName, "--timeout=30s").CombinedOutput(); err != nil {
 		t.Fatalf("gateway %s/%s never became Programmed: %v (%s)", gatewayNamespace, gatewayName, err, out)
@@ -105,27 +106,7 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 	// (gateway-name + gateway-namespace) are the stable public contract —
 	// the upstream GatewayInfrastructure conformance test discovers the
 	// Service the same way.
-	selector := fmt.Sprintf(
-		"gateway.networking.k8s.io/gateway-name=%s,gateway.networking.k8s.io/gateway-namespace=%s",
-		gatewayName, gatewayNamespace)
-	var svc string
-	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	for {
-		out, err := exec.CommandContext(waitCtx, "kubectl", "--kubeconfig", kubeconfigPath,
-			"-n", ControllerNamespace, "get", "service", "-l", selector,
-			"-o", "jsonpath={.items[0].metadata.name}").Output()
-		if err == nil && len(out) > 0 {
-			svc = string(out)
-			break
-		}
-		select {
-		case <-waitCtx.Done():
-			t.Fatalf("per-Gateway Service for %s/%s never appeared (selector %q): %v",
-				gatewayNamespace, gatewayName, selector, err)
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
+	svc := waitForGatewayService(ctx, t, gatewayNamespace, gatewayName)
 
 	// Deliberately context.Background(): the tunnel must outlive the Setup
 	// phase's ctx and is torn down via t.Cleanup below.
@@ -195,37 +176,11 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 	supervisorDone := make(chan struct{})
 	go func() {
 		defer close(supervisorDone)
-		for {
+		runForwardSupervisor(fwdCtx, t, svc, pinned, func() *exec.Cmd {
 			mu.Lock()
-			c := current
-			mu.Unlock()
-			waitErr := c.Wait()
-			if fwdCtx.Err() != nil {
-				return // torn down via t.Cleanup
-			}
-			t.Logf("ForwardGateway %s: tunnel exited unexpectedly (%v); re-establishing on pinned ports %v", svc, waitErr, pinned)
-			switch tunnel.Reestablish(fwdCtx, establishPinned, tunnel.RecoveryConfig{
-				MinBackoff: tunnelRecoveryMinBackoff,
-				MaxBackoff: tunnelRecoveryMaxBackoff,
-				Budget:     tunnelRestartBudget,
-			}, func(msg string) {
-				t.Logf("ForwardGateway %s: %s", svc, msg)
-			}) {
-			case tunnel.RecoveryCtxDone:
-				return
-			case tunnel.RecoveryBudgetExceeded:
-				t.Errorf("ForwardGateway %s: port-forward could not be re-established within %s; "+
-					"the apiserver port-forward path is unhealthy", svc, tunnelRestartBudget)
-				return
-			}
-			// Cooldown so a forward-then-immediately-die loop can't churn
-			// kubectl processes for the whole budget.
-			select {
-			case <-fwdCtx.Done():
-				return
-			case <-time.After(tunnelRestartCooldown):
-			}
-		}
+			defer mu.Unlock()
+			return current
+		}, establishPinned)
 	}()
 	// Watchdog: exit-based supervision misses the tunnel's second failure
 	// mode — kubectl stays alive and keeps accepting on the local port while
@@ -275,7 +230,8 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 // same local port and are deduplicated. On error the started process is
 // killed; on success the caller owns reaping it via Wait.
 func startForwardTunnel(ctx context.Context, svc string, portArgs []string, wantPorts int) (*exec.Cmd, []int, error) {
-	args := []string{"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace, "port-forward", "service/" + svc}
+	args := make([]string, 0, 6+len(portArgs))
+	args = append(args, kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace, "port-forward", "service/"+svc)
 	args = append(args, portArgs...)
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	cmd.Stderr = os.Stderr
@@ -292,18 +248,7 @@ func startForwardTunnel(ctx context.Context, svc string, portArgs []string, want
 		return nil, nil, cause
 	}
 
-	lines := make(chan string, 8)
-	go func() {
-		defer close(lines)
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			select {
-			case lines <- scanner.Text():
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	lines := streamForwardLines(ctx, stdout)
 
 	deadline := time.After(20 * time.Second)
 	seen := map[int]bool{}
@@ -336,4 +281,75 @@ func startForwardTunnel(ctx context.Context, svc string, portArgs []string, want
 		}
 	}()
 	return cmd, locals, nil
+}
+
+func waitForGatewayService(ctx context.Context, t *testing.T, namespace, name string) string {
+	t.Helper()
+	selector := fmt.Sprintf(
+		"gateway.networking.k8s.io/gateway-name=%s,gateway.networking.k8s.io/gateway-namespace=%s",
+		name, namespace)
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for {
+		out, err := exec.CommandContext(waitCtx, "kubectl", kubeconfigFlag, kubeconfigPath,
+			"-n", ControllerNamespace, "get", "service", "-l", selector,
+			"-o", "jsonpath={.items[0].metadata.name}").Output()
+		if err == nil && len(out) > 0 {
+			return string(out)
+		}
+		select {
+		case <-waitCtx.Done():
+			t.Fatalf("per-Gateway Service for %s/%s never appeared (selector %q): %v", namespace, name, selector, err)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func streamForwardLines(ctx context.Context, reader io.Reader) <-chan string {
+	lines := make(chan string, 8)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return lines
+}
+
+func runForwardSupervisor(
+	ctx context.Context, t *testing.T, service string, ports []string,
+	current func() *exec.Cmd, establish func(context.Context) error,
+) {
+	t.Helper()
+	for {
+		waitErr := current().Wait()
+		if ctx.Err() != nil {
+			return
+		}
+		t.Logf("ForwardGateway %s: tunnel exited unexpectedly (%v); re-establishing on pinned ports %v", service, waitErr, ports)
+		switch tunnel.Reestablish(ctx, establish, tunnel.RecoveryConfig{
+			MinBackoff: tunnelRecoveryMinBackoff,
+			MaxBackoff: tunnelRecoveryMaxBackoff,
+			Budget:     tunnelRestartBudget,
+		}, func(msg string) {
+			t.Logf("ForwardGateway %s: %s", service, msg)
+		}) {
+		case tunnel.RecoveryCtxDone:
+			return
+		case tunnel.RecoveryBudgetExceeded:
+			t.Errorf("ForwardGateway %s: port-forward could not be re-established within %s; "+
+				"the apiserver port-forward path is unhealthy", service, tunnelRestartBudget)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(tunnelRestartCooldown):
+		}
+	}
 }

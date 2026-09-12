@@ -62,6 +62,7 @@ func TestHapticClientMTLS(t *testing.T) {
 
 	feature := features.New("Ingress: client-mTLS via haproxy-haptic.org/auth-tls-secret").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -102,7 +103,7 @@ func TestHapticClientMTLS(t *testing.T) {
 				t.Fatalf("create client-CA secret: %v", err)
 			}
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-haptic-mtls",
 				Host:           host,
 				Path:           "/",
@@ -118,6 +119,7 @@ func TestHapticClientMTLS(t *testing.T) {
 			return ctx
 		}).
 		Assess("valid client cert is admitted and the backend sees the forwarded cert header", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// Poll on the echo'd X-SSL-Client-CN header: a 200 can land
 			// from the crt-list `verify required` state before the
 			// cert-header forwarding rule is live, so polling on the
@@ -128,6 +130,7 @@ func TestHapticClientMTLS(t *testing.T) {
 			return ctx
 		}).
 		Assess("missing client cert is rejected at the TLS layer", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// No WithClientCert → TLS handshake should fail. The
 			// httpclient default is insecure-skip-verify, so the only
 			// failure mode is HAProxy aborting the handshake on its
@@ -140,6 +143,7 @@ func TestHapticClientMTLS(t *testing.T) {
 			return ctx
 		}).
 		Assess("client cert from untrusted CA is rejected", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// Present a client cert signed by a *different* CA than the
 			// one in auth-tls-secret; HAProxy's `verify required` must
 			// reject it at the TLS layer.

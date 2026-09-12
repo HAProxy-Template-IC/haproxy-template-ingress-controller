@@ -27,7 +27,7 @@ import (
 // upstream in the configured header.
 func TestHapticRequestID(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC-native request correlation ID",
 		Host:        "ingress-haptic-requestid.localdev.me",
 		Annotations: map[string]string{
@@ -38,6 +38,7 @@ func TestHapticRequestID(t *testing.T) {
 			{
 				Name: "upstream receives a non-empty X-Request-ID",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectMatching(t,
 						"upstream received a non-empty X-Request-ID",
 						func(resp *httpclient.Response) bool {

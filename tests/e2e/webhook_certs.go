@@ -39,12 +39,6 @@ const webhookSecretName = HelmReleaseName + "-webhook-tls"
 // Used to populate the server certificate's DNS SANs.
 const webhookServiceName = HelmReleaseName + "-webhook"
 
-// defaultSSLCertSecretName is the Secret the chart references for the
-// HAProxy default SSL certificate. The chart's template requires this
-// Secret to exist or rendering fails (see scripts/generate-dev-ssl-cert.sh
-// for the dev-loop equivalent).
-const defaultSSLCertSecretName = "default-ssl-cert"
-
 // setupWebhookCerts returns the base64-encoded CA bundle the helm install
 // step passes via `--set controller.webhook.caBundle=...`. Tries to reuse the
 // existing webhook-cert Secret first; if found and still valid (cert
@@ -85,9 +79,9 @@ func setupWebhookCerts(ctx context.Context) (caBundleB64 string, err error) {
 		return "", fmt.Errorf("generate server cert: %w", err)
 	}
 
-	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
-	serverCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCertDER})
-	serverKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(serverKey)})
+	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: certificatePEMType, Bytes: caCertDER})
+	serverCertPEM := pem.EncodeToMemory(&pem.Block{Type: certificatePEMType, Bytes: serverCertDER})
+	serverKeyPEM := pem.EncodeToMemory(&pem.Block{Type: rsaPrivateKeyPEMType, Bytes: x509.MarshalPKCS1PrivateKey(serverKey)})
 
 	if err := applyWebhookSecret(ctx, serverCertPEM, serverKeyPEM, caCertPEM); err != nil {
 		return "", fmt.Errorf("apply webhook secret: %w", err)
@@ -199,20 +193,20 @@ func setupDefaultSSLCert(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create cert: %w", err)
 	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: certificatePEMType, Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: rsaPrivateKeyPEMType, Bytes: x509.MarshalPKCS1PrivateKey(key)})
 
 	manifest := fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
-  name: %s
+  name: default-ssl-cert
   namespace: %s
 type: kubernetes.io/tls
 data:
   tls.crt: %s
   tls.key: %s
 `,
-		defaultSSLCertSecretName, ControllerNamespace,
+		ControllerNamespace,
 		base64.StdEncoding.EncodeToString(certPEM),
 		base64.StdEncoding.EncodeToString(keyPEM),
 	)
@@ -287,13 +281,13 @@ func generateMTLSBundle(serverHost string) (*mTLSBundle, error) {
 	}
 
 	return &mTLSBundle{
-		CACertPEM:     pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER}),
-		ServerCertPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCertDER}),
-		ServerKeyPEM:  pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(serverKey)}),
-		ClientCertPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCertDER}),
-		ClientKeyPEM:  pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(clientKey)}),
-		WrongCertPEM:  pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: wrongCertDER}),
-		WrongKeyPEM:   pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(wrongKey)}),
+		CACertPEM:     pem.EncodeToMemory(&pem.Block{Type: certificatePEMType, Bytes: caCertDER}),
+		ServerCertPEM: pem.EncodeToMemory(&pem.Block{Type: certificatePEMType, Bytes: serverCertDER}),
+		ServerKeyPEM:  pem.EncodeToMemory(&pem.Block{Type: rsaPrivateKeyPEMType, Bytes: x509.MarshalPKCS1PrivateKey(serverKey)}),
+		ClientCertPEM: pem.EncodeToMemory(&pem.Block{Type: certificatePEMType, Bytes: clientCertDER}),
+		ClientKeyPEM:  pem.EncodeToMemory(&pem.Block{Type: rsaPrivateKeyPEMType, Bytes: x509.MarshalPKCS1PrivateKey(clientKey)}),
+		WrongCertPEM:  pem.EncodeToMemory(&pem.Block{Type: certificatePEMType, Bytes: wrongCertDER}),
+		WrongKeyPEM:   pem.EncodeToMemory(&pem.Block{Type: rsaPrivateKeyPEMType, Bytes: x509.MarshalPKCS1PrivateKey(wrongKey)}),
 	}, nil
 }
 

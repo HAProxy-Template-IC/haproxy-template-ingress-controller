@@ -49,11 +49,12 @@ import (
 // all of them at once, which also pins the multi-rule append behaviour
 // of features-spoa-hub's snippet inlining.
 func TestIngressModSecuritySnippetEnforced(t *testing.T) {
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	const host = "ingress-modsec.localdev.me"
 
 	feature := features.New("Ingress: nginx.ingress.kubernetes.io/modsecurity-snippet enforced").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -71,7 +72,7 @@ func TestIngressModSecuritySnippetEnforced(t *testing.T) {
 				`SecRule ARGS:debug "@streq dump" "id:9103,phase:2,deny,status:403"`,
 			}, "\n")
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo",
 				Host:           host,
 				BackendService: backend.Service,
@@ -90,30 +91,36 @@ func TestIngressModSecuritySnippetEnforced(t *testing.T) {
 			return ctx
 		}).
 		Assess("GET /admin is blocked with 403 (URI prefix rule fires)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/admin").ExpectStatus(t, http.StatusForbidden)
 			return ctx
 		}).
 		Assess("GET /api passes through to the backend (URI predicate did not match)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/api").ExpectOK(t)
 			return ctx
 		}).
 		Assess("X-Block-Me: yes header is blocked with 403 (header rule fires)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/").
 				WithHeader("X-Block-Me", "yes").
 				ExpectStatus(t, http.StatusForbidden)
 			return ctx
 		}).
 		Assess("X-Block-Me: no header passes through (header predicate did not match)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/").
 				WithHeader("X-Block-Me", "no").
 				ExpectOK(t)
 			return ctx
 		}).
 		Assess("?debug=dump query-string is blocked with 403 (args rule fires)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/?debug=dump").ExpectStatus(t, http.StatusForbidden)
 			return ctx
 		}).
 		Assess("?debug=stats query-string passes through (args predicate did not match)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/?debug=stats").ExpectOK(t)
 			return ctx
 		})
@@ -131,11 +138,12 @@ func TestIngressModSecuritySnippetEnforced(t *testing.T) {
 // verify /v1 transitions from 403 → 200 and /v2 transitions from 200 →
 // 403 across the update.
 func TestIngressModSecuritySnippetHotReload(t *testing.T) {
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	const host = "ingress-modsec-hot-reload.localdev.me"
 
 	feature := features.New("Ingress: modsecurity-snippet hot-reload (annotation update)").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -145,7 +153,7 @@ func TestIngressModSecuritySnippetHotReload(t *testing.T) {
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 
 			// Phase 1: /v1 blocked.
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo",
 				Host:           host,
 				BackendService: backend.Service,
@@ -168,6 +176,7 @@ func TestIngressModSecuritySnippetHotReload(t *testing.T) {
 			return ctx
 		}).
 		Assess("after annotation update, the new rule is enforced (hot reload)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/v2").ExpectStatus(t, http.StatusForbidden)
 			httpclient.New(t).GET(host, "/v1").ExpectOK(t)
 			return ctx
@@ -229,7 +238,7 @@ func waitForSnippetGoneFromPod(ctx context.Context, t *testing.T, marker string)
 func updateIngressAnnotation(ctx context.Context, t *testing.T, namespace, name, key, value string) {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", namespace,
 		"annotate", "ingress", name,
 		"--overwrite",

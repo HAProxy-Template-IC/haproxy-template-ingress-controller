@@ -50,6 +50,7 @@ import (
 func TestHAProxyTemplateConfigCompleteness(t *testing.T) {
 	feature := features.New("CRD CEL rule guards standalone config completeness at apply time").
 		Assess("a complete standalone config is accepted", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			hc, ns := hapticClientAndNamespace(ctx, t, cfg)
 
 			crd := minimalValidHAProxyTemplateConfig(ns, "complete-standalone")
@@ -63,6 +64,7 @@ func TestHAProxyTemplateConfigCompleteness(t *testing.T) {
 			return ctx
 		}).
 		Assess("an incomplete config is rejected by the apiserver", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			_, ns := hapticClientAndNamespace(ctx, t, cfg)
 
 			// Snippets only: no podSelector, no watchedResources, no
@@ -87,6 +89,7 @@ func TestHAProxyTemplateConfigCompleteness(t *testing.T) {
 			return ctx
 		}).
 		Assess("a config whose haproxyConfig comes from a snippet is accepted", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			_, ns := hapticClientAndNamespace(ctx, t, cfg)
 
 			// The chart's own shape: podSelector and watchedResources inline,
@@ -151,7 +154,7 @@ func dynamicClient(t *testing.T, cfg *envconf.Config) dynamic.Interface {
 	return dyn
 }
 
-func hapticClientAndNamespace(ctx context.Context, t *testing.T, cfg *envconf.Config) (hapticclient.Interface, string) {
+func hapticClientAndNamespace(ctx context.Context, t *testing.T, cfg *envconf.Config) (haptic hapticclient.Interface, namespace string) {
 	t.Helper()
 	client, err := cfg.NewClient()
 	if err != nil {

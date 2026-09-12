@@ -47,7 +47,7 @@ func TestHapticHMAC(t *testing.T) {
 	mac.Write([]byte(path))
 	validSig := hex.EncodeToString(mac.Sum(nil))
 
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC-native HMAC signature verification",
 		Host:        "ingress-haptic-hmac.localdev.me",
 		Path:        path,
@@ -58,6 +58,7 @@ func TestHapticHMAC(t *testing.T) {
 			"haproxy-haptic.org/hmac-signed-string": "path",
 		},
 		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+			t.Helper()
 			mustCreateSecret(ctx, t, client, namespace, "hmac-keys", map[string][]byte{
 				"secret": []byte(rawKey),
 			})
@@ -66,18 +67,21 @@ func TestHapticHMAC(t *testing.T) {
 			{
 				Name: "no signature returns 401",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, path).ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},
 			{
 				Name: "wrong signature returns 401",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, path).WithHeader("X-Signature", "deadbeef").ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},
 			{
 				Name: "valid signature reaches upstream (200)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, path).WithHeader("X-Signature", validSig).ExpectStatus(t, http.StatusOK)
 				},
 			},

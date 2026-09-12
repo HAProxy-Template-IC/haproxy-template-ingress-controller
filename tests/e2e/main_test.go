@@ -87,37 +87,40 @@ func init() {
 // Image expectations: haptic:test-haproxyX.Y must exist in the local Docker daemon
 // before running. The Makefile target `test-e2e` depends on
 // `docker-build-test` to build it.
-func TestMain(m *testing.M) {
+func initializeE2ERuntime() error {
 	var err error
 	runtimeImages, err = kindutil.LoadChartImages(os.Getenv("HAPTIC_HAPROXY_VERSION"))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: chart runtime images: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("chart runtime images: %w", err)
 	}
 	if err := kindutil.ValidateChartImageTag(runtimeImages.SPOAHub, os.Getenv("SPOA_TAG")); err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: SPOA_TAG: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("SPOA_TAG: %w", err)
 	}
 	ChartHAProxyVersion = runtimeImages.HAProxyVersion
 	ControllerImageName = "haptic:test-haproxy" + ChartHAProxyVersion
 	fmt.Fprintf(os.Stderr, "e2e: chart HAProxy image %s\n", runtimeImages.HAProxy)
 	e2eCluster, err = e2ecluster.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: cluster configuration: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("cluster configuration: %w", err)
 	}
 	ClusterName = e2eCluster.ClusterName
 	kubeconfigPath = e2eCluster.KubeconfigPath
 
 	if _, err := expectedControllerIdentity(); err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	testEnv = env.NewParallel()
 
 	// SAFETY: Isolate kubeconfig.
 	if err := os.Setenv("KUBECONFIG", kubeconfigPath); err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: set KUBECONFIG: %v\n", err)
+		return fmt.Errorf("set KUBECONFIG: %w", err)
+	}
+	return nil
+}
+
+func TestMain(m *testing.M) {
+	if err := initializeE2ERuntime(); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -146,11 +149,6 @@ func TestMain(m *testing.M) {
 	heartbeatCtx, heartbeatStop := context.WithCancel(context.Background())
 	startSetupHeartbeat(heartbeatCtx)
 
-	// caBundleB64 is captured from the webhook-cert setup step and consumed
-	// by the helm-install step. Closure rather than context-passing because
-	// envconf.Config doesn't carry arbitrary values.
-	var caBundleB64 string
-
 	testEnv.Setup(
 		phase("cluster-create", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return setupCluster(ctx, cfg, provider)
@@ -161,59 +159,7 @@ func TestMain(m *testing.M) {
 		phase("ensure-namespaces", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return ctx, ensureNamespaces(ctx)
 		}),
-		// install-cluster-services fans out two independent chains in
-		// parallel after the cluster + namespaces are up:
-		//
-		//   chain A: install-metallb              (~85s on a cold runner)
-		//   chain B: install-crds+certs → helm-install → backend-fixtures
-		//                                         (~120s end-to-end)
-		//
-		// Chains A and B are fully independent — MetalLB doesn't touch
-		// the chart and the chart doesn't talk to MetalLB until the
-		// loadbalancer Service needs an IP, which doesn't happen until
-		// helm finishes. Running A in parallel with B cuts the e2e
-		// cluster bootstrap by ~85s wall-clock on a fresh runner, which
-		// is the dominant saving the conformance jobs see (they pay the
-		// full bootstrap via `TEST_RUN_PATTERN=^$ make test-e2e` before
-		// running their actual suite).
-		//
-		// Backend fixtures (echo-server, blocklist-server, auth-server,
-		// …) are skipped when HAPTIC_E2E_PROFILE=conformance because the
-		// upstream conformance suites bring up their own per-scenario
-		// backend pods. Loading the e2e fixtures alongside pollutes the
-		// namespace inventory AND (in the blocklist-server case)
-		// triggers a per-render http.Fetch the chart keeps retrying on
-		// every reconcile until the pod becomes ready — historically
-		// the timing source behind shard-4 TLSRouteHostnameIntersection
-		// failures and the 7s-per-render burn that broke
-		// HTTPRouteReferenceGrant within its 10s convergence budget.
-		// The errgroup propagates a single error from either chain and
-		// cancels its sibling, matching the previous sequential
-		// behaviour where the first failure aborted the whole setup.
-		phase("install-cluster-services (parallel chains)", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			g, gctx := errgroup.WithContext(ctx)
-			g.Go(func() error {
-				_, err := installMetalLB(gctx)
-				return err
-			})
-			g.Go(func() error {
-				b, err := preInstallParallel(gctx)
-				if err != nil {
-					return err
-				}
-				caBundleB64 = b
-				if _, err := helmInstallChart(gctx, caBundleB64); err != nil {
-					return err
-				}
-				if os.Getenv("HAPTIC_E2E_PROFILE") == "conformance" {
-					fmt.Fprintln(os.Stderr, "e2e: conformance profile — skipping backend fixtures")
-					return nil
-				}
-				_, err = applyBackendFixtures(gctx)
-				return err
-			})
-			return ctx, g.Wait()
-		}),
+		phase("install-cluster-services (parallel chains)", installClusterServices),
 		phase("verify-controller-rollout", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			client, err := cfg.NewClient()
 			if err != nil {
@@ -282,6 +228,30 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func installClusterServices(ctx context.Context, _ *envconf.Config) (context.Context, error) {
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		_, err := installMetalLB(gctx)
+		return err
+	})
+	g.Go(func() error {
+		caBundleB64, err := preInstallParallel(gctx)
+		if err != nil {
+			return err
+		}
+		if _, err := helmInstallChart(gctx, caBundleB64); err != nil {
+			return err
+		}
+		if os.Getenv("HAPTIC_E2E_PROFILE") == "conformance" {
+			fmt.Fprintln(os.Stderr, "e2e: conformance profile — skipping backend fixtures")
+			return nil
+		}
+		_, err = applyBackendFixtures(gctx)
+		return err
+	})
+	return ctx, g.Wait()
+}
+
 // setupPhase is the current TestMain phase, read by the heartbeat goroutine
 // and updated by the phase() wrapper before each setup step runs.
 var setupPhase atomic.Pointer[string]
@@ -329,16 +299,7 @@ func startSetupHeartbeat(ctx context.Context) {
 // suite's isolated kubeconfig path.
 func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluster.Provider) (context.Context, error) {
 	if os.Getenv("SKIP_CLUSTER_CREATE") == "true" {
-		if e2eCluster.RequireNew {
-			return ctx, fmt.Errorf("SKIP_CLUSTER_CREATE=true cannot use e2e isolation overrides")
-		}
-		// CI mode: cluster pre-created. Just record the kubeconfig.
-		kc := os.Getenv("KUBECONFIG")
-		if kc == "" {
-			return ctx, fmt.Errorf("SKIP_CLUSTER_CREATE=true but KUBECONFIG is empty")
-		}
-		cfg.WithKubeconfigFile(kc)
-		return ctx, nil
+		return ctx, configurePrecreatedCluster(cfg)
 	}
 
 	clusters, err := provider.List()
@@ -364,35 +325,8 @@ func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluste
 	}
 
 	if !clusterExists {
-		opts := []kindcluster.CreateOption{
-			kindcluster.CreateWithWaitForReady(DefaultClusterCreateTimeout),
-			kindcluster.CreateWithRawConfig([]byte(e2eCluster.KindConfig())),
-		}
-		var createErr, cleanupErr error
-		if e2eCluster.RequireNew {
-			kindExportDir, err := os.MkdirTemp("", "haptic-e2e-kind-kubeconfig-")
-			if err != nil {
-				return ctx, fmt.Errorf("create kind kubeconfig staging directory: %w", err)
-			}
-			opts = append(opts, kindcluster.CreateWithKubeconfigPath(filepath.Join(kindExportDir, "config")))
-			createErr = provider.Create(ClusterName, opts...)
-			if createErr == nil {
-				clusterCreated = true
-			}
-			if err := os.RemoveAll(kindExportDir); err != nil {
-				cleanupErr = fmt.Errorf("remove kind kubeconfig staging directory: %w", err)
-			}
-		} else {
-			createErr = provider.Create(ClusterName, opts...)
-			if createErr == nil {
-				clusterCreated = true
-			}
-		}
-		if createErr != nil || cleanupErr != nil {
-			if createErr != nil {
-				createErr = fmt.Errorf("create kind cluster %q: %w", ClusterName, createErr)
-			}
-			return ctx, errors.Join(createErr, cleanupErr)
+		if err := createE2ECluster(provider); err != nil {
+			return ctx, err
 		}
 		if err := kindutil.BlackholeSyntheticBackends(ClusterName); err != nil {
 			return ctx, err
@@ -414,6 +348,47 @@ func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluste
 	}
 	cfg.WithKubeconfigFile(kubeconfigPath)
 	return ctx, nil
+}
+
+func configurePrecreatedCluster(cfg *envconf.Config) error {
+	if e2eCluster.RequireNew {
+		return fmt.Errorf("SKIP_CLUSTER_CREATE=true cannot use e2e isolation overrides")
+	}
+	kc := os.Getenv("KUBECONFIG")
+	if kc == "" {
+		return fmt.Errorf("SKIP_CLUSTER_CREATE=true but KUBECONFIG is empty")
+	}
+	cfg.WithKubeconfigFile(kc)
+	return nil
+}
+
+func createE2ECluster(provider *kindcluster.Provider) error {
+	opts := []kindcluster.CreateOption{
+		kindcluster.CreateWithWaitForReady(DefaultClusterCreateTimeout),
+		kindcluster.CreateWithRawConfig([]byte(e2eCluster.KindConfig())),
+	}
+	var stagingDir string
+	if e2eCluster.RequireNew {
+		var err error
+		stagingDir, err = os.MkdirTemp("", "haptic-e2e-kind-kubeconfig-")
+		if err != nil {
+			return fmt.Errorf("create kind kubeconfig staging directory: %w", err)
+		}
+		opts = append(opts, kindcluster.CreateWithKubeconfigPath(filepath.Join(stagingDir, "config")))
+	}
+	createErr := provider.Create(ClusterName, opts...)
+	if createErr == nil {
+		clusterCreated = true
+	} else {
+		createErr = fmt.Errorf("create kind cluster %q: %w", ClusterName, createErr)
+	}
+	var cleanupErr error
+	if stagingDir != "" {
+		if err := os.RemoveAll(stagingDir); err != nil {
+			cleanupErr = fmt.Errorf("remove kind kubeconfig staging directory: %w", err)
+		}
+	}
+	return errors.Join(createErr, cleanupErr)
 }
 
 // installMetricsServerBestEffort applies metrics-server to the freshly-created
@@ -557,7 +532,7 @@ func installCRDs(ctx context.Context) (context.Context, error) {
 	if err != nil {
 		return ctx, err
 	}
-	cmd := exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", crdDir)
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", kubeconfigFlag, kubeconfigPath, "-f", crdDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return ctx, fmt.Errorf("kubectl apply CRDs: %w (output: %s)", err, out)
 	}
@@ -576,7 +551,7 @@ func installCRDs(ctx context.Context) (context.Context, error) {
 // regardless of which exact CRDs a given channel/version installed.
 func waitCRDsEstablished(ctx context.Context, nameSubstr string) error {
 	listed, err := exec.CommandContext(ctx, "kubectl", "get", "crd",
-		"--kubeconfig", kubeconfigPath, "-o", "name").Output()
+		kubeconfigFlag, kubeconfigPath, "-o", "name").Output()
 	if err != nil {
 		return fmt.Errorf("list CRDs (%s): %w", nameSubstr, err)
 	}
@@ -589,7 +564,7 @@ func waitCRDsEstablished(ctx context.Context, nameSubstr string) error {
 	if len(crds) == 0 {
 		return fmt.Errorf("no CRDs matching %q found after install", nameSubstr)
 	}
-	waitArgs := append([]string{"wait", "--kubeconfig", kubeconfigPath,
+	waitArgs := append([]string{"wait", kubeconfigFlag, kubeconfigPath,
 		"--for=condition=Established", "--timeout=60s"}, crds...)
 	if out, err := exec.CommandContext(ctx, "kubectl", waitArgs...).CombinedOutput(); err != nil {
 		return fmt.Errorf("wait for CRDs established (%s): %w (output: %s)", nameSubstr, err, out)
@@ -805,12 +780,6 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	// fixtures that don't belong in conformance runs.
 	profile := os.Getenv("HAPTIC_E2E_PROFILE")
 	var valuesBytes []byte
-	// cacheProfile enables the Varnish shared-cache tier for the cache shard.
-	cacheProfile := profile == "cache"
-	// rateLimitProfile enables shared rate limiting and its Valkey store.
-	rateLimitProfile := profile == "rate-limit"
-	// apiGatewayProfile enables the api-gateway SPOA plugin for JSON request validation.
-	apiGatewayProfile := profile == "api-gateway"
 	switch profile {
 	case "conformance":
 		valuesBytes = devassets.ConformanceValuesYAML
@@ -840,7 +809,7 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	// (which implies HAProxy received and reloaded the config).
 	args := []string{
 		"upgrade", "--install", HelmReleaseName, chartDir,
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"--namespace", ControllerNamespace,
 		"--create-namespace",
 		"--values", valuesFile.Name(),
@@ -886,37 +855,7 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		"--set-string", "controller.podSpec.podAnnotations.haproxy-haptic\\.org/source-hash="+identity.sourceHash,
 		"--set-string", "controller.podSpec.podAnnotations.haproxy-haptic\\.org/e2e-rollout-id="+identity.rolloutID,
 		"--set-string", "controller.podSpec.podAnnotations.haproxy-haptic\\.org/controller-binary-sha256="+identity.binarySHA256)
-	// All three vendor annotation libraries are enabled by the core values
-	// (e2e-values.yaml), so every vendor test runs in the default profile and
-	// there are no per-vendor shards. That became possible with the per-object
-	// config split (ADR-0014): the combination used to exceed etcd's ~1.5 MiB
-	// per-object limit, and `make cr-size-check` now renders exactly this
-	// profile as the standing size regression test.
-	// Cache shard: deploy the Varnish tier (one replica keeps the shard quick).
-	// The tier's origin is the HAProxy Service; loopback + caching are exercised
-	// by TestHapticVarnishCache (gated on this profile via RequireCacheProfile).
-	if cacheProfile {
-		args = append(args,
-			"--set", "cache.varnish.enabled=true",
-			"--set", "cache.varnish.replicas=1",
-			"--set", "cache.varnish.podDisruptionBudget.enabled=false",
-			"--set", "cache.haproxy.responseTimeoutMs=500",
-			"--set", fmt.Sprintf("haproxy.service.http.port=%d", ChartHAProxyServiceHTTPPort))
-		fmt.Fprintf(os.Stderr, "e2e: cache shard — enabling Varnish with HAProxy Service port %d and kindnet policy enforcement\n", ChartHAProxyServiceHTTPPort)
-	}
-	// Shared rate-limit shard: deploy Valkey and auto-wire the bundled
-	// rate-limit plugin. TestHapticSharedRateLimit is gated on this profile.
-	if rateLimitProfile {
-		args = append(args,
-			"--set", "rateLimit.shared.enabled=true",
-			"--set", "rateLimit.shared.managedStore.enabled=true")
-		fmt.Fprintln(os.Stderr, "e2e: rate-limit shard — enabling shared rate limiting with Valkey")
-	}
-	if apiGatewayProfile {
-		args = append(args,
-			"--set", "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true")
-		fmt.Fprintln(os.Stderr, "e2e: api-gateway shard — enabling request validation")
-	}
+	args = append(args, e2eProfileHelmArgs(profile)...)
 	// Churn tier (issue #64): expose the Gateway pod-port allocator's
 	// assignments as `# gw-pod-port:` comment lines in the rendered config
 	// so TestGatewayChurn can assert zero cross-wiring through the
@@ -987,6 +926,31 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	return ctx, nil
 }
 
+func e2eProfileHelmArgs(profile string) []string {
+	switch profile {
+	case "cache":
+		fmt.Fprintf(os.Stderr, "e2e: cache shard — enabling Varnish with HAProxy Service port %d and kindnet policy enforcement\n", ChartHAProxyServiceHTTPPort)
+		return []string{
+			"--set", "cache.varnish.enabled=true",
+			"--set", "cache.varnish.replicas=1",
+			"--set", "cache.varnish.podDisruptionBudget.enabled=false",
+			"--set", "cache.haproxy.responseTimeoutMs=500",
+			"--set", fmt.Sprintf("haproxy.service.http.port=%d", ChartHAProxyServiceHTTPPort),
+		}
+	case "rate-limit":
+		fmt.Fprintln(os.Stderr, "e2e: rate-limit shard — enabling shared rate limiting with Valkey")
+		return []string{
+			"--set", "rateLimit.shared.enabled=true",
+			"--set", "rateLimit.shared.managedStore.enabled=true",
+		}
+	case "api-gateway":
+		fmt.Fprintln(os.Stderr, "e2e: api-gateway shard — enabling request validation")
+		return []string{"--set", "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true"}
+	default:
+		return nil
+	}
+}
+
 // applyBackendFixtures installs the stateless backend fixtures into the
 // SharedFixturesNamespace. These are deployed once per cluster and shared
 // across all tests; they don't carry per-test state. The namespace itself
@@ -1014,7 +978,6 @@ func applyBackendFixtures(ctx context.Context) (context.Context, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
 	for _, f := range fixtures {
-		f := f
 		g.Go(func() error {
 			if err := kubectlApplyStdin(gctx, f.yaml); err != nil {
 				return fmt.Errorf("apply %s: %w", f.name, err)
@@ -1048,7 +1011,7 @@ func teardownCluster(ctx context.Context, provider *kindcluster.Provider) (conte
 // Used for fixture YAMLs that don't need typed Go fixtures.
 func kubectlApplyStdin(ctx context.Context, yaml []byte) error {
 	apply := func(c context.Context) error {
-		cmd := exec.CommandContext(c, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", "-")
+		cmd := exec.CommandContext(c, "kubectl", "apply", kubeconfigFlag, kubeconfigPath, "-f", "-")
 		cmd.Stdin = bytes.NewReader(yaml)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%w (output: %s)", err, out)
@@ -1075,7 +1038,7 @@ func kubectlApplyStdin(ctx context.Context, yaml []byte) error {
 // error types are intentionally not surfaced.
 func kubectlGetSecretData(ctx context.Context, namespace, name string) (map[string]string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", name,
-		"--kubeconfig", kubeconfigPath, "-n", namespace, "-o", "json")
+		kubeconfigFlag, kubeconfigPath, "-n", namespace, "-o", "json")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("kubectl get secret %s/%s: %w", namespace, name, err)
@@ -1147,7 +1110,7 @@ func verifyControllerRollout(ctx context.Context, clientset kubernetes.Interface
 		return err
 	}
 	rollout := exec.CommandContext(ctx, "kubectl", "rollout", "status",
-		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 		"deployment/"+ControllerDeploymentName, "--timeout=5m")
 	if out, err := rollout.CombinedOutput(); err != nil {
 		return fmt.Errorf("wait for controller rollout: %w (output: %s)", err, out)
@@ -1186,29 +1149,13 @@ func verifyControllerBinary(
 	if deployment.Spec.Replicas != nil {
 		desiredReplicas = *deployment.Spec.Replicas
 	}
-	var pods []string
-	if measuredRuntimes == nil {
-		pods, err = waitForControllerIdentityPods(ctx, clientset, expected, desiredReplicas)
-		if err != nil {
-			return err
-		}
-	} else {
-		current, err := readControllerRuntimeIdentities(ctx, clientset)
-		if err != nil {
-			return err
-		}
-		if err := controllerRuntimeIdentitiesEqual(measuredRuntimes, current); err != nil {
-			return fmt.Errorf("measured controller changed before binary verification: %w", err)
-		}
-		pods = make([]string, 0, len(measuredRuntimes))
-		for pod := range measuredRuntimes {
-			pods = append(pods, pod)
-		}
-		slices.Sort(pods)
+	pods, err := controllerPodsForBinaryVerification(ctx, clientset, expected, desiredReplicas, measuredRuntimes)
+	if err != nil {
+		return err
 	}
 	for _, pod := range pods {
 		checksum := exec.CommandContext(ctx, "kubectl", "exec",
-			"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			pod, "-c", "controller", "--", "sha256sum", "/usr/local/bin/haptic")
 		checksumOut, err := checksum.CombinedOutput()
 		if err != nil {
@@ -1244,6 +1191,28 @@ func verifyIdentityAnnotations(owner string, annotations map[string]string, expe
 	return nil
 }
 
+func controllerPodsForBinaryVerification(
+	ctx context.Context, clientset kubernetes.Interface, expected controllerIdentity, desiredReplicas int32,
+	measuredRuntimes map[string]controllerRuntimeIdentity,
+) ([]string, error) {
+	if measuredRuntimes == nil {
+		return waitForControllerIdentityPods(ctx, clientset, expected, desiredReplicas)
+	}
+	current, err := readControllerRuntimeIdentities(ctx, clientset)
+	if err != nil {
+		return nil, err
+	}
+	if err := controllerRuntimeIdentitiesEqual(measuredRuntimes, current); err != nil {
+		return nil, fmt.Errorf("measured controller changed before binary verification: %w", err)
+	}
+	pods := make([]string, 0, len(measuredRuntimes))
+	for pod := range measuredRuntimes {
+		pods = append(pods, pod)
+	}
+	slices.Sort(pods)
+	return pods, nil
+}
+
 func readControllerRuntimeIdentities(
 	ctx context.Context,
 	clientset kubernetes.Interface,
@@ -1261,7 +1230,8 @@ func readControllerRuntimeIdentities(
 			return nil, fmt.Errorf("controller pod %s is terminating", pod.Name)
 		}
 		found := false
-		for _, status := range pod.Status.ContainerStatuses {
+		for index := range pod.Status.ContainerStatuses {
+			status := &pod.Status.ContainerStatuses[index]
 			if status.Name != "controller" {
 				continue
 			}
@@ -1321,27 +1291,8 @@ func waitForControllerIdentityPods(
 		if err != nil {
 			lastMismatch = fmt.Errorf("list controller pods: %w", err)
 		} else {
-			lastMismatch = nil
-			pods := make([]string, 0, len(podList.Items))
-			if len(podList.Items) != int(desiredReplicas) {
-				lastMismatch = fmt.Errorf("%d controller pods found, expected %d", len(podList.Items), desiredReplicas)
-			}
-			for i := range podList.Items {
-				pod := &podList.Items[i]
-				if pod.DeletionTimestamp != nil {
-					lastMismatch = fmt.Errorf("old controller pod %s is still terminating", pod.Name)
-					break
-				}
-				if pod.Status.Phase != corev1.PodRunning || !podConditionsReady(pod.Status.Conditions) {
-					lastMismatch = fmt.Errorf("controller pod %s is phase %s and not Ready", pod.Name, pod.Status.Phase)
-					break
-				}
-				if err := verifyIdentityAnnotations("controller pod "+pod.Name, pod.Annotations, expected); err != nil {
-					lastMismatch = err
-					break
-				}
-				pods = append(pods, pod.Name)
-			}
+			var pods []string
+			pods, lastMismatch = verifyControllerIdentityPods(podList.Items, expected, desiredReplicas)
 			if lastMismatch == nil {
 				return pods, nil
 			}
@@ -1353,6 +1304,27 @@ func waitForControllerIdentityPods(
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+func verifyControllerIdentityPods(items []corev1.Pod, expected controllerIdentity, desiredReplicas int32) ([]string, error) {
+	if len(items) != int(desiredReplicas) {
+		return nil, fmt.Errorf("%d controller pods found, expected %d", len(items), desiredReplicas)
+	}
+	pods := make([]string, 0, len(items))
+	for index := range items {
+		pod := &items[index]
+		if pod.DeletionTimestamp != nil {
+			return nil, fmt.Errorf("old controller pod %s is still terminating", pod.Name)
+		}
+		if pod.Status.Phase != corev1.PodRunning || !podConditionsReady(pod.Status.Conditions) {
+			return nil, fmt.Errorf("controller pod %s is phase %s and not Ready", pod.Name, pod.Status.Phase)
+		}
+		if err := verifyIdentityAnnotations("controller pod "+pod.Name, pod.Annotations, expected); err != nil {
+			return nil, err
+		}
+		pods = append(pods, pod.Name)
+	}
+	return pods, nil
 }
 
 func podConditionsReady(conditions []corev1.PodCondition) bool {

@@ -71,6 +71,7 @@ func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 
 	feature := features.New("Apply rollback: a corrupt certificate never reaches the fleet").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			var err error
 			if client, err = cfg.NewClient(); err != nil {
 				t.Fatalf("new client: %v", err)
@@ -83,7 +84,7 @@ func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 
 			backend := NewEchoServerBackend(ctx, t, client, namespace)
 			NewTLSSecret(ctx, t, client, namespace, secretName, []string{host})
-			NewIngress(ctx, t, client, namespace, IngressSpec{
+			NewIngress(ctx, t, client, namespace, &IngressSpec{
 				Name:           "echo",
 				Host:           host,
 				BackendService: backend.Service,
@@ -93,6 +94,7 @@ func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 			return ctx
 		}).
 		Assess("the route serves its own certificate", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).HTTPS(host, "/").ExpectOK(t)
 			goodCertDER = servedCertificate(ctx, t, host)
 			rejected = applyRejectedTotal(ctx, t, clientset)
@@ -100,6 +102,7 @@ func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 			return ctx
 		}).
 		Assess("a corrupt certificate never reaches the fleet", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			readyBefore := readyHAProxyPods(ctx, t, clientset)
 
 			// Probe continuously across the whole rejection window: the
@@ -167,6 +170,7 @@ func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 			return ctx
 		}).
 		Assess("fixing the Secret clears the condition with no operator action", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			repairTLSSecret(ctx, t, client, namespace, secretName, host)
 
 			waitForConfigValidatedCondition(ctx, t, client, metav1.ConditionTrue)

@@ -38,26 +38,13 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
+const kubeconfigFlag = "--kubeconfig"
+
 // lookupEnv is a thin wrapper around os.LookupEnv for use inside the
 // build-tag-gated package. Returns the value and a boolean indicating
 // whether the variable was set.
 func lookupEnv(key string) (string, bool) {
 	return os.LookupEnv(key)
-}
-
-// pipelineStatus is the subset of the controller's /debug/vars/pipeline
-// response that the e2e suite cares about. Mirrors PipelineStatus from
-// pkg/controller/debug/state.go but pulls in only the deployment phase.
-type pipelineStatus struct {
-	Deployment *deploymentStatus `json:"deployment"`
-}
-
-type deploymentStatus struct {
-	Status             string `json:"status"`
-	Timestamp          string `json:"timestamp"`
-	EndpointsTotal     int    `json:"endpoints_total"`
-	EndpointsSucceeded int    `json:"endpoints_succeeded"`
-	EndpointsFailed    int    `json:"endpoints_failed"`
 }
 
 // WaitForE2EEnvironmentReady blocks until the controller reports HTTP
@@ -79,7 +66,7 @@ type deploymentStatus struct {
 // start applying Gateway / HTTPRoute fixtures.
 //
 // Called from TestMain after helm install + fixture deploy. The job here
-// is just "the cluster is no longer in a setup-time inconsistent state."
+// is just "the cluster is no longer in a setup-time inconsistent state.".
 func WaitForE2EEnvironmentReady(ctx context.Context, client klient.Client) error {
 	cfg := testutil.SlowWaitConfig()
 	cfg.Timeout = DefaultEnvironmentReadyTimeout
@@ -178,7 +165,8 @@ func waitForInitialHAProxyDeployment(ctx context.Context, client klient.Client, 
 			if len(deployed) < expectedReplicas {
 				return false, fmt.Errorf("only %d/%d HAProxy pods reported deployed", len(deployed), expectedReplicas)
 			}
-			for _, p := range deployed {
+			for index := range deployed {
+				p := &deployed[index]
 				if p.Checksum != want {
 					return false, fmt.Errorf("pod %s at checksum %q, spec is %q", p.PodName, p.Checksum, want)
 				}
@@ -227,18 +215,6 @@ func newDebugClient(restConfig *rest.Config, cs kubernetes.Interface) *debugClie
 			restConfig, cs, ControllerNamespace, LabelSelectorController, DebugPort,
 		),
 	}
-}
-
-func (dc *debugClient) getPipelineStatus(ctx context.Context) (*pipelineStatus, error) {
-	body, err := dc.loopback.Get(ctx, DebugPathPipeline)
-	if err != nil {
-		return nil, err
-	}
-	var st pipelineStatus
-	if err := json.Unmarshal(body, &st); err != nil {
-		return nil, fmt.Errorf("decode pipeline status: %w (body=%s)", err, body)
-	}
-	return &st, nil
 }
 
 // healthzReady polls /healthz and returns (true, nil) when the controller

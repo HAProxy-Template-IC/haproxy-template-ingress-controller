@@ -46,11 +46,12 @@ import (
 // behaviour and belong to the enforcement test in
 // `ingress_modsecurity_snippet_test.go`.
 func TestIngressModSecuritySnippetRejectedByAdmission(t *testing.T) {
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	const host = "ingress-modsec-rejected.localdev.me"
 
 	feature := features.New("Ingress: nginx.ingress.kubernetes.io/modsecurity-snippet rejected when SecLang is malformed").
 		Assess("admission webhook denies an Ingress with an unknown SecLang directive", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -70,7 +71,7 @@ func TestIngressModSecuritySnippetRejectedByAdmission(t *testing.T) {
 			// for the FFI-level coverage of the same parser path.
 			brokenSnippet := `SecBogusDirective totally-invalid`
 
-			err = NewIngressExpectDenied(ctx, t, client, ns, IngressSpec{
+			err = NewIngressExpectDenied(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo",
 				Host:           host,
 				BackendService: backend.Service,

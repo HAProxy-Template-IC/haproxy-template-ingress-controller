@@ -42,7 +42,7 @@ import (
 // suffix-form key as host.map. This test pins that contract by
 // exercising it end-to-end through the per-app WAF path.
 func TestIngressModSecuritySnippetWildcardHost(t *testing.T) {
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	const (
 		wildcardHost = "*.localdev.me"
 		concreteHost = "wild-modsec-test.localdev.me"
@@ -51,6 +51,7 @@ func TestIngressModSecuritySnippetWildcardHost(t *testing.T) {
 
 	feature := features.New("Ingress: nginx.ingress.kubernetes.io/modsecurity-snippet on a wildcard host enforces on concrete subdomains").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -59,7 +60,7 @@ func TestIngressModSecuritySnippetWildcardHost(t *testing.T) {
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-wildcard",
 				Host:           wildcardHost,
 				BackendService: backend.Service,
@@ -72,12 +73,14 @@ func TestIngressModSecuritySnippetWildcardHost(t *testing.T) {
 			return ctx
 		}).
 		Assess("X-Wild-Block: yes on a concrete subdomain matching the wildcard is blocked with 403", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(concreteHost, "/").
 				WithHeader("X-Wild-Block", "yes").
 				ExpectStatus(t, http.StatusForbidden)
 			return ctx
 		}).
 		Assess("X-Wild-Block: no on a concrete subdomain passes through to the backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(concreteHost, "/").
 				WithHeader("X-Wild-Block", "no").
 				ExpectOK(t)

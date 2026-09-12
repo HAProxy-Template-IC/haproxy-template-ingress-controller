@@ -41,6 +41,7 @@ func TestIngressTLSMulti(t *testing.T) {
 
 	feature := features.New("Ingress: SAN certificate covering multiple hostnames").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -105,10 +106,12 @@ func TestIngressTLSMulti(t *testing.T) {
 			return ctx
 		}).
 		Assess("primary hostname serves over HTTPS", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).HTTPS(primary, "/").ExpectOK(t)
 			return ctx
 		}).
 		Assess("alternate hostname (in same SAN cert) serves over HTTPS", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).HTTPS(alt, "/").ExpectOK(t)
 			return ctx
 		}).

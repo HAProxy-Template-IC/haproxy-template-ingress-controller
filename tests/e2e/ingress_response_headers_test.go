@@ -28,7 +28,7 @@ import (
 // configured headers on the wire.
 func TestIngressResponseHeaders(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: response-set-header annotation",
 		Host:        "ingress-headers-response.localdev.me",
 		Annotations: map[string]string{
@@ -38,18 +38,21 @@ func TestIngressResponseHeaders(t *testing.T) {
 			{
 				Name: "Strict-Transport-Security header is set",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectHeader(t, "Strict-Transport-Security", "max-age=31536000")
 				},
 			},
 			{
 				Name: "X-Frame-Options header is DENY",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectHeader(t, "X-Frame-Options", "DENY")
 				},
 			},
 			{
 				Name: "X-Custom-Response header passes through",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectHeader(t, "X-Custom-Response", "custom-resp-value")
 				},
 			},

@@ -43,7 +43,7 @@ import (
 // per-test (deleted with the namespace).
 func TestHapticBasicAuth(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC-native HTTP Basic auth",
 		Host:        "ingress-haptic-basicauth.localdev.me",
 		Annotations: map[string]string{
@@ -53,6 +53,7 @@ func TestHapticBasicAuth(t *testing.T) {
 			"haproxy-haptic.org/auth-secret-type": "auth-file",
 		},
 		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+			t.Helper()
 			// Pre-generated bcrypt hash for "admin" (admin/admin matches the
 			// dev-env secret); regenerate with:
 			//   htpasswd -nbB admin admin | cut -d: -f2
@@ -75,12 +76,14 @@ func TestHapticBasicAuth(t *testing.T) {
 			{
 				Name: "returns 401 without credentials",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},
 			{
 				Name: "returns 200 with admin:admin credentials",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					resp := httpclient.New(t).GET(host, "/").WithBasicAuth("admin", "admin").ExpectOK(t)
 					if resp.Echo == nil {
 						t.Fatalf("expected echo-server JSON after auth, got status=%d", resp.Status)

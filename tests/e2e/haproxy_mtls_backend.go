@@ -202,7 +202,7 @@ spec:
 
 	return HAProxyMTLSBackend{
 		HTTPS:                BackendRef{Service: "haproxy-mtls-backend", Port: 8443},
-		CASecretName:         "mtls-backend-ca",
-		ClientCertSecretName: "mtls-backend-client-cert",
+		CASecretName:         caSecret.Name,
+		ClientCertSecretName: clientSecret.Name,
 	}
 }

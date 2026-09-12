@@ -39,6 +39,7 @@ func TestHapticSSLPassthrough(t *testing.T) {
 
 	feature := features.New("Ingress: haptic ssl-passthrough annotation").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -48,7 +49,7 @@ func TestHapticSSLPassthrough(t *testing.T) {
 			echoBackend := NewEchoServerBackend(ctx, t, client, ns)
 			demo := NewHAProxyDemoBackend(ctx, t, client, ns, echoBackend, host)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-haptic-passthrough",
 				Host:           host,
 				Path:           "/",
@@ -61,6 +62,7 @@ func TestHapticSSLPassthrough(t *testing.T) {
 			return ctx
 		}).
 		Assess("HTTPS request passes through to the backend that terminates TLS", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			resp := httpclient.New(t).HTTPS(host, "/").ExpectOK(t)
 			if resp.Echo == nil {
 				t.Fatalf("expected echo-server JSON via passthrough, got %d bytes", len(resp.Body))

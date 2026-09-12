@@ -73,396 +73,51 @@ func TestHapticSharedRateLimit(t *testing.T) {
 		leaseBurst    = 12
 		failoverBurst = 5
 	)
+	scenario := &sharedRateLimitScenario{
+		host:               host,
+		leaseHost:          leaseHost,
+		failoverHost:       failoverHost,
+		consumerHost:       consumerHost,
+		readinessHost:      readinessHost,
+		warmupHost:         warmupHost,
+		outageLeaseHost:    outageLeaseHost,
+		outageExactHost:    outageExactHost,
+		consumerSecretName: consumerSecretName,
+		limit:              limit,
+		leaseLimit:         leaseLimit,
+		failoverLimit:      failoverLimit,
+		warmupLimit:        warmupLimit,
+		burstTotal:         burstTotal,
+		leaseBurst:         leaseBurst,
+		failoverBurst:      failoverBurst,
+	}
 
 	feature := features.New("Ingress: HAPTIC shared rate-limit annotations").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
-			ns := NamespaceForTest(ctx, t, client)
-			DumpLogsOnFailure(t, ns)
-			backend := NewEchoServerBackend(ctx, t, client, ns)
-			consumerSecret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: consumerSecretName, Namespace: ns},
-				Type:       corev1.SecretTypeOpaque,
-				StringData: map[string]string{
-					"keys": "key-alice:alice\nkey-bob:bob\n",
-				},
-			}
-			if err := client.Resources(ns).Create(ctx, consumerSecret); err != nil {
-				t.Fatalf("create consumer API-key Secret: %v", err)
-			}
-			ingresses := createSharedRateLimitIngresses(ctx, t, client, ns,
-				IngressSpec{
-					Name:           fmt.Sprintf("echo-shared-ratelimit-%d", time.Now().UnixNano()),
-					Host:           host,
-					Path:           "/",
-					BackendService: backend.Service,
-					BackendPort:    backend.Port,
-					Annotations: map[string]string{
-						"haproxy-haptic.org/rate-limit-requests":  fmt.Sprintf("%d", limit),
-						"haproxy-haptic.org/rate-limit-period":    "60s",
-						"haproxy-haptic.org/rate-limit-burst":     fmt.Sprintf("%d", limit),
-						"haproxy-haptic.org/rate-limit-algorithm": "gcra",
-					},
-				},
-				IngressSpec{
-					Name:           fmt.Sprintf("echo-shared-ratelimit-lease-%d", time.Now().UnixNano()),
-					Host:           leaseHost,
-					Path:           "/",
-					BackendService: backend.Service,
-					BackendPort:    backend.Port,
-					Annotations: map[string]string{
-						"haproxy-haptic.org/rate-limit-requests": fmt.Sprintf("%d", leaseLimit),
-						"haproxy-haptic.org/rate-limit-period":   "60s",
-						"haproxy-haptic.org/rate-limit-burst":    fmt.Sprintf("%d", leaseLimit),
-						"haproxy-haptic.org/waf-policy":          "streaming-search",
-					},
-				},
-				IngressSpec{
-					Name:           fmt.Sprintf("echo-shared-ratelimit-failover-%d", time.Now().UnixNano()),
-					Host:           failoverHost,
-					Path:           "/",
-					BackendService: backend.Service,
-					BackendPort:    backend.Port,
-					Annotations: map[string]string{
-						"haproxy-haptic.org/rate-limit-requests":  fmt.Sprintf("%d", failoverLimit),
-						"haproxy-haptic.org/rate-limit-period":    "60s",
-						"haproxy-haptic.org/rate-limit-burst":     fmt.Sprintf("%d", failoverLimit),
-						"haproxy-haptic.org/rate-limit-algorithm": "gcra",
-					},
-				},
-				IngressSpec{
-					Name:           fmt.Sprintf("echo-shared-ratelimit-consumer-%d", time.Now().UnixNano()),
-					Host:           consumerHost,
-					Path:           "/",
-					BackendService: backend.Service,
-					BackendPort:    backend.Port,
-					Annotations: map[string]string{
-						"haproxy-haptic.org/api-key-secret":       consumerSecretName,
-						"haproxy-haptic.org/rate-limit-requests":  "1",
-						"haproxy-haptic.org/rate-limit-period":    "60s",
-						"haproxy-haptic.org/rate-limit-burst":     "1",
-						"haproxy-haptic.org/rate-limit-key":       "consumer",
-						"haproxy-haptic.org/rate-limit-algorithm": "gcra",
-					},
-				},
-				IngressSpec{
-					Name:           fmt.Sprintf("echo-shared-ratelimit-ready-%d", time.Now().UnixNano()),
-					Host:           readinessHost,
-					Path:           "/",
-					BackendService: backend.Service,
-					BackendPort:    backend.Port,
-				},
-				IngressSpec{
-					Name:           fmt.Sprintf("echo-shared-ratelimit-warmup-%d", time.Now().UnixNano()),
-					Host:           warmupHost,
-					Path:           "/",
-					BackendService: backend.Service,
-					BackendPort:    backend.Port,
-					Annotations: map[string]string{
-						"haproxy-haptic.org/rate-limit-requests":  fmt.Sprintf("%d", warmupLimit),
-						"haproxy-haptic.org/rate-limit-period":    "60s",
-						"haproxy-haptic.org/rate-limit-burst":     fmt.Sprintf("%d", warmupLimit),
-						"haproxy-haptic.org/rate-limit-algorithm": "gcra",
-					},
-				},
-				IngressSpec{
-					Name:           fmt.Sprintf("echo-shared-ratelimit-outage-lease-%d", time.Now().UnixNano()),
-					Host:           outageLeaseHost,
-					Path:           "/",
-					BackendService: backend.Service,
-					BackendPort:    backend.Port,
-					Annotations: map[string]string{
-						"haproxy-haptic.org/rate-limit-requests": "1",
-						"haproxy-haptic.org/rate-limit-period":   "60s",
-						"haproxy-haptic.org/rate-limit-burst":    "1",
-					},
-				},
-				IngressSpec{
-					Name:           fmt.Sprintf("echo-shared-ratelimit-outage-exact-%d", time.Now().UnixNano()),
-					Host:           outageExactHost,
-					Path:           "/",
-					BackendService: backend.Service,
-					BackendPort:    backend.Port,
-					Annotations: map[string]string{
-						"haproxy-haptic.org/rate-limit-requests":  "1",
-						"haproxy-haptic.org/rate-limit-period":    "60s",
-						"haproxy-haptic.org/rate-limit-burst":     "1",
-						"haproxy-haptic.org/rate-limit-algorithm": "gcra",
-					},
-				},
-			)
-			cleanupSharedRateLimitIngresses(t, client, ns, ingresses)
-			// Wait until the rate-limited route is deployed without spending
-			// request budget. HTTP polling is wrong here: the poll itself can
-			// exhaust the shared limiter before the actual assertion runs.
-			for _, ing := range ingresses {
-				waitForIngressDeployed(ctx, t, client, ns, ing.Name)
-			}
-			return StoreNamespaceInContext(ctx, ns)
-		}).
-		Assess("exact and lease budgets are shared across HAProxy pods", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			ns, err := GetNamespaceFromContext(ctx)
-			if err != nil {
-				t.Fatalf("get namespace: %v", err)
-			}
-			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
-			if err := waitForDeploymentRolloutComplete(ctx, client, ControllerNamespace, HAProxyDeploymentName, 2*time.Minute); err != nil {
-				t.Fatalf("wait for HAProxy rollout after rate-limit profile helm upgrade: %v", err)
-			}
-			podIPs := routableHAProxyPodIPs(ctx, t, client, ns, readinessHost, 2)
-			waitForSharedRateLimitReadyOnPods(ctx, t, ns, warmupHost, podIPs[:2])
-			result := sharedRateLimitBurstAcrossPods(ctx, t, ns, host, podIPs[:2], burstTotal, false)
-			t.Logf("shared rate-limit direct-pod burst: %s", result.String())
-			if result.byTarget["A"] == 0 || result.byTarget["B"] == 0 {
-				t.Fatalf("expected burst to hit both HAProxy pods; got %s", result.String())
-			}
-			if result.byCode["429"] == 0 {
-				t.Fatalf("expected at least one 429 from %d requests split across two HAProxy pods with one shared %d-request budget; got %s",
-					burstTotal, limit, result.String())
-			}
-			if result.headerProbeCode != "429" || !result.headerRetryAfter ||
-				!result.headerLimit || !result.headerRemaining || !result.headerReset {
-				t.Fatalf("expected exhausted same-source probe to return 429 with rate-limit headers; got %s", result.String())
-			}
-			leaseResult := sharedRateLimitBurstAcrossPods(ctx, t, ns, leaseHost, podIPs[:2], leaseBurst, true)
-			t.Logf("shared rate-limit lease-mode direct-pod burst: %s", leaseResult.String())
-			if leaseResult.byTarget["A"] == 0 || leaseResult.byTarget["B"] == 0 {
-				t.Fatalf("expected lease-mode burst to hit both HAProxy pods; got %s", leaseResult.String())
-			}
-			if leaseResult.byCode["429"] == 0 {
-				t.Fatalf("expected at least one lease-mode 429 from %d requests split across two HAProxy pods with one shared %d-request budget; got %s",
-					leaseBurst, leaseLimit, leaseResult.String())
-			}
-			if leaseResult.headerProbeCode != "429" || !leaseResult.headerRetryAfter ||
-				!leaseResult.headerLimit || !leaseResult.headerRemaining || !leaseResult.headerReset {
-				t.Fatalf("expected exhausted malicious lease-mode probe to return 429 with rate-limit headers before Coraza could return 403; got %s", leaseResult.String())
-			}
-
-			consumerCodes := probeSharedConsumerRateLimits(ctx, t, ns, consumerHost, podIPs[:2])
-			t.Logf("shared rate-limit authenticated-consumer probes: %v", consumerCodes)
-			if consumerCodes["alice-1"] != "200" || consumerCodes["alice-2"] != "429" ||
-				consumerCodes["bob-1"] != "200" || consumerCodes["bob-2"] != "429" {
-				t.Fatalf("expected independent one-request budgets for authenticated consumers alice and bob; got %v", consumerCodes)
-			}
-
-			deleteManagedRateLimitPrimary(ctx, t, client)
-			waitForSharedRateLimitReadyOnPods(ctx, t, ns, warmupHost, podIPs[:2])
-			failoverResult := sharedRateLimitBurstAcrossPods(ctx, t, ns, failoverHost, podIPs[:2], failoverBurst, false)
-			t.Logf("shared rate-limit after Valkey primary failover: %s", failoverResult.String())
-			if failoverResult.byCode["200"] == 0 {
-				t.Fatalf("expected at least one 200 after deleting the managed Valkey primary; got %s", failoverResult.String())
-			}
-			if failoverResult.byCode["429"] == 0 {
-				t.Fatalf("expected at least one 429 after deleting the managed Valkey primary; got %s", failoverResult.String())
-			}
-			if failoverResult.headerProbeCode != "429" || !failoverResult.headerRetryAfter ||
-				!failoverResult.headerLimit || !failoverResult.headerRemaining || !failoverResult.headerReset {
-				t.Fatalf("expected exhausted post-failover probe to return 429 with rate-limit headers; got %s", failoverResult.String())
-			}
-			return ctx
-		}).
-		Assess("total Valkey outage is bounded and isolated from HAProxy", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			ns, err := GetNamespaceFromContext(ctx)
-			if err != nil {
-				t.Fatalf("get namespace: %v", err)
-			}
-			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
-			podIPs := routableHAProxyPodIPs(ctx, t, client, ns, readinessHost, 2)
-			waitForManagedRateLimitStoreReady(ctx, t, client)
-			originalReplicas, err := managedRateLimitStoreReplicas(ctx, client)
-			if err != nil {
-				t.Fatalf("read managed Valkey replica count: %v", err)
-			}
-			var outageSignalsBefore map[string]rateLimitOutageSignals
-			err = testutil.WaitForConditionWithDescription(ctx, testutil.FastWaitConfig(),
-				"rate-limit metrics exporters on every HAProxy pod",
-				func(ctx context.Context) (bool, error) {
-					outageSignalsBefore, err = rateLimitOutageSignalsByPod(ctx, client, podIPs)
-					return err == nil, err
-				})
-			if err != nil {
-				t.Fatalf("snapshot rate-limit outage metrics before Valkey outage: %v", err)
-			}
-			probePod := createValkeyOutageProbePod(ctx, t, ns)
-
-			restored := false
-			t.Cleanup(func() {
-				if restored {
-					return
-				}
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-				defer cancel()
-				if err := scaleManagedRateLimitStore(cleanupCtx, originalReplicas); err != nil {
-					t.Errorf("restore managed Valkey replicas: %v", err)
-					return
-				}
-				if err := managedRateLimitStoreReady(cleanupCtx, client); err != nil {
-					t.Errorf("wait for restored managed Valkey store: %v", err)
-				}
-			})
-
-			if err := scaleManagedRateLimitStore(ctx, 0); err != nil {
-				t.Fatalf("scale managed Valkey store to zero: %v", err)
-			}
-			if err := waitForManagedRateLimitStoreScaledDown(ctx, client); err != nil {
-				t.Fatalf("wait for total managed Valkey outage: %v", err)
-			}
-
-			outageResult := probeValkeyOutageRoutes(ctx, t, ns, probePod, []valkeyOutageRoute{
-				{name: "plain", host: readinessHost, expectedCodes: []string{"200"}, forbidRateLimitHeaders: true},
-				{
-					name:                    "lease",
-					host:                    outageLeaseHost,
-					expectedCodes:           []string{"200", "429"},
-					requireRetryOnLimit:     true,
-					requireRateLimitHeaders: true,
-					expectedLimit:           "1",
-					expectedRemaining:       "0",
-				},
-				{
-					name:                    "exact",
-					host:                    outageExactHost,
-					expectedCodes:           []string{"200", "429"},
-					requireRetryOnLimit:     true,
-					requireRateLimitHeaders: true,
-					expectedLimit:           "1",
-					expectedRemaining:       "0",
-				},
-			}, podIPs)
-			t.Logf("managed Valkey outage probes: %s", outageResult.String())
-			if err := outageResult.validate(1 * time.Second); err != nil {
-				t.Fatalf("managed Valkey local-fallback behavior: %v", err)
-			}
-			var outageSignalsAfter map[string]rateLimitOutageSignals
-			err = testutil.WaitForConditionWithDescription(ctx, testutil.FastWaitConfig(),
-				"local-fallback rate-limit signals on every HAProxy pod",
-				func(ctx context.Context) (bool, error) {
-					outageSignalsAfter, err = rateLimitOutageSignalsByPod(ctx, client, podIPs)
-					if err != nil {
-						return false, err
-					}
-					for _, podIP := range podIPs {
-						before := outageSignalsBefore[podIP]
-						after := outageSignalsAfter[podIP]
-						for _, outcome := range rateLimitFallbackOutcomes {
-							if delta := after.outcomes[outcome] - before.outcomes[outcome]; delta < 1 {
-								return false, fmt.Errorf("HAProxy pod %s has %s delta %v, want at least 1",
-									podIP, outcome, delta)
-							}
-						}
-						if delta := after.degraded - before.degraded; delta < float64(len(rateLimitFallbackOutcomes)) {
-							return false, fmt.Errorf("HAProxy pod %s has degraded transaction delta %v, want at least %d",
-								podIP, delta, len(rateLimitFallbackOutcomes))
-						}
-					}
-					return true, nil
-				})
-			if err != nil {
-				t.Fatalf("observe local fallback on every HAProxy pod: %v", err)
-			}
-			for _, podIP := range podIPs {
-				before := outageSignalsBefore[podIP]
-				after := outageSignalsAfter[podIP]
-				deltas := make(map[string]float64, len(rateLimitFallbackOutcomes))
-				for _, outcome := range rateLimitFallbackOutcomes {
-					deltas[outcome] = after.outcomes[outcome] - before.outcomes[outcome]
-				}
-				t.Logf("HAProxy pod %s outage signals: outcomes=%v degraded=%v",
-					podIP, deltas, after.degraded-before.degraded)
-			}
-			if routable := routableHAProxyPodIPs(ctx, t, client, ns, readinessHost, 2); len(routable) < 2 {
-				t.Fatalf("expected two routable HAProxy pods during Valkey outage, got %v", routable)
-			}
-
-			probeIP := podIPs[0]
-			probeHAProxyPod, err := haproxyPodNameForIP(ctx, client, probeIP)
-			if err != nil {
-				t.Fatalf("find HAProxy pod for SPOA hub outage probe: %v", err)
-			}
-			unavailableSignalsBefore, err := rateLimitOutageSignalsByPod(ctx, client, []string{probeIP})
-			if err != nil {
-				t.Fatalf("snapshot rate-limit signals before SPOA hub outage: %v", err)
-			}
-			spoaHubDisabled := false
-			t.Cleanup(func() {
-				if !spoaHubDisabled {
-					return
-				}
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if err := setSPOAHubRuntimeServerDisabled(cleanupCtx, probeHAProxyPod, false); err != nil {
-					t.Errorf("restore SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
-					return
-				}
-				if err := waitForSPOAHubRuntimeServerState(cleanupCtx, probeHAProxyPod, false); err != nil {
-					t.Errorf("verify restored SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
-				}
-			})
-			spoaHubDisabled = true
-			if err := setSPOAHubRuntimeServerDisabled(ctx, probeHAProxyPod, true); err != nil {
-				t.Fatalf("disable SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
-			}
-			if err := waitForSPOAHubRuntimeServerState(ctx, probeHAProxyPod, true); err != nil {
-				t.Fatalf("verify disabled SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
-			}
-			unavailableProbe, err := probeValkeyOutageRouteOnce(ctx, ns, probePod, "P1", outageExactHost, probeIP)
-			if err != nil {
-				t.Fatalf("probe rate limit with unavailable SPOA hub: %v", err)
-			}
-			if unavailableProbe.code != "200" || unavailableProbe.duration > time.Second {
-				t.Fatalf("rate limit with unavailable SPOA hub returned code=%s in %s, want 200 in at most 1s",
-					unavailableProbe.code, unavailableProbe.duration)
-			}
-			if unavailableProbe.hasRateLimitHeaders() {
-				t.Fatalf("unaccounted SPOA hub fail-open returned X-RateLimit headers: %+v", unavailableProbe)
-			}
-			err = testutil.WaitForConditionWithDescription(ctx, testutil.FastWaitConfig(),
-				"a degraded rate-limit signal after the SPOA hub becomes unavailable",
-				func(ctx context.Context) (bool, error) {
-					after, err := rateLimitOutageSignalsByPod(ctx, client, []string{probeIP})
-					if err != nil {
-						return false, err
-					}
-					delta := after[probeIP].degraded - unavailableSignalsBefore[probeIP].degraded
-					if delta < 1 {
-						return false, fmt.Errorf("HAProxy pod %s has degraded transaction delta %v, want at least 1", probeIP, delta)
-					}
-					return true, nil
-				})
-			if err != nil {
-				t.Fatalf("observe SPOA hub fail-open degradation: %v", err)
-			}
-			if err := setSPOAHubRuntimeServerDisabled(ctx, probeHAProxyPod, false); err != nil {
-				t.Fatalf("restore SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
-			}
-			if err := waitForSPOAHubRuntimeServerState(ctx, probeHAProxyPod, false); err != nil {
-				t.Fatalf("verify restored SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
-			}
-			waitForSharedRateLimitReadyOnPods(ctx, t, ns, warmupHost, []string{probeIP})
-			spoaHubDisabled = false
-
-			if err := scaleManagedRateLimitStore(ctx, originalReplicas); err != nil {
-				t.Fatalf("restore managed Valkey replicas: %v", err)
-			}
-			if err := managedRateLimitStoreReady(ctx, client); err != nil {
-				t.Fatalf("wait for managed Valkey recovery: %v", err)
-			}
-			restored = true
-			waitForAuthoritativeExactRateLimitRecovery(ctx, t, client, ns, probePod, outageExactHost, podIPs, outageSignalsAfter)
-			return ctx
-		}).
+		Setup(scenario.setup).
+		Assess("exact and lease budgets are shared across HAProxy pods", scenario.sharedBudgets).
+		Assess("total Valkey outage is bounded and isolated from HAProxy", scenario.outage).
 		Feature()
 
 	testEnv.Test(t, feature)
+}
+
+type sharedRateLimitScenario struct {
+	host               string
+	leaseHost          string
+	failoverHost       string
+	consumerHost       string
+	readinessHost      string
+	warmupHost         string
+	outageLeaseHost    string
+	outageExactHost    string
+	consumerSecretName string
+	limit              int
+	leaseLimit         int
+	failoverLimit      int
+	warmupLimit        int
+	burstTotal         int
+	leaseBurst         int
+	failoverBurst      int
 }
 
 func createSharedRateLimitIngresses(
@@ -475,7 +130,7 @@ func createSharedRateLimitIngresses(
 	t.Helper()
 	ingresses := make([]*networkingv1.Ingress, 0, len(specs))
 	for _, spec := range specs {
-		ing := buildIngress(namespace, spec)
+		ing := buildIngress(namespace, &spec)
 		if err := client.Resources(namespace).Create(ctx, ing); err != nil {
 			t.Fatalf("create Ingress %s/%s: %v", namespace, spec.Name, err)
 		}
@@ -506,7 +161,7 @@ func listReadyHAProxyPodIPs(ctx context.Context, client klient.Client) ([]string
 	ips := make([]string, 0, len(pods.Items))
 	for i := range pods.Items {
 		pod := pods.Items[i]
-		if pod.DeletionTimestamp != nil || pod.Status.PodIP == "" || !podReady(pod) {
+		if pod.DeletionTimestamp != nil || pod.Status.PodIP == "" || !podReady(&pod) {
 			continue
 		}
 		ips = append(ips, pod.Status.PodIP)
@@ -563,7 +218,7 @@ func deleteManagedRateLimitPrimary(ctx context.Context, t *testing.T, client kli
 		restoreManagedRateLimitStoreScheduling(context.Background(), t)
 	})
 	deleteCmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"delete", "pod", primary,
 		"--grace-period=0",
@@ -589,7 +244,7 @@ func blockManagedRateLimitStoreReplacementScheduling(ctx context.Context, t *tes
 	t.Helper()
 	patch := `{"spec":{"updateStrategy":{"type":"OnDelete","rollingUpdate":null},"template":{"spec":{"nodeSelector":{"haproxy-haptic.org/e2e-unschedulable":"true"}}}}}`
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"patch", "statefulset", rateLimitStoreName,
 		"--type=merge",
@@ -605,7 +260,7 @@ func restoreManagedRateLimitStoreScheduling(ctx context.Context, t *testing.T) {
 	t.Helper()
 	patch := `{"spec":{"updateStrategy":{"type":"RollingUpdate","rollingUpdate":{}},"template":{"spec":{"nodeSelector":null}}}}`
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"patch", "statefulset", rateLimitStoreName,
 		"--type=merge",
@@ -636,7 +291,7 @@ func waitForManagedRateLimitPrimaryDeletionObserved(ctx context.Context, t *test
 				if pod.Name != name || string(pod.UID) != uid {
 					continue
 				}
-				if pod.DeletionTimestamp != nil || !podReady(pod) {
+				if pod.DeletionTimestamp != nil || !podReady(&pod) {
 					return true, nil
 				}
 				return false, fmt.Errorf("pod %s uid %s still Ready and not deleting", name, uid)
@@ -664,7 +319,7 @@ func waitForManagedRateLimitFailover(ctx context.Context, t *testing.T, client k
 			}
 			ready := 0
 			for i := range pods {
-				if podReady(pods[i]) {
+				if podReady(&pods[i]) {
 					ready++
 				}
 			}
@@ -710,7 +365,7 @@ func managedRateLimitStoreReady(ctx context.Context, client klient.Client) error
 			}
 			ready := 0
 			for i := range pods {
-				if podReady(pods[i]) {
+				if podReady(&pods[i]) {
 					ready++
 				}
 			}
@@ -737,7 +392,7 @@ func managedRateLimitStoreReplicas(ctx context.Context, client klient.Client) (i
 
 func scaleManagedRateLimitStore(ctx context.Context, replicas int32) error {
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"scale", "statefulset/"+rateLimitStoreName,
 		fmt.Sprintf("--replicas=%d", replicas))
@@ -807,12 +462,12 @@ func findManagedRateLimitPrimary(ctx context.Context, pods []corev1.Pod) (string
 	var checked []string
 	for i := range pods {
 		pod := pods[i]
-		if pod.DeletionTimestamp != nil || !podReady(pod) {
+		if pod.DeletionTimestamp != nil || !podReady(&pod) {
 			continue
 		}
 		checked = append(checked, pod.Name)
 		roleCmd := exec.CommandContext(ctx, "kubectl",
-			"--kubeconfig", kubeconfigPath,
+			kubeconfigFlag, kubeconfigPath,
 			"-n", ControllerNamespace,
 			"exec", pod.Name,
 			"-c", "valkey",
@@ -882,7 +537,7 @@ echo "%s $code $limit $remaining $reset";
 
 	podName := fmt.Sprintf("shared-ratelimit-ready-%d", time.Now().UnixNano())
 	kubectlArgs := func(extra ...string) []string {
-		return append([]string{"--kubeconfig", kubeconfigPath, "-n", namespace}, extra...)
+		return append([]string{kubeconfigFlag, kubeconfigPath, "-n", namespace}, extra...)
 	}
 
 	runCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs(
@@ -953,7 +608,7 @@ func probeHAProxyPodRoute(ctx context.Context, namespace, host string, podIPs []
 
 	podName := fmt.Sprintf("shared-ratelimit-route-probe-%d", time.Now().UnixNano())
 	kubectlArgs := func(extra ...string) []string {
-		return append([]string{"--kubeconfig", kubeconfigPath, "-n", namespace}, extra...)
+		return append([]string{kubeconfigFlag, kubeconfigPath, "-n", namespace}, extra...)
 	}
 
 	runCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs(
@@ -1015,7 +670,7 @@ func probeHAProxyPodRoute(ctx context.Context, namespace, host string, podIPs []
 	return routable, nil
 }
 
-func podReady(pod corev1.Pod) bool {
+func podReady(pod *corev1.Pod) bool {
 	for _, c := range pod.Status.Conditions {
 		if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
 			return true
@@ -1185,7 +840,7 @@ func rateLimitOutcomeMetricValue(body, outcome string) (value float64, seen bool
 	return prometheusMetricValue(body, pluginRateLimitRequestsMetric, fmt.Sprintf("outcome=%q", outcome))
 }
 
-func prometheusMetricValue(body, metric, requiredLabel string) (float64, bool, error) {
+func prometheusMetricValue(body, metric, requiredLabel string) (value float64, found bool, err error) {
 	var total float64
 	var seen bool
 	for _, line := range strings.Split(body, "\n") {
@@ -1270,40 +925,11 @@ func (r *valkeyOutageProbeResult) validate(maxDuration time.Duration) error {
 		if !known {
 			return fmt.Errorf("target %s returned unexpected route %q in iteration %d", probe.target, probe.route, probe.iteration)
 		}
-		if probe.iteration < 1 || probe.iteration > len(route.expectedCodes) {
-			return fmt.Errorf("target %s route %s returned unexpected iteration %d", probe.target, probe.route, probe.iteration)
+		if err := probe.validateRoute(&route, maxDuration); err != nil {
+			return err
 		}
 		key := probe.target + "/" + probe.route
 		seen[key]++
-		expectedCode := route.expectedCodes[probe.iteration-1]
-		if probe.code != expectedCode {
-			return fmt.Errorf("target %s iteration %d route %s returned %s, want %s",
-				probe.target, probe.iteration, probe.route, probe.code, expectedCode)
-		}
-		if probe.duration > maxDuration {
-			return fmt.Errorf("target %s iteration %d route %s took %s, want at most %s",
-				probe.target, probe.iteration, probe.route, probe.duration, maxDuration)
-		}
-		if route.requireRetryOnLimit && expectedCode == "429" && !probe.retry {
-			return fmt.Errorf("target %s iteration %d route %s returned 429 without Retry-After",
-				probe.target, probe.iteration, probe.route)
-		}
-		if route.requireRateLimitHeaders {
-			if probe.limit != route.expectedLimit || probe.remaining != route.expectedRemaining {
-				return fmt.Errorf("target %s iteration %d route %s returned X-RateLimit-Limit=%q and X-RateLimit-Remaining=%q, want %q and %q",
-					probe.target, probe.iteration, probe.route, probe.limit, probe.remaining,
-					route.expectedLimit, route.expectedRemaining)
-			}
-			reset, err := strconv.ParseUint(probe.reset, 10, 32)
-			if err != nil || reset == 0 {
-				return fmt.Errorf("target %s iteration %d route %s returned invalid X-RateLimit-Reset %q",
-					probe.target, probe.iteration, probe.route, probe.reset)
-			}
-		}
-		if route.forbidRateLimitHeaders && probe.hasRateLimitHeaders() {
-			return fmt.Errorf("target %s iteration %d route %s unexpectedly returned X-RateLimit headers: limit=%q remaining=%q reset=%q",
-				probe.target, probe.iteration, probe.route, probe.limit, probe.remaining, probe.reset)
-		}
 	}
 	for _, target := range r.targets {
 		for _, route := range r.routes {
@@ -1317,11 +943,44 @@ func (r *valkeyOutageProbeResult) validate(maxDuration time.Duration) error {
 	return nil
 }
 
+func (probe *valkeyOutageProbe) validateRoute(route *valkeyOutageRoute, maxDuration time.Duration) error {
+	if probe.iteration < 1 || probe.iteration > len(route.expectedCodes) {
+		return fmt.Errorf("target %s route %s returned unexpected iteration %d", probe.target, probe.route, probe.iteration)
+	}
+	expectedCode := route.expectedCodes[probe.iteration-1]
+	if probe.code != expectedCode {
+		return fmt.Errorf("target %s iteration %d route %s returned %s, want %s",
+			probe.target, probe.iteration, probe.route, probe.code, expectedCode)
+	}
+	if probe.duration > maxDuration {
+		return fmt.Errorf("target %s iteration %d route %s took %s, want at most %s",
+			probe.target, probe.iteration, probe.route, probe.duration, maxDuration)
+	}
+	if route.requireRetryOnLimit && expectedCode == "429" && !probe.retry {
+		return fmt.Errorf("target %s iteration %d route %s returned 429 without Retry-After", probe.target, probe.iteration, probe.route)
+	}
+	if route.requireRateLimitHeaders {
+		if probe.limit != route.expectedLimit || probe.remaining != route.expectedRemaining {
+			return fmt.Errorf("target %s iteration %d route %s returned X-RateLimit-Limit=%q and X-RateLimit-Remaining=%q, want %q and %q",
+				probe.target, probe.iteration, probe.route, probe.limit, probe.remaining, route.expectedLimit, route.expectedRemaining)
+		}
+		reset, err := strconv.ParseUint(probe.reset, 10, 32)
+		if err != nil || reset == 0 {
+			return fmt.Errorf("target %s iteration %d route %s returned invalid X-RateLimit-Reset %q", probe.target, probe.iteration, probe.route, probe.reset)
+		}
+	}
+	if route.forbidRateLimitHeaders && probe.hasRateLimitHeaders() {
+		return fmt.Errorf("target %s iteration %d route %s unexpectedly returned X-RateLimit headers: limit=%q remaining=%q reset=%q",
+			probe.target, probe.iteration, probe.route, probe.limit, probe.remaining, probe.reset)
+	}
+	return nil
+}
+
 func createValkeyOutageProbePod(ctx context.Context, t *testing.T, namespace string) string {
 	t.Helper()
 	podName := fmt.Sprintf("shared-ratelimit-outage-%d", time.Now().UnixNano())
 	kubectlArgs := func(extra ...string) []string {
-		return append([]string{"--kubeconfig", kubeconfigPath, "-n", namespace}, extra...)
+		return append([]string{kubeconfigFlag, kubeconfigPath, "-n", namespace}, extra...)
 	}
 	runCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs(
 		"run", podName,
@@ -1417,7 +1076,7 @@ func probeValkeyOutageRouteOnce(
 
 func execValkeyOutageProbeScript(ctx context.Context, namespace, probePod, script string) (string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", namespace,
 		"exec", probePod,
 		"--", "sh", "-c", script)
@@ -1456,7 +1115,7 @@ func parseValkeyOutageProbe(line string) (valkeyOutageProbe, error) {
 	}, nil
 }
 
-func (p valkeyOutageProbe) hasRateLimitHeaders() bool {
+func (p *valkeyOutageProbe) hasRateLimitHeaders() bool {
 	return p.limit != "-" || p.remaining != "-" || p.reset != "-"
 }
 
@@ -1636,7 +1295,7 @@ echo "H $code $retry_after $limit $remaining $reset";
 
 	podName := fmt.Sprintf("shared-ratelimit-burst-%d", time.Now().UnixNano())
 	kubectlArgs := func(extra ...string) []string {
-		return append([]string{"--kubeconfig", kubeconfigPath, "-n", namespace}, extra...)
+		return append([]string{kubeconfigFlag, kubeconfigPath, "-n", namespace}, extra...)
 	}
 
 	runCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs(
@@ -1675,12 +1334,17 @@ echo "H $code $retry_after $limit $remaining $reset";
 		t.Fatalf("read shared rate-limit burst logs: %v\nstderr: %s", err, logsErr.String())
 	}
 
+	return parseSharedRateLimitBurst(t, out.String(), total)
+}
+
+func parseSharedRateLimitBurst(t *testing.T, output string, total int) sharedRateLimitBurstResult {
+	t.Helper()
 	result := sharedRateLimitBurstResult{
 		requested: total,
 		byTarget:  map[string]int{},
 		byCode:    map[string]int{},
 	}
-	for _, raw := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+	for _, raw := range strings.Split(strings.TrimSpace(output), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
@@ -1741,7 +1405,7 @@ func probeSharedConsumerRateLimits(
 
 	podName := fmt.Sprintf("shared-ratelimit-consumers-%d", time.Now().UnixNano())
 	kubectlArgs := func(extra ...string) []string {
-		return append([]string{"--kubeconfig", kubeconfigPath, "-n", namespace}, extra...)
+		return append([]string{kubeconfigFlag, kubeconfigPath, "-n", namespace}, extra...)
 	}
 	runCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs(
 		"run", podName,
@@ -1788,4 +1452,416 @@ func probeSharedConsumerRateLimits(
 		codes[fields[0]] = fields[1]
 	}
 	return codes
+}
+
+func (s *sharedRateLimitScenario) setup(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	client, err := cfg.NewClient()
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	ns := NamespaceForTest(ctx, t, client)
+	DumpLogsOnFailure(t, ns)
+	backend := NewEchoServerBackend(ctx, t, client, ns)
+	consumerSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: s.consumerSecretName, Namespace: ns},
+		Type:       corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"keys": "key-alice:alice\nkey-bob:bob\n",
+		},
+	}
+	if err := client.Resources(ns).Create(ctx, consumerSecret); err != nil {
+		t.Fatalf("create consumer API-key Secret: %v", err)
+	}
+	ingresses := createSharedRateLimitIngresses(ctx, t, client, ns,
+		IngressSpec{
+			Name:           fmt.Sprintf("echo-shared-ratelimit-%d", time.Now().UnixNano()),
+			Host:           s.host,
+			Path:           "/",
+			BackendService: backend.Service,
+			BackendPort:    backend.Port,
+			Annotations: map[string]string{
+				"haproxy-haptic.org/rate-limit-requests":  fmt.Sprintf("%d", s.limit),
+				"haproxy-haptic.org/rate-limit-period":    "60s",
+				"haproxy-haptic.org/rate-limit-burst":     fmt.Sprintf("%d", s.limit),
+				"haproxy-haptic.org/rate-limit-algorithm": "gcra",
+			},
+		},
+		IngressSpec{
+			Name:           fmt.Sprintf("echo-shared-ratelimit-lease-%d", time.Now().UnixNano()),
+			Host:           s.leaseHost,
+			Path:           "/",
+			BackendService: backend.Service,
+			BackendPort:    backend.Port,
+			Annotations: map[string]string{
+				"haproxy-haptic.org/rate-limit-requests": fmt.Sprintf("%d", s.leaseLimit),
+				"haproxy-haptic.org/rate-limit-period":   "60s",
+				"haproxy-haptic.org/rate-limit-burst":    fmt.Sprintf("%d", s.leaseLimit),
+				"haproxy-haptic.org/waf-policy":          "streaming-search",
+			},
+		},
+		IngressSpec{
+			Name:           fmt.Sprintf("echo-shared-ratelimit-failover-%d", time.Now().UnixNano()),
+			Host:           s.failoverHost,
+			Path:           "/",
+			BackendService: backend.Service,
+			BackendPort:    backend.Port,
+			Annotations: map[string]string{
+				"haproxy-haptic.org/rate-limit-requests":  fmt.Sprintf("%d", s.failoverLimit),
+				"haproxy-haptic.org/rate-limit-period":    "60s",
+				"haproxy-haptic.org/rate-limit-burst":     fmt.Sprintf("%d", s.failoverLimit),
+				"haproxy-haptic.org/rate-limit-algorithm": "gcra",
+			},
+		},
+		IngressSpec{
+			Name:           fmt.Sprintf("echo-shared-ratelimit-consumer-%d", time.Now().UnixNano()),
+			Host:           s.consumerHost,
+			Path:           "/",
+			BackendService: backend.Service,
+			BackendPort:    backend.Port,
+			Annotations: map[string]string{
+				"haproxy-haptic.org/api-key-secret":       s.consumerSecretName,
+				"haproxy-haptic.org/rate-limit-requests":  "1",
+				"haproxy-haptic.org/rate-limit-period":    "60s",
+				"haproxy-haptic.org/rate-limit-burst":     "1",
+				"haproxy-haptic.org/rate-limit-key":       "consumer",
+				"haproxy-haptic.org/rate-limit-algorithm": "gcra",
+			},
+		},
+		IngressSpec{
+			Name:           fmt.Sprintf("echo-shared-ratelimit-ready-%d", time.Now().UnixNano()),
+			Host:           s.readinessHost,
+			Path:           "/",
+			BackendService: backend.Service,
+			BackendPort:    backend.Port,
+		},
+		IngressSpec{
+			Name:           fmt.Sprintf("echo-shared-ratelimit-warmup-%d", time.Now().UnixNano()),
+			Host:           s.warmupHost,
+			Path:           "/",
+			BackendService: backend.Service,
+			BackendPort:    backend.Port,
+			Annotations: map[string]string{
+				"haproxy-haptic.org/rate-limit-requests":  fmt.Sprintf("%d", s.warmupLimit),
+				"haproxy-haptic.org/rate-limit-period":    "60s",
+				"haproxy-haptic.org/rate-limit-burst":     fmt.Sprintf("%d", s.warmupLimit),
+				"haproxy-haptic.org/rate-limit-algorithm": "gcra",
+			},
+		},
+		IngressSpec{
+			Name:           fmt.Sprintf("echo-shared-ratelimit-outage-lease-%d", time.Now().UnixNano()),
+			Host:           s.outageLeaseHost,
+			Path:           "/",
+			BackendService: backend.Service,
+			BackendPort:    backend.Port,
+			Annotations: map[string]string{
+				"haproxy-haptic.org/rate-limit-requests": "1",
+				"haproxy-haptic.org/rate-limit-period":   "60s",
+				"haproxy-haptic.org/rate-limit-burst":    "1",
+			},
+		},
+		IngressSpec{
+			Name:           fmt.Sprintf("echo-shared-ratelimit-outage-exact-%d", time.Now().UnixNano()),
+			Host:           s.outageExactHost,
+			Path:           "/",
+			BackendService: backend.Service,
+			BackendPort:    backend.Port,
+			Annotations: map[string]string{
+				"haproxy-haptic.org/rate-limit-requests":  "1",
+				"haproxy-haptic.org/rate-limit-period":    "60s",
+				"haproxy-haptic.org/rate-limit-burst":     "1",
+				"haproxy-haptic.org/rate-limit-algorithm": "gcra",
+			},
+		},
+	)
+	cleanupSharedRateLimitIngresses(t, client, ns, ingresses)
+	// Wait until the rate-limited route is deployed without spending
+	// request budget. HTTP polling is wrong here: the poll itself can
+	// exhaust the shared limiter before the actual assertion runs.
+	for _, ing := range ingresses {
+		waitForIngressDeployed(ctx, t, client, ns, ing.Name)
+	}
+	return StoreNamespaceInContext(ctx, ns)
+}
+
+func (s *sharedRateLimitScenario) sharedBudgets(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	ns, err := GetNamespaceFromContext(ctx)
+	if err != nil {
+		t.Fatalf("get namespace: %v", err)
+	}
+	client, err := cfg.NewClient()
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if err := waitForDeploymentRolloutComplete(ctx, client, ControllerNamespace, HAProxyDeploymentName, 2*time.Minute); err != nil {
+		t.Fatalf("wait for HAProxy rollout after rate-limit profile helm upgrade: %v", err)
+	}
+	podIPs := routableHAProxyPodIPs(ctx, t, client, ns, s.readinessHost, 2)
+	waitForSharedRateLimitReadyOnPods(ctx, t, ns, s.warmupHost, podIPs[:2])
+	result := sharedRateLimitBurstAcrossPods(ctx, t, ns, s.host, podIPs[:2], s.burstTotal, false)
+	t.Logf("shared rate-limit direct-pod burst: %s", result.String())
+	if result.byTarget["A"] == 0 || result.byTarget["B"] == 0 {
+		t.Fatalf("expected burst to hit both HAProxy pods; got %s", result.String())
+	}
+	if result.byCode["429"] == 0 {
+		t.Fatalf("expected at least one 429 from %d requests split across two HAProxy pods with one shared %d-request budget; got %s",
+			s.burstTotal, s.limit, result.String())
+	}
+	if !result.hasExhaustedHeaders() {
+		t.Fatalf("expected exhausted same-source probe to return 429 with rate-limit headers; got %s", result.String())
+	}
+	leaseResult := sharedRateLimitBurstAcrossPods(ctx, t, ns, s.leaseHost, podIPs[:2], s.leaseBurst, true)
+	t.Logf("shared rate-limit lease-mode direct-pod burst: %s", leaseResult.String())
+	if leaseResult.byTarget["A"] == 0 || leaseResult.byTarget["B"] == 0 {
+		t.Fatalf("expected lease-mode burst to hit both HAProxy pods; got %s", leaseResult.String())
+	}
+	if leaseResult.byCode["429"] == 0 {
+		t.Fatalf("expected at least one lease-mode 429 from %d requests split across two HAProxy pods with one shared %d-request budget; got %s",
+			s.leaseBurst, s.leaseLimit, leaseResult.String())
+	}
+	if !leaseResult.hasExhaustedHeaders() {
+		t.Fatalf("expected exhausted malicious lease-mode probe to return 429 with rate-limit headers before Coraza could return 403; got %s", leaseResult.String())
+	}
+
+	consumerCodes := probeSharedConsumerRateLimits(ctx, t, ns, s.consumerHost, podIPs[:2])
+	t.Logf("shared rate-limit authenticated-consumer probes: %v", consumerCodes)
+	if consumerCodes["alice-1"] != "200" || consumerCodes["alice-2"] != "429" ||
+		consumerCodes["bob-1"] != "200" || consumerCodes["bob-2"] != "429" {
+		t.Fatalf("expected independent one-request budgets for authenticated consumers alice and bob; got %v", consumerCodes)
+	}
+
+	deleteManagedRateLimitPrimary(ctx, t, client)
+	waitForSharedRateLimitReadyOnPods(ctx, t, ns, s.warmupHost, podIPs[:2])
+	failoverResult := sharedRateLimitBurstAcrossPods(ctx, t, ns, s.failoverHost, podIPs[:2], s.failoverBurst, false)
+	t.Logf("shared rate-limit after Valkey primary failover: %s", failoverResult.String())
+	if failoverResult.byCode["200"] == 0 {
+		t.Fatalf("expected at least one 200 after deleting the managed Valkey primary; got %s", failoverResult.String())
+	}
+	if failoverResult.byCode["429"] == 0 {
+		t.Fatalf("expected at least one 429 after deleting the managed Valkey primary; got %s", failoverResult.String())
+	}
+	if !failoverResult.hasExhaustedHeaders() {
+		t.Fatalf("expected exhausted post-failover probe to return 429 with rate-limit headers; got %s", failoverResult.String())
+	}
+	return ctx
+}
+
+func (r *sharedRateLimitBurstResult) hasExhaustedHeaders() bool {
+	return r.headerProbeCode == "429" && r.headerRetryAfter && r.headerLimit && r.headerRemaining && r.headerReset
+}
+
+func (s *sharedRateLimitScenario) outage(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	ns, err := GetNamespaceFromContext(ctx)
+	if err != nil {
+		t.Fatalf("get namespace: %v", err)
+	}
+	client, err := cfg.NewClient()
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	podIPs := routableHAProxyPodIPs(ctx, t, client, ns, s.readinessHost, 2)
+	waitForManagedRateLimitStoreReady(ctx, t, client)
+	originalReplicas, err := managedRateLimitStoreReplicas(ctx, client)
+	if err != nil {
+		t.Fatalf("read managed Valkey replica count: %v", err)
+	}
+	outageSignalsBefore := waitForRateLimitOutageSignals(ctx, t, client, podIPs)
+	probePod := createValkeyOutageProbePod(ctx, t, ns)
+
+	restored := false
+	t.Cleanup(func() {
+		if restored {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		if err := scaleManagedRateLimitStore(cleanupCtx, originalReplicas); err != nil {
+			t.Errorf("restore managed Valkey replicas: %v", err)
+			return
+		}
+		if err := managedRateLimitStoreReady(cleanupCtx, client); err != nil {
+			t.Errorf("wait for restored managed Valkey store: %v", err)
+		}
+	})
+
+	if err := scaleManagedRateLimitStore(ctx, 0); err != nil {
+		t.Fatalf("scale managed Valkey store to zero: %v", err)
+	}
+	if err := waitForManagedRateLimitStoreScaledDown(ctx, client); err != nil {
+		t.Fatalf("wait for total managed Valkey outage: %v", err)
+	}
+
+	outageResult := probeValkeyOutageRoutes(ctx, t, ns, probePod, []valkeyOutageRoute{
+		{name: "plain", host: s.readinessHost, expectedCodes: []string{"200"}, forbidRateLimitHeaders: true},
+		{
+			name:                    "lease",
+			host:                    s.outageLeaseHost,
+			expectedCodes:           []string{"200", "429"},
+			requireRetryOnLimit:     true,
+			requireRateLimitHeaders: true,
+			expectedLimit:           "1",
+			expectedRemaining:       "0",
+		},
+		{
+			name:                    "exact",
+			host:                    s.outageExactHost,
+			expectedCodes:           []string{"200", "429"},
+			requireRetryOnLimit:     true,
+			requireRateLimitHeaders: true,
+			expectedLimit:           "1",
+			expectedRemaining:       "0",
+		},
+	}, podIPs)
+	t.Logf("managed Valkey outage probes: %s", outageResult.String())
+	if err := outageResult.validate(1 * time.Second); err != nil {
+		t.Fatalf("managed Valkey local-fallback behavior: %v", err)
+	}
+	outageSignalsAfter := waitForLocalRateLimitFallback(ctx, t, client, podIPs, outageSignalsBefore)
+	if routable := routableHAProxyPodIPs(ctx, t, client, ns, s.readinessHost, 2); len(routable) < 2 {
+		t.Fatalf("expected two routable HAProxy pods during Valkey outage, got %v", routable)
+	}
+
+	s.checkHubOutage(ctx, t, client, ns, probePod, podIPs[0])
+	if err := scaleManagedRateLimitStore(ctx, originalReplicas); err != nil {
+		t.Fatalf("restore managed Valkey replicas: %v", err)
+	}
+	if err := managedRateLimitStoreReady(ctx, client); err != nil {
+		t.Fatalf("wait for managed Valkey recovery: %v", err)
+	}
+	restored = true
+	waitForAuthoritativeExactRateLimitRecovery(ctx, t, client, ns, probePod, s.outageExactHost, podIPs, outageSignalsAfter)
+	return ctx
+}
+
+func (s *sharedRateLimitScenario) checkHubOutage(ctx context.Context, t *testing.T, client klient.Client, ns, probePod, probeIP string) {
+	t.Helper()
+	probeHAProxyPod, err := haproxyPodNameForIP(ctx, client, probeIP)
+	if err != nil {
+		t.Fatalf("find HAProxy pod for SPOA hub outage probe: %v", err)
+	}
+	unavailableSignalsBefore, err := rateLimitOutageSignalsByPod(ctx, client, []string{probeIP})
+	if err != nil {
+		t.Fatalf("snapshot rate-limit signals before SPOA hub outage: %v", err)
+	}
+	spoaHubDisabled := false
+	t.Cleanup(func() {
+		if !spoaHubDisabled {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := setSPOAHubRuntimeServerDisabled(cleanupCtx, probeHAProxyPod, false); err != nil {
+			t.Errorf("restore SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
+			return
+		}
+		if err := waitForSPOAHubRuntimeServerState(cleanupCtx, probeHAProxyPod, false); err != nil {
+			t.Errorf("verify restored SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
+		}
+	})
+	spoaHubDisabled = true
+	if err := setSPOAHubRuntimeServerDisabled(ctx, probeHAProxyPod, true); err != nil {
+		t.Fatalf("disable SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
+	}
+	if err := waitForSPOAHubRuntimeServerState(ctx, probeHAProxyPod, true); err != nil {
+		t.Fatalf("verify disabled SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
+	}
+	unavailableProbe, err := probeValkeyOutageRouteOnce(ctx, ns, probePod, "P1", s.outageExactHost, probeIP)
+	if err != nil {
+		t.Fatalf("probe rate limit with unavailable SPOA hub: %v", err)
+	}
+	if unavailableProbe.code != "200" || unavailableProbe.duration > time.Second {
+		t.Fatalf("rate limit with unavailable SPOA hub returned code=%s in %s, want 200 in at most 1s",
+			unavailableProbe.code, unavailableProbe.duration)
+	}
+	if unavailableProbe.hasRateLimitHeaders() {
+		t.Fatalf("unaccounted SPOA hub fail-open returned X-RateLimit headers: %+v", unavailableProbe)
+	}
+	waitForHubDegradation(ctx, t, client, probeIP, unavailableSignalsBefore[probeIP].degraded)
+	if err := setSPOAHubRuntimeServerDisabled(ctx, probeHAProxyPod, false); err != nil {
+		t.Fatalf("restore SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
+	}
+	if err := waitForSPOAHubRuntimeServerState(ctx, probeHAProxyPod, false); err != nil {
+		t.Fatalf("verify restored SPOA hub runtime server on %s: %v", probeHAProxyPod, err)
+	}
+	waitForSharedRateLimitReadyOnPods(ctx, t, ns, s.warmupHost, []string{probeIP})
+	spoaHubDisabled = false
+}
+
+func waitForRateLimitOutageSignals(ctx context.Context, t *testing.T, client klient.Client, podIPs []string) map[string]rateLimitOutageSignals {
+	t.Helper()
+	var signals map[string]rateLimitOutageSignals
+	err := testutil.WaitForConditionWithDescription(ctx, testutil.FastWaitConfig(),
+		"rate-limit metrics exporters on every HAProxy pod",
+		func(ctx context.Context) (bool, error) {
+			var err error
+			signals, err = rateLimitOutageSignalsByPod(ctx, client, podIPs)
+			return err == nil, err
+		})
+	if err != nil {
+		t.Fatalf("snapshot rate-limit outage metrics before Valkey outage: %v", err)
+	}
+	return signals
+}
+
+func waitForLocalRateLimitFallback(ctx context.Context, t *testing.T, client klient.Client, podIPs []string, before map[string]rateLimitOutageSignals) map[string]rateLimitOutageSignals {
+	t.Helper()
+	var after map[string]rateLimitOutageSignals
+	err := testutil.WaitForConditionWithDescription(ctx, testutil.FastWaitConfig(),
+		"local-fallback rate-limit signals on every HAProxy pod",
+		func(ctx context.Context) (bool, error) {
+			var err error
+			after, err = rateLimitOutageSignalsByPod(ctx, client, podIPs)
+			if err != nil {
+				return false, err
+			}
+			err = validateLocalRateLimitFallback(podIPs, before, after)
+			return err == nil, err
+		})
+	if err != nil {
+		t.Fatalf("observe local fallback on every HAProxy pod: %v", err)
+	}
+	for _, podIP := range podIPs {
+		deltas := make(map[string]float64, len(rateLimitFallbackOutcomes))
+		for _, outcome := range rateLimitFallbackOutcomes {
+			deltas[outcome] = after[podIP].outcomes[outcome] - before[podIP].outcomes[outcome]
+		}
+		t.Logf("HAProxy pod %s outage signals: outcomes=%v degraded=%v", podIP, deltas, after[podIP].degraded-before[podIP].degraded)
+	}
+	return after
+}
+
+func validateLocalRateLimitFallback(podIPs []string, before, after map[string]rateLimitOutageSignals) error {
+	for _, podIP := range podIPs {
+		for _, outcome := range rateLimitFallbackOutcomes {
+			if delta := after[podIP].outcomes[outcome] - before[podIP].outcomes[outcome]; delta < 1 {
+				return fmt.Errorf("HAProxy pod %s has %s delta %v, want at least 1", podIP, outcome, delta)
+			}
+		}
+		if delta := after[podIP].degraded - before[podIP].degraded; delta < float64(len(rateLimitFallbackOutcomes)) {
+			return fmt.Errorf("HAProxy pod %s has degraded transaction delta %v, want at least %d", podIP, delta, len(rateLimitFallbackOutcomes))
+		}
+	}
+	return nil
+}
+
+func waitForHubDegradation(ctx context.Context, t *testing.T, client klient.Client, probeIP string, before float64) {
+	t.Helper()
+	err := testutil.WaitForConditionWithDescription(ctx, testutil.FastWaitConfig(),
+		"a degraded rate-limit signal after the SPOA hub becomes unavailable",
+		func(ctx context.Context) (bool, error) {
+			after, err := rateLimitOutageSignalsByPod(ctx, client, []string{probeIP})
+			if err != nil {
+				return false, err
+			}
+			delta := after[probeIP].degraded - before
+			if delta < 1 {
+				return false, fmt.Errorf("HAProxy pod %s has degraded transaction delta %v, want at least 1", probeIP, delta)
+			}
+			return true, nil
+		})
+	if err != nil {
+		t.Fatalf("observe SPOA hub fail-open degradation: %v", err)
+	}
 }

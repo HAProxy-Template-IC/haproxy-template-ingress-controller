@@ -32,7 +32,7 @@ import (
 // first_seen bug).
 func TestIngressNginxPermanentRedirect(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: nginx.ingress.kubernetes.io/permanent-redirect",
 		Host:        "ingress-perm-redirect.localdev.me",
 		Annotations: map[string]string{
@@ -41,6 +41,7 @@ func TestIngressNginxPermanentRedirect(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "any request redirects to configured Location",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				httpclient.New(t).GET(host, "/some/path").ExpectRedirect(t, "https://example.com/relocated")
 			},
 		}},

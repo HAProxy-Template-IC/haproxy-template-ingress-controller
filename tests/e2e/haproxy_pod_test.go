@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -25,11 +26,12 @@ import (
 )
 
 func execInHAProxyPod(ctx context.Context, pod, container string, argv ...string) (string, error) {
-	args := []string{
-		"--kubeconfig", kubeconfigPath,
+	args := make([]string, 0, 9+len(argv))
+	args = append(args,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"exec", pod, "-c", container, "--",
-	}
+	)
 	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	var stdout, stderr bytes.Buffer
@@ -44,7 +46,7 @@ func execInHAProxyPod(ctx context.Context, pod, container string, argv ...string
 
 func podJSONPath(ctx context.Context, pod, expr string) (string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"get", "pod", pod, "-o", "jsonpath="+expr,
 	)
@@ -58,7 +60,7 @@ func podJSONPath(ctx context.Context, pod, expr string) (string, error) {
 
 func apiProxyGet(ctx context.Context, pod string, port int, path string) (string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"get", "--raw",
 		fmt.Sprintf("/api/v1/namespaces/%s/pods/%s:%d/proxy/%s", ControllerNamespace, pod, port, path),
 	)
@@ -198,7 +200,7 @@ func startSelectedHAProxyAvailabilityMonitor(
 	stateDir := "/tmp/haptic-availability-monitor-" + token
 	monitorCtx, cancel := context.WithCancel(context.Background())
 	args := []string{
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"exec", pod, "-c", "haproxy", "--", "/bin/sh", "-c", `
 _state=$3
@@ -298,7 +300,19 @@ done
 		cancel()
 		return nil, fmt.Errorf("start selected-pod availability monitor: %w", err)
 	}
+	return runAvailabilityMonitorLifecycle(ctx, cmd, cancel, stdout, &stderr, func(waitForState bool) error {
+		return stopRemoteHAProxyAvailabilityMonitor(pod, stateDir, token, waitForState)
+	})
+}
 
+func runAvailabilityMonitorLifecycle(
+	ctx context.Context,
+	cmd *exec.Cmd,
+	cancel context.CancelFunc,
+	stdout io.Reader,
+	stderr *bytes.Buffer,
+	stopRemote func(bool) error,
+) (func() error, error) {
 	done := make(chan struct{})
 	var lifecycleMu sync.Mutex
 	commandExited := false
@@ -326,11 +340,11 @@ done
 			waitForState := !handshakeReceived && !commandExited
 			lifecycleMu.Unlock()
 
-			terminateErr = stopRemoteHAProxyAvailabilityMonitor(pod, stateDir, token, waitForState)
+			terminateErr = stopRemote(waitForState)
 			cancel()
 			<-done
 			if terminateErr != nil {
-				retryErr := stopRemoteHAProxyAvailabilityMonitor(pod, stateDir, token, false)
+				retryErr := stopRemote(false)
 				if retryErr == nil {
 					terminateErr = nil
 				} else {
@@ -369,67 +383,91 @@ done
 		}
 	}()
 
+	recordHandshake := func() {
+		lifecycleMu.Lock()
+		handshakeReceived = true
+		lifecycleMu.Unlock()
+	}
+	exitedOutcome := func() availabilityMonitorOutcome {
+		lifecycleMu.Lock()
+		defer lifecycleMu.Unlock()
+		return availabilityMonitorOutcome{
+			err:            commandErr,
+			unexpectedExit: unexpectedExit,
+			stderr:         strings.TrimSpace(stderr.String()),
+		}
+	}
+	if err := awaitAvailabilityMonitor(ctx, ready, done, terminate, recordHandshake, exitedOutcome); err != nil {
+		return nil, err
+	}
+	return availabilityMonitorStop(terminate, exitedOutcome), nil
+}
+
+type availabilityMonitorOutcome struct {
+	err            error
+	unexpectedExit bool
+	stderr         string
+}
+
+func awaitAvailabilityMonitor(
+	ctx context.Context,
+	ready <-chan error,
+	done <-chan struct{},
+	terminate func() error,
+	recordHandshake func(),
+	exitedOutcome func() availabilityMonitorOutcome,
+) error {
 	select {
 	case err := <-ready:
 		if err == nil {
-			lifecycleMu.Lock()
-			handshakeReceived = true
-			lifecycleMu.Unlock()
+			recordHandshake()
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				cleanupErr := terminate()
-				return nil, errors.Join(ctxErr, cleanupErr)
+				return errors.Join(ctxErr, cleanupErr)
 			}
-			break
+			return nil
 		}
 		cleanupErr := terminate()
-		lifecycleMu.Lock()
-		monitorErr := commandErr
-		lifecycleMu.Unlock()
-		stderrText := strings.TrimSpace(stderr.String())
-		if strings.Contains(stderrText, "HAPTIC_AVAILABILITY_FAILED") {
-			return nil, errors.Join(err, fmt.Errorf("selected-pod HAProxy request failed before startup: %v (stderr: %s)",
-				monitorErr, stderrText), cleanupErr)
+		outcome := exitedOutcome()
+		if strings.Contains(outcome.stderr, "HAPTIC_AVAILABILITY_FAILED") {
+			return errors.Join(err, fmt.Errorf("selected-pod HAProxy request failed before startup: %v (stderr: %s)",
+				outcome.err, outcome.stderr), cleanupErr)
 		}
-		return nil, errors.Join(err, cleanupErr)
+		return errors.Join(err, cleanupErr)
 	case <-done:
 		cleanupErr := terminate()
-		lifecycleMu.Lock()
-		err := commandErr
-		lifecycleMu.Unlock()
-		stderrText := strings.TrimSpace(stderr.String())
-		if strings.Contains(stderrText, "HAPTIC_AVAILABILITY_FAILED") {
-			return nil, errors.Join(fmt.Errorf("selected-pod HAProxy request failed before startup: %v (stderr: %s)",
-				err, stderrText), cleanupErr)
+		outcome := exitedOutcome()
+		if strings.Contains(outcome.stderr, "HAPTIC_AVAILABILITY_FAILED") {
+			return errors.Join(fmt.Errorf("selected-pod HAProxy request failed before startup: %v (stderr: %s)",
+				outcome.err, outcome.stderr), cleanupErr)
 		}
-		return nil, fmt.Errorf("selected-pod availability monitor exited before startup: %v (stderr: %s)",
-			errors.Join(err, cleanupErr), stderrText)
+		return fmt.Errorf("selected-pod availability monitor exited before startup: %v (stderr: %s)",
+			errors.Join(outcome.err, cleanupErr), outcome.stderr)
 	case <-ctx.Done():
 		cleanupErr := terminate()
-		return nil, errors.Join(ctx.Err(), cleanupErr)
+		return errors.Join(ctx.Err(), cleanupErr)
 	}
+}
 
+func availabilityMonitorStop(terminate func() error, exitedOutcome func() availabilityMonitorOutcome) func() error {
 	var stopOnce sync.Once
 	var stopErr error
 	return func() error {
 		stopOnce.Do(func() {
 			cleanupErr := terminate()
-			lifecycleMu.Lock()
-			err := commandErr
-			exitedEarly := unexpectedExit
-			lifecycleMu.Unlock()
-			stderrText := strings.TrimSpace(stderr.String())
-			if strings.Contains(stderrText, "HAPTIC_AVAILABILITY_FAILED") {
+			outcome := exitedOutcome()
+			if strings.Contains(outcome.stderr, "HAPTIC_AVAILABILITY_FAILED") {
 				stopErr = errors.Join(fmt.Errorf("selected-pod HAProxy request failed: %w (stderr: %s)",
-					err, stderrText), cleanupErr)
+					outcome.err, outcome.stderr), cleanupErr)
 				return
 			}
-			if exitedEarly {
+			if outcome.unexpectedExit {
 				stopErr = errors.Join(fmt.Errorf("selected-pod availability monitor exited early: %v (stderr: %s)",
-					err, stderrText), cleanupErr)
+					outcome.err, outcome.stderr), cleanupErr)
 				return
 			}
 			stopErr = cleanupErr
 		})
 		return stopErr
-	}, nil
+	}
 }

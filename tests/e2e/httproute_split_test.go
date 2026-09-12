@@ -98,6 +98,7 @@ func TestHTTPRouteSplit(t *testing.T) {
 
 	feature := features.New("HTTPRoute: 70/30 weighted backend split").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -109,7 +110,7 @@ func TestHTTPRouteSplit(t *testing.T) {
 			NewGateway(ctx, t, ns, "test-gateway")
 			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
-			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
+			NewHTTPRoute(ctx, t, ns, &HTTPRouteSpec{
 				Name:        "echo-split",
 				GatewayName: "test-gateway",
 				Hostnames:   []string{host},
@@ -139,6 +140,7 @@ func TestHTTPRouteSplit(t *testing.T) {
 			return ctx
 		}).
 		Assess("traffic split converges to the configured 70/30 within a five-sigma band over ~200 samples", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client := httpclient.ForForwarded(t, fwd.HTTPPort, 0)
 
 			// Warmup: wait for N consecutive 200s before starting the

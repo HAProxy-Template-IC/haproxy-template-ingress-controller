@@ -42,7 +42,7 @@ func TestHapticSessionAffinity(t *testing.T) {
 
 	const cookieName = "HAPTICSTICKY"
 
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: haproxy-haptic.org/affinity=cookie sets and honors a session cookie",
 		Host:        "ingress-haptic-sticky.localdev.me",
 		Annotations: map[string]string{
@@ -52,6 +52,7 @@ func TestHapticSessionAffinity(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "sets " + cookieName + " cookie and presenting it keeps routing consistent",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				// cookieValue returns the value of the named Set-Cookie
 				// header, or "" if the response carries no such cookie.
 				cookieValue := func(resp *httpclient.Response) string {

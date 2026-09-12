@@ -37,7 +37,7 @@ import (
 // auth-tls-pass-certificate-to-upstream — all four annotations the
 // nginx-ingress library renders into the chart's mTLS pipeline.
 func TestIngressAuthTLSSecretNginx(t *testing.T) {
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	t.Parallel()
 	host := "ingress-nginx-auth-tls.localdev.me"
 
@@ -48,6 +48,7 @@ func TestIngressAuthTLSSecretNginx(t *testing.T) {
 
 	feature := features.New("Ingress: client-mTLS via nginx auth-tls-secret").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -85,7 +86,7 @@ func TestIngressAuthTLSSecretNginx(t *testing.T) {
 				t.Fatalf("create client-CA secret: %v", err)
 			}
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-nginx-auth-tls",
 				Host:           host,
 				Path:           "/",
@@ -102,6 +103,7 @@ func TestIngressAuthTLSSecretNginx(t *testing.T) {
 			return ctx
 		}).
 		Assess("valid client cert is admitted, request reaches backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			resp := httpclient.New(t).HTTPS(host, "/").
 				WithClientCert(bundle.ClientCertPEM, bundle.ClientKeyPEM, bundle.CACertPEM).
 				ExpectOK(t)
@@ -111,6 +113,7 @@ func TestIngressAuthTLSSecretNginx(t *testing.T) {
 			return ctx
 		}).
 		Assess("missing client cert is rejected at the TLS layer", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			_, err := httpclient.New(t).HTTPS(host, "/").Do(ctx)
 			if err == nil {
 				t.Fatalf("expected TLS handshake error without client cert, got success")

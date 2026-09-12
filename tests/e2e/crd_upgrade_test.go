@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
@@ -85,8 +86,8 @@ func controllerPodFingerprint(ctx context.Context, dc *debugClient) (map[string]
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		var restarts int32
-		for _, cs := range p.Status.ContainerStatuses {
-			restarts += cs.RestartCount
+		for index := range p.Status.ContainerStatuses {
+			restarts += p.Status.ContainerStatuses[index].RestartCount
 		}
 		out[string(p.UID)] = restarts
 	}
@@ -95,7 +96,7 @@ func controllerPodFingerprint(ctx context.Context, dc *debugClient) (map[string]
 
 // kubectlJSON runs kubectl with -o json and returns the raw output.
 func kubectlJSON(ctx context.Context, args ...string) ([]byte, error) {
-	full := append([]string{"--kubeconfig", kubeconfigPath}, args...)
+	full := append([]string{kubeconfigFlag, kubeconfigPath}, args...)
 	full = append(full, "-o", "json")
 	out, err := exec.CommandContext(ctx, "kubectl", full...).Output()
 	if err != nil {
@@ -127,39 +128,18 @@ func TestGatewayAPICRDUpgradeInPlace(t *testing.T) {
 
 	waitResolution := func(ctx context.Context, t *testing.T, wantWatched bool) *effectiveResolution {
 		t.Helper()
-		deadline := time.Now().Add(3 * time.Minute)
-		var last *effectiveResolution
-		var lastErr error
-		for time.Now().Before(deadline) {
-			res, err := dc.getEffectiveResolution(ctx)
-			if err == nil {
-				last = res
-				if _, watched := res.ResolvedVersions["tcproutes"]; watched == wantWatched {
-					// The resolution flips at iteration start; also require
-					// the controller to be fully SETTLED (healthy without
-					// the reinit grace annotation) so this test — and the
-					// sequential tests after it — don't race the rebuild
-					// (e.g. the admission webhook coming back up).
-					if dc.healthzSettled(ctx) {
-						return res
-					}
-				}
-			} else {
-				lastErr = err
-			}
-			time.Sleep(2 * time.Second)
-		}
-		t.Fatalf("timed out waiting for tcproutes watched=%v (last resolution: %+v, last error: %v)",
-			wantWatched, last, lastErr)
-		return nil
+		return dc.waitForSettledResolution(ctx, t, fmt.Sprintf("tcproutes watched=%v", wantWatched),
+			func(res *effectiveResolution) bool {
+				_, watched := res.ResolvedVersions["tcproutes"]
+				return watched == wantWatched
+			})
 	}
 
 	feature := features.New("Runtime CRD upgrade: remove + reinstall TCPRoute CRD without helm or pod restart").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
+			require.NoError(t, err, "new client")
 			cs, err := newClientsetForE2E(client.RESTConfig())
 			if err != nil {
 				t.Fatalf("build clientset: %v", err)
@@ -181,50 +161,22 @@ func TestGatewayAPICRDUpgradeInPlace(t *testing.T) {
 				t.Fatal("no controller pods found for fingerprinting")
 			}
 
-			// Capture the CRD manifest for restoration, cleaned of
-			// server-populated fields so kubectl apply can re-create it.
-			raw, err := kubectlJSON(ctx, "get", "crd", crdName)
-			if err != nil {
-				t.Fatalf("capture CRD: %v", err)
-			}
-			var obj map[string]any
-			if err := json.Unmarshal(raw, &obj); err != nil {
-				t.Fatalf("decode CRD: %v", err)
-			}
-			delete(obj, "status")
-			if md, ok := obj["metadata"].(map[string]any); ok {
-				for _, f := range []string{"uid", "resourceVersion", "creationTimestamp", "generation", "managedFields"} {
-					delete(md, f)
-				}
-			}
-			crdManifest, err = json.Marshal(obj)
-			if err != nil {
-				t.Fatalf("re-encode CRD: %v", err)
-			}
+			crdManifest = captureCRDManifest(ctx, t, crdName)
 			return ctx
 		}).
 		Assess("deleting the CRD strips the TCPRoute feature at runtime", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "delete", "crd", crdName)
+			t.Helper()
+			cmd := exec.CommandContext(ctx, "kubectl", kubeconfigFlag, kubeconfigPath, "delete", "crd", crdName)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("delete CRD: %v (output: %s)", err, out)
 			}
 
 			res := waitResolution(ctx, t, false)
-			found := false
-			for _, name := range res.Unavailable {
-				if name == "tcproutes" {
-					found = true
-				}
-			}
-			if !found {
-				t.Fatalf("tcproutes not listed unavailable after CRD deletion: %+v", res)
-			}
-			if len(res.StrippedSnippets) == 0 || len(res.StrippedTests) == 0 {
-				t.Fatalf("expected TCPRoute snippets/tests to be stripped, got %+v", res)
-			}
+			requireTCPRouteUnavailable(t, res)
 			return ctx
 		}).
 		Assess("reinstalling the CRD re-activates the feature without helm or pod restart", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			if err := kubectlApplyStdin(ctx, crdManifest); err != nil {
 				t.Fatalf("restore CRD: %v", err)
 			}
@@ -241,18 +193,86 @@ func TestGatewayAPICRDUpgradeInPlace(t *testing.T) {
 			if err != nil {
 				t.Fatalf("pod fingerprint after: %v", err)
 			}
-			for uid, restarts := range fingerprint {
-				got, ok := after[uid]
-				if !ok {
-					t.Fatalf("controller pod %s was replaced during the CRD upgrade (runtime convergence must not restart pods)", uid)
-				}
-				if got != restarts {
-					t.Fatalf("controller pod %s restarted during the CRD upgrade (%d -> %d restarts)", uid, restarts, got)
-				}
-			}
+			requireControllerFingerprintUnchanged(t, fingerprint, after)
 			return ctx
 		}).
 		Feature()
 
 	testEnv.Test(t, feature)
+}
+
+func (dc *debugClient) waitForSettledResolution(
+	ctx context.Context, t *testing.T, description string, accept func(*effectiveResolution) bool,
+) *effectiveResolution {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Minute)
+	var last *effectiveResolution
+	var lastErr error
+	for time.Now().Before(deadline) {
+		res, err := dc.getEffectiveResolution(ctx)
+		if err == nil {
+			last = res
+			// Resolution changes before rebuilding the controller's validators.
+			if accept(res) && dc.healthzSettled(ctx) {
+				return res
+			}
+		} else {
+			lastErr = err
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("timed out waiting for %s (last resolution: %+v, last error: %v)", description, last, lastErr)
+	return nil
+}
+
+func captureCRDManifest(ctx context.Context, t *testing.T, name string) []byte {
+	t.Helper()
+	raw, err := kubectlJSON(ctx, "get", "crd", name)
+	if err != nil {
+		t.Fatalf("capture CRD: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatalf("decode CRD: %v", err)
+	}
+	delete(obj, "status")
+	if md, ok := obj["metadata"].(map[string]any); ok {
+		for _, field := range []string{"uid", "resourceVersion", "creationTimestamp", "generation", "managedFields"} {
+			delete(md, field)
+		}
+	}
+	manifest, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("re-encode CRD: %v", err)
+	}
+	return manifest
+}
+
+func requireTCPRouteUnavailable(t *testing.T, res *effectiveResolution) {
+	t.Helper()
+	found := false
+	for _, name := range res.Unavailable {
+		if name == "tcproutes" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("tcproutes not listed unavailable after CRD deletion: %+v", res)
+	}
+	if len(res.StrippedSnippets) == 0 || len(res.StrippedTests) == 0 {
+		t.Fatalf("expected TCPRoute snippets/tests to be stripped, got %+v", res)
+	}
+}
+
+func requireControllerFingerprintUnchanged(t *testing.T, before, after map[string]int32) {
+	t.Helper()
+	for uid, restarts := range before {
+		got, ok := after[uid]
+		if !ok {
+			t.Fatalf("controller pod %s was replaced during the CRD upgrade (runtime convergence must not restart pods)", uid)
+		}
+		if got != restarts {
+			t.Fatalf("controller pod %s restarted during the CRD upgrade (%d -> %d restarts)", uid, restarts, got)
+		}
+	}
 }

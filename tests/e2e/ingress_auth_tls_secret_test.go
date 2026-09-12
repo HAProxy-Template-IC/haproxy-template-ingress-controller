@@ -55,6 +55,7 @@ func TestIngressAuthTLSSecret(t *testing.T) {
 
 	feature := features.New("Ingress: client-mTLS via auth-tls-secret").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -94,7 +95,7 @@ func TestIngressAuthTLSSecret(t *testing.T) {
 				t.Fatalf("create client-CA secret: %v", err)
 			}
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-auth-tls",
 				Host:           host,
 				Path:           "/",
@@ -109,6 +110,7 @@ func TestIngressAuthTLSSecret(t *testing.T) {
 			return ctx
 		}).
 		Assess("valid client cert is admitted, request reaches backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			resp := httpclient.New(t).HTTPS(host, "/").
 				WithClientCert(bundle.ClientCertPEM, bundle.ClientKeyPEM, bundle.CACertPEM).
 				ExpectOK(t)
@@ -118,6 +120,7 @@ func TestIngressAuthTLSSecret(t *testing.T) {
 			return ctx
 		}).
 		Assess("missing client cert is rejected at the TLS layer", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// No WithClientCert → TLS handshake should fail. The
 			// httpclient default is insecure-skip-verify, so the only
 			// failure mode is HAProxy aborting the handshake on its
@@ -130,6 +133,7 @@ func TestIngressAuthTLSSecret(t *testing.T) {
 			return ctx
 		}).
 		Assess("client cert from untrusted CA is rejected", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// Use the trusted CA bundle for server-side verification
 			// (so the connection isn't rejected on server cert), but
 			// present a client cert signed by a *different* CA.

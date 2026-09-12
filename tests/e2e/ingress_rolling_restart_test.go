@@ -95,6 +95,7 @@ func TestIngressRollingRestartZeroDowntime(t *testing.T) {
 
 	feature := features.New("Ingress: rolling restart of single-replica backend is zero-downtime").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -104,7 +105,7 @@ func TestIngressRollingRestartZeroDowntime(t *testing.T) {
 			backend := NewEchoServerBackend(ctx, t, client, namespace)
 			deploymentName = backend.Service
 
-			NewIngress(ctx, t, client, namespace, IngressSpec{
+			NewIngress(ctx, t, client, namespace, &IngressSpec{
 				Name:           "echo",
 				Host:           host,
 				BackendService: backend.Service,
@@ -142,6 +143,7 @@ func TestIngressRollingRestartZeroDowntime(t *testing.T) {
 		}).
 		Assess("no non-2xx/3xx beyond the single ADR-0013 bounded residual during and after rollout restart",
 			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				t.Helper()
 				client, err := cfg.NewClient()
 				if err != nil {
 					t.Fatalf("new client: %v", err)
@@ -438,7 +440,7 @@ const controllerWarmUpWindow = 3 * time.Minute
 // both samples equal and the delta reads zero — precisely when the disruption
 // was largest. The restart's cost outlives the restart: the new leader renders
 // from an empty graph for seconds afterwards.
-func controllerStillWarming(ctx context.Context, t *testing.T, client klient.Client) (bool, string) {
+func controllerStillWarming(ctx context.Context, t *testing.T, client klient.Client) (warming bool, podName string) {
 	t.Helper()
 	cs, err := newClientsetForE2E(client.RESTConfig())
 	if err != nil {

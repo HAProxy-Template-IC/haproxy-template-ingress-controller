@@ -191,7 +191,7 @@ func (r *Request) Do(ctx context.Context) (*Response, error) {
 
 	transport := r.client.transport
 	if r.mtls != nil {
-		t, err := transportForClientCert(r.client.nodeIP, r.client.httpsPort, r.mtls.cert, r.mtls.ca)
+		t, err := transportForClientCert(r.client.nodeIP, r.client.httpsPort, &r.mtls.cert, r.mtls.ca)
 		if err != nil {
 			return nil, fmt.Errorf("build mTLS transport: %w", err)
 		}

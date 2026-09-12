@@ -28,7 +28,7 @@ import (
 // a disallowed HTTP method is denied 405; an allowed one reaches the upstream.
 func TestHapticAllowedMethods(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC-native allowed-methods gating",
 		Host:        "ingress-haptic-methods.localdev.me",
 		Annotations: map[string]string{
@@ -38,12 +38,14 @@ func TestHapticAllowedMethods(t *testing.T) {
 			{
 				Name: "GET is allowed (200)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusOK)
 				},
 			},
 			{
 				Name: "POST is denied (405)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").WithMethod("POST").ExpectStatus(t, http.StatusMethodNotAllowed)
 				},
 			},
@@ -55,7 +57,7 @@ func TestHapticAllowedMethods(t *testing.T) {
 // a request missing a required header is denied 400; supplying it admits it.
 func TestHapticRequireHeaders(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC-native require-headers gating",
 		Host:        "ingress-haptic-requirehdr.localdev.me",
 		Annotations: map[string]string{
@@ -65,12 +67,14 @@ func TestHapticRequireHeaders(t *testing.T) {
 			{
 				Name: "missing required header is denied (400)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusBadRequest)
 				},
 			},
 			{
 				Name: "supplying the header admits the request (200)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").WithHeader("X-Tenant-Id", "acme").ExpectStatus(t, http.StatusOK)
 				},
 			},
@@ -82,7 +86,7 @@ func TestHapticRequireHeaders(t *testing.T) {
 // the route returns the canned body without reaching the upstream.
 func TestHapticMockResponse(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC-native mock-response",
 		Host:        "ingress-haptic-mock.localdev.me",
 		Annotations: map[string]string{
@@ -93,6 +97,7 @@ func TestHapticMockResponse(t *testing.T) {
 			{
 				Name: "returns the canned 200 body",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					resp := httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusOK)
 					if !bytes.Contains(resp.Body, []byte(`{"stub":true}`)) {
 						t.Fatalf("expected mock body, got: %s", string(resp.Body))
@@ -110,7 +115,7 @@ func TestHapticMockResponse(t *testing.T) {
 // (64-gateway-security.yaml): every request on the route gets the fixed status.
 func TestHapticRequestTermination(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC-native fixed-response",
 		Host:        "ingress-haptic-termination.localdev.me",
 		Annotations: map[string]string{
@@ -121,6 +126,7 @@ func TestHapticRequestTermination(t *testing.T) {
 			{
 				Name: "returns the fixed 503",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusServiceUnavailable)
 				},
 			},

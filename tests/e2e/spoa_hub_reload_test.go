@@ -44,9 +44,10 @@ import (
 // We do NOT couple to the hub's exact log format string — see
 // spoaHubLogsShowSuccessfulReload's substring match for the contract.
 func TestSPOAHubReloadOnConfigPush(t *testing.T) {
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	feature := features.New("SPOA hub: graceful reload on controller config push").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -62,7 +63,7 @@ func TestSPOAHubReloadOnConfigPush(t *testing.T) {
 
 			haproxyPod := firstHAProxyPodName(ctx, t)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo",
 				Host:           "spoa-hub-reload.localdev.me",
 				BackendService: backend.Service,
@@ -101,6 +102,7 @@ func TestSPOAHubReloadOnConfigPush(t *testing.T) {
 			return ctx
 		}).
 		Assess("config push lands on haproxy pod and hub reloads", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// Conditions verified in Setup; this Assess keeps the
 			// feature wiring aligned with the rest of the suite.
 			return ctx

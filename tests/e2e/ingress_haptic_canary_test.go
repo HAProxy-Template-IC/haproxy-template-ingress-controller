@@ -47,6 +47,7 @@ func TestHapticCanary(t *testing.T) {
 
 	feature := features.New("Ingress: haproxy-haptic.org/canary header-based split").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -60,7 +61,7 @@ func TestHapticCanary(t *testing.T) {
 			canaryBackend := NewEchoServerV2Backend(ctx, t, client, ns)
 
 			// Main Ingress owns the base route for the shared host → v1 backend.
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-main",
 				Host:           host,
 				BackendService: mainBackend.Service,
@@ -69,7 +70,7 @@ func TestHapticCanary(t *testing.T) {
 
 			// Canary Ingress shares the host and splits X-Canary: true off to
 			// the v2 backend. It does NOT own the base route (colocation marker).
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-canary",
 				Host:           host,
 				BackendService: canaryBackend.Service,
@@ -83,10 +84,12 @@ func TestHapticCanary(t *testing.T) {
 			return ctx
 		}).
 		Assess("canary header routes to the canary (v2) backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/").WithHeader("X-Canary", "true").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("normal traffic hits the main (default) backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).

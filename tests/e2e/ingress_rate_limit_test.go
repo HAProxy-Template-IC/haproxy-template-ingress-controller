@@ -62,6 +62,7 @@ func TestIngressRateLimit(t *testing.T) {
 
 	feature := features.New("Ingress: rate-limit annotation enforces from inside cluster").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -69,7 +70,7 @@ func TestIngressRateLimit(t *testing.T) {
 			ns := NamespaceForTest(ctx, t, client)
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-ratelimit",
 				Host:           host,
 				Path:           "/",
@@ -87,6 +88,7 @@ func TestIngressRateLimit(t *testing.T) {
 			return StoreNamespaceInContext(ctx, ns)
 		}).
 		Assess("burst from in-cluster pod trips the limit (≥1 × 429)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			ns, err := GetNamespaceFromContext(ctx)
 			if err != nil {
 				t.Fatalf("get namespace: %v", err)
@@ -107,6 +109,7 @@ func TestIngressRateLimit(t *testing.T) {
 			return ctx
 		}).
 		Assess("the 429 names the rate limiter in the access log's denied_by field", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// The stick-table limiter has no verdict variable of its own, and
 			// its status code is operator-configurable, so a 429 in the log is
 			// otherwise indistinguishable from one the backend returned or one
@@ -221,7 +224,7 @@ func (r rateLimitBurstResult) String() string {
 		code  string
 		count int
 	}
-	var pairs []cc
+	pairs := make([]cc, 0, len(r.byCode))
 	for k, v := range r.byCode {
 		pairs = append(pairs, cc{k, v})
 	}
@@ -306,7 +309,7 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 
 		podName := fmt.Sprintf("ratelimit-burst-%d", time.Now().UnixNano())
 		kubectlArgs := func(extra ...string) []string {
-			return append([]string{"--kubeconfig", kubeconfigPath, "-n", namespace}, extra...)
+			return append([]string{kubeconfigFlag, kubeconfigPath, "-n", namespace}, extra...)
 		}
 		start := time.Now()
 
@@ -367,27 +370,7 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 		}
 		elapsed := time.Since(start)
 
-		result := rateLimitBurstResult{
-			requested:  total,
-			duration:   elapsed,
-			podElapsed: -1,
-			byCode:     map[string]int{},
-		}
-		for _, raw := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-			line := strings.TrimSpace(raw)
-			if line == "" {
-				continue
-			}
-			if rest, ok := strings.CutPrefix(line, "BURST_WINDOW "); ok {
-				var t0, t1 float64
-				if n, _ := fmt.Sscanf(rest, "%f %f", &t0, &t1); n == 2 && t1 >= t0 {
-					result.podElapsed = time.Duration((t1 - t0) * float64(time.Second))
-				}
-				continue
-			}
-			result.byCode[line]++
-		}
-		return result
+		return parseRateLimitBurst(out.String(), total, elapsed)
 	}
 
 	// Retry budget: the parallel-test e2e suite drives haproxy reloads
@@ -435,6 +418,30 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 			"(last attempt: %s). Chronic under-achievement = in-suite starvation or sustained "+
 			"reload churn (issue #60); but if landed traffic was substantial with 0×429 across "+
 			"attempts, suspect a real rate-limit regression instead: %v", limit, period, result, err)
+	}
+	return result
+}
+
+func parseRateLimitBurst(output string, total int, elapsed time.Duration) rateLimitBurstResult {
+	result := rateLimitBurstResult{
+		requested:  total,
+		duration:   elapsed,
+		podElapsed: -1,
+		byCode:     map[string]int{},
+	}
+	for _, raw := range strings.Split(strings.TrimSpace(output), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "BURST_WINDOW "); ok {
+			var t0, t1 float64
+			if n, _ := fmt.Sscanf(rest, "%f %f", &t0, &t1); n == 2 && t1 >= t0 {
+				result.podElapsed = time.Duration((t1 - t0) * float64(time.Second))
+			}
+			continue
+		}
+		result.byCode[line]++
 	}
 	return result
 }

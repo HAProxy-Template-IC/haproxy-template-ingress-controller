@@ -56,7 +56,7 @@ func installMetalLB(ctx context.Context) (context.Context, error) {
 	// Step 1: apply the MetalLB manifest. This is upstream's bundle —
 	// CRDs, controller deployment, speaker daemonset, RBAC, ValidatingWebhook.
 	apply := exec.CommandContext(ctx, "kubectl", "apply",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-f", metallbManifestURL)
 	if out, err := apply.CombinedOutput(); err != nil {
 		return ctx, fmt.Errorf("apply metallb manifest: %w (output: %s)", err, out)
@@ -69,7 +69,7 @@ func installMetalLB(ctx context.Context) (context.Context, error) {
 	// for the controller deployment is the right gate — it's the
 	// component the webhook lives in.
 	wait := exec.CommandContext(ctx, "kubectl", "wait",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"--namespace", "metallb-system",
 		"--for=condition=Available",
 		"--timeout=180s",
@@ -111,7 +111,7 @@ spec:
 
 	for attempt := 0; ; attempt++ {
 		applyPool := exec.CommandContext(ctx, "kubectl", "apply",
-			"--kubeconfig", kubeconfigPath,
+			kubeconfigFlag, kubeconfigPath,
 			"-f", "-")
 		applyPool.Stdin = strings.NewReader(pool)
 		out, err := applyPool.CombinedOutput()

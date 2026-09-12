@@ -219,7 +219,7 @@ type churnMonitor struct {
 	duplicateStreaks map[string]int
 }
 
-func (m *churnMonitor) addViolation(format string, args ...any) {
+func (m *churnMonitor) addViolationf(format string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.violations) < 20 {
@@ -294,349 +294,44 @@ func TestGatewayChurn(t *testing.T) {
 	churnWindow := time.Duration(envInt(t, churnMinutesEnv, churnDefaultMinutes)) * time.Minute
 	workers := envInt(t, churnWorkersEnv, churnDefaultWorkers)
 
-	var (
-		dc         *debugClient
-		cs         kubernetes.Interface
-		dyn        dynamic.Interface
-		survivorNS string
-		workerNSs  []string
-
-		survivorGateways []string          // Gateway names in survivorNS
-		survivorHosts    map[string]string // gateway name -> route hostname
-		survivorSvcs     map[string]string // gateway name -> marker Service name
-
-		monitor = &churnMonitor{
+	scenario := &gatewayChurnScenario{
+		churnWindow: churnWindow,
+		workers:     workers,
+		monitor: &churnMonitor{
 			survivorUpdates:  map[string]int{},
 			lastServiceRV:    map[string]string{},
 			duplicateStreaks: map[string]int{},
-		}
-		totalOps int
-	)
-
-	// survivorAllocationKey is the allocator-dump key each survivor must hold
-	// in every render: single HTTP listener named "http" on port 80.
-	survivorAllocationKey := func(gwName string) string {
-		return survivorNS + "/" + gwName + ":http:80"
+		},
 	}
 
 	feature := features.New(fmt.Sprintf("Gateway churn/soak: %d workers x %s, zero cross-wiring/oscillation", workers, churnWindow)).
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
-			cs, err = newClientsetForE2E(client.RESTConfig())
-			if err != nil {
-				t.Fatalf("build clientset: %v", err)
-			}
-			dyn, err = newDynamicForE2E(client.RESTConfig())
-			if err != nil {
-				t.Fatalf("build dynamic client: %v", err)
-			}
-			dc = newDebugClient(client.RESTConfig(), cs)
-
-			// Survivor fixtures: one namespace, its own echo backend, and
-			// churnSurvivorCount Gateways+HTTPRoutes that the churn never
-			// touches.
-			survivorNS = NamespaceForTest(ctx, t, client)
-			DumpLogsOnFailure(t, survivorNS)
-			backend := NewEchoServerBackend(ctx, t, client, survivorNS)
-			survivorHosts = map[string]string{}
-			for i := 0; i < churnSurvivorCount; i++ {
-				name := fmt.Sprintf("survivor-%d", i)
-				host := fmt.Sprintf("churn-survivor-%d.localdev.me", i)
-				NewGateway(ctx, t, survivorNS, name)
-				NewHTTPRoute(ctx, t, survivorNS, HTTPRouteSpec{
-					Name:        name,
-					GatewayName: name,
-					Hostnames:   []string{host},
-					Rules: []HTTPRouteRule{{
-						PathType: "PathPrefix",
-						Path:     "/",
-						BackendRefs: []HTTPRouteBackendRef{{
-							Service: backend.Service,
-							Port:    backend.Port,
-						}},
-					}},
-				})
-				survivorGateways = append(survivorGateways, name)
-				survivorHosts[name] = host
-			}
-
-			// Baseline: routing works for every survivor BEFORE the churn, so
-			// a post-churn routing failure is attributable to the churn.
-			// ForwardGateway also gates on Programmed=True per survivor.
-			for _, gw := range survivorGateways {
-				fwd := ForwardGateway(ctx, t, survivorNS, gw, 80)
-				resp := httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(survivorHosts[gw], "/").ExpectOK(t)
-				if resp.Echo == nil {
-					t.Fatalf("survivor %s baseline: expected echo-server JSON, got %d bytes", gw, len(resp.Body))
-				}
-			}
-
-			// Resolve the survivors' marker Services (the oscillation watch
-			// counts updates by Service name).
-			survivorSvcs = map[string]string{}
-			for _, gw := range survivorGateways {
-				svcs, err := cs.CoreV1().Services(ControllerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: gatewayNameLabel + "=" + gw + "," + gatewayNamespaceLabel + "=" + survivorNS,
-				})
-				if err != nil || len(svcs.Items) != 1 {
-					t.Fatalf("survivor %s: expected exactly 1 marker Service (err=%v, got=%d)", gw, err, len(svcs.Items))
-				}
-				survivorSvcs[gw] = svcs.Items[0].Name
-			}
-
-			// The allocator dump must be live before any dump-based assertion
-			// means anything. If this times out, the cluster was helm-installed
-			// WITHOUT the churn flag (e.g. KEEP_CLUSTER reuse of a cluster whose
-			// TestMain ran without HAPTIC_E2E_CHURN=1) — TestMain's
-			// helmInstallChart only sets extraContext.dumpPodPortAllocations
-			// when the tier is enabled.
-			waitCfg := testutil.FastWaitConfig()
-			if err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
-				"allocator dump (# gw-pod-port lines) present in /debug/vars/rendered for all survivors",
-				func(ctx context.Context) (bool, error) {
-					rendered, err := dc.getRenderedConfig(ctx)
-					if err != nil {
-						return false, err
-					}
-					alloc := parseGatewayPodPortDump(rendered)
-					for _, gw := range survivorGateways {
-						if _, ok := alloc[survivorAllocationKey(gw)]; !ok {
-							return false, fmt.Errorf("survivor key %q not in dump (%d keys total) — was the chart installed with %s=1?",
-								survivorAllocationKey(gw), len(alloc), churnEnableEnv)
-						}
-					}
-					return true, nil
-				}); err != nil {
-				t.Fatalf("allocator dump not available: %v", err)
-			}
-
-			// Per-worker namespaces + backends. Workers only ever touch their
-			// own namespace, so their create/delete cycles can't collide.
-			for i := 0; i < workers; i++ {
-				ns := NamespaceForTest(ctx, t, client)
-				NewEchoServerBackend(ctx, t, client, ns)
-				workerNSs = append(workerNSs, ns)
-			}
-			return ctx
-		}).
-		Assess("sustained parallel churn: no cross-wiring, no oscillation, every Gateway converges", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			monCtx, stopMonitors := context.WithCancel(ctx)
-			var monWG sync.WaitGroup
-
-			// Sampler 1: allocator dump + Service-layer duplicate detection.
-			monWG.Add(1)
-			go func() {
-				defer monWG.Done()
-				runChurnSampler(monCtx, dc, cs, monitor, survivorGateways, survivorAllocationKey)
-			}()
-
-			// Sampler 2: survivor marker-Service update watch (oscillation).
-			monWG.Add(1)
-			go func() {
-				defer monWG.Done()
-				watchSurvivorServices(monCtx, cs, monitor, survivorSvcs)
-			}()
-
-			// Churn workers.
-			deadline := time.Now().Add(churnWindow)
-			g, gctx := errgroup.WithContext(ctx)
-			opCounts := make([]int, workers)
-			for i := 0; i < workers; i++ {
-				i := i
-				g.Go(func() error {
-					ops, err := churnWorker(gctx, dyn, cs, workerNSs[i], i, deadline)
-					opCounts[i] = ops
-					return err
-				})
-			}
-			err := g.Wait()
-			stopMonitors()
-			monWG.Wait()
-			if err != nil {
-				t.Fatalf("churn worker failed: %v", err)
-			}
-			for i, ops := range opCounts {
-				totalOps += ops
-				t.Logf("worker %d (%s): %d create/converge/delete/prune cycles", i, workerNSs[i], ops)
-			}
-			if totalOps == 0 {
-				t.Fatal("churn window produced zero completed cycles — the tier exercised nothing")
-			}
-
-			monitor.mu.Lock()
-			defer monitor.mu.Unlock()
-			t.Logf("allocator-dump samples: %d ok, %d fetch errors", monitor.dumpSamples, monitor.dumpErrors)
-			if len(monitor.violations) > 0 {
-				t.Fatalf("churn invariant violations (%d, showing up to 20):\n  %s",
-					len(monitor.violations), strings.Join(monitor.violations, "\n  "))
-			}
-			// The samplers must have actually observed the system, otherwise
-			// "zero violations" is vacuous. ~10 samples minimum even for the
-			// 1-minute smoke configuration.
-			if monitor.dumpSamples < 10 {
-				t.Fatalf("allocator-dump sampler observed only %d samples (%d errors) — assertions never ran",
-					monitor.dumpSamples, monitor.dumpErrors)
-			}
-
-			// Oscillation bound. Legitimate updates to a survivor's marker
-			// Service during churn are probe-chain shifts: per churn event
-			// (~2 per cycle) each survivor key shifts with probability
-			// ≈ live keys / 1000-slot range ≈ 1-2%, so the expected total
-			// across all survivors is well under totalOps/10. The bound
-			// below keeps >5x headroom over that while sitting orders of
-			// magnitude under the failure mode it exists to catch — the
-			// issue-#58 read-back oscillation sustained ~50 Service flips/s
-			// (thousands per minute).
-			allowed := 30 + totalOps/2
-			total := 0
-			for gw, svc := range survivorSvcs {
-				n := monitor.survivorUpdates[svc]
-				total += n
-				t.Logf("survivor %s marker Service %s: %d updates during churn", gw, svc, n)
-			}
-			if total > allowed {
-				t.Fatalf("sustained Service-update oscillation: %d survivor marker-Service updates during churn (bound %d for %d ops)",
-					total, allowed, totalOps)
-			}
-			return ctx
-		}).
-		Assess("final convergence: allocator dump and marker Services match exactly the survivor set", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// The allocator dump must converge to EXACTLY the survivor keys:
-			// all churned Gateways' allocations gone, all survivors present.
-			expected := map[string]bool{}
-			for _, gw := range survivorGateways {
-				expected[survivorAllocationKey(gw)] = true
-			}
-			finalAlloc := map[string]int{}
-			waitCfg := testutil.DefaultWaitConfig()
-			waitCfg.Timeout = 3 * time.Minute
-			if err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
-				"allocator dump converged to exactly the survivor allocations",
-				func(ctx context.Context) (bool, error) {
-					rendered, err := dc.getRenderedConfig(ctx)
-					if err != nil {
-						return false, err
-					}
-					alloc := parseGatewayPodPortDump(rendered)
-					if len(alloc) != len(expected) {
-						return false, fmt.Errorf("dump has %d keys, want %d: %v", len(alloc), len(expected), allocKeys(alloc))
-					}
-					for key := range expected {
-						if _, ok := alloc[key]; !ok {
-							return false, fmt.Errorf("survivor key %q missing from dump: %v", key, allocKeys(alloc))
-						}
-					}
-					finalAlloc = alloc
-					return true, nil
-				}); err != nil {
-				t.Fatalf("final allocator state: %v", err)
-			}
-			if wired := crossWiredPorts(finalAlloc); len(wired) > 0 {
-				t.Fatalf("final allocator dump is cross-wired: %v", wired)
-			}
-
-			// Every deleted Gateway's marker Service must be pruned: no
-			// Service labelled with any churn-worker namespace may remain.
-			churnNS := map[string]bool{}
-			for _, ns := range workerNSs {
-				churnNS[ns] = true
-			}
-			if err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
-				"all churned Gateways' marker Services pruned",
-				func(ctx context.Context) (bool, error) {
-					svcs, err := cs.CoreV1().Services(ControllerNamespace).List(ctx, metav1.ListOptions{
-						LabelSelector: gatewayNameLabel,
-					})
-					if err != nil {
-						return false, err
-					}
-					var leftovers []string
-					for i := range svcs.Items {
-						if churnNS[svcs.Items[i].Labels[gatewayNamespaceLabel]] {
-							leftovers = append(leftovers, svcs.Items[i].Name)
-						}
-					}
-					if len(leftovers) > 0 {
-						return false, fmt.Errorf("%d churn marker Services still present: %v", len(leftovers), leftovers)
-					}
-					return true, nil
-				}); err != nil {
-				t.Fatalf("churn Service pruning: %v", err)
-			}
-
-			// The cluster-layer wiring must agree with the dump: each
-			// survivor's marker Service DNATs port 80 to the allocated pod
-			// port. Combined with the dump's per-render uniqueness this rules
-			// out cross-wiring end to end (allocator AND committed Services).
-			for _, gw := range survivorGateways {
-				svc, err := cs.CoreV1().Services(ControllerNamespace).Get(ctx, survivorSvcs[gw], metav1.GetOptions{})
-				if err != nil {
-					t.Fatalf("survivor %s marker Service: %v", gw, err)
-				}
-				want := finalAlloc[survivorAllocationKey(gw)]
-				got := targetPortForServicePort(svc, 80)
-				if got != want {
-					t.Fatalf("survivor %s: marker Service targetPort %d != allocator dump port %d (cross-wiring at the Service layer)",
-						gw, got, want)
-				}
-			}
-			return ctx
-		}).
-		Assess("routing works for survivors after the churn", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			for _, gw := range survivorGateways {
-				fwd := ForwardGateway(ctx, t, survivorNS, gw, 80)
-				resp := httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(survivorHosts[gw], "/").ExpectOK(t)
-				if resp.Echo == nil {
-					t.Fatalf("survivor %s post-churn: expected echo-server JSON, got %d bytes", gw, len(resp.Body))
-				}
-			}
-			return ctx
-		}).
-		Assess("survivors go quiescent at idle (no residual update churn)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// The #63 transitionTime churn oscillated AT IDLE: with no input
-			// changing, the controller kept re-patching status, re-triggering
-			// renders. Contract: once converged, the survivor Gateways and
-			// their marker Services stop changing entirely. We wait until
-			// their resourceVersions have been stable for a full 15s
-			// observation window; sustained idle churn makes this wait time
-			// out (the failure), while a healthy controller passes on the
-			// first stable window.
-			const stableFor = 15 * time.Second
-			var (
-				lastSnapshot string
-				stableSince  time.Time
-			)
-			cfgWait := testutil.WaitConfig{
-				InitialInterval: time.Second,
-				MaxInterval:     time.Second,
-				Timeout:         2 * time.Minute,
-				Multiplier:      1.0,
-			}
-			if err := testutil.WaitForConditionWithDescription(ctx, cfgWait,
-				fmt.Sprintf("survivor Gateways+Services resourceVersions stable for %s", stableFor),
-				func(ctx context.Context) (bool, error) {
-					snap, err := survivorRVSnapshot(ctx, cs, dyn, survivorNS, survivorGateways, survivorSvcs)
-					if err != nil {
-						return false, err
-					}
-					now := time.Now()
-					if snap != lastSnapshot {
-						lastSnapshot = snap
-						stableSince = now
-						return false, fmt.Errorf("resourceVersions still changing: %s", snap)
-					}
-					return now.Sub(stableSince) >= stableFor, nil
-				}); err != nil {
-				t.Fatalf("survivors never went quiescent: %v", err)
-			}
-			return ctx
-		}).
+		Setup(scenario.setup).
+		Assess("sustained parallel churn: no cross-wiring, no oscillation, every Gateway converges", scenario.churn).
+		Assess("final convergence: allocator dump and marker Services match exactly the survivor set", scenario.converge).
+		Assess("routing works for survivors after the churn", scenario.routeSurvivors).
+		Assess("survivors go quiescent at idle (no residual update churn)", scenario.quiesce).
 		Feature()
 
 	testEnv.Test(t, feature)
+}
+
+type gatewayChurnScenario struct {
+	churnWindow      time.Duration
+	workers          int
+	dc               *debugClient
+	cs               kubernetes.Interface
+	dyn              dynamic.Interface
+	survivorNS       string
+	workerNSs        []string
+	survivorGateways []string
+	survivorHosts    map[string]string
+	survivorSvcs     map[string]string
+	monitor          *churnMonitor
+	totalOps         int
+}
+
+func (s *gatewayChurnScenario) survivorAllocationKey(gwName string) string {
+	return s.survivorNS + "/" + gwName + ":http:80"
 }
 
 // envInt reads an integer environment variable with a default; a set-but-
@@ -814,71 +509,76 @@ func runChurnSampler(ctx context.Context, dc *debugClient, cs kubernetes.Interfa
 		case <-ticker.C:
 		}
 
-		// Invariant 1: the allocator dump of the latest render.
-		rendered, err := dc.getRenderedConfig(ctx)
-		if err != nil {
-			m.mu.Lock()
-			m.dumpErrors++
-			m.mu.Unlock()
-		} else {
-			alloc := parseGatewayPodPortDump(rendered)
-			m.mu.Lock()
-			m.dumpSamples++
-			m.mu.Unlock()
-			for _, gw := range survivorGateways {
-				if _, ok := alloc[survivorKey(gw)]; !ok {
-					m.addViolation("render sample %d: survivor allocation %q missing from dump (%d keys)",
-						m.dumpSamples, survivorKey(gw), len(alloc))
-				}
-			}
-			for _, v := range crossWiredPorts(alloc) {
-				m.addViolation("render sample %d: allocator dump cross-wired: %s", m.dumpSamples, v)
-			}
-		}
-
-		// Invariant 2: committed marker Services, deduped port claims.
-		svcs, err := cs.CoreV1().Services(ControllerNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: gatewayNameLabel,
-		})
-		if err != nil {
-			continue // transient; the dump invariant above is the primary signal
-		}
-		claims := map[int][]string{}
-		for i := range svcs.Items {
-			svc := &svcs.Items[i]
-			port := targetPortForServicePort(svc, 80)
-			if port == 0 {
-				continue
-			}
-			gwID := svc.Labels[gatewayNamespaceLabel] + "/" + svc.Labels[gatewayNameLabel]
-			claims[port] = append(claims[port], gwID)
-		}
-		seenPairs := map[string]bool{}
-		for port, gws := range claims {
-			if len(gws) <= 1 {
-				continue
-			}
-			sort.Strings(gws)
-			pair := strconv.Itoa(port) + "|" + strings.Join(gws, "|")
-			seenPairs[pair] = true
-			m.mu.Lock()
-			m.duplicateStreaks[pair]++
-			streak := m.duplicateStreaks[pair]
-			m.mu.Unlock()
-			if streak == duplicateStreakThreshold {
-				m.addViolation("sustained Service-layer port collision: pod port %d claimed by %s for %d consecutive samples (~%s)",
-					port, strings.Join(gws, " AND "), streak, time.Duration(streak)*churnSampleInterval)
-			}
-		}
-		// Reset streaks whose collision cleared — only CONSECUTIVE samples count.
-		m.mu.Lock()
-		for pair := range m.duplicateStreaks {
-			if !seenPairs[pair] {
-				delete(m.duplicateStreaks, pair)
-			}
-		}
-		m.mu.Unlock()
+		sampleChurnAllocations(ctx, dc, m, survivorGateways, survivorKey)
+		sampleChurnServiceClaims(ctx, cs, m)
 	}
+}
+
+func sampleChurnAllocations(ctx context.Context, dc *debugClient, m *churnMonitor, survivors []string, survivorKey func(string) string) {
+	rendered, err := dc.getRenderedConfig(ctx)
+	if err != nil {
+		m.mu.Lock()
+		m.dumpErrors++
+		m.mu.Unlock()
+		return
+	}
+	alloc := parseGatewayPodPortDump(rendered)
+	m.mu.Lock()
+	m.dumpSamples++
+	sample := m.dumpSamples
+	m.mu.Unlock()
+	for _, gw := range survivors {
+		if _, ok := alloc[survivorKey(gw)]; !ok {
+			m.addViolationf("render sample %d: survivor allocation %q missing from dump (%d keys)", sample, survivorKey(gw), len(alloc))
+		}
+	}
+	for _, violation := range crossWiredPorts(alloc) {
+		m.addViolationf("render sample %d: allocator dump cross-wired: %s", sample, violation)
+	}
+}
+
+func sampleChurnServiceClaims(ctx context.Context, cs kubernetes.Interface, m *churnMonitor) {
+	svcs, err := cs.CoreV1().Services(ControllerNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: gatewayNameLabel,
+	})
+	if err != nil {
+		return
+	}
+	claims := map[int][]string{}
+	for i := range svcs.Items {
+		svc := &svcs.Items[i]
+		port := targetPortForServicePort(svc, 80)
+		if port == 0 {
+			continue
+		}
+		gwID := svc.Labels[gatewayNamespaceLabel] + "/" + svc.Labels[gatewayNameLabel]
+		claims[port] = append(claims[port], gwID)
+	}
+	seenPairs := map[string]bool{}
+	for port, gws := range claims {
+		if len(gws) <= 1 {
+			continue
+		}
+		sort.Strings(gws)
+		pair := strconv.Itoa(port) + "|" + strings.Join(gws, "|")
+		seenPairs[pair] = true
+		m.mu.Lock()
+		m.duplicateStreaks[pair]++
+		streak := m.duplicateStreaks[pair]
+		m.mu.Unlock()
+		if streak == duplicateStreakThreshold {
+			m.addViolationf("sustained Service-layer port collision: pod port %d claimed by %s for %d consecutive samples (~%s)",
+				port, strings.Join(gws, " AND "), streak, time.Duration(streak)*churnSampleInterval)
+		}
+	}
+	// Reset streaks whose collision cleared — only CONSECUTIVE samples count.
+	m.mu.Lock()
+	for pair := range m.duplicateStreaks {
+		if !seenPairs[pair] {
+			delete(m.duplicateStreaks, pair)
+		}
+	}
+	m.mu.Unlock()
 }
 
 // watchSurvivorServices counts resourceVersion changes on the survivor
@@ -892,22 +592,7 @@ func watchSurvivorServices(ctx context.Context, cs kubernetes.Interface, m *chur
 		watched[svc] = true
 	}
 
-	seed := func() string {
-		list, err := cs.CoreV1().Services(ControllerNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: gatewayNameLabel,
-		})
-		if err != nil {
-			return ""
-		}
-		for i := range list.Items {
-			if watched[list.Items[i].Name] {
-				m.recordServiceRV(list.Items[i].Name, list.Items[i].ResourceVersion, false)
-			}
-		}
-		return list.ResourceVersion
-	}
-
-	rv := seed()
+	rv := seedSurvivorServiceWatch(ctx, cs, m, watched)
 	for ctx.Err() == nil {
 		w, err := cs.CoreV1().Services(ControllerNamespace).Watch(ctx, metav1.ListOptions{
 			LabelSelector:       gatewayNameLabel,
@@ -918,7 +603,7 @@ func watchSurvivorServices(ctx context.Context, cs kubernetes.Interface, m *chur
 			// 410 Gone or transient failure: re-seed from a fresh list. Changes
 			// inside the gap are missed, which can only UNDERCOUNT — safe for a
 			// bound that catches thousands-per-minute oscillation.
-			rv = seed()
+			rv = seedSurvivorServiceWatch(ctx, cs, m, watched)
 			select {
 			case <-ctx.Done():
 				return
@@ -927,30 +612,47 @@ func watchSurvivorServices(ctx context.Context, cs kubernetes.Interface, m *chur
 			continue
 		}
 		for ev := range w.ResultChan() {
-			switch ev.Type {
-			case apiwatch.Added, apiwatch.Modified:
-				svc, ok := ev.Object.(*corev1.Service)
-				if !ok {
-					continue
-				}
-				rv = svc.ResourceVersion
-				if watched[svc.Name] {
-					m.recordServiceRV(svc.Name, svc.ResourceVersion, true)
-				}
-			case apiwatch.Bookmark:
-				if svc, ok := ev.Object.(*corev1.Service); ok {
-					rv = svc.ResourceVersion
-				}
-			case apiwatch.Error:
-				rv = "" // force a re-list + re-seed on the next loop
-			case apiwatch.Deleted:
-				// Churn Services disappearing is normal; survivors are never
-				// deleted (a deleted survivor would fail the convergence
-				// assertions later).
-			}
+			rv = recordSurvivorServiceEvent(ev, m, watched, rv)
 		}
 		w.Stop()
 	}
+}
+
+func seedSurvivorServiceWatch(ctx context.Context, cs kubernetes.Interface, m *churnMonitor, watched map[string]bool) string {
+	list, err := cs.CoreV1().Services(ControllerNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: gatewayNameLabel,
+	})
+	if err != nil {
+		return ""
+	}
+	for i := range list.Items {
+		if watched[list.Items[i].Name] {
+			m.recordServiceRV(list.Items[i].Name, list.Items[i].ResourceVersion, false)
+		}
+	}
+	return list.ResourceVersion
+}
+
+func recordSurvivorServiceEvent(ev apiwatch.Event, m *churnMonitor, watched map[string]bool, rv string) string {
+	switch ev.Type {
+	case apiwatch.Added, apiwatch.Modified:
+		svc, ok := ev.Object.(*corev1.Service)
+		if !ok {
+			return rv
+		}
+		if watched[svc.Name] {
+			m.recordServiceRV(svc.Name, svc.ResourceVersion, true)
+		}
+		return svc.ResourceVersion
+	case apiwatch.Bookmark:
+		if svc, ok := ev.Object.(*corev1.Service); ok {
+			return svc.ResourceVersion
+		}
+	case apiwatch.Error:
+		return ""
+	case apiwatch.Deleted:
+	}
+	return rv
 }
 
 // targetPortForServicePort returns the int targetPort the Service maps the
@@ -992,4 +694,327 @@ func survivorRVSnapshot(ctx context.Context, cs kubernetes.Interface, dyn dynami
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ","), nil
+}
+
+func (s *gatewayChurnScenario) setup(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	client, err := cfg.NewClient()
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	s.cs, err = newClientsetForE2E(client.RESTConfig())
+	if err != nil {
+		t.Fatalf("build clientset: %v", err)
+	}
+	s.dyn, err = newDynamicForE2E(client.RESTConfig())
+	if err != nil {
+		t.Fatalf("build dynamic client: %v", err)
+	}
+	s.dc = newDebugClient(client.RESTConfig(), s.cs)
+
+	// Survivor fixtures: one namespace, its own echo backend, and
+	// churnSurvivorCount Gateways+HTTPRoutes that the churn never
+	// touches.
+	s.survivorNS = NamespaceForTest(ctx, t, client)
+	DumpLogsOnFailure(t, s.survivorNS)
+	backend := NewEchoServerBackend(ctx, t, client, s.survivorNS)
+	s.survivorHosts = map[string]string{}
+	for i := 0; i < churnSurvivorCount; i++ {
+		name := fmt.Sprintf("survivor-%d", i)
+		host := fmt.Sprintf("churn-survivor-%d.localdev.me", i)
+		NewGateway(ctx, t, s.survivorNS, name)
+		NewHTTPRoute(ctx, t, s.survivorNS, &HTTPRouteSpec{
+			Name:        name,
+			GatewayName: name,
+			Hostnames:   []string{host},
+			Rules: []HTTPRouteRule{{
+				PathType: "PathPrefix",
+				Path:     "/",
+				BackendRefs: []HTTPRouteBackendRef{{
+					Service: backend.Service,
+					Port:    backend.Port,
+				}},
+			}},
+		})
+		s.survivorGateways = append(s.survivorGateways, name)
+		s.survivorHosts[name] = host
+	}
+
+	// Baseline: routing works for every survivor BEFORE the churn, so
+	// a post-churn routing failure is attributable to the churn.
+	// ForwardGateway also gates on Programmed=True per survivor.
+	for _, gw := range s.survivorGateways {
+		fwd := ForwardGateway(ctx, t, s.survivorNS, gw, 80)
+		resp := httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(s.survivorHosts[gw], "/").ExpectOK(t)
+		if resp.Echo == nil {
+			t.Fatalf("survivor %s baseline: expected echo-server JSON, got %d bytes", gw, len(resp.Body))
+		}
+	}
+
+	// Resolve the survivors' marker Services (the oscillation watch
+	// counts updates by Service name).
+	s.survivorSvcs = map[string]string{}
+	for _, gw := range s.survivorGateways {
+		svcs, err := s.cs.CoreV1().Services(ControllerNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: gatewayNameLabel + "=" + gw + "," + gatewayNamespaceLabel + "=" + s.survivorNS,
+		})
+		if err != nil || len(svcs.Items) != 1 {
+			t.Fatalf("survivor %s: expected exactly 1 marker Service (err=%v, got=%d)", gw, err, len(svcs.Items))
+		}
+		s.survivorSvcs[gw] = svcs.Items[0].Name
+	}
+
+	// The allocator dump must be live before any dump-based assertion
+	// means anything. If this times out, the cluster was helm-installed
+	// WITHOUT the churn flag (e.g. KEEP_CLUSTER reuse of a cluster whose
+	// TestMain ran without HAPTIC_E2E_CHURN=1) — TestMain's
+	// helmInstallChart only sets extraContext.dumpPodPortAllocations
+	// when the tier is enabled.
+	waitCfg := testutil.FastWaitConfig()
+	if err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
+		"allocator dump (# gw-pod-port lines) present in /debug/vars/rendered for all survivors",
+		func(ctx context.Context) (bool, error) {
+			rendered, err := s.dc.getRenderedConfig(ctx)
+			if err != nil {
+				return false, err
+			}
+			alloc := parseGatewayPodPortDump(rendered)
+			for _, gw := range s.survivorGateways {
+				if _, ok := alloc[s.survivorAllocationKey(gw)]; !ok {
+					return false, fmt.Errorf("survivor key %q not in dump (%d keys total) — was the chart installed with %s=1?",
+						s.survivorAllocationKey(gw), len(alloc), churnEnableEnv)
+				}
+			}
+			return true, nil
+		}); err != nil {
+		t.Fatalf("allocator dump not available: %v", err)
+	}
+
+	// Per-worker namespaces + backends. Workers only ever touch their
+	// own namespace, so their create/delete cycles can't collide.
+	for i := 0; i < s.workers; i++ {
+		ns := NamespaceForTest(ctx, t, client)
+		NewEchoServerBackend(ctx, t, client, ns)
+		s.workerNSs = append(s.workerNSs, ns)
+	}
+	return ctx
+}
+
+func (s *gatewayChurnScenario) churn(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	monCtx, stopMonitors := context.WithCancel(ctx)
+	var monWG sync.WaitGroup
+
+	// Sampler 1: allocator dump + Service-layer duplicate detection.
+	monWG.Add(1)
+	go func() {
+		defer monWG.Done()
+		runChurnSampler(monCtx, s.dc, s.cs, s.monitor, s.survivorGateways, s.survivorAllocationKey)
+	}()
+
+	// Sampler 2: survivor marker-Service update watch (oscillation).
+	monWG.Add(1)
+	go func() {
+		defer monWG.Done()
+		watchSurvivorServices(monCtx, s.cs, s.monitor, s.survivorSvcs)
+	}()
+
+	// Churn workers.
+	deadline := time.Now().Add(s.churnWindow)
+	g, gctx := errgroup.WithContext(ctx)
+	opCounts := make([]int, s.workers)
+	for i := 0; i < s.workers; i++ {
+		g.Go(func() error {
+			ops, err := churnWorker(gctx, s.dyn, s.cs, s.workerNSs[i], i, deadline)
+			opCounts[i] = ops
+			return err
+		})
+	}
+	err := g.Wait()
+	stopMonitors()
+	monWG.Wait()
+	if err != nil {
+		t.Fatalf("churn worker failed: %v", err)
+	}
+	for i, ops := range opCounts {
+		s.totalOps += ops
+		t.Logf("worker %d (%s): %d create/converge/delete/prune cycles", i, s.workerNSs[i], ops)
+	}
+	if s.totalOps == 0 {
+		t.Fatal("churn window produced zero completed cycles — the tier exercised nothing")
+	}
+
+	s.monitor.mu.Lock()
+	defer s.monitor.mu.Unlock()
+	t.Logf("allocator-dump samples: %d ok, %d fetch errors", s.monitor.dumpSamples, s.monitor.dumpErrors)
+	if len(s.monitor.violations) > 0 {
+		t.Fatalf("churn invariant violations (%d, showing up to 20):\n  %s",
+			len(s.monitor.violations), strings.Join(s.monitor.violations, "\n  "))
+	}
+	// The samplers must have actually observed the system, otherwise
+	// "zero violations" is vacuous. ~10 samples minimum even for the
+	// 1-minute smoke configuration.
+	if s.monitor.dumpSamples < 10 {
+		t.Fatalf("allocator-dump sampler observed only %d samples (%d errors) — assertions never ran",
+			s.monitor.dumpSamples, s.monitor.dumpErrors)
+	}
+
+	// Oscillation bound. Legitimate updates to a survivor's marker
+	// Service during churn are probe-chain shifts: per churn event
+	// (~2 per cycle) each survivor key shifts with probability
+	// ≈ live keys / 1000-slot range ≈ 1-2%, so the expected total
+	// across all survivors is well under totalOps/10. The bound
+	// below keeps >5x headroom over that while sitting orders of
+	// magnitude under the failure mode it exists to catch — the
+	// issue-#58 read-back oscillation sustained ~50 Service flips/s
+	// (thousands per minute).
+	allowed := 30 + s.totalOps/2
+	total := 0
+	for gw, svc := range s.survivorSvcs {
+		n := s.monitor.survivorUpdates[svc]
+		total += n
+		t.Logf("survivor %s marker Service %s: %d updates during churn", gw, svc, n)
+	}
+	if total > allowed {
+		t.Fatalf("sustained Service-update oscillation: %d survivor marker-Service updates during churn (bound %d for %d ops)",
+			total, allowed, s.totalOps)
+	}
+	return ctx
+}
+
+func (s *gatewayChurnScenario) converge(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	// The allocator dump must converge to EXACTLY the survivor keys:
+	// all churned Gateways' allocations gone, all survivors present.
+	expected := map[string]bool{}
+	for _, gw := range s.survivorGateways {
+		expected[s.survivorAllocationKey(gw)] = true
+	}
+	finalAlloc := map[string]int{}
+	waitCfg := testutil.DefaultWaitConfig()
+	waitCfg.Timeout = 3 * time.Minute
+	if err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
+		"allocator dump converged to exactly the survivor allocations",
+		func(ctx context.Context) (bool, error) {
+			rendered, err := s.dc.getRenderedConfig(ctx)
+			if err != nil {
+				return false, err
+			}
+			alloc := parseGatewayPodPortDump(rendered)
+			if len(alloc) != len(expected) {
+				return false, fmt.Errorf("dump has %d keys, want %d: %v", len(alloc), len(expected), allocKeys(alloc))
+			}
+			for key := range expected {
+				if _, ok := alloc[key]; !ok {
+					return false, fmt.Errorf("survivor key %q missing from dump: %v", key, allocKeys(alloc))
+				}
+			}
+			finalAlloc = alloc
+			return true, nil
+		}); err != nil {
+		t.Fatalf("final allocator state: %v", err)
+	}
+	if wired := crossWiredPorts(finalAlloc); len(wired) > 0 {
+		t.Fatalf("final allocator dump is cross-wired: %v", wired)
+	}
+
+	// Every deleted Gateway's marker Service must be pruned: no
+	// Service labelled with any churn-worker namespace may remain.
+	churnNS := map[string]bool{}
+	for _, ns := range s.workerNSs {
+		churnNS[ns] = true
+	}
+	if err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
+		"all churned Gateways' marker Services pruned",
+		func(ctx context.Context) (bool, error) {
+			svcs, err := s.cs.CoreV1().Services(ControllerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: gatewayNameLabel,
+			})
+			if err != nil {
+				return false, err
+			}
+			var leftovers []string
+			for i := range svcs.Items {
+				if churnNS[svcs.Items[i].Labels[gatewayNamespaceLabel]] {
+					leftovers = append(leftovers, svcs.Items[i].Name)
+				}
+			}
+			if len(leftovers) > 0 {
+				return false, fmt.Errorf("%d churn marker Services still present: %v", len(leftovers), leftovers)
+			}
+			return true, nil
+		}); err != nil {
+		t.Fatalf("churn Service pruning: %v", err)
+	}
+
+	// The cluster-layer wiring must agree with the dump: each
+	// survivor's marker Service DNATs port 80 to the allocated pod
+	// port. Combined with the dump's per-render uniqueness this rules
+	// out cross-wiring end to end (allocator AND committed Services).
+	for _, gw := range s.survivorGateways {
+		svc, err := s.cs.CoreV1().Services(ControllerNamespace).Get(ctx, s.survivorSvcs[gw], metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("survivor %s marker Service: %v", gw, err)
+		}
+		want := finalAlloc[s.survivorAllocationKey(gw)]
+		got := targetPortForServicePort(svc, 80)
+		if got != want {
+			t.Fatalf("survivor %s: marker Service targetPort %d != allocator dump port %d (cross-wiring at the Service layer)",
+				gw, got, want)
+		}
+	}
+	return ctx
+}
+
+func (s *gatewayChurnScenario) routeSurvivors(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	for _, gw := range s.survivorGateways {
+		fwd := ForwardGateway(ctx, t, s.survivorNS, gw, 80)
+		resp := httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(s.survivorHosts[gw], "/").ExpectOK(t)
+		if resp.Echo == nil {
+			t.Fatalf("survivor %s post-churn: expected echo-server JSON, got %d bytes", gw, len(resp.Body))
+		}
+	}
+	return ctx
+}
+
+func (s *gatewayChurnScenario) quiesce(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	// The #63 transitionTime churn oscillated AT IDLE: with no input
+	// changing, the controller kept re-patching status, re-triggering
+	// renders. Contract: once converged, the survivor Gateways and
+	// their marker Services stop changing entirely. We wait until
+	// their resourceVersions have been stable for a full 15s
+	// observation window; sustained idle churn makes this wait time
+	// out (the failure), while a healthy controller passes on the
+	// first stable window.
+	const stableFor = 15 * time.Second
+	var (
+		lastSnapshot string
+		stableSince  time.Time
+	)
+	cfgWait := testutil.WaitConfig{
+		InitialInterval: time.Second,
+		MaxInterval:     time.Second,
+		Timeout:         2 * time.Minute,
+		Multiplier:      1.0,
+	}
+	if err := testutil.WaitForConditionWithDescription(ctx, cfgWait,
+		fmt.Sprintf("survivor Gateways+Services resourceVersions stable for %s", stableFor),
+		func(ctx context.Context) (bool, error) {
+			snap, err := survivorRVSnapshot(ctx, s.cs, s.dyn, s.survivorNS, s.survivorGateways, s.survivorSvcs)
+			if err != nil {
+				return false, err
+			}
+			now := time.Now()
+			if snap != lastSnapshot {
+				lastSnapshot = snap
+				stableSince = now
+				return false, fmt.Errorf("resourceVersions still changing: %s", snap)
+			}
+			return now.Sub(stableSince) >= stableFor, nil
+		}); err != nil {
+		t.Fatalf("survivors never went quiescent: %v", err)
+	}
+	return ctx
 }

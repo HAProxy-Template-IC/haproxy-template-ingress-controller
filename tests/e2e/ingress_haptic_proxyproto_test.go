@@ -40,6 +40,7 @@ func TestHapticProxyProtocol(t *testing.T) {
 
 	feature := features.New("Ingress: haproxy-haptic.org/proxy-protocol annotation").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -49,7 +50,7 @@ func TestHapticProxyProtocol(t *testing.T) {
 			echoBackend := NewEchoServerBackend(ctx, t, client, ns)
 			demo := NewHAProxyDemoBackend(ctx, t, client, ns, echoBackend, host)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-haptic-proxyproto",
 				Host:           host,
 				Path:           "/",
@@ -62,6 +63,7 @@ func TestHapticProxyProtocol(t *testing.T) {
 			return ctx
 		}).
 		Assess("PROXY-protocol-aware backend serves the request", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
 			if resp.Echo == nil {
 				t.Fatalf("expected echo-server JSON via demo-backend, got %d bytes", len(resp.Body))

@@ -47,7 +47,7 @@ func authServerBase() string {
 // overrode the default GET to POST.
 func TestIngressAuthMethod(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: auth-method (POST override)",
 		Host:        "ingress-auth-method.localdev.me",
 		Annotations: map[string]string{
@@ -57,6 +57,7 @@ func TestIngressAuthMethod(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "chart overrides default GET to POST → auth-server 200 → backend reached",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				httpclient.New(t).GET(host, "/").ExpectOK(t)
 			},
 		}},
@@ -70,7 +71,7 @@ func TestIngressAuthMethod(t *testing.T) {
 // echo-server's JSON includes the request headers, so we can read it back.
 func TestIngressAuthHeadersSucceed(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: auth-response-headers forwarded to backend on success",
 		Host:        "ingress-auth-headers-succeed.localdev.me",
 		Annotations: map[string]string{
@@ -80,6 +81,7 @@ func TestIngressAuthHeadersSucceed(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "X-Auth-User: alice reaches the backend",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				// Poll on the echo'd header (not just status). The 200 from the
 				// auth-allowed path syncs quickly, but the companion
 				// `http-request set-header X-Auth-User var(...)` rule that
@@ -101,7 +103,7 @@ func TestIngressAuthHeadersSucceed(t *testing.T) {
 // emits when the auth plugin's `allowed=false`.
 func TestIngressAuthHeadersFail(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: auth-headers-fail forwarded to client on 401",
 		Host:        "ingress-auth-headers-fail.localdev.me",
 		Annotations: map[string]string{
@@ -111,6 +113,7 @@ func TestIngressAuthHeadersFail(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "WWW-Authenticate and X-Error-Reason are on the 401 response",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				// Poll on the conjunction of all three signals. The
 				// `http-request deny deny_status 401` rule and the
 				// companion `http-after-response set-header` rules can land

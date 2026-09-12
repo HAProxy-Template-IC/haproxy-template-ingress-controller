@@ -21,8 +21,8 @@ import (
 	"os"
 	"reflect"
 	"testing"
-	"time"
 
+	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
@@ -60,48 +60,20 @@ func TestGatewayAPIReleaseMatrix(t *testing.T) {
 		fwd      GatewayForward
 	)
 
-	// waitSettled polls until the controller reports an effective-config
-	// resolution AND /healthz is settled (no reinit-grace annotation). The
-	// accept callback gates on resolution content so callers can wait for a
-	// specific post-upgrade state.
-	waitSettled := func(ctx context.Context, t *testing.T, accept func(*effectiveResolution) bool) *effectiveResolution {
-		t.Helper()
-		deadline := time.Now().Add(3 * time.Minute)
-		var last *effectiveResolution
-		var lastErr error
-		for time.Now().Before(deadline) {
-			res, err := dc.getEffectiveResolution(ctx)
-			if err == nil {
-				last = res
-				if accept(res) && dc.healthzSettled(ctx) {
-					return res
-				}
-			} else {
-				lastErr = err
-			}
-			time.Sleep(2 * time.Second)
-		}
-		t.Fatalf("timed out waiting for settled resolution (last: %+v, last error: %v)", last, lastErr)
-		return nil
-	}
-
 	feature := features.New("Gateway API release matrix: degraded startup on "+release+" + in-place upgrade to "+defaultGatewayAPIVersion).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
+			require.NoError(t, err, "new client")
 			cs, err := newClientsetForE2E(client.RESTConfig())
-			if err != nil {
-				t.Fatalf("build clientset: %v", err)
-			}
+			require.NoError(t, err, "build clientset")
 			dc = newDebugClient(client.RESTConfig(), cs)
 
 			// TestMain already waited for the controller to become Ready on
 			// the old release — reaching this point IS the degraded-startup
 			// verification. Capture the resolution baseline and the pod
 			// fingerprint for the upgrade assertions.
-			baseline = waitSettled(ctx, t, func(*effectiveResolution) bool { return true })
+			baseline = dc.waitForSettledResolution(ctx, t, "baseline resolution", func(*effectiveResolution) bool { return true })
 			t.Logf("resolution on %s: resolved=%v unavailable=%v strippedSnippets=%d strippedTests=%d",
 				release, baseline.ResolvedVersions, baseline.Unavailable,
 				len(baseline.StrippedSnippets), len(baseline.StrippedTests))
@@ -121,7 +93,7 @@ func TestGatewayAPIReleaseMatrix(t *testing.T) {
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "matrix-gateway")
 			fwd = ForwardGateway(ctx, t, ns, "matrix-gateway", 80)
-			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
+			NewHTTPRoute(ctx, t, ns, &HTTPRouteSpec{
 				Name:        "matrix-route",
 				GatewayName: "matrix-gateway",
 				Hostnames:   []string{host},
@@ -137,6 +109,7 @@ func TestGatewayAPIReleaseMatrix(t *testing.T) {
 			return ctx
 		}).
 		Assess("core HTTPRoute routing works on "+release, func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			resp := httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectOK(t)
 			if resp.Echo == nil {
 				t.Fatalf("expected echo-server JSON, got %d bytes", len(resp.Body))
@@ -144,6 +117,7 @@ func TestGatewayAPIReleaseMatrix(t *testing.T) {
 			return ctx
 		}).
 		Assess("in-place upgrade to "+defaultGatewayAPIVersion+" converges without pod restart", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			if err := applyGatewayAPICRDs(ctx, defaultGatewayAPIVersion, e2ecluster.GatewayAPIChannelStandard); err != nil {
 				t.Fatalf("upgrade Gateway API CRDs: %v", err)
 			}
@@ -154,7 +128,7 @@ func TestGatewayAPIReleaseMatrix(t *testing.T) {
 			// risks a false 3-minute timeout; tcproutes is standard-channel
 			// only since v1.6, so its appearance is the concrete marker that
 			// the upgraded CRDs were resolved. Accept either signal.
-			res := waitSettled(ctx, t, func(r *effectiveResolution) bool {
+			res := dc.waitForSettledResolution(ctx, t, "upgraded resolution", func(r *effectiveResolution) bool {
 				_, tcpWatched := r.ResolvedVersions["tcproutes"]
 				return tcpWatched || !reflect.DeepEqual(r.ResolvedVersions, baseline.ResolvedVersions)
 			})
@@ -170,6 +144,7 @@ func TestGatewayAPIReleaseMatrix(t *testing.T) {
 			return ctx
 		}).
 		Assess("routing still works after the upgrade", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			resp := httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectOK(t)
 			if resp.Echo == nil {
 				t.Fatalf("expected echo-server JSON after upgrade, got %d bytes", len(resp.Body))

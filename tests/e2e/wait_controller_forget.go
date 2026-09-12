@@ -38,19 +38,6 @@ import (
 // on timeout the caller only logs, never fails.
 const controllerForgetTimeout = 90 * time.Second
 
-// controllerDeployedTimeout caps the post-apply wait for the HAProxyCfg
-// status to report every HAProxy pod at a render containing the marker.
-// Convergence is bounded by the controller's own pacing: reconcile debounce
-// (≤2s) + one deploy interval (minDeploymentInterval, 5s chart default) + the
-// per-pod Sync/reload (~1-2s). Latest-wins coalescing means a freshly applied
-// resource rides the NEXT deploy regardless of how many sibling tests churn
-// concurrently, so ~7s is the realistic worst case. 12s is the 2x-headroom
-// cap: generous enough to never flake on a healthy controller, tight enough
-// that a genuine convergence regression fails the test loudly instead of
-// hiding behind a 90s budget (a wait that legitimately needs >12s here would
-// itself be the bug).
-const controllerDeployedTimeout = 12 * time.Second
-
 type controllerForgetCleanupKey struct {
 	test      *testing.T
 	namespace string

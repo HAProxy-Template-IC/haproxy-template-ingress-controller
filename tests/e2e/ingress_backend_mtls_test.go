@@ -44,6 +44,7 @@ func TestIngressBackendMTLS(t *testing.T) {
 
 	feature := features.New("Ingress: backend mTLS via server-ssl + server-ca + server-crt").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -53,7 +54,7 @@ func TestIngressBackendMTLS(t *testing.T) {
 			echo := NewEchoServerBackend(ctx, t, client, ns)
 			mtls := NewHAProxyMTLSBackend(ctx, t, client, ns, echo, host)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-backend-mtls",
 				Host:           host,
 				Path:           "/",
@@ -69,6 +70,7 @@ func TestIngressBackendMTLS(t *testing.T) {
 		}).
 		Assess("HAProxy presents client cert + verifies backend cert against CA → 200 from backend",
 			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
 				if resp.Echo == nil {
 					t.Fatalf("expected echo-server JSON via mTLS-verifying backend, got %d bytes", len(resp.Body))
@@ -92,6 +94,7 @@ func TestIngressBackendMTLSHaproxyIngress(t *testing.T) {
 
 	feature := features.New("Ingress: backend mTLS via haproxy-ingress.github.io/secure-* family").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -101,7 +104,7 @@ func TestIngressBackendMTLSHaproxyIngress(t *testing.T) {
 			echo := NewEchoServerBackend(ctx, t, client, ns)
 			mtls := NewHAProxyMTLSBackend(ctx, t, client, ns, echo, host)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-hi-backend-mtls",
 				Host:           host,
 				Path:           "/",
@@ -119,6 +122,7 @@ func TestIngressBackendMTLSHaproxyIngress(t *testing.T) {
 		}).
 		Assess("haproxy-ingress secure-* annotations wire mTLS through to the backend",
 			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
 				if resp.Echo == nil {
 					t.Fatalf("expected echo-server JSON via secure-* mTLS path, got %d bytes", len(resp.Body))
