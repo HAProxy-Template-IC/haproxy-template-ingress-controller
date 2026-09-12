@@ -415,6 +415,10 @@ func (c *Component) applyPosture(endpoint *dataplane.Endpoint, state *api.State)
 		notes = append(notes, "the previous apply was rejected, resending the complete state")
 		full = true
 	}
+	if !slices.Contains(state.Features, api.FeatureWorkerFence) {
+		notes = append(notes, "the agent cannot fence runtime updates across reloads, sending the complete state")
+		full = true
+	}
 	if state.AppliedPlanID != "" && state.AppliedPlanProof == "" {
 		notes = append(notes, "the agent cannot prove its applied plan, resending the complete state")
 		full = true

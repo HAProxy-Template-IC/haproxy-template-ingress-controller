@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Runtime and file-only updates are re-diffed if a paced HAProxy reload changes their worker baseline, preventing missed routing-map updates.
+
 ### Changed
 
 - Configuration assembly reuses unchanged document subtrees when fragments are added or removed, reducing allocations.

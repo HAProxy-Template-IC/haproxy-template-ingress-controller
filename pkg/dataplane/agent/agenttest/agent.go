@@ -118,7 +118,18 @@ func WithHAProxyInfo(info api.HAProxyInfo) Option {
 // WithoutFilePatches makes the fake behave like an agent that predates
 // File.Patch, so every changed file has to arrive whole.
 func WithoutFilePatches() Option {
-	return func(a *Agent) { a.state.Features = nil }
+	return withoutFeature(api.FeatureFilePatch)
+}
+
+// WithoutWorkerFence models an agent that predates automatic-apply worker fencing.
+func WithoutWorkerFence() Option {
+	return withoutFeature(api.FeatureWorkerFence)
+}
+
+func withoutFeature(feature string) Option {
+	return func(a *Agent) {
+		a.state.Features = slices.DeleteFunc(a.state.Features, func(value string) bool { return value == feature })
+	}
 }
 
 // WithAgentOps restricts the op kinds the fake claims to execute, so a test
@@ -150,7 +161,7 @@ func New(tb testing.TB, opts ...Option) *Agent {
 			AgentVersion:      "agenttest",
 			PlanSchemaVersion: 1,
 			AgentOps:          client.ComposableOps(),
-			Features:          []string{api.FeatureFilePatch},
+			Features:          []string{api.FeatureFilePatch, api.FeatureWorkerFence},
 			HAProxy:           api.HAProxyInfo{Version: "3.4.3", FullVersion: "3.4.3-1", WorkerPID: defaultWorkerPID},
 			Files:             map[string]api.FileAt{},
 		},

@@ -52,9 +52,11 @@ are three pure steps and one round trip.
    The blob rides the apply itself on a reload, a full re-send and the drift
    pass, and for an agent that predates the call.
 
-A pod whose agent speaks a different API major, or doesn't execute an op kind
-the decision needs, gets the complete file set plus a reload. Version skew
-degrades the change; it never refuses it.
+A pod whose agent speaks a different API major, lacks an op kind the decision
+needs, or doesn't advertise `worker_fence` gets the complete file set plus a
+reload. An automatic apply from an older controller without a worker proof
+also reloads instead of executing runtime ops. The exact-identity version and
+rollback protocol remain unchanged.
 
 Which macros declare what, and what takes a backend off the reload-free lane, is
 the template author's side of the same contract; the chart's `Backend()`,
@@ -153,7 +155,7 @@ sequenceDiagram
     C->>A: POST /v1/apply (manifest first)
     A->>A: limits, paths, mode
     A->>A: promote LKG if validated_plan_id == applied
-    A->>A: fence: expected prev plan + token, leader epoch
+    A->>A: fence: applied and worker plan proofs, token, leader epoch
     alt baseline mismatch
         A-->>C: 409 Conflict {reason}
     end
@@ -172,8 +174,13 @@ sequenceDiagram
 ```
 
 Nothing is written before the fence passes. The fence accepts an apply only when
-`expected_prev_plan_id` and `expected_prev_token` equal what the agent has
-applied and `token.leader_epoch` isn't older than the epoch it last accepted.
+`expected_prev_plan_id`, `expected_prev_plan_proof`, and `expected_prev_token`
+match what the agent has applied and `token.leader_epoch` isn't older than the
+epoch it last accepted. Automatic applies also require the exact
+`expected_worker_ops_plan_id` and `expected_worker_ops_plan_proof`, even when
+they carry no runtime ops: a reload can load a map that the controller's state
+read classified as file-only. A reload-mode apply requires the worker baseline
+when its in-place batch executes.
 The refusals are distinct because the controller's answers differ:
 
 | `reason` | What happened | What the controller does |
@@ -181,7 +188,7 @@ The refusals are distinct because the controller's answers differ:
 | `prev_mismatch` | The pod is on a different plan than the ops assumed. | Re-diff from the returned state. |
 | `stale_epoch` | A newer leader has already spoken to this pod. | Stand down until it re-acquires leadership. |
 | `unknown_baseline` | The agent doesn't know what this pod runs. | Send full state with `mode: reload`. |
-| `worker_ops_mismatch` | The in-place batch was composed against a worker this pod no longer has: its pacer fired between the state read and the apply. Only refused when the batch would run — a reload is pending, or the apply asks for one the pod has to pace. | Re-diff against the worker as it's now; the applied baseline is intact. |
+| `worker_ops_mismatch` | An automatic apply or executable in-place batch targets an outdated worker baseline. | Re-read state and re-diff against the current worker and its loaded maps; the applied baseline is intact. |
 
 ## The state machine
 

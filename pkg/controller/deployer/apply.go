@@ -437,23 +437,23 @@ func (r *deployRequest) manifest(
 	validated planReference,
 ) *api.Manifest {
 	manifest := &api.Manifest{
-		IdentityVersion:       api.ExactIdentityVersion,
-		PlanID:                r.planID,
-		PlanSchemaVersion:     r.plan.SchemaVersion,
-		Token:                 r.token,
-		ExpectedPrevPlanID:    prev.planID,
-		ExpectedPrevPlanProof: prev.planProof,
-		ExpectedPrevToken:     prev.token,
-		ValidatedPlanID:       validated.id,
-		ValidatedPlanProof:    validated.proof,
-		Files:                 slices.Clone(decision.Files),
-		Ops:                   ops,
-		InPlaceOps:            decision.InPlace,
-		Mode:                  decision.Mode,
+		IdentityVersion:            api.ExactIdentityVersion,
+		PlanID:                     r.planID,
+		PlanSchemaVersion:          r.plan.SchemaVersion,
+		Token:                      r.token,
+		ExpectedPrevPlanID:         prev.planID,
+		ExpectedPrevPlanProof:      prev.planProof,
+		ExpectedPrevToken:          prev.token,
+		ExpectedWorkerOpsPlanID:    prev.workerOps,
+		ExpectedWorkerOpsPlanProof: prev.workerOpsProof,
+		ValidatedPlanID:            validated.id,
+		ValidatedPlanProof:         validated.proof,
+		Files:                      slices.Clone(decision.Files),
+		Ops:                        ops,
+		InPlaceOps:                 decision.InPlace,
+		Mode:                       decision.Mode,
 	}
 	if len(manifest.InPlaceOps) > 0 {
-		manifest.ExpectedWorkerOpsPlanID = prev.workerOps
-		manifest.ExpectedWorkerOpsPlanProof = prev.workerOpsProof
 		manifest.WorkerOpsPlanID = decision.WorkerPlan.ID
 	}
 	if full {

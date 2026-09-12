@@ -206,9 +206,9 @@ func (h *harness) postWithPlan(m *api.Manifest, list []file, plan []byte, omit .
 	return h.postPrepared(m, list, plan, omit...)
 }
 
-func (h *harness) postRaw(m *api.Manifest, list []file, omit ...string) (status int, answer []byte) {
+func (h *harness) postRaw(m *api.Manifest, list []file) (status int, answer []byte) {
 	h.t.Helper()
-	return h.postPrepared(m, list, nil, omit...)
+	return h.postPrepared(m, list, nil)
 }
 
 func (h *harness) postPrepared(m *api.Manifest, list []file, plan []byte, omit ...string) (status int, answer []byte) {
@@ -259,6 +259,9 @@ func (h *harness) prepareExactManifest(m *api.Manifest) {
 		m.ExpectedPrevPlanProof = state.AppliedPlanProof
 	}
 	m.ExpectedWorkerOpsPlanProof = ""
+	if m.ExpectedWorkerOpsPlanID == "" && m.Mode == api.ModeAuto {
+		m.ExpectedWorkerOpsPlanID = state.WorkerOpsPlanID
+	}
 	if m.ExpectedWorkerOpsPlanID == state.WorkerOpsPlanID {
 		m.ExpectedWorkerOpsPlanProof = state.WorkerOpsPlanProof
 	}

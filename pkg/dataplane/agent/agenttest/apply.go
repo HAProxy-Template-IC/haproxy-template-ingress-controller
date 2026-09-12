@@ -168,6 +168,10 @@ func (a *Agent) apply(req *applyRequest) outcome {
 
 func normalizeLegacyManifest(m *api.Manifest) {
 	if m.IdentityVersion == api.ExactIdentityVersion {
+		if m.Mode == api.ModeAuto && m.ExpectedWorkerOpsPlanProof == "" && len(m.InPlaceOps) == 0 {
+			m.Mode = api.ModeReload
+			m.Ops = nil
+		}
 		return
 	}
 	m.Mode = api.ModeReload
@@ -209,9 +213,6 @@ func (a *Agent) commitPlanBlob(req *applyRequest) {
 	a.planBlobPlanProof = req.appliedProof
 }
 
-// fence is the write gate, and the only three reasons an apply is answered with
-// a 409, the worker-ops baseline included when the in-place batch is going to
-// run: nothing is written, the caller re-diffs against the worker as it is.
 func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 	if reason := a.conflictOnce; reason != "" {
 		a.conflictOnce = ""
@@ -237,7 +238,7 @@ func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode == api.ModeReload &&
 		a.state.AppliedPlanProof != "" && m.ExpectedPrevPlanProof != a.state.AppliedPlanProof:
 		return a.conflict("prev_mismatch")
-	case a.inPlaceWillRun(m) && !samePlanRef(
+	case (m.Mode == api.ModeAuto || a.inPlaceWillRun(m)) && !samePlanRef(
 		m.ExpectedWorkerOpsPlanID,
 		m.ExpectedWorkerOpsPlanProof,
 		a.state.WorkerOpsPlanID,
