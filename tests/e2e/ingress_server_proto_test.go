@@ -40,6 +40,7 @@ func TestIngressServerProtoH2(t *testing.T) {
 
 	feature := features.New("Ingress: server-proto h2 (HTTP/2 to backend)").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -49,7 +50,7 @@ func TestIngressServerProtoH2(t *testing.T) {
 			echo := NewEchoServerBackend(ctx, t, client, ns)
 			demo := NewHAProxyDemoBackend(ctx, t, client, ns, echo, host)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-server-proto-h2",
 				Host:           host,
 				Path:           "/",
@@ -64,6 +65,7 @@ func TestIngressServerProtoH2(t *testing.T) {
 		}).
 		Assess("HAProxy speaks h2 to TLS-terminating backend → 200 from echo via demo",
 			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
 				if resp.Echo == nil {
 					t.Fatalf("expected echo-server JSON via h2 to backend, got %d bytes", len(resp.Body))

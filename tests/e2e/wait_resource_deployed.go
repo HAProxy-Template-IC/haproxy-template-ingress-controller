@@ -75,66 +75,7 @@ func waitForIngressDeployed(ctx context.Context, t *testing.T, client klient.Cli
 func waitForRouteDeployed(ctx context.Context, t *testing.T, client klient.Client, gvr schema.GroupVersionResource, namespace, name string) {
 	t.Helper()
 	waitForResourceDeployed(ctx, t, client, gvr, namespace, name,
-		func(obj *unstructured.Unstructured) (bool, string) {
-			parents, found, err := unstructured.NestedSlice(obj.Object, "status", "parents")
-			if err != nil || !found || len(parents) == 0 {
-				return false, "status.parents is empty (controller has not reported a deploy for this route)"
-			}
-			gen := obj.GetGeneration()
-			for _, p := range parents {
-				pm, ok := p.(map[string]any)
-				if !ok {
-					return false, "malformed status.parents entry"
-				}
-				conds, _, _ := unstructured.NestedSlice(pm, "conditions")
-				if len(conds) == 0 {
-					return false, "a parent has no conditions yet"
-				}
-				for _, c := range conds {
-					cm, ok := c.(map[string]any)
-					if !ok {
-						return false, "malformed condition"
-					}
-					og, _, _ := unstructured.NestedInt64(cm, "observedGeneration")
-					if og != gen {
-						typ, _, _ := unstructured.NestedString(cm, "type")
-						return false, fmt.Sprintf("condition %q is at observedGeneration %d, route is at %d", typ, og, gen)
-					}
-				}
-			}
-			return true, ""
-		})
-}
-
-// waitForGatewayDeployed blocks until the Gateway reports Programmed=True for
-// its current generation.
-func waitForGatewayDeployed(ctx context.Context, t *testing.T, client klient.Client, namespace, name string) {
-	t.Helper()
-	waitForResourceDeployed(ctx, t, client, gatewayGVR, namespace, name,
-		func(obj *unstructured.Unstructured) (bool, string) {
-			conds, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
-			if err != nil || !found {
-				return false, "status.conditions absent"
-			}
-			gen := obj.GetGeneration()
-			for _, c := range conds {
-				cm, ok := c.(map[string]any)
-				if !ok {
-					continue
-				}
-				typ, _, _ := unstructured.NestedString(cm, "type")
-				if typ != "Programmed" {
-					continue
-				}
-				status, _, _ := unstructured.NestedString(cm, "status")
-				og, _, _ := unstructured.NestedInt64(cm, "observedGeneration")
-				if status == "True" && og == gen {
-					return true, ""
-				}
-				return false, fmt.Sprintf("Programmed=%s at observedGeneration %d, gateway is at %d", status, og, gen)
-			}
-			return false, "no Programmed condition yet"
-		})
+		routeParentsAtCurrentGeneration)
 }
 
 // waitForResourceDeployed polls the named resource until ready reports true,
@@ -177,4 +118,34 @@ func waitForResourceDeployed(
 			}
 			return false, errors.New(reason)
 		})
+}
+
+func routeParentsAtCurrentGeneration(obj *unstructured.Unstructured) (ready bool, reason string) {
+	parents, found, err := unstructured.NestedSlice(obj.Object, "status", "parents")
+	if err != nil || !found || len(parents) == 0 {
+		return false, "status.parents is empty (controller has not reported a deploy for this route)"
+	}
+	gen := obj.GetGeneration()
+	for _, p := range parents {
+		pm, ok := p.(map[string]any)
+		if !ok {
+			return false, "malformed status.parents entry"
+		}
+		conds, _, _ := unstructured.NestedSlice(pm, "conditions")
+		if len(conds) == 0 {
+			return false, "a parent has no conditions yet"
+		}
+		for _, c := range conds {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				return false, "malformed condition"
+			}
+			og, _, _ := unstructured.NestedInt64(cm, "observedGeneration")
+			if og != gen {
+				typ, _, _ := unstructured.NestedString(cm, "type")
+				return false, fmt.Sprintf("condition %q is at observedGeneration %d, route is at %d", typ, og, gen)
+			}
+		}
+	}
+	return true, ""
 }

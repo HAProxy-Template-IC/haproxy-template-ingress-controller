@@ -40,7 +40,7 @@ import (
 // canary; if any single annotation breaks the chain the test fails clearly.
 func TestIngressCombined(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: combined annotations",
 		Host:        "ingress-combined.localdev.me",
 		Annotations: map[string]string{
@@ -55,6 +55,7 @@ func TestIngressCombined(t *testing.T) {
 			"haproxy.org/timeout-server":      "30s",
 		},
 		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+			t.Helper()
 			adminBcrypt := "$2y$05$mN1WVk5Qnbg4QwdAdXbfz.8b3ceH6Q5KOVCKxR2IkNAfJgLi5pIKW"
 			authSecret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "echo-auth-secret", Namespace: namespace},
@@ -69,12 +70,14 @@ func TestIngressCombined(t *testing.T) {
 			{
 				Name: "returns 401 without auth (auth gate triggers)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},
 			{
 				Name: "returns 200 with auth, security headers stack",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					resp := httpclient.New(t).GET(host, "/").
 						WithBasicAuth("admin", "admin").ExpectOK(t)
 					if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {

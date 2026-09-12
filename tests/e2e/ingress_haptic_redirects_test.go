@@ -42,7 +42,7 @@ func TestHapticRedirects(t *testing.T) {
 
 	// Permanent redirect: default code is 301; set it explicitly to exercise
 	// the -code key and pin the asserted status deterministically.
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: haproxy-haptic.org/permanent-redirect",
 		Host:        "ingress-haptic-redirects-permanent.localdev.me",
 		Annotations: map[string]string{
@@ -52,6 +52,7 @@ func TestHapticRedirects(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "any request returns 301 to configured Location",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/some/path").ExpectStatus(t, 301)
 				if got := resp.Header.Get("Location"); got != "https://example.com/relocated" {
 					t.Fatalf("expected Location https://example.com/relocated, got %q", got)
@@ -62,7 +63,7 @@ func TestHapticRedirects(t *testing.T) {
 
 	// Temporary redirect: default code is 302; set it explicitly to exercise the
 	// -code key and confirm the chart picks the temporary status per annotation.
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: haproxy-haptic.org/temporary-redirect",
 		Host:        "ingress-haptic-redirects-temporary.localdev.me",
 		Annotations: map[string]string{
@@ -72,6 +73,7 @@ func TestHapticRedirects(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "any request returns 302 to configured Location",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/some/path").ExpectStatus(t, 302)
 				if got := resp.Header.Get("Location"); got != "https://example.com/temp" {
 					t.Fatalf("expected Location https://example.com/temp, got %q", got)
@@ -82,7 +84,7 @@ func TestHapticRedirects(t *testing.T) {
 
 	// Root redirect: a request to "/" is redirected to the configured sub-path;
 	// any other path (here the root-redirect target itself) reaches the backend.
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: haproxy-haptic.org/root-redirect",
 		Host:        "ingress-haptic-redirects-rootredirect.localdev.me",
 		Annotations: map[string]string{
@@ -92,12 +94,14 @@ func TestHapticRedirects(t *testing.T) {
 			{
 				Name: "GET / redirects to /welcome",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectRedirect(t, "/welcome")
 				},
 			},
 			{
 				Name: "GET /welcome reaches the backend (no redirect loop)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/welcome").ExpectOK(t)
 				},
 			},

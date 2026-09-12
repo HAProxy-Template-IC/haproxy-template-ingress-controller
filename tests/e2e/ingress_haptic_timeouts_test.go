@@ -38,7 +38,7 @@ import (
 // still serves traffic, mirroring the vendor smoke-test assertion.
 func TestHapticTimeouts(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: haproxy-haptic.org/timeout-* family",
 		Host:        "ingress-haptic-timeouts.localdev.me",
 		Annotations: map[string]string{
@@ -53,6 +53,7 @@ func TestHapticTimeouts(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "ingress with full timeout stack still serves traffic",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
 				if resp.Echo == nil {
 					t.Fatalf("expected echo-server JSON")

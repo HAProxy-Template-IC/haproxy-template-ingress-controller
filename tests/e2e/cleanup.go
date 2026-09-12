@@ -68,7 +68,7 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 		// continuous tailers stay the instrument for a single replica's
 		// timeline; this dump is the wider net.
 		dumpCommand(t, dumpDir, "controller-logs.txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"logs", "-l", LabelSelectorController, "--all-containers", "--prefix", "--tail=50000")
 
 		// --prefix tags each line with [pod/<name> container/<name>] so the
@@ -89,7 +89,7 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 		// preserves the window around a probe-loop failure (typical e2e
 		// probe loop <= 30 s).
 		dumpCommand(t, dumpDir, "haproxy-logs.txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"logs", "-l", LabelSelectorHAProxy, "--all-containers", "--prefix", "--tail=50000")
 
 		// A sidecar that died and was restarted took its stdout with it: the
@@ -100,14 +100,14 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 		// merely observable — see the per-container state dump below for which
 		// container to look at.
 		dumpCommand(t, dumpDir, "haproxy-logs-previous.txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"logs", "-l", LabelSelectorHAProxy, "--all-containers", "--prefix", "--previous", "--tail=50000")
 
 		// Per-container ready/restart/lastState. `reason` separates an OOMKill
 		// from a clean exit, and `exitCode` separates a crash from a graceful
 		// shutdown — the pod-level READY column shows neither.
 		dumpCommand(t, dumpDir, "haproxy-container-states.txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"get", "pods", "-l", LabelSelectorHAProxy, "-o",
 			"jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{range .status.containerStatuses[*]}"+
 				"  {.name}{\"\\tready=\"}{.ready}{\"\\trestarts=\"}{.restartCount}"+
@@ -118,10 +118,10 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 		// is not necessarily the one that grew — so a container's own limit
 		// cannot be read as the cause without this.
 		dumpCommand(t, dumpDir, "nodes.txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "describe", "nodes")
+			"kubectl", kubeconfigFlag, kubeconfigPath, "describe", "nodes")
 
 		dumpCommand(t, dumpDir, "backend-fixtures-logs.txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", SharedFixturesNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", SharedFixturesNamespace,
 			"logs", "--all-containers", "--prefix", "--tail=200", "-l", "")
 
 		// Valkey and Sentinel stdout from the shared rate-limit store. A stalled
@@ -131,7 +131,7 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 		// say which node Sentinel picked. --prefix separates the two containers,
 		// which disagree by design during a failover.
 		dumpCommand(t, dumpDir, "rate-limit-store-logs.txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"logs", "-l", labelSelectorRateLimitStore, "--all-containers", "--prefix", "--tail=5000")
 
 		// Replication as each node sees it. Sentinel can report a promotion that
@@ -140,23 +140,23 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 		dumpRateLimitStoreReplication(t, dumpDir)
 
 		dumpCommand(t, dumpDir, "controller-namespace-events.txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"get", "events", "--sort-by=.lastTimestamp")
 
 		dumpCommand(t, dumpDir, "test-namespace-events.txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", namespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", namespace,
 			"get", "events", "--sort-by=.lastTimestamp")
 
 		dumpCommand(t, dumpDir, "test-namespace-resources.yaml",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", namespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", namespace,
 			"get", "all,ingresses,httproutes,secrets,configmaps", "-o", "yaml")
 
 		dumpCommand(t, dumpDir, "haproxycfg.yaml",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"get", "haproxycfg", "-o", "yaml")
 
 		dumpCommand(t, dumpDir, "controller-pods.yaml",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"get", "pods", "-o", "yaml")
 
 		// EndpointSlices for the test namespace AND across the cluster. Two
@@ -167,12 +167,12 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 		// the controller log when sibling parallel tests churn at the same
 		// time.
 		dumpCommand(t, dumpDir, "test-namespace-endpointslices.yaml",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", namespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", namespace,
 			"get", "endpointslices", "-o", "yaml")
 		// -A after the subcommand: --all-namespaces belongs to `get`, not to
 		// kubectl itself, so leading it makes kubectl read it as a plugin name.
 		dumpCommand(t, dumpDir, "all-endpointslices.yaml",
-			"kubectl", "--kubeconfig", kubeconfigPath,
+			"kubectl", kubeconfigFlag, kubeconfigPath,
 			"get", "endpointslices", "-A", "-o", "yaml")
 
 		// HAProxy's view of every server — admin state, operational state,
@@ -196,7 +196,7 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 
 	// Get the HAProxy pod names.
 	podsCmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 		"get", "pods", "-l", LabelSelectorHAProxy,
 		"-o", "jsonpath={.items[*].metadata.name}")
 	podsOut, err := podsCmd.Output()
@@ -226,14 +226,14 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 		// runtime inventory it diffs against.
 		curlAuth := `curl -sS --max-time 5 -u "$DATAPLANE_USERNAME:$DATAPLANE_PASSWORD"`
 		dumpCommand(t, dumpDir, "haproxy-agent-state-"+pod+".json",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "agent", "--",
 			"sh", "-c", curlAuth+" http://localhost:5555/v1/state")
 
 		// The configuration HAProxy is running, read from disk — single shot,
 		// no per-backend iteration needed.
 		dumpCommand(t, dumpDir, "haproxy-config-raw-"+pod+".cfg",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"cat", "/etc/haproxy/haproxy.cfg")
 
@@ -243,7 +243,7 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 		// only each map's digest and size, which cannot answer "is this host in
 		// there" — and that is the question every routing failure asks.
 		dumpCommand(t, dumpDir, "haproxy-maps-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `for m in /etc/haproxy/maps/*.map; do `+
 				`echo "=== $m ($(wc -l < "$m") entries)"; cat "$m"; done`)
@@ -259,7 +259,7 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 		// which is all this needs; the worker stats socket the agent
 		// uses would do as well.
 		dumpCommand(t, dumpDir, "haproxy-show-servers-state-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `printf '@1 show servers state\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock`)
 
@@ -272,7 +272,7 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 		// issue. `show info` also carries Uptime, so a value here is
 		// attributable to the run rather than inherited.
 		dumpCommand(t, dumpDir, "haproxy-show-info-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `printf '@1 show info\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock`)
 
@@ -281,7 +281,7 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 		// the socket unattended, and the buffer absorbs only ~167 records at the
 		// default rmem — about 170ms of stall at 1000 req/s.
 		dumpCommand(t, dumpDir, "vector-container-state-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"get", "pod", pod, "-o",
 			`jsonpath={range .status.containerStatuses[?(@.name=="vector")]}restarts={.restartCount}{"\n"}ready={.ready}{"\n"}lastState={.lastState}{"\n"}{end}`)
 
@@ -297,7 +297,7 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 		// HAProxy must serve correctly across reloads, not merely avoid 503s
 		// (a malformed-request 400 mid-reload is just as much a real bug).
 		dumpCommand(t, dumpDir, "haproxy-show-errors-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `printf '@1 show errors\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock`)
 	}
@@ -317,7 +317,7 @@ func dumpRateLimitStoreReplication(t *testing.T, dumpDir string) {
 	defer cancel()
 
 	podsCmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 		"get", "pods", "-l", labelSelectorRateLimitStore,
 		"-o", "jsonpath={.items[*].metadata.name}")
 	podsOut, err := podsCmd.Output()
@@ -329,11 +329,11 @@ func dumpRateLimitStoreReplication(t *testing.T, dumpDir string) {
 	for _, podBytes := range bytes.Fields(podsOut) {
 		pod := string(podBytes)
 		dumpCommand(t, dumpDir, "rate-limit-store-replication-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "valkey", "--",
 			"valkey-cli", "-p", "6379", "info", "replication")
 		dumpCommand(t, dumpDir, "rate-limit-store-sentinel-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "sentinel", "--",
 			"valkey-cli", "-p", "26379", "sentinel", "master", "haptic-rate-limit")
 		// Why a stalled failover picked nobody. `-failover-abort-no-good-slave`
@@ -341,7 +341,7 @@ func dumpRateLimitStoreReplication(t *testing.T, dumpDir string) {
 		// only visible as per-replica flags, master-link-down-time and
 		// info-refresh, which the `master` view above does not carry.
 		dumpCommand(t, dumpDir, "rate-limit-store-sentinel-replicas-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "sentinel", "--",
 			"valkey-cli", "-p", "26379", "sentinel", "replicas", "haptic-rate-limit")
 	}
@@ -349,10 +349,10 @@ func dumpRateLimitStoreReplication(t *testing.T, dumpDir string) {
 
 // dumpCommand runs cmd and writes its combined output to filename inside
 // dumpDir. Failures are logged via t.Logf but do not fail the test.
-func dumpCommand(t *testing.T, dumpDir, filename string, cmd string, args ...string) {
+func dumpCommand(t *testing.T, dumpDir, filename, cmd string, args ...string) {
 	t.Helper()
 	out := runCommandCapture(30*time.Second, cmd, args...)
-	if writeErr := os.WriteFile(filepath.Join(dumpDir, filename), out, 0644); writeErr != nil {
+	if writeErr := os.WriteFile(filepath.Join(dumpDir, filename), out, 0o600); writeErr != nil {
 		t.Logf("DumpLogsOnFailure: write %s: %v", filename, writeErr)
 	}
 }
@@ -382,13 +382,14 @@ func runCommandCapture(timeout time.Duration, cmd string, args ...string) []byte
 // under <repo>/debug-logs/. The directory name is the test name with
 // non-DNS-safe characters replaced by underscores.
 func failureDumpDir(t *testing.T) (string, error) {
+	t.Helper()
 	root, err := repoRoot()
 	if err != nil {
 		return "", err
 	}
 	safe := sanitizeForFilesystem(t.Name())
 	dir := filepath.Join(root, "debug-logs", safe)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 	return dir, nil

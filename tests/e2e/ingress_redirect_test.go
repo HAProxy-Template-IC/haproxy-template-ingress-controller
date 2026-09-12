@@ -28,7 +28,7 @@ import (
 func TestIngressRedirect(t *testing.T) {
 	t.Parallel()
 	const target = "https://echo.localdev.me"
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: request-redirect annotation",
 		Host:        "ingress-redirect.localdev.me",
 		Annotations: map[string]string{
@@ -38,6 +38,7 @@ func TestIngressRedirect(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "returns 302 with Location header",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				httpclient.New(t).GET(host, "/").ExpectRedirect(t, target)
 			},
 		}},

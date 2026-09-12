@@ -37,7 +37,7 @@ import (
 // The auth Secret is per-test (deleted with the namespace).
 func TestIngressBasicAuth(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HTTP Basic auth",
 		Host:        "ingress-auth.localdev.me",
 		Annotations: map[string]string{
@@ -46,6 +46,7 @@ func TestIngressBasicAuth(t *testing.T) {
 			"haproxy.org/auth-realm":  "Echo-Server-Protected",
 		},
 		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+			t.Helper()
 			// Pre-generated bcrypt hash for "admin" (admin/admin matches the
 			// dev-env secret); regenerate with:
 			//   htpasswd -nbB admin admin | cut -d: -f2
@@ -66,12 +67,14 @@ func TestIngressBasicAuth(t *testing.T) {
 			{
 				Name: "returns 401 without credentials",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},
 			{
 				Name: "returns 200 with admin:admin credentials",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					resp := httpclient.New(t).GET(host, "/").WithBasicAuth("admin", "admin").ExpectOK(t)
 					if resp.Echo == nil {
 						t.Fatalf("expected echo-server JSON after auth, got status=%d", resp.Status)

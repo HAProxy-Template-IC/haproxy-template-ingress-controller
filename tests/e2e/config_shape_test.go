@@ -53,94 +53,9 @@ var libraryGVR = schema.GroupVersionResource{
 // completeness rule for every object in the set.
 func TestConfigShape(t *testing.T) {
 	feature := features.New("chart installs one config object per library, merged by the controller").
-		Assess("exactly one config, referencing every library's snippets", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			configs := listHaptic(ctx, t, cfg, configGVR)
-			if len(configs) != 1 {
-				t.Fatalf("expected exactly one HAProxyTemplateConfig, got %d — bulk content belongs "+
-					"in HAProxyTemplateLibrary, leaving one config an operator can read and edit", len(configs))
-			}
-			config := configs[0]
-
-			if _, ok, _ := unstructured.NestedMap(config.Object, "spec", "podSelector"); !ok {
-				t.Fatal("the config carries no podSelector; no snippet can supply it, so the " +
-					"apiserver's CEL rule should have refused this object")
-			}
-			if watched, _, _ := unstructured.NestedMap(config.Object, "spec", "watchedResources"); len(watched) == 0 {
-				t.Fatal("the config declares no watchedResources; the union of every library's is meant to land here")
-			}
-
-			refs, _, _ := unstructured.NestedSlice(config.Object, "spec", "libraryRefs")
-			if len(refs) == 0 {
-				t.Fatal("the config references no HAProxyTemplateLibrary: the libraries would not be merged at all")
-			}
-
-			observed := map[string]string{}
-			for _, item := range listHaptic(ctx, t, cfg, libraryGVR) {
-				revision, _, _ := unstructured.NestedString(item.Object, "spec", "revision")
-				observed[item.GetName()] = revision
-
-				for _, field := range []string{"podSelector", "watchedResources", "dataplane", "validators"} {
-					if _, ok := item.Object["spec"].(map[string]any)[field]; ok {
-						t.Fatalf("%s carries spec.%s — a library must not be able to redefine the "+
-							"controller's operational identity", item.GetName(), field)
-					}
-				}
-			}
-
-			// Every reference must resolve at the revision it names, or the
-			// controller holds last-good and the fleet silently stops updating.
-			for i, entry := range refs {
-				fields, _ := entry.(map[string]any)
-				name, _ := fields["name"].(string)
-				want, _ := fields["revision"].(string)
-				got, present := observed[name]
-				if !present {
-					t.Fatalf("libraryRefs[%d] names %q, which does not exist", i, name)
-				}
-				if got != want {
-					t.Fatalf("libraryRefs[%d] expects %s at revision %q, but it reports %q", i, name, want, got)
-				}
-			}
-			return ctx
-		}).
-		Assess("tests ride the snippets objects", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			total := 0
-			for _, item := range listHaptic(ctx, t, cfg, libraryGVR) {
-				suite, _, _ := unstructured.NestedMap(item.Object, "spec", "validationTests")
-				total += len(suite)
-			}
-			if total == 0 {
-				t.Fatal("no object carries validationTests: an empty suite passes unconditionally, " +
-					"so the load gate would be running nothing")
-			}
-			return ctx
-		}).
-		Assess("the controller validated the set and stamped EVERY source", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// The verdict is a property of the merged set, and observedGeneration
-			// is only meaningful against the same object's metadata.generation —
-			// so every object must carry Validated=True at its own generation.
-			// A designated primary could not represent a shard edit at all.
-			deadline := time.Now().Add(2 * time.Minute)
-			var last string
-			for time.Now().Before(deadline) {
-				items := listHaptic(ctx, t, cfg, configGVR)
-				allStamped := true
-				last = ""
-				for _, item := range items {
-					if reason, ok := validatedAtOwnGeneration(&item); !ok {
-						allStamped = false
-						last = fmt.Sprintf("%s: %s", item.GetName(), reason)
-						break
-					}
-				}
-				if allStamped {
-					return ctx
-				}
-				time.Sleep(2 * time.Second)
-			}
-			t.Fatalf("controller never stamped every source of the merged set: %s", last)
-			return ctx
-		}).Feature()
+		Assess("exactly one config, referencing every library's snippets", assessConfigLibraryReferences).
+		Assess("tests ride the snippets objects", assessLibraryValidationTests).
+		Assess("the controller validated the set and stamped EVERY source", assessConfigValidationStatus).Feature()
 
 	testEnv.Test(t, feature)
 }
@@ -177,4 +92,98 @@ func listHaptic(ctx context.Context, t *testing.T, cfg *envconf.Config, gvr sche
 		t.Fatalf("listing %s: %v", gvr.Resource, err)
 	}
 	return list.Items
+}
+
+func assessConfigLibraryReferences(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	configs := listHaptic(ctx, t, cfg, configGVR)
+	if len(configs) != 1 {
+		t.Fatalf("expected exactly one HAProxyTemplateConfig, got %d — bulk content belongs "+
+			"in HAProxyTemplateLibrary, leaving one config an operator can read and edit", len(configs))
+	}
+	config := configs[0]
+
+	if _, ok, _ := unstructured.NestedMap(config.Object, "spec", "podSelector"); !ok {
+		t.Fatal("the config carries no podSelector; no snippet can supply it, so the " +
+			"apiserver's CEL rule should have refused this object")
+	}
+	if watched, _, _ := unstructured.NestedMap(config.Object, "spec", "watchedResources"); len(watched) == 0 {
+		t.Fatal("the config declares no watchedResources; the union of every library's is meant to land here")
+	}
+
+	refs, _, _ := unstructured.NestedSlice(config.Object, "spec", "libraryRefs")
+	if len(refs) == 0 {
+		t.Fatal("the config references no HAProxyTemplateLibrary: the libraries would not be merged at all")
+	}
+
+	observed := map[string]string{}
+	for _, item := range listHaptic(ctx, t, cfg, libraryGVR) {
+		revision, _, _ := unstructured.NestedString(item.Object, "spec", "revision")
+		observed[item.GetName()] = revision
+
+		for _, field := range []string{"podSelector", "watchedResources", "dataplane", "validators"} {
+			if _, ok := item.Object["spec"].(map[string]any)[field]; ok {
+				t.Fatalf("%s carries spec.%s — a library must not be able to redefine the "+
+					"controller's operational identity", item.GetName(), field)
+			}
+		}
+	}
+
+	// Every reference must resolve at the revision it names, or the
+	// controller holds last-good and the fleet silently stops updating.
+	for i, entry := range refs {
+		fields, _ := entry.(map[string]any)
+		name, _ := fields["name"].(string)
+		want, _ := fields["revision"].(string)
+		got, present := observed[name]
+		if !present {
+			t.Fatalf("libraryRefs[%d] names %q, which does not exist", i, name)
+		}
+		if got != want {
+			t.Fatalf("libraryRefs[%d] expects %s at revision %q, but it reports %q", i, name, want, got)
+		}
+	}
+	return ctx
+}
+
+func assessLibraryValidationTests(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	total := 0
+	for _, item := range listHaptic(ctx, t, cfg, libraryGVR) {
+		suite, _, _ := unstructured.NestedMap(item.Object, "spec", "validationTests")
+		total += len(suite)
+	}
+	if total == 0 {
+		t.Fatal("no object carries validationTests: an empty suite passes unconditionally, " +
+			"so the load gate would be running nothing")
+	}
+	return ctx
+}
+
+func assessConfigValidationStatus(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	// The verdict is a property of the merged set, and observedGeneration
+	// is only meaningful against the same object's metadata.generation —
+	// so every object must carry Validated=True at its own generation.
+	// A designated primary could not represent a shard edit at all.
+	deadline := time.Now().Add(2 * time.Minute)
+	var last string
+	for time.Now().Before(deadline) {
+		items := listHaptic(ctx, t, cfg, configGVR)
+		allStamped := true
+		last = ""
+		for _, item := range items {
+			if reason, ok := validatedAtOwnGeneration(&item); !ok {
+				allStamped = false
+				last = fmt.Sprintf("%s: %s", item.GetName(), reason)
+				break
+			}
+		}
+		if allStamped {
+			return ctx
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("controller never stamped every source of the merged set: %s", last)
+	return ctx
 }

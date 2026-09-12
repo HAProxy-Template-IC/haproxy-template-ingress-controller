@@ -32,7 +32,7 @@ import (
 // config becoming invalid when canary annotations are present.
 func TestIngressNginxCanary(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: nginx.ingress.kubernetes.io/canary annotations",
 		Host:        "ingress-canary.localdev.me",
 		Annotations: map[string]string{
@@ -45,6 +45,7 @@ func TestIngressNginxCanary(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "canary-annotated ingress still serves the backend",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
 				if resp.Echo == nil {
 					t.Fatalf("expected echo-server JSON")

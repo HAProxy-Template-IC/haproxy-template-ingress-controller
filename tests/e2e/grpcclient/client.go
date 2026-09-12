@@ -33,6 +33,7 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
@@ -81,18 +82,40 @@ func (c *Client) Dial(ctx context.Context, host string) (*grpc.ClientConn, error
 	tlsCfg := buildTLSConfig(host, c.caBundle)
 	target := c.nodeIP + ":" + strconv.Itoa(c.httpsPort)
 	dialer := &net.Dialer{}
-	conn, err := grpc.DialContext(ctx, target,
+	conn, err := grpc.NewClient("passthrough:///"+target,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithAuthority(host),
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return dialer.DialContext(ctx, "tcp", target)
 		}),
-		grpc.WithBlock(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("grpc.DialContext %q (host=%s): %w", target, host, err)
+		return nil, fmt.Errorf("create gRPC client %q (host=%s): %w", target, host, err)
+	}
+	if err := waitForConnection(ctx, conn); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("connect gRPC client %q (host=%s): %w", target, host, err)
 	}
 	return conn, nil
+}
+
+func waitForConnection(ctx context.Context, conn *grpc.ClientConn) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if state == connectivity.Shutdown {
+			return errors.New("gRPC client is shut down")
+		}
+		conn.Connect()
+		if !conn.WaitForStateChange(ctx, state) {
+			return ctx.Err()
+		}
+	}
 }
 
 // buildTLSConfig assembles the test dialer's *tls.Config. When

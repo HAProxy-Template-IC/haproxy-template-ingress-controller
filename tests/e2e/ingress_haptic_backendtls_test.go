@@ -59,6 +59,7 @@ func TestHapticBackendTLS(t *testing.T) {
 
 	feature := features.New("Ingress: haptic backend-TLS (backend-protocol + verify + ca/crt-secret + sni)").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -68,7 +69,7 @@ func TestHapticBackendTLS(t *testing.T) {
 			echo := NewEchoServerBackend(ctx, t, client, ns)
 			mtls := NewHAProxyMTLSBackend(ctx, t, client, ns, echo, host)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-haptic-backendtls",
 				Host:           host,
 				Path:           "/",
@@ -86,6 +87,7 @@ func TestHapticBackendTLS(t *testing.T) {
 		}).
 		Assess("haptic backend-* annotations establish a verified mTLS connection to the upstream → 200 from echo",
 			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
 				if resp.Echo == nil {
 					t.Fatalf("expected echo-server JSON via verified backend TLS, got %d bytes", len(resp.Body))

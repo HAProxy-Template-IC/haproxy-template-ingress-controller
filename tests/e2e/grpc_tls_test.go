@@ -68,6 +68,7 @@ func TestGRPCOverTLS(t *testing.T) {
 
 	feature := features.New("GRPCRoute: HTTPS listener with TLS Terminate + ALPN h2").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -78,7 +79,7 @@ func TestGRPCOverTLS(t *testing.T) {
 			NewTLSSecret(ctx, t, client, ns, certName, []string{host})
 			NewHTTPSGateway(ctx, t, ns, gatewayName, certName)
 			fwd = ForwardGateway(ctx, t, ns, gatewayName, 443)
-			NewGRPCRoute(ctx, t, ns, GRPCRouteSpec{
+			NewGRPCRoute(ctx, t, ns, &GRPCRouteSpec{
 				Name:        routeName,
 				GatewayName: gatewayName,
 				Hostnames:   []string{host},
@@ -105,6 +106,7 @@ func TestGRPCOverTLS(t *testing.T) {
 			return ctx
 		}).
 		Assess("Echo over TLS+ALPN-h2 reaches the GRPCRoute backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// The chart needs a reconciliation pass to render the
 			// new GRPCRoute into haproxy.cfg and reload every
 			// HAProxy pod after the route is applied. Poll the dial
@@ -184,23 +186,7 @@ func TestGRPCOverTLS(t *testing.T) {
 				// either the host map / path map never staged, or
 				// there's a different routing bug for this path
 				// shape.
-				h1Resp, h1Err := httpclient.ForForwarded(t, 0, fwd.HTTPSPort).
-					HTTPS(host, wantSuffix).
-					WithMethod("POST").
-					WithHeader("Content-Type", "application/grpc").
-					Do(ctx)
-				h1Diag := "(probe failed before response)"
-				if h1Err != nil {
-					h1Diag = fmt.Sprintf("dial/transport error: %v", h1Err)
-				} else if h1Resp != nil {
-					grpcStatus := h1Resp.Header.Get("grpc-status")
-					echoMethod := ""
-					if h1Resp.Echo != nil {
-						echoMethod = h1Resp.Echo.Path
-					}
-					h1Diag = fmt.Sprintf("status=%d, grpc-status=%q, echo-path=%q",
-						h1Resp.Status, grpcStatus, echoMethod)
-				}
+				h1Diag := grpcHTTP1Diagnostic(ctx, t, fwd.HTTPSPort, host, wantSuffix)
 				t.Fatalf("Echo() RPC never reached the GRPCRoute backend with method %q (poll budget=%v): "+
 					"last dial err=%v; last call err=%v; last method seen=%q; "+
 					"h1 differential probe: %s; "+
@@ -214,4 +200,24 @@ func TestGRPCOverTLS(t *testing.T) {
 		}).
 		Feature()
 	testEnv.Test(t, feature)
+}
+
+func grpcHTTP1Diagnostic(ctx context.Context, t *testing.T, httpsPort int, host, path string) string {
+	t.Helper()
+	resp, err := httpclient.ForForwarded(t, 0, httpsPort).
+		HTTPS(host, path).
+		WithMethod("POST").
+		WithHeader("Content-Type", "application/grpc").
+		Do(ctx)
+	if err != nil {
+		return fmt.Sprintf("dial/transport error: %v", err)
+	}
+	if resp == nil {
+		return "(probe failed before response)"
+	}
+	echoMethod := ""
+	if resp.Echo != nil {
+		echoMethod = resp.Echo.Path
+	}
+	return fmt.Sprintf("status=%d, grpc-status=%q, echo-path=%q", resp.Status, resp.Header.Get("grpc-status"), echoMethod)
 }

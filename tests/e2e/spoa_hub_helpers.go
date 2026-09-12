@@ -26,7 +26,7 @@ import (
 func firstHAProxyPodName(ctx context.Context, t *testing.T) string {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"get", "pods",
 		"-l", LabelSelectorHAProxy,
@@ -53,7 +53,7 @@ func firstHAProxyPodName(ctx context.Context, t *testing.T) string {
 // debug-image trickery.
 func readFileFromHAProxyPod(ctx context.Context, podName, path string) (string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"exec", podName, "-c", "haproxy", "--",
 		"cat", path,
@@ -78,7 +78,7 @@ func readFileFromHAProxyPod(ctx context.Context, podName, path string) (string, 
 // reload event after the controller pushed an updated file.
 func readSPOAHubLogs(ctx context.Context, podName string) (string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
+		kubeconfigFlag, kubeconfigPath,
 		"-n", ControllerNamespace,
 		"logs", podName, "-c", "spoa-hub", "--tail=500",
 	)

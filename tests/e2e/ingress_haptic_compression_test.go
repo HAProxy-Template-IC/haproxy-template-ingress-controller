@@ -31,7 +31,7 @@ import (
 // leaving Content-Encoding: gzip visible on the response.
 func TestHapticCompression(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC-native response compression",
 		Host:        "ingress-haptic-compression.localdev.me",
 		Annotations: map[string]string{
@@ -43,6 +43,7 @@ func TestHapticCompression(t *testing.T) {
 			{
 				Name: "gzip-advertised request gets a gzipped response",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").
 						WithHeader("Accept-Encoding", "gzip").
 						ExpectHeader(t, "Content-Encoding", "gzip")

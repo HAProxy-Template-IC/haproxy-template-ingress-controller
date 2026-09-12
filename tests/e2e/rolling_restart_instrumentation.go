@@ -80,7 +80,7 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	// so multiple failures within the same second don't overwrite.
 	tsLabel := failure.ts.UTC().Format("150405.000")
 	dir := filepath.Join(s.rootDir, tsLabel)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		s.t.Logf("proberSnapshotter: mkdir %s: %v", dir, err)
 		return
 	}
@@ -108,9 +108,9 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	// HAProxy, or the kube control plane — instead of inferring it from
 	// resource requests. Sorted by CPU so the hottest pod is first.
 	s.dumpCommand(dir, "top-pods-all-namespaces.txt",
-		"kubectl", "--kubeconfig", kubeconfigPath, "top", "pods", "-A", "--sort-by=cpu")
+		"kubectl", kubeconfigFlag, kubeconfigPath, "top", "pods", "-A", "--sort-by=cpu")
 	s.dumpCommand(dir, "top-nodes.txt",
-		"kubectl", "--kubeconfig", kubeconfigPath, "top", "nodes")
+		"kubectl", kubeconfigFlag, kubeconfigPath, "top", "nodes")
 
 	// Per-HAProxy-pod runtime state captures. The master socket route
 	// `@1 show servers state` returns the LIVE worker's view of every
@@ -123,18 +123,18 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	pods := listHAProxyPods(s.t)
 	for _, pod := range pods {
 		s.dumpCommand(dir, "haproxy-servers-state-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `printf '@1 show servers state\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock`)
 		s.dumpCommand(dir, "haproxy-servers-conn-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `printf '@1 show servers conn\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock`)
 		// Also which worker PID is currently active — under reload churn
 		// this tells us how recently the live worker was spawned and
 		// whether the runtime state was migrated from the prior worker.
 		s.dumpCommand(dir, "haproxy-show-proc-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `printf 'show proc\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock`)
 		// HAProxy's captured request parse errors — THE load-bearing
@@ -150,7 +150,7 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 		// returns "0 events" (observed, session c952f94a). This per-failure
 		// capture fires within milliseconds of the 400.
 		s.dumpCommand(dir, "haproxy-show-errors-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `printf '@1 show errors\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock`)
 	}
@@ -158,7 +158,7 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	// EndpointSlice state for the test namespace at failure time. Tells
 	// us what K8s thought the backend pod IPs were when the failure fired.
 	s.dumpCommand(dir, "endpointslices.yaml",
-		"kubectl", "--kubeconfig", kubeconfigPath, "-n", s.namespace,
+		"kubectl", kubeconfigFlag, kubeconfigPath, "-n", s.namespace,
 		"get", "endpointslices", "-o", "yaml")
 
 	// Controller log tail — last 500 lines, which at TRACE level covers
@@ -166,7 +166,7 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	// most recent deploy to each HAProxy pod was, and whether the
 	// rolling-restart EP event had been processed.
 	s.dumpCommand(dir, "controller-logs-tail.txt",
-		"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 		"logs", "-l", LabelSelectorController, "--all-containers", "--tail=500")
 
 	// HAProxy stdout (which is where the access log lands in this chart):
@@ -176,7 +176,7 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	// this failure" without parsing the test-long tail file.
 	for _, pod := range pods {
 		s.dumpCommand(dir, "haproxy-access-tail-"+pod+".log",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"logs", pod, "-c", "haproxy", "--tail=400")
 	}
 
@@ -218,7 +218,7 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 func (s *proberSnapshotter) dumpBackendState(dir string) {
 	// All pods, full YAML including deletionTimestamp / container status / IP.
 	s.dumpCommand(dir, "all-pods.yaml",
-		"kubectl", "--kubeconfig", kubeconfigPath, "-n", s.namespace,
+		"kubectl", kubeconfigFlag, kubeconfigPath, "-n", s.namespace,
 		"get", "pods", "-o", "yaml")
 
 	// Per-pod current + previous stdout. Per-pod files because a single
@@ -233,14 +233,14 @@ func (s *proberSnapshotter) dumpBackendState(dir string) {
 	}
 	for _, pod := range strings.Fields(string(out)) {
 		s.dumpCommand(dir, "backend-"+pod+"-current.log",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", s.namespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", s.namespace,
 			"logs", pod, "--tail=400")
 		// --previous returns the last terminated container's stdout. If
 		// the container hasn't restarted this will error with "previous
 		// terminated container not found"; we still want the file so the
 		// directory listing shows the attempt was made.
 		s.dumpCommand(dir, "backend-"+pod+"-previous.log",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", s.namespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", s.namespace,
 			"logs", pod, "--previous", "--tail=400")
 	}
 }
@@ -296,7 +296,7 @@ echo '--- ss state, source IP=%[2]s ---'
 ss -tn dst %[1]s 2>&1 || echo 'ss not available'
 `, b.ip, hapod)
 			s.dumpCommand(dir, fname,
-				"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+				"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 				"exec", hapod, "-c", "haproxy", "--",
 				"sh", "-c", script)
 		}
@@ -325,7 +325,7 @@ echo '--- ip addr ---'
 ip addr 2>&1 || ifconfig 2>&1 || echo 'no ip/ifconfig'
 `
 		s.dumpCommand(dir, "haproxy-netstate-"+pod+".txt",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", script)
 	}
@@ -339,12 +339,12 @@ ip addr 2>&1 || ifconfig 2>&1 || echo 'no ip/ifconfig'
 func (s *proberSnapshotter) dumpRichPodEvents(dir string) {
 	// Full RFC3339 timestamps via custom-columns.
 	s.dumpCommand(dir, "events-rfc3339.txt",
-		"kubectl", "--kubeconfig", kubeconfigPath, "-n", s.namespace,
+		"kubectl", kubeconfigFlag, kubeconfigPath, "-n", s.namespace,
 		"get", "events", "--sort-by=.lastTimestamp",
 		"-o", "custom-columns=FIRST:.firstTimestamp,LAST:.lastTimestamp,TYPE:.type,REASON:.reason,OBJECT:.involvedObject.kind/.involvedObject.name,MESSAGE:.message")
 	// Also full YAML for any field we forget to extract.
 	s.dumpCommand(dir, "events-full.yaml",
-		"kubectl", "--kubeconfig", kubeconfigPath, "-n", s.namespace,
+		"kubectl", kubeconfigFlag, kubeconfigPath, "-n", s.namespace,
 		"get", "events", "--sort-by=.lastTimestamp", "-o", "yaml")
 }
 
@@ -384,7 +384,7 @@ func (s *proberSnapshotter) dumpKubeletAndKCMTail(dir string) {
 func (s *proberSnapshotter) kubectlOut(namespace string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	full := append([]string{"--kubeconfig", kubeconfigPath, "-n", namespace}, args...)
+	full := append([]string{kubeconfigFlag, kubeconfigPath, "-n", namespace}, args...)
 	return exec.CommandContext(ctx, "kubectl", full...).Output()
 }
 
@@ -402,7 +402,7 @@ func (s *proberSnapshotter) dumpReachabilityProbes(dir string, haproxyPods []str
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath, "-n", s.namespace,
+		kubeconfigFlag, kubeconfigPath, "-n", s.namespace,
 		"get", "pods", "-l", "app=echo-server",
 		"-o", "jsonpath={range .items[*]}{.status.podIP} {.metadata.name}{\"\\n\"}{end}").Output()
 	if err != nil {
@@ -431,7 +431,7 @@ func (s *proberSnapshotter) dumpReachabilityProbes(dir string, haproxyPods []str
 		for _, b := range backends {
 			fname := fmt.Sprintf("reach-from-%s-to-%s-%s.txt", hapod, b.name, b.ip)
 			s.dumpCommand(dir, fname,
-				"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+				"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 				"exec", hapod, "-c", "haproxy", "--",
 				"curl", "-sS", "--connect-timeout", "2", "--max-time", "3",
 				"-o", "/dev/null",
@@ -472,14 +472,14 @@ func (s *proberSnapshotter) dumpConntrackState(dir string) {
 // dumpCommand runs cmd with a tight timeout (10s) and writes its combined
 // output. We use a short timeout because the test is in flight — we don't
 // want a snapshot to block the next probe interval.
-func (s *proberSnapshotter) dumpCommand(dir, filename string, cmd string, args ...string) {
+func (s *proberSnapshotter) dumpCommand(dir, filename, cmd string, args ...string) {
 	s.writeFile(dir, filename, string(runCommandCapture(10*time.Second, cmd, args...)))
 }
 
 // writeFile is best-effort — log on error, don't fail the test. The failure
 // snapshot is diagnostic, not a correctness gate.
 func (s *proberSnapshotter) writeFile(dir, name, body string) {
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 		s.t.Logf("proberSnapshotter: write %s: %v", name, err)
 	}
 }
@@ -487,10 +487,11 @@ func (s *proberSnapshotter) writeFile(dir, name, body string) {
 // listHAProxyPods returns the names of HAProxy pods in ControllerNamespace.
 // Used to fan failure-time runtime captures out across replicas.
 func listHAProxyPods(t *testing.T) []string {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 		"get", "pods", "-l", LabelSelectorHAProxy,
 		"-o", "jsonpath={.items[*].metadata.name}").Output()
 	if err != nil {
@@ -541,7 +542,7 @@ func newContinuousTailer(t *testing.T, namespace string) *continuousTailer {
 		return nil
 	}
 	dir := filepath.Join(root, "debug-logs", sanitizeForFilesystem(t.Name()), "continuous")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Logf("continuousTailer: mkdir %s: %v", dir, err)
 		return nil
 	}
@@ -625,6 +626,15 @@ func (ct *continuousTailer) stop() {
 	}
 }
 
+func openCaptureFile(directory, name string, mode int) (*os.File, error) {
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.OpenFile(name, os.O_CREATE|os.O_WRONLY|mode, 0o600)
+}
+
 // tailPodLog streams `kubectl logs -f` for one container to a file.
 //
 // --tail=1000 backfills the most recent 1000 lines before streaming new
@@ -642,15 +652,14 @@ func (ct *continuousTailer) tailPodLog(ctx context.Context, ns, pod, container, 
 	ct.wg.Add(1)
 	go func() {
 		defer ct.wg.Done()
-		f, err := os.OpenFile(filepath.Join(ct.rootDir, filename),
-			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := openCaptureFile(ct.rootDir, filename, os.O_APPEND)
 		if err != nil {
 			ct.t.Logf("continuousTailer: open %s: %v", filename, err)
 			return
 		}
 		defer f.Close()
 		cmd := exec.CommandContext(ctx, "kubectl",
-			"--kubeconfig", kubeconfigPath,
+			kubeconfigFlag, kubeconfigPath,
 			"logs", "-f", "-n", ns, pod, "-c", container, "--tail=1000")
 		cmd.Stdout = f
 		cmd.Stderr = f
@@ -665,13 +674,13 @@ func (ct *continuousTailer) kubectlStreamToFile(ctx context.Context, filename st
 	ct.wg.Add(1)
 	go func() {
 		defer ct.wg.Done()
-		f, err := os.Create(filepath.Join(ct.rootDir, filename))
+		f, err := openCaptureFile(ct.rootDir, filename, os.O_TRUNC)
 		if err != nil {
 			ct.t.Logf("continuousTailer: create %s: %v", filename, err)
 			return
 		}
 		defer f.Close()
-		full := append([]string{"--kubeconfig", kubeconfigPath}, args...)
+		full := append([]string{kubeconfigFlag, kubeconfigPath}, args...)
 		cmd := exec.CommandContext(ctx, "kubectl", full...)
 		cmd.Stdout = f
 		cmd.Stderr = f
@@ -686,7 +695,7 @@ func (ct *continuousTailer) tailKubeletViaDocker(ctx context.Context) {
 	ct.wg.Add(1)
 	go func() {
 		defer ct.wg.Done()
-		f, err := os.Create(filepath.Join(ct.rootDir, "kubelet.log"))
+		f, err := openCaptureFile(ct.rootDir, "kubelet.log", os.O_TRUNC)
 		if err != nil {
 			return
 		}
@@ -771,13 +780,13 @@ crictl inspect $CONT | grep -m1 '"pid"' | sed 's/.*: //; s/,//; s/ //g'`,
 	ct.wg.Add(1)
 	go func() {
 		defer ct.wg.Done()
-		f, err := os.Create(filepath.Join(ct.rootDir, "tcpdump-"+pod+".pcap"))
+		f, err := openCaptureFile(ct.rootDir, "tcpdump-"+pod+".pcap", os.O_TRUNC)
 		if err != nil {
 			ct.t.Logf("startTcpdumpForPod %s: create pcap: %v", pod, err)
 			return
 		}
 		defer f.Close()
-		errF, _ := os.Create(filepath.Join(ct.rootDir, "tcpdump-"+pod+".stderr"))
+		errF, _ := openCaptureFile(ct.rootDir, "tcpdump-"+pod+".stderr", os.O_TRUNC)
 		if errF != nil {
 			defer errF.Close()
 		}
@@ -838,7 +847,7 @@ func (ct *continuousTailer) startControllerLogReconciler(ctx context.Context) {
 			}
 			listCtx, listCancel := context.WithTimeout(ctx, 3*time.Second)
 			out, err := exec.CommandContext(listCtx, "kubectl",
-				"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+				kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 				"get", "pods", "-l", LabelSelectorController,
 				"-o", "jsonpath={.items[*].metadata.name}").Output()
 			listCancel()
@@ -875,7 +884,7 @@ func (ct *continuousTailer) startBackendPodReconciler(ctx context.Context) {
 			}
 			listCtx, listCancel := context.WithTimeout(ctx, 3*time.Second)
 			out, err := exec.CommandContext(listCtx, "kubectl",
-				"--kubeconfig", kubeconfigPath, "-n", ct.namespace,
+				kubeconfigFlag, kubeconfigPath, "-n", ct.namespace,
 				"get", "pods", "-l", "app=echo-server",
 				"-o", "jsonpath={.items[*].metadata.name}").Output()
 			listCancel()

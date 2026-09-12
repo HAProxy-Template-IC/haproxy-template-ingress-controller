@@ -29,7 +29,7 @@ import (
 func TestIngressCORS(t *testing.T) {
 	t.Parallel()
 	const origin = "https://example.com"
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: CORS annotations",
 		Host:        "ingress-cors.localdev.me",
 		Annotations: map[string]string{
@@ -44,6 +44,7 @@ func TestIngressCORS(t *testing.T) {
 			{
 				Name: "Access-Control-Allow-Origin echoes the configured origin",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").
 						WithHeader("Origin", origin).
 						ExpectHeader(t, "Access-Control-Allow-Origin", origin)
@@ -52,6 +53,7 @@ func TestIngressCORS(t *testing.T) {
 			{
 				Name: "Access-Control-Allow-Methods is set",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").
 						WithHeader("Origin", origin).
 						ExpectHeader(t, "Access-Control-Allow-Methods", "GET")
@@ -60,6 +62,7 @@ func TestIngressCORS(t *testing.T) {
 			{
 				Name: "Access-Control-Allow-Credentials is true",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").
 						WithHeader("Origin", origin).
 						ExpectHeader(t, "Access-Control-Allow-Credentials", "true")

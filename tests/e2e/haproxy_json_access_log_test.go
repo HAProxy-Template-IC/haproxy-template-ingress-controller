@@ -51,7 +51,7 @@ func resolveAccessLogContainer(ctx context.Context, t *testing.T) string {
 			return
 		}
 		cmd := exec.CommandContext(ctx, "kubectl",
-			"--kubeconfig", kubeconfigPath,
+			kubeconfigFlag, kubeconfigPath,
 			"-n", ControllerNamespace,
 			"get", "pod", pods[0],
 			"-o", `jsonpath={.spec.containers[*].name}`,
@@ -92,7 +92,7 @@ func readHAProxyAccessLog(ctx context.Context, t *testing.T, since time.Time, po
 	var all strings.Builder
 	for _, pod := range pods {
 		cmd := exec.CommandContext(ctx, "kubectl",
-			"--kubeconfig", kubeconfigPath,
+			kubeconfigFlag, kubeconfigPath,
 			"-n", ControllerNamespace,
 			"logs", pod, "-c", container,
 			"--since-time="+since.UTC().Format(time.RFC3339),
@@ -269,6 +269,7 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 
 	feature := features.New("HAProxy access log: one parseable JSON record per request").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -276,7 +277,7 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 			ns = NamespaceForTest(ctx, t, client)
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-json-log",
 				Host:           host,
 				BackendService: backend.Service,
@@ -288,53 +289,18 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 			return ctx
 		}).
 		Assess("the record carries the core fields with their declared JSON types", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, marker).
 				WithHeader("traceparent", traceparent).
 				ExpectOK(t)
 
 			rec := findAccessLogRecord(ctx, t, since, marker)
 
-			if got := recordString(t, rec, "method"); got != "GET" {
-				t.Errorf("method = %q, want GET", got)
-			}
-			if got := recordString(t, rec, "host"); got != host {
-				t.Errorf("host = %q, want %q", got, host)
-			}
-			// Typed items must decode as JSON numbers, not strings: a log store
-			// with a numeric mapping rejects the string form.
-			status, ok := rec["status"].(float64)
-			if !ok {
-				t.Fatalf("status is %T, want a JSON number (declared %%(status:sint)ST): %v", rec["status"], rec["status"])
-			}
-			if status != 200 {
-				t.Errorf("status = %v, want 200", status)
-			}
-			if _, ok := rec["total_time_ms"].(float64); !ok {
-				t.Errorf("total_time_ms is %T, want a JSON number", rec["total_time_ms"])
-			}
-			if got := recordString(t, rec, "ts"); got == "" {
-				t.Error("ts is empty: `format raw` drops the syslog timestamp, so the record must carry its own")
-			}
-			// resource is the join key back to Kubernetes.
-			if want, got := ns+"/echo-json-log", recordString(t, rec, "resource"); got != want {
-				t.Errorf("resource = %q, want %q", got, want)
-			}
-			// An allowed request must not look denied. The field is normally ABSENT
-			// here rather than empty: vector's omit-empty transform
-			// (vector.omitEmptyLogFields, on by default) strips fields whose value is
-			// the empty string, and no gate fired. Accept either, so the assertion
-			// holds with the transform on or off — but never accept a non-empty value.
-			if v, ok := rec["denied_by"]; ok {
-				got, isStr := v.(string)
-				if !isStr {
-					t.Errorf("denied_by is %T, want a JSON string: %v", v, v)
-				} else if got != "" {
-					t.Errorf("denied_by = %q on an allowed request, want empty or absent", got)
-				}
-			}
+			assertHTTPAccessLogCoreFields(t, rec, host, ns)
 			return ctx
 		}).
 		Assess("the request id is an opaque UUIDv7 carrying no client address", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			rec := findAccessLogRecord(ctx, t, since, marker)
 			reqID := recordString(t, rec, "req_id")
 			if !uuidV7Pattern.MatchString(reqID) {
@@ -348,6 +314,7 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 			return ctx
 		}).
 		Assess("an inbound W3C traceparent joins the record to a trace", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			rec := findAccessLogRecord(ctx, t, since, marker)
 			if got := recordString(t, rec, "trace_id"); got != wantTraceID {
 				t.Errorf("trace_id = %q, want %q (extracted from the traceparent header)", got, wantTraceID)
@@ -357,6 +324,48 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 		Feature()
 
 	testEnv.Test(t, feature)
+}
+
+func assertHTTPAccessLogCoreFields(t *testing.T, rec map[string]any, host, ns string) {
+	t.Helper()
+	if got := recordString(t, rec, "method"); got != "GET" {
+		t.Errorf("method = %q, want GET", got)
+	}
+	if got := recordString(t, rec, "host"); got != host {
+		t.Errorf("host = %q, want %q", got, host)
+	}
+	// Typed items must decode as JSON numbers, not strings: a log store
+	// with a numeric mapping rejects the string form.
+	status, ok := rec["status"].(float64)
+	if !ok {
+		t.Fatalf("status is %T, want a JSON number (declared %%(status:sint)ST): %v", rec["status"], rec["status"])
+	}
+	if status != 200 {
+		t.Errorf("status = %v, want 200", status)
+	}
+	if _, ok := rec["total_time_ms"].(float64); !ok {
+		t.Errorf("total_time_ms is %T, want a JSON number", rec["total_time_ms"])
+	}
+	if got := recordString(t, rec, "ts"); got == "" {
+		t.Error("ts is empty: `format raw` drops the syslog timestamp, so the record must carry its own")
+	}
+	// resource is the join key back to Kubernetes.
+	if want, got := ns+"/echo-json-log", recordString(t, rec, "resource"); got != want {
+		t.Errorf("resource = %q, want %q", got, want)
+	}
+	// An allowed request must not look denied. The field is normally ABSENT
+	// here rather than empty: vector's omit-empty transform
+	// (vector.omitEmptyLogFields, on by default) strips fields whose value is
+	// the empty string, and no gate fired. Accept either, so the assertion
+	// holds with the transform on or off — but never accept a non-empty value.
+	if v, ok := rec["denied_by"]; ok {
+		got, isStr := v.(string)
+		if !isStr {
+			t.Errorf("denied_by is %T, want a JSON string: %v", v, v)
+		} else if got != "" {
+			t.Errorf("denied_by = %q on an allowed request, want empty or absent", got)
+		}
+	}
 }
 
 // TestHAProxyJSONAccessLogGatewayResource proves the owner-identity fix for
@@ -378,6 +387,7 @@ func TestHAProxyJSONAccessLogGatewayResource(t *testing.T) {
 
 	feature := features.New("HAProxy access log: Gateway traffic reports the HTTPRoute as its owning resource").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -387,7 +397,7 @@ func TestHAProxyJSONAccessLogGatewayResource(t *testing.T) {
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "json-log-gateway")
 			fwd = ForwardGateway(ctx, t, ns, "json-log-gateway", 80)
-			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
+			NewHTTPRoute(ctx, t, ns, &HTTPRouteSpec{
 				Name:        "echo-json-log-gw",
 				GatewayName: "json-log-gateway",
 				Hostnames:   []string{host},
@@ -407,6 +417,7 @@ func TestHAProxyJSONAccessLogGatewayResource(t *testing.T) {
 			return ctx
 		}).
 		Assess("resource is the HTTPRoute namespace/name", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, marker).ExpectOK(t)
 
 			rec := findAccessLogRecord(ctx, t, since, marker)
@@ -445,6 +456,7 @@ func TestHapticRequestIDAcceptInboundRejectsMalformed(t *testing.T) {
 
 	feature := features.New("Ingress: request-id-accept-inbound honours only a well-formed client id").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -452,7 +464,7 @@ func TestHapticRequestIDAcceptInboundRejectsMalformed(t *testing.T) {
 			ns := NamespaceForTest(ctx, t, client)
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-request-id",
 				Host:           host,
 				BackendService: backend.Service,
@@ -466,6 +478,7 @@ func TestHapticRequestIDAcceptInboundRejectsMalformed(t *testing.T) {
 			return ctx
 		}).
 		Assess("a well-formed client id is preserved", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			resp := httpclient.New(t).GET(host, "/").
 				WithHeader("X-Request-ID", wellFormedID).
 				ExpectOK(t)
@@ -478,6 +491,7 @@ func TestHapticRequestIDAcceptInboundRejectsMalformed(t *testing.T) {
 			return ctx
 		}).
 		Assess("a malformed client id is replaced with a generated one", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			resp := httpclient.New(t).GET(host, "/").
 				WithHeader("X-Request-ID", malformedID).
 				ExpectOK(t)

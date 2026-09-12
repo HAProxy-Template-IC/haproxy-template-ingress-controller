@@ -31,13 +31,14 @@ import (
 // chart's TLS termination wiring is broken for fresh deployments.
 func TestIngressTLS(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description:   "Ingress: TLS termination",
 		Host:          "ingress-tls.localdev.me",
 		TLSSecretName: "ingress-tls-cert",
 		Assess: []SimpleIngressAssertion{{
 			Name: "host responds 200 over HTTPS",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).HTTPS(host, "/").ExpectOK(t)
 				if resp.Echo == nil {
 					t.Fatalf("expected echo-server JSON body, got %d bytes", len(resp.Body))

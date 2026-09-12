@@ -41,8 +41,14 @@ func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 // signRS256 assembles a JWT with the given header/payload and RS256-signs it.
 func signRS256(t *testing.T, priv *rsa.PrivateKey, header, payload map[string]any) string {
 	t.Helper()
-	hb, _ := json.Marshal(header)
-	pb, _ := json.Marshal(payload)
+	hb, err := json.Marshal(header)
+	if err != nil {
+		t.Fatalf("marshal JWT header: %v", err)
+	}
+	pb, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal JWT payload: %v", err)
+	}
 	signingInput := b64url(hb) + "." + b64url(pb)
 	sum := sha256.Sum256([]byte(signingInput))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, sum[:])
@@ -84,7 +90,7 @@ func TestHapticJWT(t *testing.T) {
 		"exp": time.Now().Add(1 * time.Hour).Unix(),
 	})
 
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC-native JWT verification",
 		Host:        "ingress-haptic-jwt.localdev.me",
 		Annotations: map[string]string{
@@ -92,6 +98,7 @@ func TestHapticJWT(t *testing.T) {
 			"haproxy-haptic.org/jwt-algorithm": "RS256",
 		},
 		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+			t.Helper()
 			mustCreateSecret(ctx, t, client, namespace, "jwt-keys", map[string][]byte{
 				"pubkey.pem": pubPEM,
 			})
@@ -100,24 +107,28 @@ func TestHapticJWT(t *testing.T) {
 			{
 				Name: "no token returns 401",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},
 			{
 				Name: "valid RS256 token reaches upstream (200)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").WithHeader("Authorization", "Bearer "+validToken).ExpectStatus(t, http.StatusOK)
 				},
 			},
 			{
 				Name: "expired token returns 401",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").WithHeader("Authorization", "Bearer "+expiredToken).ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},
 			{
 				Name: "algorithm-confused (HS256 header) token returns 401",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").WithHeader("Authorization", "Bearer "+algConfusedToken).ExpectStatus(t, http.StatusUnauthorized)
 				},
 			},

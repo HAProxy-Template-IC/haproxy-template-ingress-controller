@@ -72,6 +72,7 @@ func TestGatewayRouteAddRemoveIsReloadFree(t *testing.T) {
 
 	feature := features.New("Gateway route add/remove is reload-free on 3.4").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			var err error
 			if client, err = cfg.NewClient(); err != nil {
 				t.Fatalf("new client: %v", err)
@@ -99,6 +100,7 @@ func TestGatewayRouteAddRemoveIsReloadFree(t *testing.T) {
 			return ctx
 		}).
 		Assess("each cycle serves the route and, on 3.4, never reloads", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			dynamicBE := dynamicBackendsSupported()
 			http := httpclient.ForForwarded(t, fwd.HTTPPort, 0)
 			// Drain the anchor's first-appearance reload and any sibling-test

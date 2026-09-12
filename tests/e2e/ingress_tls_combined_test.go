@@ -28,7 +28,7 @@ import (
 // the HTTPS path.
 func TestIngressTLSCombined(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description:   "Ingress: TLS termination + security headers",
 		Host:          "ingress-tls-combined.localdev.me",
 		TLSSecretName: "ingress-tls-combined-cert",
@@ -43,18 +43,21 @@ func TestIngressTLSCombined(t *testing.T) {
 			{
 				Name: "HSTS header present on HTTPS response",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).HTTPS(host, "/").ExpectHeader(t, "Strict-Transport-Security", "max-age=31536000")
 				},
 			},
 			{
 				Name: "X-Frame-Options DENY",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).HTTPS(host, "/").ExpectHeader(t, "X-Frame-Options", "DENY")
 				},
 			},
 			{
 				Name: "X-Content-Type-Options nosniff",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).HTTPS(host, "/").ExpectHeader(t, "X-Content-Type-Options", "nosniff")
 				},
 			},

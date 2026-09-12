@@ -55,7 +55,7 @@ const varnishCacheStatefulSetName = HelmReleaseName + "-varnish-cache"
 func TestHapticVarnishCache(t *testing.T) {
 	RequireCacheProfile(t)
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC shared Varnish cache tier",
 		Host:        "ingress-haptic-cache.localdev.me",
 		Annotations: map[string]string{
@@ -67,6 +67,7 @@ func TestHapticVarnishCache(t *testing.T) {
 			{
 				Name: "cacheable GET is served from Varnish (X-Cache: HIT after warm-up)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					// Polling absorbs Varnish startup and the MISS→HIT transition:
 					// the first request(s) MISS (fetched from the app via the
 					// HAProxy loopback), then the object is served from the cache.
@@ -80,6 +81,7 @@ func TestHapticVarnishCache(t *testing.T) {
 			{
 				Name: "excluded path bypasses the cache (no X-Cache header)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					// cache-exclude-paths routes /nocache straight to the app, so
 					// Varnish never sees it and adds no X-Cache header.
 					httpclient.New(t).GET(host, "/nocache").ExpectMatching(t,
@@ -100,6 +102,7 @@ func TestHapticVarnishGeneratedVCLCompiles(t *testing.T) {
 
 	feature := features.New("Varnish: generated VCL compiles with the deployed image").
 		Assess("every running Varnish pod compiles its mounted VCL", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -129,318 +132,32 @@ func TestHapticVarnishCacheFaultRecovery(t *testing.T) {
 	privateHost := fmt.Sprintf("cache-private-fault-%d.localdev.me", runID)
 	faultPath := fmt.Sprintf("/cache-fault-%d", runID)
 	recoveryPath := fmt.Sprintf("/cache-recovery-%d", runID)
+	scenario := &varnishFaultScenario{
+		runID:        runID,
+		host:         host,
+		slowHost:     slowHost,
+		staleHost:    staleHost,
+		privateHost:  privateHost,
+		faultPath:    faultPath,
+		recoveryPath: recoveryPath,
+	}
 
 	feature := features.New("Ingress: Varnish outage fails open and recovers").
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
-			ns := NamespaceForTest(ctx, t, client)
-			DumpLogsOnFailure(t, ns)
-			backend := NewEchoServerBackend(ctx, t, client, ns)
-			slowBackend := newSlowCacheOrigin(ctx, t, client, ns)
-			NewIngress(ctx, t, client, ns, IngressSpec{
-				Name:           "echo",
-				Host:           host,
-				BackendService: backend.Service,
-				BackendPort:    backend.Port,
-				Annotations: map[string]string{
-					"haproxy-haptic.org/cache-enable":        "true",
-					"haproxy-haptic.org/cache-ttl":           "60",
-					"haproxy-haptic.org/cache-exclude-paths": "/nocache",
-				},
-			})
-			NewIngress(ctx, t, client, ns, IngressSpec{
-				Name:           "slow-origin",
-				Host:           slowHost,
-				BackendService: slowBackend.Service,
-				BackendPort:    slowBackend.Port,
-				Annotations: map[string]string{
-					"haproxy-haptic.org/cache-enable":         "true",
-					"haproxy-haptic.org/cache-ttl":            "60",
-					"haproxy-haptic.org/cache-stale-if-error": "60",
-				},
-			})
-			NewIngress(ctx, t, client, ns, IngressSpec{
-				Name:           "echo-private",
-				Host:           privateHost,
-				BackendService: backend.Service,
-				BackendPort:    backend.Port,
-				Annotations: map[string]string{
-					"haproxy-haptic.org/cache-enable":        "true",
-					"haproxy-haptic.org/cache-ttl":           "60",
-					"haproxy-haptic.org/cache-key":           "src,header:X-Api-Version",
-					"haproxy-haptic.org/cache-exclude-paths": "/nocache",
-					"haproxy-haptic.org/response-set-header": `Cache-Control max-age=60, public, private="Set-Cookie", public-key=keep`,
-				},
-			})
-			NewIngress(ctx, t, client, ns, IngressSpec{
-				Name:           "stale-origin",
-				Host:           staleHost,
-				BackendService: slowBackend.Service,
-				BackendPort:    slowBackend.Port,
-				Annotations: map[string]string{
-					"haproxy-haptic.org/cache-enable":         "true",
-					"haproxy-haptic.org/cache-ttl":            "1",
-					"haproxy-haptic.org/cache-stale-if-error": "60",
-				},
-			})
-			return ctx
-		}).
-		Assess("HAProxy stays available, bypasses a failed cache, and resumes caching", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
-			hc := httpclient.New(t)
-			hc.GET(host, faultPath).ExpectMatching(t,
-				"cache is warm before fault injection",
-				func(resp *httpclient.Response) bool {
-					return resp.Status == http.StatusOK && resp.Header.Get("X-Cache") == "HIT"
-				})
-
-			originalReplicas, err := varnishReplicaCount(ctx, client)
-			if err != nil {
-				t.Fatalf("read Varnish replica count: %v", err)
-			}
-			if originalReplicas < 1 {
-				t.Fatalf("Varnish starts with %d replicas, want at least 1", originalReplicas)
-			}
-
-			stoppedPods, err := stopVarnishProcesses(ctx, client)
-			if err != nil {
-				t.Fatalf("stop Varnish processes: %v", err)
-			}
-			processesStopped := true
-			t.Cleanup(func() {
-				if !processesStopped {
-					return
-				}
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if err := continueVarnishProcesses(cleanupCtx, stoppedPods); err != nil {
-					t.Errorf("continue Varnish processes: %v", err)
-				}
-			})
-
-			hangStarted := time.Now()
-			resp, err := hc.GET(host, faultPath+"-hung").Do(ctx)
-			if err != nil {
-				t.Fatalf("request through stopped Varnish processes: %v", err)
-			}
-			if elapsed := time.Since(hangStarted); elapsed > 4*time.Second {
-				t.Fatalf("stopped Varnish delayed direct fallback for %s, want at most 4s", elapsed)
-			}
-			if resp.Status != http.StatusOK || resp.Echo == nil || resp.Header.Get("X-Cache") != "" {
-				t.Fatalf("stopped Varnish fallback: status=%d echo=%t X-Cache=%q", resp.Status, resp.Echo != nil, resp.Header.Get("X-Cache"))
-			}
-			assertEchoCacheHeadersStripped(t, resp)
-			findAccessLogRecordWhere(ctx, t, hangStarted,
-				fmt.Sprintf("a direct-origin retry for stopped Varnish on host %s", host),
-				func(rec map[string]any) bool {
-					return rec["host"] == host && rec["path"] == faultPath+"-hung" &&
-						rec["server"] == "ORIGIN_FALLBACK" && rec["cache_degraded"] == "1"
-				})
-			if err := continueVarnishProcesses(ctx, stoppedPods); err != nil {
-				t.Fatalf("continue Varnish processes: %v", err)
-			}
-			processesStopped = false
-			hc.GET(host, faultPath+"-resumed").ExpectMatching(t,
-				"cache resumes after a hung Varnish process recovers",
-				func(resp *httpclient.Response) bool {
-					return resp.Status == http.StatusOK && resp.Header.Get("X-Cache") == "HIT"
-				})
-
-			slowPath := faultPath + "-slow-origin"
-			slowStarted := time.Now()
-			resp, err = hc.GET(slowHost, slowPath).Do(ctx)
-			if err != nil {
-				t.Fatalf("request through a cache miss that exceeds the cache response timeout: %v", err)
-			}
-			if elapsed := time.Since(slowStarted); elapsed > 3*time.Second {
-				t.Fatalf("slow cache miss delayed direct fallback for %s, want at most 3s", elapsed)
-			}
-			if resp.Status != http.StatusOK || string(resp.Body) != "slow-cache-origin" {
-				t.Fatalf("slow cache miss fallback: status=%d body=%q", resp.Status, resp.Body)
-			}
-			findAccessLogRecordWhere(ctx, t, slowStarted,
-				fmt.Sprintf("a direct-origin retry for slow cache miss on host %s", slowHost),
-				func(rec map[string]any) bool {
-					return rec["host"] == slowHost && rec["path"] == slowPath &&
-						rec["server"] == "ORIGIN_FALLBACK" && rec["cache_degraded"] == "1"
-				})
-
-			coldStalePath := faultPath + "-cold-stale-origin-failure"
-			coldStaleStarted := time.Now()
-			resp, err = hc.GET(slowHost, coldStalePath).Do(ctx)
-			if err != nil {
-				t.Fatalf("cold stale-if-error request through a failed Varnish origin fetch: %v", err)
-			}
-			if elapsed := time.Since(coldStaleStarted); elapsed > 3*time.Second {
-				t.Fatalf("cold stale-if-error fallback took %s, want at most 3s", elapsed)
-			}
-			if resp.Status != http.StatusOK || string(resp.Body) != "slow-cache-origin" || resp.Header.Get("X-Cache") != "" {
-				t.Fatalf("cold stale-if-error fallback: status=%d body=%q X-Cache=%q", resp.Status, resp.Body, resp.Header.Get("X-Cache"))
-			}
-			findAccessLogRecordWhere(ctx, t, coldStaleStarted,
-				fmt.Sprintf("a direct-origin retry after a cold stale-if-error fetch failure on host %s", slowHost),
-				func(rec map[string]any) bool {
-					return rec["host"] == slowHost && rec["path"] == coldStalePath &&
-						rec["server"] == "ORIGIN_FALLBACK" && rec["cache_degraded"] == "1"
-				})
-
-			stalePath := faultPath + "-stale-if-error-recovery"
-			hc.GET(staleHost, stalePath).ExpectMatching(t,
-				"an expired object is served stale only after its synchronous refresh fails",
-				func(resp *httpclient.Response) bool {
-					return resp.Status == http.StatusOK && string(resp.Body) == "slow-cache-origin" &&
-						resp.Header.Get("X-Cache") == "STALE"
-				})
-
-			originErrorPath := faultPath + "-origin-status-500"
-			originErrorStarted := time.Now()
-			resp, err = hc.GET(slowHost, originErrorPath).Do(ctx)
-			if err != nil {
-				t.Fatalf("request origin status 500 through stale-if-error cache: %v", err)
-			}
-			if resp.Status != http.StatusInternalServerError || string(resp.Body) != "origin-500" || resp.Header.Get("X-Cache") != "MISS" {
-				t.Fatalf("cold origin error changed by stale-if-error: status=%d body=%q X-Cache=%q", resp.Status, resp.Body, resp.Header.Get("X-Cache"))
-			}
-			findAccessLogRecordWhere(ctx, t, originErrorStarted,
-				fmt.Sprintf("an unretried cold origin error on host %s", slowHost),
-				func(rec map[string]any) bool {
-					degraded, found := rec["cache_degraded"]
-					return rec["host"] == slowHost && rec["path"] == originErrorPath &&
-						rec["server"] == "CACHE_DISPATCH" && (!found || degraded == "")
-				})
-
-			status425Path := faultPath + "-origin-status-425"
-			resp, err = hc.GET(slowHost, status425Path).Do(ctx)
-			if err != nil {
-				t.Fatalf("request origin status 425 through cache: %v", err)
-			}
-			if resp.Status != http.StatusTooEarly || string(resp.Body) != "origin-425" || resp.Header.Get("X-Cache") != "MISS" {
-				t.Fatalf("origin status 425 changed by cache failover: status=%d body=%q X-Cache=%q", resp.Status, resp.Body, resp.Header.Get("X-Cache"))
-			}
-			if resp.Header.Get("X-Haptic-Cache-Origin-425") != "" {
-				t.Fatal("cache failover marker leaked to the client")
-			}
-
-			forgedTransportPath := faultPath + "-origin-forged-transport-failure"
-			forgedTransportStarted := time.Now()
-			resp, err = hc.GET(slowHost, forgedTransportPath).Do(ctx)
-			if err != nil {
-				t.Fatalf("request origin response with a forged transport-failure marker through cache: %v", err)
-			}
-			if resp.Status != http.StatusOK || string(resp.Body) != "origin-forged-transport-failure" || resp.Header.Get("X-Cache") != "MISS" {
-				t.Fatalf("origin transport-failure marker triggered cache failover: status=%d body=%q X-Cache=%q", resp.Status, resp.Body, resp.Header.Get("X-Cache"))
-			}
-			if resp.Header.Get("X-Haptic-Cache-Origin-Transport-Failure") != "" {
-				t.Fatal("origin transport-failure marker leaked to the client")
-			}
-			findAccessLogRecordWhere(ctx, t, forgedTransportStarted,
-				fmt.Sprintf("an unretried forged transport-failure marker on host %s", slowHost),
-				func(rec map[string]any) bool {
-					degraded, found := rec["cache_degraded"]
-					return rec["host"] == slowHost && rec["path"] == forgedTransportPath &&
-						rec["server"] == "CACHE_DISPATCH" && (!found || degraded == "")
-				})
-
-			restoreRequired := true
-			t.Cleanup(func() {
-				if !restoreRequired {
-					return
-				}
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				defer cancel()
-				if err := setVarnishReplicas(cleanupCtx, client, originalReplicas); err != nil {
-					t.Errorf("restore Varnish replicas: %v", err)
-					return
-				}
-				if err := waitForVarnishReplicasReady(cleanupCtx, client, originalReplicas); err != nil {
-					t.Errorf("wait for restored Varnish replicas: %v", err)
-				}
-			})
-
-			beforeHAProxy, err := readyHAProxyRuntimeStates(ctx, client)
-			if err != nil {
-				t.Fatalf("read HAProxy runtime state before Varnish fault: %v", err)
-			}
-			if len(beforeHAProxy) < 2 {
-				t.Fatalf("Varnish fault test needs both HAProxy pods, found %d", len(beforeHAProxy))
-			}
-			stopAvailabilityMonitor, err := startCacheEligibleAvailabilityMonitors(
-				ctx, beforeHAProxy, host, faultPath+"-availability")
-			if err != nil {
-				t.Fatalf("start per-pod HAProxy availability monitors: %v", err)
-			}
-			monitorStopped := false
-			defer func() {
-				if !monitorStopped {
-					_ = stopAvailabilityMonitor()
-				}
-			}()
-
-			faultStarted := time.Now()
-			if err := setVarnishReplicas(ctx, client, 0); err != nil {
-				t.Fatalf("scale Varnish to zero: %v", err)
-			}
-			if err := waitForVarnishFailOpen(ctx, client, hc, host, faultPath); err != nil {
-				t.Fatalf("wait for Varnish fail-open: %v", err)
-			}
-			findAccessLogRecordWhere(ctx, t, faultStarted,
-				fmt.Sprintf("a cache-degraded fallback for host %s", host),
-				func(rec map[string]any) bool {
-					return rec["host"] == host && rec["path"] == faultPath && rec["cache_degraded"] == "1"
-				})
-			assertCacheHeadersStrippedOnFallback(t, hc, host, faultPath+"-headers")
-			assertPrivateDownstreamCacheContract(t, hc, privateHost, faultPath+"-private", http.MethodGet)
-			assertPrivateDownstreamCacheContract(t, hc, privateHost, "/nocache-private", http.MethodGet)
-			assertPrivateDownstreamCacheContract(t, hc, privateHost, faultPath+"-private-post", http.MethodPost)
-			excludedPath := fmt.Sprintf("/nocache-%d", runID)
-			hc.GET(host, excludedPath).ExpectMatching(t,
-				"excluded path remains a non-degraded direct request",
-				func(resp *httpclient.Response) bool {
-					return resp.Status == http.StatusOK && resp.Echo != nil && resp.Header.Get("X-Cache") == ""
-				})
-			findAccessLogRecordWhere(ctx, t, faultStarted,
-				fmt.Sprintf("a non-degraded cache-excluded request for host %s", host),
-				func(rec map[string]any) bool {
-					degraded, found := rec["cache_degraded"]
-					return rec["host"] == host && rec["path"] == excludedPath && (!found || degraded == "")
-				})
-
-			if err := setVarnishReplicas(ctx, client, originalReplicas); err != nil {
-				t.Fatalf("restore Varnish replicas: %v", err)
-			}
-			if err := waitForVarnishReplicasReady(ctx, client, originalReplicas); err != nil {
-				t.Fatalf("wait for Varnish recovery: %v", err)
-			}
-			hc.GET(host, recoveryPath).ExpectMatching(t,
-				"cache resumes serving hits after Varnish recovery",
-				func(resp *httpclient.Response) bool {
-					return resp.Status == http.StatusOK && resp.Header.Get("X-Cache") == "HIT"
-				})
-
-			restoreRequired = false
-			monitorErr := stopAvailabilityMonitor()
-			monitorStopped = true
-			if monitorErr != nil {
-				t.Fatalf("HAProxy became unavailable during the Varnish fault: %v", monitorErr)
-			}
-			afterHAProxy, err := readyHAProxyRuntimeStates(ctx, client)
-			if err != nil {
-				t.Fatalf("read HAProxy runtime state after Varnish fault: %v", err)
-			}
-			if err := compareHAProxyRuntimeStates(beforeHAProxy, afterHAProxy); err != nil {
-				t.Fatalf("HAProxy runtime changed during the Varnish fault: %v", err)
-			}
-			return ctx
-		}).
+		Setup(scenario.setup).
+		Assess("HAProxy stays available, bypasses a failed cache, and resumes caching", scenario.recover).
 		Feature()
 
 	testEnv.Test(t, feature)
+}
+
+type varnishFaultScenario struct {
+	runID        int64
+	host         string
+	slowHost     string
+	staleHost    string
+	privateHost  string
+	faultPath    string
+	recoveryPath string
 }
 
 func newSlowCacheOrigin(ctx context.Context, t *testing.T, client klient.Client, namespace string) BackendRef {
@@ -660,10 +377,11 @@ func readyHAProxyRuntimeStates(ctx context.Context, client klient.Client) (map[s
 	states := make(map[string]haproxyRuntimeState, len(pods.Items))
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		if pod.DeletionTimestamp != nil || !podReady(*pod) {
+		if pod.DeletionTimestamp != nil || !podReady(pod) {
 			continue
 		}
-		for _, status := range pod.Status.ContainerStatuses {
+		for index := range pod.Status.ContainerStatuses {
+			status := &pod.Status.ContainerStatuses[index]
 			if status.Name != "haproxy" {
 				continue
 			}
@@ -780,7 +498,8 @@ func varnishPods(ctx context.Context, client klient.Client) ([]string, error) {
 		return nil, fmt.Errorf("list Varnish pods: %w", err)
 	}
 	names := make([]string, 0, len(pods.Items))
-	for _, pod := range pods.Items {
+	for index := range pods.Items {
+		pod := &pods.Items[index]
 		if pod.Status.Phase == corev1.PodRunning {
 			names = append(names, pod.Name)
 		}
@@ -803,7 +522,7 @@ fi
 cat "$compile_log" >&2
 exit 1`
 	out, err := exec.CommandContext(compileCtx, "kubectl",
-		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 		"exec", pod, "-c", "varnish", "--", "/bin/sh", "-c", script,
 	).CombinedOutput()
 	if err != nil {
@@ -822,7 +541,7 @@ for pid in $(cat /proc/1/task/1/children); do
 done
 [ "$count" -gt 0 ]`
 	out, err := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 		"exec", pod, "-c", "varnish", "--", "/bin/sh", "-c", script,
 	).CombinedOutput()
 	if err != nil {
@@ -934,7 +653,7 @@ func assertNoRateLimitStoreWithoutSharedLimiter(t *testing.T) {
 	defer cancel()
 
 	out, err := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 		"get", "statefulset,poddisruptionbudget,service",
 		"-l", labelSelectorRateLimitStore, "-o", "name").CombinedOutput()
 	if err != nil {
@@ -964,7 +683,7 @@ func assertVarnishRejectsUnauthorizedPod(t *testing.T) {
 		`set -u; if ! nslookup %s >/dev/null; then echo DNS_ERROR; exit 0; fi; if curl -s -o /dev/null --connect-timeout 2 --max-time 4 http://%s:6081/; then echo UNEXPECTEDLY_ALLOWED; else code=$?; if [ "$code" = 28 ]; then echo DENIED; else echo "PROBE_ERROR_$code"; fi; fi`,
 		service, service)
 	kubectlArgs := func(extra ...string) []string {
-		return append([]string{"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace}, extra...)
+		return append([]string{kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace}, extra...)
 	}
 
 	run := exec.CommandContext(ctx, "kubectl", kubectlArgs(
@@ -1004,4 +723,348 @@ func assertVarnishRejectsUnauthorizedPod(t *testing.T) {
 	if string(bytes.TrimSpace(logs)) != "DENIED" {
 		t.Fatalf("unexpected unauthorized Varnish probe result: %q", logs)
 	}
+}
+
+func (s *varnishFaultScenario) setup(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	client, err := cfg.NewClient()
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	ns := NamespaceForTest(ctx, t, client)
+	DumpLogsOnFailure(t, ns)
+	backend := NewEchoServerBackend(ctx, t, client, ns)
+	slowBackend := newSlowCacheOrigin(ctx, t, client, ns)
+	NewIngress(ctx, t, client, ns, &IngressSpec{
+		Name:           "echo",
+		Host:           s.host,
+		BackendService: backend.Service,
+		BackendPort:    backend.Port,
+		Annotations: map[string]string{
+			"haproxy-haptic.org/cache-enable":        "true",
+			"haproxy-haptic.org/cache-ttl":           "60",
+			"haproxy-haptic.org/cache-exclude-paths": "/nocache",
+		},
+	})
+	NewIngress(ctx, t, client, ns, &IngressSpec{
+		Name:           "slow-origin",
+		Host:           s.slowHost,
+		BackendService: slowBackend.Service,
+		BackendPort:    slowBackend.Port,
+		Annotations: map[string]string{
+			"haproxy-haptic.org/cache-enable":         "true",
+			"haproxy-haptic.org/cache-ttl":            "60",
+			"haproxy-haptic.org/cache-stale-if-error": "60",
+		},
+	})
+	NewIngress(ctx, t, client, ns, &IngressSpec{
+		Name:           "echo-private",
+		Host:           s.privateHost,
+		BackendService: backend.Service,
+		BackendPort:    backend.Port,
+		Annotations: map[string]string{
+			"haproxy-haptic.org/cache-enable":        "true",
+			"haproxy-haptic.org/cache-ttl":           "60",
+			"haproxy-haptic.org/cache-key":           "src,header:X-Api-Version",
+			"haproxy-haptic.org/cache-exclude-paths": "/nocache",
+			"haproxy-haptic.org/response-set-header": `Cache-Control max-age=60, public, private="Set-Cookie", public-key=keep`,
+		},
+	})
+	NewIngress(ctx, t, client, ns, &IngressSpec{
+		Name:           "stale-origin",
+		Host:           s.staleHost,
+		BackendService: slowBackend.Service,
+		BackendPort:    slowBackend.Port,
+		Annotations: map[string]string{
+			"haproxy-haptic.org/cache-enable":         "true",
+			"haproxy-haptic.org/cache-ttl":            "1",
+			"haproxy-haptic.org/cache-stale-if-error": "60",
+		},
+	})
+	return ctx
+}
+
+func (s *varnishFaultScenario) recover(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	client, err := cfg.NewClient()
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	hc := httpclient.New(t)
+	hc.GET(s.host, s.faultPath).ExpectMatching(t,
+		"cache is warm before fault injection",
+		func(resp *httpclient.Response) bool {
+			return resp.Status == http.StatusOK && resp.Header.Get("X-Cache") == "HIT"
+		})
+
+	originalReplicas, err := varnishReplicaCount(ctx, client)
+	if err != nil {
+		t.Fatalf("read Varnish replica count: %v", err)
+	}
+	if originalReplicas < 1 {
+		t.Fatalf("Varnish starts with %d replicas, want at least 1", originalReplicas)
+	}
+	s.checkStoppedProcesses(ctx, t, client, hc)
+	s.checkSlowMiss(ctx, t, hc)
+	s.checkColdStaleFallback(ctx, t, hc)
+	s.checkStaleAndOriginError(ctx, t, hc)
+	s.checkOrigin425(ctx, t, hc)
+	s.checkForgedTransportMarker(ctx, t, hc)
+	s.checkReplicaOutage(ctx, t, client, hc, originalReplicas)
+	return ctx
+}
+
+func (s *varnishFaultScenario) checkStoppedProcesses(ctx context.Context, t *testing.T, client klient.Client, hc *httpclient.Client) {
+	t.Helper()
+	stoppedPods, err := stopVarnishProcesses(ctx, client)
+	if err != nil {
+		t.Fatalf("stop Varnish processes: %v", err)
+	}
+	processesStopped := true
+	t.Cleanup(func() {
+		if !processesStopped {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := continueVarnishProcesses(cleanupCtx, stoppedPods); err != nil {
+			t.Errorf("continue Varnish processes: %v", err)
+		}
+	})
+
+	hangStarted := time.Now()
+	resp, err := hc.GET(s.host, s.faultPath+"-hung").Do(ctx)
+	if err != nil {
+		t.Fatalf("request through stopped Varnish processes: %v", err)
+	}
+	if elapsed := time.Since(hangStarted); elapsed > 4*time.Second {
+		t.Fatalf("stopped Varnish delayed direct fallback for %s, want at most 4s", elapsed)
+	}
+	if resp.Status != http.StatusOK || resp.Echo == nil || resp.Header.Get("X-Cache") != "" {
+		t.Fatalf("stopped Varnish fallback: status=%d echo=%t X-Cache=%q", resp.Status, resp.Echo != nil, resp.Header.Get("X-Cache"))
+	}
+	assertEchoCacheHeadersStripped(t, resp)
+	findAccessLogRecordWhere(ctx, t, hangStarted,
+		fmt.Sprintf("a direct-origin retry for stopped Varnish on host %s", s.host),
+		func(rec map[string]any) bool {
+			return rec["host"] == s.host && rec["path"] == s.faultPath+"-hung" &&
+				rec["server"] == "ORIGIN_FALLBACK" && rec["cache_degraded"] == "1"
+		})
+	if err := continueVarnishProcesses(ctx, stoppedPods); err != nil {
+		t.Fatalf("continue Varnish processes: %v", err)
+	}
+	processesStopped = false
+	hc.GET(s.host, s.faultPath+"-resumed").ExpectMatching(t,
+		"cache resumes after a hung Varnish process recovers",
+		func(resp *httpclient.Response) bool {
+			return resp.Status == http.StatusOK && resp.Header.Get("X-Cache") == "HIT"
+		})
+}
+
+func (s *varnishFaultScenario) checkSlowMiss(ctx context.Context, t *testing.T, hc *httpclient.Client) {
+	t.Helper()
+	slowPath := s.faultPath + "-slow-origin"
+	slowStarted := time.Now()
+	resp, err := hc.GET(s.slowHost, slowPath).Do(ctx)
+	if err != nil {
+		t.Fatalf("request through a cache miss that exceeds the cache response timeout: %v", err)
+	}
+	if elapsed := time.Since(slowStarted); elapsed > 3*time.Second {
+		t.Fatalf("slow cache miss delayed direct fallback for %s, want at most 3s", elapsed)
+	}
+	if resp.Status != http.StatusOK || string(resp.Body) != "slow-cache-origin" {
+		t.Fatalf("slow cache miss fallback: status=%d body=%q", resp.Status, resp.Body)
+	}
+	findAccessLogRecordWhere(ctx, t, slowStarted,
+		fmt.Sprintf("a direct-origin retry for slow cache miss on host %s", s.slowHost),
+		func(rec map[string]any) bool {
+			return rec["host"] == s.slowHost && rec["path"] == slowPath &&
+				rec["server"] == "ORIGIN_FALLBACK" && rec["cache_degraded"] == "1"
+		})
+}
+
+func (s *varnishFaultScenario) checkColdStaleFallback(ctx context.Context, t *testing.T, hc *httpclient.Client) {
+	t.Helper()
+	coldStalePath := s.faultPath + "-cold-stale-origin-failure"
+	coldStaleStarted := time.Now()
+	resp, err := hc.GET(s.slowHost, coldStalePath).Do(ctx)
+	if err != nil {
+		t.Fatalf("cold stale-if-error request through a failed Varnish origin fetch: %v", err)
+	}
+	if elapsed := time.Since(coldStaleStarted); elapsed > 3*time.Second {
+		t.Fatalf("cold stale-if-error fallback took %s, want at most 3s", elapsed)
+	}
+	if resp.Status != http.StatusOK || string(resp.Body) != "slow-cache-origin" || resp.Header.Get("X-Cache") != "" {
+		t.Fatalf("cold stale-if-error fallback: status=%d body=%q X-Cache=%q", resp.Status, resp.Body, resp.Header.Get("X-Cache"))
+	}
+	findAccessLogRecordWhere(ctx, t, coldStaleStarted,
+		fmt.Sprintf("a direct-origin retry after a cold stale-if-error fetch failure on host %s", s.slowHost),
+		func(rec map[string]any) bool {
+			return rec["host"] == s.slowHost && rec["path"] == coldStalePath &&
+				rec["server"] == "ORIGIN_FALLBACK" && rec["cache_degraded"] == "1"
+		})
+}
+
+func (s *varnishFaultScenario) checkStaleAndOriginError(ctx context.Context, t *testing.T, hc *httpclient.Client) {
+	t.Helper()
+	stalePath := s.faultPath + "-stale-if-error-recovery"
+	hc.GET(s.staleHost, stalePath).ExpectMatching(t,
+		"an expired object is served stale only after its synchronous refresh fails",
+		func(resp *httpclient.Response) bool {
+			return resp.Status == http.StatusOK && string(resp.Body) == "slow-cache-origin" &&
+				resp.Header.Get("X-Cache") == "STALE"
+		})
+
+	originErrorPath := s.faultPath + "-origin-status-500"
+	originErrorStarted := time.Now()
+	resp, err := hc.GET(s.slowHost, originErrorPath).Do(ctx)
+	if err != nil {
+		t.Fatalf("request origin status 500 through stale-if-error cache: %v", err)
+	}
+	if resp.Status != http.StatusInternalServerError || string(resp.Body) != "origin-500" || resp.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("cold origin error changed by stale-if-error: status=%d body=%q X-Cache=%q", resp.Status, resp.Body, resp.Header.Get("X-Cache"))
+	}
+	findAccessLogRecordWhere(ctx, t, originErrorStarted,
+		fmt.Sprintf("an unretried cold origin error on host %s", s.slowHost),
+		func(rec map[string]any) bool {
+			degraded, found := rec["cache_degraded"]
+			return rec["host"] == s.slowHost && rec["path"] == originErrorPath &&
+				rec["server"] == "CACHE_DISPATCH" && (!found || degraded == "")
+		})
+}
+
+func (s *varnishFaultScenario) checkOrigin425(ctx context.Context, t *testing.T, hc *httpclient.Client) {
+	t.Helper()
+	status425Path := s.faultPath + "-origin-status-425"
+	resp, err := hc.GET(s.slowHost, status425Path).Do(ctx)
+	if err != nil {
+		t.Fatalf("request origin status 425 through cache: %v", err)
+	}
+	if resp.Status != http.StatusTooEarly || string(resp.Body) != "origin-425" || resp.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("origin status 425 changed by cache failover: status=%d body=%q X-Cache=%q", resp.Status, resp.Body, resp.Header.Get("X-Cache"))
+	}
+	if resp.Header.Get("X-Haptic-Cache-Origin-425") != "" {
+		t.Fatal("cache failover marker leaked to the client")
+	}
+}
+
+func (s *varnishFaultScenario) checkForgedTransportMarker(ctx context.Context, t *testing.T, hc *httpclient.Client) {
+	t.Helper()
+	forgedTransportPath := s.faultPath + "-origin-forged-transport-failure"
+	forgedTransportStarted := time.Now()
+	resp, err := hc.GET(s.slowHost, forgedTransportPath).Do(ctx)
+	if err != nil {
+		t.Fatalf("request origin response with a forged transport-failure marker through cache: %v", err)
+	}
+	if resp.Status != http.StatusOK || string(resp.Body) != "origin-forged-transport-failure" || resp.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("origin transport-failure marker triggered cache failover: status=%d body=%q X-Cache=%q", resp.Status, resp.Body, resp.Header.Get("X-Cache"))
+	}
+	if resp.Header.Get("X-Haptic-Cache-Origin-Transport-Failure") != "" {
+		t.Fatal("origin transport-failure marker leaked to the client")
+	}
+	findAccessLogRecordWhere(ctx, t, forgedTransportStarted,
+		fmt.Sprintf("an unretried forged transport-failure marker on host %s", s.slowHost),
+		func(rec map[string]any) bool {
+			degraded, found := rec["cache_degraded"]
+			return rec["host"] == s.slowHost && rec["path"] == forgedTransportPath &&
+				rec["server"] == "CACHE_DISPATCH" && (!found || degraded == "")
+		})
+}
+
+func (s *varnishFaultScenario) checkReplicaOutage(ctx context.Context, t *testing.T, client klient.Client, hc *httpclient.Client, originalReplicas int32) {
+	t.Helper()
+	restoreRequired := true
+	t.Cleanup(func() {
+		if !restoreRequired {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := setVarnishReplicas(cleanupCtx, client, originalReplicas); err != nil {
+			t.Errorf("restore Varnish replicas: %v", err)
+			return
+		}
+		if err := waitForVarnishReplicasReady(cleanupCtx, client, originalReplicas); err != nil {
+			t.Errorf("wait for restored Varnish replicas: %v", err)
+		}
+	})
+
+	beforeHAProxy, err := readyHAProxyRuntimeStates(ctx, client)
+	if err != nil {
+		t.Fatalf("read HAProxy runtime state before Varnish fault: %v", err)
+	}
+	if len(beforeHAProxy) < 2 {
+		t.Fatalf("Varnish fault test needs both HAProxy pods, found %d", len(beforeHAProxy))
+	}
+	stopAvailabilityMonitor, err := startCacheEligibleAvailabilityMonitors(
+		ctx, beforeHAProxy, s.host, s.faultPath+"-availability")
+	if err != nil {
+		t.Fatalf("start per-pod HAProxy availability monitors: %v", err)
+	}
+	monitorStopped := false
+	defer func() {
+		if !monitorStopped {
+			_ = stopAvailabilityMonitor()
+		}
+	}()
+
+	s.checkUnavailableCache(ctx, t, client, hc)
+
+	if err := setVarnishReplicas(ctx, client, originalReplicas); err != nil {
+		t.Fatalf("restore Varnish replicas: %v", err)
+	}
+	if err := waitForVarnishReplicasReady(ctx, client, originalReplicas); err != nil {
+		t.Fatalf("wait for Varnish recovery: %v", err)
+	}
+	hc.GET(s.host, s.recoveryPath).ExpectMatching(t,
+		"cache resumes serving hits after Varnish recovery",
+		func(resp *httpclient.Response) bool {
+			return resp.Status == http.StatusOK && resp.Header.Get("X-Cache") == "HIT"
+		})
+
+	restoreRequired = false
+	monitorErr := stopAvailabilityMonitor()
+	monitorStopped = true
+	if monitorErr != nil {
+		t.Fatalf("HAProxy became unavailable during the Varnish fault: %v", monitorErr)
+	}
+	afterHAProxy, err := readyHAProxyRuntimeStates(ctx, client)
+	if err != nil {
+		t.Fatalf("read HAProxy runtime state after Varnish fault: %v", err)
+	}
+	if err := compareHAProxyRuntimeStates(beforeHAProxy, afterHAProxy); err != nil {
+		t.Fatalf("HAProxy runtime changed during the Varnish fault: %v", err)
+	}
+}
+
+func (s *varnishFaultScenario) checkUnavailableCache(ctx context.Context, t *testing.T, client klient.Client, hc *httpclient.Client) {
+	t.Helper()
+	faultStarted := time.Now()
+	if err := setVarnishReplicas(ctx, client, 0); err != nil {
+		t.Fatalf("scale Varnish to zero: %v", err)
+	}
+	if err := waitForVarnishFailOpen(ctx, client, hc, s.host, s.faultPath); err != nil {
+		t.Fatalf("wait for Varnish fail-open: %v", err)
+	}
+	findAccessLogRecordWhere(ctx, t, faultStarted,
+		fmt.Sprintf("a cache-degraded fallback for host %s", s.host),
+		func(rec map[string]any) bool {
+			return rec["host"] == s.host && rec["path"] == s.faultPath && rec["cache_degraded"] == "1"
+		})
+	assertCacheHeadersStrippedOnFallback(t, hc, s.host, s.faultPath+"-headers")
+	assertPrivateDownstreamCacheContract(t, hc, s.privateHost, s.faultPath+"-private", http.MethodGet)
+	assertPrivateDownstreamCacheContract(t, hc, s.privateHost, "/nocache-private", http.MethodGet)
+	assertPrivateDownstreamCacheContract(t, hc, s.privateHost, s.faultPath+"-private-post", http.MethodPost)
+	excludedPath := fmt.Sprintf("/nocache-%d", s.runID)
+	hc.GET(s.host, excludedPath).ExpectMatching(t,
+		"excluded path remains a non-degraded direct request",
+		func(resp *httpclient.Response) bool {
+			return resp.Status == http.StatusOK && resp.Echo != nil && resp.Header.Get("X-Cache") == ""
+		})
+	findAccessLogRecordWhere(ctx, t, faultStarted,
+		fmt.Sprintf("a non-degraded cache-excluded request for host %s", s.host),
+		func(rec map[string]any) bool {
+			degraded, found := rec["cache_degraded"]
+			return rec["host"] == s.host && rec["path"] == excludedPath && (!found || degraded == "")
+		})
 }

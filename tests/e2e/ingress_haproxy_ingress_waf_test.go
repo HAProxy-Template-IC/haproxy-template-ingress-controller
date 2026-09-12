@@ -57,6 +57,7 @@ func TestIngressHaproxyIngressWafDeny(t *testing.T) {
 
 	feature := features.New("Ingress: haproxy-ingress.github.io/waf opt-in dispatches Coraza, /waf-mode controls enforcement").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -66,7 +67,7 @@ func TestIngressHaproxyIngressWafDeny(t *testing.T) {
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 
 			// Deny-mode Ingress: opts into the WAF, default mode (deny).
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-deny",
 				Host:           denyHost,
 				BackendService: backend.Service,
@@ -77,7 +78,7 @@ func TestIngressHaproxyIngressWafDeny(t *testing.T) {
 			})
 
 			// Detect-mode Ingress: opts into the WAF in shadow mode.
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-detect",
 				Host:           detectHost,
 				BackendService: backend.Service,
@@ -105,24 +106,28 @@ func TestIngressHaproxyIngressWafDeny(t *testing.T) {
 			return ctx
 		}).
 		Assess("deny mode: trigger UA is blocked with 403", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(denyHost, "/").
 				WithHeader("User-Agent", triggerUA).
 				ExpectStatus(t, http.StatusForbidden)
 			return ctx
 		}).
 		Assess("deny mode: non-trigger UA passes through to the backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(denyHost, "/").
 				WithHeader("User-Agent", "Mozilla/5.0 (haptic-e2e)").
 				ExpectOK(t)
 			return ctx
 		}).
 		Assess("detect mode: trigger UA passes through despite SecRule match (shadow rollout)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(detectHost, "/").
 				WithHeader("User-Agent", triggerUA).
 				ExpectOK(t)
 			return ctx
 		}).
 		Assess("detect mode: non-trigger UA passes through (rule did not match)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(detectHost, "/").
 				WithHeader("User-Agent", "Mozilla/5.0 (haptic-e2e)").
 				ExpectOK(t)

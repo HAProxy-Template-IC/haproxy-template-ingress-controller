@@ -29,7 +29,7 @@ import (
 // being exactly "/".
 func TestIngressAppRoot(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: app-root redirects / to configured root",
 		Host:        "ingress-app-root.localdev.me",
 		Annotations: map[string]string{
@@ -39,12 +39,14 @@ func TestIngressAppRoot(t *testing.T) {
 			{
 				Name: "GET / redirects to /welcome",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectRedirect(t, "/welcome")
 				},
 			},
 			{
 				Name: "GET /welcome reaches the backend (no redirect loop)",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/welcome").ExpectOK(t)
 				},
 			},

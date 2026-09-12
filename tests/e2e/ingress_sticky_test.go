@@ -33,7 +33,7 @@ import (
 // interacts with HAProxy stick-tables that other tests in the same
 // suite could mutate. Keeping it serial avoids subtle timing flakes.
 func TestIngressStickySession(t *testing.T) {
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: cookie-persistence sets SERVERID cookie",
 		Host:        "ingress-sticky.localdev.me",
 		Annotations: map[string]string{
@@ -42,6 +42,7 @@ func TestIngressStickySession(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "response carries Set-Cookie: SERVERID=…",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
 				cookies := resp.Header.Values("Set-Cookie")
 				for _, c := range cookies {

@@ -108,6 +108,7 @@ else
 endif
 	@echo "Running golangci-lint over the playground-tagged files..."
 	$(GOLANGCI_LINT) run --build-tags=playground ./pkg/dataplane/... ./pkg/generated/validators/...
+	@$(MAKE) lint-e2e
 	@echo "Checking no production binary links a HAProxy config parser..."
 	./scripts/check-client-native-free.sh
 	@echo "Running arch-go..."
@@ -122,6 +123,13 @@ endif
 lint-fix: ## Run golangci-lint with auto-fix
 	@echo "Running golangci-lint with auto-fix..."
 	$(GOLANGCI_LINT) run --fix ./cmd/... ./examples/... ./pkg/... ./tests/... ./tools/...
+
+.PHONY: lint-e2e lint-e2e-fix
+lint-e2e: ## Lint the full-stack e2e suite without creating a cluster
+	$(GOLANGCI_LINT) run --build-tags=e2e ./tests/e2e/...
+
+lint-e2e-fix: ## Apply supported automatic fixes to the full-stack e2e suite
+	$(GOLANGCI_LINT) run --fix --build-tags=e2e ./tests/e2e/...
 
 ## Chart linting
 
@@ -303,6 +311,12 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	@# test's 10m default under -race, which fails the package on time alone.
 	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -timeout 45m $${PKG:-./...}
 	@$(MAKE) test-playground
+	@$(MAKE) test-e2e-helpers
+
+.PHONY: test-e2e-helpers
+test-e2e-helpers: ## Test e2e client and cluster helpers without creating a cluster
+	$(GO) tool gotestsum --junitfile report-e2e-helpers.xml --format testname -- \
+		-tags=e2e -race ./tests/e2e/e2ecluster/... ./tests/e2e/grpcclient/... ./tests/e2e/httpclient/... ./tests/e2e/tunnel/...
 
 # The `playground` tag builds the client-native syntax + schema check that the
 # browser playground answers `haproxy_valid` with. Nothing else may import it

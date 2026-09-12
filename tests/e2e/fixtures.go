@@ -43,6 +43,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
+const (
+	certificatePEMType   = "CERTIFICATE"
+	rsaPrivateKeyPEMType = "RSA PRIVATE KEY"
+)
+
 // NamespaceForTest creates a namespace with a unique name derived from the
 // test name and registers a t.Cleanup that deletes the namespace (cascading
 // cleanup of all resources inside).
@@ -334,7 +339,8 @@ func serviceHasReadyEndpoint(ctx context.Context, client klient.Client, namespac
 		resources.WithLabelSelector("kubernetes.io/service-name="+serviceName)); err != nil {
 		return err
 	}
-	for _, sl := range slices.Items {
+	for index := range slices.Items {
+		sl := &slices.Items[index]
 		for _, ep := range sl.Endpoints {
 			if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
 				return nil
@@ -369,7 +375,8 @@ func countReadyEndpoints(ctx context.Context, client klient.Client, namespace, s
 		return 0, err
 	}
 	ready := 0
-	for _, sl := range slices.Items {
+	for index := range slices.Items {
+		sl := &slices.Items[index]
 		for _, ep := range sl.Endpoints {
 			if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
 				ready++
@@ -409,9 +416,10 @@ type IngressSpec struct {
 // without touching the apiserver. Shared by `NewIngress` (apply, expect
 // success) and `NewIngressExpectDenied` (apply, expect admission webhook
 // rejection).
-func buildIngress(namespace string, spec IngressSpec) *networkingv1.Ingress {
-	if spec.Path == "" {
-		spec.Path = "/"
+func buildIngress(namespace string, spec *IngressSpec) *networkingv1.Ingress {
+	path := spec.Path
+	if path == "" {
+		path = "/"
 	}
 	pathType := networkingv1.PathTypePrefix
 	switch spec.PathType {
@@ -437,7 +445,7 @@ func buildIngress(namespace string, spec IngressSpec) *networkingv1.Ingress {
 						HTTP: &networkingv1.HTTPIngressRuleValue{
 							Paths: []networkingv1.HTTPIngressPath{
 								{
-									Path:     spec.Path,
+									Path:     path,
 									PathType: &pathType,
 									Backend: networkingv1.IngressBackend{
 										Service: &networkingv1.IngressServiceBackend{
@@ -479,7 +487,7 @@ func isTransientAdmissionDenial(err error) bool {
 		strings.Contains(err.Error(), "retry after controller initialization")
 }
 
-func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespace string, spec IngressSpec) *networkingv1.Ingress {
+func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespace string, spec *IngressSpec) *networkingv1.Ingress {
 	t.Helper()
 
 	ing := buildIngress(namespace, spec)
@@ -550,7 +558,7 @@ func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespa
 // which is itself the bug the test exists to detect. We do NOT
 // register a delete cleanup — the resource was either rejected
 // (nothing to clean up) or the test already failed.
-func NewIngressExpectDenied(ctx context.Context, t *testing.T, client klient.Client, namespace string, spec IngressSpec) error {
+func NewIngressExpectDenied(ctx context.Context, t *testing.T, client klient.Client, namespace string, spec *IngressSpec) error {
 	t.Helper()
 
 	ing := buildIngress(namespace, spec)
@@ -624,7 +632,7 @@ func generateSelfSignedCert(hosts []string) (certPEM, keyPEM []byte, err error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: certificatePEMType, Bytes: der})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: rsaPrivateKeyPEMType, Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	return certPEM, keyPEM, nil
 }

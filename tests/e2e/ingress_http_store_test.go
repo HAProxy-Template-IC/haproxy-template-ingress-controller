@@ -36,19 +36,21 @@ import (
 //   - blocked-user-agent
 func TestIngressHTTPStoreDemo(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HTTP-store-driven header denylist",
 		Host:        "ingress-http-store.localdev.me",
 		Assess: []SimpleIngressAssertion{
 			{
 				Name: "no X-Custom-Header → 200",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectOK(t)
 				},
 			},
 			{
 				Name: "normal X-Custom-Header → 200",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").
 						WithHeader("X-Custom-Header", "normal-value").ExpectOK(t)
 				},
@@ -56,6 +58,7 @@ func TestIngressHTTPStoreDemo(t *testing.T) {
 			{
 				Name: "blocklisted X-Custom-Header (bad-value) → 403",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").
 						WithHeader("X-Custom-Header", "bad-value").
 						ExpectStatus(t, http.StatusForbidden)
@@ -64,6 +67,7 @@ func TestIngressHTTPStoreDemo(t *testing.T) {
 			{
 				Name: "blocklisted X-Custom-Header (evil-header) → 403",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").
 						WithHeader("X-Custom-Header", "evil-header").
 						ExpectStatus(t, http.StatusForbidden)

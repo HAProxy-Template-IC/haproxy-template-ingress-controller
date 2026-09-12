@@ -127,7 +127,7 @@ type HTTPRouteSpec struct {
 
 // NewHTTPRoute renders a HTTPRoute manifest from spec and applies it.
 // Returns the route's name.
-func NewHTTPRoute(ctx context.Context, t *testing.T, namespace string, spec HTTPRouteSpec) string {
+func NewHTTPRoute(ctx context.Context, t *testing.T, namespace string, spec *HTTPRouteSpec) string {
 	t.Helper()
 
 	const tmpl = `apiVersion: gateway.networking.k8s.io/v1
@@ -197,7 +197,7 @@ spec:
 	var buf bytes.Buffer
 	data := struct {
 		Namespace string
-		HTTPRouteSpec
+		*HTTPRouteSpec
 	}{Namespace: namespace, HTTPRouteSpec: spec}
 	if err := tpl.Execute(&buf, data); err != nil {
 		t.Fatalf("render HTTPRoute manifest: %v", err)
@@ -432,7 +432,7 @@ type GRPCRouteRule struct {
 
 // NewGRPCRoute renders a GRPCRoute manifest from spec and applies it.
 // Returns the route's name.
-func NewGRPCRoute(ctx context.Context, t *testing.T, namespace string, spec GRPCRouteSpec) string {
+func NewGRPCRoute(ctx context.Context, t *testing.T, namespace string, spec *GRPCRouteSpec) string {
 	t.Helper()
 
 	const tmpl = `apiVersion: gateway.networking.k8s.io/v1
@@ -494,7 +494,7 @@ spec:
 	var buf bytes.Buffer
 	data := struct {
 		Namespace string
-		GRPCRouteSpec
+		*GRPCRouteSpec
 	}{Namespace: namespace, GRPCRouteSpec: spec}
 	if err := tpl.Execute(&buf, data); err != nil {
 		t.Fatalf("render GRPCRoute manifest: %v", err)

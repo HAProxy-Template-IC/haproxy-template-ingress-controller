@@ -21,41 +21,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
 
-// These tests pin the auth-url request-time enforcement contract for
-// scenarios that today silently bypass authentication: subpaths of a
-// Prefix-typed ingress, requests to concrete subdomains of a wildcard
-// host, and requests matched by a haproxy-ingress regex path.
-//
-// Bug shape. The auth-* feature maps (auth-url.map and friends) are
-// keyed on `<host_match><path>` (the literal ingress path string) and
-// consumed by HAProxy via plain `map(...)` — exact-match lookup. The
-// runtime lookup key is `<host_match><actual_request_path>`. So:
-//
-//   - Prefix path `/api`, request `/api/users` → lookup key
-//     `<host>/api/users` does not equal map key `<host>/api`. Auth
-//     never fires; the request reaches the backend unauthenticated.
-//   - Regex path `/api/v[0-9]+/.*`, request `/api/v2/users` → map key
-//     contains literal regex metacharacters; exact-match never hits.
-//   - Wildcard host `*.example.com` + Prefix `/`, request to
-//     `api.example.com/users` → host normalisation works (both render
-//     and regsub-fallback collapse to `.example.com`) but the path
-//     dimension of the bug bites again.
-//
-// Each test below points auth-url at the shared auth-server's `/deny`
-// endpoint (returns 401). With the bug, silent auth-skip means the
-// request reaches the echo-server backend and gets 200. With the fix
-// (auth-url.map keyed by `<ns>/<name>`, consumed via
-// `var(txn.resource_id),map(...)`), the auth-check fires and the
-// request is denied with 401. The expected status is therefore 401;
-// red→green.
-
-// TestIngressAuthURLPrefixSubpath fails today because auth-url.map's
-// key for a Prefix-typed ingress is the literal `<host>/api` ingress
-// path, while the lookup key for the request `/api/users` is
-// `<host>/api/users`. Exact-match map() can never hit. After the fix,
-// keying by `<ns>/<name>` makes the path dimension irrelevant.
 func TestIngressAuthURLPrefixSubpath(t *testing.T) {
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	const (
 		host    = "auth-prefix-subpath.localdev.me"
 		subpath = "/api/users"
@@ -63,6 +30,7 @@ func TestIngressAuthURLPrefixSubpath(t *testing.T) {
 
 	feature := features.New("Ingress: auth-url must fire on subpath of Prefix path").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -71,7 +39,7 @@ func TestIngressAuthURLPrefixSubpath(t *testing.T) {
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-prefix",
 				Host:           host,
 				Path:           "/api",
@@ -84,6 +52,7 @@ func TestIngressAuthURLPrefixSubpath(t *testing.T) {
 			return ctx
 		}).
 		Assess("subpath request denied by auth-server returns 401", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, subpath).ExpectStatus(t, http.StatusUnauthorized)
 			return ctx
 		})
@@ -91,14 +60,8 @@ func TestIngressAuthURLPrefixSubpath(t *testing.T) {
 	testEnv.Test(t, feature.Feature())
 }
 
-// TestIngressAuthURLWildcardHostSubpath combines the wildcard-host and
-// prefix-subpath bug shapes. The wildcard host already works for the
-// routing layer thanks to MapKeyForHost + regsub fallback; the auth-url
-// map is broken on the same axis as the prefix-subpath case. After the
-// fix, the test should pass because the route's owning resource id is
-// stable regardless of which concrete subdomain the request used.
 func TestIngressAuthURLWildcardHostSubpath(t *testing.T) {
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	const (
 		wildcardHost = "*.auth-wild.localdev.me"
 		concreteHost = "api.auth-wild.localdev.me"
@@ -107,6 +70,7 @@ func TestIngressAuthURLWildcardHostSubpath(t *testing.T) {
 
 	feature := features.New("Ingress: auth-url must fire on subpath of wildcard host").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -115,7 +79,7 @@ func TestIngressAuthURLWildcardHostSubpath(t *testing.T) {
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-wild",
 				Host:           wildcardHost,
 				Path:           "/",
@@ -128,6 +92,7 @@ func TestIngressAuthURLWildcardHostSubpath(t *testing.T) {
 			return ctx
 		}).
 		Assess("concrete subdomain subpath denied by auth-server returns 401", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(concreteHost, subpath).ExpectStatus(t, http.StatusUnauthorized)
 			return ctx
 		})
@@ -135,13 +100,6 @@ func TestIngressAuthURLWildcardHostSubpath(t *testing.T) {
 	testEnv.Test(t, feature.Feature())
 }
 
-// TestIngressAuthURLRegexPath uses the haproxy-ingress regex-path
-// flavour: pathType=ImplementationSpecific plus the
-// haproxy-ingress.github.io/path-type=regex annotation routes the path
-// into path-regex.map (consumed via map_reg()). auth-url.map is keyed
-// by `<ns>/<name>` (resource id), so the auth lookup is decoupled from
-// the path entirely — wildcard hosts, regex paths, prefix subpaths all
-// resolve to the same resource_id and the auth-url lookup hits.
 func TestIngressAuthURLRegexPath(t *testing.T) {
 	// This test needs both vendor libraries at once: the
 	// nginx.ingress.kubernetes.io/auth-url annotation (nginxIngress) to make
@@ -151,7 +109,7 @@ func TestIngressAuthURLRegexPath(t *testing.T) {
 	// skipped everywhere and never actually ran. The core profile now enables
 	// all three, so it executes; the guards stay for the conformance profile,
 	// which enables only nginx-ingress.
-	RequireVendorLibrary(t, "nginxIngress")
+	RequireVendorLibrary(t, nginxIngressLibrary)
 	RequireVendorLibrary(t, "haproxyIngress")
 	const (
 		host        = "auth-regex.localdev.me"
@@ -161,6 +119,7 @@ func TestIngressAuthURLRegexPath(t *testing.T) {
 
 	feature := features.New("Ingress: auth-url must fire on haproxy-ingress regex path").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -169,7 +128,7 @@ func TestIngressAuthURLRegexPath(t *testing.T) {
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-regex",
 				Host:           host,
 				Path:           regexPath,
@@ -184,6 +143,7 @@ func TestIngressAuthURLRegexPath(t *testing.T) {
 			return ctx
 		}).
 		Assess("regex-matched request denied by auth-server returns 401", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, requestPath).ExpectStatus(t, http.StatusUnauthorized)
 			return ctx
 		})
@@ -191,11 +151,6 @@ func TestIngressAuthURLRegexPath(t *testing.T) {
 	testEnv.Test(t, feature.Feature())
 }
 
-// denyAuthURL is the in-cluster URL of the shared auth-server's /deny
-// endpoint. auth-server returns 401 for paths under /deny. Used by all
-// three red→green tests to make silent auth-skip observable: with the
-// bug the request bypasses auth and reaches the echo-server (200);
-// with the fix the auth check fires and returns 401.
 func denyAuthURL() string {
 	return "http://auth-server." + SharedFixturesNamespace + ".svc:80/deny"
 }

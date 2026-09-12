@@ -43,7 +43,7 @@ func TestHapticRequestValidation(t *testing.T) {
 		maxBodyBytes    = "64"
 	)
 
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: HAPTIC request-schema validation annotations",
 		Host:        "ingress-haptic-request-validation.localdev.me",
 		Annotations: map[string]string{
@@ -70,6 +70,7 @@ func TestHapticRequestValidation(t *testing.T) {
 			{
 				Name: "valid JSON body reaches the backend",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/validate").
 						WithMethod(http.MethodPost).
 						WithHeader("Content-Type", "application/json").
@@ -82,6 +83,7 @@ func TestHapticRequestValidation(t *testing.T) {
 			{
 				Name: "schema mismatch is rejected",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/validate").
 						WithMethod(http.MethodPost).
 						WithHeader("Content-Type", "application/json").
@@ -94,6 +96,7 @@ func TestHapticRequestValidation(t *testing.T) {
 			{
 				Name: "invalid JSON is rejected",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/validate").
 						WithMethod(http.MethodPost).
 						WithHeader("Content-Type", "application/json").
@@ -106,6 +109,7 @@ func TestHapticRequestValidation(t *testing.T) {
 			{
 				Name: "wrong content type is rejected",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/validate").
 						WithMethod(http.MethodPost).
 						WithHeader("Content-Type", "text/plain").
@@ -118,6 +122,7 @@ func TestHapticRequestValidation(t *testing.T) {
 			{
 				Name: "oversized body is rejected before plugin validation",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					body := `{"name":"` + strings.Repeat("a", 80) + `"}`
 					httpclient.New(t).GET(host, "/validate").
 						WithMethod(http.MethodPost).
@@ -131,6 +136,7 @@ func TestHapticRequestValidation(t *testing.T) {
 			{
 				Name: "unknown-length body is rejected before plugin validation",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/validate").
 						WithMethod(http.MethodPost).
 						WithHeader("Content-Type", "application/json").
@@ -143,6 +149,7 @@ func TestHapticRequestValidation(t *testing.T) {
 			{
 				Name: "GET is not body-validated",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/validate").
 						ExpectMatching(t, "GET bypasses request-body validation", func(resp *httpclient.Response) bool {
 							return resp.Status == http.StatusOK && resp.Echo != nil

@@ -19,7 +19,6 @@ package e2e
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -404,6 +403,7 @@ func TestIngressAnnotations(t *testing.T) {
 				"nginx.ingress.kubernetes.io/auth-signin": "https://login.example.com/oauth/start",
 			},
 			extraAssert: func(t *testing.T, host string) {
+				t.Helper()
 				// The deny path issues a 302 redirect to auth-signin; verify
 				// the chart wired the redirect rule.
 				resp := httpclient.New(t).GET(host, "/").ExpectStatus(t, 302)
@@ -477,20 +477,14 @@ func TestIngressAnnotations(t *testing.T) {
 		// Each row targets exactly one vendor-annotation prefix; skip rows
 		// whose library isn't the one enabled in the current e2e shard so the
 		// rest of the table still runs.
-		rowLib := ""
-		for key := range tc.annotations {
-			for prefix, lib := range vendorPrefixes {
-				if strings.HasPrefix(key, prefix) {
-					rowLib = lib
-				}
-			}
-		}
+		rowLib := annotationVendorLibrary(tc.annotations)
 		if rowLib != "" && !enabledVendorLibraries()[rowLib] {
 			continue
 		}
 
 		feature := features.New("Ingress: "+tc.name).
 			Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				t.Helper()
 				client, err := cfg.NewClient()
 				if err != nil {
 					t.Fatalf("new client: %v", err)
@@ -498,7 +492,7 @@ func TestIngressAnnotations(t *testing.T) {
 				ns := NamespaceForTest(ctx, t, client)
 				DumpLogsOnFailure(t, ns)
 				backend := NewEchoServerBackend(ctx, t, client, ns)
-				NewIngress(ctx, t, client, ns, IngressSpec{
+				NewIngress(ctx, t, client, ns, &IngressSpec{
 					Name:           "echo-" + tc.name,
 					Host:           tc.host,
 					Path:           "/",
@@ -509,6 +503,7 @@ func TestIngressAnnotations(t *testing.T) {
 				return ctx
 			}).
 			Assess(tc.host+" passes through to backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				t.Helper()
 				if tc.extraAssert != nil {
 					tc.extraAssert(t, tc.host)
 					return ctx
@@ -541,6 +536,7 @@ func TestIngressPodNamedServerScaling(t *testing.T) {
 
 	feature := features.New("Ingress: pod-named server scaling").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -549,7 +545,7 @@ func TestIngressPodNamedServerScaling(t *testing.T) {
 			DumpLogsOnFailure(t, ns)
 			// Two replicas → two ready endpoints → two pod-named servers.
 			backend := NewEchoServerBackendWithReplicas(ctx, t, client, ns, "echo-scale", 2)
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-scale",
 				Host:           host,
 				Path:           "/",
@@ -559,6 +555,7 @@ func TestIngressPodNamedServerScaling(t *testing.T) {
 			return ctx
 		}).
 		Assess("every backend pod receives traffic (one server per pod, no slot pool)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// The default backend balance is round-robin, so requests from one
 			// client still fan across both servers. Poll rather than send a
 			// fixed count so a single still-converging reload doesn't flake;

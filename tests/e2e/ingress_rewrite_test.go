@@ -28,7 +28,7 @@ import (
 // in its JSON response, so we verify by asserting on Echo.Path.
 func TestIngressPathRewrite(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: path-rewrite annotation",
 		Host:        "ingress-rewrite.localdev.me",
 		Annotations: map[string]string{
@@ -39,12 +39,14 @@ func TestIngressPathRewrite(t *testing.T) {
 			{
 				Name: "/api/v1/test rewrites to /test at the backend",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/api/v1/test").ExpectEchoPath(t, "/test")
 				},
 			},
 			{
 				Name: "/api/v1/users rewrites to /users at the backend",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/api/v1/users").ExpectEchoPath(t, "/users")
 				},
 			},

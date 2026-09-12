@@ -69,6 +69,7 @@ func TestIngressRouteAddRemoveIsReloadFree(t *testing.T) {
 
 	feature := features.New("Ingress route add/remove is reload-free on 3.4").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			var err error
 			if client, err = cfg.NewClient(); err != nil {
 				t.Fatalf("new client: %v", err)
@@ -88,7 +89,7 @@ func TestIngressRouteAddRemoveIsReloadFree(t *testing.T) {
 			// A stable Ingress of the same shape holds the profile and the static
 			// response-header line, so cycling the second Ingress moves only a
 			// dynamic backend and a map entry.
-			NewIngress(ctx, t, client, namespace, IngressSpec{
+			NewIngress(ctx, t, client, namespace, &IngressSpec{
 				Name:           "ing-anchor",
 				Host:           anchorHost,
 				BackendService: anchorSvc.Service,
@@ -99,6 +100,7 @@ func TestIngressRouteAddRemoveIsReloadFree(t *testing.T) {
 			return ctx
 		}).
 		Assess("each cycle serves the Ingress and, on 3.4, never reloads", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			dynamicBE := dynamicBackendsSupported()
 			http := httpclient.New(t)
 			// Drain the anchor's first-appearance reload and any sibling-test
@@ -169,6 +171,7 @@ func TestCustomCRDRouteAddRemoveIsReloadFree(t *testing.T) {
 
 	feature := features.New("Custom-CRD route add/remove is reload-free on 3.4").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			var err error
 			if client, err = cfg.NewClient(); err != nil {
 				t.Fatalf("new client: %v", err)
@@ -189,6 +192,7 @@ func TestCustomCRDRouteAddRemoveIsReloadFree(t *testing.T) {
 			return ctx
 		}).
 		Assess("each cycle adds and removes the Route's backend, reload-free on 3.4", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			dynamicBE := dynamicBackendsSupported()
 			backend := namespace + "_" + cycleName
 			waitFleetQuiescent(ctx, t, client, cs)

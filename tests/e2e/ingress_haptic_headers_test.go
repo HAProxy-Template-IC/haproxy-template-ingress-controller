@@ -40,7 +40,7 @@ import (
 // (one header per line), matching the haptic fragment's split-on-"\n" parser.
 func TestHapticHeaders(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: haproxy-haptic.org header manipulation",
 		Host:        "ingress-haptic-headers.localdev.me",
 		Annotations: map[string]string{
@@ -59,42 +59,49 @@ func TestHapticHeaders(t *testing.T) {
 			{
 				Name: "response-set-header injects X-Custom-Response",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectHeader(t, "X-Custom-Response", "custom-resp-value")
 				},
 			},
 			{
 				Name: "response-set-header injects X-Frame-Options DENY",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectHeader(t, "X-Frame-Options", "DENY")
 				},
 			},
 			{
 				Name: "request-set-header reaches upstream as X-Custom-Request",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectEchoHeader(t, "X-Custom-Request", "custom-req-value")
 				},
 			},
 			{
 				Name: "request-set-header reaches upstream as X-Request-ID",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectEchoHeader(t, "X-Request-ID", "req-12345")
 				},
 			},
 			{
 				Name: "set-host overrides upstream Host header",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectEchoHeader(t, "Host", "custom-upstream.example.com")
 				},
 			},
 			{
 				Name: "x-forwarded-prefix reaches upstream",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/").ExpectEchoHeader(t, "X-Forwarded-Prefix", "/haptic-prefix")
 				},
 			},
 			{
 				Name: "forwardfor sets X-Forwarded-For on the upstream request",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					// forwardfor=update rewrites X-Forwarded-For to %[src]; the
 					// exact source IP isn't predictable, so assert the upstream
 					// saw a non-empty dotted IPv4 value via ExpectMatching.

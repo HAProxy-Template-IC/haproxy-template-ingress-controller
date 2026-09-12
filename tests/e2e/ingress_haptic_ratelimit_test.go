@@ -67,6 +67,7 @@ func TestHapticRateLimit(t *testing.T) {
 
 	feature := features.New("Ingress: haptic rate-limit annotation enforces from inside cluster").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -74,7 +75,7 @@ func TestHapticRateLimit(t *testing.T) {
 			ns := NamespaceForTest(ctx, t, client)
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "echo-haptic-ratelimit",
 				Host:           host,
 				Path:           "/",
@@ -92,6 +93,7 @@ func TestHapticRateLimit(t *testing.T) {
 			return StoreNamespaceInContext(ctx, ns)
 		}).
 		Assess("burst from in-cluster pod trips the limit (≥1 × 429)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			ns, err := GetNamespaceFromContext(ctx)
 			if err != nil {
 				t.Fatalf("get namespace: %v", err)

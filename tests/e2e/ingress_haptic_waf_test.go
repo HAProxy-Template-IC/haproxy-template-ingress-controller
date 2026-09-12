@@ -37,6 +37,7 @@ func TestHapticWAFPolicies(t *testing.T) {
 
 	feature := features.New("Ingress: reusable Coraza WAF policies are narrow and body-safe").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			client, err := cfg.NewClient()
 			if err != nil {
 				t.Fatalf("new client: %v", err)
@@ -45,7 +46,7 @@ func TestHapticWAFPolicies(t *testing.T) {
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "streaming",
 				Host:           streamingHost,
 				BackendService: backend.Service,
@@ -54,7 +55,7 @@ func TestHapticWAFPolicies(t *testing.T) {
 					"haproxy-haptic.org/waf-policy": "streaming-search",
 				},
 			})
-			NewIngress(ctx, t, client, ns, IngressSpec{
+			NewIngress(ctx, t, client, ns, &IngressSpec{
 				Name:           "web",
 				Host:           webHost,
 				BackendService: backend.Service,
@@ -76,17 +77,20 @@ func TestHapticWAFPolicies(t *testing.T) {
 			return ctx
 		}).
 		Assess("metadata-inspecting policy still blocks hostile headers", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(streamingHost, "/").
 				WithHeader("User-Agent", "haptic-waf-block-probe").
 				ExpectStatus(t, http.StatusForbidden)
 			return ctx
 		}).
 		Assess("search q exclusion is narrow", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(streamingHost, "/?q=haptic-waf-query-probe").ExpectOK(t)
 			httpclient.New(t).GET(streamingHost, "/?other=haptic-waf-query-probe").ExpectStatus(t, http.StatusForbidden)
 			return ctx
 		}).
 		Assess("streaming uploads are not buffered or body-inspected", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(streamingHost, "/upload").
 				WithMethod(http.MethodPost).
 				WithHeader("Content-Type", "application/octet-stream").
@@ -95,6 +99,7 @@ func TestHapticWAFPolicies(t *testing.T) {
 			return ctx
 		}).
 		Assess("web policy inspects complete bounded bodies", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(webHost, "/submit").
 				WithMethod(http.MethodPost).
 				WithHeader("Content-Type", "application/x-www-form-urlencoded").

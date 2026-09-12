@@ -36,7 +36,7 @@ func TestHapticPathRewrite(t *testing.T) {
 	t.Parallel()
 
 	// Two-token form: strip the /api/v1/ prefix via "<from> <to>".
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: haproxy-haptic.org/path-rewrite two-token form",
 		Host:        "ingress-haptic-rewrite.localdev.me",
 		Annotations: map[string]string{
@@ -46,12 +46,14 @@ func TestHapticPathRewrite(t *testing.T) {
 			{
 				Name: "/api/v1/test rewrites to /test at the backend",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/api/v1/test").ExpectEchoPath(t, "/test")
 				},
 			},
 			{
 				Name: "/api/v1/users rewrites to /users at the backend",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/api/v1/users").ExpectEchoPath(t, "/users")
 				},
 			},
@@ -60,7 +62,7 @@ func TestHapticPathRewrite(t *testing.T) {
 
 	// Bare form: a value with no space replaces the whole path, so every
 	// request lands on /backend at the upstream regardless of the request path.
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: haproxy-haptic.org/path-rewrite bare whole-path form",
 		Host:        "ingress-haptic-rewrite-bare.localdev.me",
 		Annotations: map[string]string{
@@ -70,12 +72,14 @@ func TestHapticPathRewrite(t *testing.T) {
 			{
 				Name: "/svc rewrites to /backend at the backend",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/svc").ExpectEchoPath(t, "/backend")
 				},
 			},
 			{
 				Name: "/deep/nested/path also rewrites to /backend at the backend",
 				Check: func(t *testing.T, host string) {
+					t.Helper()
 					httpclient.New(t).GET(host, "/deep/nested/path").ExpectEchoPath(t, "/backend")
 				},
 			},

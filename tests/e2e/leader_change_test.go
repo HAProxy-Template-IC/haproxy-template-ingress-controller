@@ -76,6 +76,7 @@ func TestLeaderChangeReloadsNothing(t *testing.T) {
 
 	feature := features.New("Leader change: a new leader reloads nothing").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			var err error
 			if client, err = cfg.NewClient(); err != nil {
 				t.Fatalf("new client: %v", err)
@@ -87,7 +88,7 @@ func TestLeaderChangeReloadsNothing(t *testing.T) {
 			DumpLogsOnFailure(t, namespace)
 
 			backend := NewEchoServerBackend(ctx, t, client, namespace)
-			NewIngress(ctx, t, client, namespace, IngressSpec{
+			NewIngress(ctx, t, client, namespace, &IngressSpec{
 				Name:           "echo",
 				Host:           host,
 				BackendService: backend.Service,
@@ -96,6 +97,7 @@ func TestLeaderChangeReloadsNothing(t *testing.T) {
 			return ctx
 		}).
 		Assess("the route is live and the fleet is quiet", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			httpclient.New(t).GET(host, "/").ExpectOK(t)
 
 			// The route answering proves ONE pod reloaded, not that the fleet
@@ -116,6 +118,7 @@ func TestLeaderChangeReloadsNothing(t *testing.T) {
 			return ctx
 		}).
 		Assess("the handover does not touch the fleet", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			handLeaseTo(ctx, t, clientset, standby)
 			waitForLeadershipHandover(ctx, t, clientset, oldLeader)
 
@@ -134,32 +137,19 @@ func TestLeaderChangeReloadsNothing(t *testing.T) {
 			// pod-names.map is rewritten and applied file-only. That is worth
 			// reporting, not failing on — the worker is what must not restart.
 			after := fleetPlanState(ctx, t, client, clientset)
-			for pod, before := range baseline {
-				now, ok := after[pod]
-				if !ok {
-					t.Fatalf("HAProxy pod %s disappeared across the failover", pod)
-				}
-				if now.appliedPlanID != before.appliedPlanID {
-					t.Logf("pod %s was given another plan across the failover (%s → %s)",
-						pod, before.appliedPlanID, now.appliedPlanID)
-				}
-				if now.startTime != before.startTime {
-					t.Fatalf("HAProxy pod %s re-executed its worker across the failover "+
-						"(start time %v → %v): a new leader must diff against what the pod "+
-						"reports, not reload it", pod, before.startTime, now.startTime)
-				}
-			}
+			requireFleetWorkerContinuity(t, baseline, after)
 			t.Logf("all %d pods kept their worker across the failover", len(baseline))
 			return ctx
 		}).
 		Assess("the new leader deploys a fresh route", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
 			// Zero reloads must not mean a wedged controller: the new leader
 			// has to be driving the fleet, which only a new route proves.
 			namespace := NamespaceForTest(ctx, t, client)
 			DumpLogsOnFailure(t, namespace)
 			backend := NewEchoServerBackend(ctx, t, client, namespace)
 			const freshHost = "leader-change-after.localdev.me"
-			NewIngress(ctx, t, client, namespace, IngressSpec{
+			NewIngress(ctx, t, client, namespace, &IngressSpec{
 				Name:           "echo-after",
 				Host:           freshHost,
 				BackendService: backend.Service,
@@ -381,7 +371,8 @@ func fleetPlanState(
 		t.Fatalf("get HAProxyCfg: %v", err)
 	}
 	plans := map[string]string{}
-	for _, pod := range obj.Status.DeployedToPods {
+	for index := range obj.Status.DeployedToPods {
+		pod := &obj.Status.DeployedToPods[index]
 		plans[pod.PodName] = pod.AppliedPlanID
 	}
 
@@ -425,6 +416,23 @@ func waitForQuietFleet(ctx context.Context, t *testing.T, cs kubernetes.Interfac
 	}
 	t.Fatalf("the fleet never stopped reloading: %v", settled)
 	return nil
+}
+
+func requireFleetWorkerContinuity(t *testing.T, baseline, after map[string]podPlanState) {
+	t.Helper()
+	for pod, before := range baseline {
+		now, ok := after[pod]
+		if !ok {
+			t.Fatalf("HAProxy pod %s disappeared across the failover", pod)
+		}
+		if now.appliedPlanID != before.appliedPlanID {
+			t.Logf("pod %s was given another plan across the failover (%s → %s)", pod, before.appliedPlanID, now.appliedPlanID)
+		}
+		if now.startTime != before.startTime {
+			t.Fatalf("HAProxy pod %s re-executed its worker across the failover "+
+				"(start time %v → %v): a new leader must diff against what the pod reports, not reload it", pod, before.startTime, now.startTime)
+		}
+	}
 }
 
 func sameStartTimes(a, b map[string]float64) bool {

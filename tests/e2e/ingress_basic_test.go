@@ -29,12 +29,13 @@ import (
 // top.
 func TestIngressBasic(t *testing.T) {
 	t.Parallel()
-	RunSimpleIngressTest(t, SimpleIngressTest{
+	RunSimpleIngressTest(t, &SimpleIngressTest{
 		Description: "Ingress: basic routing",
 		Host:        "ingress-basic.localdev.me",
 		Assess: []SimpleIngressAssertion{{
 			Name: "host returns 200 from echo-server",
 			Check: func(t *testing.T, host string) {
+				t.Helper()
 				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
 				if resp.Echo == nil {
 					t.Fatalf("expected echo-server JSON body, got %d bytes: %s", len(resp.Body), string(resp.Body))

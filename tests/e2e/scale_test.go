@@ -208,366 +208,57 @@ func TestScale(t *testing.T) {
 		}
 	})
 
-	var (
-		cs  kubernetes.Interface
-		dyn dynamic.Interface
-		hc  hapticclient.Interface
-
-		ingressNamespaces []string
-		gatewayNS         string
-		probeNS           string
-
-		haproxyReplicas int
-
-		// markers is the full set of chart-emitted backend-name prefixes the
-		// convergence wait requires in the deployed config (one per Ingress,
-		// one per Gateway's HTTPRoute).
-		markers []string
-		// sampleIngressHosts / sampleGateways are the routing spot-check picks.
-		sampleIngressHosts []string
-		sampleGateways     []string
-
-		reloadsBefore  map[string]float64
-		cpuBefore      map[string]controllerCPUCounter
-		cpuWindowStart time.Time
-
-		seedDuration    time.Duration
-		markerDurations []time.Duration
-		routedDurations []time.Duration
-	)
+	scenario := &scaleScenario{
+		namespaceCount:  namespaceCount,
+		ingressPerNS:    ingressPerNS,
+		gatewayCount:    gatewayCount,
+		seedWorkers:     seedWorkers,
+		budgetChangeP95: budgetChangeP95,
+		budgetSeed:      budgetSeed,
+		budgetRSS:       budgetRSS,
+		totalIngresses:  totalIngresses,
+		sink:            sink,
+	}
 
 	feature := features.New(fmt.Sprintf("Scale tier: %d ns x %d Ingresses + %d Gateways, budget-asserted",
 		namespaceCount, ingressPerNS, gatewayCount)).
-		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			client, err := cfg.NewClient()
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
-			cs, err = newClientsetForE2E(client.RESTConfig())
-			if err != nil {
-				t.Fatalf("build clientset: %v", err)
-			}
-			dyn, err = newDynamicForE2E(client.RESTConfig())
-			if err != nil {
-				t.Fatalf("build dynamic client: %v", err)
-			}
-			hc, err = hapticclient.NewForConfig(client.RESTConfig())
-			if err != nil {
-				t.Fatalf("build haptic clientset: %v", err)
-			}
-
-			haproxyReplicas, err = discoverHAProxyReplicaCount(ctx, client)
-			if err != nil {
-				t.Fatalf("discover HAProxy replica count: %v", err)
-			}
-			sink.set("haproxy_replicas", haproxyReplicas)
-
-			// Probe namespace: hosts the single-change latency Ingresses. The
-			// only namespace worth per-test log capture — the 20+ seed
-			// namespaces would just multiply identical dumps (the CI
-			// after_script captures suite-level controller/HAProxy logs).
-			probeNS = NamespaceForTest(ctx, t, client)
-			DumpLogsOnFailure(t, probeNS)
-			NewEchoServerBackend(ctx, t, client, probeNS)
-
-			// Seed namespaces: create them all plus their echo backends
-			// WITHOUT waiting per-namespace, then wait for every backend's
-			// endpoint in one condition. This is fixture bring-up (pod
-			// scheduling + image start), deliberately outside the measured
-			// seed window — the system under test is haptic, not kubelet.
-			for i := 0; i < namespaceCount; i++ {
-				ns := NamespaceForTest(ctx, t, client)
-				if err := applyEchoServerBackend(ctx, client, ns); err != nil {
-					t.Fatalf("seed namespace %s: %v", ns, err)
-				}
-				ingressNamespaces = append(ingressNamespaces, ns)
-			}
-			gatewayNS = NamespaceForTest(ctx, t, client)
-			if err := applyEchoServerBackend(ctx, client, gatewayNS); err != nil {
-				t.Fatalf("gateway namespace %s: %v", gatewayNS, err)
-			}
-			waitAllEchoBackendsReady(ctx, t, client, append(append([]string{}, ingressNamespaces...), gatewayNS))
-
-			// Snapshot before seed so both seed and latency probes contribute.
-			reloadsBefore = snapshotReloadCounters(ctx, t, cs)
-			_, _, cpuBefore = controllerResourceUsage(ctx, t, cs)
-			cpuWindowStart = time.Now()
-			return ctx
-		}).
-		Assess("seed to full convergence within budget-bounded wait", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			seedStart := time.Now()
-
-			g, gctx := errgroup.WithContext(ctx)
-			g.SetLimit(seedWorkers)
-			for nsIdx, ns := range ingressNamespaces {
-				for i := 0; i < ingressPerNS; i++ {
-					name := fmt.Sprintf("ing-%03d", i)
-					host := fmt.Sprintf("s%02d-i%03d.scale.localdev.me", nsIdx, i)
-					markers = append(markers, ingressBackendMarker(ns, name))
-					g.Go(func() error {
-						return createScaleIngress(gctx, cs, ns, IngressSpec{
-							Name:           name,
-							Host:           host,
-							BackendService: EchoServerBackend.Service,
-							BackendPort:    EchoServerBackend.Port,
-						})
-					})
-					switch {
-					case nsIdx == 0 && i == 0,
-						nsIdx == len(ingressNamespaces)/2 && i == ingressPerNS/2,
-						nsIdx == len(ingressNamespaces)-1 && i == ingressPerNS-1:
-						sampleIngressHosts = append(sampleIngressHosts, host)
-					}
-				}
-			}
-			for gi := 0; gi < gatewayCount; gi++ {
-				gwName := fmt.Sprintf("gw-%02d", gi)
-				host := fmt.Sprintf("%s.scale.localdev.me", gwName)
-				markers = append(markers, gatewayBackendMarker(gatewayNS, gwName))
-				if gi == 0 || gi == gatewayCount-1 {
-					sampleGateways = append(sampleGateways, gwName)
-				}
-				g.Go(func() error {
-					if err := createChurnGateway(gctx, dyn, gatewayNS, gwName); err != nil {
-						return fmt.Errorf("create Gateway %s/%s: %w", gatewayNS, gwName, err)
-					}
-					if err := createChurnHTTPRoute(gctx, dyn, gatewayNS, gwName, host); err != nil {
-						return fmt.Errorf("create HTTPRoute %s/%s: %w", gatewayNS, gwName, err)
-					}
-					return nil
-				})
-			}
-			if err := g.Wait(); err != nil {
-				t.Fatalf("seeding failed: %v", err)
-			}
-			t.Logf("seeded %d Ingresses across %d namespaces + %d Gateways in %s (creates only)",
-				totalIngresses, namespaceCount, gatewayCount, time.Since(seedStart).Round(time.Second))
-
-			// Batch convergence: ONE wait over the whole marker set. The wait
-			// gets 1.5x the seed budget so a slow-but-converging run still
-			// produces measurements and a scale-metrics.json (the budget
-			// assertion fails afterwards with the real number); only a run
-			// that can't even converge at 1.5x dies here.
-			waitCfg := testutil.WaitConfig{
-				InitialInterval: time.Second,
-				MaxInterval:     3 * time.Second,
-				Timeout:         budgetSeed + budgetSeed/2,
-				Multiplier:      1.2,
-			}
-			if err := waitForMarkersDeployed(ctx, hc, haproxyReplicas, markers, waitCfg,
-				fmt.Sprintf("all %d backend markers deployed to %d HAProxy pods", len(markers), haproxyReplicas)); err != nil {
-				t.Fatalf("seed convergence: %v", err)
-			}
-			seedDuration = time.Since(seedStart)
-			sink.set("seed_to_converged_seconds", round2(seedDuration.Seconds()))
-			t.Logf("seed -> full convergence: %s", seedDuration.Round(time.Millisecond))
-			return ctx
-		}).
-		Assess("routing spot-check on a sample", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			for _, host := range sampleIngressHosts {
-				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
-				if resp.Echo == nil {
-					t.Fatalf("spot-check %s: expected echo-server JSON, got %d bytes", host, len(resp.Body))
-				}
-			}
-			for _, gw := range sampleGateways {
-				fwd := ForwardGateway(ctx, t, gatewayNS, gw, 80)
-				host := fmt.Sprintf("%s.scale.localdev.me", gw)
-				resp := httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectOK(t)
-				if resp.Echo == nil {
-					t.Fatalf("spot-check Gateway %s: expected echo-server JSON, got %d bytes", gw, len(resp.Body))
-				}
-			}
-			return ctx
-		}).
-		Assess("controller quiesces after the seed storm", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// The last marker landing does not mean the controller is idle:
-			// Gateway status write-back is itself a watched input, so seeding
-			// keeps triggering renders after convergence. A latency sample
-			// taken here measures the tail of that storm, not a single change
-			// — which is what the p95 budget is about. Gate on the rendered
-			// config going still, so every sample starts from idle.
-			const stableFor = 5 * time.Second
-			cfgName := HAProxyConfigName + "-haproxycfg"
-			var (
-				lastRV      string
-				stableSince time.Time
-			)
-			quiesceStart := time.Now()
-			quiesceWait := testutil.WaitConfig{
-				InitialInterval: 500 * time.Millisecond,
-				MaxInterval:     time.Second,
-				Timeout:         2 * time.Minute,
-				Multiplier:      1.0,
-			}
-			if err := testutil.WaitForConditionWithDescription(ctx, quiesceWait,
-				fmt.Sprintf("HAProxyCfg resourceVersion stable for %s", stableFor),
-				func(ctx context.Context) (bool, error) {
-					obj, err := hc.HaproxyTemplateICV1alpha1().HAProxyCfgs(ControllerNamespace).
-						Get(ctx, cfgName, metav1.GetOptions{})
-					if err != nil {
-						return false, err
-					}
-					now := time.Now()
-					if obj.ResourceVersion != lastRV {
-						lastRV = obj.ResourceVersion
-						stableSince = now
-						return false, fmt.Errorf("still re-rendering (resourceVersion %s)", obj.ResourceVersion)
-					}
-					return now.Sub(stableSince) >= stableFor, nil
-				}); err != nil {
-				t.Fatalf("controller never went quiescent after seeding: %v", err)
-			}
-			quiesceDuration := time.Since(quiesceStart)
-			sink.set("post_seed_quiesce_seconds", round2(quiesceDuration.Seconds()))
-			t.Logf("post-seed quiescence reached in %s", quiesceDuration.Round(time.Millisecond))
-			return ctx
-		}).
-		Assess("single-change convergence latency at full scale", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			// Per-sample wait: fine-grained polling for timing resolution
-			// (<=500ms granularity vs a 15s budget), capped well past the
-			// budget so a slow sample is MEASURED and fails the budget assert
-			// with its real value instead of dying inside the wait.
-			perSampleTimeout := 2 * time.Minute
-			if 4*budgetChangeP95 > perSampleTimeout {
-				perSampleTimeout = 4 * budgetChangeP95
-			}
-			for k := 1; k <= scaleChangeSamples; k++ {
-				name := fmt.Sprintf("probe-%d", k)
-				host := fmt.Sprintf("scale-probe-%d.localdev.me", k)
-				start := time.Now()
-				if err := createScaleIngress(ctx, cs, probeNS, IngressSpec{
-					Name:           name,
-					Host:           host,
-					BackendService: EchoServerBackend.Service,
-					BackendPort:    EchoServerBackend.Port,
-				}); err != nil {
-					t.Fatalf("latency sample %d: %v", k, err)
-				}
-				waitCfg := testutil.WaitConfig{
-					InitialInterval: 100 * time.Millisecond,
-					MaxInterval:     500 * time.Millisecond,
-					Timeout:         perSampleTimeout,
-					Multiplier:      1.3,
-				}
-				if err := waitForMarkersDeployed(ctx, hc, haproxyReplicas,
-					[]string{ingressBackendMarker(probeNS, name)}, waitCfg,
-					fmt.Sprintf("probe Ingress %s deployed to all HAProxy pods", name)); err != nil {
-					t.Fatalf("latency sample %d: %v", k, err)
-				}
-				markerDur := time.Since(start)
-				// Marker-deployed already implies every pod reloaded the
-				// probe's backend; the HTTP poll closes the last gap to
-				// "actually routed" (NodePort round-robin across pods).
-				httpclient.New(t).GET(host, "/").ExpectOK(t)
-				routedDur := time.Since(start)
-				markerDurations = append(markerDurations, markerDur)
-				routedDurations = append(routedDurations, routedDur)
-				// Record the sample and the running aggregates immediately so
-				// an abort mid-loop still ships every measured sample.
-				sink.set(fmt.Sprintf("change_convergence_seconds_sample_%d", k), round2(routedDur.Seconds()))
-				sink.set("change_convergence_seconds_median", round2(durationPercentile(routedDurations, 50).Seconds()))
-				sink.set("change_convergence_seconds_p95", round2(durationPercentile(routedDurations, 95).Seconds()))
-				sink.set("change_marker_seconds_median", round2(durationPercentile(markerDurations, 50).Seconds()))
-				sink.set("change_marker_seconds_p95", round2(durationPercentile(markerDurations, 95).Seconds()))
-				t.Logf("latency sample %d: create->deployed %s, create->routed %s",
-					k, markerDur.Round(time.Millisecond), routedDur.Round(time.Millisecond))
-			}
-			return ctx
-		}).
-		Assess("collect metrics, write scale-metrics.json, assert budgets", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			changeMedian := durationPercentile(routedDurations, 50)
-			changeP95 := durationPercentile(routedDurations, 95)
-
-			// Final rendered-config shape, straight from the HAProxyCfg CR.
-			// Each measurement lands in the sink the moment it exists, so a
-			// Fatal on a later step still preserves the earlier ones.
-			cfgName := HAProxyConfigName + "-haproxycfg"
-			obj, err := hc.HaproxyTemplateICV1alpha1().HAProxyCfgs(ControllerNamespace).Get(ctx, cfgName, metav1.GetOptions{})
-			if err != nil {
-				t.Fatalf("get HAProxyCfg: %v", err)
-			}
-			content, err := haproxyCfgContent(obj)
-			if err != nil {
-				t.Fatalf("decode HAProxyCfg content: %v", err)
-			}
-			configLines := strings.Count(content, "\n") + 1
-			sink.set("config_lines", configLines)
-			sink.set("config_bytes", len(content))
-			sink.set("haproxycfg_spec_content_bytes", len(obj.Spec.Content))
-			sink.set("compression_engaged", obj.Spec.Compressed)
-
-			threshold := compressionThreshold(ctx, t, hc)
-			sink.set("compression_threshold_bytes", threshold)
-
-			// Keep the established working-set budget and record kubelet RSS separately.
-			workingSet, rss, cpuAfter := controllerResourceUsage(ctx, t, cs)
-			cpuWindowEnd := time.Now()
-			sink.set("controller_rss_bytes", workingSet)
-			sink.set("controller_memory_rss_bytes", rss)
-
-			// Reload + duration counters from the controller's /metrics.
-			reloadsAfter := snapshotReloadCounters(ctx, t, cs)
-			reloadDelta := reloadCounterDelta(reloadsBefore, reloadsAfter)
-			sink.set("haproxy_reloads_total_delta", reloadDelta)
-			cpuDelta, err := controllerCPUSecondsDelta(cpuBefore, cpuAfter)
-			if err != nil {
-				t.Fatalf("measure controller CPU: %v", err)
-			}
-			sink.set("controller_container_cpu_seconds_delta", round2(cpuDelta))
-			sink.set("controller_cpu_sampling_window_seconds", round2(cpuWindowEnd.Sub(cpuWindowStart).Seconds()))
-			for key, metric := range map[string]string{
-				"reconciliation_duration_seconds_avg":  "haptic_reconciliation_duration_seconds",
-				"deployment_duration_seconds_avg":      "haptic_deployment_duration_seconds",
-				"webhook_request_duration_seconds_avg": "haptic_webhook_request_duration_seconds",
-			} {
-				if avg, ok := controllerHistogramAvg(ctx, cs, metric); ok {
-					sink.set(key, round2(avg))
-				}
-			}
-			if err := verifyControllerBinary(ctx, cs, controllerRuntimeIdentities(cpuAfter)); err != nil {
-				t.Fatalf("verify measured controller binary: %v", err)
-			}
-			sink.set("controller_identity_verified", true)
-
-			path, _, err := sink.flush()
-			if err != nil {
-				t.Fatalf("write scale metrics: %v", err)
-			}
-			t.Logf("scale metrics written to %s", path)
-			t.Logf("scale metrics: %d config lines, %d B uncompressed (compressed=%v, threshold=%d B), "+
-				"seed=%s, change median=%s p95=%s, controller workingSet=%d MiB, reloads=%.0f",
-				configLines, len(content), obj.Spec.Compressed, threshold,
-				seedDuration.Round(time.Second), changeMedian.Round(time.Millisecond),
-				changeP95.Round(time.Millisecond), workingSet/(1<<20), reloadDelta)
-
-			// ── Budget assertions (metrics JSON is already on disk, so a
-			// failing budget still ships full artifacts). ──
-			if seedDuration > budgetSeed {
-				t.Errorf("BUDGET: seed->converged %s exceeds %s (%s to relax)",
-					seedDuration.Round(time.Second), budgetSeed, scaleBudgetSeedEnv)
-			}
-			if changeP95 > budgetChangeP95 {
-				t.Errorf("BUDGET: single-change convergence p95 %s exceeds %s at full scale (%s to relax)",
-					changeP95.Round(time.Millisecond), budgetChangeP95, scaleBudgetChangeP95Env)
-			}
-			if workingSet > uint64(budgetRSS) {
-				t.Errorf("BUDGET: controller workingSet %d bytes exceeds %d (%s to relax)",
-					workingSet, budgetRSS, scaleBudgetRSSEnv)
-			}
-			// Compression invariant: engaged iff the rendered content is over
-			// the threshold. (The publisher also skips compression when it
-			// wouldn't shrink the payload; for haproxy.cfg text zstd always
-			// shrinks by >80%, so the iff holds.)
-			if wantCompressed := int64(len(content)) > threshold; obj.Spec.Compressed != wantCompressed {
-				t.Errorf("compression invariant violated: content %d B vs threshold %d B, want compressed=%v got %v",
-					len(content), threshold, wantCompressed, obj.Spec.Compressed)
-			}
-			return ctx
-		}).
+		Setup(scenario.setup).
+		Assess("seed to full convergence within budget-bounded wait", scenario.seed).
+		Assess("routing spot-check on a sample", scenario.spotCheck).
+		Assess("controller quiesces after the seed storm", scenario.quiesce).
+		Assess("single-change convergence latency at full scale", scenario.measureChanges).
+		Assess("collect metrics, write scale-metrics.json, assert budgets", scenario.collectMetrics).
 		Feature()
 
 	testEnv.Test(t, feature)
+}
+
+type scaleScenario struct {
+	namespaceCount     int
+	ingressPerNS       int
+	gatewayCount       int
+	seedWorkers        int
+	budgetChangeP95    time.Duration
+	budgetSeed         time.Duration
+	budgetRSS          int64
+	totalIngresses     int
+	sink               *scaleMetricsSink
+	cs                 kubernetes.Interface
+	dyn                dynamic.Interface
+	hc                 hapticclient.Interface
+	ingressNamespaces  []string
+	gatewayNS          string
+	probeNS            string
+	haproxyReplicas    int
+	markers            []string
+	sampleIngressHosts []string
+	sampleGateways     []string
+	reloadsBefore      map[string]float64
+	cpuBefore          map[string]controllerCPUCounter
+	cpuWindowStart     time.Time
+	seedDuration       time.Duration
+	markerDurations    []time.Duration
+	routedDurations    []time.Duration
 }
 
 // ingressBackendMarker is the chart-emitted backend-name prefix for an
@@ -589,7 +280,7 @@ func gatewayBackendMarker(namespace, routeName string) string {
 // transient failures. Under seed load the admission webhook (which dry-run
 // renders the full config per request) can exceed its timeout; a bounded
 // retry with backoff absorbs that without hiding persistent failures.
-func createScaleIngress(ctx context.Context, cs kubernetes.Interface, namespace string, spec IngressSpec) error {
+func createScaleIngress(ctx context.Context, cs kubernetes.Interface, namespace string, spec *IngressSpec) error {
 	ing := buildIngress(namespace, spec)
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -661,26 +352,16 @@ func waitForMarkersDeployed(ctx context.Context, hc hapticclient.Interface, expe
 			if err != nil {
 				return false, err
 			}
-			missing := 0
-			firstMissing := ""
-			for _, m := range markers {
-				if !strings.Contains(content, m) {
-					if firstMissing == "" {
-						firstMissing = m
-					}
-					missing++
-				}
-			}
-			if missing > 0 {
-				return false, fmt.Errorf("%d/%d markers not yet in rendered config (first missing: %s)",
-					missing, len(markers), firstMissing)
+			if err := requireConfigMarkers(content, markers); err != nil {
+				return false, err
 			}
 			completeChecksums[obj.Spec.Checksum] = struct{}{}
 			deployed := obj.Status.DeployedToPods
 			if len(deployed) < expectedReplicas {
 				return false, fmt.Errorf("only %d/%d HAProxy pods reported deployed", len(deployed), expectedReplicas)
 			}
-			for _, p := range deployed {
+			for index := range deployed {
+				p := &deployed[index]
 				if _, ok := completeChecksums[p.Checksum]; !ok {
 					return false, fmt.Errorf("pod %s at checksum %q, not yet a marker-complete render (spec %q)",
 						p.PodName, p.Checksum, obj.Spec.Checksum)
@@ -688,6 +369,24 @@ func waitForMarkersDeployed(ctx context.Context, hc hapticclient.Interface, expe
 			}
 			return true, nil
 		})
+}
+
+func requireConfigMarkers(content string, markers []string) error {
+	missing := 0
+	firstMissing := ""
+	for _, marker := range markers {
+		if strings.Contains(content, marker) {
+			continue
+		}
+		if firstMissing == "" {
+			firstMissing = marker
+		}
+		missing++
+	}
+	if missing > 0 {
+		return fmt.Errorf("%d/%d markers not yet in rendered config (first missing: %s)", missing, len(markers), firstMissing)
+	}
+	return nil
 }
 
 // haproxyCfgContent returns the HAProxyCfg's rendered content, decompressing
@@ -736,6 +435,77 @@ type controllerCPUCounter struct {
 	restartCount int32
 }
 
+type kubeletContainerStats struct {
+	Name string `json:"name"`
+	CPU  struct {
+		UsageCoreNanoSeconds *uint64 `json:"usageCoreNanoSeconds"`
+	} `json:"cpu"`
+	Memory struct {
+		WorkingSetBytes *uint64 `json:"workingSetBytes"`
+		RSSBytes        *uint64 `json:"rssBytes"`
+	} `json:"memory"`
+}
+
+type kubeletPodStats struct {
+	PodRef struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	} `json:"podRef"`
+	Containers []kubeletContainerStats `json:"containers"`
+}
+
+type controllerStatsSnapshot struct {
+	cpuSeconds    map[string]float64
+	workingSets   map[string]uint64
+	rssValues     map[string]uint64
+	maxWorkingSet uint64
+	maxRSS        uint64
+}
+
+func (s *controllerStatsSnapshot) addPods(pods []kubeletPodStats, selected map[string]bool) {
+	for _, pod := range pods {
+		if pod.PodRef.Namespace != ControllerNamespace || !selected[pod.PodRef.Name] {
+			continue
+		}
+		for i := range pod.Containers {
+			container := &pod.Containers[i]
+			if container.Name == "controller" {
+				s.addContainer(pod.PodRef.Name, container)
+			}
+		}
+	}
+}
+
+func (s *controllerStatsSnapshot) addContainer(pod string, c *kubeletContainerStats) {
+	if c.Memory.WorkingSetBytes != nil {
+		s.workingSets[pod] = *c.Memory.WorkingSetBytes
+		s.maxWorkingSet = max(s.maxWorkingSet, *c.Memory.WorkingSetBytes)
+	}
+	if c.Memory.RSSBytes != nil {
+		s.rssValues[pod] = *c.Memory.RSSBytes
+		s.maxRSS = max(s.maxRSS, *c.Memory.RSSBytes)
+	}
+	if c.CPU.UsageCoreNanoSeconds != nil {
+		s.cpuSeconds[pod] = float64(*c.CPU.UsageCoreNanoSeconds) / float64(time.Second)
+	}
+}
+
+func (s *controllerStatsSnapshot) requireComplete(expectedPods int) error {
+	for _, field := range []struct {
+		name  string
+		count int
+	}{
+		{"working-set", len(s.workingSets)},
+		{"RSS", len(s.rssValues)},
+		{"CPU", len(s.cpuSeconds)},
+	} {
+		if field.count != expectedPods {
+			return fmt.Errorf("kubelet stats summary carried %s data for %d of %d controller pods", field.name, field.count, expectedPods)
+		}
+	}
+	return nil
+}
+
 func controllerResourceUsage(
 	ctx context.Context,
 	t *testing.T,
@@ -755,25 +525,10 @@ func controllerResourceUsage(
 		nodes = append(nodes, node)
 	}
 	sort.Strings(nodes)
-	cpuSeconds := map[string]float64{}
-	workingSets := map[string]uint64{}
-	rssValues := map[string]uint64{}
-	type containerStats struct {
-		Name string `json:"name"`
-		CPU  struct {
-			UsageCoreNanoSeconds *uint64 `json:"usageCoreNanoSeconds"`
-		} `json:"cpu"`
-		Memory struct {
-			WorkingSetBytes *uint64 `json:"workingSetBytes"`
-			RSSBytes        *uint64 `json:"rssBytes"`
-		} `json:"memory"`
-	}
-	type podStats struct {
-		PodRef struct {
-			Name      string `json:"name"`
-			Namespace string `json:"namespace"`
-		} `json:"podRef"`
-		Containers []containerStats `json:"containers"`
+	stats := controllerStatsSnapshot{
+		cpuSeconds:  map[string]float64{},
+		workingSets: map[string]uint64{},
+		rssValues:   map[string]uint64{},
 	}
 	for _, node := range nodes {
 		raw, err := cs.CoreV1().RESTClient().Get().
@@ -784,52 +539,22 @@ func controllerResourceUsage(
 			t.Fatalf("kubelet stats summary for node %s: %v", node, err)
 		}
 		var summary struct {
-			Pods []podStats `json:"pods"`
+			Pods []kubeletPodStats `json:"pods"`
 		}
 		if err := json.Unmarshal(raw, &summary); err != nil {
 			t.Fatalf("decode stats summary for node %s: %v", node, err)
 		}
-		for _, p := range summary.Pods {
-			if p.PodRef.Namespace != ControllerNamespace || !pods[p.PodRef.Name] {
-				continue
-			}
-			for _, c := range p.Containers {
-				if c.Name != "controller" {
-					continue
-				}
-				if c.Memory.WorkingSetBytes != nil {
-					workingSets[p.PodRef.Name] = *c.Memory.WorkingSetBytes
-					if *c.Memory.WorkingSetBytes > workingSet {
-						workingSet = *c.Memory.WorkingSetBytes
-					}
-				}
-				if c.Memory.RSSBytes != nil {
-					rssValues[p.PodRef.Name] = *c.Memory.RSSBytes
-					if *c.Memory.RSSBytes > rss {
-						rss = *c.Memory.RSSBytes
-					}
-				}
-				if c.CPU.UsageCoreNanoSeconds != nil {
-					cpuSeconds[p.PodRef.Name] = float64(*c.CPU.UsageCoreNanoSeconds) / float64(time.Second)
-				}
-			}
-		}
+		stats.addPods(summary.Pods, pods)
 	}
-	if len(workingSets) != len(pods) {
-		t.Fatalf("kubelet stats summary carried working-set data for %d of %d controller pods", len(workingSets), len(pods))
-	}
-	if len(rssValues) != len(pods) {
-		t.Fatalf("kubelet stats summary carried RSS data for %d of %d controller pods", len(rssValues), len(pods))
-	}
-	if len(cpuSeconds) != len(pods) {
-		t.Fatalf("kubelet stats summary carried CPU data for %d of %d controller pods", len(cpuSeconds), len(pods))
+	if err := stats.requireComplete(len(pods)); err != nil {
+		t.Fatal(err)
 	}
 	currentRuntimes := controllerPodRuntimes(ctx, t, cs)
 	if err := controllerPodRuntimesEqual(runtimes, currentRuntimes); err != nil {
 		t.Fatalf("controller runtime changed during kubelet stats snapshot: %v", err)
 	}
-	cpuCounters = make(map[string]controllerCPUCounter, len(cpuSeconds))
-	for pod, seconds := range cpuSeconds {
+	cpuCounters = make(map[string]controllerCPUCounter, len(stats.cpuSeconds))
+	for pod, seconds := range stats.cpuSeconds {
 		runtime := runtimes[pod]
 		cpuCounters[pod] = controllerCPUCounter{
 			seconds:      seconds,
@@ -838,11 +563,12 @@ func controllerResourceUsage(
 			restartCount: runtime.restartCount,
 		}
 	}
-	return workingSet, rss, cpuCounters
+	return stats.maxWorkingSet, stats.maxRSS, cpuCounters
 }
 
 // controllerPodNames returns the current controller pod names as a set.
 func controllerPodNames(ctx context.Context, t *testing.T, cs kubernetes.Interface) map[string]bool {
+	t.Helper()
 	runtimes := controllerPodRuntimes(ctx, t, cs)
 	names := make(map[string]bool, len(runtimes))
 	for pod := range runtimes {
@@ -869,7 +595,8 @@ func controllerPodRuntimes(ctx context.Context, t *testing.T, cs kubernetes.Inte
 			t.Fatalf("controller pod %s is not scheduled", pod.Name)
 		}
 		var runtime *controllerPodRuntime
-		for _, status := range pod.Status.ContainerStatuses {
+		for index := range pod.Status.ContainerStatuses {
+			status := &pod.Status.ContainerStatuses[index]
 			if status.Name != "controller" {
 				continue
 			}
@@ -1145,7 +872,7 @@ func durationPercentile(samples []time.Duration, pct int) time.Duration {
 	}
 	sorted := append([]time.Duration{}, samples...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	rank := (pct*len(sorted) + 99) / 100 // ceil(pct/100 * n)
+	rank := (pct*len(sorted) + 99) / 100
 	if rank < 1 {
 		rank = 1
 	}
@@ -1193,4 +920,346 @@ func parseEnvInt64(key string, def int64) (int64, error) {
 		return 0, fmt.Errorf("%s=%q: want a positive integer", key, v)
 	}
 	return n, nil
+}
+
+func (s *scaleScenario) setup(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	client, err := cfg.NewClient()
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	s.cs, err = newClientsetForE2E(client.RESTConfig())
+	if err != nil {
+		t.Fatalf("build clientset: %v", err)
+	}
+	s.dyn, err = newDynamicForE2E(client.RESTConfig())
+	if err != nil {
+		t.Fatalf("build dynamic client: %v", err)
+	}
+	s.hc, err = hapticclient.NewForConfig(client.RESTConfig())
+	if err != nil {
+		t.Fatalf("build haptic clientset: %v", err)
+	}
+
+	s.haproxyReplicas, err = discoverHAProxyReplicaCount(ctx, client)
+	if err != nil {
+		t.Fatalf("discover HAProxy replica count: %v", err)
+	}
+	s.sink.set("haproxy_replicas", s.haproxyReplicas)
+
+	// Probe namespace: hosts the single-change latency Ingresses. The
+	// only namespace worth per-test log capture — the 20+ seed
+	// namespaces would just multiply identical dumps (the CI
+	// after_script captures suite-level controller/HAProxy logs).
+	s.probeNS = NamespaceForTest(ctx, t, client)
+	DumpLogsOnFailure(t, s.probeNS)
+	NewEchoServerBackend(ctx, t, client, s.probeNS)
+
+	// Seed namespaces: create them all plus their echo backends
+	// WITHOUT waiting per-namespace, then wait for every backend's
+	// endpoint in one condition. This is fixture bring-up (pod
+	// scheduling + image start), deliberately outside the measured
+	// seed window — the system under test is haptic, not kubelet.
+	for i := 0; i < s.namespaceCount; i++ {
+		ns := NamespaceForTest(ctx, t, client)
+		if err := applyEchoServerBackend(ctx, client, ns); err != nil {
+			t.Fatalf("seed namespace %s: %v", ns, err)
+		}
+		s.ingressNamespaces = append(s.ingressNamespaces, ns)
+	}
+	s.gatewayNS = NamespaceForTest(ctx, t, client)
+	if err := applyEchoServerBackend(ctx, client, s.gatewayNS); err != nil {
+		t.Fatalf("gateway namespace %s: %v", s.gatewayNS, err)
+	}
+	waitAllEchoBackendsReady(ctx, t, client, append(append([]string{}, s.ingressNamespaces...), s.gatewayNS))
+
+	// Snapshot before seed so both seed and latency probes contribute.
+	s.reloadsBefore = snapshotReloadCounters(ctx, t, s.cs)
+	_, _, s.cpuBefore = controllerResourceUsage(ctx, t, s.cs)
+	s.cpuWindowStart = time.Now()
+	return ctx
+}
+
+func (s *scaleScenario) seed(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	seedStart := time.Now()
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(s.seedWorkers)
+	s.queueIngresses(gctx, g)
+	s.queueGateways(gctx, g)
+	if err := g.Wait(); err != nil {
+		t.Fatalf("seeding failed: %v", err)
+	}
+	t.Logf("seeded %d Ingresses across %d namespaces + %d Gateways in %s (creates only)",
+		s.totalIngresses, s.namespaceCount, s.gatewayCount, time.Since(seedStart).Round(time.Second))
+
+	waitCfg := testutil.WaitConfig{
+		InitialInterval: time.Second,
+		MaxInterval:     3 * time.Second,
+		Timeout:         s.budgetSeed + s.budgetSeed/2,
+		Multiplier:      1.2,
+	}
+	if err := waitForMarkersDeployed(ctx, s.hc, s.haproxyReplicas, s.markers, waitCfg,
+		fmt.Sprintf("all %d backend markers deployed to %d HAProxy pods", len(s.markers), s.haproxyReplicas)); err != nil {
+		t.Fatalf("seed convergence: %v", err)
+	}
+	s.seedDuration = time.Since(seedStart)
+	s.sink.set("seed_to_converged_seconds", round2(s.seedDuration.Seconds()))
+	t.Logf("seed -> full convergence: %s", s.seedDuration.Round(time.Millisecond))
+	return ctx
+}
+
+func (s *scaleScenario) queueIngresses(gctx context.Context, g *errgroup.Group) {
+	for nsIdx, ns := range s.ingressNamespaces {
+		for i := 0; i < s.ingressPerNS; i++ {
+			name := fmt.Sprintf("ing-%03d", i)
+			host := fmt.Sprintf("s%02d-i%03d.scale.localdev.me", nsIdx, i)
+			s.markers = append(s.markers, ingressBackendMarker(ns, name))
+			g.Go(func() error {
+				return createScaleIngress(gctx, s.cs, ns, &IngressSpec{
+					Name:           name,
+					Host:           host,
+					BackendService: EchoServerBackend.Service,
+					BackendPort:    EchoServerBackend.Port,
+				})
+			})
+			switch {
+			case nsIdx == 0 && i == 0,
+				nsIdx == len(s.ingressNamespaces)/2 && i == s.ingressPerNS/2,
+				nsIdx == len(s.ingressNamespaces)-1 && i == s.ingressPerNS-1:
+				s.sampleIngressHosts = append(s.sampleIngressHosts, host)
+			}
+		}
+	}
+}
+
+func (s *scaleScenario) queueGateways(gctx context.Context, g *errgroup.Group) {
+	for gi := 0; gi < s.gatewayCount; gi++ {
+		gwName := fmt.Sprintf("gw-%02d", gi)
+		host := fmt.Sprintf("%s.scale.localdev.me", gwName)
+		s.markers = append(s.markers, gatewayBackendMarker(s.gatewayNS, gwName))
+		if gi == 0 || gi == s.gatewayCount-1 {
+			s.sampleGateways = append(s.sampleGateways, gwName)
+		}
+		g.Go(func() error {
+			if err := createChurnGateway(gctx, s.dyn, s.gatewayNS, gwName); err != nil {
+				return fmt.Errorf("create Gateway %s/%s: %w", s.gatewayNS, gwName, err)
+			}
+			if err := createChurnHTTPRoute(gctx, s.dyn, s.gatewayNS, gwName, host); err != nil {
+				return fmt.Errorf("create HTTPRoute %s/%s: %w", s.gatewayNS, gwName, err)
+			}
+			return nil
+		})
+	}
+}
+
+func (s *scaleScenario) spotCheck(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	for _, host := range s.sampleIngressHosts {
+		resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
+		if resp.Echo == nil {
+			t.Fatalf("spot-check %s: expected echo-server JSON, got %d bytes", host, len(resp.Body))
+		}
+	}
+	for _, gw := range s.sampleGateways {
+		fwd := ForwardGateway(ctx, t, s.gatewayNS, gw, 80)
+		host := fmt.Sprintf("%s.scale.localdev.me", gw)
+		resp := httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectOK(t)
+		if resp.Echo == nil {
+			t.Fatalf("spot-check Gateway %s: expected echo-server JSON, got %d bytes", gw, len(resp.Body))
+		}
+	}
+	return ctx
+}
+
+func (s *scaleScenario) quiesce(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	// The last marker landing does not mean the controller is idle:
+	// Gateway status write-back is itself a watched input, so seeding
+	// keeps triggering renders after convergence. A latency sample
+	// taken here measures the tail of that storm, not a single change
+	// — which is what the p95 budget is about. Gate on the rendered
+	// config going still, so every sample starts from idle.
+	const stableFor = 5 * time.Second
+	cfgName := HAProxyConfigName + "-haproxycfg"
+	var (
+		lastRV      string
+		stableSince time.Time
+	)
+	quiesceStart := time.Now()
+	quiesceWait := testutil.WaitConfig{
+		InitialInterval: 500 * time.Millisecond,
+		MaxInterval:     time.Second,
+		Timeout:         2 * time.Minute,
+		Multiplier:      1.0,
+	}
+	if err := testutil.WaitForConditionWithDescription(ctx, quiesceWait,
+		fmt.Sprintf("HAProxyCfg resourceVersion stable for %s", stableFor),
+		func(ctx context.Context) (bool, error) {
+			obj, err := s.hc.HaproxyTemplateICV1alpha1().HAProxyCfgs(ControllerNamespace).
+				Get(ctx, cfgName, metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
+			now := time.Now()
+			if obj.ResourceVersion != lastRV {
+				lastRV = obj.ResourceVersion
+				stableSince = now
+				return false, fmt.Errorf("still re-rendering (resourceVersion %s)", obj.ResourceVersion)
+			}
+			return now.Sub(stableSince) >= stableFor, nil
+		}); err != nil {
+		t.Fatalf("controller never went quiescent after seeding: %v", err)
+	}
+	quiesceDuration := time.Since(quiesceStart)
+	s.sink.set("post_seed_quiesce_seconds", round2(quiesceDuration.Seconds()))
+	t.Logf("post-seed quiescence reached in %s", quiesceDuration.Round(time.Millisecond))
+	return ctx
+}
+
+func (s *scaleScenario) measureChanges(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	// Per-sample wait: fine-grained polling for timing resolution
+	// (<=500ms granularity vs a 15s budget), capped well past the
+	// budget so a slow sample is MEASURED and fails the budget assert
+	// with its real value instead of dying inside the wait.
+	perSampleTimeout := 2 * time.Minute
+	if 4*s.budgetChangeP95 > perSampleTimeout {
+		perSampleTimeout = 4 * s.budgetChangeP95
+	}
+	for k := 1; k <= scaleChangeSamples; k++ {
+		name := fmt.Sprintf("probe-%d", k)
+		host := fmt.Sprintf("scale-probe-%d.localdev.me", k)
+		start := time.Now()
+		if err := createScaleIngress(ctx, s.cs, s.probeNS, &IngressSpec{
+			Name:           name,
+			Host:           host,
+			BackendService: EchoServerBackend.Service,
+			BackendPort:    EchoServerBackend.Port,
+		}); err != nil {
+			t.Fatalf("latency sample %d: %v", k, err)
+		}
+		waitCfg := testutil.WaitConfig{
+			InitialInterval: 100 * time.Millisecond,
+			MaxInterval:     500 * time.Millisecond,
+			Timeout:         perSampleTimeout,
+			Multiplier:      1.3,
+		}
+		if err := waitForMarkersDeployed(ctx, s.hc, s.haproxyReplicas,
+			[]string{ingressBackendMarker(s.probeNS, name)}, waitCfg,
+			fmt.Sprintf("probe Ingress %s deployed to all HAProxy pods", name)); err != nil {
+			t.Fatalf("latency sample %d: %v", k, err)
+		}
+		markerDur := time.Since(start)
+		// Marker-deployed already implies every pod reloaded the
+		// probe's backend; the HTTP poll closes the last gap to
+		// "actually routed" (NodePort round-robin across pods).
+		httpclient.New(t).GET(host, "/").ExpectOK(t)
+		routedDur := time.Since(start)
+		s.markerDurations = append(s.markerDurations, markerDur)
+		s.routedDurations = append(s.routedDurations, routedDur)
+		// Record the sample and the running aggregates immediately so
+		// an abort mid-loop still ships every measured sample.
+		s.sink.set(fmt.Sprintf("change_convergence_seconds_sample_%d", k), round2(routedDur.Seconds()))
+		s.sink.set("change_convergence_seconds_median", round2(durationPercentile(s.routedDurations, 50).Seconds()))
+		s.sink.set("change_convergence_seconds_p95", round2(durationPercentile(s.routedDurations, 95).Seconds()))
+		s.sink.set("change_marker_seconds_median", round2(durationPercentile(s.markerDurations, 50).Seconds()))
+		s.sink.set("change_marker_seconds_p95", round2(durationPercentile(s.markerDurations, 95).Seconds()))
+		t.Logf("latency sample %d: create->deployed %s, create->routed %s",
+			k, markerDur.Round(time.Millisecond), routedDur.Round(time.Millisecond))
+	}
+	return ctx
+}
+
+func (s *scaleScenario) collectMetrics(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+	t.Helper()
+	changeMedian := durationPercentile(s.routedDurations, 50)
+	changeP95 := durationPercentile(s.routedDurations, 95)
+
+	// Final rendered-config shape, straight from the HAProxyCfg CR.
+	// Each measurement lands in the sink the moment it exists, so a
+	// Fatal on a later step still preserves the earlier ones.
+	cfgName := HAProxyConfigName + "-haproxycfg"
+	obj, err := s.hc.HaproxyTemplateICV1alpha1().HAProxyCfgs(ControllerNamespace).Get(ctx, cfgName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get HAProxyCfg: %v", err)
+	}
+	content, err := haproxyCfgContent(obj)
+	if err != nil {
+		t.Fatalf("decode HAProxyCfg content: %v", err)
+	}
+	configLines := strings.Count(content, "\n") + 1
+	s.sink.set("config_lines", configLines)
+	s.sink.set("config_bytes", len(content))
+	s.sink.set("haproxycfg_spec_content_bytes", len(obj.Spec.Content))
+	s.sink.set("compression_engaged", obj.Spec.Compressed)
+
+	threshold := compressionThreshold(ctx, t, s.hc)
+	s.sink.set("compression_threshold_bytes", threshold)
+
+	// Keep the established working-set budget and record kubelet RSS separately.
+	workingSet, rss, cpuAfter := controllerResourceUsage(ctx, t, s.cs)
+	cpuWindowEnd := time.Now()
+	s.sink.set("controller_rss_bytes", workingSet)
+	s.sink.set("controller_memory_rss_bytes", rss)
+
+	// Reload + duration counters from the controller's /metrics.
+	reloadsAfter := snapshotReloadCounters(ctx, t, s.cs)
+	reloadDelta := reloadCounterDelta(s.reloadsBefore, reloadsAfter)
+	s.sink.set("haproxy_reloads_total_delta", reloadDelta)
+	cpuDelta, err := controllerCPUSecondsDelta(s.cpuBefore, cpuAfter)
+	if err != nil {
+		t.Fatalf("measure controller CPU: %v", err)
+	}
+	s.sink.set("controller_container_cpu_seconds_delta", round2(cpuDelta))
+	s.sink.set("controller_cpu_sampling_window_seconds", round2(cpuWindowEnd.Sub(s.cpuWindowStart).Seconds()))
+	for key, metric := range map[string]string{
+		"reconciliation_duration_seconds_avg":  "haptic_reconciliation_duration_seconds",
+		"deployment_duration_seconds_avg":      "haptic_deployment_duration_seconds",
+		"webhook_request_duration_seconds_avg": "haptic_webhook_request_duration_seconds",
+	} {
+		if avg, ok := controllerHistogramAvg(ctx, s.cs, metric); ok {
+			s.sink.set(key, round2(avg))
+		}
+	}
+	if err := verifyControllerBinary(ctx, s.cs, controllerRuntimeIdentities(cpuAfter)); err != nil {
+		t.Fatalf("verify measured controller binary: %v", err)
+	}
+	s.sink.set("controller_identity_verified", true)
+
+	path, _, err := s.sink.flush()
+	if err != nil {
+		t.Fatalf("write scale metrics: %v", err)
+	}
+	t.Logf("scale metrics written to %s", path)
+	t.Logf("scale metrics: %d config lines, %d B uncompressed (compressed=%v, threshold=%d B), "+
+		"seed=%s, change median=%s p95=%s, controller workingSet=%d MiB, reloads=%.0f",
+		configLines, len(content), obj.Spec.Compressed, threshold,
+		s.seedDuration.Round(time.Second), changeMedian.Round(time.Millisecond),
+		changeP95.Round(time.Millisecond), workingSet/(1<<20), reloadDelta)
+
+	// ── Budget assertions (metrics JSON is already on disk, so a
+	// failing budget still ships full artifacts). ──
+	if s.seedDuration > s.budgetSeed {
+		t.Errorf("BUDGET: seed->converged %s exceeds %s (%s to relax)",
+			s.seedDuration.Round(time.Second), s.budgetSeed, scaleBudgetSeedEnv)
+	}
+	if changeP95 > s.budgetChangeP95 {
+		t.Errorf("BUDGET: single-change convergence p95 %s exceeds %s at full scale (%s to relax)",
+			changeP95.Round(time.Millisecond), s.budgetChangeP95, scaleBudgetChangeP95Env)
+	}
+	if workingSet > uint64(s.budgetRSS) {
+		t.Errorf("BUDGET: controller workingSet %d bytes exceeds %d (%s to relax)",
+			workingSet, s.budgetRSS, scaleBudgetRSSEnv)
+	}
+	// Compression invariant: engaged iff the rendered content is over
+	// the threshold. (The publisher also skips compression when it
+	// wouldn't shrink the payload; for haproxy.cfg text zstd always
+	// shrinks by >80%, so the iff holds.)
+	if wantCompressed := int64(len(content)) > threshold; obj.Spec.Compressed != wantCompressed {
+		t.Errorf("compression invariant violated: content %d B vs threshold %d B, want compressed=%v got %v",
+			len(content), threshold, wantCompressed, obj.Spec.Compressed)
+	}
+	return ctx
 }
