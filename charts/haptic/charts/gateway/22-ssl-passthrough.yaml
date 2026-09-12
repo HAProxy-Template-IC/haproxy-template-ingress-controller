@@ -104,16 +104,16 @@ templateSnippets:
               // Aggregate effective SNIs across every accepted (parentRef,
               // listener) pair for this rule, deduped per rule.
               var snisForRule = map[string]bool{}
-            %%}
-            {%%
-              // sniMeta carries per-SNI listener-frontend metadata
-              // (port, mode, hostname, Gateway identity) that the new
-              // frontends-600-gateway-tls-listener consumer needs to
-              // emit one mode-tcp frontend per port. The map dedupes
-              // by SNI within a route, mirroring the previous
-              // `snisForRule` set behaviour — first listener that
-              // claims a given SNI wins.
-              var sniMeta = map[string]any{}
+              var fixed = func(value int) string {
+                var encoded = tostring(value)
+                var zeroes = "0000000000"
+                if len(encoded) >= len(zeroes) { return encoded }
+                return zeroes[:len(zeroes)-len(encoded)] + encoded
+              }
+              // One leg per (SNI, listener port): the per-port frontends each
+              // need their own entry, and a listener's mode decides the leg's
+              // backend. The first listener claiming a (SNI, port) wins.
+              var legs = map[string]any{}
             %%}
             {%- for _, parentRef := range route.Spec.ParentRefs %}
               {%%
@@ -244,15 +244,11 @@ templateSnippets:
                   {%- if inter != "" %}
                     {%- snisForRule[inter] = true %}
                     {%%
-                      // First listener to claim this SNI wins for the
-                      // listener-frontend metadata (matches the existing
-                      // snisForRule set behaviour). Subsequent listeners
-                      // contributing the same SNI to the same route
-                      // route to the same backend; per-port routing is
-                      // homogeneous within a route.
-                      _, alreadySeen := sniMeta[inter]
+                      var legKey = inter + "\x00" + fixed(lPort)
+                      _, alreadySeen := legs[legKey]
                       if !alreadySeen {
-                        sniMeta[inter] = map[string]any{
+                        legs[legKey] = map[string]any{
+                          "sni":               inter,
                           "port":              lPort,
                           "mode":              lMode,
                           "listener_hostname": lHost,
@@ -266,47 +262,51 @@ templateSnippets:
               {%- end %}
             {%- end %}
 
-            {#- Emit one entry per intersected SNI; backend dedup happens
-                downstream in backends-501-gateway-ssl-passthrough. -#}
+            {#- Emit one entry per leg; backend dedup happens downstream in
+                backends-501-gateway-ssl-passthrough. A rule attached to
+                listeners of both modes gets one backend per mode, since only
+                the Terminate leg may re-encrypt through a BackendTLSPolicy. -#}
             {%%
               var beName = "gtw_tls_" + nsStr + "_" + nameStr + "_" + tostring(ruleIdx)
-              var fixed = func(value int) string {
-                var encoded = tostring(value)
-                var zeroes = "0000000000"
-                if len(encoded) >= len(zeroes) { return encoded }
-                return zeroes[:len(zeroes)-len(encoded)] + encoded
-              }
-            %%}
-            {%%
-              // Dump the SNI set into a slice so we iterate over a known
-              // shape; ranging over `map[string]bool` was producing
-              // surprising loop-variable behaviour in Scriggo.
               var sniSlice = []any{}
               for k, _ := range snisForRule {
                 sniSlice = append(sniSlice, k)
               }
+              var legKeys = []any{}
+              var modes = map[string]bool{}
+              for k, legAny := range legs {
+                legKeys = append(legKeys, k)
+                modes[tostring(legAny.(map[string]any)["mode"])] = true
+              }
+              var split = modes["Terminate"] && modes["Passthrough"]
+              var backendNameFor = func(mode string) string {
+                if !split { return beName }
+                if mode == "Terminate" { return beName + "_terminate" }
+                return beName + "_passthrough"
+              }
               if len(sniSlice) > 0 {
                 var definitionKey = "1/tls/" + nsStr + "/" + route.Metadata.Name + "/" + fixed(ruleIdx)
                 var sortedSNIs = sort_strings(sniSlice)
-                // Any Terminate listener marks the rule's backend for re-encryption: a mixed
-                // rule then fails its Passthrough leg closed instead of sending plaintext.
-                var terminate = false
-                for _, metaAny := range sniMeta {
-                  if tostring(metaAny.(map[string]any)["mode"]) == "Terminate" { terminate = true }
+                var backends = []any{}
+                if modes["Passthrough"] {
+                  backends = append(backends, map[string]any{"name": backendNameFor("Passthrough"), "terminate": false})
+                }
+                if modes["Terminate"] {
+                  backends = append(backends, map[string]any{"name": backendNameFor("Terminate"), "terminate": true})
                 }
                 show shared.Publish("definitions", definitionKey, map[string]any{
-                  "name": beName,
                   "invalid": !ruleResolved,
-                  "terminate": terminate,
                   "rank": definitionKey + "/" + sortedSNIs[0],
+                  "backends": backends,
                 })
               }
             %%}
-            {%- for _, sniVal := range sniSlice %}
+            {%- for _, legKeyAny := range sort_strings(legKeys) %}
               {%%
+                var leg = legs[tostring(legKeyAny)].(map[string]any)
                 var entry = map[string]any{}
-                entry["name"] = beName
-                entry["sni"] = sniVal
+                entry["name"] = backendNameFor(tostring(leg["mode"]))
+                entry["sni"] = leg["sni"]
                 entry["namespace"] = nsStr
                 // Re-derive the route name on the spot — `nameStr` from
                 // the enclosing scope was being clobbered by an inner
@@ -314,22 +314,14 @@ templateSnippets:
                 entry["route"] = route.Metadata.Name
                 entry["route_type"] = "tlsroute"
                 entry["rule_idx"] = ruleIdx
-                // Listener-frontend metadata for the new
-                // frontends-600-gateway-tls-listener consumer. The
-                // existing ssl-tcp consumer ignores these fields. We
-                // copy from sniMeta (built inside the listener loop
-                // where lPort/lMode/lHost were in scope) rather than
-                // referencing those vars here — they're out of scope
-                // by now, and Scriggo loop-var leakage is unreliable.
-                var meta = sniMeta[tostring(sniVal)].(map[string]any)
-                entry["port"] = meta["port"]
-                entry["mode"] = meta["mode"]
-                entry["gw_namespace"] = meta["gw_namespace"]
-                entry["gw_name"] = meta["gw_name"]
-                entry["listener_hostname"] = meta["listener_hostname"]
+                entry["port"] = leg["port"]
+                entry["mode"] = leg["mode"]
+                entry["gw_namespace"] = leg["gw_namespace"]
+                entry["gw_name"] = leg["gw_name"]
+                entry["listener_hostname"] = leg["listener_hostname"]
                 entry["invalid"] = !ruleResolved
                 show shared.Publish("backends", "1/tls/" + nsStr + "/" + route.Metadata.Name + "/" +
-                  fixed(ruleIdx) + "/" + tostring(sniVal), entry)
+                  fixed(ruleIdx) + "/" + tostring(leg["sni"]) + "/" + fixed(toint(leg["port"])), entry)
               %%}
             {%- end %}
           {%- end %}
