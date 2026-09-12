@@ -357,6 +357,9 @@ func newGatewaySSLPassthroughBackendDependencyFixture(
 			gatewaySSLPassthroughHTTPBackendComponent,
 			"backenditems-501-gateway-ssl-passthrough-tls",
 			"backends-501-gateway-ssl-passthrough",
+			"util-resolve-backend-tls", "util-gateway-backend-bindings",
+			"util-gateway-tls-backend-bindings", "util-replay-gateway-backend-effects",
+			"backendtlsvalues-490-gateway",
 		},
 	})
 	snippets[gatewaySSLPassthroughHTTPDependencyComponent] = config.TemplateSnippet{
@@ -381,13 +384,16 @@ func newGatewaySSLPassthroughBackendDependencyFixture(
 	cfg := &config.Config{
 		Dataplane: testDataplaneConfig(),
 		WatchedResources: map[string]config.WatchedResource{
-			"gateways":        {APIVersion: "gateway.networking.k8s.io/v1", Resources: "gateways", IndexBy: []string{"metadata.namespace", "metadata.name"}},
-			"httproutes":      {APIVersion: "gateway.networking.k8s.io/v1", Resources: "httproutes", IndexBy: []string{"metadata.namespace", "metadata.name"}},
-			"tlsroutes":       {APIVersion: "gateway.networking.k8s.io/v1", Resources: "tlsroutes", IndexBy: []string{"metadata.namespace", "metadata.name"}},
-			"namespaces":      {APIVersion: "v1", Resources: "namespaces", IndexBy: []string{"metadata.name"}},
-			"referencegrants": {APIVersion: "gateway.networking.k8s.io/v1", Resources: "referencegrants", IndexBy: []string{"metadata.namespace", "metadata.name"}},
-			"services":        {APIVersion: "v1", Resources: "services", IndexBy: []string{"metadata.namespace", "metadata.name"}},
-			"endpoints":       {APIVersion: "discovery.k8s.io/v1", Resources: "endpointslices", IndexBy: []string{"metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"}},
+			"gateways":           {APIVersion: "gateway.networking.k8s.io/v1", Resources: "gateways", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"httproutes":         {APIVersion: "gateway.networking.k8s.io/v1", Resources: "httproutes", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"tlsroutes":          {APIVersion: "gateway.networking.k8s.io/v1", Resources: "tlsroutes", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"namespaces":         {APIVersion: "v1", Resources: "namespaces", IndexBy: []string{"metadata.name"}},
+			"referencegrants":    {APIVersion: "gateway.networking.k8s.io/v1", Resources: "referencegrants", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"services":           {APIVersion: "v1", Resources: "services", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"endpoints":          {APIVersion: "discovery.k8s.io/v1", Resources: "endpointslices", IndexBy: []string{"metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"}},
+			"configmaps":         {APIVersion: "v1", Resources: "configmaps", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"secrets":            {APIVersion: "v1", Resources: "secrets", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"backendtlspolicies": {APIVersion: "gateway.networking.k8s.io/v1", Resources: "backendtlspolicies", IndexBy: []string{"metadata.namespace", "metadata.name"}},
 		},
 		TemplateSnippets: snippets,
 		HAProxyConfig: config.HAProxyConfig{
@@ -412,7 +418,8 @@ func newGatewaySSLPassthroughBackendDependencyFixture(
 		"gateways": k8sstore.NewMemoryStore(2), "httproutes": fixture.httpRoutes,
 		"tlsroutes": fixture.tlsRoutes, "namespaces": k8sstore.NewMemoryStore(1),
 		"referencegrants": k8sstore.NewMemoryStore(2), "services": fixture.services,
-		"endpoints": fixture.endpoints,
+		"endpoints": fixture.endpoints, "configmaps": k8sstore.NewMemoryStore(2),
+		"secrets": k8sstore.NewMemoryStore(2), "backendtlspolicies": k8sstore.NewMemoryStore(2),
 	})
 	return fixture
 }
@@ -423,6 +430,10 @@ func gatewaySSLPassthroughBackendDependencyTypes(t *testing.T) *typebootstrap.Re
 	backendTypes := gatewayBackendSchemaTypes(t)
 	types.Types["endpoints"] = backendTypes.Types["endpoints"]
 	types.Kinds["endpoints"] = backendTypes.Kinds["endpoints"]
+	for _, name := range []string{"configmaps", "secrets", "backendtlspolicies"} {
+		types.Types[name] = backendTypes.Types[name]
+		types.Kinds[name] = backendTypes.Kinds[name]
+	}
 	return types
 }
 

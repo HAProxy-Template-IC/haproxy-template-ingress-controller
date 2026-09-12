@@ -30,8 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Helm chart
 
+#### Added
+
+- `RequestRedirect` and `URLRewrite` filters on HTTPRoute `backendRefs` apply per backend; a rule-level filter of the same type takes precedence.
+
 #### Fixed
 
+- Gateway names longer than 63 bytes no longer stall status publication for every Gateway: the per-Gateway Service label and the derived certificate file names are hash-bounded to their limits.
+- BackendTLSPolicy status lists the Gateways of consuming GRPCRoutes and TLSRoutes, not only HTTPRoutes, and matches consumers by the backendRef namespace.
+- BackendTLSPolicy applies to GRPCRoute backends targeted by port name and re-encrypts Terminate-listener TLSRoute backends; TLS h2 backends negotiate `alpn h2`.
+- The fail-closed 503 for a BackendTLSPolicy without a resolvable CA is emitted after the backend's other request rules, removing HAProxy's dead-rule warning.
 - Routes without plaintext listeners no longer generate an unbound HTTP TCP frontend; internal HTTP routing and validation remain enabled.
 - Varnish uses a writable memory-backed workdir for shared logs, statistics, and compiled VCL without adding container capabilities.
 

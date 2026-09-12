@@ -288,9 +288,16 @@ templateSnippets:
               if len(sniSlice) > 0 {
                 var definitionKey = "1/tls/" + nsStr + "/" + route.Metadata.Name + "/" + fixed(ruleIdx)
                 var sortedSNIs = sort_strings(sniSlice)
+                // Any Terminate listener marks the rule's backend for re-encryption: a mixed
+                // rule then fails its Passthrough leg closed instead of sending plaintext.
+                var terminate = false
+                for _, metaAny := range sniMeta {
+                  if tostring(metaAny.(map[string]any)["mode"]) == "Terminate" { terminate = true }
+                }
                 show shared.Publish("definitions", definitionKey, map[string]any{
                   "name": beName,
                   "invalid": !ruleResolved,
+                  "terminate": terminate,
                   "rank": definitionKey + "/" + sortedSNIs[0],
                 })
               }

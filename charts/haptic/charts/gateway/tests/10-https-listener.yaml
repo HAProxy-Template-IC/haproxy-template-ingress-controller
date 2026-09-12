@@ -1,4 +1,12 @@
 _fx:
+  secretsTlsChecksClientCertificate: &secretsTlsChecksClientCertificate
+    - apiVersion: v1
+      kind: Secret
+      metadata: {name: tls-checks-client-certificate, namespace: gateway-conformance-infra}
+      type: kubernetes.io/tls
+      data:
+        tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+        tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
   dataCaCrtBeginCertificate: &dataCaCrtBeginCertificate
     ca.crt: |
       -----BEGIN CERTIFICATE-----
@@ -363,6 +371,8 @@ validationTests:
       - type: haproxy_valid
 
       - {type: contains, target: haproxy.cfg, pattern: "http-request return status 503"}
+      # Emitted last: a final action before the set-timeout rule would make it a warned-about NOOP.
+      - {type: contains, target: haproxy.cfg, pattern: '(?s)http-request set-timeout server var\(txn\.gw_rule_id\).*?http-request return status 503'}
 
       - {type: not_contains, target: haproxy.cfg, pattern: "default-server check ssl ca-file"}
 
@@ -602,14 +612,7 @@ validationTests:
           kind: ConfigMap
           metadata: {name: tls-checks-ca-certificate, namespace: gateway-conformance-infra}
           data: *dataCaCrtBeginCertificate
-      secrets:
-        - apiVersion: v1
-          kind: Secret
-          metadata: {name: tls-checks-client-certificate, namespace: gateway-conformance-infra}
-          type: kubernetes.io/tls
-          data:
-            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
-            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+      secrets: *secretsTlsChecksClientCertificate
     assertions:
       - type: haproxy_valid
 
@@ -660,3 +663,47 @@ validationTests:
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'default_dual-rsa-gw\.pem \[ocsp-update on\] dual\.example\.com'
+
+  test-gateway-backend-client-cert-file-name-bounded-for-maximum-length-gateway-name:
+    requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [gateways.spec.tls.backend]
+    description: "A 253-byte Gateway name yields a backend client-certificate file name within the 255-byte file-name limit, hash-suffixed, and the backend still references it."
+    fixtures:
+      secrets: *secretsTlsChecksClientCertificate
+      gatewayclasses: *gatewayclassesGatewayclass2
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway-name-maximum-length-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, namespace: gateway-conformance-infra, generation: 1}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, protocol: HTTP, allowedRoutes: {namespaces: {from: Same}}}
+            tls:
+              backend: {clientCertificateRef: {group: "", kind: Secret, name: tls-checks-client-certificate}}
+      namespaces: *namespacesNamespace
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: long-gateway-client-cert, namespace: gateway-conformance-infra}
+          spec:
+            parentRefs:
+              - {name: gateway-name-maximum-length-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, namespace: gateway-conformance-infra}
+            hostnames:
+              - abc.example.com
+            rules:
+              - backendRefs:
+                  - {group: "", kind: Service, name: tls-backend-with-client-cert-validation, port: 443}
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: tls-backend-with-client-cert-validation, namespace: gateway-conformance-infra}
+          spec:
+            ports:
+              - {name: https, protocol: TCP, port: 443, targetPort: 8443}
+    assertions:
+      - type: haproxy_valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'crt gw-clientcert-gateway-conformance-infra-gateway-name-maximum-length-aaa+-24feb40a\.pem'

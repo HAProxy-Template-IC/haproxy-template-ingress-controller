@@ -1,4 +1,69 @@
 templateSnippets:
+  util-resolve-backend-tls:
+    template: |-
+      {#- The winning BackendTLSPolicy for a Service port. The caller registers caBundle
+          under caFilename; found with neither a bundle nor systemCA means the policy is
+          unresolvable and the backend must fail closed, never fall back to plaintext. -#}
+      {%- var ResolveBackendTLS = func(backendNs string, backendName string, backendPort int) map[string]any {
+        var result = map[string]any{
+          "found": false, "hostname": "", "verifyHost": "", "caFilename": "", "caBundle": "", "systemCA": false,
+        }
+        var portName = ""
+        var service = resources.services.GetSingle(backendNs, backendName)
+        if service != nil {
+          for _, p := range service.Spec.Ports {
+            if toint(p.Port) == backendPort { portName = p.Name }
+          }
+        }
+        var policy, _ = shared.Select("gateway-backend-tls-policies", "targets",
+          backendNs + "\x00" + backendName + "\x00" + portName)
+        if policy == nil { return result }
+        result["found"] = true
+        var validation any = dig(policy, "validation")
+        var hostname = dig_string(validation, "", "hostname")
+        result["hostname"] = hostname
+        // verifyhost takes the first Hostname SAN if any, else hostname: HAProxy's
+        // verifyhost is single-valued. hostname keeps driving SNI.
+        var verifyHost = hostname
+        for _, san := range dig(validation, "subjectAltNames") | toSlice() {
+          if dig_string(san, "", "type") == "Hostname" && dig_string(san, "", "hostname") != "" {
+            verifyHost = dig_string(san, "", "hostname")
+            break
+          }
+        }
+        result["verifyHost"] = verifyHost
+        var caBundleParts = []any{}
+        for _, ref := range dig(validation, "caCertificateRefs") | toSlice() {
+          var refGroup = dig_string(ref, "", "group")
+          var refKind = dig_string(ref, "", "kind")
+          var refName = dig_string(ref, "", "name")
+          if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
+            var cm = resources.configmaps.GetSingle(backendNs, refName)
+            if cm != nil && cm.Data["ca.crt"] != "" {
+              caBundleParts = append(caBundleParts, cm.Data["ca.crt"])
+            }
+          } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
+            var sec = resources.secrets.GetSingle(backendNs, refName)
+            if sec != nil {
+              var dataMap = sec.Data
+              var b64, ok = dataMap["ca.crt"]
+              if !ok || b64 == "" { b64, _ = dataMap["tls.crt"] }
+              if b64 != "" {
+                var decoded, decodeErr = b64decode(b64)
+                if decodeErr == nil { caBundleParts = append(caBundleParts, decoded) }
+              }
+            }
+          }
+        }
+        if len(caBundleParts) > 0 {
+          result["caFilename"] = "btls-" + backendNs + "-" + dig_string(policy, "", "name") + ".crt"
+          result["caBundle"] = join(caBundleParts, "\n")
+        } else if dig_string(validation, "", "wellKnownCACertificates") == "System" {
+          result["systemCA"] = true
+        }
+        return result
+      } -%}
+
   util-generate-httproute-backends-gateway:
     requires: [gateways, httproutes, referencegrants]
     template: |
@@ -6,6 +71,8 @@ templateSnippets:
       {%- import "util-backend-servers-result" for BackendServersResult -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
+      {%- import "util-bounded-name" for BoundedName -%}
+      {%- import "util-resolve-backend-tls" for ResolveBackendTLS -%}
       {%- macro GenerateHTTPRouteBackends(routes []any, dedupCategory string) -%}
       {%- for _, route := range routes -%}
       {%- var routeNs = dig_string(route, "", "metadata", "namespace") -%}
@@ -70,90 +137,21 @@ templateSnippets:
       {%- var btlsBroken = false -%}
       {%- var gwClientCertPath = "" -%}
       {%%
-        var portNameForBackend = ""
-        if protoFlag == "" {
-          var svcLookup = resources.services.GetSingle(tostring(backendNs), tostring(backendName))
-          if svcLookup != nil {
-            for _, p := range svcLookup.Spec.Ports {
-              if toint(p.Port) == toint(backendPort) {
-                portNameForBackend = p.Name
-              }
-            }
-          }
+        var btls = ResolveBackendTLS(tostring(backendNs), tostring(backendName), toint(backendPort))
+        btlsHostname = tostring(btls["hostname"])
+        btlsVerifyHost = tostring(btls["verifyHost"])
+        if tostring(btls["caBundle"]) != "" {
+          // Type "ca-file" (not "file"): same path, but a content-only
+          // rotation then applies via the runtime API, no reload on 3.2+.
+          var resolvedPath, fileErr = RegisterBackendFile("ca-file",
+            tostring(btls["caFilename"]), tostring(btls["caBundle"]))
+          if fileErr == nil { btlsCaPath = resolvedPath }
+        } else if btls["systemCA"] == true {
+          btlsCaPath = "@system-ca"
         }
-        var policyTarget = tostring(backendNs) + "\x00" + tostring(backendName) + "\x00" + portNameForBackend
-        var winningPolicy, _ = shared.Select("gateway-backend-tls-policies", "targets", policyTarget)
-        if winningPolicy != nil {
-          var validation any = dig(winningPolicy, "validation")
-          btlsHostname = dig_string(validation, "", "hostname")
-          // verifyhost takes the FIRST Hostname SAN if any, else hostname
-          // (HAProxy verifyhost is single-valued; SAN OR-lists / URI SANs
-          // have no equivalent). hostname keeps driving SNI.
-          btlsVerifyHost = dig_string(validation, "", "hostname")
-          for _, san := range dig(validation, "subjectAltNames") | toSlice() {
-            if dig_string(san, "", "type") == "Hostname" && dig_string(san, "", "hostname") != "" {
-              btlsVerifyHost = dig_string(san, "", "hostname")
-              break
-            }
-          }
-          var caBundleParts = []any{}
-          for _, ref := range dig(validation, "caCertificateRefs") | toSlice() {
-            var refGroup = dig_string(ref, "", "group")
-            var refKind = dig_string(ref, "", "kind")
-            var refName = dig_string(ref, "", "name")
-              if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
-                var cm = resources.configmaps.GetSingle(tostring(backendNs), refName)
-                if cm != nil {
-                  var caCrt = cm.Data["ca.crt"]
-                  if caCrt != "" {
-                    caBundleParts = append(caBundleParts, caCrt)
-                  }
-                }
-              } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
-                var sec = resources.secrets.GetSingle(tostring(backendNs), refName)
-                if sec != nil {
-                  // sec.Data is map[string]string (typegen); a
-                  // .(map[string]any) assertion panics on it.
-                  var dataMap = sec.Data
-                  var caCrt, ok = dataMap["ca.crt"]
-                  var b64 = ""
-                  if ok && caCrt != "" {
-                    b64 = caCrt
-                  } else {
-                    var tlsCrt, ok2 = dataMap["tls.crt"]
-                    if ok2 && tlsCrt != "" {
-                      b64 = tlsCrt
-                    }
-                  }
-                  if b64 != "" {
-                    var decoded, decodeErr = b64decode(b64)
-                    if decodeErr == nil {
-                      caBundleParts = append(caBundleParts, decoded)
-                    }
-                  }
-                }
-              }
-            }
-          var wkca = dig_string(validation, "", "wellKnownCACertificates")
-          if len(caBundleParts) > 0 {
-            var caBundle = join(caBundleParts, "\n")
-            var policyName = dig_string(winningPolicy, "", "name")
-            var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
-            // Type "ca-file" (not "file"): same path, but a content-only
-            // rotation then applies via the runtime API, no reload on 3.2+.
-            var resolvedPath, fileErr = RegisterBackendFile("ca-file", caFilename, caBundle)
-            if fileErr == nil {
-              btlsCaPath = resolvedPath
-            }
-          } else if wkca == "System" {
-            btlsCaPath = "@system-ca"
-          }
-          // An unresolvable CA makes the policy invalid: fail closed (503
-          // below), never downgrade the backend connection to plaintext.
-          if btlsCaPath == "" {
-            btlsBroken = true
-          }
-        }
+        // An unresolvable CA makes the policy invalid: fail closed (503
+        // below), never downgrade the backend connection to plaintext.
+        btlsBroken = btls["found"] == true && btlsCaPath == ""
         for _, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
           if gwClientCertPath != "" {
             break
@@ -202,7 +200,7 @@ templateSnippets:
             continue
           }
           var combined = crtPem + "\n" + keyPem
-          var fname = "gw-clientcert-" + gwNs + "-" + gwName + ".pem"
+          var fname = BoundedName("gw-clientcert-" + gwNs + "-" + gwName, 251) + ".pem"
           // Type "cert" lands the file under ssl/, and HAProxy's
           // `crt-base ssl` prepends ssl/ again — so emit the bare filename,
           // not the path fileRegistry returns.
@@ -242,6 +240,9 @@ templateSnippets:
             dsFlags = append(dsFlags, "verifyhost " + btlsVerifyHost)
           }
         }
+        if resolvedProtoFlag == "h2" && (btlsCaPath != "" || gwClientCertPath != "") {
+          dsFlags = append(dsFlags, "alpn h2")
+        }
         if gwClientCertPath != "" {
           dsFlags = append(dsFlags, "crt " + gwClientCertPath)
         }
@@ -254,13 +255,6 @@ templateSnippets:
         var defaultServer = []any{map[string]any{"name": "check"}}
         for _, kw := range FlagsToKeywordArgs(dsFlags) {
           defaultServer = append(defaultServer, kw)
-        }
-
-        if btlsBroken {
-          profile = append(profile,
-            "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
-            "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
-            "http-request return status 503")
         }
 
         // Rule-level retry (GEP-1731). `retries`/`retry-on` are not conditional
@@ -350,6 +344,14 @@ templateSnippets:
         var toMap = FilePath("map", "gw-timeout.map")
         profile = append(profile, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
           tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
+        // Last: an unconditional final action makes every later http-request rule a
+        // warned-about NOOP.
+        if btlsBroken {
+          profile = append(profile,
+            "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
+            "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
+            "http-request return status 503")
+        }
       %%}
       {%- var serverResult = BackendServersResult(backendName, 0, backendPort, nil, nil, beKey, backendNs) -%}
       {{- shared.Publish("owners", beKey, map[string]any{"backend": beKey}) -}}
@@ -385,6 +387,8 @@ templateSnippets:
       {%- import "util-backend-servers-result" for BackendServersResult -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
+      {%- import "util-bounded-name" for BoundedName -%}
+      {%- import "util-resolve-backend-tls" for ResolveBackendTLS -%}
       {%- macro GenerateGRPCRouteBackends(routes []*resources.grpcroutes.T, dedupCategory string) -%}
       {%- for _, route := range routes -%}
       {%- var routeNs = route.Metadata.Namespace -%}
@@ -437,80 +441,21 @@ templateSnippets:
         var gwClientCertPath = ""
       %%}
       {%%
-        var portNameForBackend = ""
-        var policyTarget = tostring(backendNs) + "\x00" + tostring(backendName) + "\x00" + portNameForBackend
-        var winningPolicy, _ = shared.Select("gateway-backend-tls-policies", "targets", policyTarget)
-        if winningPolicy != nil {
-          var validation any = dig(winningPolicy, "validation")
-          btlsHostname = dig_string(validation, "", "hostname")
-          // verifyhost takes the FIRST Hostname SAN if any, else hostname
-          // (HAProxy verifyhost is single-valued; SAN OR-lists / URI SANs
-          // have no equivalent). hostname keeps driving SNI.
-          btlsVerifyHost = dig_string(validation, "", "hostname")
-          for _, san := range dig(validation, "subjectAltNames") | toSlice() {
-            if dig_string(san, "", "type") == "Hostname" && dig_string(san, "", "hostname") != "" {
-              btlsVerifyHost = dig_string(san, "", "hostname")
-              break
-            }
-          }
-          var caBundleParts = []any{}
-          for _, ref := range dig(validation, "caCertificateRefs") | toSlice() {
-            var refGroup = dig_string(ref, "", "group")
-            var refKind = dig_string(ref, "", "kind")
-            var refName = dig_string(ref, "", "name")
-              if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
-                var cm = resources.configmaps.GetSingle(tostring(backendNs), refName)
-                if cm != nil {
-                  var caCrt = cm.Data["ca.crt"]
-                  if caCrt != "" {
-                    caBundleParts = append(caBundleParts, caCrt)
-                  }
-                }
-              } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
-                var sec = resources.secrets.GetSingle(tostring(backendNs), refName)
-                if sec != nil {
-                  // sec.Data is map[string]string (typegen); a
-                  // .(map[string]any) assertion panics on it.
-                  var dataMap = sec.Data
-                  var caCrt, ok = dataMap["ca.crt"]
-                  var b64 = ""
-                  if ok && caCrt != "" {
-                    b64 = caCrt
-                  } else {
-                    var tlsCrt, ok2 = dataMap["tls.crt"]
-                    if ok2 && tlsCrt != "" {
-                      b64 = tlsCrt
-                    }
-                  }
-                  if b64 != "" {
-                    var decoded, decodeErr = b64decode(b64)
-                    if decodeErr == nil {
-                      caBundleParts = append(caBundleParts, decoded)
-                    }
-                  }
-                }
-              }
-            }
-          var wkca = dig_string(validation, "", "wellKnownCACertificates")
-          if len(caBundleParts) > 0 {
-            var caBundle = join(caBundleParts, "\n")
-            var policyName = dig_string(winningPolicy, "", "name")
-            var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
-            // Type "ca-file" (not "file"): same path, but a content-only
-            // rotation then applies via the runtime API, no reload on 3.2+.
-            var resolvedPath, fileErr = RegisterBackendFile("ca-file", caFilename, caBundle)
-            if fileErr == nil {
-              btlsCaPath = resolvedPath
-            }
-          } else if wkca == "System" {
-            btlsCaPath = "@system-ca"
-          }
-          // An unresolvable CA makes the policy invalid: fail closed (503
-          // below), never downgrade the backend connection to plaintext.
-          if btlsCaPath == "" {
-            btlsBroken = true
-          }
+        var btls = ResolveBackendTLS(tostring(backendNs), tostring(backendName), toint(backendPort))
+        btlsHostname = tostring(btls["hostname"])
+        btlsVerifyHost = tostring(btls["verifyHost"])
+        if tostring(btls["caBundle"]) != "" {
+          // Type "ca-file" (not "file"): same path, but a content-only
+          // rotation then applies via the runtime API, no reload on 3.2+.
+          var resolvedPath, fileErr = RegisterBackendFile("ca-file",
+            tostring(btls["caFilename"]), tostring(btls["caBundle"]))
+          if fileErr == nil { btlsCaPath = resolvedPath }
+        } else if btls["systemCA"] == true {
+          btlsCaPath = "@system-ca"
         }
+        // An unresolvable CA makes the policy invalid: fail closed (503
+        // below), never downgrade the backend connection to plaintext.
+        btlsBroken = btls["found"] == true && btlsCaPath == ""
         for _, parentRef := range route.Spec.ParentRefs {
           if gwClientCertPath != "" {
             break
@@ -559,7 +504,7 @@ templateSnippets:
             continue
           }
           var combined = crtPem + "\n" + keyPem
-          var fname = "gw-clientcert-" + gwNs + "-" + gwName + ".pem"
+          var fname = BoundedName("gw-clientcert-" + gwNs + "-" + gwName, 251) + ".pem"
           // Type "cert" lands the file under ssl/, and HAProxy's
           // `crt-base ssl` prepends ssl/ again — so emit the bare filename,
           // not the path fileRegistry returns.
@@ -599,6 +544,9 @@ templateSnippets:
             dsFlags = append(dsFlags, "verifyhost " + btlsVerifyHost)
           }
         }
+        if resolvedProtoFlag == "h2" && (btlsCaPath != "" || gwClientCertPath != "") {
+          dsFlags = append(dsFlags, "alpn h2")
+        }
         if gwClientCertPath != "" {
           dsFlags = append(dsFlags, "crt " + gwClientCertPath)
         }
@@ -611,13 +559,6 @@ templateSnippets:
         var defaultServer = []any{map[string]any{"name": "check"}}
         for _, kw := range FlagsToKeywordArgs(dsFlags) {
           defaultServer = append(defaultServer, kw)
-        }
-
-        if btlsBroken {
-          profile = append(profile,
-            "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
-            "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
-            "http-request return status 503")
         }
 
         // GEP-1619 session persistence — rationale in the HTTPRoute backend
@@ -661,6 +602,14 @@ templateSnippets:
         var toMap = FilePath("map", "gw-timeout.map")
         profile = append(profile, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
           tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
+        // Last: an unconditional final action makes every later http-request rule a
+        // warned-about NOOP.
+        if btlsBroken {
+          profile = append(profile,
+            "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
+            "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
+            "http-request return status 503")
+        }
       %%}
       {%- var serverResult = BackendServersResult(backendName, 0, backendPort, nil, nil, beKey, backendNs) -%}
       {{- shared.Publish("owners", beKey, map[string]any{"backend": beKey}) -}}
@@ -765,8 +714,8 @@ templateSnippets:
 
   util-replay-gateway-backend-effects:
     template: |-
-      {% macro ReplayGatewayBackendEffects() %}
-      {%- for _, effect := range incremental_values("gateway-backends", "effects") -%}
+      {% macro ReplayGatewayBackendEffects(group string) %}
+      {%- for _, effect := range incremental_values(group, "effects") -%}
         {%- for _, file := range toSlice(effect | dig("files")) -%}
           {%- var record = file.(map[string]any) -%}
           {%- var _, registerErr = fileRegistry.Register(
@@ -811,7 +760,7 @@ templateSnippets:
     template: |
       {%- import "util-replay-gateway-backend-effects" for ReplayGatewayBackendEffects -%}
       {{- render "backendtlsvalues-490-gateway" default "" -}}
-      {{- ReplayGatewayBackendEffects() -}}
+      {{- ReplayGatewayBackendEffects("gateway-backends") -}}
       # gateway/backends-gateway
       {{ render "backenditems-500-gateway-http" }}
       {{- render "backenditems-510-gateway-grpc" -}}
@@ -963,19 +912,28 @@ templateSnippets:
         }
       %%}
 
+  util-gateway-tls-backend-bindings:
+    template: |-
+      {%- import "util-gateway-backend-bindings" for GatewayBackendProps -%}
+      {{- toJSON(map[string]any{"tlsroutes": GatewayBackendProps()}) -}}
+
   backenditems-501-gateway-ssl-passthrough-tls:
-    requires: [endpoints, services, tlsroutes]
+    requires: [configmaps, endpoints, secrets, services, tlsroutes]
     incremental:
-      source: tlsroutes
+      bindingsTemplate: '{{- render "util-gateway-tls-backend-bindings" -}}'
       group: gateway-ssl-passthrough-backend-specs
       consumes: [gateway-ssl-passthrough]
+      optionalConsumes: [gateway-backend-tls-policies]
       effects: [publishValue]
     template: |-
+      {%- import "util-backend" for FlagsToKeywordArgs -%}
       {%- import "util-backend-servers-result" for BackendServersResult -%}
+      {%- import "util-resolve-backend-tls" for ResolveBackendTLS -%}
       {%%
         var route = item
         var namespace = dig_string(route, "", "metadata", "namespace")
         var routeName = dig_string(route, "", "metadata", "name")
+        var files = []any{}
         var fixed = func(value int) string {
           var encoded = tostring(value)
           var zeroes = "0000000000"
@@ -999,12 +957,48 @@ templateSnippets:
           var rank = dig_string(definition, definitionKey, "rank")
           var servers = BackendServersResult(
             refName, 0, refPort, nil, nil, backendName, refNamespace)
+          var defaultServer = []any{map[string]any{"name": "check"}}
+          var body = []any{}
+          // A Terminate listener hands the backend plaintext, so a BackendTLSPolicy
+          // re-encrypts here; a Passthrough listener forwards the client's TLS untouched.
+          if dig(definition, "terminate") == true {
+            var btls = ResolveBackendTLS(refNamespace, refName, refPort)
+            if btls["found"] == true {
+              var caPath = ""
+              if tostring(btls["caBundle"]) != "" {
+                var caFilename = tostring(btls["caFilename"])
+                files = append(files, map[string]any{
+                  "type": "ca-file", "filename": caFilename, "content": tostring(btls["caBundle"]),
+                })
+                caPath = caFilename
+                if tostring(props["fileDir"]) != "" { caPath = tostring(props["fileDir"]) + "/" + caFilename }
+              } else if btls["systemCA"] == true {
+                caPath = "@system-ca"
+              }
+              if caPath == "" {
+                body = append(body, "tcp-request content reject")
+              } else {
+                var flags = []any{"ssl"}
+                if caPath != "@system-ca" { flags = append(flags, "ca-file " + caPath) }
+                flags = append(flags, "verify required")
+                if tostring(btls["hostname"]) != "" {
+                  flags = append(flags, "sni str(" + tostring(btls["hostname"]) + ")")
+                }
+                if tostring(btls["verifyHost"]) != "" {
+                  flags = append(flags, "verifyhost " + tostring(btls["verifyHost"]))
+                }
+                for _, kw := range FlagsToKeywordArgs(flags) { defaultServer = append(defaultServer, kw) }
+              }
+            }
+          }
           show shared.Publish("specs", rank, map[string]any{
             "backend": map[string]any{
               "name": backendName,
               "guid": make_guid("be", backendName),
               "mode": "tcp",
               "comments": []any{"# gateway/backends-gateway-ssl-passthrough (tlsroute)"},
+              "defaultServer": defaultServer,
+              "body": body,
               "servers": servers["servers"],
             },
             "degraded": map[string]any{
@@ -1015,14 +1009,20 @@ templateSnippets:
             },
           })
         }
+        if len(files) > 0 {
+          show shared.Publish("effects", "tls/" + namespace + "/" + routeName, map[string]any{"files": files})
+        }
       %%}
 
   backends-501-gateway-ssl-passthrough:
     requires: [endpoints, gateways, namespaces, referencegrants, services]
     template: |
       {%- import "util-backend" for Backend -%}
+      {%- import "util-replay-gateway-backend-effects" for ReplayGatewayBackendEffects -%}
+      {{- render "backendtlsvalues-490-gateway" default "" -}}
       {{ render_glob "gateway-ssl-passthrough-*" }}
       {{- render_glob "backenditems-501-gateway-ssl-passthrough-*" -}}
+      {{- ReplayGatewayBackendEffects("gateway-ssl-passthrough-backend-specs") -}}
       {%- for _, publicationAny := range incremental_values("gateway-ssl-passthrough-backend-specs", "specs") %}
       {%- var publication = publicationAny.(map[string]any) -%}
       {%- var degraded = publication["degraded"].(map[string]any) -%}

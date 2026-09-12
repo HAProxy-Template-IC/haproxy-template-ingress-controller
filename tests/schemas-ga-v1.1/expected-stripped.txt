@@ -14,11 +14,22 @@
 # stale entry both fail CI).
 # stripped set to match this file EXACTLY (a newly-stripped test or a
 # whose `requires` names an unserved resource and every test whose
+test-backendtlspolicy-ancestor-deduplicated-across-route-kinds
+test-backendtlspolicy-ancestor-falls-back-to-target-without-routes
+test-backendtlspolicy-ancestor-follows-backend-ref-namespace
+test-backendtlspolicy-ancestor-from-grpcroute
+test-backendtlspolicy-ancestor-from-tlsroute
 test-backendtlspolicy-compiles
+test-backendtlspolicy-grpcroute-port-name-reencrypts
 test-backendtlspolicy-invalid-ca-cert-ref-rejects
 test-backendtlspolicy-no-san-hostname-drives-both
 test-backendtlspolicy-san-hostname-drives-verifyhost
 test-backendtlspolicy-status-transition-time-preserved
+test-backendtlspolicy-tlsroute-mixed-listeners-still-reencrypt
+test-backendtlspolicy-tlsroute-passthrough-forwards-client-tls
+test-backendtlspolicy-tlsroute-terminate-reencrypts
+test-backendtlspolicy-tlsroute-terminate-unresolvable-ca-rejects
+test-gateway-backend-client-cert-file-name-bounded-for-maximum-length-gateway-name
 test-gateway-backend-client-cert-shape
 test-gateway-bind-per-gateway-shape
 test-gateway-crtlist-per-listener-shapes
@@ -31,6 +42,7 @@ test-gateway-infrastructure-propagation-labels-only
 test-gateway-infrastructure-propagation-marker-name-fits-rfc1123-label
 test-gateway-infrastructure-propagation-with-static-addresses
 test-gateway-mirror-mixed-percent-fallback
+test-gateway-name-maximum-length-labels-bounded
 test-gateway-timeout-map
 test-gateway-timeout-rejected
 test-httproute-cors-allow-through

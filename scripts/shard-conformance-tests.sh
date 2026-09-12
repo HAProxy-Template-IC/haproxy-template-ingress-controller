@@ -103,6 +103,10 @@ fi
 
 GOMODCACHE="$(go env GOMODCACHE)"
 TESTS_DIR="${GOMODCACHE}/sigs.k8s.io/gateway-api/conformance@${GW_API_CONF_VERSION}/tests"
+# Nothing built earlier in the job imports this module any more, so fetch it here.
+if [[ ! -d "$TESTS_DIR" ]]; then
+  go mod download "sigs.k8s.io/gateway-api/conformance@${GW_API_CONF_VERSION}" >&2 || true
+fi
 if [[ ! -d "$TESTS_DIR" ]]; then
   echo "error: upstream conformance tests directory not found at $TESTS_DIR" >&2
   echo "       (run \`go mod download\` to populate the cache)" >&2

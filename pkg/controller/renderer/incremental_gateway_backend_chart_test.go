@@ -48,7 +48,7 @@ const (
 const gatewayBackendChartRoot = `{%- import "util-replay-gateway-backend-effects" for ReplayGatewayBackendEffects -%}
 {{ planRegistry.ProfileGroup() }}
 {{- render "backendtlsvalues-490-gateway" default "" -}}
-{{- ReplayGatewayBackendEffects() -}}
+{{- ReplayGatewayBackendEffects("gateway-backends") -}}
 # gateway/backends-gateway
 {{ render "backenditems-500-gateway-http" }}
 {{- render "backenditems-510-gateway-grpc" -}}
@@ -506,6 +506,8 @@ func loadGatewayBackendChartSnippets(t *testing.T) map[string]config.TemplateSni
 		"util-backend-servers-result":  true, "util-backend-servers": true,
 		"util-backend-name-gateway":      true,
 		"util-reference-grant-permitted": true, "util-backend-ref-valid": true,
+		"util-bounded-name":                        true,
+		"util-resolve-backend-tls":                 true,
 		"util-generate-httproute-backends-gateway": true,
 		"util-generate-grpcroute-backends-gateway": true,
 		"backendtlsvalues-490-gateway":             true, "util-gateway-backend-bindings": true,
