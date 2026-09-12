@@ -54,8 +54,10 @@ ARCHES=(amd64 arm64 armv7)
 fetch() {
     local target="$1" url="$2" headers
     headers="$(mktemp "${WORKDIR}/headers.XXXXXX")"
+    # Idempotent GET behind cosign verification: outlast a registry that answers
+    # 409 for a single file for more than the ten seconds five retries cover (#217).
     if ! curl --fail --silent --show-error --location \
-        --retry 5 --retry-delay 2 --retry-all-errors \
+        --retry 8 --retry-delay 5 --retry-max-time 120 --retry-all-errors \
         --dump-header "${headers}" \
         --output "${target}" "${url}"; then
         echo "  ERROR: download failed: ${url}" >&2

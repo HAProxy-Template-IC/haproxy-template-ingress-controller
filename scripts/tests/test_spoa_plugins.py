@@ -143,8 +143,9 @@ class SPOAPluginPreparationTests(unittest.TestCase):
             plugin, version, _ = arguments[-1].split("/")[-3:]
             pin = "SPOA_PLUGIN_" + plugin.upper().replace("-", "_") + "_VERSION"
             self.assertEqual(version, versions[pin])
-            self.assertEqual(arguments[arguments.index("--retry") + 1], "5")
-            self.assertEqual(arguments[arguments.index("--retry-delay") + 1], "2")
+            self.assertEqual(arguments[arguments.index("--retry") + 1], "8")
+            self.assertEqual(arguments[arguments.index("--retry-delay") + 1], "5")
+            self.assertEqual(arguments[arguments.index("--retry-max-time") + 1], "120")
             self.assertIn("--retry-all-errors", arguments)
 
     def test_rejects_untrusted_or_wrong_version_signature(self):
