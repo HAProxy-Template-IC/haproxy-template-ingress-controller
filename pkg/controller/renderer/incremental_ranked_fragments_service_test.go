@@ -39,6 +39,16 @@ var value = item | dig_string("", "spec", "value")
 show shared.PublishRanked("lines", key, rank, value + "\n")
 %%}`
 
+// One component publishing several ranked lines: their position in the
+// result is part of the ranked-text projection key, so a reorder within one
+// item must not be mistaken for a collision between identities.
+const rankedFragmentListProducerTemplate = `{%%
+var rank = item | dig_string("", "spec", "rank")
+for _, key := range toStringSlice(item | dig("spec", "keys") | fallback([]any{})) {
+  show shared.PublishRanked("lines", key, rank, key + "\n")
+}
+%%}`
+
 type rankedFragmentServiceFixture struct {
 	config   *config.Config
 	service  *RenderService
@@ -51,7 +61,14 @@ type rankedFragmentServiceFixture struct {
 
 func newRankedFragmentServiceFixture(t *testing.T) *rankedFragmentServiceFixture {
 	t.Helper()
-	cfg := rankedFragmentServiceConfig(false)
+	return newRankedFragmentServiceFixtureWithConfig(t, rankedFragmentServiceConfig(false))
+}
+
+func newRankedFragmentServiceFixtureWithConfig(
+	t *testing.T,
+	cfg *config.Config,
+) *rankedFragmentServiceFixture {
+	t.Helper()
 	declarations := helpers.BuildAdditionalDeclarations(cfg, &typebootstrap.Result{
 		Types: map[string]reflect.Type{}, Kinds: map[string]string{}, Errors: map[string]error{},
 	})
@@ -161,6 +178,28 @@ func TestRenderServiceIncrementalRankedFragmentsLifecycle(t *testing.T) {
 	assert.Equal(t, "route-b\nroute-a-2\n", fixture.renderAndCommit(t))
 	afterPromotion := fixture.engine.executionCounts()
 	assert.Equal(t, afterCollision["routes/a"], afterPromotion["routes/a"])
+}
+
+func TestRenderServiceIncrementalRankedFragmentsSurviveReorderWithinOneItem(t *testing.T) {
+	cfg := rankedFragmentServiceConfig(false)
+	snippet := cfg.TemplateSnippets["100-routes"]
+	snippet.Template = rankedFragmentListProducerTemplate
+	cfg.TemplateSnippets["100-routes"] = snippet
+	fixture := newRankedFragmentServiceFixtureWithConfig(t, cfg)
+	listRoute := func(keys ...any) map[string]any {
+		return incrementalTestResource("default", "list", map[string]any{"rank": "100", "keys": keys})
+	}
+	require.NoError(t, fixture.routes.Add(listRoute("x", "y"), []string{"default", "list"}))
+	assert.Equal(t, "x\ny\n", fixture.renderAndCommit(t))
+
+	require.NoError(t, fixture.routes.Update(listRoute("y", "x"), []string{"default", "list"}))
+	assert.Equal(t, "y\nx\n", fixture.renderAndCommit(t))
+
+	require.NoError(t, fixture.routes.Update(listRoute("w", "y", "x"), []string{"default", "list"}))
+	assert.Equal(t, "w\ny\nx\n", fixture.renderAndCommit(t))
+
+	require.NoError(t, fixture.routes.Update(listRoute("y", "x"), []string{"default", "list"}))
+	assert.Equal(t, "y\nx\n", fixture.renderAndCommit(t))
 }
 
 func TestRenderServiceIncrementalRankedFragmentsAbortAndAdmissionStayIsolated(t *testing.T) {

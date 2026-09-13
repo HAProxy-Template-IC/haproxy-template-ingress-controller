@@ -26,6 +26,7 @@ import (
 type incrementalRankedTextUpdate struct {
 	cell    incrementalRankedTextCell
 	changes map[string]rendercontent.TextFragmentChange
+	owners  map[string]string
 }
 
 func (u *incrementalGroupIndexUpdate) refreshRankedText() error {
@@ -35,8 +36,16 @@ func (u *incrementalGroupIndexUpdate) refreshRankedText() error {
 		transitionKeys = append(transitionKeys, key)
 	}
 	slices.Sort(transitionKeys)
+	// The projection key is the winner's rank and position in its component
+	// result, so a publication that moved within one result must vacate its
+	// position before another identity claims it: removals first, then additions.
 	for _, key := range transitionKeys {
-		if err := u.stageRankedTextTransition(updates, key); err != nil {
+		if err := u.stageRankedTextTransition(updates, key, false); err != nil {
+			return err
+		}
+	}
+	for _, key := range transitionKeys {
+		if err := u.stageRankedTextTransition(updates, key, true); err != nil {
 			return err
 		}
 	}
@@ -51,6 +60,7 @@ func (u *incrementalGroupIndexUpdate) refreshRankedText() error {
 func (u *incrementalGroupIndexUpdate) stageRankedTextTransition(
 	updates map[string]*incrementalRankedTextUpdate,
 	key string,
+	additions bool,
 ) error {
 	transition := u.publicationTransitions[key]
 	if transition.original == transition.final {
@@ -60,15 +70,14 @@ func (u *incrementalGroupIndexUpdate) stageRankedTextTransition(
 	if err != nil {
 		return err
 	}
-	if transition.original.present {
-		if err := removeRankedTextWinner(update, transition.cell, &transition.original.value); err != nil {
-			return err
+	if !additions {
+		if transition.original.present {
+			return removeRankedTextWinner(update, transition.cell, &transition.original.value)
 		}
+		return nil
 	}
 	if transition.final.present {
-		if err := addRankedTextWinner(update, transition.cell, &transition.final.value); err != nil {
-			return err
-		}
+		return addRankedTextWinner(update, transition.cell, &transition.final.value)
 	}
 	return nil
 }
@@ -128,7 +137,9 @@ func (u *incrementalGroupIndexUpdate) rankedTextUpdate(
 		return nil, err
 	}
 	update := &incrementalRankedTextUpdate{
-		cell: state, changes: make(map[string]rendercontent.TextFragmentChange),
+		cell:    state,
+		changes: make(map[string]rendercontent.TextFragmentChange),
+		owners:  make(map[string]string),
 	}
 	updates[cell] = update
 	return update, nil
@@ -155,7 +166,7 @@ func removeRankedTextWinner(
 		update.cell.nonStringCount--
 		return nil
 	}
-	return setRankedTextChange(update, rendercontent.TextFragmentChange{
+	return setRankedTextChange(update, winner, rendercontent.TextFragmentChange{
 		Key: string(incrementalPublicationProjectionKey(winner, true)),
 	})
 }
@@ -182,7 +193,7 @@ func addRankedTextWinner(
 		update.cell.nonStringCount++
 		return nil
 	}
-	return setRankedTextChange(update, rendercontent.TextFragmentChange{
+	return setRankedTextChange(update, winner, rendercontent.TextFragmentChange{
 		Key:     string(incrementalPublicationProjectionKey(winner, true)),
 		Text:    text,
 		Present: true,
@@ -191,16 +202,25 @@ func addRankedTextWinner(
 
 func setRankedTextChange(
 	update *incrementalRankedTextUpdate,
+	winner *incrementalIndexedPublication,
 	change rendercontent.TextFragmentChange,
 ) error {
+	if update.owners == nil {
+		update.owners = make(map[string]string)
+	}
 	if previous, exists := update.changes[change.Key]; exists && previous != change {
 		if !previous.Present && change.Present {
 			update.changes[change.Key] = change
+			update.owners[change.Key] = winner.key
 			return nil
 		}
-		return errors.New("incremental ranked text transitions collide")
+		return fmt.Errorf(
+			"incremental ranked text transitions collide in cell %q between %q and %q (rank %q)",
+			winner.cell, update.owners[change.Key], winner.key, winner.rank,
+		)
 	}
 	update.changes[change.Key] = change
+	update.owners[change.Key] = winner.key
 	return nil
 }
 
