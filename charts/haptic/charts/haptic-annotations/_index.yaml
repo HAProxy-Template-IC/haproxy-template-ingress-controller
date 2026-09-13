@@ -222,6 +222,16 @@ maps:
       # <ns>/<name> → "<req|conn> <window> <threshold> <status>" for the per-pod stick-table limiter.
       # Populated by map-haptic-rate-limit-routes-*; read by frontend-filters-863-haptic-rate-limit.
       {{ render_glob "map-haptic-rate-limit-routes-*" -}}
+  haptic-rate-limit-allow-partitions.map:
+    ordered: false
+    template: |
+      # <block> <block>: the disjoint cover of every rate-limit-allowlist; src,map_ip() names the block a client falls in.
+      {{ render_glob "map-haptic-rate-limit-allow-partitions-*" -}}
+  haptic-rate-limit-allow-members.map:
+    ordered: false
+    template: |
+      # <block>|<ns>/<name> 1: the route exempts that block from its rate limit. Read by frontend-filters-863-haptic-rate-limit.
+      {{ render_glob "map-haptic-rate-limit-allow-members-*" -}}
   haptic-bandwidth-routes.map:
     template: |
       # <ns>/<name> → "<download bytes/s|_> <upload bytes/s|_> <stream|client|service>"

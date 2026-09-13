@@ -8,11 +8,12 @@
 # Every route tracks into shared string-keyed tables ("<ns>/<name>|<src>"), so a
 # budget is still per route and per client. The per-value text is what HAProxy
 # takes as a literal: one table proxy and track rule per distinct counter
-# window, one deny per distinct status code, one shared-scope bandwidth filter
-# per distinct (direction, scope, rate), and one allowlist ACL per route that
-# sets rate-limit-allowlist (a CIDR list cannot be scoped to a route through a
-# map). The blocks run on the client leg before the cache switch (865), so a
-# cache hit and a miss consume the same budget.
+# window, one deny per distinct status code, and one shared-scope bandwidth
+# filter per distinct (direction, scope, rate). An allowlist is two map
+# lookups: the block of the disjoint cover of every list a client falls in
+# (map_ip), then whether the route exempts that block. The blocks run on the
+# client leg before the cache switch (865), so a cache hit and a miss consume
+# the same budget.
 templateSnippets:
   # ==========================================================================
   # Per-source rate limit (stick-table, per pod).
@@ -148,6 +149,70 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
+  # The allowlist maps. map_ip returns one longest-prefix match, so every list
+  # is cut into the blocks of the disjoint cover of all lists (cidr_partition):
+  # a client falls in exactly one block, and a route exempts a block when one
+  # of its CIDRs contains it. Both maps are keyed lookups, so a list change is
+  # a map operation.
+  util-haptic-rate-limit-allowlists:
+    template: |-
+      {#- result["routes"]: every published "<ns>/<name> <cidr> [<cidr>…]";
+          result["blocks"]: cidr_partition over all of their CIDRs. Computed
+          once per render; both map templates read it. -#}
+      {%- macro HapticRateLimitAllowlists(result map[string]any) -%}
+        {%- var listsAny, _ = shared.ComputeIfAbsent("hapticRateLimitAllowlists", func() any {
+          var cidrs = []any{}
+          var routes = []any{}
+          for _, v := range incremental_values("haptic-rate-limit-routes", "allowlist") {
+            routes = append(routes, tostring(v))
+            for _, c := range split(strings_splitn(tostring(v), " ", 2)[1], " ") {
+              cidrs = append(cidrs, c)
+            }
+          }
+          var blocks, err = cidr_partition(cidrs)
+          return map[string]any{"routes": routes, "blocks": blocks, "err": err}
+        }) -%}
+        {%- var lists = listsAny.(map[string]any) -%}
+        {%- if lists["err"] != nil -%}{{ fail(tostring(lists["err"])) }}{%- end -%}
+        {%- result["routes"] = lists["routes"] -%}
+        {%- result["blocks"] = lists["blocks"] -%}
+      {%- end macro -%}
+
+  map-haptic-rate-limit-allow-partitions-863-haptic:
+    template: |-
+      {%- import "util-haptic-rate-limit-allowlists" for HapticRateLimitAllowlists -%}
+      {%- var lists = map[string]any{} -%}
+      {{- HapticRateLimitAllowlists(lists) -}}
+      {%- var seen = map[string]bool{} -%}
+      {%- var lines = []any{} -%}
+      {%- for _, list := range lists["blocks"].(map[string][]string) -%}
+        {%- for _, b := range list -%}{%- if !seen[b] -%}{%- seen[b] = true -%}{%- lines = append(lines, b) -%}{%- end -%}{%- end -%}
+      {%- end -%}
+      {%- for _, b := range sort_strings(lines) %}
+      {{ b }} {{ b }}
+      {%- end %}
+
+  map-haptic-rate-limit-allow-members-863-haptic:
+    template: |-
+      {%- import "util-haptic-rate-limit-allowlists" for HapticRateLimitAllowlists -%}
+      {%- var lists = map[string]any{} -%}
+      {{- HapticRateLimitAllowlists(lists) -}}
+      {%- var blocks = lists["blocks"].(map[string][]string) -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- var lines = []any{} -%}
+      {%- for _, r := range lists["routes"].([]any) -%}
+        {%- var parts = strings_splitn(tostring(r), " ", 2) -%}
+        {%- for _, c := range split(parts[1], " ") -%}
+          {%- for _, b := range blocks[c] -%}
+            {%- var line = b + "|" + parts[0] -%}
+            {%- if !seen[line] -%}{%- seen[line] = true -%}{%- lines = append(lines, line) -%}{%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {%- for _, l := range sort_strings(lines) %}
+      {{ l }} 1
+      {%- end %}
+
   # One table proxy per distinct (counter, window): a frontend holds at most one
   # stick-table of its own, and the window is part of the store type.
   # `peers localinstance` carries the counters from the old worker to the new
@@ -201,8 +266,10 @@ templateSnippets:
       {%- end -%}
       {%- var statuses = []any{} -%}
       {%- for _, v := range incremental_values("haptic-rate-limit-routes", "status") -%}{%- statuses = append(statuses, tostring(v)) -%}{%- end -%}
-      {%- var allowlists = []any{} -%}
-      {%- for _, v := range incremental_values("haptic-rate-limit-routes", "allowlist") -%}{%- allowlists = append(allowlists, tostring(v)) -%}{%- end -%}
+      {%- var partitions, e2 = pathResolver.GetPath("haptic-rate-limit-allow-partitions.map", "map") -%}
+      {%- if e2 != nil -%}{{ fail(tostring(e2)) }}{%- end -%}
+      {%- var members, e3 = pathResolver.GetPath("haptic-rate-limit-allow-members.map", "map") -%}
+      {%- if e3 != nil -%}{{ fail(tostring(e3)) }}{%- end -%}
       {{ "\n" }}# haptic/rate-limiting
       http-request set-var(txn.lrl_cfg) var(txn.resource_id),map({{ routes }})
       http-request set-var(txn.lrl_counter) var(txn.lrl_cfg),field(1,' ') if { var(txn.lrl_cfg) -m found }
@@ -210,10 +277,8 @@ templateSnippets:
       http-request set-var(txn.lrl_threshold) var(txn.lrl_cfg),field(3,' ') if { var(txn.lrl_cfg) -m found }
       http-request set-var(txn.lrl_status) var(txn.lrl_cfg),field(4,' ') if { var(txn.lrl_cfg) -m found }
       http-request set-var-fmt(txn.lrl_key) %[var(txn.resource_id)]|%[src] if { var(txn.lrl_cfg) -m found }
-      {%- for _, a := range sort_strings(allowlists) %}
-        {%- var parts = strings_splitn(tostring(a), " ", 2) %}
-      http-request set-var(txn.lrl_allow) bool(true) if { var(txn.resource_id) -m str {{ parts[0] }} } { src {{ parts[1] }} }
-      {%- end %}
+      http-request set-var(txn.lrl_part) src,map_ip({{ partitions }}) if { var(txn.lrl_cfg) -m found }
+      http-request set-var(txn.lrl_allow) bool(true) if { var(txn.lrl_part) -m found } { var(txn.lrl_part),concat(|,txn.resource_id),map({{ members }}) -m found }
       {%- for _, t := range sort_strings(tables) %}
         {%- var parts = split(tostring(t), "|") %}
       http-request track-sc1 var(txn.lrl_key) table haptic_rl_tbl_{{ parts[0] }}_{{ parts[1] }} if { var(txn.lrl_counter) -m str {{ parts[0] }} } { var(txn.lrl_window) -m str {{ parts[1] }} }
