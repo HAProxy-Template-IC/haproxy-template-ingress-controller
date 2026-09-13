@@ -270,13 +270,14 @@ func waitBackendRuntime(ctx context.Context, t *testing.T, cs kubernetes.Interfa
 // lane: a response header that lands in a backend-keyed map, a server timeout
 // that lands in the shared profile, the default compression whose settings
 // are inherited from that profile (#230), and a per-source rate limit whose
-// threshold comes from a frontend map. The backend body stays empty and the
-// cycle proves such a route is dynamic.
+// threshold and allowlist come from frontend maps. The backend body stays
+// empty and the cycle proves such a route is dynamic.
 func ingressFilterAnnotations(respValue string) map[string]string {
 	return map[string]string{
-		"haproxy.org/response-set-header":   reloadFreeRespHeader + " " + respValue,
-		"haproxy.org/timeout-server":        "30s",
-		"haproxy-haptic.org/rate-limit-rps": "1000",
+		"haproxy.org/response-set-header":         reloadFreeRespHeader + " " + respValue,
+		"haproxy.org/timeout-server":              "30s",
+		"haproxy-haptic.org/rate-limit-rps":       "1000",
+		"haproxy-haptic.org/rate-limit-allowlist": "10.0.0.0/8",
 	}
 }
 

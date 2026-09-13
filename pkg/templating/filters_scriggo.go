@@ -185,6 +185,7 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncDigString] = scriggoDigString
 	decl[FuncIsNil] = scriggoIsNil
 	decl[FuncToStringSlice] = scriggoToStringSlice
+	decl[FuncCidrPartition] = scriggoCidrPartition
 	decl[FuncJoin] = scriggoJoin
 	decl[FuncReplace] = scriggoStringsReplace
 

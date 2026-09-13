@@ -57,7 +57,7 @@ var exactCycleReplayPreviousOutputGlobals = map[string]struct{}{
 
 var exactCycleReplayPureFunctions = map[string]struct{}{
 	builtinAbbreviate: {}, builtinAbs: {}, builtinBase64: {}, "b64decode": {}, "b64encode": {},
-	"basename": {}, builtinCapitalize: {}, builtinCapitalizeAll: {}, "ceil": {}, "coalesce": {},
+	"basename": {}, builtinCapitalize: {}, builtinCapitalizeAll: {}, "ceil": {}, "cidr_partition": {}, "coalesce": {},
 	"condition": {}, "dig": {}, "dig_string": {},
 	"fail": {}, "fallback": {}, "filter": {}, "flat_map": {},
 	builtinFormatFloat: {}, builtinFormatInt: {}, "glob_match": {}, "group_by": {}, builtinHasPrefix: {},

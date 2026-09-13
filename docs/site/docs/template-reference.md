@@ -70,6 +70,7 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `title(s)` | Title-case a string | `title(mode)` |
 | `isdigit(s)` | True when the string is non-empty and all digits — check before `toint()` | `{% if isdigit(port) %}` |
 | `toStringSlice(items)` | Copy scalar elements from a slice to `[]string`; a composite element fails the render | `toStringSlice(hosts)` |
+| `cidr_partition(cidrs)` | Split a set of IPv4/IPv6 prefixes (a bare address is a host prefix) into the disjoint blocks each prefix is a union of, as `map[input][]block`. A `map_ip` lookup over all blocks names exactly one block for any address, so per-route CIDR lists become two map lookups instead of a config line | `cidr_partition(allowlists)["10.0.0.0/8"]` |
 | `sort_strings(items)` | Sort deterministic scalar elements lexicographically, returning `[]string` | `sort_strings(keys(m))` |
 | `sort_ints(items)` | Sort a `[]any` numerically, returning `[]int` — use for ports and IDs, where `sort_strings` would put `"10"` before `"2"`. Non-integer entries coerce through `toint()` and sort to the front | `sort_ints(ports)` |
 | `ceil(f)` | Round a float up | `ceil(tofloat(total) / 4)` |

@@ -141,6 +141,9 @@ const (
 	// Available in: Scriggo only.
 	FuncToStringSlice = "toStringSlice"
 
+	// FuncCidrPartition splits a CIDR set into the disjoint blocks each prefix is a union of.
+	FuncCidrPartition = "cidr_partition"
+
 	// FuncJoin joins a string slice with a separator.
 	// Available in: Scriggo only.
 	FuncJoin = "join"
