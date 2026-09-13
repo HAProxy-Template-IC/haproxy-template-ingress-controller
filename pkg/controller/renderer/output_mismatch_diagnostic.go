@@ -39,7 +39,10 @@ func (s *RenderService) reportOutputPublicationMismatch(
 	s.logger.Error("Rendered output rejected", "path", mismatch.Path,
 		"plan_bytes", mismatch.PlanBytes, "artifact_bytes", mismatch.ArtifactBytes,
 		"written", mismatch.Written, "matched", mismatch.Matched,
-		"read_ok", mismatch.ReadOK, "exact_read", mismatch.ExactRead, "plan_digest_valid", mismatch.PlanDigestValid)
+		"read_ok", mismatch.ReadOK, "exact_read", mismatch.ExactRead, "plan_digest_valid", mismatch.PlanDigestValid,
+		"incremental_commit", mismatch.IncrementalCommit,
+		"plan_file_inherited", mismatch.PlanFileInherited, "plan_file_changed", mismatch.PlanFileChanged,
+		"artifact_inherited", mismatch.ArtifactInherited, "artifact_changed", mismatch.ArtifactChanged)
 	if transition == nil {
 		return
 	}
