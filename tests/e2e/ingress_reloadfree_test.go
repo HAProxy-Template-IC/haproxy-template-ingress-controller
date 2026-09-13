@@ -266,16 +266,17 @@ func waitBackendRuntime(ctx context.Context, t *testing.T, cs kubernetes.Interfa
 		})
 }
 
-// ingressFilterAnnotations are the haproxytech per-route directives C13 moved
-// onto the runtime lane: a response header that lands in a backend-keyed map,
-// and a server timeout that lands in the shared profile. Compression stays at
-// its default (on): the compression filter is on the frontend and the route's
-// algorithm and types are inherited from the shared profile (#230), so the
-// backend body stays empty and the cycle proves the default route is dynamic.
+// ingressFilterAnnotations are per-route directives that all ride the runtime
+// lane: a response header that lands in a backend-keyed map, a server timeout
+// that lands in the shared profile, the default compression whose settings
+// are inherited from that profile (#230), and a per-source rate limit whose
+// threshold comes from a frontend map. The backend body stays empty and the
+// cycle proves such a route is dynamic.
 func ingressFilterAnnotations(respValue string) map[string]string {
 	return map[string]string{
-		"haproxy.org/response-set-header": reloadFreeRespHeader + " " + respValue,
-		"haproxy.org/timeout-server":      "30s",
+		"haproxy.org/response-set-header":   reloadFreeRespHeader + " " + respValue,
+		"haproxy.org/timeout-server":        "30s",
+		"haproxy-haptic.org/rate-limit-rps": "1000",
 	}
 }
 
@@ -294,6 +295,7 @@ metadata:
   annotations:
     haproxy.org/response-set-header: "%s %s"
     haproxy.org/timeout-server: "30s"
+    haproxy-haptic.org/rate-limit-rps: "1000"
 spec:
   ingressClassName: haptic
   rules:

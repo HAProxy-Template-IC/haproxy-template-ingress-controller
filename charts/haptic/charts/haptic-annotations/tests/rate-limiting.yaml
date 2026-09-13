@@ -20,7 +20,11 @@ _fx:
 
 validationTests:
   test-haptic-rate-limit-rps:
-    description: rate-limit-rps with tunable period/size/status-code and allowlist
+    description: >-
+      rate-limit-rps with tunable period/size/status-code and allowlist: the route
+      lands in haptic-rate-limit-routes.map, the window gets one shared string-keyed
+      table sized to the largest request, the allowlist is the one per-route line on
+      the frontend, and the backend section stays plain.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -41,12 +45,17 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
+      # No bandwidth route in the fixture: none of the bandwidth machinery is emitted.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'filter bwlim-'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'backend haptic_bw_tbl'}
+      - {type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^default/rps-ingress req 5s 10 429$'}
       - type: contains
         target: haproxy.cfg
-        pattern: "stick-table type ip size 200k expire 5s store http_req_rate"
-      - {type: contains, target: haproxy.cfg, pattern: "http-request track-sc0 src"}
-      - {type: contains, target: haproxy.cfg, pattern: "deny_status 429"}
-      - {type: contains, target: haproxy.cfg, pattern: "src 10.0.0.0/8 192.168.0.0/16"}
+        pattern: '(?ms)^backend haptic_rl_tbl_req_5s from haptic-be-\w+$(?:\n[ \t]+guid [^\n]+)?\n[ \t]+stick-table type string len 340 size 204800 expire 5s store http_req_rate\(5s\) peers localinstance$'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request track-sc1 var\(txn\.lrl_key\) table haptic_rl_tbl_req_5s if \{ var\(txn\.lrl_counter\) -m str req \} \{ var\(txn\.lrl_window\) -m str 5s \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 429 if \{ var\(txn\.lrl_status\) -m str 429 \} \{ var\(txn\.denied_by\) -m str rate_limit_local \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.lrl_allow\) bool\(true\) if \{ var\(txn\.resource_id\) -m str default/rps-ingress \} \{ src 10\.0\.0\.0/8 192\.168\.0\.0/16 \}'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_rps-ingress_svc_echo_80 from haptic-be-\w+$\n[ \t]+guid [^\n]+\n(?:[ \t]+#[^\n]*\n)*[ \t]+server '}
 
   test-haptic-rate-limit-rpm-precedence:
     description: rate-limit-rps wins over rate-limit-rpm; rpm is ignored
@@ -67,9 +76,11 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "expire 1s store http_req_rate"}
-      - {type: contains, target: haproxy.cfg, pattern: "sc_http_req_rate.0. gt 20"}
-      - {type: contains, target: haproxy.cfg, pattern: "rate-limit-rpm ignored"}
+      - {type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^default/rpm-ingress req 1s 20 429$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'backend haptic_rl_tbl_req_1s'}
+      - {type: contains, target: haproxy.cfg, pattern: 'expire 1s store http_req_rate\(1s\)'}
+      - {type: contains, target: events, pattern: "RateLimitCapIgnored"}
+      - {type: contains, target: events, pattern: "rate-limit-rpm ignored"}
 
   test-haptic-rate-limit-connections:
     description: rate-limit-connections uses the conn_cur counter
@@ -89,15 +100,20 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "store conn_cur peers localinstance"}
-      - {type: contains, target: haproxy.cfg, pattern: "sc_conn_cur.0. gt 100"}
+      - {type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^default/conn-ingress conn 30s 100 429$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'backend haptic_rl_tbl_conn_30s'}
+      - {type: contains, target: haproxy.cfg, pattern: 'expire 30s store conn_cur peers localinstance'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request track-sc1 var\(txn\.lrl_key\) table haptic_rl_tbl_conn_30s if \{ var\(txn\.lrl_counter\) -m str conn \} \{ var\(txn\.lrl_window\) -m str 30s \}'}
+      - {type: contains, target: haproxy.cfg, pattern: '\{ var\(txn\.lrl_counter\) -m str conn \} \{ sc_conn_cur\(1\),sub\(txn\.lrl_threshold\) -m int gt 0 \}'}
 
   test-haptic-bandwidth-limit-per-stream:
     description: >-
-      Without a scope, download- and upload-bandwidth-limit emit per-stream bwlim-out
-      and bwlim-in filters and no stick-table. Also pins that no min-size is emitted:
-      the deleted -after annotation mapped to it, but min-size is HAProxy's
-      forward-chunk size (manual 9.7), not nginx's "throttle after N bytes".
+      Without a scope, download- and upload-bandwidth-limit ride the two per-stream
+      filters every frontend carries, with the route's rates (in bytes) taken from
+      haptic-bandwidth-routes.map; no shared-scope filter is declared. Also pins
+      that no min-size is emitted: the deleted -after annotation mapped to it, but
+      min-size is HAProxy's forward-chunk size (manual 9.7), not nginx's "throttle
+      after N bytes".
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -111,28 +127,27 @@ validationTests:
           spec: *specBwExampleCom
     assertions:
       - type: haproxy_valid
+      - {type: contains, target: "map:haptic-bandwidth-routes.map", pattern: '(?m)^default/bw-ingress 102400 51200 stream$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'filter bwlim-out haptic_bw_out default-limit 1m default-period 1s'}
+      - {type: contains, target: haproxy.cfg, pattern: 'filter bwlim-in haptic_bw_in default-limit 1m default-period 1s'}
       - type: contains
         target: haproxy.cfg
-        pattern: "filter bwlim-out haptic_bwlim_out_default_bw-ingress default-limit 100k default-period 1s"
+        pattern: 'http-request set-bandwidth-limit haptic_bw_out limit var\(txn\.bw_down\) if \{ var\(txn\.bw_scope\) -m str stream \} !\{ var\(txn\.bw_down\) -m str _ \}'
       - type: contains
         target: haproxy.cfg
-        pattern: "filter bwlim-in haptic_bwlim_in_default_bw-ingress default-limit 50k default-period 1s"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-bandwidth-limit haptic_bwlim_out_default_bw-ingress"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-bandwidth-limit haptic_bwlim_in_default_bw-ingress"
-      - {type: not_contains, target: haproxy.cfg, pattern: "filter bwlim-(in|out) .*min-size"}
+        pattern: 'http-request set-bandwidth-limit haptic_bw_in limit var\(txn\.bw_up\) if \{ var\(txn\.bw_scope\) -m str stream \} !\{ var\(txn\.bw_up\) -m str _ \}'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'filter bwlim-(in|out) .*min-size'}
       - type: not_contains
         target: haproxy.cfg
-        description: the per-stream form must not declare a stick-table
-        pattern: "stick-table type (ip|integer) size 100k expire 60s store bytes_in_rate"
+        description: a stream-only fleet declares no shared-scope filter
+        pattern: 'filter bwlim-(in|out) haptic_bw_(in|out)_(client|service)_'
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_bw-ingress_svc_echo_80 from haptic-be-\w+$\n[ \t]+guid [^\n]+\n(?:[ \t]+#[^\n]*\n)*[ \t]+server '}
 
   test-haptic-bandwidth-limit-scope-client:
     description: >-
       bandwidth-limit-scope client shares one budget across all of a source IP's
-      streams via a backend-local ip stick-table keyed on src.
+      streams: a shared filter per (direction, rate) meters into the one string-keyed
+      table under "<route>|<src>".
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -147,24 +162,22 @@ validationTests:
           spec: *specBwExampleCom
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "stick-table type ip size 100k expire 60s store bytes_in_rate\\(1s\\),bytes_out_rate\\(1s\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "filter bwlim-out haptic_bwlim_out_default_bw-ingress limit 10m key src"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "filter bwlim-in haptic_bwlim_in_default_bw-ingress limit 1m key src"
+      - {type: contains, target: "map:haptic-bandwidth-routes.map", pattern: '(?m)^default/bw-ingress 10485760 1048576 client$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'stick-table type string len 340 size 100k expire 60s store bytes_in_rate\(1s\),bytes_out_rate\(1s\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'filter bwlim-out haptic_bw_out_client_10485760 limit 10485760 key var\(txn\.bw_key\) table haptic_bw_tbl'}
+      - {type: contains, target: haproxy.cfg, pattern: 'filter bwlim-in haptic_bw_in_client_1048576 limit 1048576 key var\(txn\.bw_key\) table haptic_bw_tbl'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var-fmt\(txn\.bw_key\) %\[var\(txn\.resource_id\)\]\|%\[src\] if \{ var\(txn\.bw_scope\) -m str client \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-bandwidth-limit haptic_bw_out_client_10485760 if \{ var\(txn\.bw_scope\) -m str client \} \{ var\(txn\.bw_down\) -m str 10485760 \}'}
       - type: not_contains
         target: haproxy.cfg
         description: a shared filter takes limit/key, never the per-stream default-limit form
-        pattern: "haptic_bwlim_\\w+_default_bw-ingress default-limit"
+        pattern: 'haptic_bw_(in|out)_client_\d+ default-limit'
 
   test-haptic-bandwidth-limit-scope-service:
     description: >-
-      bandwidth-limit-scope service caps the whole backend with an integer
-      stick-table keyed on be_id, so all clients of the route share one budget.
+      bandwidth-limit-scope service caps the whole route: the shared filter meters
+      into the one table under the route id, so all clients of the route share one
+      budget.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -178,18 +191,15 @@ validationTests:
           spec: *specBwExampleCom
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "stick-table type integer size 100k expire 60s store bytes_in_rate\\(1s\\),bytes_out_rate\\(1s\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "filter bwlim-out haptic_bwlim_out_default_bw-ingress limit 10m key be_id"
+      - {type: contains, target: "map:haptic-bandwidth-routes.map", pattern: '(?m)^default/bw-ingress 10485760 _ service$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'filter bwlim-out haptic_bw_out_service_10485760 limit 10485760 key var\(txn\.bw_key\) table haptic_bw_tbl'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.bw_key\) var\(txn\.resource_id\) if \{ var\(txn\.bw_scope\) -m str service \}'}
 
-  test-haptic-bandwidth-limit-scope-conflicts-with-rate-limit:
+  test-haptic-bandwidth-limit-scope-coexists-with-rate-limit:
     description: >-
-      A shared bandwidth scope plus a per-source rate-limit cap would put two
-      stick-tables in one backend, which HAProxy rejects outright. The render must
-      fail with an actionable message rather than emit a config that can't start.
+      A shared bandwidth scope and a per-source rate-limit cap coexist on one route:
+      each limiter meters into its own shared table proxy, so the one-stick-table
+      limit of a backend never applies.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -203,7 +213,11 @@ validationTests:
               haproxy-haptic.org/rate-limit-rps: "10"
           spec: *specBwExampleCom
     assertions:
-      - { type: contains, target: rendering_error, pattern: "HAProxy allows one stick-table per backend" }
+      - type: haproxy_valid
+      - {type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^default/bw-ingress req 1s 10 429$'}
+      - {type: contains, target: "map:haptic-bandwidth-routes.map", pattern: '(?m)^default/bw-ingress 10485760 _ client$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'backend haptic_rl_tbl_req_1s'}
+      - {type: contains, target: haproxy.cfg, pattern: 'backend haptic_bw_tbl'}
 
   test-haptic-bandwidth-limit-scope-invalid:
     description: An unknown bandwidth-limit-scope value fails the render and lists the valid ones.
@@ -223,12 +237,10 @@ validationTests:
 
   test-haptic-rate-limit-cache-route-client-leg:
     description: >-
-      On a cache-enabled route the per-pod limiter moves to the client leg
-      (issue #134): a per-route table proxy plus resource_id-scoped track/deny
-      in the frontend, emitted before the varnish_cache switch so cache hits
-      consume the budget too. The application backend keeps no copy — on the
-      origin leg src would be the Varnish pod. The non-cached twin route pins
-      that the backend-copy pattern still matches real output.
+      The per-pod limiter runs on the client leg for every route, cache-enabled or
+      not: the shared table proxies, the track and the deny sit in the frontend
+      before the varnish_cache switch, so cache hits consume the budget too, and no
+      backend carries a copy (on the origin leg src would be the Varnish pod).
     extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
@@ -285,39 +297,30 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
+      - {type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^default/cached-rps req 5s 10 403$'}
+      - {type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^default/cached-conn conn 30s 100 429$'}
+      - {type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^default/plain-rps req 1s 10 429$'}
       - type: contains
         target: haproxy.cfg
-        pattern: "backend haptic_rl_tbl_default_cached-rps from haptic-be-\\w+\\n\\s+stick-table type ip size 200k expire 5s store http_req_rate\\(5s\\) peers localinstance"
+        pattern: '(?ms)^backend haptic_rl_tbl_req_5s from haptic-be-\w+$(?:\n[ \t]+guid [^\n]+)?\n[ \t]+stick-table type string len 340 size 204800 expire 5s store http_req_rate\(5s\) peers localinstance$'
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request track-sc0 src table haptic_rl_tbl_default_cached-rps if \\{ var\\(txn\\.resource_id\\) -m str default/cached-rps \\}"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 403 if \\{ var\\(txn\\.resource_id\\) -m str default/cached-rps \\} \\{ sc_http_req_rate\\(0\\) gt 10 \\} !\\{ src 10\\.0\\.0\\.0/8 \\}"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend haptic_rl_tbl_default_cached-conn from haptic-be-\\w+\\n\\s+stick-table type ip size 100k expire 30s store conn_cur peers localinstance"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "if \\{ var\\(txn\\.resource_id\\) -m str default/cached-conn \\} \\{ sc_conn_cur\\(0\\) gt 100 \\}"
-      - type: contains
-        target: haproxy.cfg
-        description: rps wins over rpm on the client leg too, and the ignored cap is recorded
-        pattern: "cache-enabled route \\(default/cached-rps\\) - rate-limit-rpm ignored"
+        pattern: '(?ms)^backend haptic_rl_tbl_conn_30s from haptic-be-\w+$(?:\n[ \t]+guid [^\n]+)?\n[ \t]+stick-table type string len 340 size 102400 expire 30s store conn_cur peers localinstance$'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.lrl_allow\) bool\(true\) if \{ var\(txn\.resource_id\) -m str default/cached-rps \} \{ src 10\.0\.0\.0/8 \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 403 if \{ var\(txn\.lrl_status\) -m str 403 \} \{ var\(txn\.denied_by\) -m str rate_limit_local \}'}
+      - {type: contains, target: events, pattern: "rate-limit-rpm ignored"}
       - type: match_order
         target: haproxy.cfg
-        description: the client-leg deny must precede the varnish_cache switch
+        description: the client-leg track and deny must precede the varnish_cache switch
         patterns:
-          - "http-request track-sc0 src table haptic_rl_tbl_default_cached-rps"
-          - "use_backend varnish_cache"
+          - 'http-request track-sc1 var\(txn\.lrl_key\) table haptic_rl_tbl_req_5s'
+          - 'http-request deny deny_status 403 if \{ var\(txn\.lrl_status\) -m str 403 \}'
+          - 'use_backend varnish_cache'
       - type: not_contains
         target: haproxy.cfg
-        description: no backend copy — on the origin leg it would key on the Varnish pod IP
-        pattern: "# haptic/rate-limiting \\(default/cached-rps\\)"
-      - type: contains
-        target: haproxy.cfg
-        description: positive twin — the backend-copy pattern matches a non-cached route
-        pattern: "# haptic/rate-limiting \\(default/plain-rps\\)"
+        description: no backend copy for any route
+        pattern: '# haptic/rate-limiting \(default/'
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_plain-rps_svc_echo_80 from haptic-be-\w+$\n[ \t]+guid [^\n]+\n(?:[ \t]+#[^\n]*\n)*[ \t]+server '}
 
   test-haptic-rate-limit-cache-route-invalid-threshold:
     description: >-
@@ -346,10 +349,10 @@ validationTests:
 
   test-haptic-bandwidth-limit-cache-route-client-leg:
     description: >-
-      On a cache-enabled route the bwlim filters move to the client frontend
-      (issue #134), so responses served straight from varnish_cache are
-      throttled too. Shared scopes get a per-route table proxy; the stream
-      scope keeps the per-stream form. The application backend keeps no copy.
+      Bandwidth limits run on the client frontend for every route, cache-enabled or
+      not, so responses served straight from varnish_cache are throttled too. Shared
+      scopes meter into the one shared table; the stream scope rides the per-stream
+      filters. No backend carries a copy.
     extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
@@ -403,42 +406,32 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
+      - {type: contains, target: "map:haptic-bandwidth-routes.map", pattern: '(?m)^default/cached-bw-client 10485760 1048576 client$'}
+      - {type: contains, target: "map:haptic-bandwidth-routes.map", pattern: '(?m)^default/cached-bw-stream 102400 _ stream$'}
+      - {type: contains, target: "map:haptic-bandwidth-routes.map", pattern: '(?m)^default/plain-bw 102400 _ stream$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'filter bwlim-out haptic_bw_out_client_10485760 limit 10485760 key var\(txn\.bw_key\) table haptic_bw_tbl'}
+      - {type: contains, target: haproxy.cfg, pattern: 'filter bwlim-in haptic_bw_in_client_1048576 limit 1048576 key var\(txn\.bw_key\) table haptic_bw_tbl'}
       - type: contains
         target: haproxy.cfg
-        pattern: "filter bwlim-out haptic_bwlim_out_default_cached-bw-client limit 10m key src table haptic_bwlim_tbl_default_cached-bw-client"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "filter bwlim-in haptic_bwlim_in_default_cached-bw-client limit 1m key src table haptic_bwlim_tbl_default_cached-bw-client"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend haptic_bwlim_tbl_default_cached-bw-client from haptic-be-\\w+\\n\\s+stick-table type ip size 100k expire 60s store bytes_in_rate\\(1s\\),bytes_out_rate\\(1s\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-bandwidth-limit haptic_bwlim_out_default_cached-bw-client if \\{ var\\(txn\\.resource_id\\) -m str default/cached-bw-client \\}"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "filter bwlim-out haptic_bwlim_out_default_cached-bw-stream default-limit 100k default-period 1s"
+        pattern: '(?ms)^backend haptic_bw_tbl from haptic-be-\w+$(?:\n[ \t]+guid [^\n]+)?\n[ \t]+stick-table type string len 340 size 100k expire 60s store bytes_in_rate\(1s\),bytes_out_rate\(1s\)$'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-bandwidth-limit haptic_bw_out_client_10485760 if \{ var\(txn\.bw_scope\) -m str client \} \{ var\(txn\.bw_down\) -m str 10485760 \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-bandwidth-limit haptic_bw_out limit var\(txn\.bw_down\) if \{ var\(txn\.bw_scope\) -m str stream \}'}
       - type: match_order
         target: haproxy.cfg
         description: the client-leg limit assignment must precede the varnish_cache switch
         patterns:
-          - "http-request set-bandwidth-limit haptic_bwlim_out_default_cached-bw-client"
-          - "use_backend varnish_cache"
+          - 'http-request set-bandwidth-limit haptic_bw_out_client_10485760'
+          - 'use_backend varnish_cache'
       - type: not_contains
         target: haproxy.cfg
-        description: no backend copy — cache hits would bypass it entirely
-        pattern: "# haptic/bandwidth-limit \\(default/cached-bw-client\\)"
-      - type: contains
-        target: haproxy.cfg
-        description: positive twin — the backend-copy pattern matches a non-cached route
-        pattern: "# haptic/bandwidth-limit \\(default/plain-bw\\)"
+        description: no backend copy for any route
+        pattern: '# haptic/bandwidth-limit \(default/'
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_plain-bw_svc_echo_80 from haptic-be-\w+$\n[ \t]+guid [^\n]+\n(?:[ \t]+#[^\n]*\n)*[ \t]+server '}
 
   test-haptic-rate-limit-cache-route-coexists-with-bandwidth-scope:
     description: >-
-      On a cache-enabled route a shared bandwidth scope and a per-source cap
-      may coexist: each client-leg limiter has its own table proxy, so the
-      one-stick-table-per-backend refusal that applies to non-cached routes
-      does not bite here.
+      On a cache-enabled route a shared bandwidth scope and a per-source cap coexist:
+      each limiter meters into its own shared table proxy.
     extraContext: *extracontextCacheVarnish
     fixtures:
       ingresses:
@@ -462,16 +455,18 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "backend haptic_rl_tbl_default_cached-both"}
-      - {type: contains, target: haproxy.cfg, pattern: "backend haptic_bwlim_tbl_default_cached-both"}
+      - {type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^default/cached-both req 1s 10 429$'}
+      - {type: contains, target: "map:haptic-bandwidth-routes.map", pattern: '(?m)^default/cached-both 10485760 _ client$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'backend haptic_rl_tbl_req_1s'}
+      - {type: contains, target: haproxy.cfg, pattern: 'backend haptic_bw_tbl'}
 
   test-haptic-bandwidth-limit-with-compression:
     description: >-
-      Regression pin: HAProxy makes an explicit filter line mandatory for compression
-      as soon as another filter is declared on the proxy, so compress-enable plus a
-      bandwidth limit used to render a config HAProxy refused to start. haproxy_valid
-      catches that. match_order pins compression ahead of the bwlim filter, so the
-      download cap meters the compressed bytes that go on the wire.
+      HAProxy makes an explicit filter line mandatory for compression as soon as
+      another filter is declared on the proxy, so the frontend that carries the bwlim
+      filters declares `filter compression` too; haproxy_valid catches a regression.
+      match_order pins compression ahead of the bwlim filter, so the download cap
+      meters the compressed bytes that go on the wire.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -488,6 +483,30 @@ validationTests:
       - type: match_order
         target: haproxy.cfg
         patterns:
-          - "filter compression"
-          - "filter bwlim-out haptic_bwlim_out_default_bw-ingress"
-      - {type: contains, target: haproxy.cfg, pattern: "compression algo gzip"}
+          - 'filter compression'
+          - 'filter bwlim-out haptic_bw_out default-limit'
+      - {type: contains, target: haproxy.cfg, pattern: 'compression algo gzip'}
+
+  test-haptic-rate-limit-status-code-not-deniable-rejected:
+    description: >-
+      deny_status only takes a status HAProxy has a built-in error page for; a
+      418 used to pass the 3-digit check and break the whole config at load.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-teapot
+            annotations:
+              haproxy-haptic.org/rate-limit-rps: "10"
+              haproxy-haptic.org/rate-limit-status-code: "418"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-teapot.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "rate-limit-status-code' on Ingress 'default/rl-teapot'. HAProxy can only deny with a status that has a built-in error page"}

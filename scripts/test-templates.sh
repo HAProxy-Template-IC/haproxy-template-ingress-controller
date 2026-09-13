@@ -423,8 +423,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         test-haptic-rate-limit-shared-exact-consumer \
         test-haptic-rate-limit-shared-strict-unavailable \
         test-haptic-rate-limit-shared-consumer-cache-route \
-        test-haptic-rate-limit-shared-consumer-cache-requires-api-key \
-        test-haptic-rate-limit-shared-consumer-cache-no-api-key-fails-closed \
+        test-haptic-rate-limit-shared-consumer-cache-without-api-key-accepted \
         test-haptic-cache-shared-rate-limit-loopback \
         test-haptic-cache-autoscaling \
         test-haptic-rate-limit-shared-invalid-requests \

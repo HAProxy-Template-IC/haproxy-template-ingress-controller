@@ -475,13 +475,21 @@ backend's shape (`charts/haptic/charts/base/library.yaml`, `ProfileDirective`):
 |---|---|---|
 | Comment (`# ...`) | Recorded on the plan record so a change explains the text | none, never shapes the backend |
 | Profile | `timeout *`, `fullconn`, `retries`, `retry-on`, `compression *`, `cookie`, `dynamic-cookie-key`, `option httpchk`, `http-check`; also `serverOpts["profile"]`, `balance`, `hashType` | none while a profile with the same values exists; the first route with a new combination reloads once to add it |
+| Frontend map | a uniform rule block per HTTP frontend reading `<ns>/<name>`-keyed maps (`frontend-filters-858..899` in haptic-annotations: JWT, API key, HMAC, consumer groups, rate and bandwidth limits, route-unavailable) | none; literals the block must spell out (a header name, a key file, a rate window) reload once when new |
 | Body | everything else: `filter`, `stick-table`, `http-request`/`http-response` rules, `acl`, raw injections | the backend is structural: add and remove reload |
 
 `serverOpts["flags"]` (`default-server` keywords `add server` accepts) and the
 per-backend maps (`backend-timeouts.map`, `ing-reshdr.map`) are runtime-only.
 So before a new snippet emits a line, ask which lane it lands in: a setting HAProxy
 accepts in a `defaults` section costs nothing, a map-driven uniform line costs
-nothing, and a per-route rule costs the route its dynamic shape. A `filter`
+nothing, and a per-route rule costs the route its dynamic shape. A per-route
+feature is written as a `util-haptic-<feature>-route` macro resolving the
+annotations, a `map-haptic-<feature>-routes-*` producer emitting one map line
+per route, a `features-*-names` publisher for the distinct literals (a component
+cannot both emit text and publish), and one `frontend-filters-*` block; HAProxy
+takes converter arguments from variables (`jwt_verify`, `hmac`, `sub`,
+`set-bandwidth-limit limit <expr>`) but header names, key files and table names
+only as literals. A `filter`
 cannot live in a defaults, which is why compression's filter sits on the
 frontends (`frontend-filters-110-haptic-compression-filter`) while its settings
 ride the profile; a body that declares another filter next to inherited

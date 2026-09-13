@@ -464,3 +464,48 @@ validationTests:
                     - {path: /oauth2, pathType: Prefix, backend: {service: {name: oauth2-proxy, port: {number: 4180}}}}
     assertions:
       - {type: contains, target: rendering_error, pattern: "inject an entry into the auth routing map"}
+
+  # ---- Secret references land in whitespace-delimited map lines ----
+  test-haptic-api-key-secret-ref-with-space-rejected:
+    description: >-
+      A space in api-key-secret would shift the fields of the route's map line
+      and leave the route with no key check; the ref is validated as a Secret name.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ak-space
+            annotations:
+              haproxy-haptic.org/api-key-secret: "keys a"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ak-space.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "annotation 'haproxy-haptic.org/api-key-secret' on Ingress 'default/ak-space'. Expected a Secret name or 'namespace/name'"}
+
+  test-haptic-consumer-groups-secret-ref-with-newline-rejected:
+    description: >-
+      A newline in consumer-groups-secret would add a map line under another
+      tenant's route key; the ref is validated as a Secret name.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cg-newline
+            annotations:
+              haproxy-haptic.org/api-key-secret: "keys"
+              haproxy-haptic.org/consumer-groups-secret: "groups\nvictim/route default/groups ok"
+              haproxy-haptic.org/allowed-consumer-groups: "admins"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cg-newline.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "annotation 'haproxy-haptic.org/consumer-groups-secret' on Ingress 'default/cg-newline'. Expected a Secret name or 'namespace/name'"}
