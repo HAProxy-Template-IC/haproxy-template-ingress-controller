@@ -174,8 +174,8 @@ templateSnippets:
   # Resolve and parse the packed shared-rate-limit rule before any plugin is
   # dispatched. Priority 020 lets source-IP limits reject abusive traffic at
   # 025, before the more expensive Coraza pass at 050. Consumer-keyed limits
-  # reuse these transaction variables later in the selected Ingress backend,
-  # after native API-key/JWT rules have established txn.haptic_consumer.
+  # reuse these transaction variables in the haptic-annotations dispatch block
+  # (band 863), after native API-key/JWT rules have established txn.haptic_consumer.
   frontend-spoe-filters-020-rate-limit-config:
     template: |
       {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
@@ -201,7 +201,7 @@ templateSnippets:
 
   # Source-IP limits are the public-edge DoS guard. Run them before Coraza so
   # rejected floods do not consume WAF CPU. Consumer quotas deliberately run
-  # later in the selected backend because their identity is established there.
+  # later (band 863) because their identity is established by then.
   frontend-spoe-filters-025-rate-limit-ip:
     template: |
       {%- import "util-spoa-rate-limit-dispatch" for DispatchSharedRateLimit %}

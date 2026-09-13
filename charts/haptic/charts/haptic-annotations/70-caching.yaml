@@ -94,8 +94,8 @@ templateSnippets:
 
                 All three credential kinds are therefore enforced on the CLIENT
                 leg for a cache-enabled route, before the cache is consulted:
-                api-key by frontend-filters-860, HMAC by -861, consumer-groups by
-                -862. This combination used to be refused outright; the refusal
+                api-key by frontend-filters-860, HMAC by 861, consumer-groups by
+                862, which run for every route on the client leg. This combination used to be refused outright; the refusal
                 is gone because the enforcement exists, not because the risk did.
                 Basic auth and JWT need no such snippet: both carry the
                 credential in `Authorization`, which the builtin already refuses

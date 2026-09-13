@@ -5,35 +5,160 @@
 # shared consumer identity (txn.haptic_consumer) that the per-consumer quota and
 # consumer-group ACL features key on.
 #
-# Reload-free: the key→consumer map is delivered as an HAProxyMapFile, so keys
-# can be added/rotated via the runtime map API without an HAProxy reload — the
-# strongest reload-free story in the API-gateway feature set.
+# Everything per route lives in two maps, so a route is added, changed or
+# removed with map operations only and its backend stays dynamic:
+#   haptic-api-key-routes.map  <ns>/<name> → "<hdr|query> <name> <secret> <ok|missing> <forward-header|->"
+#   haptic-apikeys.map         <secret ns/name>|<apikey> → <consumer>
+# One uniform rule block on every HTTP frontend (frontend-filters-860) reads
+# them. The only per-value text is one fetch rule per distinct header or query
+# parameter name in use, because `req.hdr(<name>)` takes a literal; a new NAME
+# is the one change that still reloads. The rules run on the client leg for
+# every route, cache-enabled ones included, before the cache switch (865).
+#
 # Missing Secrets fail closed per route with 503 until the watch cache observes
-# the Secret; a propagation race must never disable authentication or make the
-# rendered config reference a map that was not registered.
+# the Secret; a propagation race must never disable authentication.
 #
 # Secret format (data key `keys`, base64-encoded): one entry per line, either a
 # bare `<apikey>` (the key is its own consumer id) or `<apikey>:<consumer>`.
 templateSnippets:
-  # ==========================================================================
-  # API-key map generation (global side-effect: build one map per Secret)
-  # ==========================================================================
-  features-862-haptic-api-key:
-    requires: [ingresses]
+  util-haptic-secret-ref:
     template: |-
-      {%- for _, entry := range incremental_values("haptic-api-key-maps", "maps") -%}
-        {%- var record = entry.(map[string]any) -%}
-        {%- if !record["found"].(bool) -%}
-      {{ "\n" }}# WARNING haproxy-haptic.org/api-key-secret: Secret '{{ tostring(record["secret"]) }}' referenced on Ingress {{ tostring(record["ingress"]) }} not found at render time; failing closed (503) for this route until it is present.
-        {%- else -%}
-          {%- var mapName = tostring(record["filename"]) -%}
-          {%- var secretRef = tostring(record["secret"]) -%}
-          {%- var ingressKey = tostring(record["ingress"]) -%}
-          {%- var keysData = tostring(record["keys"]) | b64decode() | tostring() -%}
-          {%- if keysData == "" -%}
-            {{- fail("Secret '" + secretRef + "' referenced by annotation 'haproxy-haptic.org/api-key-secret' on Ingress '" + ingressKey + "' has an empty or missing 'keys' data key.") -}}
+      {#- "<name>" is a Secret in the Ingress namespace, "<ns>/<name>" anywhere. The
+          ref lands in whitespace-delimited map lines, so only DNS-1123 characters pass. -#}
+      {%- macro HapticSecretRef(ns string, ref string, annotation string, key string) -%}
+        {%- if !regex_search(ref, "^[a-z0-9.-]+(/[a-z0-9.-]+)?$") -%}
+          {{- fail("Invalid value for annotation '" + annotation + "' on Ingress '" + key + "'. Expected a Secret name or 'namespace/name' (lowercase letters, digits, '-' and '.').") -}}
+        {%- end -%}
+        {%- if strings_contains(ref, "/") -%}{{- ref -}}{%- else -%}{{- ns + "/" + ref -}}{%- end -%}
+      {%- end macro -%}
+
+  # Resolves one Ingress's API-key settings; result["enabled"] false when the
+  # route has none. Shared by the map producer and the name publisher so both
+  # see the same values.
+  util-haptic-api-key-route:
+    template: |-
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-haptic-secret-ref" for HapticSecretRef -%}
+      {%- macro HapticApiKeyRoute(ingress any, result map[string]any) -%}
+        {%- var ns = dig_string(ingress, "", "metadata", "namespace") -%}
+        {%- var key = ns + "/" + dig_string(ingress, "", "metadata", "name") -%}
+        {%- var apiKeySecret = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/api-key-secret") -%}
+        {%- result["enabled"] = apiKeySecret != "" -%}
+        {%- result["intent"] = "" -%}
+        {%- if apiKeySecret == "" -%}
+          {#- Without the Secret the other api-key-* annotations are inert, so the
+              route would be served with no key check while reading as protected. -#}
+          {%- for _, a := range []string{"api-key-header", "api-key-query", "api-key-consumer-header"} -%}
+            {%- if tostring(result["intent"]) == "" && dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/" + a) != "" -%}
+              {%- result["intent"] = a -%}
+              {%- result["enabled"] = true -%}
+              {%- result["source"] = "_" -%}
+              {%- result["name"] = "_" -%}
+              {%- result["secretRef"] = "_" -%}
+              {%- result["state"] = "nosecret" -%}
+              {%- result["fwd"] = "_" -%}
+            {%- end -%}
           {%- end -%}
-          {%- var lines = []string{} -%}
+        {%- else -%}
+          {%- var hdr = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/api-key-header") -%}
+          {%- var qparam = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/api-key-query") -%}
+          {%- if hdr != "" && qparam != "" -%}
+            {{- fail("Ingress '" + key + "' sets both haproxy-haptic.org/api-key-header and haproxy-haptic.org/api-key-query; they are mutually exclusive.") -}}
+          {%- end -%}
+          {%- if qparam != "" -%}
+            {%- result["source"] = "query" -%}
+            {%- result["name"] = ValidateConfigValue(qparam, "haproxy-haptic.org/api-key-query", key, false) -%}
+          {%- else -%}
+            {%- if hdr == "" -%}{%- hdr = "X-API-Key" -%}{%- end -%}
+            {%- result["source"] = "hdr" -%}
+            {%- result["name"] = ValidateConfigValue(hdr, "haproxy-haptic.org/api-key-header", key, false) -%}
+          {%- end -%}
+          {%- result["fwd"] = "_" -%}
+          {%- var consumerHdr = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/api-key-consumer-header") -%}
+          {%- if consumerHdr != "" -%}
+            {%- result["fwd"] = ValidateConfigValue(consumerHdr, "haproxy-haptic.org/api-key-consumer-header", key, false) -%}
+          {%- end -%}
+          {%- var secretRef = HapticSecretRef(ns, apiKeySecret, "haproxy-haptic.org/api-key-secret", key) -%}
+          {%- var refParts = split(secretRef, "/") -%}
+          {%- result["secretRef"] = secretRef -%}
+          {%- result["state"] = "ok" -%}
+          {%- if resources.secrets.GetSingle(refParts[0], refParts[1]) == nil -%}
+            {%- result["state"] = "missing" -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  map-haptic-api-key-routes-860-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/api-key-secret']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-header']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-query']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-consumer-header']"
+    template: |-
+      {%- import "util-haptic-api-key-route" for HapticApiKeyRoute -%}
+      {%- var route = map[string]any{} -%}
+      {{- HapticApiKeyRoute(item, route) -}}
+      {%- if route["enabled"] == true -%}
+      {{ "\n" }}{{ dig_string(item, "", "metadata", "namespace") }}/{{ dig_string(item, "", "metadata", "name") }} {{ route["source"] }} {{ route["name"] }} {{ route["secretRef"] }} {{ route["state"] }} {{ route["fwd"] }}
+      {%- end -%}
+
+  # Distinct header, query and forward-header names in use, for the fetch rules
+  # the frontend block has to spell out; also the fail-closed event. A component
+  # cannot both publish and emit text, hence the split from the map producer.
+  features-860-haptic-api-key-names:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/api-key-secret']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-header']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-query']"
+        - "metadata.annotations['haproxy-haptic.org/api-key-consumer-header']"
+      group: haptic-api-key-routes
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-haptic-api-key-route" for HapticApiKeyRoute -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- var route = map[string]any{} -%}
+      {{- HapticApiKeyRoute(item, route) -}}
+      {%- if route["enabled"] == true -%}
+        {%- var ns = dig_string(item, "", "metadata", "namespace") -%}
+        {%- var name = dig_string(item, "", "metadata", "name") -%}
+        {%- var key = ns + "/" + name -%}
+        {%- if tostring(route["intent"]) != "" -%}
+          {{- WebhookRejectOrWarn(resources.ingresses.GetSingle(ns, name), "ApiKeySecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/" + tostring(route["intent"]) + "' but no 'haproxy-haptic.org/api-key-secret'. Keys cannot be checked without it, so this route fails closed with 503. Set api-key-secret, or remove the other api-key-* annotations.") -}}
+        {%- else -%}
+          {%- var fetchName = tostring(route["name"]) -%}
+          {{- shared.Publish(tostring(route["source"]), fetchName, fetchName) -}}
+          {%- if tostring(route["fwd"]) != "_" -%}{{- shared.Publish("fwd", tostring(route["fwd"]), tostring(route["fwd"])) -}}{%- end -%}
+          {%- if tostring(route["state"]) == "missing" -%}
+            {{- recordEvent(resources.ingresses.GetSingle(ns, name), "ApiKeySecretMissing", "Ingress " + key + " references Secret '" + tostring(route["secretRef"]) + "' in 'haproxy-haptic.org/api-key-secret', but it could not be resolved. Requests are denied with 503 until the Secret is present.") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  map-haptic-apikeys-860-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/api-key-secret']"]
+    template: |-
+      {%- import "util-haptic-secret-ref" for HapticSecretRef -%}
+      {%- var ns = dig_string(item, "", "metadata", "namespace") -%}
+      {%- var key = ns + "/" + dig_string(item, "", "metadata", "name") -%}
+      {%- var apiKeySecret = dig_string(item, "", "metadata", "annotations", "haproxy-haptic.org/api-key-secret") -%}
+      {%- if apiKeySecret != "" -%}
+        {%- var secretRef = HapticSecretRef(ns, apiKeySecret, "haproxy-haptic.org/api-key-secret", key) -%}
+        {%- var refParts = split(secretRef, "/") -%}
+        {%- var secret = resources.secrets.GetSingle(refParts[0], refParts[1]) -%}
+        {%- if secret != nil -%}
+          {%- var keysData = secret.Data["keys"] | b64decode() | tostring() -%}
+          {%- if strip(keysData) == "" -%}
+            {{- fail("Secret '" + secretRef + "' referenced by annotation 'haproxy-haptic.org/api-key-secret' on Ingress '" + key + "' has an empty or missing 'keys' data key.") -}}
+          {%- end -%}
           {%- for _, rawLine := range split(keysData, "\n") -%}
             {%- var l = strip(rawLine) -%}
             {%- if l == "" %}{%- continue %}{%- end -%}
@@ -45,218 +170,69 @@ templateSnippets:
               {%- consumer = kp[1] -%}
             {%- end -%}
             {%- if !regex_search(apikey, "^[!-~]+$") || !regex_search(consumer, "^[!-~]+$") -%}
-              {{- fail("Secret '" + secretRef + "' referenced on Ingress '" + ingressKey + "' has an invalid API key or consumer id (whitespace / control characters are not permitted).") -}}
+              {{- fail("Secret '" + secretRef + "' referenced on Ingress '" + key + "' has an invalid API key or consumer id (whitespace / control characters are not permitted).") -}}
             {%- end -%}
-            {%- lines = append(lines, apikey + " " + consumer) -%}
+            {{- shared.Unique("map-haptic-apikeys", secretRef + "|" + apikey, "\n" + secretRef + "|" + apikey + " " + consumer) -}}
           {%- end -%}
-          {%- var mapContent = join(lines, "\n") + "\n" -%}
-          {%- var _, regErr = fileRegistry.Register("map", mapName, mapContent) -%}
-          {%- if regErr != nil -%}{{ fail("failed to register API-key map " + mapName + ": " + tostring(regErr)) }}{%- end -%}
         {%- end -%}
       {%- end -%}
-      {{- render "haptic-api-key-map-publications" -}}
 
-  haptic-api-key-map-publications:
+  # ==========================================================================
+  # API-key check + consumer identity: one block per HTTP frontend.
+  # Band 860: after JWT (858), whose `sub` wins the set-once identity, and
+  # before consumer groups (862), the consumer rate limit (863) and the cache
+  # switch (865).
+  # ==========================================================================
+  frontend-filters-860-haptic-api-key:
     requires: [ingresses]
-    incremental:
-      source: ingresses
-      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/api-key-secret']"]
-      group: haptic-api-key-maps
-      effects: [publishValue]
-    template: |-
-      {%- var ingress = resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
-      {%- if ingress != nil -%}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var apiKeySecret = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] %}
-        {%- if apiKeySecret != "" %}
-          {%- var secretNs = ns %}
-          {%- var secretName = apiKeySecret %}
-          {%- if strings_contains(apiKeySecret, "/") %}
-            {%- var parts = split(apiKeySecret, "/") %}
-            {%- secretNs = parts[0] %}
-            {%- secretName = parts[1] %}
-          {%- end %}
-          {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
-          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
-          {%- var keysEncoded = "" %}
-          {%- if secret != nil %}{%- keysEncoded = secret.Data["keys"] %}{%- end %}
-          {{- shared.Publish("availability", key, map[string]any{"found": secret != nil}) -}}
-          {{- shared.Publish("maps", mapName, map[string]any{
-            "filename": mapName,
-            "found": secret != nil,
-            "keys": keysEncoded,
-            "secret": secretNs + "/" + secretName,
-            "ingress": key,
-          }) -}}
-        {%- end %}
-      {%- end -%}
-
-  # ==========================================================================
-  # API-key check + consumer identity (backend-directives; inherit_context)
-  # ==========================================================================
-  # ==========================================================================
-  # Client-leg API-key enforcement for CACHE-ENABLED routes.
-  #
-  # backend-directives-806 puts the identity and the 401 in the application
-  # backend. A cache-enabled route never enters that backend on the client leg —
-  # frontend-switching-865 switches it to `backend varnish_cache` — so without this
-  # the deny never runs for a cached request, and an uncredentialed caller is
-  # served the authenticated response straight from cache. Varnish's builtin does
-  # not save us: it only refuses to serve cached responses to requests carrying
-  # Authorization or Cookie, and an API key is neither.
-  #
-  # Emitted at band 860, before the cache switch. Every rule is scoped to its own
-  # route by resource_id. The backend copy stays: it is what enforces on the
-  # cache-miss origin leg, and its `unless { var(txn.haptic_consumer) -m found }`
-  # guard makes the second execution idempotent.
-  # ==========================================================================
-  features-900-haptic-fragment-860-api-key-cache-routes:
-    requires: [ingresses]
-    incremental:
-      bindingsTemplate: |-
-        {%- var mapDir, err = pathResolver.GetPath("", "map") -%}
-        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
-        {{- toJSON(map[string]any{"ingresses": map[string]any{"mapDir": mapDir}}) -}}
-      whenAnyPathExists:
-        - "metadata.annotations['haproxy-haptic.org/api-key-secret']"
-        - "metadata.annotations['haproxy-haptic.org/api-key-header']"
-        - "metadata.annotations['haproxy-haptic.org/api-key-query']"
-        - "metadata.annotations['haproxy-haptic.org/cache-enable']"
-      consumes: [haptic-api-key-maps]
-      effects: [publishValue]
-    template: |-
-      {%- var fragment = render "util-haptic-fragment-body-860-api-key-cache-routes" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
-      {%- end -%}
-
-  frontend-filters-860-haptic-api-key-cache-routes:
-    requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-860-api-key-cache-routes", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-860-api-key-cache-routes:
-    template: |
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- var ingress = resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
-      {%- if ingress != nil %}
-        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
-          {%- var ns = ingress.Metadata.Namespace %}
-          {%- var name = ingress.Metadata.Name %}
-          {%- var key = ns + "/" + name %}
-          {%- var apiKeySecret = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] %}
-          {%- if apiKeySecret != "" %}
-            {%- var secretNs = ns %}
-            {%- var secretName = apiKeySecret %}
-            {%- if strings_contains(apiKeySecret, "/") %}
-              {%- var sparts = split(apiKeySecret, "/") %}
-              {%- secretNs = sparts[0] %}
-              {%- secretName = sparts[1] %}
-            {%- end %}
-            {%- var hdr = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-header"] %}
-            {%- var qparam = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-query"] %}
-            {%- var fetch = "" %}
-            {%- if qparam != "" %}
-              {%- fetch = "url_param(" + ValidateConfigValue(qparam, "haproxy-haptic.org/api-key-query", key, false) + ")" %}
-            {%- else %}
-              {%- var h = hdr %}
-              {%- if h == "" %}{%- h = "X-API-Key" %}{%- end %}
-              {%- fetch = "req.hdr(" + ValidateConfigValue(h, "haproxy-haptic.org/api-key-header", key, false) + ")" %}
-            {%- end %}
-            {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
-            {%- var availability, found = shared.Select("haptic-api-key-maps", "availability", key) %}
-            {%- var secretFound = found && availability.(map[string]any)["found"].(bool) %}
-      {{ "\n" }}# haptic/api-key on the client leg — cache-enabled route ({{ key }})
-            {%- if !secretFound %}
-      http-request set-var(txn.denied_by) str(api_key_unavailable) if { var(txn.resource_id) -m str {{ key }} }
-      http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ key }} }
-            {%- else %}
-              {%- var mapPath = tostring(props["mapDir"]) + "/" + mapName %}
-      http-request set-var(txn.haptic_apikey) {{ fetch }} if { var(txn.resource_id) -m str {{ key }} }
-      http-request set-var(txn.denied_by) str(api_key) if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_apikey),map({{ mapPath }}) -m found }
-      http-request deny deny_status 401 if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_apikey),map({{ mapPath }}) -m found }
-      http-request set-var(txn.haptic_consumer) var(txn.haptic_apikey),map({{ mapPath }}) if { var(txn.resource_id) -m str {{ key }} } !{ var(txn.haptic_consumer) -m found }
-            {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-
-  backend-directives-806-haptic-api-key:
     template: |
       {#
-        HAPTIC API-key check
-
         Annotations:
           - haproxy-haptic.org/api-key-secret: "<ns/name>" | "<name>" (required)
           - haproxy-haptic.org/api-key-header: "<header>" (default X-API-Key)
           - haproxy-haptic.org/api-key-query: "<param>" (mutually exclusive with -header)
           - haproxy-haptic.org/api-key-consumer-header: "<header>" (forward the consumer id upstream)
 
-        Generated HAProxy Config:
-          http-request set-var(txn.haptic_apikey) req.hdr(<header>)
-          http-request deny deny_status 401 unless { var(txn.haptic_apikey),map(<map>) -m found }
-          http-request set-var(txn.haptic_consumer) var(txn.haptic_apikey),map(<map>) unless { var(txn.haptic_consumer) -m found }
-          http-request set-header <consumer-header> %[var(txn.haptic_consumer)] if { var(txn.haptic_consumer) -m found }
+        The route's settings come from haptic-api-key-routes.map, the key from
+        haptic-apikeys.map keyed by "<secret>|<apikey>". A route whose Secret is
+        absent is denied 503; an unknown or missing key 401. The consumer var is
+        set-once (`!{ -m found }`) so JWT and API-key auth compose.
 
-        The consumer var is set-once (`unless -m found`) so JWT and API-key auth
-        compose — the first producer (JWT at 805) wins. This is the shared
-        identity the per-consumer quota / consumer-group features read.
+        The forward header is stripped from the client request first: on any path
+        that reaches here without an identity — a `satisfy: any` route admitted by
+        IP, for example — the caller's own value would otherwise be forwarded to the
+        application as the consumer.
       #}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var apiKeySecret = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] %}
-        {%- if apiKeySecret != "" %}
-          {%- var secretNs = ns %}
-          {%- var secretName = apiKeySecret %}
-          {%- if strings_contains(apiKeySecret, "/") %}
-            {%- var parts = split(apiKeySecret, "/") %}
-            {%- secretNs = parts[0] %}
-            {%- secretName = parts[1] %}
-          {%- end %}
-          {%- var hdr = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-header"] %}
-          {%- var qparam = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-query"] %}
-          {%- if hdr != "" && qparam != "" %}
-            {{- fail("Ingress '" + key + "' sets both haproxy-haptic.org/api-key-header and haproxy-haptic.org/api-key-query; they are mutually exclusive.") -}}
-          {%- end %}
-          {%- var fetch = "" %}
-          {%- if qparam != "" %}
-            {%- var q = ValidateConfigValue(qparam, "haproxy-haptic.org/api-key-query", key, false) %}
-            {%- fetch = "url_param(" + q + ")" %}
-          {%- else %}
-            {%- if hdr == "" %}{%- hdr = "X-API-Key" %}{%- end %}
-            {%- var h = ValidateConfigValue(hdr, "haproxy-haptic.org/api-key-header", key, false) %}
-            {%- fetch = "req.hdr(" + h + ")" %}
-          {%- end %}
-          {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
-          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
-      # haptic/api-key ({{ key }})
-          {%- if secret == nil %}
-      # WARNING haproxy-haptic.org/api-key-secret: referenced Secret not found at render time; failing closed (503) for this route until it is present.
-      http-request set-var(txn.denied_by) str(api_key_unavailable)
-      http-request deny deny_status 503
-          {%- else %}
-            {%- var mapPath = FilePath("map", mapName) %}
-      http-request set-var(txn.haptic_apikey) {{ fetch }}
-      http-request set-var(txn.denied_by) str(api_key) unless { var(txn.haptic_apikey),map({{ mapPath }}) -m found }
-      http-request deny deny_status 401 unless { var(txn.haptic_apikey),map({{ mapPath }}) -m found }
-      http-request set-var(txn.haptic_consumer) var(txn.haptic_apikey),map({{ mapPath }}) unless { var(txn.haptic_consumer) -m found }
-          {%- var consumerHdr = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-consumer-header"] %}
-          {%- if consumerHdr != "" %}
-            {%- var ch = ValidateConfigValue(consumerHdr, "haproxy-haptic.org/api-key-consumer-header", key, false) %}
-      {# Strip first: the set-header below is conditional on an identity having
-          been established, so on any path that reaches here without one — a
-          `satisfy: any` route admitted by IP, for example — the caller's own
-          value would otherwise be forwarded to the application as the consumer. #}
-      http-request del-header {{ ch }}
-      http-request set-header {{ ch }} %[var(txn.haptic_consumer)] if { var(txn.haptic_consumer) -m found }
-          {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end -%}
+      {%- var routes, e1 = pathResolver.GetPath("haptic-api-key-routes.map", "map") -%}
+      {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
+      {%- var keys, e2 = pathResolver.GetPath("haptic-apikeys.map", "map") -%}
+      {%- if e2 != nil -%}{{ fail(tostring(e2)) }}{%- end -%}
+      {%- var hdrs = []any{} -%}
+      {%- for _, v := range incremental_values("haptic-api-key-routes", "hdr") -%}{%- hdrs = append(hdrs, tostring(v)) -%}{%- end -%}
+      {%- var queries = []any{} -%}
+      {%- for _, v := range incremental_values("haptic-api-key-routes", "query") -%}{%- queries = append(queries, tostring(v)) -%}{%- end -%}
+      {%- var fwds = []any{} -%}
+      {%- for _, v := range incremental_values("haptic-api-key-routes", "fwd") -%}{%- fwds = append(fwds, tostring(v)) -%}{%- end -%}
+      {{ "\n" }}# haptic/api-key
+      http-request set-var(txn.ak_cfg) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.ak_src) var(txn.ak_cfg),field(1,' ') if { var(txn.ak_cfg) -m found }
+      http-request set-var(txn.ak_name) var(txn.ak_cfg),field(2,' ') if { var(txn.ak_cfg) -m found }
+      http-request set-var(txn.ak_secret) var(txn.ak_cfg),field(3,' ') if { var(txn.ak_cfg) -m found }
+      http-request set-var(txn.ak_state) var(txn.ak_cfg),field(4,' ') if { var(txn.ak_cfg) -m found }
+      http-request set-var(txn.ak_fwd) var(txn.ak_cfg),field(5,' ') if { var(txn.ak_cfg) -m found }
+      http-request set-var(txn.denied_by) str(api_key_unavailable) if { var(txn.ak_state) -m str missing nosecret }
+      http-request deny deny_status 503 if { var(txn.ak_state) -m str missing nosecret }
+      {%- for _, h := range sort_strings(hdrs) %}
+      http-request set-var(txn.haptic_apikey) req.hdr({{ h }}) if { var(txn.ak_src) -m str hdr } { var(txn.ak_name) -m str {{ h }} }
+      {%- end %}
+      {%- for _, q := range sort_strings(queries) %}
+      http-request set-var(txn.haptic_apikey) url_param({{ q }}) if { var(txn.ak_src) -m str query } { var(txn.ak_name) -m str {{ q }} }
+      {%- end %}
+      http-request set-var(txn.ak_consumer) var(txn.ak_secret),concat(|,txn.haptic_apikey),map({{ keys }}) if { var(txn.ak_state) -m str ok } { var(txn.haptic_apikey) -m found }
+      http-request set-var(txn.denied_by) str(api_key) if { var(txn.ak_state) -m str ok } !{ var(txn.ak_consumer) -m found }
+      http-request deny deny_status 401 if { var(txn.ak_state) -m str ok } !{ var(txn.ak_consumer) -m found }
+      http-request set-var(txn.haptic_consumer) var(txn.ak_consumer) if { var(txn.ak_consumer) -m found } !{ var(txn.haptic_consumer) -m found }
+      {%- for _, f := range sort_strings(fwds) %}
+      http-request del-header {{ f }} if { var(txn.ak_fwd) -m str {{ f }} }
+      http-request set-header {{ f }} %[var(txn.haptic_consumer)] if { var(txn.ak_fwd) -m str {{ f }} } { var(txn.haptic_consumer) -m found }
+      {%- end %}

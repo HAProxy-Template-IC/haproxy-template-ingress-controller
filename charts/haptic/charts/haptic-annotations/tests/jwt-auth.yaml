@@ -2,10 +2,12 @@
 validationTests:
   test-haptic-jwt-auth:
     description: >-
-      jwt-secret registers the public key and emits the alg-confusion-hardened
-      verify chain (constant alg, header-alg guard), exp/iss/required-claim
-      denies, sets the shared consumer from sub, and forwards claims after
-      del-header'ing them. A missing key Secret fails closed with 503.
+      jwt-secret registers the public key, the route's settings land in
+      haptic-jwt-routes.map, and one frontend block runs the alg-confusion-hardened
+      verify chain (header-alg guard, a verify rule per key file with the constant
+      algorithm), the exp/nbf/iss/aud/required-claim denies, sets the shared consumer
+      from sub, and forwards claims after del-header'ing them. A missing key Secret
+      fails closed with 503.
     fixtures:
       secrets:
         - apiVersion: v1
@@ -54,44 +56,48 @@ validationTests:
                       backend: { service: { name: echo, port: { number: 80 } } }
     assertions:
       - type: haproxy_valid
-      # nbf is the other half of the validity window. Without it a token minted
-      # for a future window is usable the moment it is issued.
+      - {type: contains, target: "map:haptic-jwt-routes.map", pattern: '(?m)^default/jwt-ingress RS256 haptic-jwt-default_jwt-keys\.pem ok https://issuer\.example\.com my-api ,scope, ,sub:X-User-Id,email:X-User-Email,$'}
+      - {type: contains, target: "map:haptic-jwt-routes.map", pattern: '(?m)^default/jwt-nosecret RS256 _ missing _ _ _ _$'}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request deny deny_status 401 if \\{ var\\(txn\\.haptic_jwt_nbf\\) -m found \\} \\{ var\\(txn\\.haptic_jwt_nbf\\),sub\\(txn\\.haptic_jwt_now\\) -m int gt 0 \\}"
-      # THE ORDERING IS THE SECURITY PROPERTY: the signature must be verified
-      # before any claim is trusted, and the identity taken only at the end.
-      # jwt_payload_query parses, it does not verify.
+        pattern: 'http-request deny deny_status 401 if \{ var\(txn\.jwt_state\) -m str ok \} \{ var\(txn\.haptic_jwt_nbf\) -m found \} \{ var\(txn\.haptic_jwt_nbf\),sub\(txn\.haptic_jwt_now\) -m int gt 0 \}'
       - type: match_order
         target: haproxy.cfg
         patterns:
-          - "http-request deny deny_status 401 unless \\{ http_auth_bearer,jwt_verify\\("
-          - "http-request deny deny_status 401 if \\{ var\\(txn\\.haptic_jwt_nbf\\) -m found \\}"
-          - "http-request set-var\\(txn\\.haptic_consumer\\) http_auth_bearer,jwt_payload_query\\('\\$\\.sub'\\)"
+          - 'http-request deny deny_status 401 if \{ var\(txn\.jwt_state\) -m str ok \} \{ var\(txn\.jwt_alg\) -m str RS256 \} \{ var\(txn\.jwt_key\) -m str haptic-jwt-default_jwt-keys\.pem \} !\{ http_auth_bearer,jwt_verify\('
+          - 'http-request deny deny_status 401 if \{ var\(txn\.jwt_state\) -m str ok \} \{ var\(txn\.haptic_jwt_nbf\) -m found \}'
+          - 'http-request set-var\(txn\.haptic_consumer\) http_auth_bearer,jwt_payload_query\(''\$\.sub''\)'
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(txn.haptic_jwt_alg\\) http_auth_bearer,jwt_header_query\\('\\$.alg'\\)"
+        pattern: 'http-request set-var\(txn\.haptic_jwt_alg\) http_auth_bearer,jwt_header_query\(''\$\.alg''\) if \{ var\(txn\.jwt_state\) -m str ok \}'
+      # The token's alg must equal the configured one, and verification runs with the configured constant.
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request deny deny_status 401 unless \\{ var\\(txn.haptic_jwt_alg\\) -m str RS256 \\}"
+        pattern: 'http-request deny deny_status 401 if \{ var\(txn\.jwt_state\) -m str ok \} !\{ var\(txn\.haptic_jwt_alg\),strcmp\(txn\.jwt_alg\) -m int 0 \}'
       - type: contains
         target: haproxy.cfg
-        pattern: "jwt_verify\\(RS256,\"[^\"]*haptic-jwt-default-jwt-keys\\.pem\"\\) -m int 1"
+        pattern: 'jwt_verify\(RS256,"[^"]*haptic-jwt-default_jwt-keys\.pem"\) -m int 1'
       - type: contains
         target: haproxy.cfg
-        pattern: "jwt_payload_query\\('\\$.iss'\\) -m str \"https://issuer.example.com\""
-      - {type: contains, target: haproxy.cfg, pattern: "jwt_payload_query\\('\\$.aud'\\) -m str \"my-api\""}
+        pattern: 'jwt_payload_query\(''\$\.iss''\),strcmp\(txn\.jwt_iss\) -m int 0'
+      - {type: contains, target: haproxy.cfg, pattern: 'jwt_payload_query\(''\$\.aud''\),strcmp\(txn\.jwt_aud\) -m int 0'}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request deny deny_status 401 unless \\{ http_auth_bearer,jwt_payload_query\\('\\$.scope'\\) -m found \\}"
+        pattern: 'http-request deny deny_status 401 if \{ var\(txn\.jwt_state\) -m str ok \} \{ var\(txn\.jwt_req\) -m sub ,scope, \} !\{ http_auth_bearer,jwt_payload_query\(''\$\.scope''\) -m found \}'
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.haptic_consumer\\) http_auth_bearer,jwt_payload_query\\('\\$.sub'\\) unless \\{ var\\(txn.haptic_consumer\\) -m found \\}"
-      - {type: contains, target: haproxy.cfg, pattern: "http-request del-header X-User-Id"}
+        pattern: 'set-var\(txn\.haptic_consumer\) http_auth_bearer,jwt_payload_query\(''\$\.sub''\) if \{ var\(txn\.jwt_state\) -m str ok \} !\{ var\(txn\.haptic_consumer\) -m found \}'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-User-Id if \{ var\(txn\.jwt_fwd\) -m sub :X-User-Id, \}'}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-header X-User-Id %\\[http_auth_bearer,jwt_payload_query\\('\\$.sub'\\)\\]"
-      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
+        pattern: 'http-request set-header X-User-Id %\[http_auth_bearer,jwt_payload_query\(''\$\.sub''\)\] if \{ var\(txn\.jwt_state\) -m str ok \} \{ var\(txn\.jwt_fwd\) -m sub ,sub:X-User-Id, \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.denied_by\) str\(jwt_key_unavailable\) if \{ var\(txn\.jwt_state\) -m str missing \}'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.jwt_state\) -m str missing nosecret \}'}
+      - {type: contains, target: events, pattern: "JWTSecretMissing"}
+      # The chain lives on the frontend; the backend section stays plain (dynamic on 3.4).
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_jwt-ingress_svc_echo_80 from haptic-be-\w+$\n[ \t]+guid [^\n]+\n(?:[ \t]+#[^\n]*\n)*[ \t]+server '}
 
   test-haptic-jwt-annotations-without-secret-fail-closed:
     description: >-
@@ -117,10 +123,12 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
+      - {type: contains, target: "map:haptic-jwt-routes.map", pattern: '(?m)^default/jwt-nokey _ _ nosecret _ _ _ _$'}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(txn\\.denied_by\\) str\\(jwt_unavailable\\)"
-      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
+        pattern: 'http-request set-var\(txn\.denied_by\) str\(jwt_unavailable\) if \{ var\(txn\.jwt_state\) -m str nosecret \}'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.jwt_state\) -m str missing nosecret \}'}
+      - {type: contains, target: events, pattern: "JWTSecretMissing"}
 
   test-haptic-jwt-annotations-without-secret-rejected-at-admission:
     description: >-

@@ -216,14 +216,13 @@ validationTests:
                   paths:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
-      # The Secret lookup races the resource store, so this must not abort the
-      # render — a bare fail() here took the whole fleet down for one Ingress.
-      # The route is denied instead, and recovers when the Secret appears.
       - type: haproxy_valid
+      - {type: contains, target: "map:haptic-route-unavailable.map", pattern: '(?m)^default/btls-noca backend_tls_unavailable$'}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(txn\\.denied_by\\) str\\(backend_tls_unavailable\\)"
-      - {type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503"}
+        pattern: 'http-request set-var\(txn\.denied_by\) str\(backend_tls_unavailable\) if \{ var\(txn\.resource_id\),map\([^)]*haptic-route-unavailable\.map\) -m str backend_tls_unavailable \}'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.resource_id\),map\([^)]*haptic-route-unavailable\.map\) -m found \}'}
+      - {type: contains, target: events, pattern: "BackendCASecretMissing"}
 
   test-haptic-backend-ca-secret-present-still-verifies:
     description: >-

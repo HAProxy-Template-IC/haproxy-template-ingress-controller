@@ -34,15 +34,13 @@ _helm_load:
     - path: watchedResources.waf_selfservice_catalogs.fieldSelector
       value: 'metadata.name={{ .Values.controller.config.templatingSettings.extraContext.waf.policies.selfService.configMapName | default "waf-policies" }}'
   unset:
-    # These two snippets import util-spoa-rate-limit-dispatch, which the spoa-hub
+    # This snippet imports util-spoa-rate-limit-dispatch, which the spoa-hub
     # library defines. The import is compile-time: with the hub absent it fails
-    # to compile and bricks the whole config. Both only emit when hub messages
-    # are present (the hub is on), so dropping them when it is off changes no
+    # to compile and bricks the whole config. It only emits when hub messages
+    # are present (the hub is on), so dropping it when it is off changes no
     # output. The fail-closed guard for a rate-limit annotation without the hub
     # lives in map-rate-limit-820-haptic, which has no such import.
-    - path: templateSnippets.backend-directives-807-haptic-shared-rate-limit-consumer
-      when: '{{ include "haptic.spoaHub.disabled" . }}'
-    - path: templateSnippets.frontend-filters-863-haptic-shared-rate-limit-consumer-cache-routes
+    - path: templateSnippets.frontend-filters-863-haptic-shared-rate-limit-consumer
       when: '{{ include "haptic.spoaHub.disabled" . }}'
 
 # Library-declared extraContext defaults. These flow into the rendered config's
@@ -178,3 +176,59 @@ watchedResources:
     apiVersion: v1
     resources: configmaps
     indexBy: ["metadata.namespace", "metadata.name"]
+
+# Per-route settings of the API-gateway features, read by one uniform rule
+# block per HTTP frontend (frontend-filters-858..899 in this library). Keyed by
+# <ns>/<name> (txn.resource_id) unless noted; a route is added, changed or
+# removed with map operations only, so its backend stays dynamic.
+maps:
+  haptic-api-key-routes.map:
+    template: |
+      # <ns>/<name> → "<hdr|query|_> <name|_> <secret ns/name|_> <ok|missing|nosecret> <consumer-header|_>"
+      # Populated by map-haptic-api-key-routes-*; read by frontend-filters-860-haptic-api-key.
+      {{ render_glob "map-haptic-api-key-routes-*" -}}
+  haptic-apikeys.map:
+    template: |
+      # <secret ns/name>|<apikey> → <consumer>, for every Secret an Ingress references.
+      # Populated by map-haptic-apikeys-*; looked up by frontend-filters-860-haptic-api-key.
+      {{ render_glob "map-haptic-apikeys-*" -}}
+  haptic-jwt-routes.map:
+    template: |
+      # <ns>/<name> → "<alg> <key file|_> <ok|missing> <issuer|_> <audience|_> <,required,claims,|_> <,claim:Header,|_>"
+      # Populated by map-haptic-jwt-routes-*; read by frontend-filters-858-haptic-jwt.
+      {{ render_glob "map-haptic-jwt-routes-*" -}}
+  haptic-hmac-routes.map:
+    template: |
+      # <ns>/<name> → "<alg> <signature header> <body|path> <ok|missing> <base64 key|_>"
+      # Populated by map-haptic-hmac-routes-*; read by frontend-filters-861-haptic-hmac.
+      {{ render_glob "map-haptic-hmac-routes-*" -}}
+  haptic-consumer-group-routes.map:
+    template: |
+      # <ns>/<name> → "<secret ns/name> <ok|missing|invalid>"
+      # Populated by map-haptic-consumer-group-routes-*; read by frontend-filters-862-haptic-consumer-groups.
+      {{ render_glob "map-haptic-consumer-group-routes-*" -}}
+  haptic-consumer-group-allow.map:
+    template: |
+      # <ns>/<name>|<group> → 1 for every group a route allows.
+      # Populated by map-haptic-consumer-group-allow-*; read by frontend-filters-862-haptic-consumer-groups.
+      {{ render_glob "map-haptic-consumer-group-allow-*" -}}
+  haptic-consumer-groups.map:
+    template: |
+      # <secret ns/name>|<consumer> → <group>, for every Secret an Ingress references.
+      # Populated by map-haptic-consumer-groups-*; read by frontend-filters-862-haptic-consumer-groups.
+      {{ render_glob "map-haptic-consumer-groups-*" -}}
+  haptic-rate-limit-routes.map:
+    template: |
+      # <ns>/<name> → "<req|conn> <window> <threshold> <status>" for the per-pod stick-table limiter.
+      # Populated by map-haptic-rate-limit-routes-*; read by frontend-filters-863-haptic-rate-limit.
+      {{ render_glob "map-haptic-rate-limit-routes-*" -}}
+  haptic-bandwidth-routes.map:
+    template: |
+      # <ns>/<name> → "<download bytes/s|_> <upload bytes/s|_> <stream|client|service>"
+      # Populated by map-haptic-bandwidth-routes-*; read by frontend-filters-864-haptic-bandwidth-limit.
+      {{ render_glob "map-haptic-bandwidth-routes-*" -}}
+  haptic-route-unavailable.map:
+    template: |
+      # <ns>/<name> → <denied_by reason> for a route whose backend TLS could not be configured.
+      # Populated by map-haptic-route-unavailable-*; read by frontend-filters-899-haptic-route-unavailable.
+      {{ render_glob "map-haptic-route-unavailable-*" -}}

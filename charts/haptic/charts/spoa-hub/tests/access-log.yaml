@@ -150,8 +150,10 @@ validationTests:
           - 'set-var\(txn\.denied_by\) str\(rate_limit_shared_invalid\) if \{ var\(txn\.rl_verdict_class\) -m str invalid \}'
           - 'deny deny_status 429 hdr Retry-After %\[var\(txn\.hub\.rate_limit\.retry_after\)\] if \{ var\(txn\.rl_verdict_class\) -m str limited fallback-limited \}'
           - 'deny deny_status 429 hdr Retry-After 1 if \{ var\(txn\.rl_verdict_class\) -m str unavailable invalid \}'
-      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  http-request unset-var\(txn\.rl_verdict_class\)$', expected: "3"}
-      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  http-request set-var\(txn\.rl_verdict_class\) str\(limited\)', expected: "3"}
+      # Two dispatch blocks per HTTP frontend: source-IP before the WAF and
+      # consumer after the identity rules, on all three frontends.
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  http-request unset-var\(txn\.rl_verdict_class\)$', expected: "6"}
+      - {type: match_count, target: haproxy.cfg, pattern: '(?m)^  http-request set-var\(txn\.rl_verdict_class\) str\(limited\)', expected: "6"}
       - type: not_contains
         target: haproxy.cfg
         pattern: 'set-var\(txn\.rl_verdict_class\) str\(limited\) if \{ var\(txn\.rl_limit\) -m found \} \{ var\(txn\.rl_keyspec\) -m str [a-z]+ \} !\{ var\(txn\.hub\.rate_limit\.allowed\) -m bool \}'
