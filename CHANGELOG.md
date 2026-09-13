@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Configuration assembly reuses unchanged document subtrees when fragments are added or removed, reducing allocations.
+- The rendered-output rejection log names whether the mismatching plan file and artifact were inherited from the previous render or produced by the rejected one (#213).
 
 ### Fixed
 

@@ -574,6 +574,42 @@ func TestOutputTransactionRejectsDuplicateArtifactRuntimePath(t *testing.T) {
 	require.ErrorContains(t, err, "duplicated")
 }
 
+func TestOutputTransactionMismatchNamesPairProvenance(t *testing.T) {
+	fixture := newScaleOutputFixture(t, 2)
+	base := mustOutputSnapshot(
+		t, fixture.authority, fixture.config, fixture.plan, fixture.artifacts, nil,
+	)
+	path := "maps/diverged.map"
+	descriptor := renderartifact.Descriptor{
+		Family: renderartifact.Map, Path: path, RuntimePath: path,
+	}
+	deltas := insertMapOutputDeltas(t, &fixture, base, descriptor, "diverged.example be-1\n")
+	artifactTransaction, err := renderartifact.BeginTransaction(
+		fixture.artifactAuthority, fixture.artifacts,
+	)
+	require.NoError(t, err)
+	require.NoError(t, artifactTransaction.Insert(
+		descriptor, renderartifact.NewLiteralContent("diverged.example be-2\n"),
+	))
+	_, deltas.artifacts, err = artifactTransaction.Commit()
+	require.NoError(t, err)
+	transaction, err := BeginTransaction(
+		fixture.authority, base, deltas.document, deltas.plan, deltas.artifacts,
+	)
+	require.NoError(t, err)
+	_, _, err = transaction.Commit()
+	var mismatch *ArtifactContentMismatchError
+	require.ErrorAs(t, err, &mismatch)
+	assert.Equal(t, path, mismatch.Path)
+	assert.Equal(t, mismatch.PlanBytes, mismatch.ArtifactBytes)
+	assert.False(t, mismatch.ExactRead)
+	assert.True(t, mismatch.IncrementalCommit)
+	assert.False(t, mismatch.PlanFileInherited)
+	assert.True(t, mismatch.PlanFileChanged)
+	assert.False(t, mismatch.ArtifactInherited)
+	assert.True(t, mismatch.ArtifactChanged)
+}
+
 func TestOutputStructuralDeltaRejectsTamperingAndABA(t *testing.T) {
 	fixture := newSectionOutputFixture(t, 3)
 	deltas := insertSectionOutputDeltas(t, fixture, 1, "inserted\n")

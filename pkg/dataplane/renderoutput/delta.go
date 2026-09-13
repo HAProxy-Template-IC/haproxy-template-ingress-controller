@@ -1086,6 +1086,14 @@ func applyChangedOutputBinding(
 		return nil, err
 	}
 	if err := validateOutputBindingPair(path, file, artifact, nextDocument); err != nil {
+		var mismatch *ArtifactContentMismatchError
+		if errors.As(err, &mismatch) {
+			mismatch.IncrementalCommit = true
+			mismatch.PlanFileInherited = change.fileAfter == 0
+			mismatch.PlanFileChanged = fileChanged
+			mismatch.ArtifactInherited = change.artifactAfter == 0
+			mismatch.ArtifactChanged = artifactChanged
+		}
 		return nil, err
 	}
 	if baseFound && !fileChanged && !artifactChanged {

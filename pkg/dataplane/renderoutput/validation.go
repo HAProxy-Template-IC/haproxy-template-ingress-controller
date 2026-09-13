@@ -304,15 +304,25 @@ func validateArtifactContent(
 }
 
 // ArtifactContentMismatchError carries comparison evidence without file contents.
+// IncrementalCommit is set only when the pair was rejected by an incremental
+// commit; the four provenance fields are meaningful only then. Inherited means
+// the delta carried no After for the path, so the base binding's value was
+// re-validated; changed means the After differs from the base. An inherited,
+// unchanged pair that mismatches was already inconsistent in the base.
 type ArtifactContentMismatchError struct {
-	Path            string
-	PlanBytes       int
-	ArtifactBytes   int
-	Written         int64
-	Matched         int
-	ReadOK          bool
-	ExactRead       bool
-	PlanDigestValid bool
+	Path              string
+	PlanBytes         int
+	ArtifactBytes     int
+	Written           int64
+	Matched           int
+	ReadOK            bool
+	ExactRead         bool
+	PlanDigestValid   bool
+	IncrementalCommit bool
+	PlanFileInherited bool
+	PlanFileChanged   bool
+	ArtifactInherited bool
+	ArtifactChanged   bool
 }
 
 func (e *ArtifactContentMismatchError) Error() string {
