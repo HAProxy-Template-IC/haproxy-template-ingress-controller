@@ -273,6 +273,10 @@ templateSnippets:
       {%- if !regex_search(corazaBodyWaitTimeout, "^[1-9][0-9]*(us|ms|s|m|h|d)?$") %}
         {%- fail("extraContext.waf.policies.requestBody.waitTimeout must be a positive HAProxy duration.") %}
       {%- end %}
+      {#- Emitted only while a route has a WAF map entry, or dispatch is
+          default-on; the first route reloads once, as does removing the last. #}
+      {%- var wafRoutes = strip((render_glob "map-coraza-app-*") + (render_glob "map-haproxy-ingress-waf-*")) %}
+      {%- if dispatchMode == "default-on" || wafRoutes != "" %}
       http-request set-var(txn.coraza_app) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
       http-request set-var(txn.coraza_mode) var(txn.resource_id),map({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
       http-request set-var(txn.coraza_body_cfg) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-body.map", "map") }}) unless { var(txn.coraza_body_cfg) -m found }
@@ -390,6 +394,7 @@ templateSnippets:
       http-request set-var(txn.denied_by) str(waf) if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.action) -m found } !{ var(txn.hub.coraza.action) -m str allow }
       http-request deny deny_status 403 if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.action) -m found } !{ var(txn.hub.coraza.action) -m str allow }
       {%- end %}
+      {%- end %}
 
   # External-auth wiring: looks up the per-ingress auth URL in
   # auth-url.map (populated by ingress libraries from their auth-url
@@ -402,6 +407,9 @@ templateSnippets:
       {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-auth" %}
+      {#- Emitted only while a route has an auth-url map entry; the first
+          route reloads once, as does removing the last. #}
+      {%- if strip(render_glob "map-auth-url-*") != "" %}
       http-request set-var(txn.auth_url) var(txn.resource_id),map({{ pathResolver.GetPath("auth-url.map", "map") }}) unless { var(txn.auth_url) -m found }
       http-request set-var(txn.auth_signin) var(txn.resource_id),map({{ pathResolver.GetPath("auth-signin.map", "map") }}) unless { var(txn.auth_signin) -m found }
       http-request set-var(txn.auth_method) var(txn.resource_id),map({{ pathResolver.GetPath("auth-method.map", "map") }}) unless { var(txn.auth_method) -m found }
@@ -440,6 +448,7 @@ templateSnippets:
           path. Empty when no ingress uses the annotation. Same
           trailing-newline trick as the pass-headers glob. #}
       {{- render_glob "frontend-spoe-set-fail-headers-*" }}{{ "\n" }}
+      {%- end %}
       {%- end %}
 
   # API-gateway request validation. Resolves the per-route schema rule from

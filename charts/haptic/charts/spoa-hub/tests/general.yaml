@@ -30,6 +30,49 @@ validationTests:
       - {type: not_contains, target: haproxy.cfg, pattern: "backend spoa-hub"}
       - {type: not_contains, target: haproxy.cfg, pattern: "filter spoe engine spoa-hub"}
 
+  test-spoa-hub-blocks-absent-without-routes:
+    description: "With the WAF and external-auth messages enabled but no route carrying a WAF or auth-url annotation, the SPOE filters are declared and the dispatch blocks that read the (empty) maps are not emitted."
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-request
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: plain
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: echo, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "filter spoe engine spoa-hub-check-request config"}
+      - {type: contains, target: haproxy.cfg, pattern: "filter spoe engine spoa-hub-check-auth config"}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.coraza_app\)'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'send-spoe-group spoa-hub-check-request'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.auth_url\)'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'send-spoe-group spoa-hub-check-auth'}
+
   test-spoa-hub-rendering:
     # The fixture below pins haproxyVersion=3.2 so the rendered backend
     # uses `mode spop` (which is what the assertions assume). On a 3.0
@@ -61,7 +104,7 @@ validationTests:
             name: auth-trigger
             namespace: default
             annotations:
-              nginx.ingress.kubernetes.io/auth-url: "http://auth.svc.cluster.local/check"
+              haproxy-haptic.org/auth-url: "http://auth.svc.cluster.local/check"
           spec:
             ingressClassName: haproxy
             rules:

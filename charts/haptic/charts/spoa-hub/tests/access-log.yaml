@@ -26,6 +26,7 @@ validationTests:
       access log, and every gate that returns a status names itself in
       txn.denied_by so a 403/429/422 in the log is attributable.
     extraContext:
+      waf: {dispatch: {mode: default-on, defaultEnforcement: deny}}
       spoaHub:
         enabled: true
         haproxy:
@@ -45,7 +46,11 @@ validationTests:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata: { namespace: default, name: spoa-log }
+          metadata:
+            namespace: default
+            name: spoa-log
+            annotations:
+              haproxy-haptic.org/auth-url: "http://auth.svc.cluster.local/check"
           spec:
             ingressClassName: haptic
             rules:
@@ -248,9 +253,11 @@ validationTests:
     description: >-
       A WAF that cannot be consulted must not 503 the caller. It reduces risk, it
       does not establish identity, so a blip in our own sidecar must not refuse
-      traffic that did nothing wrong. The event is recorded instead.
+      traffic that did nothing wrong. The event is recorded instead. Rendered
+      under dispatch default-on so the block exists without a WAF route.
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     extraContext:
+      waf: {dispatch: {mode: default-on, defaultEnforcement: deny}}
       spoaHub:
         enabled: true
         haproxy:
@@ -270,8 +277,6 @@ validationTests:
           metadata:
             namespace: default
             name: waf-posture
-            annotations:
-              haproxy-haptic.org/waf: "on"
           spec:
             ingressClassName: haptic
             rules:
@@ -303,10 +308,11 @@ validationTests:
   test-spoa-hub-waf-fail-closed-opt-in:
     description: >-
       waf.failClosed restores the 503 for operators who would rather refuse
-      traffic than let it past uninspected. Off by default.
+      traffic than let it past uninspected. Off by default. Rendered under
+      dispatch default-on so the block exists without a WAF route.
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     extraContext:
-      waf: {failClosed: true}
+      waf: {failClosed: true, dispatch: {mode: default-on, defaultEnforcement: deny}}
       spoaHub:
         enabled: true
         haproxy:
@@ -326,8 +332,6 @@ validationTests:
           metadata:
             namespace: default
             name: waf-posture
-            annotations:
-              haproxy-haptic.org/waf: "on"
           spec:
             ingressClassName: haptic
             rules:
