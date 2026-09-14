@@ -419,6 +419,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         test-nginx-ingress-canary-by-header \
         test-haptic-cache-core \
         test-haptic-rate-limit-shared-ip \
+        test-haptic-rate-limit-shared-ip-allowlist \
         test-haptic-rate-limit-shared-ip-before-waf \
         test-haptic-rate-limit-shared-exact-consumer \
         test-haptic-rate-limit-shared-strict-unavailable \

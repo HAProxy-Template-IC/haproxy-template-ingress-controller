@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rate-limit-allowlist` also exempts clients from the shared limiter (`rate-limit-requests`); it only reached the per-pod limiter before. An allowlist on a route with no rate limit is refused at admission and reported as a `RateLimitAllowlistIgnored` Warning Event on reconcile instead of being ignored silently (#232).
 - An incremental render no longer fails with "incremental ranked text transitions collide" when a component's ranked publications change position within one result; the reorder was mistaken for a collision between identities and denied unrelated admissions while the batch was in flight.
 - Admission warnings report only the template-recorded events on the resource being admitted; events on other resources, such as governance audit violations elsewhere in the cluster, stay in their own Kubernetes Events.
 - Runtime and file-only updates are re-diffed if a paced HAProxy reload changes their worker baseline, preventing missed routing-map updates.
