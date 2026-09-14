@@ -7,7 +7,7 @@
 validationTests:
   test-gateway-route-maps-always-present:
     requires: [httproutes]
-    description: A route with no filters at all still gets every filter map and every static line that reads one. Creating a map on the first route that needs it, and deleting it with the last, are both changes to haproxy.cfg — the reload these maps exist to avoid.
+    description: A route with no filters at all still gets every filter map, so a later route's filter is a map entry; the redirect, rewrite and mirror rule blocks that read them appear with the first route carrying that filter and leave with the last, one reload each way, and stay out of a frontend that uses none of them.
     fixtures:
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -30,13 +30,15 @@ validationTests:
       - {type: contains, target: map:route-winner.map, pattern: 'Candidate group'}
       - {type: contains, target: map:route-backend.map, pattern: 'path_match qualifier'}
 
-      # The blocks that read them are static too, so the first redirect, rewrite,
-      # mirror or timeout in the cluster is a map entry and nothing else.
-      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_redir\) var\(txn\.gw_rule_id\),map\([^)]*gw-redirect\.map\)'}
-      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_rw\) var\(txn\.gw_rule_id\),map\([^)]*gw-urlrewrite\.map\)'}
-      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_mirror_targets\) var\(txn\.gw_rule_id\),map\([^)]*gw-mirror\.map\)'}
+      # The timeout line is static, so the first timeout in the cluster is a map
+      # entry and nothing else. The redirect, rewrite and mirror blocks are not
+      # emitted until a route carries that filter (see the tests in 40-filters.yaml
+      # for their presence).
       - {type: contains, target: haproxy.cfg, pattern: 'set-timeout server var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-timeout\.map\)'}
-      - {type: contains, target: haproxy.cfg, pattern: 'redirect location "%\[var\(txn\.gw_redir_scheme\)\]'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_redir\) var\(txn\.gw_rule_id\),map\([^)]*gw-redirect\.map\)'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_rw\) var\(txn\.gw_rule_id\),map\([^)]*gw-urlrewrite\.map\)'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_mirror_targets\) var\(txn\.gw_rule_id\),map\([^)]*gw-mirror\.map\)'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'redirect location "%\[var\(txn\.gw_redir_scheme\)\]'}
 
       # A header modifier is the one filter whose line set depends on the header
       # names in use, so an unused name has no line — see

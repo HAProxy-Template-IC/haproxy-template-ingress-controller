@@ -68,10 +68,13 @@ templateSnippets:
       {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
       {{- render "gateway-listener-hostname-claims-100-gateway" -}}
 
+  # Emitted only while a Gateway claims a hostname; the first one reloads
+  # once, as does removing the last.
   frontend-extra-100-gateway-misdirected:
     requires: [gateways, referencegrants]
     template: |
       {{- render "util-gateway-listener-hostname-claim-publications" -}}
+      {%- if incremental_value_count("gateway-listener-hostname-claims", "present") > 0 -%}
       {%- var exactContent = incremental_ranked_fragments("gateway-listener-hostname-claims", "exact") -%}
       {%- var regexContent = incremental_ranked_fragments("gateway-listener-hostname-claims", "regex") -%}
       {%- if exactContent == "" %}{%- exactContent = "\n" %}{%- end -%}
@@ -93,6 +96,8 @@ templateSnippets:
           the access log. The condition must stay byte-identical to the return below. #}
       http-request set-var(txn.denied_by) str(gw_sni_host_mismatch) if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
       http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
+      {%- end %}
+
   log-fields-500-gateway:
     requires: [gateways]
     template: |-
@@ -103,12 +108,18 @@ templateSnippets:
       %(gw_route)[var(txn.gw_rule_id)]
       {%- end %}
 
+  # This block and 900 exist only while an HTTPRoute or GRPCRoute does; the
+  # first route reloads once, as does removing the last.
   frontend-matchers-advanced-010-route-id-setup:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
+      {{- render "util-gateway-route-frontend-publications" -}}
+      {%- if incremental_value_count("gateway-route-candidates", "presence-http") > 0 || incremental_value_count("gateway-route-candidates", "presence-grpc") > 0 -%}
       {# txn.path_match qualifier format: GW_ROUTE_ID:<route_type>:<routeIds>, e.g. GW_ROUTE_ID:http:ns1_route1_0__ns2_route2_1 #}
       # gateway/frontend-matchers-advanced-010-route-id-setup
       http-request set-var(req.gw_route_type) var(txn.path_match),field(2,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
       http-request set-var(req.gw_routeId) var(txn.path_match),field(3,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
+      {%- end %}
 
   util-gateway-route-frontend-bindings:
     template: |-
@@ -509,6 +520,7 @@ templateSnippets:
     template: |
       {%- import "util-register-gateway-route-frontend-map" for RegisterGatewayRouteFrontendMap -%}
       {{- render "util-gateway-route-frontend-publications" -}}
+      {%- if incremental_value_count("gateway-route-candidates", "presence-http") > 0 || incremental_value_count("gateway-route-candidates", "presence-grpc") > 0 -%}
       {{- "" }}
       # gateway/frontend-matchers-advanced-900-path-match
       {{- incremental_ranked_text_fragment("gateway-route-frontend", "backend-config") -}}
@@ -520,6 +532,7 @@ templateSnippets:
       {{- "" }}
       http-request set-var(txn.gw_rule_id) var(req.gw_routeId),map({{ routeWinnerPath }}) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID } !{ var(txn.gw_rule_id) -m found } { var(req.gw_routeId),map({{ routeWinnerPath }}) -m found }
       http-request set-var(txn.path_match) var(txn.gw_rule_id),map({{ routeBackendPath }}) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID } { var(txn.gw_rule_id),map({{ routeBackendPath }}) -m found }
+      {%- end %}
 
   frontend-filters-450-gateway-cors:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
@@ -545,6 +558,8 @@ templateSnippets:
       {%- var mirrorWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") %}
       {%- var rbMap, _ = pathResolver.GetPath("request-buffering.map", "map") %}
       {%- var m = tostring(gwmVal.(map[string]any)["mirrorPctPath"]) %}
+      {%- if incremental_ranked_fragment_bytes("gateway-route-filter-maps", "mirror") > 0 || incremental_ranked_fragment_bytes("gateway-route-filter-maps", "cfg-mirror-fallback") > 0 %}
       # gateway/mirror-buffer: required so req.body reaches
       # the mirror plugin (see frontend-filters-550-gateway-mirror).
       http-request wait-for-body time {{ mirrorWait }} if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map({{ rbMap }},on) -m str off } { var(txn.gw_rule_id),map_str_int({{ m }}) -m found }
+      {%- end %}

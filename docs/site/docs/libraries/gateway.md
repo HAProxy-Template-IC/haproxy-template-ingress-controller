@@ -1312,6 +1312,10 @@ TLSRoute and TCPRoute status is written on the `deployed` outcome only (see thei
 
 - The first route in the cluster to name a given header in a `RequestHeaderModifier`
   or `ResponseHeaderModifier`. Every later route using that header name is a map entry.
+- The first route in the cluster to carry a `RequestRedirect`, `URLRewrite` or
+  `RequestMirror` filter, and removing the last one: the filter's rule block
+  exists only while a route uses it. The same holds for the route-id and
+  misdirected-request blocks with the first route and the first Gateway.
 - A rule whose `matches` carry several different path prefixes, combined with
   `ReplacePrefixMatch`: one map value carries one prefix length, so that rule keeps a
   configuration line per match.
