@@ -529,12 +529,16 @@ templateSnippets:
       {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-res-be-set") -}}
       {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-res-be-add") -}}
       {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-res-be-del") -}}
+      {%- var debug = extraContext | dig("diagnostics", "routingHeaders", "enabled") | fallback(false) %}
+      {#- The redirect, rewrite and mirror blocks exist only while a route
+          carries that filter; the first one reloads once, as does removing
+          the last. #}
+      {%- if incremental_ranked_fragment_bytes("gateway-route-filter-maps", "redirect") > 0 %}
       {%- var redirMap = tostring(gwm["redirectPath"]) %}
       {#- Fallbacks are the pod-internal 8080/8443 (chart-wide convention);
           extraContext.httpPort/httpsPort is always plumbed in production. -#}
       {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
       {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
-      {%- var debug = extraContext | dig("diagnostics", "routingHeaders", "enabled") | fallback(false) %}
       # gateway/frontend-filters-gateway-redirect
       {# The backendRef-level entry is read first so a rule-level entry, read last, overrides it. #}
       http-request set-var(txn.gw_redir) var(txn.gw_rule_id),concat(|,txn.backend_name,),map({{ redirMap }}) if { var(txn.gw_rule_id),concat(|,txn.backend_name,),map({{ redirMap }}) -m found }
@@ -577,6 +581,8 @@ templateSnippets:
       {%- for _, code := range []string{"301", "302", "303", "307", "308"} %}
       http-request redirect location "%[var(txn.gw_redir_scheme)]://%[var(txn.gw_redir_host)]%[var(txn.gw_redir_port)]%[var(txn.gw_redir_path)]%[var(txn.gw_redir_query)]" code {{ code }} if { var(txn.gw_redir),field(1,|) -m str {{ code }} }
       {%- end %}
+      {%- end %}
+      {%- if incremental_ranked_fragment_bytes("gateway-route-filter-maps", "urlrewrite") > 0 %}
       {%- var rwMap = tostring(gwm["urlrewritePath"]) %}
       # gateway/frontend-filters-gateway-urlrewrite
       http-request set-var(txn.gw_rw) var(txn.gw_rule_id),concat(|,txn.backend_name,),map({{ rwMap }}) if { var(txn.gw_rule_id),concat(|,txn.backend_name,),map({{ rwMap }}) -m found }
@@ -591,6 +597,7 @@ templateSnippets:
       http-request set-path %[var(txn.gw_rw_path)] if { var(txn.gw_rw_path) -m found }
       {%- if debug %}
       http-request set-var(txn.filters_applied) str(URLRewrite) if { var(txn.gw_rw) -m found } !{ var(txn.filters_applied) -m found }
+      {%- end %}
       {%- end %}
 
   # Appends `scheme|host:port|timeout_ms|retries` entries to txn.gw_mirror_targets.
@@ -607,8 +614,10 @@ templateSnippets:
       {%- var gwm = gwmVal.(map[string]any) %}
       {%- var m = tostring(gwm["mirrorPath"]) %}
       {%- var pctMap = tostring(gwm["mirrorPctPath"]) %}
+      {%- if incremental_ranked_fragment_bytes("gateway-route-filter-maps", "mirror") > 0 || incremental_ranked_fragment_bytes("gateway-route-filter-maps", "cfg-mirror-fallback") > 0 %}
       # gateway/frontend-filters-gateway-mirror
       http-request set-var(txn.gw_mirror_pct) var(txn.gw_rule_id),map_str_int({{ pctMap }}) if { var(txn.gw_rule_id),map_str_int({{ pctMap }}) -m found }
       {# rand(100) draws 0..99, so 100% always samples and 0% never does. #}
       http-request set-var(txn.gw_mirror_targets) var(txn.gw_rule_id),map({{ m }}),url_dec(1) if { var(txn.gw_rule_id),map({{ m }}) -m found } { rand(100),sub(txn.gw_mirror_pct) -m int lt 0 }
       {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-mirror-fallback") -}}
+      {%- end %}
