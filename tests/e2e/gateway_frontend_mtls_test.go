@@ -348,8 +348,8 @@ func (f *gatewayMTLSFixture) assertFleet(ctx context.Context, t *testing.T) {
 	service, err := f.clientset.CoreV1().Services(ControllerNamespace).Get(ctx, f.service.Name, metav1.GetOptions{})
 	require.NoError(t, err)
 	require.Equal(t, f.service.UID, service.UID)
-	require.Equal(t, f.service.Spec.Ports, service.Spec.Ports)
 	require.Equal(t, f.service.Spec.Selector, service.Spec.Selector)
+	f.followServicePorts(t, service)
 	pods, err := f.clientset.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(service.Spec.Selector).String(),
 	})
@@ -364,6 +364,35 @@ func (f *gatewayMTLSFixture) assertFleet(ctx context.Context, t *testing.T) {
 		pod := &pods.Items[index]
 		require.Equal(t, identities[pod.Name], string(pod.UID))
 	}
+}
+
+// followServicePorts keeps the Service identity, listener ports and NodePorts
+// stable but follows a moved targetPort: the allocator hashes (Gateway, port)
+// into its range with linear probing in creation order, so when an older
+// Gateway that collided with ours is deleted, our listener vacates the probed
+// slot for the hashed one (15-pod-port-allocator.yaml). Parallel e2e Gateway
+// churn makes that a normal event here, not a defect.
+func (f *gatewayMTLSFixture) followServicePorts(t *testing.T, service *corev1.Service) {
+	t.Helper()
+	require.Len(t, service.Spec.Ports, len(f.service.Spec.Ports))
+	for index := range service.Spec.Ports {
+		previous, current := f.service.Spec.Ports[index], service.Spec.Ports[index]
+		require.Equal(t, previous.Name, current.Name)
+		require.Equal(t, previous.Port, current.Port)
+		require.Equal(t, previous.Protocol, current.Protocol)
+		require.Equal(t, previous.NodePort, current.NodePort)
+		if previous.TargetPort != current.TargetPort {
+			t.Logf("Service %s port %d moved its pod port %s -> %s; an older colliding Gateway left the fleet",
+				service.Name, current.Port, previous.TargetPort.String(), current.TargetPort.String())
+		}
+		switch current.Port {
+		case 443:
+			f.ports["default"] = current.TargetPort.IntValue()
+		case 8443:
+			f.ports["override"] = current.TargetPort.IntValue()
+		}
+	}
+	f.service = service
 }
 
 func (f *gatewayMTLSFixture) assertBind(ctx context.Context, t *testing.T, pod *corev1.Pod, listener string, present bool) {
@@ -382,11 +411,13 @@ func (f *gatewayMTLSFixture) assertBind(ctx context.Context, t *testing.T, pod *
 		container := &current.Status.InitContainerStatuses[index]
 		require.Zero(t, container.RestartCount, "%s/%s", pod.Name, container.Name)
 	}
-	config, err := readFileFromHAProxyPod(ctx, pod.Name, "/etc/haproxy/haproxy.cfg")
-	require.NoError(t, err)
-	require.NotEmpty(t, config)
-	pattern := fmt.Sprintf(`(?m)^\s+bind \*:%d ssl crt-list \S+`, f.ports[listener])
-	require.Equal(t, present, regexp.MustCompile(pattern).MatchString(config), "%s listener=%s port=%d", pod.Name, listener, f.ports[listener])
+	// A moved pod port reaches the Service at once but the bind only after the
+	// deployer's interval and a reload, so the config may trail the Service.
+	pattern := regexp.MustCompile(fmt.Sprintf(`(?m)^\s+bind \*:%d ssl crt-list \S+`, f.ports[listener]))
+	require.Eventually(t, func() bool {
+		config, err := readFileFromHAProxyPod(ctx, pod.Name, "/etc/haproxy/haproxy.cfg")
+		return err == nil && config != "" && pattern.MatchString(config) == present
+	}, 90*time.Second, 2*time.Second, "%s listener=%s port=%d present=%v", pod.Name, listener, f.ports[listener], present)
 }
 
 func (f *gatewayMTLSFixture) assertOK(ctx context.Context, t *testing.T, pod, listener string, certificate *tls.Certificate) {
