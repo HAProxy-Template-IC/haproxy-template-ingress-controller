@@ -231,9 +231,11 @@ templateSnippets:
       {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
       {%- var members, e2 = pathResolver.GetPath("haptic-rate-limit-allow-members.map", "map") -%}
       {%- if e2 != nil -%}{{ fail(tostring(e2)) }}{%- end -%}
+      {%- if incremental_value_count("haptic-rate-limit-routes", "allowlist") > 0 -%}
       {{ "\n" }}# haptic/rate-limit-allowlist
       http-request set-var(txn.rl_allow_block) src,map_ip({{ partitions }}) if { var(txn.resource_id) -m found }
       http-request set-var(txn.rl_allow) bool(true) if { var(txn.rl_allow_block) -m found } { var(txn.rl_allow_block),concat(|,txn.resource_id),map({{ members }}) -m found }
+      {%- end %}
 
   # One table proxy per distinct (counter, window): a frontend holds at most one
   # stick-table of its own, and the window is part of the store type.
@@ -276,7 +278,10 @@ templateSnippets:
         Per-source rate limit on the client leg. sc1 is the slot this block owns
         (sc0 is left to the vendor libraries' backend limiters). The threshold
         comes from the map through sub(): over the cap means rate - threshold > 0.
+        Emitted only while a route carries a per-pod limit; the first one
+        reloads once, as does removing the last.
       #}
+      {%- if incremental_value_count("haptic-rate-limit-routes", "tables") > 0 -%}
       {%- var routes, e1 = pathResolver.GetPath("haptic-rate-limit-routes.map", "map") -%}
       {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
       {%- var tables = []any{} -%}
@@ -303,6 +308,7 @@ templateSnippets:
       http-request set-var(txn.denied_by) str(rate_limit_local) if { var(txn.lrl_counter) -m str conn } { sc_conn_cur(1),sub(txn.lrl_threshold) -m int gt 0 } !{ var(txn.rl_allow) -m bool }
       {%- for _, s := range sort_strings(statuses) %}
       http-request deny deny_status {{ s }} if { var(txn.lrl_status) -m str {{ s }} } { var(txn.denied_by) -m str rate_limit_local }
+      {%- end %}
       {%- end %}
 
   # ==========================================================================

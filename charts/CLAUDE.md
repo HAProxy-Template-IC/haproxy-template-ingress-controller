@@ -475,7 +475,7 @@ backend's shape (`charts/haptic/charts/base/library.yaml`, `ProfileDirective`):
 |---|---|---|
 | Comment (`# ...`) | Recorded on the plan record so a change explains the text | none, never shapes the backend |
 | Profile | `timeout *`, `fullconn`, `retries`, `retry-on`, `compression *`, `cookie`, `dynamic-cookie-key`, `option httpchk`, `http-check`; also `serverOpts["profile"]`, `balance`, `hashType` | none while a profile with the same values exists; the first route with a new combination reloads once to add it |
-| Frontend map | a uniform rule block per HTTP frontend reading `<ns>/<name>`-keyed maps (`frontend-filters-858..899` in haptic-annotations: JWT, API key, HMAC, consumer groups, rate and bandwidth limits, route-unavailable) | none; literals the block must spell out (a header name, a key file, a rate window) reload once when new |
+| Frontend map | a uniform rule block per HTTP frontend reading `<ns>/<name>`-keyed maps (`frontend-filters-858..899` in haptic-annotations: JWT, API key, HMAC, consumer groups, rate and bandwidth limits, route-unavailable) | none; literals the block must spell out (a header name, a key file, a rate window) reload once when new. The block itself is gated on `incremental_value_count(<group>, "any") > 0`: it appears with the first route using the feature and leaves with the last, one reload each way, so an unused feature costs no rule evaluation per request |
 | Body | everything else: `filter`, `stick-table`, `http-request`/`http-response` rules, `acl`, raw injections | the backend is structural: add and remove reload |
 
 `serverOpts["flags"]` (`default-server` keywords `add server` accepts) and the

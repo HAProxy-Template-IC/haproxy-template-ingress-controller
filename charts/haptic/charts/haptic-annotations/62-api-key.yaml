@@ -125,6 +125,7 @@ templateSnippets:
       {%- var route = map[string]any{} -%}
       {{- HapticApiKeyRoute(item, route) -}}
       {%- if route["enabled"] == true -%}
+        {{- shared.Publish("any", "any", "any") -}}
         {%- var ns = dig_string(item, "", "metadata", "namespace") -%}
         {%- var name = dig_string(item, "", "metadata", "name") -%}
         {%- var key = ns + "/" + name -%}
@@ -201,8 +202,10 @@ templateSnippets:
         The forward header is stripped from the client request first: on any path
         that reaches here without an identity — a `satisfy: any` route admitted by
         IP, for example — the caller's own value would otherwise be forwarded to the
-        application as the consumer.
+        application as the consumer. Emitted only while a route carries API-key
+        settings; the first one reloads once, as does removing the last.
       #}
+      {%- if incremental_value_count("haptic-api-key-routes", "any") > 0 -%}
       {%- var routes, e1 = pathResolver.GetPath("haptic-api-key-routes.map", "map") -%}
       {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
       {%- var keys, e2 = pathResolver.GetPath("haptic-apikeys.map", "map") -%}
@@ -235,4 +238,5 @@ templateSnippets:
       {%- for _, f := range sort_strings(fwds) %}
       http-request del-header {{ f }} if { var(txn.ak_fwd) -m str {{ f }} }
       http-request set-header {{ f }} %[var(txn.haptic_consumer)] if { var(txn.ak_fwd) -m str {{ f }} } { var(txn.haptic_consumer) -m found }
+      {%- end %}
       {%- end %}

@@ -155,6 +155,7 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "proto h2"}
       - {type: not_contains, target: haproxy.cfg, pattern: "ssl verify"}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/route-unavailable$'}
 
   test-haptic-backend-verify-without-ca-rejected:
     description: >-
@@ -255,3 +256,7 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "ssl verify required ca-file"}
+      # The deny block is in place while nothing is blocked, so losing the CA
+      # later is a map entry, not a reload.
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/route-unavailable$'}
+      - {type: not_contains, target: "map:haptic-route-unavailable.map", pattern: 'btls-ca-ok'}

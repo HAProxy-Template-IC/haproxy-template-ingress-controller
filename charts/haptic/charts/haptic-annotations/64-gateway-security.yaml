@@ -446,6 +446,7 @@ templateSnippets:
       {%- var route = map[string]any{} -%}
       {{- HapticHMACRoute(item, route) -}}
       {%- if route["enabled"] == true -%}
+        {{- shared.Publish("any", "any", "any") -}}
         {{- shared.Publish("alg", tostring(route["alg"]), tostring(route["alg"])) -}}
         {{- shared.Publish("hdr", tostring(route["hdr"]), tostring(route["hdr"])) -}}
         {%- if tostring(route["state"]) == "missing" -%}
@@ -471,8 +472,11 @@ templateSnippets:
         A body-signed route waits for the request body the way base's request
         buffering does (extraContext.requestBuffering.waitTimeout), conditionally
         per route instead of a proxy-wide `option http-buffer-request`. Fails
-        CLOSED per route (503) while the Secret is absent.
+        CLOSED per route (503) while the Secret is absent. Emitted only while a
+        route carries HMAC settings; the first one reloads once, as does
+        removing the last.
       #}
+      {%- if incremental_value_count("haptic-hmac-routes", "any") > 0 -%}
       {%- var routes, e1 = pathResolver.GetPath("haptic-hmac-routes.map", "map") -%}
       {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
       {%- var bodyWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") -%}
@@ -497,6 +501,7 @@ templateSnippets:
       {%- for _, h := range sort_strings(hdrs) %}
       http-request set-var(txn.denied_by) str(hmac) if { var(txn.hm_state) -m str ok } { var(txn.hm_hdr) -m str {{ h }} } !{ req.hdr({{ h }}),strcmp(txn.haptic_hmac) -m int 0 }
       http-request deny deny_status 401 if { var(txn.hm_state) -m str ok } { var(txn.hm_hdr) -m str {{ h }} } !{ req.hdr({{ h }}),strcmp(txn.haptic_hmac) -m int 0 }
+      {%- end %}
       {%- end %}
 
   # ==========================================================================
@@ -617,20 +622,22 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  features-862-haptic-consumer-groups-events:
+  features-862-haptic-consumer-groups-names:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists:
         - "metadata.annotations['haproxy-haptic.org/consumer-groups-secret']"
         - "metadata.annotations['haproxy-haptic.org/allowed-consumer-groups']"
-      effects: [recordEvent]
+      group: haptic-consumer-group-routes
+      effects: [publishValue, recordEvent]
     template: |-
       {%- import "util-haptic-consumer-group-route" for HapticConsumerGroupRoute -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var route = map[string]any{} -%}
       {{- HapticConsumerGroupRoute(item, route) -}}
       {%- if route["enabled"] == true -%}
+        {{- shared.Publish("any", "any", "any") -}}
         {%- var ns = dig_string(item, "", "metadata", "namespace") -%}
         {%- var name = dig_string(item, "", "metadata", "name") -%}
         {%- var key = ns + "/" + name -%}
@@ -653,7 +660,10 @@ templateSnippets:
         Requires an authenticated consumer (JWT at 858 or API key at 860 sets
         txn.haptic_consumer); with no consumer the group lookup misses and the
         request is denied 403. A missing Secret or an empty group list denies 503.
+        Emitted only while a route carries consumer-group settings; the first
+        one reloads once, as does removing the last.
       #}
+      {%- if incremental_value_count("haptic-consumer-group-routes", "any") > 0 -%}
       {%- var routes, e1 = pathResolver.GetPath("haptic-consumer-group-routes.map", "map") -%}
       {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
       {%- var allow, e2 = pathResolver.GetPath("haptic-consumer-group-allow.map", "map") -%}
@@ -669,3 +679,4 @@ templateSnippets:
       http-request set-var(txn.cg_group) var(txn.cg_secret),concat(|,txn.haptic_consumer),map({{ groups }}) if { var(txn.cg_state) -m str ok } { var(txn.haptic_consumer) -m found }
       http-request set-var(txn.denied_by) str(consumer_groups) if { var(txn.cg_state) -m str ok } !{ var(txn.resource_id),concat(|,txn.cg_group),map({{ allow }}) -m found }
       http-request deny deny_status 403 if { var(txn.cg_state) -m str ok } !{ var(txn.resource_id),concat(|,txn.cg_group),map({{ allow }}) -m found }
+      {%- end %}

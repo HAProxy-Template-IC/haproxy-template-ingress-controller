@@ -229,6 +229,7 @@ templateSnippets:
       {%- var route = map[string]any{} -%}
       {{- HapticJWTRoute(item, route) -}}
       {%- if route["enabled"] == true -%}
+        {{- shared.Publish("any", "any", "any") -}}
         {%- var ns = dig_string(item, "", "metadata", "namespace") -%}
         {%- var name = dig_string(item, "", "metadata", "name") -%}
         {%- var key = ns + "/" + name -%}
@@ -269,8 +270,11 @@ templateSnippets:
         Every rule is gated on the route's map entry (txn.jwt_*), so a route
         without JWT is untouched. Denies short-circuit, so the consumer identity
         and the forwarded claims below them are reached by valid tokens only.
-        exp/nbf are enforced only when the claim is present.
+        exp/nbf are enforced only when the claim is present. Emitted only
+        while a route carries JWT settings; the first one reloads once, as
+        does removing the last.
       #}
+      {%- if incremental_value_count("haptic-jwt-routes", "any") > 0 -%}
       {%- var routes, e1 = pathResolver.GetPath("haptic-jwt-routes.map", "map") -%}
       {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
       {%- var keys = []any{} -%}
@@ -325,4 +329,5 @@ templateSnippets:
       {%- for _, f := range sort_strings(fwds) %}
         {%- var pair = strings_splitn(tostring(f), ":", 2) %}
       http-request set-header {{ pair[1] }} %[http_auth_bearer,jwt_payload_query('$.{{ pair[0] }}')] if { var(txn.jwt_state) -m str ok } { var(txn.jwt_fwd) -m sub ,{{ pair[0] }}:{{ pair[1] }}, }
+      {%- end %}
       {%- end %}
