@@ -585,7 +585,10 @@ changing or removing a route is a map operation: the route's backend stays
 dynamic and nothing reloads. What HAProxy takes only as a literal is spelled
 out once per distinct value in use and reloads when a new one appears: an
 API-key header or query parameter name, a JWT key file (a new `jwt-secret`), an
-HMAC algorithm or signature header, a JWT claim to require or forward.
+HMAC algorithm or signature header, a JWT claim to require or forward. Each
+block exists only while a route uses its feature: the first route to adopt one
+reloads once, and so does removing the last, so a fleet without JWT evaluates
+none of the JWT rules.
 
 JSON request-body validation is opt-in via `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true`. Schemas are resolved from ConfigMaps or Secrets and compiled when the bundled plugin initializes/reloads. HAProxy rejects bodies above the route cap before SPOE, waits up to `requestBody.waitTimeout` only on matching POST/PUT/PATCH routes, and then validates against an in-memory compiled schema. The process-global `tune.bufsize` comes from `extraContext.requestBodyInspection.haproxyBuffer.sizeBytes`; `reservedBytes` (default `8192`) protects request headers and rewrite space. Any validator or policy body cap above the remaining capacity fails. Requests without `Content-Length` return `411`, duplicate lengths return `400`, and incomplete buffering returns `413` instead of validating truncated input. Request-body transformation isn't supported.
 

@@ -78,6 +78,10 @@ validationTests:
       - {type: contains, target: map:rate-limit.map, pattern: "default/rl-shared-allow 10 1 10 lease ip"}
       - {type: contains, target: "map:haptic-rate-limit-allow-partitions.map", pattern: '(?m)^10\.0\.0\.0/8 10\.0\.0\.0/8$'}
       - {type: contains, target: "map:haptic-rate-limit-allow-members.map", pattern: '(?m)^10\.0\.0\.0/8\|default/rl-shared-allow 1$'}
+      - type: not_contains
+        target: haproxy.cfg
+        description: a shared limit alone does not emit the per-pod block
+        pattern: '(?m)^ *# haptic/rate-limiting$'
       - type: match_order
         target: haproxy.cfg
         description: verdict (090) before the source-IP dispatch inside the spoa-hub block (100)

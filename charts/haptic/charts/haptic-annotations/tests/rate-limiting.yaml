@@ -48,6 +48,12 @@ validationTests:
       # No bandwidth route in the fixture: none of the bandwidth machinery is emitted.
       - {type: not_contains, target: haproxy.cfg, pattern: 'filter bwlim-'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'backend haptic_bw_tbl'}
+      # Nor the block of any other feature the fixture does not use.
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/jwt$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/api-key$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/hmac$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/consumer-groups$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/route-unavailable$'}
       - {type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^default/rps-ingress req 5s 10 429$'}
       - type: contains
         target: haproxy.cfg
@@ -599,6 +605,9 @@ validationTests:
       - {type: contains, target: events, pattern: "RateLimitAllowlistIgnored"}
       - {type: not_contains, target: "map:haptic-rate-limit-allow-members.map", pattern: 'default/rl-noop-allow'}
       - {type: not_contains, target: "map:haptic-rate-limit-allow-partitions.map", pattern: '10\.0\.0\.0/8'}
+      # No route limits anything, so neither block is emitted.
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/rate-limit-allowlist$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/rate-limiting$'}
 
   test-haptic-rate-limit-allowlist-without-limiter-rejected-at-admission:
     description: Writing an Ingress with rate-limit-allowlist but no rate limit is refused when the resource is written.
