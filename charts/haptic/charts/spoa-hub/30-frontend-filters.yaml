@@ -14,6 +14,8 @@ templateSnippets:
   # policy and verdict handling.
   # extraCond ("" for none) is an additional ACL appended to every rule — the
   # cache client-leg dispatch scopes itself to cache-enabled routes with it.
+  # A request with txn.rl_allow set (an allowlisted client, decided before this
+  # block by the route library) is exempt: no dispatch, no verdict, no headers.
   util-spoa-rate-limit-dispatch:
     template: |
       {% macro DispatchSharedRateLimit(keySpec string, extraCond string, failClosed bool) string %}
@@ -22,22 +24,22 @@ templateSnippets:
       {# Build <ns>/<name>|<dimension>. Consumer mode uses the identity set by
           native API-key/JWT backend rules and falls back to source IP when the
           route has no authenticated identity. #}
-      http-request set-var(txn.rl_dim) src if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }{{ extraCond }}
+      http-request set-var(txn.rl_dim) src if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} }{{ extraCond }}
       {%- if keySpec == "consumer" %}
-      http-request set-var(txn.rl_dim) var(txn.haptic_consumer) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str consumer } { var(txn.haptic_consumer) -m found }{{ extraCond }}
+      http-request set-var(txn.rl_dim) var(txn.haptic_consumer) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str consumer } { var(txn.haptic_consumer) -m found }{{ extraCond }}
       {%- end %}
-      http-request set-var(txn.rl_key) var(txn.resource_id),concat(|,txn.rl_dim) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }{{ extraCond }}
-      http-request set-var(txn.rl_rule_invalid) bool(true) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.rl_dim),length gt 0 }{{ extraCond }}
-      http-request set-var(txn.denied_by) str(rate_limit_shared_invalid) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.rl_rule_invalid) -m bool }{{ extraCond }}
-      http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.rl_rule_invalid) -m bool }{{ extraCond }}
-      http-request send-spoe-group spoa-hub-check-ratelimit check-ratelimit-group if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.rl_rule_invalid) -m bool }{{ extraCond }}
-      http-request set-var(txn.rate_limit_degraded) str(1) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
-      http-request set-var(txn.rate_limit_degraded) str(1) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.degraded) -m bool }{{ extraCond }}
+      http-request set-var(txn.rl_key) var(txn.resource_id),concat(|,txn.rl_dim) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} }{{ extraCond }}
+      http-request set-var(txn.rl_rule_invalid) bool(true) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.rl_dim),length gt 0 }{{ extraCond }}
+      http-request set-var(txn.denied_by) str(rate_limit_shared_invalid) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.rl_rule_invalid) -m bool }{{ extraCond }}
+      http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.rl_rule_invalid) -m bool }{{ extraCond }}
+      http-request send-spoe-group spoa-hub-check-ratelimit check-ratelimit-group if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.rl_rule_invalid) -m bool }{{ extraCond }}
+      http-request set-var(txn.rate_limit_degraded) str(1) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
+      http-request set-var(txn.rate_limit_degraded) str(1) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.degraded) -m bool }{{ extraCond }}
       {%- if failClosed %}
-      http-request set-var(txn.denied_by) str(rate_limit_shared_unavailable) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
-      http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
+      http-request set-var(txn.denied_by) str(rate_limit_shared_unavailable) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
+      http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }{{ extraCond }}
       {%- end %}
-      http-request set-var(txn.rl_verdict_class) str(limited) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }{{ extraCond }}
+      http-request set-var(txn.rl_verdict_class) str(limited) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }{{ extraCond }}
       http-request set-var(txn.rl_verdict_class) str(fallback-limited) if { var(txn.rl_verdict_class) -m str limited } { var(txn.hub.rate_limit.degraded) -m bool } { var(txn.hub.rate_limit.accounted) -m bool }{{ extraCond }}
       http-request set-var(txn.rl_verdict_class) str(unavailable) if { var(txn.rl_verdict_class) -m str limited } { var(txn.hub.rate_limit.degraded) -m bool } !{ var(txn.hub.rate_limit.accounted) -m bool }{{ extraCond }}
       http-request set-var(txn.rl_verdict_class) str(invalid) if { var(txn.rl_verdict_class) -m str limited } { var(txn.hub.rate_limit.degraded) -m found } !{ var(txn.hub.rate_limit.degraded) -m bool } !{ var(txn.hub.rate_limit.accounted) -m bool }{{ extraCond }}
@@ -47,12 +49,12 @@ templateSnippets:
       http-request deny deny_status 429 hdr Retry-After %[var(txn.hub.rate_limit.retry_after)] if { var(txn.rl_verdict_class) -m str limited fallback-limited }{{ extraCond }}
       http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_verdict_class) -m str unavailable invalid }{{ extraCond }}
       {# http-after-response also covers HAProxy's internally generated 429. #}
-      http-after-response set-header X-RateLimit-Limit %[var(txn.hub.rate_limit.limit)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.degraded) -m found } !{ var(txn.hub.rate_limit.accounted) -m found }{{ extraCond }}
-      http-after-response set-header X-RateLimit-Remaining %[var(txn.hub.rate_limit.remaining)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.degraded) -m found } !{ var(txn.hub.rate_limit.accounted) -m found }{{ extraCond }}
-      http-after-response set-header X-RateLimit-Reset %[var(txn.hub.rate_limit.reset)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.degraded) -m found } !{ var(txn.hub.rate_limit.accounted) -m found }{{ extraCond }}
-      http-after-response set-header X-RateLimit-Limit %[var(txn.hub.rate_limit.limit)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.accounted) -m bool }{{ extraCond }}
-      http-after-response set-header X-RateLimit-Remaining %[var(txn.hub.rate_limit.remaining)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.accounted) -m bool }{{ extraCond }}
-      http-after-response set-header X-RateLimit-Reset %[var(txn.hub.rate_limit.reset)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.accounted) -m bool }{{ extraCond }}
+      http-after-response set-header X-RateLimit-Limit %[var(txn.hub.rate_limit.limit)] if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.degraded) -m found } !{ var(txn.hub.rate_limit.accounted) -m found }{{ extraCond }}
+      http-after-response set-header X-RateLimit-Remaining %[var(txn.hub.rate_limit.remaining)] if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.degraded) -m found } !{ var(txn.hub.rate_limit.accounted) -m found }{{ extraCond }}
+      http-after-response set-header X-RateLimit-Reset %[var(txn.hub.rate_limit.reset)] if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.degraded) -m found } !{ var(txn.hub.rate_limit.accounted) -m found }{{ extraCond }}
+      http-after-response set-header X-RateLimit-Limit %[var(txn.hub.rate_limit.limit)] if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.accounted) -m bool }{{ extraCond }}
+      http-after-response set-header X-RateLimit-Remaining %[var(txn.hub.rate_limit.remaining)] if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.accounted) -m bool }{{ extraCond }}
+      http-after-response set-header X-RateLimit-Reset %[var(txn.hub.rate_limit.reset)] if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.accounted) -m bool }{{ extraCond }}
       {% end %}
 
   # Body-inspecting features pass req.body to SPOE, and HAProxy only exposes

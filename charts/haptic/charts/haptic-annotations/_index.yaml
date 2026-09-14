@@ -230,7 +230,7 @@ maps:
   haptic-rate-limit-allow-members.map:
     ordered: false
     template: |
-      # <block>|<ns>/<name> 1: the route exempts that block from its rate limit. Read by frontend-filters-863-haptic-rate-limit.
+      # <block>|<ns>/<name> 1: the route exempts that block from its rate limits. Read by frontend-filters-090-haptic-rate-limit-allowlist.
       {{ render_glob "map-haptic-rate-limit-allow-members-*" -}}
   haptic-bandwidth-routes.map:
     template: |

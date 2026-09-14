@@ -56,6 +56,7 @@ func TestHapticSharedRateLimit(t *testing.T) {
 	runID := time.Now().UnixNano()
 	host := fmt.Sprintf("rl-%d.localdev.me", runID)
 	leaseHost := fmt.Sprintf("rl-lease-%d.localdev.me", runID)
+	allowHost := fmt.Sprintf("rl-allow-%d.localdev.me", runID)
 	failoverHost := fmt.Sprintf("rl-failover-%d.localdev.me", runID)
 	consumerHost := fmt.Sprintf("rl-consumer-%d.localdev.me", runID)
 	readinessHost := fmt.Sprintf("rl-ready-%d.localdev.me", runID)
@@ -76,6 +77,7 @@ func TestHapticSharedRateLimit(t *testing.T) {
 	scenario := &sharedRateLimitScenario{
 		host:               host,
 		leaseHost:          leaseHost,
+		allowHost:          allowHost,
 		failoverHost:       failoverHost,
 		consumerHost:       consumerHost,
 		readinessHost:      readinessHost,
@@ -104,6 +106,7 @@ func TestHapticSharedRateLimit(t *testing.T) {
 type sharedRateLimitScenario struct {
 	host               string
 	leaseHost          string
+	allowHost          string
 	failoverHost       string
 	consumerHost       string
 	readinessHost      string
@@ -1488,6 +1491,20 @@ func (s *sharedRateLimitScenario) setup(ctx context.Context, t *testing.T, cfg *
 			},
 		},
 		IngressSpec{
+			Name:           fmt.Sprintf("echo-shared-ratelimit-allow-%d", time.Now().UnixNano()),
+			Host:           s.allowHost,
+			Path:           "/",
+			BackendService: backend.Service,
+			BackendPort:    backend.Port,
+			Annotations: map[string]string{
+				"haproxy-haptic.org/rate-limit-requests":  fmt.Sprintf("%d", s.limit),
+				"haproxy-haptic.org/rate-limit-period":    "60s",
+				"haproxy-haptic.org/rate-limit-burst":     fmt.Sprintf("%d", s.limit),
+				"haproxy-haptic.org/rate-limit-algorithm": "gcra",
+				"haproxy-haptic.org/rate-limit-allowlist": "0.0.0.0/0,::/0",
+			},
+		},
+		IngressSpec{
 			Name:           fmt.Sprintf("echo-shared-ratelimit-lease-%d", time.Now().UnixNano()),
 			Host:           s.leaseHost,
 			Path:           "/",
@@ -1631,6 +1648,8 @@ func (s *sharedRateLimitScenario) sharedBudgets(ctx context.Context, t *testing.
 		t.Fatalf("expected independent one-request budgets for authenticated consumers alice and bob; got %v", consumerCodes)
 	}
 
+	s.assertAllowlistedRouteUnlimited(ctx, t, ns, podIPs[:2])
+
 	deleteManagedRateLimitPrimary(ctx, t, client)
 	waitForSharedRateLimitReadyOnPods(ctx, t, ns, s.warmupHost, podIPs[:2])
 	failoverResult := sharedRateLimitBurstAcrossPods(ctx, t, ns, s.failoverHost, podIPs[:2], s.failoverBurst, false)
@@ -1645,6 +1664,19 @@ func (s *sharedRateLimitScenario) sharedBudgets(ctx context.Context, t *testing.
 		t.Fatalf("expected exhausted post-failover probe to return 429 with rate-limit headers; got %s", failoverResult.String())
 	}
 	return ctx
+}
+
+// assertAllowlistedRouteUnlimited covers #232: the route's allowlist matches
+// every client, so the same shared budget that produced 429s on its siblings
+// must never fire here.
+func (s *sharedRateLimitScenario) assertAllowlistedRouteUnlimited(ctx context.Context, t *testing.T, ns string, podIPs []string) {
+	t.Helper()
+	result := sharedRateLimitBurstAcrossPods(ctx, t, ns, s.allowHost, podIPs, s.burstTotal, false)
+	t.Logf("shared rate-limit allowlisted-client burst: %s", result.String())
+	if result.byCode["429"] != 0 || result.byCode["200"] == 0 {
+		t.Fatalf("expected no 429 from %d requests on the allowlisted shared-limit route (rate-limit-allowlist covers the client); got %s",
+			s.burstTotal, result.String())
+	}
 }
 
 func (r *sharedRateLimitBurstResult) hasExhaustedHeaders() bool {

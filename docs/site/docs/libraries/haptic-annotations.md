@@ -140,7 +140,7 @@ Two facts about bandwidth limits surprise people, so check them against what you
 | `haproxy-haptic.org/rate-limit-rps` | ✅ Supported | Caps requests per second per source IP via an `http_req_rate` stick-table; requests over the cap are rejected with the deny status (default `429`), with no burst allowance. |
 | `haproxy-haptic.org/rate-limit-size` | ✅ Supported | Sets the stick-table size (default `100k`); routes sharing a rate window share one table, sized to the largest value any of them asks for. |
 | `haproxy-haptic.org/rate-limit-status-code` | ✅ Supported | Sets the HTTP status returned to rejected requests (default 429). Only a status HAProxy has a built-in error page for is accepted (200, 400, 401, 403, 404, 405, 407, 408, 410, 413, 414, 425, 429, 431, 500 to 504); it becomes the `http-request deny deny_status` code. |
-| `haproxy-haptic.org/rate-limit-allowlist` | ✅ Supported | Exempts comma-separated CIDRs (IPv4 or IPv6) from the rate limit; invalid CIDRs fail the render. Applied through two runtime maps, so adding, editing, or removing a list never reloads. |
+| `haproxy-haptic.org/rate-limit-allowlist` | ✅ Supported | Exempts comma-separated CIDRs (IPv4 or IPv6) from the route's rate limit, per-pod or shared; invalid CIDRs fail the render, and an allowlist on a route with no rate limit is refused at admission (a Warning Event on reconcile). Applied through two runtime maps, so adding, editing, or removing a list never reloads. |
 
 ### Compression
 
