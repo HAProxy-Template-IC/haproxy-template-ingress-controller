@@ -502,6 +502,165 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
+  # Upstream Set-Cookie Domain/Path rewriting ("<from> <to>", the ingress-nginx
+  # proxy_cookie_* model) from a per-pair lane: the rewrite is a regex with
+  # both literals in it, so ing-cookie-rewrite-routes.map holds
+  # "<route id>|<family>|<Kind>|<from>|<to>" -> 1 and the block emits one
+  # replace-header per distinct pair of the family, gated on the row. A route on
+  # a known pair is a map edit; a new pair reloads once. strict refuses a bad
+  # arity at admission (haptic); nginx warns and skips, as before.
+  util-cookie-rewrite-publish:
+    template: |-
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- macro PublishCookieRewrite(ingress *resources.ingresses.T, domainAnnotation string, pathAnnotation string, family string) -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- for _, kind := range []string{"Domain", "Path"} -%}
+          {%- var annotation = domainAnnotation -%}
+          {%- if kind == "Path" -%}{%- annotation = pathAnnotation -%}{%- end -%}
+          {%- var value = ingress.Metadata.Annotations[annotation] -%}
+          {%- if value != "" -%}
+            {%- var parts = split(strip(value), " ") -%}
+            {%- if len(parts) != 2 -%}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation '" + annotation + "' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + value + "'.") -}}
+            {%- else -%}
+              {%- var from = ValidateConfigValue(parts[0], annotation, key, false) -%}
+              {%- var to = ValidateConfigValue(parts[1], annotation, key, false) -%}
+              {%- if strings_contains(from + to, "|") -%}
+                {{- fail("Invalid value for annotation '" + annotation + "' on Ingress '" + key + "': '|' is not allowed in the from/to pair.") -}}
+              {%- end -%}
+              {%- var pair = family + "|" + kind + "|" + from + "|" + to -%}
+              {{- shared.Publish(family, "any", "any") -}}
+              {{- shared.Publish("pair", pair, pair) -}}
+              {{- shared.Publish("route", key + "|" + pair, key + "|" + pair + " 1") -}}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  features-200-ingress-cookie-rewrite:
+    template: '{{- render_glob "ingress-cookie-rewrite-*" -}}'
+
+  ingress-cookie-rewrite-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-cookie-rewrite
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  util-cookie-rewrite-lane:
+    template: |-
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- macro CookieRewriteLane(family string) -%}
+        {%- if incremental_value_count("ingress-cookie-rewrite", family) > 0 -%}
+          {%%
+            var routesVal, _ = shared.ComputeIfAbsent("ingressCookieRewriteMap", func() any {
+              var rows = []any{}
+              for _, v := range incremental_values("ingress-cookie-rewrite", "route") {
+                rows = append(rows, tostring(v))
+              }
+              var lines = []string{}
+              for _, r := range sort_strings(rows) {
+                lines = append(lines, tostring(r))
+              }
+              return RegisterMap("ing-cookie-rewrite-routes.map", lines, map[string]any{"ordered": false})
+            })
+            var routes = tostring(routesVal)
+            var pairs = []any{}
+            for _, v := range incremental_values("ingress-cookie-rewrite", "pair") {
+              if hasPrefix(tostring(v), family + "|") {
+                pairs = append(pairs, tostring(v))
+              }
+            }
+          %%}
+      {{ "\n" }}# {{ family }}/cookie-rewrite
+          {%- for _, p := range sort_strings(pairs) %}
+            {%- var f = split(tostring(p), "|") %}
+      http-response replace-header Set-Cookie (.*){{ f[1] }}={{ f[2] }}(.*) \1{{ f[1] }}={{ f[3] }}\2 if { var(txn.resource_id),concat(|{{ p }}),map({{ routes }}) -m found }
+          {%- end %}
+        {%- end -%}
+      {%- end macro -%}
+
+  # Upstream Location/Refresh rewriting (the ingress-nginx proxy_redirect model:
+  # a literal "from", regex-escaped, and a replacement "to") from the same
+  # per-pair lane shape: ing-location-rewrite-routes.map holds
+  # "<route id>|<family>|<from>|<to>" -> 1. "default" has no HAProxy
+  # equivalent and records an Event; "off" or unset publishes nothing.
+  util-location-rewrite-publish:
+    template: |-
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- macro PublishLocationRewrite(ingress *resources.ingresses.T, fromAnn string, toAnn string, family string, strict bool) -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var from = ingress.Metadata.Annotations[fromAnn] -%}
+        {%- var to = ingress.Metadata.Annotations[toAnn] -%}
+        {%- if from == "default" -%}
+          {{- recordEvent(ingress, "UnsupportedAnnotationValue", "Annotation '" + fromAnn + "=default' on Ingress '" + key + "' is not supported: HAProxy has no proxy_pass-derived rewrite. Specify an explicit from/to pair.") -}}
+        {%- else if from != "" && from != "off" -%}
+          {%- if to == "" -%}
+            {%- if strict -%}
+              {{- fail("Annotation '" + fromAnn + "' on Ingress '" + key + "' requires '" + toAnn + "'.") -}}
+            {%- else -%}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Annotation '" + fromAnn + "' on Ingress '" + key + "' requires '" + toAnn + "'; the Location rewrite is skipped.") -}}
+            {%- end -%}
+          {%- else -%}
+            {%- var f = ValidateConfigValue(from, fromAnn, key, false) -%}
+            {%- var t = ValidateConfigValue(to, toAnn, key, false) -%}
+            {%- if strings_contains(f + t, "|") -%}
+              {{- fail("Invalid value for annotation '" + fromAnn + "' or '" + toAnn + "' on Ingress '" + key + "': '|' is not allowed in the from/to pair.") -}}
+            {%- end -%}
+            {%- var pair = family + "|" + f + "|" + t -%}
+            {{- shared.Publish(family, "any", "any") -}}
+            {{- shared.Publish("pair", pair, pair) -}}
+            {{- shared.Publish("route", key + "|" + pair, key + "|" + pair + " 1") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  features-200-ingress-location-rewrite:
+    template: '{{- render_glob "ingress-location-rewrite-*" -}}'
+
+  ingress-location-rewrite-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-location-rewrite
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  util-location-rewrite-lane:
+    template: |-
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- macro LocationRewriteLane(family string) -%}
+        {%- if incremental_value_count("ingress-location-rewrite", family) > 0 -%}
+          {%%
+            var routesVal, _ = shared.ComputeIfAbsent("ingressLocationRewriteMap", func() any {
+              var rows = []any{}
+              for _, v := range incremental_values("ingress-location-rewrite", "route") {
+                rows = append(rows, tostring(v))
+              }
+              var lines = []string{}
+              for _, r := range sort_strings(rows) {
+                lines = append(lines, tostring(r))
+              }
+              return RegisterMap("ing-location-rewrite-routes.map", lines, map[string]any{"ordered": false})
+            })
+            var routes = tostring(routesVal)
+            var pairs = []any{}
+            for _, v := range incremental_values("ingress-location-rewrite", "pair") {
+              if hasPrefix(tostring(v), family + "|") {
+                pairs = append(pairs, tostring(v))
+              }
+            }
+          %%}
+      {{ "\n" }}# {{ family }}/location-rewrite
+          {%- for _, p := range sort_strings(pairs) %}
+            {%- var f = split(tostring(p), "|") %}
+      http-response replace-header Location {{ sanitize_regex(f[1]) }} {{ f[2] }} if { var(txn.resource_id),concat(|{{ p }}),map({{ routes }}) -m found }
+      http-response replace-header Refresh {{ sanitize_regex(f[1]) }} {{ f[2] }} if { var(txn.resource_id),concat(|{{ p }}),map({{ routes }}) -m found }
+          {%- end %}
+        {%- end -%}
+      {%- end macro -%}
+
   # aclPrefix must stay distinct per library — validation tests assert on the
   # resulting ACL names.
   # Renders every family's publisher (ingress-access-control-<band>-<library>,

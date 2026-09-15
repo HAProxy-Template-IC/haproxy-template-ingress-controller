@@ -3,7 +3,7 @@
 #
 # These run as backend-directives-* (inherit_context: ingress + serverOpts).
 # proxy-ssl-* mutates the server-line flags (serverOpts["flags"]); the cookie
-# rewrites emit http-response replace-header lines directly into the backend.
+# rewrites ride per-pair map lanes on the HTTP frontends.
 templateSnippets:
   # ============================================================================
   # Backend TLS to upstream (proxy-ssl-*)
@@ -200,93 +200,51 @@ templateSnippets:
       {%- end -%}
 
   # ============================================================================
-  # Upstream Set-Cookie rewriting (proxy-cookie-domain / proxy-cookie-path)
-  # ============================================================================
 
-  backend-directives-790-nginx-ingress-proxy-cookie:
-    template: |
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {#-
-        Nginx Ingress Proxy Cookie Domain / Path Rewriting
+  # Upstream Set-Cookie and Location/Refresh rewriting (proxy-cookie-domain /
+  # proxy-cookie-path, proxy-redirect-from / proxy-redirect-to) from the shared
+  # per-pair lanes on the HTTP frontends, so the backend stays plain.
+  # Documentation:
+  #   https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-cookie-domain
+  #   https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-redirect-from
+  frontend-filters-791-nginx-ingress-proxy-cookie:
+    requires: [ingresses]
+    template: |-
+      {%- import "util-cookie-rewrite-lane" for CookieRewriteLane -%}
+      {{- CookieRewriteLane("ni") -}}
 
-        Documentation:
-          https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-cookie-domain
-          https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-cookie-path
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/proxy-cookie-domain: "<from> <to>"
-          - nginx.ingress.kubernetes.io/proxy-cookie-path: "<from> <to>"
-
-        nginx's two-argument form rewrites the Domain= / Path= attribute of
-        the upstream Set-Cookie header from <from> to <to>. HAProxy expresses
-        the same with a regex replace-header that preserves the rest of the
-        cookie string:
-
-          http-response replace-header Set-Cookie (.*)Domain=<from>(.*) \1Domain=<to>\2
-          http-response replace-header Set-Cookie (.*)Path=<from>(.*) \1Path=<to>\2
-      -#}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var cookieDomain = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-cookie-domain"] %}
-        {%- var cookiePath = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-cookie-path"] %}
-        {%- if cookieDomain != "" %}
-          {%- var parts = split(strip(cookieDomain), " ") %}
-          {%- if len(parts) == 2 %}
-      # nginx-ingress/proxy-cookie-domain ({{ key }})
-      http-response replace-header Set-Cookie (.*)Domain={{ ValidateConfigValue(parts[0], "nginx.ingress.kubernetes.io/proxy-cookie-domain", key, false) }}(.*) \1Domain={{ ValidateConfigValue(parts[1], "nginx.ingress.kubernetes.io/proxy-cookie-domain", key, false) }}\2
-          {%- else %}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Annotation 'nginx.ingress.kubernetes.io/proxy-cookie-domain' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookieDomain + "'.") -}}
-          {%- end %}
-        {%- end %}
-        {%- if cookiePath != "" %}
-          {%- var parts = split(strip(cookiePath), " ") %}
-          {%- if len(parts) == 2 %}
-      # nginx-ingress/proxy-cookie-path ({{ key }})
-      http-response replace-header Set-Cookie (.*)Path={{ ValidateConfigValue(parts[0], "nginx.ingress.kubernetes.io/proxy-cookie-path", key, false) }}(.*) \1Path={{ ValidateConfigValue(parts[1], "nginx.ingress.kubernetes.io/proxy-cookie-path", key, false) }}\2
-          {%- else %}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Annotation 'nginx.ingress.kubernetes.io/proxy-cookie-path' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookiePath + "'.") -}}
-          {%- end %}
-        {%- end %}
+  ingress-cookie-rewrite-0791-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/proxy-cookie-domain']", "metadata.annotations['nginx.ingress.kubernetes.io/proxy-cookie-path']"]
+      group: ingress-cookie-rewrite
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-cookie-rewrite-publish" for PublishCookieRewrite -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {{- PublishCookieRewrite(ingress, "nginx.ingress.kubernetes.io/proxy-cookie-domain", "nginx.ingress.kubernetes.io/proxy-cookie-path", "ni") -}}
       {%- end -%}
 
-  backend-directives-795-nginx-ingress-proxy-redirect:
-    template: |
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {#-
-        Nginx Ingress proxy-redirect-from / proxy-redirect-to — rewrite the
-        Location and Refresh response headers coming from the upstream.
+  frontend-filters-796-nginx-ingress-proxy-redirect:
+    requires: [ingresses]
+    template: |-
+      {%- import "util-location-rewrite-lane" for LocationRewriteLane -%}
+      {{- LocationRewriteLane("ni") -}}
 
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-redirect-from
-
-        Annotations:
-          - proxy-redirect-from: text to replace (default "off"; "default" mode
-              derives from proxy_pass and has no HAProxy equivalent → warning)
-          - proxy-redirect-to: replacement text
-        Both are required together; each must be a string without spaces.
-
-        HAProxy mapping (the `from` literal is regex-escaped):
-          http-response replace-header Location <from> <to>
-          http-response replace-header Refresh  <from> <to>
-      -#}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var from = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-redirect-from"] %}
-        {%- var to = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-redirect-to"] %}
-        {%- if from == "default" %}
-      # Warning: nginx.ingress.kubernetes.io/proxy-redirect-from=default on Ingress {{ key }} is not supported — HAProxy has no proxy_pass-derived rewrite; specify an explicit from/to pair.
-        {%- else if from != "" && from != "off" %}
-          {%- if to == "" %}
-            {{- fail("Annotation 'nginx.ingress.kubernetes.io/proxy-redirect-from' on Ingress '" + key + "' requires 'nginx.ingress.kubernetes.io/proxy-redirect-to'.") -}}
-          {%- end %}
-          {%- var fromRe = sanitize_regex(ValidateConfigValue(from, "nginx.ingress.kubernetes.io/proxy-redirect-from", key, false)) %}
-          {%- var toV = ValidateConfigValue(to, "nginx.ingress.kubernetes.io/proxy-redirect-to", key, false) %}
-      # nginx-ingress/proxy-redirect ({{ key }})
-      http-response replace-header Location {{ fromRe }} {{ toV }}
-      http-response replace-header Refresh {{ fromRe }} {{ toV }}
-        {%- end %}
+  ingress-location-rewrite-0796-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/proxy-redirect-from']"]
+      group: ingress-location-rewrite
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-location-rewrite-publish" for PublishLocationRewrite -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {{- PublishLocationRewrite(ingress, "nginx.ingress.kubernetes.io/proxy-redirect-from", "nginx.ingress.kubernetes.io/proxy-redirect-to", "ni", true) -}}
       {%- end -%}

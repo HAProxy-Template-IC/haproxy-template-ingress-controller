@@ -59,8 +59,8 @@ The Nginx Ingress library implements these extension points:
 | Backend Directives | `backend-directives-765-nginx-ingress-satisfy-any` | `satisfy: any` combined IP-or-auth gate |
 | Backend Directives | `backend-directives-770-nginx-ingress-rate-limiting` | Rate limiting / connection limiting |
 | Backend Directives | `backend-directives-780-nginx-ingress-upstream-hash` | Hash-based load balancing |
-| Backend Directives | `backend-directives-790-nginx-ingress-proxy-cookie` | Upstream `Set-Cookie` rewriting (`proxy-cookie-domain`, `proxy-cookie-path`) |
-| Backend Directives | `backend-directives-795-nginx-ingress-proxy-redirect` | Upstream `Location`/`Refresh` rewriting (`proxy-redirect-from`, `proxy-redirect-to`) |
+| Frontend Filters | `frontend-filters-791-nginx-ingress-proxy-cookie` | Upstream `Set-Cookie` rewriting (`proxy-cookie-domain`, `proxy-cookie-path`), from a per-route map |
+| Frontend Filters | `frontend-filters-796-nginx-ingress-proxy-redirect` | Upstream `Location`/`Refresh` rewriting (`proxy-redirect-from`, `proxy-redirect-to`), from a per-route map |
 | Backend Directives | `backend-directives-900-nginx-ingress-config-snippet` | Raw backend config injection |
 | Map (request headers) | `map-reqhdr-host-760-nginx-ingress`, `map-reqhdr-xfwd-prefix-760-nginx-ingress`, `map-reqhdr-connection-760-nginx-ingress` | per-backend map entries for `upstream-vhost` / `x-forwarded-prefix` / `connection-proxy-header` |
 | Map (host) | `map-host-720-nginx-ingress-server-alias` | `server-alias` hostnames → the rule host's routing key in `host.map` |
@@ -524,7 +524,8 @@ annotations:
 
 ```haproxy
 backend my-backend
-    http-response replace-header Set-Cookie (.*)Domain=backend.internal(.*) \1Domain=example.com\2
+    # one rule per distinct pair on the frontend, gated by the route's row in ing-cookie-rewrite-routes.map
+    http-response replace-header Set-Cookie (.*)Domain=backend.internal(.*) \1Domain=example.com\2 if { var(txn.resource_id),concat(|ni|Domain|backend.internal|example.com),map(/etc/haproxy/maps/ing-cookie-rewrite-routes.map) -m found }
 ```
 
 ---
@@ -546,7 +547,7 @@ annotations:
 
 ```haproxy
 backend my-backend
-    http-response replace-header Set-Cookie (.*)Path=/internal(.*) \1Path=/app\2
+    http-response replace-header Set-Cookie (.*)Path=/internal(.*) \1Path=/app\2 if { var(txn.resource_id),concat(|ni|Path|/internal|/app),map(/etc/haproxy/maps/ing-cookie-rewrite-routes.map) -m found }
 ```
 
 ---
@@ -575,8 +576,9 @@ annotations:
 
 ```haproxy
 backend my-backend
-    http-response replace-header Location http://backend\.internal/ https://example.com/
-    http-response replace-header Refresh http://backend\.internal/ https://example.com/
+    # one rule pair per distinct from/to on the frontend, gated by the route's row in ing-location-rewrite-routes.map
+    http-response replace-header Location http://backend\.internal/ https://example.com/ if { var(txn.resource_id),concat(|ni|http://backend.internal/|https://example.com/),map(/etc/haproxy/maps/ing-location-rewrite-routes.map) -m found }
+    http-response replace-header Refresh http://backend\.internal/ https://example.com/ if { var(txn.resource_id),concat(|ni|http://backend.internal/|https://example.com/),map(/etc/haproxy/maps/ing-location-rewrite-routes.map) -m found }
 ```
 
 ---

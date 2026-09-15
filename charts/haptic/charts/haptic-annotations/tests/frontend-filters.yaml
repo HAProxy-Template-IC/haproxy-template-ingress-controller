@@ -242,14 +242,13 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-response replace-header Set-Cookie .*Domain=new\\.example\\.com"
-      - {type: contains, target: haproxy.cfg, pattern: "http-response replace-header Set-Cookie .*Path=/new"}
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-response replace-header Location http://old\\\\.svc https://new\\.svc if"
-      - {type: contains, target: haproxy.cfg, pattern: "http-response replace-header Refresh"}
+      - {type: contains, target: "map:ing-cookie-rewrite-routes.map", pattern: '(?m)^default/px-ingress\|haptic\|Domain\|old\.example\.com\|new\.example\.com 1$'}
+      - {type: contains, target: "map:ing-cookie-rewrite-routes.map", pattern: '(?m)^default/px-ingress\|haptic\|Path\|/old\|/new 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response replace-header Set-Cookie \(\.\*\)Domain=old\.example\.com\(\.\*\) \\1Domain=new\.example\.com\\2 if \{ var\(txn\.resource_id\),concat\(\|haptic\|Domain\|old\.example\.com\|new\.example\.com\),map\(\S*/ing-cookie-rewrite-routes\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response replace-header Set-Cookie \(\.\*\)Path=/old\(\.\*\) \\1Path=/new\\2 if'}
+      - {type: contains, target: "map:ing-location-rewrite-routes.map", pattern: '(?m)^default/px-ingress\|haptic\|http://old\.svc\|https://new\.svc 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response replace-header Location http://old\\\.svc https://new\.svc if \{ var\(txn\.resource_id\),concat\(\|haptic\|http://old\.svc\|https://new\.svc\),map\(\S*/ing-location-rewrite-routes\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: "http-response replace-header Refresh http://old"}
 
   test-haptic-security-rules-scoped-by-route-not-host:
     description: >-
