@@ -597,7 +597,7 @@ JSON request-body validation is opt-in via `controller.config.templatingSettings
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
 | `haproxy-haptic.org/allowed-consumer-groups` | ✅ Supported | Comma-separated group set the route permits; a request whose consumer isn't in an allowed group is denied `403`. Requires `consumer-groups-secret` and an authenticated consumer. |
-| `haproxy-haptic.org/allowed-methods` | ✅ Supported | Restricts the accepted HTTP methods (comma-separated); any other method is denied with `405`. |
+| `haproxy-haptic.org/allowed-methods` | ✅ Supported | Restricts the accepted HTTP methods (comma-separated); any other method is denied with `405`. Applied from a per-route map. |
 | `haproxy-haptic.org/api-key-consumer-header` | ✅ Supported | Forwards the resolved consumer id to the upstream in the named header. |
 | `haproxy-haptic.org/api-key-header` | ✅ Supported | Header carrying the API key (default `X-API-Key`); mutually exclusive with `api-key-query`. |
 | `haproxy-haptic.org/api-key-query` | ✅ Supported | Query parameter carrying the API key; mutually exclusive with `api-key-header`. |
@@ -613,7 +613,7 @@ JSON request-body validation is opt-in via `controller.config.templatingSettings
 | `haproxy-haptic.org/jwt-issuer` | ✅ Supported | Required `iss` claim value (exact match). |
 | `haproxy-haptic.org/jwt-required-claims` | ✅ Supported | Comma-separated claim names that must be present in the payload; a missing claim is denied `401`. |
 | `haproxy-haptic.org/jwt-secret` | ✅ Supported | Names the Secret (data key `pubkey.pem`) for asymmetric JWT verification with an alg-confusion guard, `exp`/`iss`/`aud`/required-claim checks, and the shared consumer identity from `sub`. Fails closed (`503`) when the Secret is absent. A new key Secret reloads once; routes sharing a key are added and removed without one, and key rotation needs a reload. |
-| `haproxy-haptic.org/mock-response` | ✅ Supported | A non-empty value returns it as a canned response body, short-circuiting the backend (for stubbing an API). |
+| `haproxy-haptic.org/mock-response` | ✅ Supported | A non-empty value returns it as a canned response body, short-circuiting the backend (for stubbing an API). The body comes from a per-route map; the first route with a new status and content-type pair reloads once. |
 | `haproxy-haptic.org/mock-response-code` | ✅ Supported | HTTP status for `mock-response` (default `200`). |
 | `haproxy-haptic.org/mock-response-content-type` | ✅ Supported | Content-Type for the `mock-response` body (default `application/json`). |
 | `haproxy-haptic.org/request-id` | ✅ Supported | The value `true` generates a per-request correlation id and forwards it upstream (HAProxy `unique-id`). |
@@ -624,12 +624,12 @@ JSON request-body validation is opt-in via `controller.config.templatingSettings
 | `haproxy-haptic.org/request-schema-fail-open` | ✅ Supported | Per-route policy for missing plugin verdicts/schema ids (`true` or `false`, default from `extraContext.apiGateway.requestSchemaValidation.defaultFailOpen`, chart default `true`). The default allows the request and records `schema_degraded`; `false` returns `422` with `denied_by=schema_unavailable`. |
 | `haproxy-haptic.org/request-schema-max-body-size` | ✅ Supported | Per-route validator input cap (1..1048576; default `requestSchemaValidation.requestBody.defaultMaxBytes`, chart default `8192`). It must fit within `requestBodyInspection.haproxyBuffer.sizeBytes - reservedBytes`. Oversized requests return `413` before SPOE. This doesn't replace `haproxy-haptic.org/max-request-body-size`, the general backend body-size limit. |
 | `haproxy-haptic.org/request-schema-secret` | ✅ Supported | Enables JSON request-body validation using a Secret schema reference: `[namespace/]name[:key]`, default key `schema.json`. The Secret data value must be base64-encoded JSON Schema. Exactly one schema source is required. |
-| `haproxy-haptic.org/fixed-response` | ✅ Supported | The value `true` returns a fixed response for every request matching the route's hosts via `http-request return` — for maintenance windows or sunset routes. Runs before mocking and the validators. Defaults to status 503 / `text/plain`, and can return a bare status with no body. |
+| `haproxy-haptic.org/fixed-response` | ✅ Supported | The value `true` returns a fixed response for every request on the route via `http-request return` — for maintenance windows or sunset routes. Runs before mocking and the validators. Defaults to status 503 / `text/plain`, and can return a bare status with no body. The body comes from a per-route map; the first route with a new status and content-type pair reloads once. |
 | `haproxy-haptic.org/fixed-response-body` | ✅ Supported | Optional response body for `fixed-response`. |
 | `haproxy-haptic.org/fixed-response-code` | ✅ Supported | HTTP status for `fixed-response` (default 503; must be 100-599). |
 | `haproxy-haptic.org/fixed-response-content-type` | ✅ Supported | Content-Type for the `fixed-response` body (default `text/plain`). |
-| `haproxy-haptic.org/require-content-type` | ✅ Supported | Requires an allowed `Content-Type` (comma-separated) on body methods (POST/PUT/PATCH); a disallowed type is rejected with `415` (prefix-matched, so charset suffixes still match). |
-| `haproxy-haptic.org/require-headers` | ✅ Supported | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. |
+| `haproxy-haptic.org/require-content-type` | ✅ Supported | Requires an allowed `Content-Type` (comma-separated) on body methods (POST/PUT/PATCH); a disallowed type is rejected with `415` (prefix-matched, so charset suffixes still match). Applied from a per-route map. |
+| `haproxy-haptic.org/require-headers` | ✅ Supported | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. Applied from a per-route map; the first route to require a new header name reloads once. |
 
 <!-- 181 annotations documented -->
 

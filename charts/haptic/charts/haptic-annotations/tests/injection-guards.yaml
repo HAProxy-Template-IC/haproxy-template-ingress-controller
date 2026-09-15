@@ -155,7 +155,7 @@ validationTests:
 
   # ---- fixed-response / mock-response content-type + body ----
   test-haptic-fixed-response-body-escapes-dollar:
-    description: A fixed-response body containing a dollar sign renders with $ escaped, so HAProxy does not expand it as an environment variable.
+    description: A fixed-response body containing a dollar sign lands URL-encoded in the body map, so HAProxy never sees it as an environment variable.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -173,7 +173,8 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'string "cost \\\$5" if'}
+      - {type: contains, target: "map:haptic-return-body.map", pattern: '(?m)^default/\S+ cost%20%245$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'cost'}
 
   test-haptic-fixed-response-content-type-control-char-reconcile-warns-and-skips:
     description: A control character in fixed-response-content-type is skipped while a valid sibling fixed-response still renders.
@@ -209,7 +210,7 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'string "ok" if'}
+      - {type: contains, target: "map:haptic-return-body.map", pattern: '(?m)^default/\S+ ok$'}
       - {type: not_contains, target: haproxy.cfg, pattern: "fr-inj-marker"}
 
   test-haptic-fixed-response-content-type-control-char-admission-rejected:
@@ -266,7 +267,7 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'string "served" if'}
+      - {type: contains, target: "map:haptic-return-body.map", pattern: '(?m)^default/mock-ok served$'}
       - {type: not_contains, target: haproxy.cfg, pattern: "mock-inj-marker"}
 
   # ---- shared EmitAnnotationCORS macro ----
