@@ -15,6 +15,8 @@
 package deployplan
 
 import (
+	"path"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
@@ -44,4 +46,21 @@ func InventoryOf(p *renderplan.Plan) api.Inventory {
 		}
 	}
 	return inventory
+}
+
+// certDirOf is the directory the plan's certificates live in, which the
+// rendered config also names as crt-base; "" when the plan registers none.
+func certDirOf(p *renderplan.Plan) string {
+	if p == nil {
+		return ""
+	}
+	for i := range p.Files {
+		if p.Files[i].Kind != renderplan.FileKindCert {
+			continue
+		}
+		if dir := path.Dir(p.Files[i].Path); dir != "." {
+			return dir
+		}
+	}
+	return ""
 }

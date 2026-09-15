@@ -158,11 +158,8 @@ templateSnippets:
                 {%- var crtFilename = crtNs + "-" + crtName + "-backend-tls-client.pem" %}
                 {%- var _, crtRegErr = RegisterBackendFile("cert", crtFilename, combinedPem) -%}
                 {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-                {#- BARE filename: `crt` resolves against crt-base, so the ssl/-prefixed
-                    path would double to ssl/ssl/<name> and fail `haproxy -c`. The bare
-                    arg then can't match the runtime store ident (ssl/<name>), so the
-                    backend is marked structural below. Reload-free needs a
-                    crt-base-free absolute reference; tracked as a follow-up. -#}
+                {#- Bare filename: crt-base joins it, on the config line and on add
+                    server alike; an ssl/-prefixed path would double. -#}
                 {%- crtPart = " crt " + crtFilename %}
               {%- else %}
       # Warning: Secret {{ crtNs }}/{{ crtName }} referenced by haproxy-haptic.org/backend-crt-secret on Ingress {{ key }} is missing the 'tls.crt' or 'tls.key' key
@@ -205,8 +202,6 @@ templateSnippets:
           {%- end %}
           {%- if crtPart != "" %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), trimSpace(crtPart)) %}
-            {#- crt is crt-base-relative, so add server can't match it: structural (Backend records why). -#}
-            {%- serverOpts["shape"] = "structural-crt" %}
           {%- end %}
 
           {#- backend-sni: host keyword forwards the request Host; a literal is

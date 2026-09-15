@@ -70,6 +70,7 @@ func DiffIndexed(next *renderplan.Plan, nextIndex *Index, base *Baseline) Decisi
 			caps:                  base.Caps,
 			inventory:             &base.Inventory,
 			created:               map[string]bool{},
+			certDir:               certDirOf(next),
 			pendingServerDeletes:  base.PendingServerDeletes,
 			pendingBackendDeletes: base.PendingBackendDeletes,
 		},

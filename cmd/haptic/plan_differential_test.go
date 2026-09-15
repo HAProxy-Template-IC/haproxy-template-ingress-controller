@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -696,12 +697,14 @@ func TestPlanDifferentialDefaultServerKeywordsAreStructured(t *testing.T) {
 }
 
 // TestPlanDifferentialBackendTLSShapes proves the two BackendTLS reload-free
-// properties MR 2 depends on. First, a CA bundle is registered as a
-// runtime-rotatable ca-file (FileKindCA), so a new verify-BackendTLS route and a
-// CA rotation apply over the runtime API instead of reloading. Second, an mTLS
-// client cert — whose `crt` arg is crt-base-relative and can never equal the
-// runtime cert-store ident — makes its backend structural, so the deploy side
-// reloads it (hitless) rather than composing an `add server` the worker refuses.
+// properties. First, a CA bundle is registered as a runtime-rotatable ca-file
+// (FileKindCA), so a new verify-BackendTLS route and a CA rotation apply over
+// the runtime API instead of reloading. Second, an mTLS client cert is
+// referenced bare under crt-base, which resolves to the path the plan
+// registers it under — the runtime cert-store ident `add server ... crt` must
+// match — so the backend stays dynamic and pod churn on it never reloads; a
+// crt the plan does not register would make the worker refuse the add server,
+// which is why the arg is pinned to the plan.
 func TestPlanDifferentialBackendTLSShapes(t *testing.T) {
 	restoreHAProxy := dataplanetest.InstallFakeHAProxy()
 	t.Cleanup(restoreHAProxy)
@@ -720,22 +723,37 @@ func TestPlanDifferentialBackendTLSShapes(t *testing.T) {
 		}
 		certs := deployplan.InventoryOf(rendered.plan).Certs
 		for name, backend := range rendered.plan.Backends {
-			for _, kw := range backend.DefaultServer {
-				// A crt whose arg is not a loaded cert can never ride `add server`,
-				// so the backend must be structural or pod churn silently reloads it.
-				if kw.Name == keywordCrt && len(kw.Args) == 1 && !slices.Contains(certs, kw.Args[0]) {
-					sawCrtBackend = true
-					assert.Equalf(t, renderplan.ShapeStructural, backend.Shape,
-						"backend %q carries an unmatched crt %q but is %q, not structural",
-						name, kw.Args[0], backend.Shape)
-					assert.NotEmptyf(t, backend.ShapeReason,
-						"backend %q is structural for an unmatched crt but records no ShapeReason", name)
-				}
+			if assertClientCertDynamic(t, name, &backend, certs) {
+				sawCrtBackend = true
 			}
 		}
 	}
 	assert.True(t, sawCA, "no backend-tls CA registered as a runtime-rotatable ca-file (FileKindCA)")
-	assert.True(t, sawCrtBackend, "no mTLS backend with an unmatched crt keyword — the finding-2 guard exercised nothing")
+	assert.True(t, sawCrtBackend, "no mTLS backend with a crt keyword — the dynamic client-cert guard exercised nothing")
+}
+
+// assertClientCertDynamic checks a backend carrying a client cert and reports
+// whether it carries one. `add server ... crt` takes the config line's bare
+// filename: HAProxy joins crt-base, the certificate directory, onto it, so the
+// result must be a file the plan registers or the worker refuses the add; and
+// the backend must stay dynamic, or pod churn on it reloads.
+func assertClientCertDynamic(t *testing.T, name string, backend *renderplan.Backend, certs []string) bool {
+	t.Helper()
+	seen := false
+	for _, kw := range backend.DefaultServer {
+		if kw.Name != keywordCrt {
+			continue
+		}
+		seen = true
+		if assert.Lenf(t, kw.Args, 1, "backend %q carries a crt keyword with %d args", name, len(kw.Args)) {
+			assert.Truef(t, slices.ContainsFunc(certs, func(p string) bool { return path.Dir(p)+"/"+kw.Args[0] == p }),
+				"backend %q carries crt %q, which resolves to no cert file the plan registers", name, kw.Args[0])
+		}
+		assert.Equalf(t, renderplan.ShapeDynamic, backend.Shape,
+			"backend %q carries a client cert but is %q (%s): pod churn on it would reload",
+			name, backend.Shape, backend.ShapeReason)
+	}
+	return seen
 }
 
 const keywordCrt = "crt"

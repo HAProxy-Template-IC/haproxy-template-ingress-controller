@@ -246,12 +246,7 @@ templateSnippets:
         if gwClientCertPath != "" {
           dsFlags = append(dsFlags, "crt " + gwClientCertPath)
         }
-        // crt is crt-base-relative, so add server can't match it: structural (Backend
-        // records why). Reload-free needs a crt-base-free absolute reference (follow-up).
         var beShape any = nil
-        if gwClientCertPath != "" {
-          beShape = "structural-crt"
-        }
         var defaultServer = []any{map[string]any{"name": "check"}}
         for _, kw := range FlagsToKeywordArgs(dsFlags) {
           defaultServer = append(defaultServer, kw)
@@ -550,12 +545,7 @@ templateSnippets:
         if gwClientCertPath != "" {
           dsFlags = append(dsFlags, "crt " + gwClientCertPath)
         }
-        // crt is crt-base-relative, so add server can't match it: structural (Backend
-        // records why). Reload-free needs a crt-base-free absolute reference (follow-up).
         var beShape any = nil
-        if gwClientCertPath != "" {
-          beShape = "structural-crt"
-        }
         var defaultServer = []any{map[string]any{"name": "check"}}
         for _, kw := range FlagsToKeywordArgs(dsFlags) {
           defaultServer = append(defaultServer, kw)
