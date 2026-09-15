@@ -84,7 +84,8 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | `backend-directives-210-haproxytech-advanced-health-checks` | `haproxy.org/check-http`, `haproxy.org/check-interval` |
 | `backend-directives-250-haproxytech-rate-limiting` | `haproxy.org/rate-limit-*` |
 | `backend-directives-300-haproxytech-header-manipulation` | `haproxy.org/request-set-header`, `haproxy.org/response-set-header` |
-| `backend-directives-350-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` |
+| `backend-directives-350-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` (patterns that aren't a prefix strip) |
+| `frontend-filters-995-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` (a bare value or a prefix strip, from per-route maps) |
 | `backend-directives-400-haproxytech-session-persistence` | `haproxy.org/cookie-persistence` |
 | `backend-directives-401-haproxytech-session-persistence-no-dynamic` | `haproxy.org/cookie-persistence-no-dynamic` |
 | `backend-directives-500-haproxytech-ingress-auth` | `haproxy.org/auth-*` (attaches the userlist per backend) |
@@ -734,7 +735,7 @@ option forwardfor
 
 **Status**: ✅ Supported
 
-**Description**: Rewrite request path using regex patterns before forwarding to backend. Supports two formats: single parameter (matches all paths) or two parameters (regex pattern and replacement).
+**Description**: Rewrite request path using regex patterns before forwarding to backend. Supports two formats: single parameter (matches all paths) or two parameters (regex pattern and replacement). A bare value, or a prefix strip (`^<prefix>(.*)` with `<new prefix>\1` or a plain `<new path>` as the replacement, `<prefix>` without regex metacharacters), is applied from a per-route map on the HTTP frontends and keeps the route reload-free; any other pattern is a `replace-path` rule in the backend.
 
 **Usage**:
 
@@ -764,7 +765,8 @@ spec:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-request replace-path ^/api/v1/(.*) /\1
+# haproxytech-rewrite-prefix.map, read by the frontend lane: drop 8 bytes, prepend /
+default/path-rewrite-example|/api/v1/ 8 /
 ```
 
 **Dependencies**: None
