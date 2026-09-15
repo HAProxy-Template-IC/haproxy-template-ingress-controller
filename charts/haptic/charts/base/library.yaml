@@ -1948,6 +1948,18 @@ templateSnippets:
       {%- end %}
       {% end macro %}
 
+  # The frontend filter chain, behind one macro on purpose: a render_glob
+  # expands into the function table of whatever function contains it, and
+  # Scriggo's bytecode caps that table at 256 entries. Expanding the chain
+  # directly in each frontend spent most of that budget in the haproxy.cfg
+  # top-level function, so the next library to add a snippet was the one that
+  # broke the build. Nested here, the chain costs a caller a single entry.
+  util-frontend-filter-chain:
+    template: |-
+      {%- macro FrontendFilterChain() -%}
+      {{- render_glob "frontend-filters-*" -}}
+      {%- end macro -%}
+
   util-register-map:
     template: |-
       {#
@@ -2740,6 +2752,7 @@ k8sResources:
 haproxyConfig:
   template: |
     {%- import "util-backend" for Backend -%}
+    {%- import "util-frontend-filter-chain" for FrontendFilterChain -%}
     global
         {{ render "global-settings" | indent(2, true) }}
 
@@ -2880,7 +2893,7 @@ haproxyConfig:
         {# Extension point for frontend request/response filters #}
         {# Runs AFTER routing decisions, BEFORE backend selection #}
         {# Libraries can inject filter logic here (header modification, redirects, rewrites) #}
-        {{- render_glob "frontend-filters-*" | indent(2, true) }}
+        {{- FrontendFilterChain() | indent(2, true) }}
         {{- render_glob "frontend-switching-*" | indent(2, true) }}
         use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
         default_backend default_backend
@@ -2900,7 +2913,7 @@ haproxyConfig:
         {# client uses. #}
         {{- render_glob "frontend-extra-*" | indent(2, true) }}
         {{ render "frontend-routing-logic" | indent(2, true) }}
-        {{- render_glob "frontend-filters-*" | indent(2, true) }}
+        {{- FrontendFilterChain() | indent(2, true) }}
         {{- render_glob "frontend-switching-*" | indent(2, true) }}
         use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
         default_backend default_backend
