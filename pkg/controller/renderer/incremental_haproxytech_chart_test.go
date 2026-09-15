@@ -433,7 +433,6 @@ func loadHAProxyTechGatedSnippets(t *testing.T) map[string]config.TemplateSnippe
 		"util-validate-cidr-list":             true,
 		"util-publish-access-control":         true,
 		"util-cors-publish":                   true,
-		"util-haproxytech-logging-fragment":   true,
 	}
 	for _, name := range haproxyTechGatedComponents {
 		wanted[name] = true

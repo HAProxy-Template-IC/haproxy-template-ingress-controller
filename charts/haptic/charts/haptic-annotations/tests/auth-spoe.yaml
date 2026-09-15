@@ -281,9 +281,8 @@ validationTests:
       - type: contains
         target: map:mtls-error.map
         pattern: "api.example.com https%3a%2f%2flogin.example.com%2fcert-required"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-header X-SSL-Client-Cert %\\[ssl_c_der,base64\\] if \\{ ssl_fc_has_crt \\}"
+      - {type: contains, target: "map:haptic-cert-header-routes.map", pattern: '(?m)^default/\S+ 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-SSL-Client-Cert %\[ssl_c_der,base64\] if \{ ssl_fc_has_crt \} \{ var\(txn\.resource_id\),map\(\S*/haptic-cert-header-routes\.map\) -m found \}'}
 
   # ============================================================================
   # External auth (SPOE) — requires spoa-hub loaded

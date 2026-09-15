@@ -324,7 +324,7 @@ Request/response header manipulation, capture, CORS, source-IP allow/deny, and u
 | `haproxy-haptic.org/response-cookie-path` | ✅ Supported | Rewrites the `Path` attribute of upstream `Set-Cookie` response headers, given a `<from> <to>` pair, preserving the rest of the cookie string. Host-scoped; a wrong-arity value fails the render. |
 | `haproxy-haptic.org/response-location-rewrite-from` | ✅ Supported | Names the literal text to match in the `Location` and `Refresh` response headers; the matched text is regex-escaped and replaced with the value of `response-location-rewrite-to`. Host-scoped. |
 | `haproxy-haptic.org/response-location-rewrite-to` | ✅ Supported | Supplies the replacement text for `response-location-rewrite-from`; required whenever a match pattern is set, or the render fails. |
-| `haproxy-haptic.org/request-capture` | ✅ Supported | Captures the named request headers (newline-separated) in the logs via `capture request header`, across the whole frontend. |
+| `haproxy-haptic.org/request-capture` | ✅ Supported | Captures the named request headers (newline-separated) in the logs via `capture request header`, across the whole frontend; each header and length pair is emitted once, so a route sharing a known pair is reload-free. |
 | `haproxy-haptic.org/request-capture-len` | ✅ Supported | Sets the capture length for `request-capture` (default `128`). |
 | `haproxy-haptic.org/request-set-header` | ✅ Supported | Sets request headers sent to the upstream, one `<name> <value>` per line. Reload-free: values move into `ing-reqhdr.map`, read by one static `http-request set-header` line per header name, keyed on the backend. |
 | `haproxy-haptic.org/response-set-header` | ✅ Supported | Sets response headers, one `<name> <value>` per line. Reload-free: values move into `ing-reshdr.map`, read by one static `http-response set-header` line per header name, keyed on the backend. |
@@ -385,7 +385,7 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 | `haproxy-haptic.org/auth-secret` | ✅ Supported | Names the Secret holding basic-auth credentials, as `name` or `namespace/name`; while the Secret is absent the route answers 503. |
 | `haproxy-haptic.org/auth-secret-type` | ✅ Supported | Selects the credentials Secret format: `auth-file` (htpasswd in the `auth` key) or `auth-map` (one key per user); default `auth-file`. |
 | `haproxy-haptic.org/auth-signin` | ✅ Supported | Sets the sign-in redirect URL for failed external authentication. |
-| `haproxy-haptic.org/auth-tls-cert-header` | ✅ Supported | Forwards the client certificate details (`X-SSL-Client-CN`, `X-SSL-Client-DN`, `X-SSL-Client-Cert`) to the upstream when a client certificate was presented. |
+| `haproxy-haptic.org/auth-tls-cert-header` | ✅ Supported | Forwards the client certificate details (`X-SSL-Client-CN`, `X-SSL-Client-DN`, `X-SSL-Client-Cert`) to the upstream when a client certificate was presented. Applied from a per-route map. |
 | `haproxy-haptic.org/auth-tls-error-page` | ✅ Supported | Redirects to the given URL when client-certificate (mTLS) verification fails. |
 | `haproxy-haptic.org/auth-tls-secret` | ✅ Supported | Enables client-certificate (mTLS) verification for the host using the CA in the named Secret; a host is required. |
 | `haproxy-haptic.org/auth-tls-verify-client` | ⚠️ Caveat | Sets client-certificate verification: `on` requires it, `optional` and `optional_no_ca` both map to `verify optional` (HAProxy has no distinct `optional_no_ca` mode), and `off` disables it. |

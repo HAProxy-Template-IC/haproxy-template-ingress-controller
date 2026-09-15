@@ -272,34 +272,51 @@ templateSnippets:
         {{- shared.Unique("fragments", "global", "\n# nginx-ingress/auth-tls-pass-certificate-to-upstream — drop client-supplied copies\nhttp-request del-header ssl-client-cert\nhttp-request del-header ssl-client-subject-dn") -}}
       {%- end -%}
 
+  # auth-tls-pass-certificate-to-upstream: the ssl-client-* headers for a
+  # route that opted in, from nginx-cert-header-routes.map ("<route id>" -> 1);
+  # the strip (789) stays unconditional. auth-tls-error-page lives in
+  # features-150 (map-driven).
   frontend-filters-790-nginx-ingress-mtls-error:
+    requires: [ingresses]
+    template: |
+      {%- import "util-register-map" for RegisterMap -%}
+      {{- render "nginx-ingress-cert-header-publications" -}}
+      {%- if incremental_value_count("nginx-ingress-cert-header", "any") > 0 -%}
+      {%%
+        var routesVal, _ = shared.ComputeIfAbsent("nginxCertHeaderMap", func() any {
+          var rows = []any{}
+          for _, v := range incremental_values("nginx-ingress-cert-header", "route") {
+            rows = append(rows, tostring(v))
+          }
+          var lines = []string{}
+          for _, r := range sort_strings(rows) {
+            lines = append(lines, tostring(r))
+          }
+          return RegisterMap("nginx-cert-header-routes.map", lines, map[string]any{"ordered": false})
+        })
+        var routes = tostring(routesVal)
+      %%}
+      {{ "\n" }}# ni/auth-tls-pass-certificate-to-upstream
+      http-request set-header ssl-client-cert %[ssl_c_der,base64] if { var(txn.resource_id),map({{ routes }}) -m found }
+      http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { var(txn.resource_id),map({{ routes }}) -m found }
+      {%- end %}
+
+  nginx-ingress-cert-header-publications:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream']"]
-    template: |
-      {# auth-tls-error-page lives in features-150 (map-driven, reload-free); only
-          cert passthrough belongs here. #}
-      {#- Strip unconditionally, and never host-scoped: a wildcard or host-less
-          rule made the old exact host gate miss entirely, leaving the caller's
-          own header to reach an application this annotation tells to trust it.
-          A missed set is fail-closed; a missed strip is forgery. -#}
+      group: nginx-ingress-cert-header
+      effects: [publishValue]
+    template: |-
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" %}
-            {%- var cond = "{ var(txn.resource_id) -m str " + key + " }" %}
-      # nginx-ingress/auth-tls-pass-certificate-to-upstream ({{ key }})
-      http-request set-header ssl-client-cert %[ssl_c_der,base64] if {{ cond }}
-      http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if {{ cond }}
-          {%- end %}
+      {%- if ingress != nil && ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {{- shared.Publish("any", "any", "any") -}}
+        {{- shared.Publish("route", key, key + " 1") -}}
       {%- end -%}
 
-  # The SPOE mirror notification fires before the request body would arrive, so
-  # without buffering the plugin mirrors PUT/POST with an empty body.
   frontend-filters-093-nginx-ingress-mirror-buffer:
     template: |-
       {{- render "nginx-ingress-mirror-buffer-publications" -}}

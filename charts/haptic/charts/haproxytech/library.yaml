@@ -315,7 +315,18 @@ templateSnippets:
     template: |-
       {%- import "util-src-ip-lane" for SrcIPHeaderLane -%}
       {{- SrcIPHeaderLane("haproxytech") -}}
-      {%- for _, fragment := range incremental_values("haproxytech-logging", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+      {%- if incremental_value_count("haproxytech-logging", "any") > 0 -%}
+      {%%
+        var pairs = []any{}
+        for _, v := range incremental_values("haproxytech-logging", "pair") {
+          pairs = append(pairs, tostring(v))
+        }
+      %%}
+      {{ "\n" }}# haproxytech/request-capture
+      {%- for _, p := range sort_strings(pairs) %}
+      capture request header {{ p }}
+      {%- end %}
+      {%- end %}
 
   # src-ip-header from the shared map lane; a bad value must fail closed, not
   # skip: emitting nothing would leave downstream trust ACLs judging the
@@ -350,45 +361,34 @@ templateSnippets:
       group: haproxytech-logging
       effects: [publishValue, recordEvent]
     template: |-
-      {%- var fragment = render "util-haproxytech-logging-fragment" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
-      {%- end -%}
-
-  util-haproxytech-logging-fragment:
-    template: |-
+      {#- Capture slots are frontend-wide and positional: one (name, len) pair
+          is published per header and the block emits each distinct pair once. -#}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var reqCapture = ingress.Metadata.Annotations["haproxy.org/request-capture"] %}
-          {%- var captureLen = ingress.Metadata.Annotations["haproxy.org/request-capture-len"] %}
-          {%- if captureLen == "" %}{%- captureLen = "128" %}{%- end %}
-          {%- if reqCapture != "" %}
-            {#- captureLen is a bare positive integer; toint() rejects any trailing
-                garbage (a newline, a second word) by returning 0, so this one check
-                is both the sanity gate and the injection guard for the len operand. -#}
-            {%- if toint(captureLen) <= 0 %}
-              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + captureLen + "' for annotation 'haproxy.org/request-capture-len' on Ingress '" + key + "'. Must be a positive integer; request capture is skipped.") -}}
-            {%- else %}
-      # haproxytech/frontend-filters-haproxytech-logging (request-capture for {{ key }})
-            {%- for _, line := range split(reqCapture, "\n") %}
-              {%- var t = trimSpace(line) %}
-              {%- if t != "" %}
-                {%- var capInj = ConfigInjectionKind(t, "token") %}
-                {%- if capInj != "" %}
-                  {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/request-capture' on Ingress '" + key + "' names a header containing " + capInj + ", which would break the capture directive; that entry is skipped.") -}}
-                {%- else %}
-      capture request header {{ t }} len {{ captureLen }}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-            {%- end %}
-          {%- end %}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy.org/request-capture"] != "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var captureLen = ingress.Metadata.Annotations["haproxy.org/request-capture-len"] -%}
+        {%- if captureLen == "" -%}{%- captureLen = "128" -%}{%- end -%}
+        {#- captureLen is a bare positive integer; toint() rejects any trailing
+            garbage (a newline, a second word) by returning 0, so this one check
+            is both the sanity gate and the injection guard for the len operand. -#}
+        {%- if toint(captureLen) <= 0 -%}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + captureLen + "' for annotation 'haproxy.org/request-capture-len' on Ingress '" + key + "'. Must be a positive integer; request capture is skipped.") -}}
+        {%- else -%}
+          {%- for _, line := range split(ingress.Metadata.Annotations["haproxy.org/request-capture"], "\n") -%}
+            {%- var t = trimSpace(line) -%}
+            {%- if t == "" -%}{%- continue -%}{%- end -%}
+            {%- var capInj = ConfigInjectionKind(t, "token") -%}
+            {%- if capInj != "" -%}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy.org/request-capture' on Ingress '" + key + "' names a header containing " + capInj + ", which would break the capture directive; that entry is skipped.") -}}
+            {%- else -%}
+              {{- shared.Publish("any", "any", "any") -}}
+              {{- shared.Publish("pair", t + " len " + captureLen, t + " len " + captureLen) -}}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   global-top-500-haproxytech-ingress-auth:
@@ -2323,6 +2323,65 @@ validationTests:
       - {type: contains, target: "map:ing-cors-regex.map", pattern: '(?m)^\^default/ok-cors\\\|\.\*\(https://\.\*\\\.example\\\.com\) 1$'}
       - {type: contains, target: "map:ing-cors-methods.map", pattern: '(?m)^default/ok-cors GET%2c%20POST$'}
       - {type: contains, target: "map:ing-cors-headers.map", pattern: '(?m)^default/ok-cors X-H%25K$'}
+
+  test-haproxytech-request-capture-shared-pair-emitted-once:
+    description: Two Ingresses capturing the same header with the same length yield one capture slot per frontend; a second length is a second slot.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cap-a
+            annotations:
+              haproxy.org/request-capture: "X-Trace-Id"
+              haproxy.org/request-capture-len: "64"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cap-a.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cap-b
+            annotations:
+              haproxy.org/request-capture: |
+                X-Trace-Id
+                X-Tenant
+              haproxy.org/request-capture-len: "64"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cap-b.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cap-c
+            annotations:
+              haproxy.org/request-capture: "X-Trace-Id"
+              haproxy.org/request-capture-len: "128"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cap-c.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "capture request header X-Trace-Id len 64"}
+      - {type: contains, target: haproxy.cfg, pattern: "capture request header X-Tenant len 64"}
+      - {type: contains, target: haproxy.cfg, pattern: "capture request header X-Trace-Id len 128"}
+      # The shared pair is one slot per frontend: the sorted slots never repeat a line.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'capture request header X-Trace-Id len 64\n\s*capture request header X-Trace-Id len 64'}
 
   test-haproxytech-path-rewrite-map-lane:
     description: haproxy.org/path-rewrite prefix strips and the bare form ride the frontend maps; a pattern that is not a prefix strip keeps its backend replace-path.

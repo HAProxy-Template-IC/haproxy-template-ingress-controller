@@ -151,65 +151,55 @@ templateSnippets:
       {%- import "util-src-ip-lane" for SrcIPHeaderLane -%}
       {{- SrcIPHeaderLane("haptic") -}}
 
-  features-900-haptic-fragment-850-request-capture:
+  # request-capture (haproxytech semantics): capture slots are frontend-wide
+  # and positional, so the block emits one `capture request header <name> len
+  # <len>` per distinct pair in use; a route on a known pair changes nothing,
+  # a new pair reloads once.
+  features-850-haptic-request-capture:
     requires: [ingresses]
     incremental:
       source: ingresses
-      whenAnyPathExists:
-        - "metadata.annotations['haproxy-haptic.org/request-capture']"
-        - "metadata.annotations['haproxy-haptic.org/request-capture-len']"
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/request-capture']"]
+      group: haptic-request-capture
       effects: [publishValue, recordEvent]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-850-request-capture" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/request-capture"] != "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var captureLen = ingress.Metadata.Annotations["haproxy-haptic.org/request-capture-len"] -%}
+        {%- if captureLen == "" -%}{%- captureLen = "128" -%}{%- end -%}
+        {%- if toint(captureLen) <= 0 -%}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + captureLen + "' for annotation 'haproxy-haptic.org/request-capture-len' on Ingress '" + key + "'. Must be a positive integer.") -}}
+        {%- else -%}
+          {%- for _, line := range split(ingress.Metadata.Annotations["haproxy-haptic.org/request-capture"], "\n") -%}
+            {%- var t = trimSpace(line) -%}
+            {%- if t != "" -%}
+              {%- var pair = ValidateConfigValue(t, "haproxy-haptic.org/request-capture", key, false) + " len " + captureLen -%}
+              {{- shared.Publish("any", "any", "any") -}}
+              {{- shared.Publish("pair", pair, pair) -}}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   frontend-filters-850-haptic-request-capture:
     requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-850-request-capture", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-850-request-capture:
     template: |
-      {#
-        HAPTIC request capture (best-of-breed: haproxytech request-capture).
-
-        Captures request header values into the log line. Applied
-        frontend-wide (capture slots are positional and not host-scopable).
-
-        Annotations:
-          - haproxy-haptic.org/request-capture: newline-separated header names
-            (one per line) to capture.
-          - haproxy-haptic.org/request-capture-len: capture length (default 128).
-
-        Generated HAProxy Config:
-          capture request header <name> len <len>
-      #}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var reqCapture = ingress.Metadata.Annotations["haproxy-haptic.org/request-capture"] %}
-          {%- var captureLen = ingress.Metadata.Annotations["haproxy-haptic.org/request-capture-len"] %}
-          {%- if captureLen == "" %}{%- captureLen = "128" %}{%- end %}
-          {%- if reqCapture != "" %}
-            {%- if toint(captureLen) <= 0 %}
-              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + captureLen + "' for annotation 'haproxy-haptic.org/request-capture-len' on Ingress '" + key + "'. Must be a positive integer.") -}}
-              {%- continue %}
-            {%- end %}
-      # haptic/request-capture ({{ key }})
-            {%- for _, line := range split(reqCapture, "\n") %}
-              {%- var t = trimSpace(line) %}
-              {%- if t != "" %}
-      capture request header {{ ValidateConfigValue(t, "haproxy-haptic.org/request-capture", key, false) }} len {{ captureLen }}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- if incremental_value_count("haptic-request-capture", "any") > 0 -%}
+      {%%
+        var pairs = []any{}
+        for _, v := range incremental_values("haptic-request-capture", "pair") {
+          pairs = append(pairs, tostring(v))
+        }
+      %%}
+      {{ "\n" }}# haptic/request-capture
+      {%- for _, p := range sort_strings(pairs) %}
+      capture request header {{ p }}
+      {%- end %}
+      {%- end %}
 
   features-900-haptic-fragment-860-response-cookie:
     requires: [ingresses]
