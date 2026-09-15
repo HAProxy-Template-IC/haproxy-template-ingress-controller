@@ -792,7 +792,7 @@ One shared rule for all hosts; each host's value (here `max-age=31536000; includ
 
 **Status**: ✅ Supported
 
-**Description**: Enable Cross-Origin Resource Sharing (CORS) handling for the ingress.
+**Description**: Enable Cross-Origin Resource Sharing (CORS) handling for the ingress. The headers come from per-route maps read by one frontend rule block, so adding or removing a CORS route is reload-free.
 
 **Related annotations**:
 

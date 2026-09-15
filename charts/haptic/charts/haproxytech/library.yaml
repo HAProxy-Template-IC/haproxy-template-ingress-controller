@@ -25,7 +25,6 @@ templateSnippets:
   features-099-haproxytech-publications:
     template: |-
       {{- render "haproxytech-forwarded-for-publications" -}}
-      {{- render "haproxytech-cors-publications" -}}
       {{- render "haproxytech-logging-publications" -}}
       {{- render "haproxytech-ssl-redirect-port-publications" -}}
       {{- render "haproxytech-captured-headers-publications" -}}
@@ -94,93 +93,63 @@ templateSnippets:
       {%- end -%}
 
   frontend-filters-300-haproxytech-cors:
-    template: |
-      {# Mirrors upstream haproxytech/kubernetes-ingress pkg/annotations/ingress/resSetCORS.go.
-          http-after-response, not http-response: the headers must also reach the synthetic preflight 204. #}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {%- for _, entryAny := range incremental_values("haproxytech-cors", "entries") %}
-        {%- var entry = entryAny.(map[string]any) %}
-        {%- var hosts = []string{} %}
-        {%- for _, host := range toSlice(entry["hosts"]) %}{%- hosts = append(hosts, tostring(host)) %}{%- end %}
-        {%- var key = tostring(entry["key"]) %}
-        {%- var origin = tostring(entry["origin"]) %}
-        {%- var methods = tostring(entry["methods"]) %}
-        {%- var headers = tostring(entry["headers"]) %}
-        {%- var credentials = tostring(entry["credentials"]) %}
-        {%- var maxAge = tostring(entry["maxAge"]) %}
-        {%- var respondOptions = tostring(entry["respondOptions"]) %}
-        {%- var cond = HostMatchCondition(hosts) %}
-        {%- var originHdr = origin %}
-        {%- var originAcl = "{ var(txn.cors_origin) -m found }" %}
-        {%- if origin != "*" %}
-          {%- originAcl = "{ var(txn.cors_origin) -m reg '" + origin + "' }" %}
-          {%- originHdr = "%[var(txn.cors_origin)]" %}
-        {%- end %}
-      # haproxytech/frontend-filters-haproxytech-cors (for {{ key }})
-      http-request set-var(txn.cors_origin) req.hdr(origin) if {{ cond }}
-      http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ originAcl }}
-      http-after-response set-header Access-Control-Allow-Methods "{{ EscapeLogFormatValue(methods) }}" if {{ cond }} {{ originAcl }}
-        {%- if headers != "" %}
-      http-after-response set-header Access-Control-Allow-Headers "{{ EscapeLogFormatValue(headers) }}" if {{ cond }} {{ originAcl }}
-        {%- end %}
-        {%- if credentials == "true" %}
-      http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ originAcl }}
-        {%- end %}
-        {%- if maxAge != "" %}
-      http-after-response set-header Access-Control-Max-Age "{{ EscapeLogFormatValue(maxAge) }}" if {{ cond }} {{ originAcl }}
-        {%- end %}
-        {%- if respondOptions == "true" %}
-      http-request return status 204 if {{ cond }} METH_OPTIONS
-        {%- end %}
-      {%- end -%}
+    requires: [ingresses]
+    template: |-
+      {%- import "util-cors-lane" for CorsLane -%}
+      {{- CorsLane("haproxytech") -}}
 
-  haproxytech-cors-publications:
+  # Mirrors upstream haproxytech/kubernetes-ingress pkg/annotations/ingress/resSetCORS.go:
+  # cors-allow-origin is one regex searched in the request Origin ("*" allows
+  # any), the preflight 204 is opt-in and unconditional, and there is no Vary.
+  ingress-cors-0300-haproxytech:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy.org/cors-enable']"]
-      group: haproxytech-cors
+      group: ingress-cors
       effects: [publishValue, recordEvent]
     template: |-
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-cors-publish" for PublishCORS -%}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil && ingress.Metadata.Annotations["haproxy.org/cors-enable"] == "true" -%}
         {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
-        {%- var hosts = []any{} -%}
-        {%- for _, rule := range ingress.Spec.Rules -%}
-          {%- if rule.Host != "" -%}{%- hosts = append(hosts, rule.Host) -%}{%- end -%}
-        {%- end -%}
-        {%- if len(hosts) > 0 -%}
-          {%- var origin = ingress.Metadata.Annotations["haproxy.org/cors-allow-origin"] -%}
-          {%- if origin == "" -%}{%- origin = "*" -%}{%- end -%}
-          {%- var methods = ingress.Metadata.Annotations["haproxy.org/cors-allow-methods"] -%}
-          {%- if methods == "" -%}{%- methods = "*" -%}{%- end -%}
-          {%- var headers = ingress.Metadata.Annotations["haproxy.org/cors-allow-headers"] -%}
-          {%- if headers == "" -%}{%- headers = "*" -%}{%- end -%}
-          {%- var credentials = ingress.Metadata.Annotations["haproxy.org/cors-allow-credentials"] -%}
-          {%- if credentials == "" -%}{%- credentials = "false" -%}{%- end -%}
-          {%- var maxAge = ingress.Metadata.Annotations["haproxy.org/cors-max-age"] -%}
-          {%- if maxAge == "" -%}{%- maxAge = "5" -%}{%- end -%}
-          {%- var respondOptions = ingress.Metadata.Annotations["haproxy.org/cors-respond-to-options"] -%}
-          {%- var corsInj = "" -%}
-          {%- if origin != "*" -%}{%- corsInj = ConfigInjectionKind(origin, "squote") -%}{%- end -%}
-          {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(methods, "line") -%}{%- end -%}
-          {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(headers, "line") -%}{%- end -%}
-          {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(maxAge, "line") -%}{%- end -%}
-          {%- if corsInj != "" -%}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "A CORS annotation on Ingress '" + key + "' contains " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the value.") -}}
-          {%- else if credentials == "true" && origin == "*" -%}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "CORS configuration error on Ingress '" + key + "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}
-          {%- else -%}
-            {{- shared.Publish("entries", key, map[string]any{
-              "key": key, "hosts": hosts, "origin": origin, "methods": methods,
-              "headers": headers, "credentials": credentials, "maxAge": maxAge,
-              "respondOptions": respondOptions,
-            }) -}}
+        {%- var origin = ingress.Metadata.Annotations["haproxy.org/cors-allow-origin"] -%}
+        {%- if origin == "" -%}{%- origin = "*" -%}{%- end -%}
+        {%- var methods = ingress.Metadata.Annotations["haproxy.org/cors-allow-methods"] -%}
+        {%- if methods == "" -%}{%- methods = "*" -%}{%- end -%}
+        {%- var headers = ingress.Metadata.Annotations["haproxy.org/cors-allow-headers"] -%}
+        {%- if headers == "" -%}{%- headers = "*" -%}{%- end -%}
+        {%- var credentials = ingress.Metadata.Annotations["haproxy.org/cors-allow-credentials"] == "true" -%}
+        {%- var maxAge = ingress.Metadata.Annotations["haproxy.org/cors-max-age"] -%}
+        {%- if maxAge == "" -%}{%- maxAge = "5" -%}{%- end -%}
+        {%- var preflight = 0 -%}
+        {%- if ingress.Metadata.Annotations["haproxy.org/cors-respond-to-options"] == "true" -%}{%- preflight = 2 -%}{%- end -%}
+        {%- var corsInj = "" -%}
+        {%- if origin != "*" -%}{%- corsInj = ConfigInjectionKind(origin, "squote") -%}{%- end -%}
+        {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(methods, "line") -%}{%- end -%}
+        {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(headers, "line") -%}{%- end -%}
+        {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(maxAge, "line") -%}{%- end -%}
+        {%- if corsInj != "" -%}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "A CORS annotation on Ingress '" + key + "' contains " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the value.") -}}
+        {%- else if credentials && origin == "*" -%}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "CORS configuration error on Ingress '" + key + "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}
+        {%- else if strings_contains(origin, " ") -%}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "CORS configuration error on Ingress '" + key + "': cors-allow-origin must not contain spaces; the origin regex is one map-file token.") -}}
+        {%- else -%}
+          {%- var regexes = []string{} -%}
+          {%- if origin != "*" -%}
+            {#- The regex is searched in the Origin (unanchored -m reg parity); a
+                leading ^ keeps its meaning at the start of the Origin. -#}
+            {%- if hasPrefix(origin, "^") -%}
+              {%- regexes = append(regexes, "(" + origin[1:] + ")") -%}
+            {%- else -%}
+              {%- regexes = append(regexes, ".*(" + origin + ")") -%}
+            {%- end -%}
           {%- end -%}
+          {{- PublishCORS(key, "haproxytech", origin == "*", []string{}, regexes, methods, headers, maxAge, credentials, "", false, preflight) -}}
         {%- end -%}
       {%- end -%}
 
@@ -1599,14 +1568,13 @@ validationTests:
                       backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      # The regex origin is single-quoted, and its backslash-escaped dots survive
-      # literally inside the strong quotes (token/double-quote guarding would have
-      # mangled the '\').
-      - {type: contains, target: haproxy.cfg, pattern: 'var\(txn\.cors_origin\) -m reg ''\^https://'}
-      - {type: contains, target: haproxy.cfg, pattern: 'example\\\.com\$'' \}'}
+      # The regex origin becomes one regex row keyed by route, its leading ^ kept
+      # at the start of the Origin and its escaped dots intact.
+      - {type: contains, target: "map:ing-cors-regex.map", pattern: '(?m)\\\|\(https://\(\.\+\\\.\)\?\(dev\\\.\|test\\\.\)\?example\\\.com\$\) 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'concat\(\|,txn\.haproxytech_cors_origin\),map_reg\(\S*/ing-cors-regex\.map\) -m found'}
       - type: contains
         target: haproxy.cfg
-        pattern: "Access-Control-Allow-Origin '%\\[var\\(txn\\.cors_origin\\)\\]'"
+        pattern: "Access-Control-Allow-Origin '%\\[var\\(txn\\.haproxytech_cors_origin\\)\\]'"
       - type: contains
         target: haproxy.cfg
         pattern: "http-after-response set-header Access-Control-Allow-Origin"
@@ -1637,6 +1605,7 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "http-request return status 204 if .* METH_OPTIONS"}
+      - {type: contains, target: "map:ing-cors-routes.map", pattern: '(?m)^default/cors-preflight-ingress haproxytech:list 1 0 1 2$'}
       - type: contains
         target: haproxy.cfg
         pattern: "http-after-response set-header Access-Control-Allow-Credentials 'true'"
@@ -2284,7 +2253,7 @@ validationTests:
       - {type: not_contains, target: haproxy.cfg, pattern: "ZZINJECT"}
 
   test-haproxytech-guarded-values-render:
-    description: Legit values still render correctly through the new guards, including the load-bearing cases — %→%% in a header value, a \N path backreference, and a single-quoted regex CORS origin with backslashes.
+    description: Legit values still render correctly through the new guards, including the load-bearing cases — %→%% in a header value, a \N path backreference, and a regex CORS origin whose backslashes reach its map row intact.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -2340,9 +2309,9 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: 'set-header X-Pct %\[var\(txn\.backend_name\),concat\(\|set\|x-pct\),map\([^)]*ing-reqhdr\.map\),url_dec\(1\)\]'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'set-header X-Pct "a'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request replace-path /api/\(\.\*\) /v2/\\1'}
-      - {type: contains, target: haproxy.cfg, pattern: 'var\(txn\.cors_origin\) -m reg ''https://\.\*\\\.example\\\.com'''}
-      - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Allow-Methods "GET, POST"'}
-      - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Allow-Headers "X-H%%K"'}
+      - {type: contains, target: "map:ing-cors-regex.map", pattern: '(?m)^\^default/ok-cors\\\|\.\*\(https://\.\*\\\.example\\\.com\) 1$'}
+      - {type: contains, target: "map:ing-cors-methods.map", pattern: '(?m)^default/ok-cors GET%2c%20POST$'}
+      - {type: contains, target: "map:ing-cors-headers.map", pattern: '(?m)^default/ok-cors X-H%25K$'}
 
   test-haproxytech-path-rewrite-map-lane:
     description: haproxy.org/path-rewrite prefix strips and the bare form ride the frontend maps; a pattern that is not a prefix strip keeps its backend replace-path.

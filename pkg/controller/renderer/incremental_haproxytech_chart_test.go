@@ -38,7 +38,7 @@ import (
 var haproxyTechGatedComponents = []string{
 	"haproxytech-forwarded-for-publications",
 	"ingress-access-control-0200-haproxytech",
-	"haproxytech-cors-publications",
+	"ingress-cors-0300-haproxytech",
 	"haproxytech-ssl-redirect-port-publications",
 	"haproxytech-request-redirect-publications",
 	"haproxytech-logging-publications",
@@ -50,7 +50,7 @@ var haproxyTechGatedComponents = []string{
 
 const haproxyTechGatedRoot = `{{- render "haproxytech-forwarded-for-publications" -}}
 {{- render "ingress-access-control-0200-haproxytech" -}}
-{{- render "haproxytech-cors-publications" -}}
+{{- render "ingress-cors-0300-haproxytech" -}}
 {{- render "haproxytech-ssl-redirect-port-publications" -}}
 {{- render "haproxytech-request-redirect-publications" -}}
 {{- render "haproxytech-logging-publications" -}}
@@ -62,7 +62,7 @@ const haproxyTechGatedRoot = `{{- render "haproxytech-forwarded-for-publications
 
 const haproxyTechAuthRoot = `{{- render "haproxytech-forwarded-for-publications" -}}
 {{- render "ingress-access-control-0200-haproxytech" -}}
-{{- render "haproxytech-cors-publications" -}}
+{{- render "ingress-cors-0300-haproxytech" -}}
 {{- render "haproxytech-ssl-redirect-port-publications" -}}
 {{- render "haproxytech-request-redirect-publications" -}}
 {{- render "haproxytech-logging-publications" -}}
@@ -432,6 +432,7 @@ func loadHAProxyTechGatedSnippets(t *testing.T) map[string]config.TemplateSnippe
 		"util-emit-annotation-access-control": true,
 		"util-validate-cidr-list":             true,
 		"util-publish-access-control":         true,
+		"util-cors-publish":                   true,
 		"util-haproxytech-logging-fragment":   true,
 	}
 	for _, name := range haproxyTechGatedComponents {

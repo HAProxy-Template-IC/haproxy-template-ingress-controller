@@ -328,7 +328,7 @@ validationTests:
       - {type: contains, target: rendering_error, pattern: "CORS is not applied"}
 
   test-haptic-cors-value-percent-escaped:
-    description: A CORS value with a log-format fetch renders with every % doubled to %%, so a tenant cannot read request-scoped state into the CORS response header.
+    description: A CORS value with a log-format fetch lands URL-encoded in the expose map and is decoded only per request, so a tenant cannot read request-scoped state into the CORS response header.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -347,7 +347,8 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Expose-Headers "X-%%\[req\.hdr\(y\)\]"'}
+      - {type: contains, target: "map:ing-cors-expose.map", pattern: '(?m)^default/cors-pct X-%25%5breq\.hdr%28y%29%5d$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'X-%\[req'}
 
   # ---- oauth-uri-prefix into auth routing maps (mapkey guard) ----
   test-haptic-oauth-uri-prefix-legit-renders:

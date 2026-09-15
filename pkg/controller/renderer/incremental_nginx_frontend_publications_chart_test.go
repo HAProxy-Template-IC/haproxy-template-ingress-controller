@@ -38,16 +38,14 @@ import (
 )
 
 const nginxFrontendPublicationRoot = `{%- var incremental = render "frontend-filters-555-nginx-ingress-mirror" +
-  render "frontend-filters-730-nginx-ingress-cors" +
   render "frontend-switching-780-nginx-ingress-canary" -%}
 {%- var legacy = render "legacy-nginx-ingress-mirror" +
-  render "legacy-nginx-ingress-cors-root" +
   render "legacy-nginx-ingress-canary" -%}
 {{ "BEGIN-I\n" }}{{ incremental }}{{ "\nEND-I\nBEGIN-L\n" -}}
 {{ legacy }}
 {{ "\nEND-L\n" -}}
 {%- if tostring(extraContext | dig("poisonRead") | fallback(false)) == "true" -%}
-  {%- var files = incremental_values("nginx-ingress-cors", "files") -%}
+  {%- var files = incremental_values("nginx-ingress-mirror", "files") -%}
   {%- if len(files) > 0 -%}{%- files[0].(map[string]any)["content"] = "poison" -%}{%- end -%}
 {%- end -%}
 {%- if tostring(extraContext | dig("failAfterReplay") | fallback(false)) == "true" -%}
@@ -203,18 +201,6 @@ use_backend {{ canaryBackend }} if { rand(100) lt {{ canaryWeight }} } {{ cond }
 {%- end -%}
 `
 
-const legacyNginxCORSRootTemplate = `{%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
-{%- for _, ingress := range resources.ingresses.List() -%}
-  {#- No enable annotation → the macro emits nothing; skip the call. -#}
-  {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/enable-cors"] == "" %}{%- continue %}{%- end %}
-  {{ EmitAnnotationCORS(ingress,
-      "nginx.ingress.kubernetes.io",
-      "nginx.ingress.kubernetes.io/enable-cors",
-      "1728000",
-      "nginx-ingress/cors") }}
-{%- end -%}
-`
-
 type nginxFrontendPublicationFixture struct {
 	config    *config.Config
 	service   *RenderService
@@ -240,7 +226,7 @@ func TestNginxFrontendPublicationsPreserveColdBytesAndLargeHostFiles(t *testing.
 	expectedContent := strings.Join(nginxFrontendHosts(31), "\n") + "\n"
 	assert.Equal(t, expectedContent, firstFiles.GeneralFiles[0].GetContent())
 	assert.Contains(t, first.HAProxyConfig, "-f files/host-match-")
-	assert.Equal(t, 3, fixture.engine.executionCounts()["ingresses/subject"])
+	assert.Equal(t, 2, fixture.engine.executionCounts()["ingresses/subject"])
 
 	beforeWarm := fixture.engine.executionCounts()
 	warm := fixture.renderAndCommit(t)
@@ -263,7 +249,7 @@ func TestNginxFrontendPublicationsPreserveColdBytesAndLargeHostFiles(t *testing.
 	fixture.updateIngress(t, nginxFrontendIngress("subject", changedHosts, true, "v2"))
 	changed := fixture.renderAndCommit(t)
 	requireNginxFrontendDifferential(t, changed)
-	assert.Equal(t, beforeChanged["ingresses/subject"]+3, fixture.engine.executionCounts()["ingresses/subject"])
+	assert.Equal(t, beforeChanged["ingresses/subject"]+2, fixture.engine.executionCounts()["ingresses/subject"])
 	assert.Equal(t, strings.Join(changedHosts, "\n")+"\n", requireAuxiliaryFiles(t, changed).GeneralFiles[0].GetContent())
 }
 
@@ -316,7 +302,7 @@ func TestNginxFrontendPublicationsStayConstantWithInactiveIngresses(t *testing.T
 	beforeChanged := fixture.engine.executionCounts()
 	fixture.updateIngress(t, nginxFrontendIngress("subject", []string{"changed.example.com"}, true, "v2"))
 	fixture.renderAndCommit(t)
-	require.Equal(t, beforeChanged["ingresses/subject"]+3, fixture.engine.executionCounts()["ingresses/subject"])
+	require.Equal(t, beforeChanged["ingresses/subject"]+2, fixture.engine.executionCounts()["ingresses/subject"])
 }
 
 func TestNginxFrontendFailedRootAndAdmissionCannotPoisonCache(t *testing.T) {
@@ -345,10 +331,10 @@ func TestNginxFrontendFailedRootAndAdmissionCannotPoisonCache(t *testing.T) {
 	fixture.config.TemplatingSettings.ExtraContext["failAfterReplay"] = false
 	retried := fixture.renderAndCommit(t)
 	requireNginxFrontendDifferential(t, retried)
-	require.Equal(t, afterFailure["ingresses/subject"]+3, fixture.engine.executionCounts()["ingresses/subject"])
+	require.Equal(t, afterFailure["ingresses/subject"]+2, fixture.engine.executionCounts()["ingresses/subject"])
 
 	invalid := nginxFrontendIngress("subject", nginxFrontendHosts(31), true, "v3")
-	invalid["metadata"].(map[string]any)["annotations"].(map[string]any)["nginx.ingress.kubernetes.io/cors-max-age"] = "1\t2"
+	invalid["metadata"].(map[string]any)["annotations"].(map[string]any)["nginx.ingress.kubernetes.io/mirror-target"] = "http://"
 	overlay := stores.NewOverlayStoreProvider(
 		fixture.provider,
 		stores.NewValidationContext(map[string]*stores.StoreOverlay{
@@ -359,7 +345,7 @@ func TestNginxFrontendFailedRootAndAdmissionCannotPoisonCache(t *testing.T) {
 		t.Context(), overlay, rendercontext.RenderModeAdmission,
 		rendercontext.WithAdmissionSubject("ingresses", "default", "subject"),
 	)
-	require.ErrorContains(t, err, "would split the frontend directive")
+	require.ErrorContains(t, err, "could not derive a host:port authority")
 	assert.Nil(t, admission)
 	afterAdmission := fixture.engine.executionCounts()
 	baseAfterAdmission := fixture.renderAndCommit(t)
@@ -375,9 +361,6 @@ func newNginxFrontendPublicationFixture(t *testing.T) *nginxFrontendPublicationF
 	}
 	snippets["legacy-nginx-ingress-canary"] = config.TemplateSnippet{
 		Name: "legacy-nginx-ingress-canary", Template: legacyNginxCanaryTemplate,
-	}
-	snippets["legacy-nginx-ingress-cors-root"] = config.TemplateSnippet{
-		Name: "legacy-nginx-ingress-cors-root", Template: legacyNginxCORSRootTemplate,
 	}
 	cfg := &config.Config{
 		Dataplane: testDataplaneConfig(),
@@ -429,9 +412,7 @@ func loadNginxFrontendPublicationSnippets(t *testing.T) map[string]config.Templa
 		"util-validate-config-value": true, "util-config-injection-kind": true,
 		"util-escape-dquote-value": true, "util-escape-logformat-value": true,
 		"util-backend-name-ingress": true, "util-ingress-host-match-publication": true,
-		"util-ingress-annotation-cors-fragment": true, "util-emit-annotation-cors": true,
 		"frontend-filters-555-nginx-ingress-mirror": true, "nginx-ingress-mirror-publications": true,
-		"frontend-filters-730-nginx-ingress-cors": true, "nginx-ingress-cors-publications": true,
 		"frontend-switching-780-nginx-ingress-canary": true, "nginx-ingress-canary-publications": true,
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))
@@ -474,7 +455,6 @@ func nginxFrontendIngress(name string, hosts []string, active bool, revision str
 	if active {
 		annotations = map[string]any{
 			"nginx.ingress.kubernetes.io/mirror-target":          "https://mirror.example:8443$request_uri",
-			"nginx.ingress.kubernetes.io/enable-cors":            "true",
 			"nginx.ingress.kubernetes.io/canary":                 "true",
 			"nginx.ingress.kubernetes.io/canary-by-header":       "X-Canary",
 			"nginx.ingress.kubernetes.io/canary-by-header-value": "always",
@@ -557,5 +537,17 @@ func requireNginxFrontendDifferential(t *testing.T, result *RenderResult) {
 	require.NotEqual(t, -1, legacyEnd)
 	incremental := text[incrementalStart+len("BEGIN-I\n") : incrementalEnd]
 	legacy := text[legacyStart+len("BEGIN-L\n") : legacyEnd]
-	require.Equal(t, legacy, incremental)
+	require.Equal(t, withoutBlankLines(legacy), withoutBlankLines(incremental))
+}
+
+// withoutBlankLines drops whitespace-only lines: HAProxy ignores them, and
+// the legacy and incremental roots join their blocks with different padding.
+func withoutBlankLines(text string) string {
+	kept := make([]string, 0, strings.Count(text, "\n")+1)
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) != "" {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
 }

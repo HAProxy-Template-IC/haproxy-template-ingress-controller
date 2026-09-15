@@ -134,6 +134,11 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-after-response set-header Access-Control-Allow-Credentials 'true'"
       - {type: contains, target: haproxy.cfg, pattern: "http-request return status 204 if"}
+      - {type: contains, target: "map:ing-cors-routes.map", pattern: '(?m)^default/cors-ingress haptic:list 1 1 0 1$'}
+      - {type: contains, target: "map:ing-cors-origins.map", pattern: '(?m)^default/cors-ingress\|https://app\.example\.com 1$'}
+      - {type: contains, target: "map:ing-cors-methods.map", pattern: '(?m)^default/cors-ingress GET%2c%20POST%2c%20OPTIONS$'}
+      - {type: contains, target: "map:ing-cors-expose.map", pattern: '(?m)^default/cors-ingress X-Total-Count$'}
+      - {type: contains, target: "map:ing-cors-maxage.map", pattern: '(?m)^default/cors-ingress 600$'}
 
   test-haptic-access-control:
     description: allowlist/denylist-source-range ride the shared map lane — a routes row, the disjoint CIDR partition, allow and deny member rows keyed by route, and one four-rule block for the haptic family instead of per-route ACLs

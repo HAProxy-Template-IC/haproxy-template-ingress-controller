@@ -104,135 +104,26 @@ templateSnippets:
   # redirect-loc-<code>.map), so adding/changing a host redirect is a map-only,
   # reload-free update instead of a per-ingress inline-ACL redirect.
 
-  util-haproxy-ingress-cors-fragment:
+  frontend-filters-660-haproxy-ingress-cors:
+    requires: [ingresses]
     template: |-
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {%- macro HaproxyIngressCORS(ingress *resources.ingresses.T, cond string) -%}
-        {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-enable"] == "true" -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {%- var key = ns + "/" + name -%}
-          {%- var rawOrigin = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-allow-origin"] -%}
-          {%- if rawOrigin == "" -%}{%- rawOrigin = "*" -%}{%- end -%}
-          {%- var methods = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-allow-methods"] -%}
-          {%- if methods == "" -%}{%- methods = "GET, PUT, POST, DELETE, PATCH, OPTIONS" -%}{%- end -%}
-          {%- var headers = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-allow-headers"] -%}
-          {%- if headers == "" -%}{%- headers = "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" -%}{%- end -%}
-          {%- var credentials = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-allow-credentials"] -%}
-          {%- var exposeHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-expose-headers"] -%}
-          {%- var maxAge = ingress.Metadata.Annotations["haproxy-ingress.github.io/cors-max-age"] -%}
-          {%- if maxAge == "" -%}{%- maxAge = "86400" -%}{%- end -%}
-          {%- var corsInj = "" -%}
-          {%- for _, value := range []string{methods, headers, maxAge, exposeHeaders} -%}
-            {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(value, "line") -%}{%- end -%}
-          {%- end -%}
-          {%- if corsInj != "" -%}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " has a CORS annotation value containing " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the cors-allow-methods/-headers/-max-age/-expose-headers values.") -}}
-            {%- return -%}
-          {%- end -%}
-          {%- var allowAny = false -%}
-          {%- var exact = []string{} -%}
-          {%- var regexes = []string{} -%}
-          {%- for _, token := range split(rawOrigin, ",") -%}
-            {%- var origin = strip(token) -%}
-            {%- if origin == "" -%}{%- continue -%}{%- end -%}
-            {%- if origin == "*" -%}{%- allowAny = true -%}{%- break -%}{%- end -%}
-            {%- if !regex_search(origin, "^([a-z]+://(\\*\\.)?[A-Za-z0-9\\-.]*(:[0-9]+)?|null)$") -%}
-              {{- fail("Invalid CORS origin '" + origin + "' in annotation 'haproxy-ingress.github.io/cors-allow-origin' on Ingress '" + key + "' — must be scheme://host[:port], scheme://*.host[:port], null, or *.") -}}
-            {%- end -%}
-            {%- if strings_contains(origin, "*") -%}
-              {%- regexes = append(regexes, "^" + replace(sanitize_regex(origin), "\\*", "[A-Za-z0-9\\-]+") + "$") -%}
-            {%- else -%}
-              {%- exact = append(exact, origin) -%}
-            {%- end -%}
-          {%- end -%}
-          {%- var aclName = "cors_origin_haproxy-ingress_github_io_" + ns + "_" + name -%}
-          {%- var originHdr = "%[var(txn.cors_origin)]" -%}
-          {%- if allowAny -%}{%- originHdr = "*" -%}{%- end %}
-      # haproxy-ingress/cors ({{ key }})
-      http-request set-var(txn.cors_origin) req.hdr(Origin) if {{ cond }}{{ "\n" -}}{%- if allowAny %}
-      acl {{ aclName }} var(txn.cors_origin) -m found{%- else -%}
-            {%- for i := 0; i < len(exact); i += 20 -%}
-              {%- var hi = i + 20 -%}{%- if hi > len(exact) -%}{%- hi = len(exact) -%}{%- end %}
-      acl {{ aclName }} var(txn.cors_origin) -m str {{ join(exact[i:hi], " ") }}{%- end -%}
-            {%- for i := 0; i < len(regexes); i += 20 -%}
-              {%- var hi = i + 20 -%}{%- if hi > len(regexes) -%}{%- hi = len(regexes) -%}{%- end %}
-      acl {{ aclName }} var(txn.cors_origin) -m reg {{ join(regexes[i:hi], " ") }}{%- end -%}
-          {%- end %}
-      http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Allow-Methods "{{ EscapeLogFormatValue(methods) }}" if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Allow-Headers "{{ EscapeLogFormatValue(headers) }}" if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Max-Age "{{ EscapeLogFormatValue(maxAge) }}" if {{ cond }} {{ aclName }}{{ "\n" -}}{%- if credentials == "true" %}
-      http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ aclName }}{{ "\n" -}}{%- end -%}{%- if exposeHeaders != "" %}
-      http-after-response set-header Access-Control-Expose-Headers "{{ EscapeLogFormatValue(exposeHeaders) }}" if {{ cond }} {{ aclName }}{{ "\n" -}}{%- end -%}{%- if !allowAny %}
-      http-after-response add-header Vary Origin if {{ cond }} {{ aclName }}{{ "\n" -}}{%- end %}
-      http-request return status 204 if {{ cond }} {{ aclName }} METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }{{ "\n" -}}{%- end -%}
-      {%- end macro -%}
+      {%- import "util-cors-lane" for CorsLane -%}
+      {{- CorsLane("hi") -}}
 
-  util-incremental-haproxy-ingress-cors:
+  ingress-cors-0660-haproxy-ingress:
     requires: [ingresses]
     incremental:
-      bindingsTemplate: |-
-        {%- var fileDir, err = pathResolver.GetPath("", "file") -%}
-        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
-        {{- toJSON(map[string]any{"ingresses": map[string]any{"fileDir": fileDir}}) -}}
+      source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/cors-enable']"]
-      group: haproxy-ingress-cors
+      group: ingress-cors
       effects: [publishValue, recordEvent]
     template: |-
-      {%- import "util-ingress-host-match-publication" for IngressHostMatchPublication -%}
-      {%- import "util-haproxy-ingress-cors-fragment" for HaproxyIngressCORS -%}
+      {%- import "util-ingress-annotation-cors-publish" for IngressCORSPublish -%}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil -%}
-        {%- var hosts = []string{} -%}
-        {%- for _, rule := range ingress.Spec.Rules -%}
-          {%- if rule.Host != "" -%}{%- hosts = append(hosts, rule.Host) -%}{%- end -%}
-        {%- end -%}
-        {%- if len(hosts) > 0 -%}
-          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
-          {%- var match = IngressHostMatchPublication(hosts, tostring(props["fileDir"])) -%}
-          {%- var fragment = HaproxyIngressCORS(ingress, tostring(match["condition"])) -%}
-          {%- if fragment != "" -%}
-            {{- shared.Publish("fragments", key, fragment) -}}
-            {%- if match["file"] != nil -%}{{- shared.Publish("files", key, match["file"]) -}}{%- end -%}
-          {%- end -%}
-        {%- end -%}
+        {{- IngressCORSPublish(ingress, "haproxy-ingress.github.io", "haproxy-ingress.github.io/cors-enable", "86400", "hi") -}}
       {%- end -%}
-
-  frontend-filters-660-haproxy-ingress-cors:
-    requires: [ingresses]
-    template: |
-      {#
-        HAProxy-Ingress CORS Annotations
-
-        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#cors-enable
-
-        Annotations:
-          - haproxy-ingress.github.io/cors-enable: "true|false" (required to enable)
-          - haproxy-ingress.github.io/cors-allow-origin: "*" (optional, default: *)
-          - haproxy-ingress.github.io/cors-allow-methods: "GET,POST,..." (optional, default: GET, PUT, POST, DELETE, PATCH, OPTIONS)
-          - haproxy-ingress.github.io/cors-allow-headers: "header,..." (optional, default: DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization)
-          - haproxy-ingress.github.io/cors-allow-credentials: "true|false" (optional)
-          - haproxy-ingress.github.io/cors-expose-headers: "header,..." (optional)
-          - haproxy-ingress.github.io/cors-max-age: "<seconds>" (optional, default: 86400)
-
-        Generated HAProxy Config:
-          http-response add-header Access-Control-Allow-Origin <origin> if <host-match>
-          http-response add-header Access-Control-Allow-Methods <methods> if <host-match> METH_OPTIONS
-          ... (other CORS headers)
-      #}
-      {%- for _, fileAny := range incremental_values("haproxy-ingress-cors", "files") -%}
-        {%- var file = fileAny.(map[string]any) -%}
-        {%- var _, err = fileRegistry.Register("file", tostring(file["filename"]), tostring(file["content"])) -%}
-        {%- if err != nil -%}{{ fail("Failed to register CORS host match file '" + tostring(file["filename"]) + "': " + err.Error()) }}{%- end -%}
-      {%- end -%}
-      {%- var fragments = incremental_values("haproxy-ingress-cors", "fragments") -%}
-      {%- if len(fragments) > 0 -%}{{- "\n  \n" -}}{%- end -%}
-      {%- for _, fragment := range fragments -%}{{- tostring(fragment) -}}{{- "  \n" -}}{%- end -%}
-      {{- render "util-incremental-haproxy-ingress-cors" -}}
 
   # Reload-free: the `headers` annotation (pipe-separated name:value pairs)
   # becomes entries in ing-reqhdr.map (built by ingress.yaml

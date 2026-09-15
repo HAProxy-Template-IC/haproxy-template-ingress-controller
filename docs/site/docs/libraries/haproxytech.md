@@ -266,17 +266,14 @@ spec:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-# Capture the request Origin into a transaction variable
-http-request set-var(txn.cors_origin) req.hdr(origin) if { var(txn.host) -m str api.example.com }
-
-# CORS response headers, added via http-after-response so they apply to backend
-# responses AND to a HAProxy-generated preflight response (see cors-respond-to-options)
-http-after-response set-header Access-Control-Allow-Origin '*' if { var(txn.host) -m str api.example.com } { var(txn.cors_origin) -m found }
-http-after-response set-header Access-Control-Allow-Methods 'GET, POST, PUT, DELETE' if { var(txn.host) -m str api.example.com } { var(txn.cors_origin) -m found }
-http-after-response set-header Access-Control-Allow-Headers 'Content-Type, Authorization' if { var(txn.host) -m str api.example.com } { var(txn.cors_origin) -m found }
+# ing-cors-routes.map: <route id> haproxytech:<any|list> <credentials> <vary> <regex> <preflight>
+default/cors-api haproxytech:any 0 0 0 0
+# ing-cors-methods.map and ing-cors-headers.map, URL-encoded
+default/cors-api GET%2c%20POST%2c%20PUT%2c%20DELETE
+default/cors-api Content-Type%2c%20Authorization
 ```
 
-This mirrors the upstream HAProxy Kubernetes Ingress Controller. By default the CORS headers are added to whatever response the backend returns; to have HAProxy answer the preflight itself, set [`cors-respond-to-options`](#haproxyorgcors-respond-to-options).
+One rule block per HTTP frontend (`# haproxytech/cors`) reads these maps: it captures the request Origin, checks it against the route's row, and sets the `Access-Control-*` headers via `http-after-response` so they also cover a HAProxy-generated preflight response. Adding or removing a CORS route is a runtime map update, not a reload. This mirrors the upstream HAProxy Kubernetes Ingress Controller. By default the CORS headers are added to whatever response the backend returns; to have HAProxy answer the preflight itself, set [`cors-respond-to-options`](#haproxyorgcors-respond-to-options).
 
 **Dependencies**: All other `cors-*` annotations require `cors-enable: "true"`
 
@@ -304,12 +301,14 @@ haproxy.org/cors-allow-origin: "^https://(.+\\.)?(example\\.com)(:\\d{1,5})?$"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-# Wildcard
-http-after-response set-header Access-Control-Allow-Origin '*' if { var(txn.cors_origin) -m found }
+# Wildcard: the route's row in ing-cors-routes.map, any request Origin is answered with '*'
+default/cors-api haproxytech:any 0 0 0 0
 
-# Exact or regex match: the annotation value is a regex matched against the
-# request Origin, and the header echoes the matched origin (never the raw regex)
-http-after-response set-header Access-Control-Allow-Origin '%[var(txn.cors_origin)]' if { var(txn.cors_origin) -m reg ^https://(.+\.)?(example\.com)(:\d{1,5})?$ }
+# Exact or regex match: the annotation value is a regex searched in the request
+# Origin, one row keyed by route in ing-cors-regex.map; the header echoes the
+# matched Origin (never the raw regex)
+default/cors-api haproxytech:list 0 0 1 0
+^default/cors-api\|(https://(.+\.)?(example\.com)(:\d{1,5})?$) 1
 ```
 
 **Dependencies**: Requires `cors-enable: "true"`

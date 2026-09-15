@@ -35,50 +35,24 @@ templateSnippets:
   # to per-ingress inline ACLs here, that costs a reload per host change.
 
   frontend-filters-730-nginx-ingress-cors:
+    requires: [ingresses]
     template: |-
-      {{- render "nginx-ingress-cors-publications" -}}
-      {%- for _, fileAny := range incremental_values("nginx-ingress-cors", "files") -%}
-        {%- var file = fileAny.(map[string]any) -%}
-        {%- var _, err = fileRegistry.Register("file", tostring(file["filename"]), tostring(file["content"])) -%}
-        {%- if err != nil -%}{{ fail("Failed to register host match file '" + tostring(file["filename"]) + "': " + err.Error()) }}{%- end -%}
-      {%- end -%}
-      {%- var fragments = incremental_values("nginx-ingress-cors", "fragments") -%}
-      {%- for _, fragment := range fragments -%}
-        {{- "\n  " + tostring(fragment) -}}
-      {%- end -%}
-      {%- if len(fragments) > 0 -%}{{ "\n        " }}{%- end -%}
+      {%- import "util-cors-lane" for CorsLane -%}
+      {{- CorsLane("ni") -}}
 
-  nginx-ingress-cors-publications:
+  ingress-cors-0730-nginx-ingress:
     requires: [ingresses]
     incremental:
-      bindingsTemplate: |-
-        {%- var fileDir, err = pathResolver.GetPath("", "file") -%}
-        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
-        {{- toJSON(map[string]any{"ingresses": map[string]any{"fileDir": fileDir}}) -}}
+      source: ingresses
       whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/enable-cors']"]
-      group: nginx-ingress-cors
+      group: ingress-cors
       effects: [publishValue, recordEvent]
     template: |-
-      {%- import "util-ingress-host-match-publication" for IngressHostMatchPublication -%}
-      {%- import "util-ingress-annotation-cors-fragment" for IngressAnnotationCORSFragment -%}
+      {%- import "util-ingress-annotation-cors-publish" for IngressCORSPublish -%}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil -%}
-        {%- var hosts = []string{} -%}
-        {%- for _, rule := range ingress.Spec.Rules -%}
-          {%- if rule.Host != "" -%}{%- hosts = append(hosts, rule.Host) -%}{%- end -%}
-        {%- end -%}
-        {%- if len(hosts) > 0 -%}
-          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
-          {%- var match = IngressHostMatchPublication(hosts, tostring(props["fileDir"])) -%}
-          {%- var fragment = IngressAnnotationCORSFragment(ingress,
-            "nginx.ingress.kubernetes.io", "nginx.ingress.kubernetes.io/enable-cors",
-            "1728000", "nginx-ingress/cors", tostring(match["condition"])) -%}
-          {%- if fragment != "" -%}
-            {{- shared.Publish("fragments", key, fragment) -}}
-            {%- if match["file"] != nil -%}{{- shared.Publish("files", key, match["file"]) -}}{%- end -%}
-          {%- end -%}
-        {%- end -%}
+        {{- IngressCORSPublish(ingress, "nginx.ingress.kubernetes.io", "nginx.ingress.kubernetes.io/enable-cors", "1728000", "ni") -}}
       {%- end -%}
 
   # Reload-free: custom-request/response-headers become entries in

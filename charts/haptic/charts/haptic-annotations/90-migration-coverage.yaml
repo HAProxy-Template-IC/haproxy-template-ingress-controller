@@ -217,7 +217,7 @@ _migrationCoverage:
         note: "comma-separated allow-list with single-level '*.' wildcard, matched request Origin echoed back (via macro); default '*'"
       haproxy-haptic.org/cors-enable:
         status: supported
-        note: "gates the shared EmitAnnotationCORS macro; always-on preflight 204 is the best-of-breed behaviour (no respond-to-options knob)"
+        note: "gates the shared CORS map lane; always-on preflight 204 is the best-of-breed behaviour (no respond-to-options knob)"
       haproxy-haptic.org/cors-expose-headers:
         status: supported
         note: "Access-Control-Expose-Headers when set (via macro)"

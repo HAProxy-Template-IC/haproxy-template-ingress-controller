@@ -866,7 +866,7 @@ http-response set-header Strict-Transport-Security %[var(txn.host),map(maps/hsts
 
 **Status**: ✅ Supported
 
-**Description**: Enable CORS handling for the ingress.
+**Description**: Enable CORS handling for the ingress. The headers come from per-route maps read by one frontend rule block, so adding or removing a CORS route is reload-free.
 
 **Related annotations**:
 
