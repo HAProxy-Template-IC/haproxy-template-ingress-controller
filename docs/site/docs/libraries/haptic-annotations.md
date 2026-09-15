@@ -395,7 +395,7 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 | `haproxy-haptic.org/oauth` | ✅ Supported | Enables authentication through `oauth2-proxy` (the only supported provider), building on external auth; skipped when `auth-url` is set. |
 | `haproxy-haptic.org/oauth-headers` | ✅ Supported | Lists headers forwarded from the `oauth2-proxy` response on success (default `X-Auth-Request-Email`). |
 | `haproxy-haptic.org/oauth-uri-prefix` | ✅ Supported | Sets the `oauth2-proxy` callback path prefix (default `/oauth2`). |
-| `haproxy-haptic.org/satisfy` | ✅ Supported | The value `any` grants access when either the source-IP allowlist or basic authentication passes, instead of requiring both. |
+| `haproxy-haptic.org/satisfy` | ✅ Supported | The value `any` grants access when either the source-IP allowlist or basic authentication passes, instead of requiring both. The gate is a frontend rule per distinct userlist-and-realm pair, so such a route is added and removed at runtime; an allowlist with an IPv6 entry keeps a backend rule. |
 | `haproxy-haptic.org/waf-mode` | ✅ Supported | Sets `deny` or `detect`, overriding the selected policy's enforcement only when `waf.ingressPermissions.allowEnforcementOverride` permits it. Requires a selected `waf-policy`. |
 
 #### Reusable WAF policies

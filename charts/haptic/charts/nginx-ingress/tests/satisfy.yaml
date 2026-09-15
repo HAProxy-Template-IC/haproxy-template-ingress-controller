@@ -35,18 +35,58 @@ validationTests:
                       backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
+      # One challenge per distinct (userlist, realm) pair on the frontend,
+      # picked by a membership row, so the route carries no configuration text.
+      - {type: contains, target: "map:ing-satisfy-routes.map", pattern: '(?m)^default/satisfy-any-ingress\\|ni\\|ni_auth_default_satisfy-auth\\|Protected 1$'}
       - type: contains
         target: haproxy.cfg
-        pattern: "acl ni_satisfy_ip_default_satisfy-any-ingress src 10\\.0\\.0\\.0/8 192\\.168\\.0\\.0/16"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request auth realm \"Protected\" if !ni_satisfy_ip_default_satisfy-any-ingress !\\{ http_auth\\(ni_auth_default_satisfy-auth\\) \\}"
+        pattern: 'http-request auth realm "Protected" if \{ var\(txn\.resource_id\),concat\(\|ni\|ni_auth_default_satisfy-auth\|Protected\),map\(\S*/ing-satisfy-routes\.map\) -m found \} !\{ var\(txn\.ni_sat_allow\) -m bool \} !\{ http_auth\(ni_auth_default_satisfy-auth\) \}'
+      # nginx-ingress attributes its 429/401 in the access log; the marker moves
+      # with the challenge.
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.denied_by\) str\(basic_auth\) if \{ var\(txn\.resource_id\),concat\(\|ni\|ni_auth_default_satisfy-auth\|Protected\)'}
+      - {type: contains, target: "map:ing-satisfy-allow-members.map", pattern: '(?m)^10\.0\.0\.0/8\|default/satisfy-any-ingress 1$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: "acl ni_satisfy_ip_default_satisfy-any-ingress"}
       - type: not_contains
         target: haproxy.cfg
         pattern: "http-request deny if .* !ni_allowlist_default_satisfy-any-ingress"
       - type: not_contains
         target: haproxy.cfg
         pattern: "http-request auth realm \"Protected\" unless \\{ http_auth\\(ni_auth_default_satisfy-auth\\) \\}"
+  test-nginx-ingress-satisfy-any-realm-pipe-rejected:
+    description: >-
+      '|' separates the fields of the lane's map key, so a realm carrying one
+      would publish a row no rule can match. nginx-ingress reaches the guard
+      through its own resolver, whose realm check permits the character.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: satisfy-auth}
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sat-pipe
+            annotations:
+              nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8"
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "satisfy-auth"
+              nginx.ingress.kubernetes.io/auth-realm: "Weird|Realm"
+              nginx.ingress.kubernetes.io/satisfy: "any"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: sat-pipe.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: echo, port: {number: 80}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "on Ingress 'default/sat-pipe': '\\|' is not allowed in a satisfy=any realm"}
 
   test-nginx-ingress-satisfy-all-default:
     description: satisfy=all (the default) keeps the independent whitelist deny and unconditional auth challenge (AND semantics)

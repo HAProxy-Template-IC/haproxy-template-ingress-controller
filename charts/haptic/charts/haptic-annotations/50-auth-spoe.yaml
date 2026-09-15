@@ -214,14 +214,18 @@ templateSnippets:
   # Basic auth — per-route map + frontend challenge
   # ============================================================================
   # Resolves one Ingress's basic-auth settings. result["state"] is "" when the
-  # route has no basic auth or is a satisfy=any route (backend-directives-825
-  # owns those), else "ok", "missing" (Secret absent) or "nosecret".
+  # route has no basic auth, else "ok", "missing" (Secret absent) or "nosecret".
+  # forSatisfy selects which half of the split this call wants: false for the
+  # plain challenge, true for the satisfy=any lane, which needs the same
+  # userlist and the same realm rules — the realm is a map value that has to
+  # compare equal to the rule's quoted token, so the constraint lives here once.
   util-haptic-basic-auth-route:
     template: |-
       {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
-      {%- macro HapticBasicAuthRoute(ingress *resources.ingresses.T, result map[string]any) -%}
+      {%- macro HapticBasicAuthRoute(ingress *resources.ingresses.T, forSatisfy bool, result map[string]any) -%}
         {%- result["state"] = "" -%}
-        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/auth-type"] == "basic" && SatisfyAnyMode(ingress) == "" -%}
+        {%- var satisfy = SatisfyAnyMode(ingress) == "any" -%}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/auth-type"] == "basic" && satisfy == forSatisfy -%}
           {%- var ns = ingress.Metadata.Namespace -%}
           {%- var key = ns + "/" + ingress.Metadata.Name -%}
           {%- var authSecret = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret"] -%}
@@ -264,7 +268,7 @@ templateSnippets:
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil -%}
         {%- var route = map[string]any{} -%}
-        {{- HapticBasicAuthRoute(ingress, route) -}}
+        {{- HapticBasicAuthRoute(ingress, false, route) -}}
         {%- var state = tostring(route["state"]) -%}
         {%- if state == "ok" -%}
       {{ "\n" }}{{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ok {{ route["userlist"] }} {{ route["realm"] }}
@@ -290,7 +294,7 @@ templateSnippets:
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil -%}
         {%- var route = map[string]any{} -%}
-        {{- HapticBasicAuthRoute(ingress, route) -}}
+        {{- HapticBasicAuthRoute(ingress, false, route) -}}
         {%- var state = tostring(route["state"]) -%}
         {%- if state != "" -%}
           {{- shared.Publish("any", "any", "any") -}}
@@ -399,6 +403,41 @@ templateSnippets:
         %%}
       {%- end macro -%}
 
+  # A satisfy=any route publishes into the shared lane; one whose allowlist has
+  # an IPv6 entry cannot be partitioned and keeps the backend gate below.
+  ingress-satisfy-0825-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-haptic.org/satisfy']"
+        - "metadata.annotations['haproxy-haptic.org/allowlist-source-range']"
+        - "metadata.annotations['haproxy-haptic.org/auth-type']"
+        - "metadata.annotations['haproxy-haptic.org/auth-secret']"
+        - "metadata.annotations['haproxy-haptic.org/auth-realm']"
+      group: ingress-satisfy
+      effects: [publishValue]
+    template: |-
+      {%- import "util-haptic-basic-auth-route" for HapticBasicAuthRoute -%}
+      {%- import "util-satisfy-publish" for PublishSatisfyAny -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var route = map[string]any{} -%}
+        {{- HapticBasicAuthRoute(ingress, true, route) -}}
+        {%- if tostring(route["state"]) == "ok" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- _ = PublishSatisfyAny(key, ingress.Metadata.Annotations["haproxy-haptic.org/allowlist-source-range"],
+            "haproxy-haptic.org/allowlist-source-range", "haptic", tostring(route["userlist"]), tostring(route["realm"])) -%}
+        {%- end -%}
+      {%- end -%}
+
+  frontend-filters-901-haptic-satisfy-any:
+    requires: [ingresses]
+    template: |-
+      {%- import "util-satisfy-lane" for SatisfyLane -%}
+      {{- SatisfyLane("haptic", "") -}}
+
   backend-directives-825-haptic-satisfy-any:
     template: |
       {#
@@ -412,13 +451,18 @@ templateSnippets:
         allow-list AND that have not authenticated — the OR semantics of
         satisfy=any. The standalone allowlist deny (access-control fragment) and
         the frontend basic-auth block (the route is left out of its map) suppress
-        themselves for this Ingress via SatisfyAnyMode(). The gate is a backend
-        rule, so a satisfy=any route stays structural.
+        themselves for this Ingress via SatisfyAnyMode().
+
+        Only reached when the allowlist carries an IPv6 entry: `cidr_partition`
+        cannot cover mixed families, so that route keeps this backend gate while
+        every other satisfy route is served by
+        frontend-filters-901-haptic-satisfy-any. A backend rule makes the route
+        structural, which is the cost of the fallback.
       #}
       {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
       {%- if ingress != nil %}
-        {%- if SatisfyAnyMode(ingress) != "" %}
+        {%- if SatisfyAnyMode(ingress) != "" && strings_contains(ValidateCidrList(ingress.Metadata.Annotations["haproxy-haptic.org/allowlist-source-range"], "haproxy-haptic.org/allowlist-source-range", ingress.Metadata.Namespace + "/" + ingress.Metadata.Name), ":") %}
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
           {%- var key = ns + "/" + name %}

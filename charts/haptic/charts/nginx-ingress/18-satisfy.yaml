@@ -59,6 +59,41 @@ templateSnippets:
         %%}
       {%- end macro -%}
 
+  # A satisfy=any route publishes into the shared lane; one whose allowlist has
+  # an IPv6 entry, or whose realm needs escaping, keeps the backend gate.
+  ingress-satisfy-0765-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/satisfy']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/whitelist-source-range']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/auth-type']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/auth-secret']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/auth-realm']"
+      group: ingress-satisfy
+      effects: [publishValue]
+    template: |-
+      {%- import "util-nginx-ingress-basic-auth-route" for NginxBasicAuthRoute -%}
+      {%- import "util-satisfy-publish" for PublishSatisfyAny -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var route = map[string]any{} -%}
+        {{- NginxBasicAuthRoute(ingress, true, route) -}}
+        {%- if tostring(route["lane"]) == "map" && tostring(route["state"]) == "ok" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- _ = PublishSatisfyAny(key, ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/whitelist-source-range"],
+            "nginx.ingress.kubernetes.io/whitelist-source-range", "ni", tostring(route["userlist"]), tostring(route["realm"])) -%}
+        {%- end -%}
+      {%- end -%}
+
+  frontend-filters-901-nginx-ingress-satisfy-any:
+    requires: [ingresses]
+    template: |-
+      {%- import "util-satisfy-lane" for SatisfyLane -%}
+      {{- SatisfyLane("ni", "basic_auth") -}}
+
   backend-directives-765-nginx-ingress-satisfy-any:
     template: |
       {#
@@ -75,13 +110,24 @@ templateSnippets:
         satisfy=any. The independent whitelist deny (frontend-filters-700) and
         unconditional auth challenge (backend-directives-760) are suppressed for
         this Ingress via SatisfyAnyMode().
+
+        Only reached when the allow-list carries an IPv6 entry (`cidr_partition`
+        cannot cover mixed families) or the realm needs escaping (a map value
+        cannot carry it); every other satisfy route is served by
+        frontend-filters-901-nginx-ingress-satisfy-any. A backend rule makes the
+        route structural, which is the cost of the fallback.
       #}
       {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
+      {%- import "util-nginx-ingress-basic-auth-route" for NginxBasicAuthRoute -%}
       {%- if ingress != nil %}
-        {%- if SatisfyAnyMode(ingress) != "" %}
+        {%- var satRoute = map[string]any{} %}
+        {%- if SatisfyAnyMode(ingress) != "" %}{{- NginxBasicAuthRoute(ingress, true, satRoute) -}}{%- end %}
+        {%- var onLane = tostring(satRoute["lane"]) == "map" && tostring(satRoute["state"]) == "ok" &&
+          !strings_contains(ValidateCidrList(ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/whitelist-source-range"], "nginx.ingress.kubernetes.io/whitelist-source-range", ingress.Metadata.Namespace + "/" + ingress.Metadata.Name), ":") %}
+        {%- if SatisfyAnyMode(ingress) != "" && !onLane %}
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
           {%- var key = ns + "/" + name %}
