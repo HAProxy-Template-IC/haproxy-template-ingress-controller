@@ -909,9 +909,13 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-acl ni_allowlist_default_my-ingress src 10.0.0.0/8 192.168.0.0/16
-http-request deny if { hdr(host) -i example.com } !ni_allowlist_default_my-ingress
+# ni/access-control
+http-request set-var(txn.ac) var(txn.resource_id),map(maps/ing-ac-routes.map)
+http-request set-var(txn.ac_block) src,map_ip(maps/ing-ac-partitions.map) if { var(txn.ac) -m beg "ni:" }
+http-request deny if { var(txn.ac) -m str "ni:allow" "ni:both" } !{ var(txn.ac_block),concat(|,txn.resource_id),map(maps/ing-ac-allow.map) -m found }
 ```
+
+The route's CIDRs live in maps shared by every annotation library (`ing-ac-routes.map`, `ing-ac-partitions.map`, `ing-ac-allow.map`, `ing-ac-deny.map`), so adding or removing an allowlisted route is a map update, not a reload. A list with an IPv6 entry keeps a per-route `acl`/`deny` pair, which reloads on add and remove.
 
 ---
 

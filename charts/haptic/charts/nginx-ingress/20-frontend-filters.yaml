@@ -1,32 +1,34 @@
 templateSnippets:
-  frontend-filters-700-nginx-ingress-access-control:
+  ingress-access-control-0700-nginx-ingress:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists:
         - "metadata.annotations['nginx.ingress.kubernetes.io/whitelist-source-range']"
         - "metadata.annotations['nginx.ingress.kubernetes.io/denylist-source-range']"
-      effects: [recordEvent]
-    template: |
-      {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
+      group: ingress-access-control
+      effects: [publishValue, recordEvent]
+    template: |-
+      {#- Rows for the shared map lane (util-access-control-lane), or the legacy
+          per-route fragment for a list with an IPv6 entry. Under satisfy=any the
+          allow-list deny would block an IP that auth could still rescue, so that
+          arm is left out; backend-directives-765 emits the combined gate. -#}
+      {%- import "util-publish-access-control" for PublishAccessControl -%}
       {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil -%}
-        {%- var anns = ingress.Metadata.Annotations %}
-        {%- if anns["nginx.ingress.kubernetes.io/whitelist-source-range"] != "" || anns["nginx.ingress.kubernetes.io/denylist-source-range"] != "" %}
-        {#- Under satisfy=any the allow-list deny would block an IP that auth could still
-            rescue, so drop that arm; backend-directives-765 emits the combined gate. -#}
         {%- var allowAnn = "nginx.ingress.kubernetes.io/whitelist-source-range" -%}
         {%- if SatisfyAnyMode(ingress) != "" -%}{%- allowAnn = "" -%}{%- end -%}
-        {{ EmitAnnotationAccessControl(ingress,
-            allowAnn,
-            "nginx.ingress.kubernetes.io/denylist-source-range",
-            "ni",
-            "nginx-ingress/whitelist-source-range ({KEY})",
-            "nginx-ingress/denylist-source-range ({KEY})") }}
-        {%- end -%}
+        {%- var fragment = PublishAccessControl(ingress, allowAnn, "nginx.ingress.kubernetes.io/denylist-source-range", "ni", "nginx-ingress/whitelist-source-range ({KEY})", "nginx-ingress/denylist-source-range ({KEY})") -%}
+        {%- if fragment != "" -%}{{- shared.Publish("fragments:ni", ingress.Metadata.Namespace + "/" + ingress.Metadata.Name, fragment) -}}{%- end -%}
       {%- end -%}
+
+  frontend-filters-700-nginx-ingress-access-control:
+    requires: [ingresses]
+    template: |-
+      {%- import "util-access-control-lane" for AccessControlLane -%}
+      {{- AccessControlLane("ni") -}}
 
   # ssl-redirect and hsts live in features-105/-155: they register hosts into gf maps
   # that ssl.yaml/base.yaml emit one shared map-driven rule from — don't move them back
