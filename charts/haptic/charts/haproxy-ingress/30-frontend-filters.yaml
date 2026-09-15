@@ -6,44 +6,28 @@ templateSnippets:
   # Phase 2: Frontend Filters
   # ============================================================================
 
+  # forwardfor: add | update | ifmissing | ignore (an unknown value is add,
+  # as upstream), from the shared map lane (util-forwardfor-lane).
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#forwardfor
   frontend-filters-600-haproxy-ingress-forwardfor:
+    requires: [ingresses]
+    template: |-
+      {%- import "util-forwardfor-lane" for ForwardForLane -%}
+      {{- ForwardForLane("hi") -}}
+
+  ingress-forwardfor-0600-haproxy-ingress:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/forwardfor']"]
+      group: ingress-forwardfor
+      effects: [publishValue]
     template: |-
-      {#
-        HAProxy-Ingress forwardfor Annotation
-
-        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#forwardfor
-
-        Annotations:
-          - haproxy-ingress.github.io/forwardfor: "add|update|ignore|ifmissing" (optional)
-
-        Generated HAProxy Config:
-          option forwardfor [header <name>] [if-none]
-      #}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var forwardfor = ingress.Metadata.Annotations["haproxy-ingress.github.io/forwardfor"] %}
-          {%- if forwardfor != "" && forwardfor != "ignore" %}
-            {#- Scoped by matched route: the previous exact host gate emitted
-                nothing for a wildcard or host-less rule, so a client-supplied
-                X-Forwarded-For reached the backend unmodified. -#}
-            {%- var xffCond = "{ var(txn.resource_id) -m str " + key + " }" %}
-      # haproxy-ingress/forwardfor ({{ key }})
-              {%- if forwardfor == "ifmissing" %}
-      http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ xffCond }}
-              {%- else if forwardfor == "update" %}
-      http-request set-header X-Forwarded-For %[src] if {{ xffCond }}
-              {%- else %}
-                {# "add" is the default behavior #}
-      http-request add-header X-Forwarded-For %[src] if {{ xffCond }}
-              {%- end %}
-          {%- end %}
+      {%- import "util-forwardfor-publish" for PublishForwardFor -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {{- PublishForwardFor(ingress, "haproxy-ingress.github.io/forwardfor", "hi", false) -}}
       {%- end -%}
 
   ingress-access-control-0610-haproxy-ingress:

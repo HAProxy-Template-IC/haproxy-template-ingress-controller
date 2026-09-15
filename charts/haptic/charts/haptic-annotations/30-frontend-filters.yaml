@@ -3,7 +3,7 @@
 # Best-of-breed superset of the three vendor frontend-filter fragments, exposed
 # under the haproxy-haptic.org/* prefix:
 #   - forwardfor        (haproxy-ingress: add|update|ifmissing|ignore)
-#   - request/response-set-header, src-ip-header, request-capture (haproxytech)
+#   - request/response-set-header, src-ip-header (map lane), request-capture (haproxytech)
 #   - cors              (the shared CORS map lane — ingress-nginx model)
 #   - allow/deny-list   (the shared EmitAnnotationAccessControl macro)
 #   - response-cookie-*          (nginx proxy_cookie_* upstream Set-Cookie rewriting)
@@ -14,64 +14,28 @@
 templateSnippets:
 
 
-  features-900-haptic-fragment-800-forwardfor:
+  # forwardfor (haproxy-ingress semantics): add | update | ifmissing | ignore,
+  # from the shared map lane (util-forwardfor-lane).
+  ingress-forwardfor-0800-haptic:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/forwardfor']"]
+      group: ingress-forwardfor
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-800-forwardfor" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- import "util-forwardfor-publish" for PublishForwardFor -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {{- PublishForwardFor(ingress, "haproxy-haptic.org/forwardfor", "haptic", true) -}}
       {%- end -%}
 
   frontend-filters-800-haptic-forwardfor:
     requires: [ingresses]
     template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-800-forwardfor", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-800-forwardfor:
-    template: |
-      {#
-        HAPTIC forwardfor Annotation (best-of-breed: haproxy-ingress semantics)
-
-        Annotations:
-          - haproxy-haptic.org/forwardfor: "add|update|ifmissing|ignore" (optional)
-
-        Generated HAProxy Config (host-scoped):
-          add       → http-request add-header X-Forwarded-For %[src]
-          update    → http-request set-header X-Forwarded-For %[src]
-          ifmissing → http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found }
-          ignore    → (no rule)
-      #}
-      {%- import "util-haptic-ingress-match" for HapticResourceMatchCondition -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-          {#- Annotation first: the ns/name/key strings are only needed when it is set. -#}
-          {%- var forwardfor = ingress.Metadata.Annotations["haproxy-haptic.org/forwardfor"] %}
-          {%- if forwardfor == "" %}{%- continue %}{%- end %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- if forwardfor != "add" && forwardfor != "update" && forwardfor != "ifmissing" && forwardfor != "ignore" %}
-            {{- fail("Invalid value '" + forwardfor + "' for annotation 'haproxy-haptic.org/forwardfor' on Ingress '" + key + "'. Valid values: add, update, ifmissing, ignore") -}}
-          {%- end %}
-          {%- if forwardfor != "" && forwardfor != "ignore" %}
-            {#- Scoped by matched route: the previous exact host gate emitted
-                nothing for a wildcard or host-less rule, so a client-supplied
-                X-Forwarded-For reached the backend unmodified. -#}
-            {%- var xffCond = HapticResourceMatchCondition(key) %}
-      # haptic/forwardfor ({{ key }})
-              {%- if forwardfor == "ifmissing" %}
-      http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ xffCond }}
-              {%- else if forwardfor == "update" %}
-      http-request set-header X-Forwarded-For %[src] if {{ xffCond }}
-              {%- else %}
-      http-request add-header X-Forwarded-For %[src] if {{ xffCond }}
-              {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-forwardfor-lane" for ForwardForLane -%}
+      {{- ForwardForLane("haptic") -}}
 
   ingress-access-control-0810-haptic:
     requires: [ingresses]
@@ -159,57 +123,33 @@ templateSnippets:
       {%- import "util-cors-lane" for CorsLane -%}
       {{- CorsLane("haptic") -}}
 
-  features-900-haptic-fragment-840-src-ip-header:
+  # src-ip-header (haproxytech semantics): the trusted client address from a
+  # request header, via the shared map lane (util-src-ip-lane). set-src
+  # rewrites the address every src-based ACL then evaluates, so the name
+  # fails closed on a bad value and the lane is keyed by route, never by an
+  # exact host.
+  ingress-src-ip-0840-haptic:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/src-ip-header']"]
+      group: ingress-src-ip
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-840-src-ip-header" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-src-ip-publish" for PublishSrcIPHeader -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"] != "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {{- PublishSrcIPHeader(key, ValidateConfigValue(ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"], "haproxy-haptic.org/src-ip-header", key, false), "haptic") -}}
       {%- end -%}
 
   frontend-filters-840-haptic-src-ip-header:
     requires: [ingresses]
     template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-840-src-ip-header", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-840-src-ip-header:
-    template: |
-      {#
-        HAPTIC source-IP override (best-of-breed: haproxytech src-ip-header).
-
-        Rewrites the connection source address from a request header, so
-        downstream ACLs, logging and rate-limiting see the real client IP when
-        HAProxy sits behind another proxy.
-
-        Annotations:
-          - haproxy-haptic.org/src-ip-header: "<header-name>" (optional)
-
-        Generated HAProxy Config (host-scoped):
-          http-request set-src hdr(<header-name>) if <host-match>
-      #}
-      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition, HapticResourceMatchCondition -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-          {#- Annotation first: the ns/name/key strings are only needed when it is set. -#}
-          {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"] %}
-          {%- if srcIpHeader == "" %}{%- continue %}{%- end %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- if srcIpHeader != "" %}
-            {# Scoped by matched route. set-src rewrites the address every
-                src-based ACL then evaluates, so a wildcard or host-less rule
-                that skipped this left the CIDR allow/deny lists judging the
-                proxy's address instead of the client's. #}
-      # haptic/src-ip-header ({{ key }})
-      http-request set-src hdr({{ ValidateConfigValue(srcIpHeader, "haproxy-haptic.org/src-ip-header", key, false) }}) if {{ HapticResourceMatchCondition(key) }}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-src-ip-lane" for SrcIPHeaderLane -%}
+      {{- SrcIPHeaderLane("haptic") -}}
 
   features-900-haptic-fragment-850-request-capture:
     requires: [ingresses]

@@ -416,7 +416,7 @@ The library classifies 56 `haproxy.org/*` annotations: 37 supported, 14 with beh
 | `haproxy.org/send-proxy-protocol` | Behaviour differs | proxy, proxy-v1, proxy-v2, proxy-v2-ssl and proxy-v2-ssl-cn map to the matching send-proxy flags; any other value is silently ignored. |
 | `haproxy.org/server-ca` | Behaviour differs | Verifies the upstream certificate against the Secret's ca.crt; a missing Secret or missing ca.crt renders a warning comment and silently skips verification instead of failing. |
 | `haproxy.org/server-crt` | Behaviour differs | Presents a client certificate to the upstream from the Secret; a missing Secret or missing tls.crt/tls.key renders a warning comment and skips the client cert instead of failing. |
-| `haproxy.org/src-ip-header` | Behaviour differs | Rewrites the source IP from the named header (set-src), but only for rules with an explicit host. |
+| `haproxy.org/src-ip-header` | Behaviour differs | Rewrites the source IP from the named header (set-src) for the route, from a per-route map. |
 | `haproxy.org/standalone-backend` | Not carried over | Not implemented; HAPTIC always shares the backend model. |
 | `haproxy.org/timeout-client` | Not carried over | A frontend-level timeout owned by HAPTIC's shared frontend, not settable per Ingress. |
 | `haproxy.org/timeout-http-keep-alive` | Not carried over | A frontend-level timeout owned by HAPTIC's shared frontend, not settable per Ingress. |

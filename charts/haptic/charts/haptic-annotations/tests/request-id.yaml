@@ -64,9 +64,9 @@ validationTests:
         description: >-
           Exactly one unique-id-format in `defaults`; a second one from another
           library would be a duplicate directive.
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-header X-Trace-Id %\\[unique-id\\] if"
+      - {type: contains, target: "map:haptic-request-id-routes.map", pattern: '(?m)^default/\S+ X-Trace-Id 0$'}
+      - {type: contains, target: "map:haptic-request-id-routes.map", pattern: '(?m)^default/\S+ X-Request-ID 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Trace-Id %\[unique-id\] if \{ var\(txn\.resource_id\),map\(\S*/haptic-request-id-routes\.map\) -m str "X-Trace-Id 0" \}'}
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-header X-Request-ID %\[unique-id\] if .* !\{ req.hdr\(X-Request-ID\) -m reg \^\[A-Za-z0-9\._:-\]\{1,128\}\$ \}'
