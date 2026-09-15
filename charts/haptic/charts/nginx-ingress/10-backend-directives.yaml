@@ -393,72 +393,63 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  backend-directives-770-nginx-ingress-rate-limiting:
-    template: |
+  # limit-rps > limit-rpm > limit-connections: a route carries one counter (a
+  # stick table stores each data type once), the capped-out annotations record
+  # an Event. The threshold reaches an ACL operand through the routes map, so a
+  # malformed value fails rather than shipping the route without its limit.
+  ingress-rate-limit-0770-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/limit-rps']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/limit-rpm']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/limit-connections']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/limit-whitelist']"
+      group: ingress-rate-limit
+      effects: [publishValue, recordEvent]
+    template: |-
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {#- One stick-table per backend, and it stores each data type once: http_req_rate(1s) and
-          http_req_rate(60s) can't coexist ("store option 'http_req_rate' already enabled, ignored"),
-          so limit-rps and limit-rpm are mutually exclusive. conn_cur is a separate data type. -#}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var limitRps = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rps"] %}
-        {%- var limitRpm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rpm"] %}
-        {%- var limitConn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-connections"] %}
-        {#- The threshold reaches an unquoted sc_http_req_rate/sc_conn_cur ACL operand;
-            a malformed value must fail rather than silently ship without the limit. Only
-            the value that is actually emitted is checked (rps > rpm > connections). -#}
-        {%- var rlInj = "" %}
-        {%- var rlField = "" %}
-        {%- var rlVal = "" %}
-        {%- if limitRps != "" %}
-          {%- rlInj = ConfigInjectionKind(limitRps, "token") %}{%- rlField = "limit-rps" %}{%- rlVal = limitRps %}
-        {%- else if limitRpm != "" %}
-          {%- rlInj = ConfigInjectionKind(limitRpm, "token") %}{%- rlField = "limit-rpm" %}{%- rlVal = limitRpm %}
-        {%- else if limitConn != "" %}
-          {%- rlInj = ConfigInjectionKind(limitConn, "token") %}{%- rlField = "limit-connections" %}{%- rlVal = limitConn %}
-        {%- end %}
-        {%- if rlInj != "" %}
-          {{- fail("Invalid value '" + rlVal + "' for annotation 'nginx.ingress.kubernetes.io/" + rlField + "' on Ingress '" + key + "': contains " + rlInj + ", which would break the rate-limit ACL. Use a plain integer.") -}}
-        {%- end %}
-        {%- var limitWhitelist = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-whitelist"] %}
-        {%- var exempt = "" %}
-        {%- if limitWhitelist != "" %}
-          {%- var validated = ValidateCidrList(limitWhitelist, "nginx.ingress.kubernetes.io/limit-whitelist", key) %}
-          {%- if validated != "" %}
-            {%- exempt = " !{ src " + validated + " }" %}
-          {%- end %}
-        {%- end %}
-        {%- if limitRps != "" || limitRpm != "" %}
-          {%- var ignored = []string{} %}
-          {%- if limitRps != "" && limitRpm != "" %}{%- ignored = append(ignored, "limit-rpm") %}{%- end %}
-          {%- if limitConn != "" %}{%- ignored = append(ignored, "limit-connections") %}{%- end %}
-          {%- if len(ignored) > 0 %}
-      # nginx-ingress/rate-limiting ({{ key }}) - {{ join(ignored, ", ") }} ignored (HAProxy stores http_req_rate once per stick-table; conn_cur needs a separate counter)
-          {%- else %}
-      # nginx-ingress/rate-limiting ({{ key }})
-          {%- end %}
-          {%- if limitRps != "" %}
-      {# `peers localinstance` (base.yaml) carries the per-source counter across reloads. #}
-      stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
-      http-request track-sc0 src
-      http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ limitRps }} }{{ exempt }}
-      http-request deny deny_status 429 if { sc_http_req_rate(0) gt {{ limitRps }} }{{ exempt }}
-          {%- else %}
-      stick-table type ip size 100k expire 60s store http_req_rate(60s) peers localinstance
-      http-request track-sc0 src
-      http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ limitRpm }} }{{ exempt }}
-      http-request deny deny_status 429 if { sc_http_req_rate(0) gt {{ limitRpm }} }{{ exempt }}
-          {%- end %}
-        {%- else if limitConn != "" %}
-      # nginx-ingress/rate-limiting ({{ key }})
-      stick-table type ip size 100k expire 30s store conn_cur peers localinstance
-      http-request track-sc0 src
-      http-request set-var(txn.denied_by) str(rate_limit_connections) if { sc_conn_cur(0) gt {{ limitConn }} }{{ exempt }}
-      http-request deny deny_status 429 if { sc_conn_cur(0) gt {{ limitConn }} }{{ exempt }}
-        {%- end %}
+      {%- import "util-rate-limit-publish" for PublishRateLimit -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var limitRps = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rps"] -%}
+        {%- var limitRpm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rpm"] -%}
+        {%- var limitConn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-connections"] -%}
+        {%- var counter = "req" -%}
+        {%- var window = "" -%}
+        {%- var field = "" -%}
+        {%- var value = "" -%}
+        {%- var ignored = []string{} -%}
+        {%- if limitRps != "" -%}
+          {%- field = "limit-rps" -%}{%- value = limitRps -%}{%- window = "1s" -%}
+          {%- if limitRpm != "" -%}{%- ignored = append(ignored, "limit-rpm") -%}{%- end -%}
+          {%- if limitConn != "" -%}{%- ignored = append(ignored, "limit-connections") -%}{%- end -%}
+        {%- else if limitRpm != "" -%}
+          {%- field = "limit-rpm" -%}{%- value = limitRpm -%}{%- window = "60s" -%}
+          {%- if limitConn != "" -%}{%- ignored = append(ignored, "limit-connections") -%}{%- end -%}
+        {%- else if limitConn != "" -%}
+          {%- field = "limit-connections" -%}{%- value = limitConn -%}{%- window = "30s" -%}{%- counter = "conn" -%}
+        {%- end -%}
+        {%- if value != "" -%}
+          {%- var injection = ConfigInjectionKind(value, "token") -%}
+          {%- if injection != "" -%}
+            {{- fail("Invalid value '" + value + "' for annotation 'nginx.ingress.kubernetes.io/" + field + "' on Ingress '" + key + "': contains " + injection + ", which would break the rate-limit ACL. Use a plain integer.") -}}
+          {%- end -%}
+          {%- if toint(value) <= 0 -%}
+            {{- fail("Invalid value '" + value + "' for annotation 'nginx.ingress.kubernetes.io/" + field + "' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end -%}
+          {%- var allow = "" -%}
+          {%- var whitelist = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-whitelist"] -%}
+          {%- if whitelist != "" -%}{%- allow = ValidateCidrList(whitelist, "nginx.ingress.kubernetes.io/limit-whitelist", key) -%}{%- end -%}
+          {%- if len(ignored) > 0 -%}
+            {{- recordEvent(ingress, "RateLimitCapIgnored", "Ingress " + key + ": " + join(ignored, ", ") + " ignored, a route has one rate-limit counter and limit-rps > limit-rpm > limit-connections wins.") -}}
+          {%- end -%}
+          {{- PublishRateLimit(key, counter, window, "102400", tostring(toint(value)), "429", allow) -}}
+        {%- end -%}
       {%- end -%}
 
   # These maps are consumed by base.yaml's frontend-filters-26x-request-set-* rules,

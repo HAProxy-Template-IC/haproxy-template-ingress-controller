@@ -575,69 +575,48 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  backend-directives-685-haproxy-ingress-rate-limiting:
-    template: |
+  # limit-rps takes precedence over limit-rpm (a route carries one counter); the
+  # capped-out annotation records an Event. limit-whitelist exempts its sources
+  # from the deny, tracked as before.
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#limit
+  ingress-rate-limit-0685-haproxy-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-ingress.github.io/limit-rps']"
+        - "metadata.annotations['haproxy-ingress.github.io/limit-rpm']"
+        - "metadata.annotations['haproxy-ingress.github.io/limit-whitelist']"
+      group: ingress-rate-limit
+      effects: [publishValue, recordEvent]
+    template: |-
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
-      {#-
-        HAProxy-Ingress Rate Limiting
-
-        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#limit
-
-        Annotations:
-          - haproxy-ingress.github.io/limit-rps: "<requests-per-second>" (optional)
-          - haproxy-ingress.github.io/limit-rpm: "<requests-per-minute>" (optional)
-          - haproxy-ingress.github.io/limit-whitelist: "<cidr>,<cidr>,..." (optional)
-
-        HAProxy supports one stick-table per backend, so limit-rps takes
-        precedence over limit-rpm when both are set. limit-whitelist exempts the
-        listed source CIDRs from the deny (they are still tracked, never denied).
-
-        Generated HAProxy config (limit-rps: 10, whitelist 10.0.0.0/8):
-          stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
-          http-request track-sc0 src
-          http-request deny deny_status 429 if { sc_http_req_rate(0) gt 10 } !{ src 10.0.0.0/8 }
-      -#}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var limitRps = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-rps"] %}
-        {%- var limitRpm = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-rpm"] %}
-        {%- var whitelist = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-whitelist"] %}
-        {%- var rate = "" %}
-        {%- var window = "" %}
-        {%- var bothSet = false %}
-        {%- if limitRps != "" %}
-          {%- rate = limitRps %}
-          {%- window = "1s" %}
-          {%- if limitRpm != "" %}{%- bothSet = true %}{%- end %}
-        {%- else if limitRpm != "" %}
-          {%- rate = limitRpm %}
-          {%- window = "60s" %}
-        {%- end %}
-        {%- if rate != "" %}
-          {%- if toint(rate) <= 0 %}
+      {%- import "util-rate-limit-publish" for PublishRateLimit -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var limitRps = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-rps"] -%}
+        {%- var limitRpm = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-rpm"] -%}
+        {%- var rate = "" -%}
+        {%- var window = "" -%}
+        {%- if limitRps != "" -%}
+          {%- rate = limitRps -%}{%- window = "1s" -%}
+          {%- if limitRpm != "" -%}
+            {{- recordEvent(ingress, "RateLimitCapIgnored", "Ingress " + key + ": limit-rpm ignored, limit-rps takes precedence (a route carries one rate-limit counter).") -}}
+          {%- end -%}
+        {%- else if limitRpm != "" -%}
+          {%- rate = limitRpm -%}{%- window = "60s" -%}
+        {%- end -%}
+        {%- if rate != "" -%}
+          {%- if toint(rate) <= 0 -%}
             {{- fail("Invalid rate-limit value '" + rate + "' on Ingress '" + key + "'. Must be a positive integer.") -}}
-          {%- end %}
-          {%- var guard = "" %}
-          {%- if whitelist != "" %}
-            {%- var validated = ValidateCidrList(whitelist, "haproxy-ingress.github.io/limit-whitelist", key) %}
-            {%- if validated != "" %}{%- guard = " !{ src " + validated + " }" %}{%- end %}
-          {%- end %}
-          {%- if bothSet %}
-      # haproxy-ingress/rate-limiting ({{ key }}) - limit-rps takes precedence; limit-rpm ignored (HAProxy supports one stick-table per backend)
-          {%- else %}
-      # haproxy-ingress/rate-limiting ({{ key }})
-          {%- end %}
-      {# `peers localinstance` (base.yaml global-top-050-peers) carries the #}
-      {# per-source counter from the old worker to the new one on reload, so a #}
-      {# client's accumulated rate survives config churn instead of resetting to #}
-      {# zero (matches haproxytech/nginx-ingress). Local-only: stays per-pod. #}
-      stick-table type ip size 100k expire {{ window }} store http_req_rate({{ window }}) peers localinstance
-      http-request track-sc0 src
-      http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ rate }} }{{ guard }}
-      http-request deny deny_status 429 if { sc_http_req_rate(0) gt {{ rate }} }{{ guard }}
-        {%- end %}
+          {%- end -%}
+          {%- var allow = "" -%}
+          {%- var whitelist = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-whitelist"] -%}
+          {%- if whitelist != "" -%}{%- allow = ValidateCidrList(whitelist, "haproxy-ingress.github.io/limit-whitelist", key) -%}{%- end -%}
+          {{- PublishRateLimit(key, "req", window, "102400", tostring(toint(rate)), "429", allow) -}}
+        {%- end -%}
       {%- end -%}
 
   backend-directives-690-haproxy-ingress-rewrite-target:

@@ -661,6 +661,193 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
+  # Vendor per-source rate limits — nginx-ingress limit-rps/-rpm/-connections,
+  # haproxy-ingress limit-rps/-rpm, haproxytech rate-limit-requests — from one
+  # frontend lane. Each vendor kept a stick-table in the route's backend, which
+  # made that backend structural; the counters now live in shared table proxies
+  # keyed "<route id>|<src>", so a budget is still per route and per client.
+  # ing-rl-routes.map: "<route id>" → "<req|conn> <window> <threshold> <status>".
+  # A route on a window and status that already exist is a map edit; a new
+  # window, table size or status reloads once. sc0 is the slot this lane owns
+  # (the HAPTIC-native limiter at 863 owns sc1) and an Ingress carrying two
+  # families' annotations is refused, so no route is tracked twice.
+  util-rate-limit-publish:
+    template: |-
+      {%- macro PublishRateLimit(key string, counter string, window string, sizeBytes string, threshold string, status string, allowCidrs string) -%}
+        {{- shared.Publish("route", key, key + " " + counter + " " + window + " " + threshold + " " + status) -}}
+        {{- shared.Publish("tables", counter + "|" + window + "|" + sizeBytes, counter + "|" + window + "|" + sizeBytes) -}}
+        {{- shared.Publish("status", status, status) -}}
+        {%- if allowCidrs != "" -%}{{- shared.Publish("allowlist", key, key + " " + allowCidrs) -}}{%- end -%}
+      {%- end macro -%}
+
+  # Renders every vendor's publisher (ingress-rate-limit-<band>-<library>, plus
+  # the declaration below) in one sorted pass: a shared incremental group must
+  # render its members in canonical order.
+  features-200-ingress-rate-limit:
+    template: '{{- render_glob "ingress-rate-limit-*" -}}'
+
+  ingress-rate-limit-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-rate-limit
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  # The lane's three maps, registered once per render: the route table and the
+  # allowlist pair, whose shape is the access-control lane's (map_ip over the
+  # disjoint cover of every list, then membership per route).
+  util-rate-limit-maps:
+    template: |-
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- macro RateLimitMaps(result map[string]any) -%}
+        {%%
+          var mapsVal, _ = shared.ComputeIfAbsent("ingressRateLimitMaps", func() any {
+            var lists = []any{}
+            var cidrs = []any{}
+            for _, v := range incremental_values("ingress-rate-limit", "allowlist") {
+              lists = append(lists, tostring(v))
+              for _, c := range split(strings_splitn(tostring(v), " ", 2)[1], " ") {
+                cidrs = append(cidrs, c)
+              }
+            }
+            var blocks, err = cidr_partition(cidrs)
+            if err != nil {
+              fail(tostring(err))
+            }
+            var seen = map[string]bool{}
+            var partitions = []any{}
+            for _, list := range blocks {
+              for _, b := range list {
+                if !seen[b] {
+                  seen[b] = true
+                  partitions = append(partitions, b)
+                }
+              }
+            }
+            var partitionLines = []string{}
+            for _, b := range sort_strings(partitions) {
+              partitionLines = append(partitionLines, tostring(b) + " " + tostring(b))
+            }
+            var memberSeen = map[string]bool{}
+            var members = []any{}
+            for _, r := range lists {
+              var parts = strings_splitn(tostring(r), " ", 2)
+              for _, c := range split(parts[1], " ") {
+                for _, b := range blocks[c] {
+                  var line = b + "|" + parts[0] + " 1"
+                  if !memberSeen[line] {
+                    memberSeen[line] = true
+                    members = append(members, line)
+                  }
+                }
+              }
+            }
+            var memberLines = []string{}
+            for _, l := range sort_strings(members) {
+              memberLines = append(memberLines, tostring(l))
+            }
+            var routes = []any{}
+            for _, v := range incremental_values("ingress-rate-limit", "route") {
+              routes = append(routes, tostring(v))
+            }
+            var routeLines = []string{}
+            for _, r := range sort_strings(routes) {
+              routeLines = append(routeLines, tostring(r))
+            }
+            return map[string]any{
+              "routes": RegisterMap("ing-rl-routes.map", routeLines, map[string]any{"ordered": false}),
+              "partitions": RegisterMap("ing-rl-allow-partitions.map", partitionLines, map[string]any{"ordered": false}),
+              "members": RegisterMap("ing-rl-allow-members.map", memberLines, map[string]any{"ordered": false}),
+            }
+          })
+          var maps = mapsVal.(map[string]any)
+          result["routes"] = maps["routes"]
+          result["partitions"] = maps["partitions"]
+          result["members"] = maps["members"]
+        %%}
+      {%- end macro -%}
+
+  # The allowlist verdict, ahead of the limiter: the block of the disjoint cover
+  # the client falls in, then whether the route exempts it.
+  frontend-filters-089-ingress-rate-limit-allowlist:
+    requires: [ingresses]
+    template: |
+      {%- import "util-rate-limit-maps" for RateLimitMaps -%}
+      {%- if incremental_value_count("ingress-rate-limit", "allowlist") > 0 -%}
+      {%- var maps = map[string]any{} -%}
+      {{- RateLimitMaps(maps) -}}
+      {{ "\n" }}# ingress/rate-limit-allowlist
+      http-request set-var(txn.vrl_allow_block) src,map_ip({{ maps["partitions"] }}) if { var(txn.resource_id) -m found }
+      http-request set-var(txn.vrl_allow) bool(true) if { var(txn.vrl_allow_block) -m found } { var(txn.vrl_allow_block),concat(|,txn.resource_id),map({{ maps["members"] }}) -m found }
+      {%- end %}
+
+  # One table proxy per distinct (counter, window), sized by the largest request:
+  # a frontend holds at most one stick-table of its own, and the window is part
+  # of the store type. `peers localinstance` carries the counters from the old
+  # worker to the new one on reload, as the per-backend tables did.
+  backends-812-ingress-rate-limit-tables:
+    template: |
+      {%- import "util-backend" for Backend -%}
+      {%- var tables = map[string]int{} -%}
+      {%- for _, rowAny := range incremental_values("ingress-rate-limit", "tables") -%}
+        {%- var parts = split(tostring(rowAny), "|") -%}
+        {%- var name = parts[0] + "|" + parts[1] -%}
+        {%- var n = toint(parts[2]) -%}
+        {%- if n > tables[name] -%}{%- tables[name] = n -%}{%- end -%}
+      {%- end -%}
+      {%- var names = []any{} -%}
+      {%- for name := range tables -%}{%- names = append(names, name) -%}{%- end -%}
+      {%- for _, nameAny := range sort_strings(names) %}
+        {%- var name = tostring(nameAny) %}
+        {%- var parts = split(name, "|") %}
+        {%- var store = "conn_cur" %}
+        {%- if parts[0] == "req" %}{%- store = "http_req_rate(" + parts[1] + ")" %}{%- end %}
+      {{ "\n" }}{{ Backend(map[string]any{
+           "name": "ing_rl_tbl_" + parts[0] + "_" + parts[1],
+           "comments": []any{"# ingress/rate-limiting shared table (" + parts[0] + ", " + parts[1] + ")"},
+           "body": []any{"stick-table type string len 340 size " + tostring(tables[name]) + " expire " + parts[1] + " store " + store + " peers localinstance"},
+         }) }}
+      {%- end %}
+
+  # The limiter itself: the route's counter, window, threshold and status come
+  # from the map, so only the distinct windows (a track rule each) and statuses
+  # (a deny each) are spelled out. Runs on the client leg before the cache
+  # switch (865), like the HAPTIC-native limiter, so a cache hit and a miss
+  # consume the same budget — the per-backend tables only saw misses.
+  frontend-filters-863-ingress-rate-limit:
+    requires: [ingresses]
+    template: |
+      {%- import "util-rate-limit-maps" for RateLimitMaps -%}
+      {%- if incremental_value_count("ingress-rate-limit", "tables") > 0 -%}
+      {%- var maps = map[string]any{} -%}
+      {{- RateLimitMaps(maps) -}}
+      {%- var windows = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- for _, v := range incremental_values("ingress-rate-limit", "tables") -%}
+        {%- var parts = split(tostring(v), "|") -%}
+        {%- var name = parts[0] + "|" + parts[1] -%}
+        {%- if !seen[name] -%}{%- seen[name] = true -%}{%- windows = append(windows, name) -%}{%- end -%}
+      {%- end -%}
+      {%- var statuses = []any{} -%}
+      {%- for _, v := range incremental_values("ingress-rate-limit", "status") -%}{%- statuses = append(statuses, tostring(v)) -%}{%- end -%}
+      {{ "\n" }}# ingress/rate-limiting
+      http-request set-var(txn.vrl_cfg) var(txn.resource_id),map({{ maps["routes"] }})
+      http-request set-var(txn.vrl_counter) var(txn.vrl_cfg),field(1,' ') if { var(txn.vrl_cfg) -m found }
+      http-request set-var(txn.vrl_window) var(txn.vrl_cfg),field(2,' ') if { var(txn.vrl_cfg) -m found }
+      http-request set-var(txn.vrl_threshold) var(txn.vrl_cfg),field(3,' ') if { var(txn.vrl_cfg) -m found }
+      http-request set-var(txn.vrl_status) var(txn.vrl_cfg),field(4,' ') if { var(txn.vrl_cfg) -m found }
+      http-request set-var-fmt(txn.vrl_key) %[var(txn.resource_id)]|%[src] if { var(txn.vrl_cfg) -m found }
+      {%- for _, t := range sort_strings(windows) %}
+        {%- var parts = split(tostring(t), "|") %}
+      http-request track-sc0 var(txn.vrl_key) table ing_rl_tbl_{{ parts[0] }}_{{ parts[1] }} if { var(txn.vrl_counter) -m str {{ parts[0] }} } { var(txn.vrl_window) -m str {{ parts[1] }} }
+      {%- end %}
+      http-request set-var(txn.denied_by) str(rate_limit_local) if { var(txn.vrl_counter) -m str req } { sc_http_req_rate(0),sub(txn.vrl_threshold) -m int gt 0 } !{ var(txn.vrl_allow) -m bool }
+      http-request set-var(txn.denied_by) str(rate_limit_connections) if { var(txn.vrl_counter) -m str conn } { sc_conn_cur(0),sub(txn.vrl_threshold) -m int gt 0 } !{ var(txn.vrl_allow) -m bool }
+      {%- for _, s := range sort_strings(statuses) %}
+      http-request deny deny_status {{ s }} if { var(txn.vrl_status) -m str {{ s }} } { var(txn.denied_by) -m str rate_limit_local rate_limit_connections }
+      {%- end %}
+      {%- end %}
+
   # aclPrefix must stay distinct per library — validation tests assert on the
   # resulting ACL names.
   # Renders every family's publisher (ingress-access-control-<band>-<library>,

@@ -831,9 +831,15 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\)"
-      - {type: contains, target: haproxy.cfg, pattern: "deny_status 429"}
-
+        pattern: "stick-table type string len 340 size 102400 expire 1s store http_req_rate\\(1s\\) peers localinstance"
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request track-sc0 var\(txn\.vrl_key\) table ing_rl_tbl_req_1s if \{ var\(txn\.vrl_counter\) -m str req \} \{ var\(txn\.vrl_window\) -m str 1s \}'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 429 if \{ var\(txn\.vrl_status\) -m str 429 \}'}
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/ratelimit-ingress req 1s 10 429$'}
+      # The route's backend stays plain — the counters live in the shared table
+      # proxy, which is what keeps the backend's servers dynamic.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-request track-sc0 src'}
   test-nginx-ingress-rate-limit-rpm:
     description: Nginx Ingress limit-rpm annotation generates per-minute stick-table and deny 429
     fixtures:
@@ -865,11 +871,12 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "stick-table type ip size 100k expire 60s store http_req_rate\\(60s\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 120 \\}"
-
+        pattern: "stick-table type string len 340 size 102400 expire 60s store http_req_rate\\(60s\\) peers localinstance"
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/rpm-ingress req 60s 120 429$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 429 if \{ var\(txn\.vrl_status\) -m str 429 \}'}
+      # The route's backend stays plain — the counters live in the shared table
+      # proxy, which is what keeps the backend's servers dynamic.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-request track-sc0 src'}
   test-nginx-ingress-rate-limit-rps-and-rpm:
     description: limit-rps takes precedence over limit-rpm (HAProxy stores http_req_rate once per table)
     fixtures:
@@ -902,12 +909,64 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\}"
-      - {type: not_contains, target: haproxy.cfg, pattern: "gt 300"}
-      - {type: contains, target: haproxy.cfg, pattern: "limit-rpm ignored"}
+        pattern: "stick-table type string len 340 size 102400 expire 1s store http_req_rate\\(1s\\) peers localinstance"
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/rpsrpm-ingress req 1s 10 429$'}
+      # The ignored cap is reported on the Ingress, not as a config comment: the
+      # lane's rules carry no per-route text.
+      - {type: contains, target: events, pattern: "RateLimitCapIgnored"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "ing_rl_tbl_req_60s"}
+  test-nginx-ingress-rate-limit-shares-one-table:
+    description: Two routes on the same window share one table proxy and one deny rule; only their map rows differ.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: shared-rl-service}
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shared-rl-a
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rps: "10"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shared-rl-a.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: shared-rl-service, port: {number: 80}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shared-rl-b
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rps: "50"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shared-rl-b.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: shared-rl-service, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/shared-rl-a req 1s 10 429$'}
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/shared-rl-b req 1s 50 429$'}
+      # One table proxy for the whole fleet, and one deny rule per frontend: the
+      # block is uniform, so a second route on the same window adds neither.
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend ing_rl_tbl_req_1s '}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?s)backend ing_rl_tbl_req_1s.*backend ing_rl_tbl_req_1s'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'deny deny_status 429 if \{ var\(txn\.vrl_status\)[^\n]*\n\s*http-request deny deny_status 429'}
 
   test-nginx-ingress-rate-limit-whitelist:
     description: Nginx Ingress limit-whitelist exempts CIDRs from rate limiting
@@ -939,10 +998,16 @@ validationTests:
                       backend: {service: {name: rlwl-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/rlwl-ingress req 1s 10 429$'}
+      - {type: contains, target: "map:ing-rl-allow-partitions.map", pattern: '(?m)^10\.0\.0\.0/8 10\.0\.0\.0/8$'}
+      - {type: contains, target: "map:ing-rl-allow-partitions.map", pattern: '(?m)^192\.168\.1\.0/24 192\.168\.1\.0/24$'}
+      - {type: contains, target: "map:ing-rl-allow-members.map", pattern: '(?m)^10\.0\.0\.0/8\|default/rlwl-ingress 1$'}
+      - {type: contains, target: "map:ing-rl-allow-members.map", pattern: '(?m)^192\.168\.1\.0/24\|default/rlwl-ingress 1$'}
       - type: contains
         target: haproxy.cfg
-        pattern: "deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\} !\\{ src 10\\.0\\.0\\.0/8 192\\.168\\.1\\.0/24 \\}"
-
+        pattern: 'http-request set-var\(txn\.vrl_allow\) bool\(true\) if \{ var\(txn\.vrl_allow_block\) -m found \} \{ var\(txn\.vrl_allow_block\),concat\(\|,txn\.resource_id\),map\(\S*/ing-rl-allow-members\.map\) -m found \}'
+      # The exemption is a map lookup, not per-route text in the deny rule.
+      - {type: not_contains, target: haproxy.cfg, pattern: '!\{ src 10\.0\.0\.0/8'}
   test-nginx-ingress-config-snippet:
     description: Nginx Ingress configuration-snippet injects raw directives
     extraContext: {waf: {ingressPermissions: {allowRawHAProxyConfig: true}}}
