@@ -1065,9 +1065,13 @@ userlist ni_auth_default_basic-auth
   user admin password '$2y$05$mO1VWak5QnbhNgJ4QwdAdXbfz.8b3ceH6U5KOVCKxR2IkNAfJgLi5pIKW'
   user user password '$2y$05$anotherBcryptHash'
 
-backend my-backend
-    http-request auth realm "Protected Area" unless { http_auth(ni_auth_default_basic-auth) }
+frontend http_frontend
+    # nginx-ingress/basic-auth
+    http-request set-var(txn.ni_ba) var(txn.resource_id),map(maps/nginx-ingress-basic-auth-routes.map)
+    http-request auth realm "Protected Area" if { var(txn.ni_ba) -m str "ok ni_auth_default_basic-auth Protected Area" } !{ http_auth(ni_auth_default_basic-auth) }
 ```
+
+The challenge is one rule block per HTTP frontend fed by a per-route map, so a route on an existing credentials Secret is added and removed at runtime. A realm that needs escaping (`"`, `\` or `$`) keeps a backend `http-request auth` rule, which reloads on add and remove.
 
 ---
 

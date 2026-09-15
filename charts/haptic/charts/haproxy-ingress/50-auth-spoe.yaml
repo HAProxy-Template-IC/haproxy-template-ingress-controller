@@ -753,75 +753,160 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
+  # Resolves one Ingress's basic auth. result["lane"] is "" (no auth-secret),
+  # "map" (state "ok" with userlist and realm, or "missing") or "backend" (a
+  # realm that needs escaping or carries a control character).
+  util-haproxy-ingress-basic-auth-route:
+    template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- macro HaproxyIngressBasicAuthRoute(ingress *resources.ingresses.T, result map[string]any) -%}
+        {%- result["lane"] = "" -%}
+        {%- var authSecret = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-secret"] -%}
+        {%- if authSecret != "" -%}
+          {%- var authRealm = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-realm"] -%}
+          {%- if authRealm == "" -%}{%- authRealm = "Restricted" -%}{%- end -%}
+          {%- var secretNs = ingress.Metadata.Namespace -%}
+          {%- var secretName = authSecret -%}
+          {%- if strings_contains(authSecret, "/") -%}
+            {%- var parts = split(authSecret, "/") -%}
+            {%- secretNs = parts[0] -%}
+            {%- secretName = parts[1] -%}
+          {%- end -%}
+          {%- result["userlist"] = "hi_auth_" + secretNs + "_" + secretName -%}
+          {%- result["realm"] = authRealm -%}
+          {%- result["realmInjection"] = ConfigInjectionKind(authRealm, "line") -%}
+          {%- if resources.secrets.GetSingle(secretNs, secretName) == nil -%}
+            {%- result["lane"] = "map" -%}
+            {%- result["state"] = "missing" -%}
+          {%- else -%}
+            {%- result["lane"] = "backend" -%}
+            {#- The realm is a literal in a quoted config token and in a map
+                value: one that needs escaping stays on the backend rule. -#}
+            {%- if result["realmInjection"] == "" && regex_search(authRealm, "^[^\"\\\\$\\t]*$") && authRealm == strip(authRealm) -%}
+              {%- result["lane"] = "map" -%}
+              {%- result["state"] = "ok" -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
   backend-directives-680-haproxy-ingress-auth:
     template: |
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
+      {%- import "util-haproxy-ingress-basic-auth-route" for HaproxyIngressBasicAuthRoute -%}
       {#-
-        HAProxy-Ingress Basic Auth Backend Directive
-
-        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-secret
-
+        haproxy-ingress Basic Auth, backend lane.
         Annotations:
           - haproxy-ingress.github.io/auth-secret: "<ns/name>" or "<name>" (required)
           - haproxy-ingress.github.io/auth-realm: "<realm>" (optional, default: "Restricted")
-
-        Generates:
-          http-request auth realm "<realm>" unless { http_auth(<userlist>) }
+        A realm that needs escaping keeps the challenge here, which makes the
+        backend structural, and a control character in the realm fails closed;
+        every other route rides the frontend map lane
+        (frontend-filters-900-haproxy-ingress-basic-auth).
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var authSecret = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-secret"] %}
-        {%- if authSecret != "" %}
-          {%- var authRealm = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-realm"] %}
-          {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
-          {#- Parse secret reference (supports "ns/name" or just "name") -#}
-          {%- var secretNs = ns %}
-          {%- var secretName = authSecret %}
-          {%- if strings_contains(authSecret, "/") %}
-            {%- var parts = split(authSecret, "/") %}
-            {%- secretNs = parts[0] %}
-            {%- secretName = parts[1] %}
-          {%- end %}
-          {%- var userlistName = "hi_auth_" + secretNs + "_" + secretName %}
-          {#-
-            Skip the http_auth ACL ref when the referenced Secret isn't in
-            the controller's cache; the matching userlist snippet skips its
-            userlist on the same condition so the rendered config stays
-            self-consistent. Both reads use the render transaction's immutable
-            store snapshot, so they cannot observe different states.
-          -#}
-          {%- var hiAuthSecret = resources.secrets.GetSingle(secretNs, secretName) %}
-          {#- Assert to the typed pointer before the nil check (see the userlist
-              snippet above): a boxed typed-nil *resources.secrets.T passes `!= nil`,
-              which would emit an http_auth ref to a userlist the (correctly-skipping)
-              userlist snippet never produced — `haproxy -c` then fails with
-              "unable to find userlist". -#}
-          {%- if hiAuthSecret != nil %}
-          {%- var realmInj = ConfigInjectionKind(authRealm, "line") %}
-          {%- if realmInj != "" %}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+        {%- var rw = map[string]any{} %}
+        {{- HaproxyIngressBasicAuthRoute(ingress, rw) -}}
+        {%- if rw["lane"] == "backend" %}
+          {%- if rw["realmInjection"] != "" %}
             {#- auth-realm is a double-quoted literal; EscapeDquoteValue neutralises
                 quotes/$, but a control character can't live in the string, so fail
                 closed (auth = security) rather than emit a splittable directive. -#}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAuthRealm", "Ingress " + key + " annotation 'haproxy-ingress.github.io/auth-realm' contains " + realmInj + "; basic auth cannot be applied, so this route fails closed with 503. Remove control characters from the value.") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAuthRealm", "Ingress " + key + " annotation 'haproxy-ingress.github.io/auth-realm' contains " + tostring(rw["realmInjection"]) + "; basic auth cannot be applied, so this route fails closed with 503. Remove control characters from the value.") -}}
       # WARNING haproxy-ingress/auth-realm: invalid value for {{ key }}; failing closed (503).
       http-request set-var(txn.denied_by) str(basic_auth_unavailable)
       http-request deny deny_status 503
           {%- else %}
-      # haproxy-ingress/backend-directives-auth ({{ key }})
-      http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
-      http-request auth realm "{{ EscapeDquoteValue(authRealm) }}" unless { http_auth({{ userlistName }}) }
-          {%- end %}
-          {%- else %}
-            {# No resolvable Secret means no userlist, and emitting nothing left
-                the backend serving every request unauthenticated. #}
-            {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-ingress.github.io/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
-      # WARNING haproxy-ingress/auth-secret: Secret not resolvable for {{ key }}; failing closed (503) until it is present.
-      http-request set-var(txn.denied_by) str(basic_auth_unavailable)
-      http-request deny deny_status 503
+      # haproxy-ingress/backend-directives-auth ({{ key }}): the realm needs escaping, so it stays a backend rule
+      http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ rw["userlist"] }}) }
+      http-request auth realm "{{ EscapeDquoteValue(tostring(rw["realm"])) }}" unless { http_auth({{ rw["userlist"] }}) }
           {%- end %}
         {%- end %}
       {%- end -%}
+
+  # Rows, userlists and (userlist, realm) pairs for the map lane; also the
+  # fail-closed event. A component cannot both publish and emit text, hence
+  # the split from the backend snippet.
+  features-680-haproxy-ingress-basic-auth-routes:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy-ingress.github.io/auth-secret']"
+        - "metadata.annotations['haproxy-ingress.github.io/auth-realm']"
+      group: haproxy-ingress-basic-auth-routes
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-haproxy-ingress-basic-auth-route" for HaproxyIngressBasicAuthRoute -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var rw = map[string]any{} -%}
+        {{- HaproxyIngressBasicAuthRoute(ingress, rw) -}}
+        {%- if rw["lane"] == "map" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {{- shared.Publish("any", "any", "any") -}}
+          {%- if rw["state"] == "ok" -%}
+            {%- var pair = tostring(rw["userlist"]) + " " + tostring(rw["realm"]) -%}
+            {{- shared.Publish("row", key, key + " ok " + pair) -}}
+            {{- shared.Publish("userlist", tostring(rw["userlist"]), tostring(rw["userlist"])) -}}
+            {{- shared.Publish("pair", pair, pair) -}}
+          {%- else -%}
+            {{- shared.Publish("row", key, key + " missing") -}}
+            {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-ingress.github.io/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # Basic-auth challenge, map lane: one block per HTTP frontend at band 900,
+  # the last request-phase band, where the backend rule used to run.
+  frontend-filters-900-haproxy-ingress-basic-auth:
+    requires: [ingresses]
+    template: |
+      {#
+        haproxy-ingress-basic-auth-routes.map: "<ns>/<name>" → "ok <userlist> <realm>" | "missing",
+        built from the rows features-*-haproxy-ingress-basic-auth-routes publishes. `auth
+        realm` and http_auth() take literals only, so there is one rule per
+        distinct (userlist, realm) pair, selected by comparing the whole map
+        value; a route whose Secret is absent is denied 503. Emitted only while
+        a route uses the lane; the first one reloads once, as does removing the
+        last or adding a pair.
+      #}
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- if incremental_value_count("haproxy-ingress-basic-auth-routes", "any") > 0 -%}
+      {%%
+        var routesVal, _ = shared.ComputeIfAbsent("haproxyIngressBasicAuthMap", func() any {
+          var rows = []any{}
+          for _, v := range incremental_values("haproxy-ingress-basic-auth-routes", "row") {
+            rows = append(rows, tostring(v))
+          }
+          var lines = []string{}
+          for _, r := range sort_strings(rows) {
+            lines = append(lines, tostring(r))
+          }
+          return RegisterMap("haproxy-ingress-basic-auth-routes.map", lines, map[string]any{"ordered": false})
+        })
+        var routes = tostring(routesVal)
+        var userlists = []any{}
+        for _, v := range incremental_values("haproxy-ingress-basic-auth-routes", "userlist") {
+          userlists = append(userlists, tostring(v))
+        }
+        var pairs = []any{}
+        for _, v := range incremental_values("haproxy-ingress-basic-auth-routes", "pair") {
+          pairs = append(pairs, tostring(v))
+        }
+      %%}
+      # haproxy-ingress/basic-auth
+      http-request set-var(txn.hi_ba) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.denied_by) str(basic_auth_unavailable) if { var(txn.hi_ba) -m str missing }
+      http-request deny deny_status 503 if { var(txn.hi_ba) -m str missing }
+      {%- for _, u := range sort_strings(userlists) %}
+      http-request set-var(txn.denied_by) str(basic_auth) if { var(txn.hi_ba) -m beg "ok {{ u }} " } !{ http_auth({{ u }}) }
+      {%- end %}
+      {%- for _, p := range sort_strings(pairs) %}
+      {%- var pair = strings_splitn(tostring(p), " ", 2) %}
+      http-request auth realm "{{ pair[1] }}" if { var(txn.hi_ba) -m str "ok {{ p }}" } !{ http_auth({{ pair[0] }}) }
+      {%- end %}
+      {%- end %}

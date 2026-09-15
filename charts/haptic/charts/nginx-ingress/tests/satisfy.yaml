@@ -82,9 +82,11 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request deny if .* !ni_allowlist_default_satall-ingress"
+      # satisfy=all keeps both gates: the allowlist deny and the map-lane challenge.
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request auth realm \"Restricted\" unless \\{ http_auth\\(ni_auth_default_satall-auth\\) \\}"
+        pattern: "http-request auth realm \"Restricted\" if \\{ var\\(txn\\.ni_ba\\) -m str \"ok ni_auth_default_satall-auth Restricted\" \\} !\\{ http_auth\\(ni_auth_default_satall-auth\\) \\}"
+      - {type: contains, target: "map:nginx-ingress-basic-auth-routes.map", pattern: '(?m)^default/satall-ingress ok ni_auth_default_satall-auth Restricted$'}
 
   # Config-injection wiring check (issue #157): the combined satisfy=any gate is a
   # distinct auth-realm emitter from backend-directives-760; it too guards the

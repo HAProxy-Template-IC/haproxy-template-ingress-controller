@@ -225,86 +225,163 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
+  # Resolves one Ingress's basic auth. result["lane"] is "" (no basic auth, no
+  # Secret name, or satisfy=any, which backend-directives-765 owns), "map"
+  # (state "ok" with userlist and realm, or "missing") or "backend" (a realm
+  # that needs escaping, which a map value cannot carry).
+  util-nginx-ingress-basic-auth-route:
+    template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
+      {%- macro NginxBasicAuthRoute(ingress *resources.ingresses.T, result map[string]any) -%}
+        {%- result["lane"] = "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var authType = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-type"] -%}
+        {%- if authType != "" && authType != "basic" -%}
+          {{- fail("Unsupported auth-type '" + authType + "' for annotation 'nginx.ingress.kubernetes.io/auth-type' on Ingress '" + key + "'. Only 'basic' is supported.") -}}
+        {%- end -%}
+        {%- var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"] -%}
+        {%- if authType == "basic" && authSecret != "" -%}
+          {%- var authRealm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-realm"] -%}
+          {%- if authRealm == "" -%}{%- authRealm = "Restricted" -%}{%- end -%}
+          {%- var realmInj = ConfigInjectionKind(authRealm, "line") -%}
+          {%- if realmInj != "" -%}
+            {{- fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/auth-realm' on Ingress '" + key + "': contains " + realmInj + ", which would break the auth realm directive. Remove control characters from the value.") -}}
+          {%- end -%}
+          {%- var secretNs = ingress.Metadata.Namespace -%}
+          {%- var secretName = authSecret -%}
+          {%- if strings_contains(authSecret, "/") -%}
+            {%- var parts = split(authSecret, "/") -%}
+            {%- secretNs = parts[0] -%}
+            {%- secretName = parts[1] -%}
+          {%- end -%}
+          {%- result["userlist"] = "ni_auth_" + secretNs + "_" + secretName -%}
+          {%- result["realm"] = authRealm -%}
+          {%- if resources.secrets.GetSingle(secretNs, secretName) == nil -%}
+            {%- result["lane"] = "map" -%}
+            {%- result["state"] = "missing" -%}
+          {%- else if SatisfyAnyMode(ingress) == "" -%}
+            {%- result["lane"] = "backend" -%}
+            {#- The realm is a literal in a quoted config token and in a map
+                value: one that needs escaping stays on the backend rule. -#}
+            {%- if regex_search(authRealm, "^[^\"\\\\$\\t]*$") && authRealm == strip(authRealm) -%}
+              {%- result["lane"] = "map" -%}
+              {%- result["state"] = "ok" -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
   backend-directives-760-nginx-ingress-auth:
     template: |
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
+      {%- import "util-nginx-ingress-basic-auth-route" for NginxBasicAuthRoute -%}
       {#-
-        Nginx Ingress Basic Auth Backend Directive
-
+        Nginx Ingress Basic Auth, backend lane.
         Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#authentication
-
         Annotations:
           - nginx.ingress.kubernetes.io/auth-type: "basic" (required)
           - nginx.ingress.kubernetes.io/auth-secret: "<ns/name>" or "<name>" (required)
           - nginx.ingress.kubernetes.io/auth-realm: "<realm>" (optional, default: "Restricted")
-
-        Only auth-type "basic" is supported. Other types will fail with an error.
-
-        Generates:
-          http-request auth realm "<realm>" unless { http_auth(ni_auth_<secretNs>_<secretName>) }
+        A realm that needs escaping keeps the challenge here, which makes the
+        backend structural; every other route rides the frontend map lane
+        (frontend-filters-900-nginx-ingress-basic-auth). satisfy=any is
+        backend-directives-765's.
       -#}
-      {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
       {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var authType = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-type"] %}
-        {%- if authType != "" %}
-          {%- if authType != "basic" %}
-            {{- fail("Unsupported auth-type '" + authType + "' for annotation 'nginx.ingress.kubernetes.io/auth-type' on Ingress '" + key + "'. Only 'basic' is supported.") -}}
-          {%- end %}
-          {%- var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"] %}
-          {%- if authSecret != "" %}
-            {%- var authRealm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-realm"] %}
-            {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
-            {%- var realmInj = ConfigInjectionKind(authRealm, "line") %}
-            {%- if realmInj != "" %}
-              {{- fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/auth-realm' on Ingress '" + key + "': contains " + realmInj + ", which would break the auth realm directive. Remove control characters from the value.") -}}
-            {%- end %}
-            {%- var secretNs = ns %}
-            {%- var secretName = authSecret %}
-            {%- if strings_contains(authSecret, "/") %}
-              {%- var parts = split(authSecret, "/") %}
-              {%- secretNs = parts[0] %}
-              {%- secretName = parts[1] %}
-            {%- end %}
-            {%- var userlistName = "ni_auth_" + secretNs + "_" + secretName %}
-            {#-
-              Skip the http_auth ACL ref when the referenced Secret isn't in
-              the controller's cache; the matching userlist snippet skips its
-              userlist on the same condition so the rendered config stays
-              self-consistent.
-
-              The component and userlist reads share the render transaction's
-              immutable store snapshot, so they cannot observe different states.
-            -#}
-            {%- var nginxAuthSecret = resources.secrets.GetSingle(secretNs, secretName) %}
-            {#- Assert to the typed pointer before the nil check (see the userlist
-                snippet below): a boxed typed-nil *resources.secrets.T passes `!= nil`,
-                which would emit an http_auth ref to a userlist the (correctly-skipping)
-                userlist snippet never produced — `haproxy -c` then fails with
-                "unable to find userlist". -#}
-            {#- Under satisfy=any the auth challenge is folded into the combined
-                IP-or-auth gate emitted by backend-directives-765, so suppress
-                the unconditional challenge here (an allow-listed IP must pass
-                without authenticating). -#}
-            {%- if nginxAuthSecret == nil %}
-              {# Before the satisfy fold: the combined gate in -765 has no userlist
-                  either, so deferring to it would still serve unauthenticated. #}
-              {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'nginx.ingress.kubernetes.io/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
-      # WARNING nginx.ingress.kubernetes.io/auth-secret: Secret not resolvable for {{ key }}; failing closed (503) until it is present.
-      http-request set-var(txn.denied_by) str(basic_auth_unavailable)
-      http-request deny deny_status 503
-            {%- else if SatisfyAnyMode(ingress) == "" %}
-      # nginx-ingress/backend-directives-auth ({{ key }})
-      http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
-      http-request auth realm "{{ EscapeDquoteValue(authRealm) }}" unless { http_auth({{ userlistName }}) }
-            {%- end %}
-          {%- end %}
+        {%- var rw = map[string]any{} %}
+        {{- NginxBasicAuthRoute(ingress, rw) -}}
+        {%- if rw["lane"] == "backend" %}
+      # nginx-ingress/backend-directives-auth ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}): the realm needs escaping, so it stays a backend rule
+      http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ rw["userlist"] }}) }
+      http-request auth realm "{{ EscapeDquoteValue(tostring(rw["realm"])) }}" unless { http_auth({{ rw["userlist"] }}) }
         {%- end %}
       {%- end -%}
+
+  # Rows, userlists and (userlist, realm) pairs for the map lane; also the
+  # fail-closed event. A component cannot both publish and emit text, hence
+  # the split from the backend snippet.
+  features-760-nginx-ingress-basic-auth-routes:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/auth-type']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/auth-secret']"
+      group: nginx-ingress-basic-auth-routes
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-nginx-ingress-basic-auth-route" for NginxBasicAuthRoute -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var rw = map[string]any{} -%}
+        {{- NginxBasicAuthRoute(ingress, rw) -}}
+        {%- if rw["lane"] == "map" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {{- shared.Publish("any", "any", "any") -}}
+          {%- if rw["state"] == "ok" -%}
+            {%- var pair = tostring(rw["userlist"]) + " " + tostring(rw["realm"]) -%}
+            {{- shared.Publish("row", key, key + " ok " + pair) -}}
+            {{- shared.Publish("userlist", tostring(rw["userlist"]), tostring(rw["userlist"])) -}}
+            {{- shared.Publish("pair", pair, pair) -}}
+          {%- else -%}
+            {{- shared.Publish("row", key, key + " missing") -}}
+            {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'nginx.ingress.kubernetes.io/auth-secret', but that Secret could not be resolved. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # Basic-auth challenge, map lane: one block per HTTP frontend at band 900,
+  # the last request-phase band, where the backend rule used to run.
+  frontend-filters-900-nginx-ingress-basic-auth:
+    requires: [ingresses]
+    template: |
+      {#
+        nginx-ingress-basic-auth-routes.map: "<ns>/<name>" → "ok <userlist> <realm>" | "missing",
+        built from the rows features-*-nginx-ingress-basic-auth-routes publishes. `auth
+        realm` and http_auth() take literals only, so there is one rule per
+        distinct (userlist, realm) pair, selected by comparing the whole map
+        value; a route whose Secret is absent is denied 503. Emitted only while
+        a route uses the lane; the first one reloads once, as does removing the
+        last or adding a pair.
+      #}
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- if incremental_value_count("nginx-ingress-basic-auth-routes", "any") > 0 -%}
+      {%%
+        var routesVal, _ = shared.ComputeIfAbsent("nginxIngressBasicAuthMap", func() any {
+          var rows = []any{}
+          for _, v := range incremental_values("nginx-ingress-basic-auth-routes", "row") {
+            rows = append(rows, tostring(v))
+          }
+          var lines = []string{}
+          for _, r := range sort_strings(rows) {
+            lines = append(lines, tostring(r))
+          }
+          return RegisterMap("nginx-ingress-basic-auth-routes.map", lines, map[string]any{"ordered": false})
+        })
+        var routes = tostring(routesVal)
+        var userlists = []any{}
+        for _, v := range incremental_values("nginx-ingress-basic-auth-routes", "userlist") {
+          userlists = append(userlists, tostring(v))
+        }
+        var pairs = []any{}
+        for _, v := range incremental_values("nginx-ingress-basic-auth-routes", "pair") {
+          pairs = append(pairs, tostring(v))
+        }
+      %%}
+      # nginx-ingress/basic-auth
+      http-request set-var(txn.ni_ba) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.denied_by) str(basic_auth_unavailable) if { var(txn.ni_ba) -m str missing }
+      http-request deny deny_status 503 if { var(txn.ni_ba) -m str missing }
+      {%- for _, u := range sort_strings(userlists) %}
+      http-request set-var(txn.denied_by) str(basic_auth) if { var(txn.ni_ba) -m beg "ok {{ u }} " } !{ http_auth({{ u }}) }
+      {%- end %}
+      {%- for _, p := range sort_strings(pairs) %}
+      {%- var pair = strings_splitn(tostring(p), " ", 2) %}
+      http-request auth realm "{{ pair[1] }}" if { var(txn.ni_ba) -m str "ok {{ p }}" } !{ http_auth({{ pair[0] }}) }
+      {%- end %}
+      {%- end %}
 
   # ============================================================================
   # Global Top (Auth Userlists)

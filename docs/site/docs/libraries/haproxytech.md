@@ -1884,9 +1884,10 @@ spec:
 userlist auth_default_auth-credentials
   user admin password $2y$05$...
 
-# Backend section
+# Frontend section, one block per HTTP frontend fed by a per-route map
 # The realm "API Access" is normalized to "API-Access" (see note below)
-http-request auth realm "API-Access" unless { http_auth(auth_default_auth-credentials) }
+http-request set-var(txn.ht_ba) var(txn.resource_id),map(maps/haproxytech-basic-auth-routes.map)
+http-request auth realm "API-Access" if { var(txn.ht_ba) -m str "ok auth_default_auth-credentials API-Access" } !{ http_auth(auth_default_auth-credentials) }
 ```
 
 **Dependencies**: Requires `auth-secret` to be set
