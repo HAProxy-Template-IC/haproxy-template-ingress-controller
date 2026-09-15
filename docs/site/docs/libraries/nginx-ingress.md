@@ -57,7 +57,7 @@ The Nginx Ingress library implements these extension points:
 | Backend Directives | `backend-directives-760-nginx-ingress-auth` | Basic auth enforcement |
 | Backend Directives | `backend-directives-760-nginx-ingress-proxy-ssl` | Backend TLS (`proxy-ssl-*` server flags) |
 | Backend Directives | `backend-directives-765-nginx-ingress-satisfy-any` | `satisfy: any` combined IP-or-auth gate |
-| Backend Directives | `backend-directives-770-nginx-ingress-rate-limiting` | Rate limiting / connection limiting |
+| Publications | `ingress-rate-limit-0770-nginx-ingress` | Rate limiting / connection limiting (`limit-rps`, `limit-rpm`, `limit-connections`, `limit-whitelist`) — publishes the route into the shared frontend lane |
 | Backend Directives | `backend-directives-780-nginx-ingress-upstream-hash` | Hash-based load balancing |
 | Frontend Filters | `frontend-filters-791-nginx-ingress-proxy-cookie` | Upstream `Set-Cookie` rewriting (`proxy-cookie-domain`, `proxy-cookie-path`), from a per-route map |
 | Frontend Filters | `frontend-filters-796-nginx-ingress-proxy-redirect` | Upstream `Location`/`Refresh` rewriting (`proxy-redirect-from`, `proxy-redirect-to`), from a per-route map |
@@ -384,7 +384,7 @@ default_my-ingress_svc_my-service_80 internal.example.com
 | `limit-connections` | Maximum concurrent connections per source IP |
 | `limit-whitelist` | Comma-separated CIDRs exempt from the limits |
 
-Exceeding a limit returns HTTP 429 — ingress-nginx allows a 5x burst and rejects with 503, so expect stricter enforcement at the same value after migrating. HAProxy stores one counter per backend stick-table, so the three limits are mutually exclusive with precedence `limit-rps` > `limit-rpm` > `limit-connections` (the rendered config notes ignored ones in a comment). Invalid CIDRs in `limit-whitelist` fail the render.
+Exceeding a limit returns HTTP 429 — ingress-nginx allows a 5x burst and rejects with 503, so expect stricter enforcement at the same value after migrating. A stick-table stores each data type once, so the three limits are mutually exclusive with precedence `limit-rps` > `limit-rpm` > `limit-connections`; HAPTIC records a `RateLimitCapIgnored` Event on the Ingress naming the ones it ignored. Invalid CIDRs in `limit-whitelist` fail the render.
 
 **Usage**:
 
@@ -397,13 +397,28 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-backend my-backend
-    stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
-    http-request track-sc0 src
-    http-request deny deny_status 429 if { sc_http_req_rate(0) gt 100 } !{ src 10.0.0.0/8 }
+frontend https
+    # ingress/rate-limit-allowlist
+    http-request set-var(txn.vrl_allow_block) src,map_ip(/etc/haproxy/maps/ing-rl-allow-partitions.map) if { var(txn.resource_id) -m found }
+    http-request set-var(txn.vrl_allow) bool(true) if { var(txn.vrl_allow_block) -m found } { var(txn.vrl_allow_block),concat(|,txn.resource_id),map(/etc/haproxy/maps/ing-rl-allow-members.map) -m found }
+
+    # ingress/rate-limiting
+    http-request set-var(txn.vrl_cfg) var(txn.resource_id),map(/etc/haproxy/maps/ing-rl-routes.map)
+    http-request set-var(txn.vrl_counter) var(txn.vrl_cfg),field(1,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var(txn.vrl_window) var(txn.vrl_cfg),field(2,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var(txn.vrl_threshold) var(txn.vrl_cfg),field(3,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var(txn.vrl_status) var(txn.vrl_cfg),field(4,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var-fmt(txn.vrl_key) %[var(txn.resource_id)]|%[src] if { var(txn.vrl_cfg) -m found }
+    http-request track-sc0 var(txn.vrl_key) table ing_rl_tbl_req_1s if { var(txn.vrl_counter) -m str req } { var(txn.vrl_window) -m str 1s }
+    http-request set-var(txn.denied_by) str(rate_limit_local) if { var(txn.vrl_counter) -m str req } { sc_http_req_rate(0),sub(txn.vrl_threshold) -m int gt 0 } !{ var(txn.vrl_allow) -m bool }
+    http-request deny deny_status 429 if { var(txn.vrl_status) -m str 429 } { var(txn.denied_by) -m str rate_limit_local rate_limit_connections }
+
+backend ing_rl_tbl_req_1s
+    stick-table type string len 340 size 102400 expire 1s store http_req_rate(1s) peers localinstance
 ```
 
-The `peers localinstance` reference carries the per-source counters across HAProxy reloads, so accumulated rates survive config churn.
+The route's counter, window, threshold, and deny status come from `ing-rl-routes.map` (`<namespace>/<name>` → `req 1s 100 429`), so the rules above are the same for every rate-limited route and adding or removing one is a map operation. The counters live in a shared table proxy keyed `<namespace>/<name>|<source address>`, which keeps the budget per route and per client while leaving the route's own backend plain and therefore dynamic. The `peers localinstance` reference carries the counters across HAProxy reloads, so accumulated rates survive config churn.
+Whitelisted sources are exempted through two map lookups rather than a `src` list in the deny rule: `ing-rl-allow-partitions.map` maps the client address to the one block of the disjoint cover of every whitelist, and `ing-rl-allow-members.map` says whether this route exempts that block. Editing a whitelist is therefore also a map operation.
 
 ---
 
@@ -1327,7 +1342,7 @@ use_backend default_my-app-canary_svc_my-app-canary_http if { rand(100) lt 20 } 
 ```
 
 !!! note "Canary and rate limiting compose per backend"
-    Canary selection happens in the frontend (`use_backend ... if { rand(100) lt <weight> }`) before backend selection, and [rate limits](#rate-limiting) render into per-backend stick-tables. The main and canary Ingresses are separate backends, so each enforces the rate limit set on its own Ingress. A `limit-rps` on the main Ingress alone does *not* limit canary traffic — the split-off portion reaches the canary backend, which has no stick-table. To bound both, set the rate-limit annotation on the canary Ingress too. Gateway API weighted splitting has no rate-limit annotation, so there's nothing to combine there.
+    Canary selection happens in the frontend (`use_backend ... if { rand(100) lt <weight> }`) before backend selection, and [rate limits](#rate-limiting) count against a key built from the matched route. The main and canary Ingresses are separate routes, so each enforces the rate limit set on its own Ingress. A `limit-rps` on the main Ingress alone does *not* limit canary traffic — the split-off portion is attributed to the canary route, which has no limit of its own. To bound both, set the rate-limit annotation on the canary Ingress too. Gateway API weighted splitting has no rate-limit annotation, so there's nothing to combine there.
 
 ---
 

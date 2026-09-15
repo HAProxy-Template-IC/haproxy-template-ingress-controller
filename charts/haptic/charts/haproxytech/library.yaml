@@ -645,44 +645,85 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  backend-directives-250-haproxytech-rate-limiting:
-    template: |
+  # rate-limit-requests per rate-limit-period (default 1s), table sized by
+  # rate-limit-size (default 100k), deny rate-limit-status-code (default 403),
+  # rate-limit-whitelist exempt. Rate limiting is a security control: an
+  # injected value fails closed rather than shipping the route without its
+  # limit. Each field is a bare token.
+  ingress-rate-limit-0250-haproxytech:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['haproxy.org/rate-limit-requests']"
+        - "metadata.annotations['haproxy.org/rate-limit-period']"
+        - "metadata.annotations['haproxy.org/rate-limit-size']"
+        - "metadata.annotations['haproxy.org/rate-limit-status-code']"
+        - "metadata.annotations['haproxy.org/rate-limit-whitelist']"
+      group: ingress-rate-limit
+      effects: [publishValue]
+    template: |-
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- if ingress != nil %}
-        {%- var rateReq = ingress.Metadata.Annotations["haproxy.org/rate-limit-requests"] %}
-        {%- if rateReq != "" %}
-          {%- var period = ingress.Metadata.Annotations["haproxy.org/rate-limit-period"] %}
-          {%- if period == "" %}{%- period = "1s" %}{%- end %}
-          {%- var size = ingress.Metadata.Annotations["haproxy.org/rate-limit-size"] %}
-          {%- if size == "" %}{%- size = "100k" %}{%- end %}
-          {%- var status = ingress.Metadata.Annotations["haproxy.org/rate-limit-status-code"] %}
-          {%- if status == "" %}{%- status = "403" %}{%- end %}
-          {#- Rate limiting is a security control: an injected value must fail closed, not
-              skip (skipping would drop the limit entirely). Each field is a bare token. -#}
-          {%- var rlName = "" %}{%- var rlChar = "" %}{%- var c = "" %}
-          {%- c = ConfigInjectionKind(rateReq, "token") %}{%- if c != "" %}{%- rlName = "rate-limit-requests" %}{%- rlChar = c %}{%- end %}
-          {%- if rlName == "" %}{%- c = ConfigInjectionKind(period, "token") %}{%- if c != "" %}{%- rlName = "rate-limit-period" %}{%- rlChar = c %}{%- end %}{%- end %}
-          {%- if rlName == "" %}{%- c = ConfigInjectionKind(size, "token") %}{%- if c != "" %}{%- rlName = "rate-limit-size" %}{%- rlChar = c %}{%- end %}{%- end %}
-          {%- if rlName == "" %}{%- c = ConfigInjectionKind(status, "token") %}{%- if c != "" %}{%- rlName = "rate-limit-status-code" %}{%- rlChar = c %}{%- end %}{%- end %}
-          {%- if rlName != "" %}
-            {{- fail("Invalid value for annotation 'haproxy.org/" + rlName + "' on Ingress '" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + "': contains " + rlChar + ", which would split the rate-limit directive. Rate limiting must stay enforceable, so the config is rejected.") -}}
-          {%- end %}
-          {%- var whitelist = ingress.Metadata.Annotations["haproxy.org/rate-limit-whitelist"] %}
-          {%- var guard = "" %}
-          {%- if whitelist != "" %}
-            {%- var validated = ValidateCidrList(whitelist, "haproxy.org/rate-limit-whitelist", ingress.Metadata.Namespace + "/" + ingress.Metadata.Name) %}
-            {%- if validated != "" %}
-              {%- guard = " !{ src " + validated + " }" %}
-            {%- end %}
-          {%- end %}
-      # haproxytech/backend-directives-haproxytech-rate-limiting
-      {# `peers localinstance` (base.yaml global-top-050-peers) hands the per-source counter to the new worker on reload, so a reload doesn't reset every client's budget. #}
-      stick-table type ip size {{ size }} expire {{ period }} store http_req_rate({{ period }}) peers localinstance
-      http-request track-sc0 src
-      http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ rateReq }} }{{ guard }}
-      http-request deny deny_status {{ status }} if { sc_http_req_rate(0) gt {{ rateReq }} }{{ guard }}
-        {%- end %}
+      {%- import "util-rate-limit-publish" for PublishRateLimit -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy.org/rate-limit-requests"] != "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var requests = ingress.Metadata.Annotations["haproxy.org/rate-limit-requests"] -%}
+        {%- var period = ingress.Metadata.Annotations["haproxy.org/rate-limit-period"] -%}
+        {%- if period == "" -%}{%- period = "1s" -%}{%- end -%}
+        {%- var size = ingress.Metadata.Annotations["haproxy.org/rate-limit-size"] -%}
+        {%- if size == "" -%}{%- size = "100k" -%}{%- end -%}
+        {%- var status = ingress.Metadata.Annotations["haproxy.org/rate-limit-status-code"] -%}
+        {%- if status == "" -%}{%- status = "403" -%}{%- end -%}
+        {%- var injected = "" -%}
+        {%- var injectedField = "" -%}
+        {%- var c = ConfigInjectionKind(requests, "token") -%}
+        {%- if c != "" -%}{%- injectedField = "rate-limit-requests" -%}{%- injected = c -%}{%- end -%}
+        {%- if injected == "" -%}
+          {%- c = ConfigInjectionKind(period, "token") -%}
+          {%- if c != "" -%}{%- injectedField = "rate-limit-period" -%}{%- injected = c -%}{%- end -%}
+        {%- end -%}
+        {%- if injected == "" -%}
+          {%- c = ConfigInjectionKind(size, "token") -%}
+          {%- if c != "" -%}{%- injectedField = "rate-limit-size" -%}{%- injected = c -%}{%- end -%}
+        {%- end -%}
+        {%- if injected == "" -%}
+          {%- c = ConfigInjectionKind(status, "token") -%}
+          {%- if c != "" -%}{%- injectedField = "rate-limit-status-code" -%}{%- injected = c -%}{%- end -%}
+        {%- end -%}
+        {%- if injected != "" -%}
+          {{- fail("Invalid value for annotation 'haproxy.org/" + injectedField + "' on Ingress '" + key + "': contains " + injected + ", which would split the rate-limit directive. Rate limiting must stay enforceable, so the config is rejected.") -}}
+        {%- end -%}
+        {%- if toint(requests) <= 0 -%}
+          {{- fail("Invalid value '" + requests + "' for annotation 'haproxy.org/rate-limit-requests' on Ingress '" + key + "'. Must be a positive integer.") -}}
+        {%- end -%}
+        {%- if !regex_search(period, "^[0-9]+(us|ms|s|m|h|d)?$") -%}
+          {{- fail("Invalid value '" + period + "' for annotation 'haproxy.org/rate-limit-period' on Ingress '" + key + "'. Expected a HAProxy time value like '1s', '10s', '1m'.") -}}
+        {%- end -%}
+        {%- if !regex_search(size, "^[0-9]+[kKmMgG]?$") -%}
+          {{- fail("Invalid value '" + size + "' for annotation 'haproxy.org/rate-limit-size' on Ingress '" + key + "'. Expected a size like '100k', '1m'.") -}}
+        {%- end -%}
+        {%- if !regex_search(status, "^(200|400|401|403|404|405|407|408|410|413|414|425|429|431|500|501|502|503|504)$") -%}
+          {{- fail("Invalid value '" + status + "' for annotation 'haproxy.org/rate-limit-status-code' on Ingress '" + key + "'. HAProxy can only deny with a status that has a built-in error page: 200, 400, 401, 403, 404, 405, 407, 408, 410, 413, 414, 425, 429, 431, 500, 501, 502, 503 or 504.") -}}
+        {%- end -%}
+        {%- var digits = size -%}
+        {%- if !regex_search(size, "^[0-9]+$") -%}{%- digits = size[0:len(size)-1] -%}{%- end -%}
+        {%- var bytes = toint(digits) -%}
+        {%- if hasSuffix(size, "k") || hasSuffix(size, "K") -%}{%- bytes = bytes * 1024 -%}{%- end -%}
+        {%- if hasSuffix(size, "m") || hasSuffix(size, "M") -%}{%- bytes = bytes * 1048576 -%}{%- end -%}
+        {%- if hasSuffix(size, "g") || hasSuffix(size, "G") -%}{%- bytes = bytes * 1073741824 -%}{%- end -%}
+        {#- A zero magnitude passes the format check and would reach the shared
+            table as `size 0`, which HAProxy rejects only at config parse, far
+            from the annotation that caused it. -#}
+        {%- if bytes <= 0 -%}
+          {{- fail("Invalid value '" + size + "' for annotation 'haproxy.org/rate-limit-size' on Ingress '" + key + "'. Must be a positive size like '100k', '1m'.") -}}
+        {%- end -%}
+        {%- var allow = "" -%}
+        {%- var whitelist = ingress.Metadata.Annotations["haproxy.org/rate-limit-whitelist"] -%}
+        {%- if whitelist != "" -%}{%- allow = ValidateCidrList(whitelist, "haproxy.org/rate-limit-whitelist", key) -%}{%- end -%}
+        {{- PublishRateLimit(key, "req", period, tostring(bytes), tostring(toint(requests)), status, allow) -}}
       {%- end -%}
 
   map-reqhdr-host-250-haproxytech:
@@ -1828,10 +1869,34 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "stick-table type ip size 100k expire 10s store http_req_rate\\(10s\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 403 if \\{ sc_http_req_rate\\(0\\) gt 10 \\} !\\{ src 10\\.0\\.0\\.0/8 192\\.168\\.1\\.5 \\}"
+        pattern: "stick-table type string len 340 size 102400 expire 10s store http_req_rate\\(10s\\) peers localinstance"
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/rl-whitelist-ingress req 10s 10 403$'}
+      - {type: contains, target: "map:ing-rl-allow-members.map", pattern: '(?m)^10\.0\.0\.0/8\|default/rl-whitelist-ingress 1$'}
+      - {type: contains, target: "map:ing-rl-allow-members.map", pattern: '(?m)^192\.168\.1\.5/32\|default/rl-whitelist-ingress 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 403 if \{ var\(txn\.vrl_status\) -m str 403 \}'}
+  test-haproxytech-rate-limit-size-zero-fails:
+    description: >-
+      A zero-magnitude rate-limit-size passes the format check but would reach
+      the shared table as `size 0`, which HAProxy rejects only at config parse.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-zero-size
+            annotations:
+              haproxy.org/rate-limit-requests: "10"
+              haproxy.org/rate-limit-size: "0"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rl-zero.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "rate-limit-size' on Ingress 'default/rl-zero-size'. Must be a positive size"}
 
   test-haproxytech-rate-limit-no-whitelist:
     description: >-
@@ -1857,11 +1922,10 @@ validationTests:
                       backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 403 if \\{ sc_http_req_rate\\(0\\) gt 10 \\}"
-      - {type: not_contains, target: haproxy.cfg, pattern: "gt 10 \\} !\\{ src"}
-
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/rl-plain-ingress req 1s 10 403$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 403 if \{ var\(txn\.vrl_status\) -m str 403 \}'}
+      # Without a whitelist the allowlist block is not emitted at all.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'rate-limit-allowlist'}
   test-haproxytech-access-control-allow-list:
     description: >-
       haproxy.org/allow-list (the canonical upstream key) emits a src allow ACL.

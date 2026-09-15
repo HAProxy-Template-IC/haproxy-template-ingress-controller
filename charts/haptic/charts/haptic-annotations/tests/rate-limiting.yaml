@@ -532,6 +532,30 @@ validationTests:
     assertions:
       - {type: contains, target: rendering_error, pattern: "rate-limit-status-code' on Ingress 'default/rl-teapot'. HAProxy can only deny with a status that has a built-in error page"}
 
+  test-haptic-rate-limit-size-zero-rejected:
+    description: >-
+      A zero-magnitude table size passes the format check but would reach the
+      stick-table as `size 0`, which HAProxy rejects only at config parse.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-zero-size
+            annotations:
+              haproxy-haptic.org/rate-limit-rps: "10"
+              haproxy-haptic.org/rate-limit-size: "0k"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-zero-size.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "rate-limit-size' on Ingress 'default/rl-zero-size'. Must be a positive size"}
+
   test-haptic-rate-limit-allowlist-overlap-partitions:
     description: >-
       Two routes whose allowlists overlap (a /8 and a /16 inside it) still get

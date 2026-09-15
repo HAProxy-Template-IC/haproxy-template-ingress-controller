@@ -82,7 +82,7 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | `backend-directives-150-haproxytech-load-balance` | `haproxy.org/load-balance` |
 | `backend-directives-200-haproxytech-health-checks` | `haproxy.org/check` |
 | `backend-directives-210-haproxytech-advanced-health-checks` | `haproxy.org/check-http`, `haproxy.org/check-interval` |
-| `backend-directives-250-haproxytech-rate-limiting` | `haproxy.org/rate-limit-*` |
+| `ingress-rate-limit-0250-haproxytech` | `haproxy.org/rate-limit-*` (published into the shared frontend lane) |
 | `backend-directives-300-haproxytech-header-manipulation` | `haproxy.org/request-set-header`, `haproxy.org/response-set-header` |
 | `backend-directives-350-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` (patterns that aren't a prefix strip) |
 | `frontend-filters-995-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` (a bare value or a prefix strip, from per-route maps) |
@@ -468,11 +468,27 @@ spec:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-backend api-backend
-    stick-table type ip size 100k expire 1m store http_req_rate(1m)
-    http-request track-sc0 src
-    http-request deny deny_status 429 if { sc_http_req_rate(0) gt 100 }
+frontend https
+    # ingress/rate-limit-allowlist
+    http-request set-var(txn.vrl_allow_block) src,map_ip(/etc/haproxy/maps/ing-rl-allow-partitions.map) if { var(txn.resource_id) -m found }
+    http-request set-var(txn.vrl_allow) bool(true) if { var(txn.vrl_allow_block) -m found } { var(txn.vrl_allow_block),concat(|,txn.resource_id),map(/etc/haproxy/maps/ing-rl-allow-members.map) -m found }
+
+    # ingress/rate-limiting
+    http-request set-var(txn.vrl_cfg) var(txn.resource_id),map(/etc/haproxy/maps/ing-rl-routes.map)
+    http-request set-var(txn.vrl_counter) var(txn.vrl_cfg),field(1,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var(txn.vrl_window) var(txn.vrl_cfg),field(2,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var(txn.vrl_threshold) var(txn.vrl_cfg),field(3,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var(txn.vrl_status) var(txn.vrl_cfg),field(4,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var-fmt(txn.vrl_key) %[var(txn.resource_id)]|%[src] if { var(txn.vrl_cfg) -m found }
+    http-request track-sc0 var(txn.vrl_key) table ing_rl_tbl_req_1m if { var(txn.vrl_counter) -m str req } { var(txn.vrl_window) -m str 1m }
+    http-request set-var(txn.denied_by) str(rate_limit_local) if { var(txn.vrl_counter) -m str req } { sc_http_req_rate(0),sub(txn.vrl_threshold) -m int gt 0 } !{ var(txn.vrl_allow) -m bool }
+    http-request deny deny_status 429 if { var(txn.vrl_status) -m str 429 } { var(txn.denied_by) -m str rate_limit_local rate_limit_connections }
+
+backend ing_rl_tbl_req_1m
+    stick-table type string len 340 size 102400 expire 1m store http_req_rate(1m) peers localinstance
 ```
+
+The route's counter, window, threshold, and deny status come from `ing-rl-routes.map` (`<namespace>/<name>` → `req 1m 100 429`), so the rules above are the same for every rate-limited route and adding or removing one is a map operation. The counters live in a shared table proxy keyed `<namespace>/<name>|<source address>`, which keeps the budget per route and per client while leaving the route's own backend plain and therefore dynamic. The `peers localinstance` reference carries the counters across HAProxy reloads, so accumulated rates survive config churn.
 
 **Dependencies**: Other rate-limit annotations require this to be set
 
@@ -502,7 +518,7 @@ haproxy.org/rate-limit-period: "1m"
 
 **Status**: ✅ Supported
 
-**Description**: Size of the stick-table used to track client IPs. Supports suffixes `k` (thousands) or `M` (millions).
+**Description**: Size of the stick-table that tracks the route's clients. Supports suffixes `k` (thousands) or `M` (millions). Routes sharing a period share one table, sized by the largest request among them.
 
 **Default**: `100k` (100,000 entries)
 
@@ -541,7 +557,7 @@ haproxy.org/rate-limit-status-code: "429"
 
 **Status**: ✅ Supported
 
-**Description**: Comma-separated IP addresses or CIDR ranges that are exempt from the rate-limit deny. Whitelisted sources are still tracked in the stick-table but are never denied, mirroring haproxy-ingress' `limit-whitelist`.
+**Description**: Comma-separated IP addresses or CIDR ranges that are exempt from the rate-limit deny. Whitelisted sources are still tracked but are never denied, mirroring haproxy-ingress' `limit-whitelist`.
 
 **Usage**:
 
@@ -571,12 +587,23 @@ spec:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-stick-table type ip size 100k expire 10s store http_req_rate(10s) peers localinstance
-http-request track-sc0 src
-http-request deny deny_status 403 if { sc_http_req_rate(0) gt 10 } !{ src 10.0.0.0/8 192.168.1.5 }
+frontend https
+    # ingress/rate-limit-allowlist
+    http-request set-var(txn.vrl_allow_block) src,map_ip(/etc/haproxy/maps/ing-rl-allow-partitions.map) if { var(txn.resource_id) -m found }
+    http-request set-var(txn.vrl_allow) bool(true) if { var(txn.vrl_allow_block) -m found } { var(txn.vrl_allow_block),concat(|,txn.resource_id),map(/etc/haproxy/maps/ing-rl-allow-members.map) -m found }
 ```
 
-The trailing `!{ src … }` guard makes the deny fire only for non-whitelisted sources.
+```text
+# ing-rl-allow-partitions.map
+10.0.0.0/8 10.0.0.0/8
+192.168.1.5/32 192.168.1.5/32
+
+# ing-rl-allow-members.map
+10.0.0.0/8|default/rate-limited-api 1
+192.168.1.5/32|default/rate-limited-api 1
+```
+
+The exemption is two map lookups instead of a `src` list in the deny rule: the first names the one block of the disjoint cover of every whitelist the client falls in, the second says whether this route exempts that block. The rate-limit rules then skip the deny while `txn.vrl_allow` is set, so editing a whitelist is a map operation rather than a reload.
 
 **Dependencies**: Requires `rate-limit-requests` to be set
 

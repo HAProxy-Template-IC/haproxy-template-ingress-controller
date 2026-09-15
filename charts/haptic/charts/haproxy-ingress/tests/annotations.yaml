@@ -747,11 +747,12 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\) peers localinstance"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\}"
-
+        pattern: "stick-table type string len 340 size 102400 expire 1s store http_req_rate\\(1s\\) peers localinstance"
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/rps-ingress req 1s 10 429$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 429 if \{ var\(txn\.vrl_status\) -m str 429 \}'}
+      # The route's backend stays plain — the counters live in the shared table
+      # proxy, which is what keeps the backend's servers dynamic.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-request track-sc0 src'}
   test-haproxy-ingress-limit-rpm:
     description: limit-rpm generates a per-minute request-rate stick-table
     fixtures:
@@ -772,11 +773,8 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "stick-table type ip size 100k expire 60s store http_req_rate\\(60s\\) peers localinstance"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 120 \\}"
-
+        pattern: "stick-table type string len 340 size 102400 expire 60s store http_req_rate\\(60s\\) peers localinstance"
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/rpm-ingress req 60s 120 429$'}
   test-haproxy-ingress-limit-whitelist:
     description: limit-whitelist exempts listed CIDRs from the rate limit
     fixtures:
@@ -796,14 +794,11 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\} !\\{ src 10.0.0.0/8 192.168.1.1 \\}"
-
-  # ==========================================================================
-  # Path rewriting (rewrite-target)
-  # ==========================================================================
-
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/wl-ingress req 1s 10 429$'}
+      - {type: contains, target: "map:ing-rl-allow-members.map", pattern: '(?m)^10\.0\.0\.0/8\|default/wl-ingress 1$'}
+      # A bare address in the list is its own host block.
+      - {type: contains, target: "map:ing-rl-allow-members.map", pattern: '(?m)^192\.168\.1\.1/32\|default/wl-ingress 1$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '!\{ src 10\.0\.0\.0/8'}
   test-haproxy-ingress-rewrite-target:
     description: rewrite-target emits replace-path and translates $N capture groups to \N
     fixtures:

@@ -77,6 +77,14 @@ templateSnippets:
           {%- else if !regex_search(size, "^[0-9]+[kKmMgG]?$") -%}
             {{- fail("Invalid value '" + size + "' for annotation 'haproxy-haptic.org/rate-limit-size' on Ingress '" + key + "'. Expected a size like '100k', '1m'.") -}}
           {%- end -%}
+          {#- A zero magnitude passes the format check and would reach the shared
+              table as `size 0`, which HAProxy rejects only at config parse, far
+              from the annotation that caused it. -#}
+          {%- var sizeDigits = size -%}
+          {%- if !regex_search(size, "^[0-9]+$") -%}{%- sizeDigits = size[0:len(size)-1] -%}{%- end -%}
+          {%- if toint(sizeDigits) <= 0 -%}
+            {{- fail("Invalid value '" + size + "' for annotation 'haproxy-haptic.org/rate-limit-size' on Ingress '" + key + "'. Must be a positive size like '100k', '1m'.") -}}
+          {%- end -%}
           {%- result["size"] = size -%}
           {%- var status = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/rate-limit-status-code") -%}
           {%- if status == "" -%}

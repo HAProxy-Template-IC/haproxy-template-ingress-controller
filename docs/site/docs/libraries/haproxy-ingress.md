@@ -69,7 +69,7 @@ The haproxy-ingress library hooks into these extension points. Snippet names enc
 | `backend-directives-660-haproxy-ingress-server-options` | `initial-weight`, other server-line options |
 | `backend-directives-670-haproxy-ingress-session-affinity` | `affinity`, `session-cookie-*` |
 | `backend-directives-680-haproxy-ingress-auth` | `auth-secret`, `auth-realm` (attaches userlist to the backend) |
-| `backend-directives-685-haproxy-ingress-rate-limiting` | `limit-rps`, `limit-rpm`, `limit-whitelist` |
+| `ingress-rate-limit-0685-haproxy-ingress` | `limit-rps`, `limit-rpm`, `limit-whitelist` (published into the shared frontend lane) |
 | `backend-directives-690-haproxy-ingress-rewrite-target` | `rewrite-target` (capture-group rewrites; literal rewrites go to `path-rewrite.map`) |
 | `backend-directives-695-haproxy-ingress-agent-check` | `agent-check-port`, `agent-check-addr`, `agent-check-interval`, `agent-check-send` |
 | `backend-directives-900-haproxy-ingress-config-backend` | `config-backend` |
@@ -443,7 +443,7 @@ http-request deny deny_status 413 if { var(txn.haptic_body_limit) -m int gt 0 } 
 | `limit-rpm` | Maximum requests per minute per source IP |
 | `limit-whitelist` | Comma-separated CIDRs exempt from the limit |
 
-The cap is hard — jcmoraisjr/haproxy-ingress grants a burst allowance on top of the configured rate, so expect stricter enforcement at the same value after migrating. HAProxy stores one request-rate counter per backend, so when both are set `limit-rps` wins and `limit-rpm` is ignored (the rendered config notes it in a comment). Invalid CIDRs in `limit-whitelist` fail the render.
+The cap is hard — jcmoraisjr/haproxy-ingress grants a burst allowance on top of the configured rate, so expect stricter enforcement at the same value after migrating. A route carries one request-rate counter, so when both are set `limit-rps` wins and HAPTIC records a `RateLimitCapIgnored` Event on the Ingress for the ignored `limit-rpm`. Invalid CIDRs in `limit-whitelist` fail the render.
 
 **Usage**:
 
@@ -456,13 +456,28 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-backend my-backend
-    stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
-    http-request track-sc0 src
-    http-request deny deny_status 429 if { sc_http_req_rate(0) gt 10 } !{ src 10.0.0.0/8 }
+frontend https
+    # ingress/rate-limit-allowlist
+    http-request set-var(txn.vrl_allow_block) src,map_ip(/etc/haproxy/maps/ing-rl-allow-partitions.map) if { var(txn.resource_id) -m found }
+    http-request set-var(txn.vrl_allow) bool(true) if { var(txn.vrl_allow_block) -m found } { var(txn.vrl_allow_block),concat(|,txn.resource_id),map(/etc/haproxy/maps/ing-rl-allow-members.map) -m found }
+
+    # ingress/rate-limiting
+    http-request set-var(txn.vrl_cfg) var(txn.resource_id),map(/etc/haproxy/maps/ing-rl-routes.map)
+    http-request set-var(txn.vrl_counter) var(txn.vrl_cfg),field(1,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var(txn.vrl_window) var(txn.vrl_cfg),field(2,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var(txn.vrl_threshold) var(txn.vrl_cfg),field(3,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var(txn.vrl_status) var(txn.vrl_cfg),field(4,' ') if { var(txn.vrl_cfg) -m found }
+    http-request set-var-fmt(txn.vrl_key) %[var(txn.resource_id)]|%[src] if { var(txn.vrl_cfg) -m found }
+    http-request track-sc0 var(txn.vrl_key) table ing_rl_tbl_req_1s if { var(txn.vrl_counter) -m str req } { var(txn.vrl_window) -m str 1s }
+    http-request set-var(txn.denied_by) str(rate_limit_local) if { var(txn.vrl_counter) -m str req } { sc_http_req_rate(0),sub(txn.vrl_threshold) -m int gt 0 } !{ var(txn.vrl_allow) -m bool }
+    http-request deny deny_status 429 if { var(txn.vrl_status) -m str 429 } { var(txn.denied_by) -m str rate_limit_local rate_limit_connections }
+
+backend ing_rl_tbl_req_1s
+    stick-table type string len 340 size 102400 expire 1s store http_req_rate(1s) peers localinstance
 ```
 
-The `peers localinstance` reference carries the per-source counters across HAProxy reloads, so accumulated rates survive config churn.
+The route's counter, window, threshold, and deny status come from `ing-rl-routes.map` (`<namespace>/<name>` → `req 1s 10 429`), so the rules above are the same for every rate-limited route and adding or removing one is a map operation. The counters live in a shared table proxy keyed `<namespace>/<name>|<source address>`, which keeps the budget per route and per client while leaving the route's own backend plain and therefore dynamic. The `peers localinstance` reference carries the counters across HAProxy reloads, so accumulated rates survive config churn.
+Whitelisted sources are exempted through two map lookups rather than a `src` list in the deny rule: `ing-rl-allow-partitions.map` maps the client address to the one block of the disjoint cover of every whitelist, and `ing-rl-allow-members.map` says whether this route exempts that block. Editing a whitelist is therefore also a map operation.
 
 ---
 
