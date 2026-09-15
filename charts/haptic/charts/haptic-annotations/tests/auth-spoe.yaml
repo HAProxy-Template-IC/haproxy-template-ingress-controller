@@ -185,6 +185,128 @@ validationTests:
   # ============================================================================
   # satisfy=any — OR-combine allowlist + basic auth
   # ============================================================================
+  test-haptic-satisfy-any-realm-pipe-rejected:
+    description: >-
+      '|' separates the fields of the lane's map key, so a realm carrying one
+      would publish a row that no rule can match. The render fails closed
+      rather than shipping a satisfy route with no gate.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: satisfy-auth }
+          type: Opaque
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sat-pipe
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "satisfy-auth"
+              haproxy-haptic.org/auth-secret-type: "auth-map"
+              haproxy-haptic.org/auth-realm: "Weird|Realm"
+              haproxy-haptic.org/allowlist-source-range: "10.0.0.0/8"
+              haproxy-haptic.org/satisfy: "any"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: sat-pipe.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "on Ingress 'default/sat-pipe': '\\|' is not allowed in a satisfy=any realm"}
+
+  test-haptic-satisfy-any-shares-one-challenge:
+    description: >-
+      Two satisfy=any routes on one Secret and realm share a single challenge
+      rule; only their membership rows differ, so the second is a map edit.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: satisfy-auth }
+          type: Opaque
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sat-a
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "satisfy-auth"
+              haproxy-haptic.org/auth-secret-type: "auth-map"
+              haproxy-haptic.org/auth-realm: "Shared"
+              haproxy-haptic.org/allowlist-source-range: "10.0.0.0/8"
+              haproxy-haptic.org/satisfy: "any"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: sat-a.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sat-b
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "satisfy-auth"
+              haproxy-haptic.org/auth-secret-type: "auth-map"
+              haproxy-haptic.org/auth-realm: "Shared"
+              haproxy-haptic.org/allowlist-source-range: "172.16.0.0/12"
+              haproxy-haptic.org/satisfy: "any"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: sat-b.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "map:ing-satisfy-routes.map", pattern: '(?m)^default/sat-a\|haptic\|haptic_auth_default_satisfy-auth\|Shared 1$'}
+      - {type: contains, target: "map:ing-satisfy-routes.map", pattern: '(?m)^default/sat-b\|haptic\|haptic_auth_default_satisfy-auth\|Shared 1$'}
+      # One challenge per frontend for the shared pair: never two in a row.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'auth realm "Shared"[^\n]*\n\s*http-request auth realm "Shared"'}
+
+  test-haptic-satisfy-any-ipv6-keeps-backend-gate:
+    description: >-
+      An allow-list with an IPv6 entry cannot be cut into a disjoint cover, so
+      that route keeps the backend gate instead of joining the frontend lane.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: satisfy-auth }
+          type: Opaque
+          data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sat-v6
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "satisfy-auth"
+              haproxy-haptic.org/auth-secret-type: "auth-map"
+              haproxy-haptic.org/auth-realm: "Protected"
+              haproxy-haptic.org/allowlist-source-range: "10.0.0.0/8,2001:db8::/32"
+              haproxy-haptic.org/satisfy: "any"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: sat-v6.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'acl haptic_satisfy_ip_default_sat-v6 src 10\.0\.0\.0/8 2001:db8::/32'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request auth realm "Protected" if !haptic_satisfy_ip_default_sat-v6'}
+      # No route joined the lane, so its rules — and its routes map — are absent.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'ing-satisfy-routes\.map'}
+
   test-haptic-satisfy-any:
     description: >-
       satisfy=any folds the allowlist and basic auth into a single backend
@@ -217,12 +339,18 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
+      # The gate is a frontend rule per distinct (userlist, realm) pair, picked
+      # by a membership row, so the route itself carries no configuration text.
+      - {type: contains, target: "map:ing-satisfy-routes.map", pattern: '(?m)^default/satisfy-any-ingress\|haptic\|haptic_auth_default_satisfy-auth\|Protected 1$'}
       - type: contains
         target: haproxy.cfg
-        pattern: "acl haptic_satisfy_ip_default_satisfy-any-ingress src 10\\.0\\.0\\.0/8 192\\.168\\.0\\.0/16"
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request auth realm "Protected" if !haptic_satisfy_ip_default_satisfy-any-ingress !\{ http_auth\(haptic_auth_default_satisfy-auth\) \}'
+        pattern: 'http-request auth realm "Protected" if \{ var\(txn\.resource_id\),concat\(\|haptic\|haptic_auth_default_satisfy-auth\|Protected\),map\(\S*/ing-satisfy-routes\.map\) -m found \} !\{ var\(txn\.haptic_sat_allow\) -m bool \} !\{ http_auth\(haptic_auth_default_satisfy-auth\) \}'
+      # The allow-list half is the access-control shape: the block of the
+      # disjoint cover the client falls in, then whether this route exempts it.
+      - {type: contains, target: "map:ing-satisfy-allow-partitions.map", pattern: '(?m)^10\.0\.0\.0/8 10\.0\.0\.0/8$'}
+      - {type: contains, target: "map:ing-satisfy-allow-members.map", pattern: '(?m)^10\.0\.0\.0/8\|default/satisfy-any-ingress 1$'}
+      - {type: contains, target: "map:ing-satisfy-allow-members.map", pattern: '(?m)^192\.168\.0\.0/16\|default/satisfy-any-ingress 1$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'acl haptic_satisfy_ip_default_satisfy-any-ingress'}
       - type: not_contains
         target: haproxy.cfg
         pattern: '-m str "ok haptic_auth_default_satisfy-auth Protected"'
@@ -230,10 +358,6 @@ validationTests:
       # under satisfy=any — the combined gate above owns the allowlist, so an
       # authenticated request from a non-allow-listed IP still passes.
       - {type: not_contains, target: haproxy.cfg, pattern: "haptic_allowlist_default_satisfy-any-ingress"}
-
-  # ============================================================================
-  # mTLS — client-cert verification + error page + cert passthrough
-  # ============================================================================
   test-haptic-auth-tls:
     description: >-
       auth-tls-secret registers a SNI-keyed CA verify (verify required) in the

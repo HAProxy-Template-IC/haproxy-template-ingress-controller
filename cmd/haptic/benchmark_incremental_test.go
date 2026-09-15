@@ -1571,7 +1571,7 @@ func TestBundledChartHapticActivationStaysExactAcrossScaleAndGovernance(t *testi
 	cfg, setup, logger, cleanup := bundledChartSetup(t)
 	t.Cleanup(cleanup)
 	gatedComponents := bundledHapticActivationComponents(t, cfg)
-	require.Len(t, gatedComponents, 94)
+	require.Len(t, gatedComponents, 95)
 
 	var expectedOneChangeExecutions uint64
 	for _, resourceCount := range incrementalBenchmarkResourceCounts {

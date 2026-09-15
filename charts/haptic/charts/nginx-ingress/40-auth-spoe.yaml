@@ -233,7 +233,7 @@ templateSnippets:
     template: |-
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
-      {%- macro NginxBasicAuthRoute(ingress *resources.ingresses.T, result map[string]any) -%}
+      {%- macro NginxBasicAuthRoute(ingress *resources.ingresses.T, forSatisfy bool, result map[string]any) -%}
         {%- result["lane"] = "" -%}
         {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
         {%- var authType = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-type"] -%}
@@ -257,10 +257,14 @@ templateSnippets:
           {%- end -%}
           {%- result["userlist"] = "ni_auth_" + secretNs + "_" + secretName -%}
           {%- result["realm"] = authRealm -%}
+          {#- An absent Secret means SatisfyAnyMode is false, so the plain
+              challenge owns the 503; the satisfy caller must not claim it too. -#}
           {%- if resources.secrets.GetSingle(secretNs, secretName) == nil -%}
-            {%- result["lane"] = "map" -%}
-            {%- result["state"] = "missing" -%}
-          {%- else if SatisfyAnyMode(ingress) == "" -%}
+            {%- if !forSatisfy -%}
+              {%- result["lane"] = "map" -%}
+              {%- result["state"] = "missing" -%}
+            {%- end -%}
+          {%- else if (SatisfyAnyMode(ingress) == "any") == forSatisfy -%}
             {%- result["lane"] = "backend" -%}
             {#- The realm is a literal in a quoted config token and in a map
                 value: one that needs escaping stays on the backend rule. -#}
@@ -290,7 +294,7 @@ templateSnippets:
       -#}
       {%- if ingress != nil %}
         {%- var rw = map[string]any{} %}
-        {{- NginxBasicAuthRoute(ingress, rw) -}}
+        {{- NginxBasicAuthRoute(ingress, false, rw) -}}
         {%- if rw["lane"] == "backend" %}
       # nginx-ingress/backend-directives-auth ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}): the realm needs escaping, so it stays a backend rule
       http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ rw["userlist"] }}) }
@@ -316,7 +320,7 @@ templateSnippets:
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil -%}
         {%- var rw = map[string]any{} -%}
-        {{- NginxBasicAuthRoute(ingress, rw) -}}
+        {{- NginxBasicAuthRoute(ingress, false, rw) -}}
         {%- if rw["lane"] == "map" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {{- shared.Publish("any", "any", "any") -}}

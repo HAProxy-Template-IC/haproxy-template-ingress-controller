@@ -848,6 +848,147 @@ templateSnippets:
       {%- end %}
       {%- end %}
 
+  # satisfy=any — the combined address-or-authentication gate, from one frontend
+  # lane. The gate was a pair of backend rules (an `acl … src <cidrs>` plus a
+  # conditional `http-request auth`), which made every satisfy route structural.
+  # `auth realm` and `http_auth()` take literals only, so the lane emits one
+  # challenge per distinct (userlist, realm) pair, selected by a membership row:
+  # ing-satisfy-routes.map holds "<route id>|<family>|<userlist>|<realm>" → 1.
+  # The address half is the access-control lane's shape — map_ip over the
+  # disjoint cover of every list, then per-route membership — so a route on an
+  # existing pair is a map edit and editing a list is a map operation.
+  # A list carrying an IPv6 entry cannot be partitioned; those routes keep the
+  # backend gate, and the publisher says so by returning "ipv6".
+  util-satisfy-publish:
+    template: |-
+      {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {%- macro PublishSatisfyAny(key string, allowlist string, allowAnnotation string, family string, userlist string, realm string) string -%}
+        {%- var cidrs = ValidateCidrList(allowlist, allowAnnotation, key) -%}
+        {%- if strings_contains(cidrs, ":") -%}
+          {{- "ipv6" -}}
+        {%- else -%}
+          {%- if strings_contains(userlist + realm, "|") -%}
+            {{- fail("Invalid auth realm '" + realm + "' on Ingress '" + key + "': '|' is not allowed in a satisfy=any realm.") -}}
+          {%- end -%}
+          {%- var pair = family + "|" + userlist + "|" + realm -%}
+          {{- shared.Publish(family, "any", "any") -}}
+          {{- shared.Publish("pair", pair, pair) -}}
+          {{- shared.Publish("route", key + "|" + pair, key + "|" + pair + " 1") -}}
+          {{- shared.Publish("allowlist", key, key + " " + cidrs) -}}
+          {{- "" -}}
+        {%- end -%}
+      {%- end macro -%}
+
+  features-200-ingress-satisfy:
+    template: '{{- render_glob "ingress-satisfy-*" -}}'
+
+  ingress-satisfy-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-satisfy
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  util-satisfy-maps:
+    template: |-
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- macro SatisfyMaps(result map[string]any) -%}
+        {%%
+          var mapsVal, _ = shared.ComputeIfAbsent("ingressSatisfyMaps", func() any {
+            var lists = []any{}
+            var cidrs = []any{}
+            for _, v := range incremental_values("ingress-satisfy", "allowlist") {
+              lists = append(lists, tostring(v))
+              for _, c := range split(strings_splitn(tostring(v), " ", 2)[1], " ") {
+                cidrs = append(cidrs, c)
+              }
+            }
+            var blocks, err = cidr_partition(cidrs)
+            if err != nil {
+              fail(tostring(err))
+            }
+            var seen = map[string]bool{}
+            var partitions = []any{}
+            for _, list := range blocks {
+              for _, b := range list {
+                if !seen[b] {
+                  seen[b] = true
+                  partitions = append(partitions, b)
+                }
+              }
+            }
+            var partitionLines = []string{}
+            for _, b := range sort_strings(partitions) {
+              partitionLines = append(partitionLines, tostring(b) + " " + tostring(b))
+            }
+            var memberSeen = map[string]bool{}
+            var members = []any{}
+            for _, r := range lists {
+              var parts = strings_splitn(tostring(r), " ", 2)
+              for _, c := range split(parts[1], " ") {
+                for _, b := range blocks[c] {
+                  var line = b + "|" + parts[0] + " 1"
+                  if !memberSeen[line] {
+                    memberSeen[line] = true
+                    members = append(members, line)
+                  }
+                }
+              }
+            }
+            var memberLines = []string{}
+            for _, l := range sort_strings(members) {
+              memberLines = append(memberLines, tostring(l))
+            }
+            var routes = []any{}
+            for _, v := range incremental_values("ingress-satisfy", "route") {
+              routes = append(routes, tostring(v))
+            }
+            var routeLines = []string{}
+            for _, r := range sort_strings(routes) {
+              routeLines = append(routeLines, tostring(r))
+            }
+            return map[string]any{
+              "routes": RegisterMap("ing-satisfy-routes.map", routeLines, map[string]any{"ordered": false}),
+              "partitions": RegisterMap("ing-satisfy-allow-partitions.map", partitionLines, map[string]any{"ordered": false}),
+              "members": RegisterMap("ing-satisfy-allow-members.map", memberLines, map[string]any{"ordered": false}),
+            }
+          })
+          var maps = mapsVal.(map[string]any)
+          result["routes"] = maps["routes"]
+          result["partitions"] = maps["partitions"]
+          result["members"] = maps["members"]
+        %%}
+      {%- end macro -%}
+
+  # SatisfyLane(family, deniedBy): the family's challenge rules. deniedBy is the
+  # txn.denied_by marker the family recorded on its backend gate, or "" for a
+  # family that recorded none — the log field is the only reason it differs.
+  util-satisfy-lane:
+    template: |-
+      {%- import "util-satisfy-maps" for SatisfyMaps -%}
+      {%- macro SatisfyLane(family string, deniedBy string) -%}
+        {%- if incremental_value_count("ingress-satisfy", family) > 0 -%}
+          {%- var maps = map[string]any{} -%}
+          {{- SatisfyMaps(maps) -}}
+          {%- var pairs = []any{} -%}
+          {%- for _, v := range incremental_values("ingress-satisfy", "pair") -%}
+            {%- if hasPrefix(tostring(v), family + "|") -%}{%- pairs = append(pairs, tostring(v)) -%}{%- end -%}
+          {%- end -%}
+          {%- var v = "txn." + family + "_sat_allow" -%}
+      {{ "\n" }}# {{ family }}/satisfy-any
+      http-request set-var({{ v }}_block) src,map_ip({{ maps["partitions"] }}) if { var(txn.resource_id) -m found }
+      http-request set-var({{ v }}) bool(true) if { var({{ v }}_block) -m found } { var({{ v }}_block),concat(|,txn.resource_id),map({{ maps["members"] }}) -m found }
+          {%- for _, p := range sort_strings(pairs) %}
+            {%- var parts = split(tostring(p), "|") %}
+            {%- var cond = "{ var(txn.resource_id),concat(|" + tostring(p) + "),map(" + tostring(maps["routes"]) + ") -m found } !{ var(" + v + ") -m bool } !{ http_auth(" + parts[1] + ") }" %}
+            {%- if deniedBy != "" %}
+      http-request set-var(txn.denied_by) str({{ deniedBy }}) if {{ cond }}
+            {%- end %}
+      http-request auth realm "{{ parts[2] }}" if {{ cond }}
+          {%- end %}
+        {%- end -%}
+      {%- end macro -%}
+
   # aclPrefix must stay distinct per library — validation tests assert on the
   # resulting ACL names.
   # Renders every family's publisher (ingress-access-control-<band>-<library>,

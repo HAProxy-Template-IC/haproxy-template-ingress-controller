@@ -56,7 +56,8 @@ The Nginx Ingress library implements these extension points:
 | Backend Directives | `backend-directives-750-nginx-ingress-rewrite-target` | URL rewriting (capture rewrites; literal rewrites go to `path-rewrite.map` via `map-path-rewrite-750-nginx-ingress`) |
 | Backend Directives | `backend-directives-760-nginx-ingress-auth` | Basic auth enforcement |
 | Backend Directives | `backend-directives-760-nginx-ingress-proxy-ssl` | Backend TLS (`proxy-ssl-*` server flags) |
-| Backend Directives | `backend-directives-765-nginx-ingress-satisfy-any` | `satisfy: any` combined IP-or-auth gate |
+| Publications | `ingress-satisfy-0765-nginx-ingress` | `satisfy: any` combined IP-or-auth gate — publishes the route into the shared frontend lane |
+| Backend Directives | `backend-directives-765-nginx-ingress-satisfy-any` | The same gate for a route the lane can't serve: an allow-list with an IPv6 entry, or a realm needing escaping |
 | Publications | `ingress-rate-limit-0770-nginx-ingress` | Rate limiting / connection limiting (`limit-rps`, `limit-rpm`, `limit-connections`, `limit-whitelist`) — publishes the route into the shared frontend lane |
 | Backend Directives | `backend-directives-780-nginx-ingress-upstream-hash` | Hash-based load balancing |
 | Frontend Filters | `frontend-filters-791-nginx-ingress-proxy-cookie` | Upstream `Set-Cookie` rewriting (`proxy-cookie-domain`, `proxy-cookie-path`), from a per-route map |
@@ -1115,12 +1116,19 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-backend my-backend
-    acl ni_satisfy_ip_default_my-ingress src 10.0.0.0/8
-    http-request auth realm "Restricted" if !ni_satisfy_ip_default_my-ingress !{ http_auth(ni_auth_default_basic-auth) }
+frontend https
+    # ni/satisfy-any
+    http-request set-var(txn.ni_sat_allow_block) src,map_ip(/etc/haproxy/maps/ing-satisfy-allow-partitions.map) if { var(txn.resource_id) -m found }
+    http-request set-var(txn.ni_sat_allow) bool(true) if { var(txn.ni_sat_allow_block) -m found } { var(txn.ni_sat_allow_block),concat(|,txn.resource_id),map(/etc/haproxy/maps/ing-satisfy-allow-members.map) -m found }
+    http-request set-var(txn.denied_by) str(basic_auth) if { var(txn.resource_id),concat(|ni|ni_auth_default_basic-auth|Restricted),map(/etc/haproxy/maps/ing-satisfy-routes.map) -m found } !{ var(txn.ni_sat_allow) -m bool } !{ http_auth(ni_auth_default_basic-auth) }
+    http-request auth realm "Restricted" if { var(txn.resource_id),concat(|ni|ni_auth_default_basic-auth|Restricted),map(/etc/haproxy/maps/ing-satisfy-routes.map) -m found } !{ var(txn.ni_sat_allow) -m bool } !{ http_auth(ni_auth_default_basic-auth) }
 ```
 
 The independent frontend whitelist deny and the unconditional backend auth challenge are suppressed for this Ingress and replaced by the combined check.
+
+`auth realm` and `http_auth()` take literals, so the lane emits one challenge per distinct userlist-and-realm pair and selects it with a membership row in `ing-satisfy-routes.map` (`<namespace>/<name>|ni|<userlist>|<realm>` → `1`). The allow-list half is two map lookups: the block of the disjoint cover of every list the client falls in, then whether this route exempts that block. A route on a pair that already exists is therefore a map operation, and the route's own backend stays plain.
+
+Two cases keep the backend gate instead, because the lane can't express them: an allow-list carrying an IPv6 entry, which can't be cut into a disjoint cover alongside IPv4, and a realm that needs escaping, which a map value can't carry. Those routes stay structural.
 
 ---
 
