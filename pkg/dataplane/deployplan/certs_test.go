@@ -15,6 +15,7 @@
 package deployplan_test
 
 import (
+	"path"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -269,7 +270,7 @@ func TestDiffCRTListWithoutEntriesReloads(t *testing.T) {
 // created into its inventory, so both ends see the same runtime store.
 func TestDiffCertificateCreatedInThisDiffCountsAsLoaded(t *testing.T) {
 	added := srv("SRV_2", "10.0.0.2", 8080)
-	added.Extra = []renderplan.KeywordArg{{Name: "crt", Args: []string{certPath}}}
+	added.Extra = []renderplan.KeywordArg{{Name: "crt", Args: []string{path.Base(certPath)}}}
 	cert := renderplan.File{Path: certPath, Kind: renderplan.FileKindCert}
 	certBefore := withDigest(&cert, "before")
 	certAfter := withDigest(&cert, "after")
@@ -286,6 +287,29 @@ func TestDiffCertificateCreatedInThisDiffCountsAsLoaded(t *testing.T) {
 
 	require.Equal(t, deployplan.VerdictRuntime, got.Verdict, got.Reasons)
 	assert.Equal(t, []string{api.OpServerAdd, api.OpServerEnable, api.OpCertNew}, kinds(got.Ops))
+}
+
+// TestDiffServerCRTResolvesUnderCRTBase pins that a server's `crt` names its
+// certificate the way the config line does, bare under crt-base, and still
+// counts as loaded: HAProxy joins crt-base onto add server's argument too. A
+// bare name no registered certificate resolves to stays a reload.
+func TestDiffServerCRTResolvesUnderCRTBase(t *testing.T) {
+	cert := renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "same"}
+	anchor := srv("SRV_1", "10.0.0.1", 8080)
+	base := on34(basePlan(withFile(&cert), withBackend(dynBackend("be-a", anchor))))
+	base.Inventory = api.Inventory{Certs: []string{certPath}}
+
+	bare := srv("SRV_2", "10.0.0.2", 8080)
+	bare.Extra = []renderplan.KeywordArg{{Name: "crt", Args: []string{path.Base(certPath)}}}
+	got := deployplan.Diff(basePlan(withFile(&cert), withBackend(dynBackend("be-a", anchor, bare))), base)
+	require.Equal(t, deployplan.VerdictRuntime, got.Verdict, got.Reasons)
+	assert.Equal(t, []string{api.OpServerAdd, api.OpServerEnable}, kinds(got.Ops))
+
+	unknown := srv("SRV_3", "10.0.0.3", 8080)
+	unknown.Extra = []renderplan.KeywordArg{{Name: "crt", Args: []string{"other.pem"}}}
+	got = deployplan.Diff(basePlan(withFile(&cert), withBackend(dynBackend("be-a", anchor, unknown))), base)
+	require.Equal(t, deployplan.VerdictReload, got.Verdict, got.Reasons)
+	reasonsContain(t, got.Reasons, "keyword crt cannot be set on a dynamic server")
 }
 
 func TestDiffCRTListNotLoadedIsWrittenOnly(t *testing.T) {

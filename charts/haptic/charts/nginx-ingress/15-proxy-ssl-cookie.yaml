@@ -120,9 +120,8 @@ templateSnippets:
                   {%- var crtFilename = secNs + "-" + secName + "-proxy-ssl-client.pem" %}
                   {%- var _, crtRegErr = RegisterBackendFile("cert", crtFilename, combinedPem) -%}
                   {%- if crtRegErr != nil -%}{{ fail("failed to register proxy-ssl client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-                  {#- BARE filename: `crt` resolves against crt-base (ssl/-prefixed would
-                      double to ssl/ssl/<name> and fail `haproxy -c`). The bare arg then
-                      can't match the runtime store ident, so the backend is structural. -#}
+                  {#- Bare filename: crt-base joins it, on the config line and on add
+                      server alike; an ssl/-prefixed path would double. -#}
                   {%- crtPart = " crt " + crtFilename %}
                 {%- end %}
               {%- end %}
@@ -154,8 +153,6 @@ templateSnippets:
             {%- if effVerify == "required" && caFilePart != "" %}{%- serverOpts["flags"] = append(serverOpts["flags"].([]any), trimSpace(caFilePart)) %}{%- end %}
             {%- if crtPart != "" %}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), trimSpace(crtPart)) %}
-              {#- crt is crt-base-relative, so add server can't match it: structural (Backend records why). -#}
-              {%- serverOpts["shape"] = "structural-crt" %}
             {%- end %}
 
             {#- proxy-ssl-name → SNI (valid in any verify mode). verifyhost is

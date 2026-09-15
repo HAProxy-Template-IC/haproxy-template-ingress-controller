@@ -18,8 +18,12 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
@@ -69,20 +73,7 @@ func TestHapticBackendTLS(t *testing.T) {
 			echo := NewEchoServerBackend(ctx, t, client, ns)
 			mtls := NewHAProxyMTLSBackend(ctx, t, client, ns, echo, host)
 
-			NewIngress(ctx, t, client, ns, &IngressSpec{
-				Name:           "echo-haptic-backendtls",
-				Host:           host,
-				Path:           "/",
-				BackendService: mtls.HTTPS.Service,
-				BackendPort:    mtls.HTTPS.Port,
-				Annotations: map[string]string{
-					"haproxy-haptic.org/backend-protocol":   "https",
-					"haproxy-haptic.org/backend-verify":     "on",
-					"haproxy-haptic.org/backend-ca-secret":  mtls.CASecretName,
-					"haproxy-haptic.org/backend-crt-secret": mtls.ClientCertSecretName,
-					"haproxy-haptic.org/backend-sni":        "host",
-				},
-			})
+			NewIngress(ctx, t, client, ns, backendTLSIngress("echo-haptic-backendtls", host, "host", mtls))
 			return ctx
 		}).
 		Assess("haptic backend-* annotations establish a verified mTLS connection to the upstream → 200 from echo",
@@ -96,4 +87,109 @@ func TestHapticBackendTLS(t *testing.T) {
 			}).
 		Feature()
 	testEnv.Test(t, feature)
+}
+
+// TestHapticBackendTLSRouteAddRemoveIsReloadFree proves a client-cert backend
+// is dynamic: the certificate is referenced bare under crt-base, which add
+// server resolves against the runtime store, so a second route on the same
+// certificate is added and removed at runtime. Serial like the other
+// reload-free suites: a reload count is attributable only on a quiet fleet.
+// Both routes send the anchor host as SNI, the name the fixture's upstream
+// certificate is issued for.
+func TestHapticBackendTLSRouteAddRemoveIsReloadFree(t *testing.T) {
+	const (
+		anchorHost = "ingress-haptic-backendtls-rf-anchor.localdev.me"
+		anchorName = "echo-haptic-backendtls-rf-anchor"
+		cycleHost  = "ingress-haptic-backendtls-rf-cycle.localdev.me"
+		cycleName  = "echo-haptic-backendtls-rf-cycle"
+	)
+	var (
+		client klient.Client
+		cs     kubernetes.Interface
+		dyn    dynamic.Interface
+		ns     string
+		mtls   HAProxyMTLSBackend
+	)
+	feature := features.New("Ingress: haptic backend-TLS client-cert route add/remove is reload-free on 3.4").
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
+			var err error
+			if client, err = cfg.NewClient(); err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			if cs, err = newClientsetForE2E(client.RESTConfig()); err != nil {
+				t.Fatalf("build clientset: %v", err)
+			}
+			if dyn, err = newDynamicForE2E(client.RESTConfig()); err != nil {
+				t.Fatalf("build dynamic client: %v", err)
+			}
+			ns = NamespaceForTest(ctx, t, client)
+			DumpLogsOnFailure(t, ns)
+			echo := NewEchoServerBackend(ctx, t, client, ns)
+			mtls = NewHAProxyMTLSBackend(ctx, t, client, ns, echo, anchorHost)
+			NewIngress(ctx, t, client, ns, backendTLSIngress(anchorName, anchorHost, anchorHost, mtls))
+			httpclient.New(t).GET(anchorHost, "/").ExpectOK(t)
+			return ctx
+		}).
+		Assess("a second client-cert route is added and removed at runtime and, on 3.4, never reloads",
+			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				t.Helper()
+				hc := httpclient.New(t)
+				waitFleetQuiescent(ctx, t, client, cs)
+				before := captureReloadFingerprint(ctx, t, cs)
+
+				// Created directly: NewIngress would register a forget-namespace
+				// wait on this sub-test, which blocks while the anchor still exists.
+				// The cycle deletes the route itself.
+				cycle := buildIngress(ns, backendTLSIngress(cycleName, cycleHost, anchorHost, mtls))
+				if err := client.Resources(ns).Create(ctx, cycle); err != nil {
+					t.Fatalf("create Ingress %s/%s: %v", ns, cycleName, err)
+				}
+				reloadFreeReaction(ctx, t, cs, fmt.Sprintf("%s/ answers 200 through the verified mTLS upstream", cycleHost),
+					func(ctx context.Context) (bool, error) {
+						resp, err := hc.GET(cycleHost, "/").Do(ctx)
+						if err != nil {
+							return false, err
+						}
+						if resp.Status != 200 {
+							return false, fmt.Errorf("status %d", resp.Status)
+						}
+						if resp.Echo == nil {
+							return false, fmt.Errorf("no echo JSON in %d bytes", len(resp.Body))
+						}
+						return true, nil
+					})
+				deleteRouteByName(ctx, t, dyn, ingressGVR, ns, cycleName)
+				waitForRouteGone(ctx, t, cs, hc, cycleHost, "/")
+
+				after := captureReloadFingerprint(ctx, t, cs)
+				if dynamicBackendsSupported() {
+					assertReloadFree(t, before, after, "client-cert route create+delete")
+				} else {
+					t.Logf("client-cert route cycle: %.0f reloads on %s (dynamic backends need 3.4)",
+						after.reloads-before.reloads, ChartHAProxyVersion)
+				}
+				return ctx
+			}).
+		Feature()
+	testEnv.Test(t, feature)
+}
+
+// backendTLSIngress is the verified-mTLS route shape; sni is the backend-sni
+// annotation value ("host", or a literal name the upstream certificate covers).
+func backendTLSIngress(name, host, sni string, mtls HAProxyMTLSBackend) *IngressSpec {
+	return &IngressSpec{
+		Name:           name,
+		Host:           host,
+		Path:           "/",
+		BackendService: mtls.HTTPS.Service,
+		BackendPort:    mtls.HTTPS.Port,
+		Annotations: map[string]string{
+			"haproxy-haptic.org/backend-protocol":   "https",
+			"haproxy-haptic.org/backend-verify":     "on",
+			"haproxy-haptic.org/backend-ca-secret":  mtls.CASecretName,
+			"haproxy-haptic.org/backend-crt-secret": mtls.ClientCertSecretName,
+			"haproxy-haptic.org/backend-sni":        sni,
+		},
+	}
 }

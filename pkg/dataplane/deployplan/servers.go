@@ -36,6 +36,9 @@ type composer struct {
 	// created are the runtime-store objects this diff creates before anything
 	// can name them; the agent folds them into its inventory the same way.
 	created map[string]bool
+	// certDir is where the plan's certificates live, which the config also
+	// names as crt-base; "" when the plan registers none.
+	certDir string
 	// pendingServerDeletes and pendingBackendDeletes are the pod's baseline plus
 	// what this diff has composed, because the cap is on the queue, not the ACK.
 	pendingServerDeletes  int

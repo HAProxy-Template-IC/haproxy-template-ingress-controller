@@ -989,11 +989,8 @@ templateSnippets:
               {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}
               {%- var _, crtRegErr = RegisterBackendFile("cert", crtFilename, combinedPem) -%}
               {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-              {#- Bare filename: `crt` resolves against crt-base, so the arg can't
-                  match the runtime store ident and add server can't carry it —
-                  structural. -#}
+              {#- Bare filename: crt-base joins it, on the config line and on add server alike. -#}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtFilename) %}
-              {%- serverOpts["shape"] = "structural-crt" %}
             {%- else %}
               {{- recordEvent(ingress, "ServerCrtSecretIncomplete", "Ingress " + key + " references Secret '" + serverCrt + "' in 'haproxy.org/server-crt', but it has no tls.crt/tls.key. No client certificate is presented upstream.") -}}
             # haproxy.org/server-crt: referenced Secret missing tls.crt/tls.key; no client certificate presented

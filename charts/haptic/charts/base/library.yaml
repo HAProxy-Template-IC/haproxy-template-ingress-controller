@@ -1378,15 +1378,6 @@ templateSnippets:
               spec["shape"] = "structural"
             }
           }
-          // Shape code "structural-crt": a backend carrying an mTLS `crt` (resolved
-          // via crt-base, so its arg can't match the runtime cert store). Expand it
-          // to a structural shape plus the reason, defined once here rather than
-          // duplicated at every crt call site.
-          if spec["shape"] == "structural-crt" {
-            spec["shape"] = "structural"
-            spec["shapeReason"] = "mTLS client cert (crt) is crt-base-relative and can't match add server, so pod churn reloads"
-          }
-
           var lines = []any{}
           for _, comment := range headerComments {
             lines = append(lines, tostring(comment))

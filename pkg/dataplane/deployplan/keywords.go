@@ -145,7 +145,24 @@ func (c *composer) filesLoaded(kw *api.KeywordArg) bool {
 	default:
 		return true
 	}
-	return len(kw.Args) == 1 && (slices.Contains(loaded, kw.Args[0]) || c.created[kw.Args[0]])
+	if len(kw.Args) != 1 {
+		return false
+	}
+	name := kw.Args[0]
+	if kw.Name == keywordCRT && !slices.Contains(loaded, name) && !c.created[name] {
+		name = c.underCRTBase(name)
+	}
+	return slices.Contains(loaded, name) || c.created[name]
+}
+
+// underCRTBase resolves a crt argument as HAProxy does on the config line and
+// on add server alike: a relative path is joined onto crt-base, which the
+// config points at the plan's certificate directory.
+func (c *composer) underCRTBase(arg string) string {
+	if c.certDir == "" || strings.HasPrefix(arg, "/") {
+		return arg
+	}
+	return c.certDir + "/" + arg
 }
 
 func allSafeTokens(args []string) bool {
