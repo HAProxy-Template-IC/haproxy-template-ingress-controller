@@ -192,6 +192,16 @@ maps:
       # <ns>/<name> → "ok <userlist> <realm>" | "missing" | "nosecret"
       # Populated by map-haptic-basic-auth-routes-*; read by frontend-filters-900-haptic-basic-auth.
       {{ render_glob "map-haptic-basic-auth-routes-*" -}}
+  haptic-rewrite-routes.map:
+    template: |
+      # <ns>/<name> → 1 for every route whose path-rewrite rides the map lane.
+      # Populated by map-haptic-rewrite-routes-*; read by frontend-filters-995-haptic-path-rewrite.
+      {{ render_glob "map-haptic-rewrite-routes-*" -}}
+  haptic-rewrite-prefix.map:
+    template: |
+      # <ns>/<name>|<prefix> → "<offset> <new prefix>", a prefix-tree lookup (map_beg) per map-lane route.
+      # Populated by map-haptic-rewrite-prefix-*; read by frontend-filters-995-haptic-path-rewrite.
+      {{ render_glob "map-haptic-rewrite-prefix-*" -}}
   haptic-apikeys.map:
     template: |
       # <secret ns/name>|<apikey> → <consumer>, for every Secret an Ingress references.
