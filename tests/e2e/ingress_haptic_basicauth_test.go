@@ -18,12 +18,17 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/e2e-framework/klient"
+	"sigs.k8s.io/e2e-framework/pkg/envconf"
+	"sigs.k8s.io/e2e-framework/pkg/features"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
@@ -54,23 +59,7 @@ func TestHapticBasicAuth(t *testing.T) {
 		},
 		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
 			t.Helper()
-			// Pre-generated bcrypt hash for "admin" (admin/admin matches the
-			// dev-env secret); regenerate with:
-			//   htpasswd -nbB admin admin | cut -d: -f2
-			adminBcrypt := "$2y$05$mN1WVk5Qnbg4QwdAdXbfz.8b3ceH6Q5KOVCKxR2IkNAfJgLi5pIKW"
-			// auth-file format: one `username:hash` htpasswd line in the `auth` key.
-			htpasswd := "admin:" + adminBcrypt + "\n"
-			authSecret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "echo-auth-secret",
-					Namespace: namespace,
-				},
-				Type: corev1.SecretTypeOpaque,
-				Data: map[string][]byte{"auth": []byte(htpasswd)},
-			}
-			if err := client.Resources(namespace).Create(ctx, authSecret); err != nil {
-				t.Fatalf("create auth secret: %v", err)
-			}
+			newBasicAuthSecret(ctx, t, client, namespace)
 		},
 		Assess: []SimpleIngressAssertion{
 			{
@@ -92,4 +81,126 @@ func TestHapticBasicAuth(t *testing.T) {
 			},
 		},
 	})
+}
+
+// newBasicAuthSecret creates the auth-file Secret both basic-auth tests use:
+// one `username:hash` htpasswd line in the `auth` key. The bcrypt hash is for
+// "admin" (admin/admin matches the dev-env secret); regenerate with
+// `htpasswd -nbB admin admin | cut -d: -f2`.
+func newBasicAuthSecret(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+	t.Helper()
+	adminBcrypt := "$2y$05$mN1WVk5Qnbg4QwdAdXbfz.8b3ceH6Q5KOVCKxR2IkNAfJgLi5pIKW"
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "echo-auth-secret", Namespace: namespace},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{"auth": []byte("admin:" + adminBcrypt + "\n")},
+	}
+	if err := client.Resources(namespace).Create(ctx, authSecret); err != nil {
+		t.Fatalf("create auth secret: %v", err)
+	}
+}
+
+// TestHapticBasicAuthRouteAddRemoveIsReloadFree proves a basic-auth route on an
+// existing credentials Secret is dynamic: the challenge is a frontend rule fed
+// by a per-route map, so the backend stays plain and a second route is added
+// and removed at runtime. Serial like the other reload-free suites: a reload
+// count is attributable only on a quiet fleet.
+func TestHapticBasicAuthRouteAddRemoveIsReloadFree(t *testing.T) {
+	const (
+		anchorHost = "ingress-haptic-basicauth-rf-anchor.localdev.me"
+		anchorName = "echo-haptic-basicauth-rf-anchor"
+		cycleHost  = "ingress-haptic-basicauth-rf-cycle.localdev.me"
+		cycleName  = "echo-haptic-basicauth-rf-cycle"
+	)
+	var (
+		client klient.Client
+		cs     kubernetes.Interface
+		dyn    dynamic.Interface
+		ns     string
+		echo   BackendRef
+	)
+	feature := features.New("Ingress: HAPTIC-native basic-auth route add/remove is reload-free on 3.4").
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
+			var err error
+			if client, err = cfg.NewClient(); err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			if cs, err = newClientsetForE2E(client.RESTConfig()); err != nil {
+				t.Fatalf("build clientset: %v", err)
+			}
+			if dyn, err = newDynamicForE2E(client.RESTConfig()); err != nil {
+				t.Fatalf("build dynamic client: %v", err)
+			}
+			ns = NamespaceForTest(ctx, t, client)
+			DumpLogsOnFailure(t, ns)
+			echo = NewEchoServerBackend(ctx, t, client, ns)
+			newBasicAuthSecret(ctx, t, client, ns)
+			NewIngress(ctx, t, client, ns, basicAuthIngress(anchorName, anchorHost, echo))
+			httpclient.New(t).GET(anchorHost, "/").WithBasicAuth("admin", "admin").ExpectOK(t)
+			return ctx
+		}).
+		Assess("a second route on the same Secret is added and removed at runtime and, on 3.4, never reloads",
+			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				t.Helper()
+				hc := httpclient.New(t)
+				waitFleetQuiescent(ctx, t, client, cs)
+				before := captureReloadFingerprint(ctx, t, cs)
+
+				// Created directly: NewIngress would register a forget-namespace
+				// wait on this sub-test, which blocks while the anchor still exists.
+				// The cycle deletes the route itself.
+				cycle := buildIngress(ns, basicAuthIngress(cycleName, cycleHost, echo))
+				if err := client.Resources(ns).Create(ctx, cycle); err != nil {
+					t.Fatalf("create Ingress %s/%s: %v", ns, cycleName, err)
+				}
+				reloadFreeReaction(ctx, t, cs, fmt.Sprintf("%s/ answers 200 with credentials", cycleHost),
+					func(ctx context.Context) (bool, error) {
+						resp, err := hc.GET(cycleHost, "/").WithBasicAuth("admin", "admin").Do(ctx)
+						if err != nil {
+							return false, err
+						}
+						if resp.Status != http.StatusOK {
+							return false, fmt.Errorf("status %d", resp.Status)
+						}
+						if resp.Echo == nil {
+							return false, fmt.Errorf("no echo JSON in %d bytes", len(resp.Body))
+						}
+						return true, nil
+					})
+				// The runtime-added route is challenged too: its map row, not a
+				// backend rule, names the userlist.
+				hc.GET(cycleHost, "/").ExpectStatus(t, http.StatusUnauthorized)
+				deleteRouteByName(ctx, t, dyn, ingressGVR, ns, cycleName)
+				waitForRouteGone(ctx, t, cs, hc, cycleHost, "/")
+
+				after := captureReloadFingerprint(ctx, t, cs)
+				if dynamicBackendsSupported() {
+					assertReloadFree(t, before, after, "basic-auth route create+delete")
+				} else {
+					t.Logf("basic-auth route cycle: %.0f reloads on %s (dynamic backends need 3.4)",
+						after.reloads-before.reloads, ChartHAProxyVersion)
+				}
+				return ctx
+			}).
+		Feature()
+	testEnv.Test(t, feature)
+}
+
+// basicAuthIngress is the basic-auth route shape the anchor and the cycled
+// route share, Secret and userlist included.
+func basicAuthIngress(name, host string, echo BackendRef) *IngressSpec {
+	return &IngressSpec{
+		Name:           name,
+		Host:           host,
+		Path:           "/",
+		BackendService: echo.Service,
+		BackendPort:    echo.Port,
+		Annotations: map[string]string{
+			"haproxy-haptic.org/auth-type":        "basic",
+			"haproxy-haptic.org/auth-secret":      "echo-auth-secret",
+			"haproxy-haptic.org/auth-realm":       "Echo-Server-Protected",
+			"haproxy-haptic.org/auth-secret-type": "auth-file",
+		},
+	}
 }

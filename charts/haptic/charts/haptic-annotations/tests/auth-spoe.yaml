@@ -14,8 +14,8 @@ validationTests:
   test-haptic-basic-auth:
     description: >-
       haproxy-haptic.org/auth-type basic + auth-secret (auth-file htpasswd)
-      generates a userlist (bcrypt hash + user::plain → insecure-password) and
-      the backend auth challenge.
+      generates a userlist (bcrypt hash + user::plain → insecure-password), a
+      routes-map row and the frontend auth challenge; the backend stays plain.
     fixtures:
       secrets:
         # data.auth = base64("admin:$2y$05$...\nguest::plainpw\n")
@@ -47,7 +47,107 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "user guest insecure-password plainpw"}
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request auth realm "ProtectedArea" unless \{ http_auth\(haptic_auth_default_haptic-auth\) \}'
+        pattern: 'http-request auth realm "ProtectedArea" if \{ var\(txn\.ba_cfg\) -m str "ok haptic_auth_default_haptic-auth ProtectedArea" \} !\{ http_auth\(haptic_auth_default_haptic-auth\) \}'
+      - {type: contains, target: "map:haptic-basic-auth-routes.map", pattern: '(?m)^default/auth-ingress ok haptic_auth_default_haptic-auth ProtectedArea$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'auth realm "ProtectedArea" unless'}
+
+  test-haptic-basic-auth-shared-secret-one-rule-per-pair:
+    description: >-
+      Routes on one credentials Secret share its userlist; the frontend spells
+      out one auth rule per distinct (userlist, realm) pair, a realm may
+      contain spaces and is stripped, and every route has its own map row.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: shared-auth }
+          type: Opaque
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCmd1ZXN0OjpwbGFpbnB3Cg==
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ba-one
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "shared-auth"
+              haproxy-haptic.org/auth-realm: " Staging Area "
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: one.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ba-two
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "shared-auth"
+              haproxy-haptic.org/auth-realm: "Staging Area"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: two.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ba-three
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "shared-auth"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: three.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: haproxy.cfg, pattern: "userlist haptic_auth_default_shared-auth", expected: "1"}
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request auth realm "Staging Area" if \{ var\(txn\.ba_cfg\) -m str "ok haptic_auth_default_shared-auth Staging Area" \} !\{ http_auth\(haptic_auth_default_shared-auth\) \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request auth realm "Restricted" if \{ var\(txn\.ba_cfg\) -m str "ok haptic_auth_default_shared-auth Restricted" \} !\{ http_auth\(haptic_auth_default_shared-auth\) \}'
+      - {type: contains, target: "map:haptic-basic-auth-routes.map", pattern: '(?m)^default/ba-one ok haptic_auth_default_shared-auth Staging Area$'}
+      - {type: contains, target: "map:haptic-basic-auth-routes.map", pattern: '(?m)^default/ba-two ok haptic_auth_default_shared-auth Staging Area$'}
+      - {type: contains, target: "map:haptic-basic-auth-routes.map", pattern: '(?m)^default/ba-three ok haptic_auth_default_shared-auth Restricted$'}
+
+  test-haptic-basic-auth-realm-rejects-weak-quote-expansion:
+    description: >-
+      The realm is a weakly quoted config token and a map value: a `$` would be
+      expanded in one and kept in the other, so the rule would never match.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: haptic-auth }
+          type: Opaque
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCmd1ZXN0OjpwbGFpbnB3Cg==
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-ingress
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "haptic-auth"
+              haproxy-haptic.org/auth-realm: "Area $HOME"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: auth.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Invalid auth-realm 'Area [$]HOME' on Ingress 'default/auth-ingress'"}
 
   test-haptic-basic-auth-map:
     description: >-
@@ -125,7 +225,7 @@ validationTests:
         pattern: 'http-request auth realm "Protected" if !haptic_satisfy_ip_default_satisfy-any-ingress !\{ http_auth\(haptic_auth_default_satisfy-auth\) \}'
       - type: not_contains
         target: haproxy.cfg
-        pattern: 'http-request auth realm "Protected" unless \{ http_auth\(haptic_auth_default_satisfy-auth\) \}'
+        pattern: '-m str "ok haptic_auth_default_satisfy-auth Protected"'
       # The standalone allowlist deny (access-control fragment) is suppressed
       # under satisfy=any — the combined gate above owns the allowlist, so an
       # authenticated request from a non-allow-listed IP still passes.
