@@ -92,14 +92,11 @@ EmitAnnotationAccessControl(
 )
 ```
 
-**Used by:**
+**Used by:** `PublishAccessControl` (below), for a list with an IPv6 entry; every other list rides the map lane.
 
-- `haproxytech/` → `frontend-filters-200-haproxytech-access-control`
-- `haproxy-ingress/` → `frontend-filters-610-haproxy-ingress-access-control`
-- `nginx-ingress/` → `frontend-filters-700-nginx-ingress-access-control`
-- `haptic-annotations/` → `frontend-filters-810-haptic-access-control` (`aclPrefix: "haptic"`)
+### `PublishAccessControl` and `AccessControlLane`
 
-Validation tests assert on the names of the generated ACLs (`ni_allowlist_*`, `hi_allowlist_*`, `haproxytech_allowlist_*`, `haptic_allowlist_*`), so each library passes its distinct `aclPrefix`.
+The map lane for source-IP allow and deny lists. Each library's publisher (`ingress-access-control-<band>-<library>`, in incremental group `ingress-access-control`) calls `PublishAccessControl` with the same arguments as `EmitAnnotationAccessControl`; an IPv4-only list becomes rows for four shared maps (`ing-ac-routes.map`, `ing-ac-partitions.map` from `cidr_partition`, `ing-ac-allow.map`, `ing-ac-deny.map`), and a list with an IPv6 entry comes back as the legacy fragment for the publisher to keep under `fragments:<family>`. Each library's frontend block, at its own band, renders `AccessControlLane("<family>")`: one exact lookup by route id, one `map_ip` lookup of the client address, and one deny rule each for the allow and the deny mode, followed by the family's legacy fragments. `family` doubles as the legacy ACL prefix (`ni`, `hi`, `haproxytech`, `haptic`).
 
 ### `WebhookRejectOrWarn`
 

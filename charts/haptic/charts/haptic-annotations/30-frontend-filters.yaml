@@ -13,30 +13,6 @@
 # producers. Snippets sit in the 800-band (600s=haproxy-ingress, 700s=nginx).
 templateSnippets:
 
-  util-haptic-emit-annotation-access-control:
-    template: |-
-      {%- import "util-haptic-ingress-match" for HapticResourceMatchCondition -%}
-      {%- import "util-validate-cidr-list" for ValidateCidrList -%}
-      {%- macro EmitHapticAnnotationAccessControl(ingress *resources.ingresses.T, allowAnnotation string, denyAnnotation string, aclPrefix string, allowCommentFmt string, denyCommentFmt string) -%}
-        {%- var ns = ingress.Metadata.Namespace -%}
-        {%- var name = ingress.Metadata.Name -%}
-        {%- var key = ns + "/" + name -%}
-        {%- var cond = HapticResourceMatchCondition(key) -%}
-        {%- var allowlist = ingress.Metadata.Annotations[allowAnnotation] -%}
-        {%- var denylist = ingress.Metadata.Annotations[denyAnnotation] -%}
-        {%- if allowlist != "" %}
-      # {{ replace(allowCommentFmt, "{KEY}", key) }}
-      acl {{ aclPrefix }}_allowlist_{{ ns }}_{{ name }} src {{ ValidateCidrList(allowlist, allowAnnotation, key) }}
-
-      http-request deny if {{ cond }} !{{ aclPrefix }}_allowlist_{{ ns }}_{{ name }}
-        {%- end -%}
-        {%- if denylist != "" %}
-      # {{ replace(denyCommentFmt, "{KEY}", key) }}
-      acl {{ aclPrefix }}_denylist_{{ ns }}_{{ name }} src {{ ValidateCidrList(denylist, denyAnnotation, key) }}
-
-      http-request deny if {{ cond }} {{ aclPrefix }}_denylist_{{ ns }}_{{ name }}
-        {%- end -%}
-      {%- end macro -%}
 
   util-haptic-emit-annotation-cors:
     template: |-
@@ -179,7 +155,7 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
-  features-900-haptic-fragment-810-access-control:
+  ingress-access-control-0810-haptic:
     requires: [ingresses]
     incremental:
       source: ingresses
@@ -187,49 +163,35 @@ templateSnippets:
         - "metadata.annotations['haproxy-haptic.org/allowlist-source-range']"
         - "metadata.annotations['haproxy-haptic.org/denylist-source-range']"
         - "metadata.annotations['haproxy-haptic.org/satisfy']"
+      group: ingress-access-control
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-810-access-control" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {#
+        HAPTIC IP allow/deny-list: rows for the shared map lane
+        (util-access-control-lane), or the legacy per-route fragment for a
+        list with an IPv6 entry.
+        Annotations:
+          - haproxy-haptic.org/allowlist-source-range: "CIDR,CIDR,..." (optional)
+          - haproxy-haptic.org/denylist-source-range: "CIDR,CIDR,..." (optional)
+        Under satisfy=any the combined IP-or-auth gate (backend-directives-825)
+        owns the allowlist, so it is left out here; the denylist still applies.
+      #}
+      {%- import "util-publish-access-control" for PublishAccessControl -%}
+      {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var allowKey = "haproxy-haptic.org/allowlist-source-range" -%}
+        {%- if SatisfyAnyMode(ingress) == "any" -%}{%- allowKey = "" -%}{%- end -%}
+        {%- var fragment = PublishAccessControl(ingress, allowKey, "haproxy-haptic.org/denylist-source-range", "haptic", "haptic/allowlist-source-range ({KEY})", "haptic/denylist-source-range ({KEY})") -%}
+        {%- if fragment != "" -%}{{- shared.Publish("fragments:haptic", ingress.Metadata.Namespace + "/" + ingress.Metadata.Name, fragment) -}}{%- end -%}
       {%- end -%}
 
   frontend-filters-810-haptic-access-control:
     requires: [ingresses]
     template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-810-access-control", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-810-access-control:
-    template: |
-      {#
-        HAPTIC IP allow/deny-list (best-of-breed: shared CIDR-ACL macro)
-
-        Annotations:
-          - haproxy-haptic.org/allowlist-source-range: "CIDR,CIDR,..." (optional)
-          - haproxy-haptic.org/denylist-source-range: "CIDR,CIDR,..." (optional)
-
-        Generated HAProxy Config (host-scoped):
-          acl <name> src <cidrs>
-          http-request deny if <host-match> !<acl>   (allowlist)
-          http-request deny if <host-match>  <acl>   (denylist)
-      #}
-      {%- import "util-haptic-emit-annotation-access-control" for EmitHapticAnnotationAccessControl -%}
-      {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
-        {#- Under satisfy=any the combined IP-or-auth gate (backend-directives-825)
-            owns the allowlist so an allow-listed OR authenticated request passes;
-            suppress the standalone allowlist deny here by passing an empty key
-            (the macro then skips it). The denylist deny still applies. -#}
-        {%- var allowKey = "haproxy-haptic.org/allowlist-source-range" %}
-        {%- if SatisfyAnyMode(ingress) == "any" %}{%- allowKey = "" %}{%- end %}
-        {{ EmitHapticAnnotationAccessControl(ingress,
-            allowKey,
-            "haproxy-haptic.org/denylist-source-range",
-            "haptic",
-            "haptic/allowlist-source-range ({KEY})",
-            "haptic/denylist-source-range ({KEY})") }}
-      {%- end -%}
+      {%- import "util-access-control-lane" for AccessControlLane -%}
+      {{- AccessControlLane("haptic") -}}
 
   # Reload-free: request-set-header and response-set-header (newline-separated
   # "<name> <value>" records) become entries in ing-reqhdr.map / ing-reshdr.map

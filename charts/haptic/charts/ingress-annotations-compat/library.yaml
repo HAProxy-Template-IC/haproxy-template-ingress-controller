@@ -275,6 +275,145 @@ templateSnippets:
 
   # aclPrefix must stay distinct per library — validation tests assert on the
   # resulting ACL names.
+  # Renders every family's publisher (ingress-access-control-<band>-<library>,
+  # plus the declaration below) in one sorted pass: a shared incremental
+  # group must render its members in canonical order.
+  features-200-ingress-access-control:
+    template: '{{- render_glob "ingress-access-control-*" -}}'
+
+  # Declares the group every annotation library publishes its source-IP
+  # allow/deny rows into, so the lane's readers find it in every render.
+  ingress-access-control-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-access-control
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  # PublishAccessControl: the map-lane publisher, called from a component in
+  # group ingress-access-control. An IPv4-only list becomes rows ("<family>"
+  # for the gate, "route" → "<id> <family>:allow|deny|both", "allow"/"deny" →
+  # "<id> <cidr>..."); a list with an IPv6 entry cannot be partitioned, so the
+  # legacy per-route fragment is returned for the caller to publish under
+  # "fragments:<family>". family doubles as the legacy ACL prefix.
+  util-publish-access-control:
+    template: |-
+      {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
+      {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {%- macro PublishAccessControl(ingress *resources.ingresses.T, allowAnnotation string, denyAnnotation string, family string, allowCommentFmt string, denyCommentFmt string) -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var allowlist = "" -%}
+        {%- if allowAnnotation != "" -%}{%- allowlist = ingress.Metadata.Annotations[allowAnnotation] -%}{%- end -%}
+        {%- var denylist = "" -%}
+        {%- if denyAnnotation != "" -%}{%- denylist = ingress.Metadata.Annotations[denyAnnotation] -%}{%- end -%}
+        {%- if allowlist != "" || denylist != "" -%}
+          {%- var allowCidrs = "" -%}
+          {%- if allowlist != "" -%}{%- allowCidrs = ValidateCidrList(allowlist, allowAnnotation, key) -%}{%- end -%}
+          {%- var denyCidrs = "" -%}
+          {%- if denylist != "" -%}{%- denyCidrs = ValidateCidrList(denylist, denyAnnotation, key) -%}{%- end -%}
+          {%- if strings_contains(allowCidrs + denyCidrs, ":") -%}
+            {{- EmitAnnotationAccessControl(ingress, allowAnnotation, denyAnnotation, family, allowCommentFmt, denyCommentFmt) -}}
+          {%- else -%}
+            {%- var mode = "both" -%}
+            {%- if denyCidrs == "" -%}{%- mode = "allow" -%}{%- else if allowCidrs == "" -%}{%- mode = "deny" -%}{%- end -%}
+            {{- shared.Publish(family, key, key) -}}
+            {{- shared.Publish("route", key, key + " " + family + ":" + mode) -}}
+            {%- if allowCidrs != "" -%}{{- shared.Publish("allow", key, key + " " + allowCidrs) -}}{%- end -%}
+            {%- if denyCidrs != "" -%}{{- shared.Publish("deny", key, key + " " + denyCidrs) -}}{%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  # AccessControlLane(family): one family's four rules at that family's band,
+  # then its legacy fragments. The four maps are shared by every family and
+  # registered once per render: ing-ac-routes.map (route id → family:mode),
+  # ing-ac-partitions.map (the disjoint cover of every CIDR, a map_ip lookup on
+  # src), ing-ac-allow.map and ing-ac-deny.map ("<block>|<route id>" → 1). A
+  # client outside every block leaves txn.ac_block unset, so the concat fetch
+  # fails: an allowlisted route denies it, a denylisted route lets it through,
+  # exactly what `src <cidrs>` did.
+  util-access-control-lane:
+    template: |-
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- macro AccessControlLane(family string) -%}
+        {%- if incremental_value_count("ingress-access-control", family) > 0 -%}
+          {%%
+            var mapsVal, _ = shared.ComputeIfAbsent("ingressAccessControlMaps", func() any {
+              var cidrs = []any{}
+              var lists = map[string][]any{"allow": []any{}, "deny": []any{}}
+              for _, kind := range []string{"allow", "deny"} {
+                for _, v := range incremental_values("ingress-access-control", kind) {
+                  lists[kind] = append(lists[kind], tostring(v))
+                  for _, c := range split(strings_splitn(tostring(v), " ", 2)[1], " ") {
+                    cidrs = append(cidrs, c)
+                  }
+                }
+              }
+              var blocks, err = cidr_partition(cidrs)
+              if err != nil {
+                fail(tostring(err))
+              }
+              var seen = map[string]bool{}
+              var partitions = []any{}
+              for _, list := range blocks {
+                for _, b := range list {
+                  if !seen[b] {
+                    seen[b] = true
+                    partitions = append(partitions, b)
+                  }
+                }
+              }
+              var partitionLines = []string{}
+              for _, b := range sort_strings(partitions) {
+                partitionLines = append(partitionLines, tostring(b) + " " + tostring(b))
+              }
+              var members = func(kind string) []string {
+                var out = []any{}
+                var seenLine = map[string]bool{}
+                for _, r := range lists[kind] {
+                  var parts = strings_splitn(tostring(r), " ", 2)
+                  for _, c := range split(parts[1], " ") {
+                    for _, b := range blocks[c] {
+                      var line = b + "|" + parts[0] + " 1"
+                      if !seenLine[line] {
+                        seenLine[line] = true
+                        out = append(out, line)
+                      }
+                    }
+                  }
+                }
+                var lines = []string{}
+                for _, l := range sort_strings(out) {
+                  lines = append(lines, tostring(l))
+                }
+                return lines
+              }
+              var routes = []any{}
+              for _, v := range incremental_values("ingress-access-control", "route") {
+                routes = append(routes, tostring(v))
+              }
+              var routeLines = []string{}
+              for _, r := range sort_strings(routes) {
+                routeLines = append(routeLines, tostring(r))
+              }
+              return map[string]any{
+                "routes": RegisterMap("ing-ac-routes.map", routeLines, map[string]any{"ordered": false}),
+                "partitions": RegisterMap("ing-ac-partitions.map", partitionLines, map[string]any{"ordered": false}),
+                "allow": RegisterMap("ing-ac-allow.map", members("allow"), map[string]any{"ordered": false}),
+                "deny": RegisterMap("ing-ac-deny.map", members("deny"), map[string]any{"ordered": false}),
+              }
+            })
+            var maps = mapsVal.(map[string]any)
+          %%}
+      # {{ family }}/access-control
+      http-request set-var(txn.ac) var(txn.resource_id),map({{ maps["routes"] }})
+      http-request set-var(txn.ac_block) src,map_ip({{ maps["partitions"] }}) if { var(txn.ac) -m beg "{{ family }}:" }
+      http-request deny if { var(txn.ac) -m str "{{ family }}:allow" "{{ family }}:both" } !{ var(txn.ac_block),concat(|,txn.resource_id),map({{ maps["allow"] }}) -m found }
+      http-request deny if { var(txn.ac) -m str "{{ family }}:deny" "{{ family }}:both" } { var(txn.ac_block),concat(|,txn.resource_id),map({{ maps["deny"] }}) -m found }
+        {%- end -%}
+        {%- for _, f := range incremental_values("ingress-access-control", "fragments:" + family) -%}{{- tostring(f) -}}{%- end -%}
+      {%- end macro -%}
+
   util-emit-annotation-access-control:
     template: |
       {%- import "util-validate-cidr-list" for ValidateCidrList %}

@@ -46,7 +46,7 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
-  frontend-filters-610-haproxy-ingress-access-control:
+  ingress-access-control-0610-haproxy-ingress:
     requires: [ingresses]
     incremental:
       source: ingresses
@@ -54,42 +54,38 @@ templateSnippets:
         - "metadata.annotations['haproxy-ingress.github.io/allowlist-source-range']"
         - "metadata.annotations['haproxy-ingress.github.io/whitelist-source-range']"
         - "metadata.annotations['haproxy-ingress.github.io/denylist-source-range']"
-    template: |
+      group: ingress-access-control
+      effects: [publishValue]
+    template: |-
       {#
         HAProxy-Ingress Access Control Annotations
-
         Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#allowlist-source-range
-
         Annotations:
           - haproxy-ingress.github.io/allowlist-source-range: "CIDR,CIDR,..." (optional)
           - haproxy-ingress.github.io/whitelist-source-range: deprecated alias of
             allowlist-source-range; ignored when allowlist-source-range is set
           - haproxy-ingress.github.io/denylist-source-range: "CIDR,CIDR,..." (optional)
-
-        Generated HAProxy Config:
-          acl <name> src <cidrs>
-          http-request deny if <host-match> !<acl>    (for allowlist)
-          http-request deny if <host-match> <acl>     (for denylist)
+        Rows for the shared map lane (util-access-control-lane), or the legacy
+        per-route fragment for a list with an IPv6 entry.
       #}
-      {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
-        {#- No participating annotation → the macro emits nothing; skip the call. -#}
-        {%- var anns = ingress.Metadata.Annotations %}
-        {%- if anns["haproxy-ingress.github.io/allowlist-source-range"] == "" && anns["haproxy-ingress.github.io/whitelist-source-range"] == "" && anns["haproxy-ingress.github.io/denylist-source-range"] == "" %}{%- continue %}{%- end %}
-        {#- whitelist-source-range is the deprecated alias of allowlist-source-range;
-            upstream ignores it when allowlist-source-range is declared. -#}
-        {%- var allowKey = "haproxy-ingress.github.io/allowlist-source-range" %}
-        {%- if anns["haproxy-ingress.github.io/allowlist-source-range"] == "" && anns["haproxy-ingress.github.io/whitelist-source-range"] != "" %}
-          {%- allowKey = "haproxy-ingress.github.io/whitelist-source-range" %}
-        {%- end %}
-        {{ EmitAnnotationAccessControl(ingress,
-            allowKey,
-            "haproxy-ingress.github.io/denylist-source-range",
-            "hi",
-            "haproxy-ingress/allowlist-source-range ({KEY})",
-            "haproxy-ingress/denylist-source-range ({KEY})") }}
+      {%- import "util-publish-access-control" for PublishAccessControl -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var anns = ingress.Metadata.Annotations -%}
+        {%- var allowKey = "haproxy-ingress.github.io/allowlist-source-range" -%}
+        {%- if anns["haproxy-ingress.github.io/allowlist-source-range"] == "" && anns["haproxy-ingress.github.io/whitelist-source-range"] != "" -%}
+          {%- allowKey = "haproxy-ingress.github.io/whitelist-source-range" -%}
+        {%- end -%}
+        {%- var fragment = PublishAccessControl(ingress, allowKey, "haproxy-ingress.github.io/denylist-source-range", "hi", "haproxy-ingress/allowlist-source-range ({KEY})", "haproxy-ingress/denylist-source-range ({KEY})") -%}
+        {%- if fragment != "" -%}{{- shared.Publish("fragments:hi", ingress.Metadata.Namespace + "/" + ingress.Metadata.Name, fragment) -}}{%- end -%}
       {%- end -%}
+
+  frontend-filters-610-haproxy-ingress-access-control:
+    requires: [ingresses]
+    template: |-
+      {%- import "util-access-control-lane" for AccessControlLane -%}
+      {{- AccessControlLane("hi") -}}
 
   # SSL redirect relocated to features-105-haproxy-ingress-ssl-redirect: it now
   # registers hosts into the shared gf["sslRedirectHosts"] map (ssl.yaml emits the

@@ -37,7 +37,7 @@ import (
 
 var haproxyTechGatedComponents = []string{
 	"haproxytech-forwarded-for-publications",
-	"haproxytech-access-control-publications",
+	"ingress-access-control-0200-haproxytech",
 	"haproxytech-cors-publications",
 	"haproxytech-ssl-redirect-port-publications",
 	"haproxytech-request-redirect-publications",
@@ -49,7 +49,7 @@ var haproxyTechGatedComponents = []string{
 }
 
 const haproxyTechGatedRoot = `{{- render "haproxytech-forwarded-for-publications" -}}
-{{- render "haproxytech-access-control-publications" -}}
+{{- render "ingress-access-control-0200-haproxytech" -}}
 {{- render "haproxytech-cors-publications" -}}
 {{- render "haproxytech-ssl-redirect-port-publications" -}}
 {{- render "haproxytech-request-redirect-publications" -}}
@@ -61,7 +61,7 @@ const haproxyTechGatedRoot = `{{- render "haproxytech-forwarded-for-publications
 {{ len(incremental_values("haproxytech-forwarded-for", "enabled")) }}`
 
 const haproxyTechAuthRoot = `{{- render "haproxytech-forwarded-for-publications" -}}
-{{- render "haproxytech-access-control-publications" -}}
+{{- render "ingress-access-control-0200-haproxytech" -}}
 {{- render "haproxytech-cors-publications" -}}
 {{- render "haproxytech-ssl-redirect-port-publications" -}}
 {{- render "haproxytech-request-redirect-publications" -}}
@@ -424,15 +424,15 @@ func loadHAProxyTechSetHostCollisionSnippets(t *testing.T) map[string]config.Tem
 func loadHAProxyTechGatedSnippets(t *testing.T) map[string]config.TemplateSnippet {
 	t.Helper()
 	wanted := map[string]bool{
-		"util-webhook-reject-or-warn":              true,
-		"util-config-injection-kind":               true,
-		"util-validate-config-value":               true,
-		"util-backend-name-ingress":                true,
-		"util-ingress-header-publish":              true,
-		"util-emit-annotation-access-control":      true,
-		"util-validate-cidr-list":                  true,
-		"util-haproxytech-access-control-fragment": true,
-		"util-haproxytech-logging-fragment":        true,
+		"util-webhook-reject-or-warn":         true,
+		"util-config-injection-kind":          true,
+		"util-validate-config-value":          true,
+		"util-backend-name-ingress":           true,
+		"util-ingress-header-publish":         true,
+		"util-emit-annotation-access-control": true,
+		"util-validate-cidr-list":             true,
+		"util-publish-access-control":         true,
+		"util-haproxytech-logging-fragment":   true,
 	}
 	for _, name := range haproxyTechGatedComponents {
 		wanted[name] = true
