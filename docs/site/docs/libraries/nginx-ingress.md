@@ -1440,8 +1440,9 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-request set-header ssl-client-cert %[ssl_c_der,base64] if { hdr(host) -i example.com }
-http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { hdr(host) -i example.com }
+# one block per frontend, gated by the route's row in nginx-cert-header-routes.map
+http-request set-header ssl-client-cert %[ssl_c_der,base64] if { var(txn.resource_id),map(/etc/haproxy/maps/nginx-cert-header-routes.map) -m found }
+http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { var(txn.resource_id),map(/etc/haproxy/maps/nginx-cert-header-routes.map) -m found }
 ```
 
 ---

@@ -628,58 +628,49 @@ templateSnippets:
     template: |-
       {%- for _, fragment := range incremental_values("features-900-haptic-fragment-819-auth-tls-cert-header-strip", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
 
-  features-900-haptic-fragment-820-auth-tls-cert-header:
+  # auth-tls-cert-header: the X-SSL-Client-* headers for a route that opted in,
+  # from haptic-cert-header-routes.map ("<route id>" -> 1); the strip above
+  # stays unconditional. No per-route literal, so one block serves every route.
+  features-820-haptic-auth-tls-cert-header:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-tls-cert-header']"]
-      consumes: [haptic-ingress-match-publications]
+      group: haptic-cert-header
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-820-auth-tls-cert-header" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {{- shared.Publish("any", "any", "any") -}}
+        {{- shared.Publish("route", key, key + " 1") -}}
       {%- end -%}
 
   frontend-filters-820-haptic-auth-tls-cert-header:
     requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-820-auth-tls-cert-header", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-820-auth-tls-cert-header:
     template: |
-      {#
-        HAPTIC auth-tls-cert-header — forward client-certificate details to the
-        backend as request headers on hosts that presented a client cert.
-
-        Annotation: haproxy-haptic.org/auth-tls-cert-header: "true|false"
-
-        Generated HAProxy Config (per matched host):
-          http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } <host-match>
-          http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } <host-match>
-          http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } <host-match>
-      #}
-      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
-      {%- var ingress = resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-            {%- var cond = HapticHostMatchCondition(key) %}
-      # haptic/auth-tls-cert-header ({{ key }})
-      http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } {{ cond }}
-      http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } {{ cond }}
-      http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } {{ cond }}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- if incremental_value_count("haptic-cert-header", "any") > 0 -%}
+      {%%
+        var routesVal, _ = shared.ComputeIfAbsent("hapticCertHeaderMap", func() any {
+          var rows = []any{}
+          for _, v := range incremental_values("haptic-cert-header", "route") {
+            rows = append(rows, tostring(v))
+          }
+          var lines = []string{}
+          for _, r := range sort_strings(rows) {
+            lines = append(lines, tostring(r))
+          }
+          return RegisterMap("haptic-cert-header-routes.map", lines, map[string]any{"ordered": false})
+        })
+        var routes = tostring(routesVal)
+      %%}
+      {{ "\n" }}# haptic/auth-tls-cert-header
+      http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } { var(txn.resource_id),map({{ routes }}) -m found }
+      http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } { var(txn.resource_id),map({{ routes }}) -m found }
+      http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } { var(txn.resource_id),map({{ routes }}) -m found }
+      {%- end %}
 
   # ============================================================================
   # External auth (SPOE) — map contributions

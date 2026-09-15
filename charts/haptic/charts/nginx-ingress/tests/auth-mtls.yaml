@@ -559,9 +559,8 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header ssl-client-cert\n'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header ssl-client-subject-dn\n'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'del-header ssl-client-[a-z-]+ if'}
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'set-header ssl-client-cert %\[ssl_c_der,base64\] if \{ var\(txn\.resource_id\) -m str default/nx-passcert \}'
+      - {type: contains, target: "map:nginx-cert-header-routes.map", pattern: '(?m)^default/nx-passcert 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header ssl-client-cert %\[ssl_c_der,base64\] if \{ var\(txn\.resource_id\),map\(\S*/nginx-cert-header-routes\.map\) -m found \}'}
 
   test-nginx-ingress-auth-secret-missing-fails-closed:
     description: >-
