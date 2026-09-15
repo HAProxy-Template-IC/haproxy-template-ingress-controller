@@ -764,29 +764,69 @@ templateSnippets:
           "haproxy.org/request-set-header", "haproxy.org/response-set-header", "\n", " ", "0300-haproxytech") -}}
       {%- end -%}
 
+  # Resolves one Ingress's haproxy.org/path-rewrite: result["lane"] is ""
+  # (no rewrite), "invalid" (a control character; result["message"] says so),
+  # "map" or "backend" (see util-path-rewrite-shape in ingress-annotations-compat).
+  util-haproxytech-path-rewrite:
+    template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-path-rewrite-shape" for PathRewriteShape -%}
+      {%- macro HaproxytechPathRewrite(ingress *resources.ingresses.T, result map[string]any) -%}
+        {%- result["lane"] = "" -%}
+        {%- var rewrite = ingress.Metadata.Annotations["haproxy.org/path-rewrite"] -%}
+        {%- if rewrite != "" -%}
+          {%- var inj = ConfigInjectionKind(rewrite, "line") -%}
+          {%- if inj != "" -%}
+            {%- result["lane"] = "invalid" -%}
+            {%- result["message"] = "Invalid value for annotation 'haproxy.org/path-rewrite' on Ingress '" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + "': contains " + inj + ", which would split the backend directive; the path rewrite is skipped." -%}
+          {%- else -%}
+            {{- PathRewriteShape(rewrite, result) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  # Gates the frontend block and feeds its maps. An invalid value is reported
+  # by the backend component, which can emit text.
+  features-350-haproxytech-rewrite-routes:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy.org/path-rewrite']"]
+      group: haproxytech-rewrite-routes
+      effects: [publishValue]
+    template: |-
+      {%- import "util-haproxytech-path-rewrite" for HaproxytechPathRewrite -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var rw = map[string]any{} -%}
+        {{- HaproxytechPathRewrite(ingress, rw) -}}
+        {%- if rw["lane"] == "map" -%}
+          {%- var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- var row = rid + "|" + tostring(rw["prefix"]) + " " + tostring(rw["offset"]) -%}
+          {%- if tostring(rw["newPrefix"]) != "" -%}{%- row = row + " " + tostring(rw["newPrefix"]) -%}{%- end -%}
+          {{- shared.Publish("any", "any", "any") -}}
+          {{- shared.Publish("route", rid, rid + " 1") -}}
+          {{- shared.Publish("prefix", rid, row) -}}
+        {%- end -%}
+      {%- end -%}
+
   backend-directives-350-haproxytech-path-rewrite:
     template: |
-      {#- Both the match regex and the replacement legitimately carry backslashes —
-          regex escapes and \N group backreferences — so they are emitted raw and guarded
-          for control chars only (EscapeLogFormatValue would double the backslashes and
-          break the backreferences). A control char is the cross-directive injection here. -#}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {#- Regex escapes and \N backreferences are legitimate here, so the value is
+          emitted raw and guarded for control chars only (EscapeLogFormatValue would
+          double the backslashes). Prefix strips and the bare form ride the frontend
+          map instead (frontend-filters-995-haproxytech-path-rewrite). -#}
+      {%- import "util-haproxytech-path-rewrite" for HaproxytechPathRewrite -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
-        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-        {%- var rewrite = ingress.Metadata.Annotations["haproxy.org/path-rewrite"] %}
-        {%- if rewrite != "" %}
-          {%- var rwInj = ConfigInjectionKind(rewrite, "line") %}
-          {%- if rwInj != "" %}
-            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy.org/path-rewrite' on Ingress '" + key + "': contains " + rwInj + ", which would split the backend directive; the path rewrite is skipped.") -}}
-          {%- else if strings_contains(rewrite, " ") %}
-            {%- var parts = split(rewrite, " ") %}
+        {%- var rw = map[string]any{} %}
+        {{- HaproxytechPathRewrite(ingress, rw) -}}
+        {%- if rw["lane"] == "invalid" %}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", tostring(rw["message"])) -}}
+        {%- else if rw["lane"] == "backend" %}
       # haproxytech/backend-directives-haproxytech-path-rewrite
-      http-request replace-path {{ parts[0] }} {{ parts[1:] | join(" ") }}
-          {%- else %}
-      # haproxytech/backend-directives-haproxytech-path-rewrite
-      http-request replace-path (.*) {{ rewrite }}
-          {%- end %}
+      http-request replace-path {{ rw["from"] }} {{ rw["to"] }}
         {%- end %}
       {%- end -%}
 
@@ -982,6 +1022,46 @@ templateSnippets:
       {%- var pair = strings_splitn(tostring(p), " ", 2) %}
       http-request auth realm "{{ pair[1] }}" if { var(txn.ht_ba) -m str "ok {{ p }}" } !{ http_auth({{ pair[0] }}) }
       {%- end %}
+      {%- end %}
+
+  # Path rewrite, map lane: one block per HTTP frontend at band 995, the last
+  # request-phase band, where the backend rule used to run.
+  frontend-filters-995-haproxytech-path-rewrite:
+    requires: [ingresses]
+    template: |
+      {#
+        Annotation: haproxy.org/path-rewrite (prefix strips and the bare form;
+        see util-haproxytech-path-rewrite). haproxytech-rewrite-routes.map and
+        haproxytech-rewrite-prefix.map are built from the rows
+        features-350-haproxytech-rewrite-routes publishes and read by the shared
+        util-path-rewrite-lane. Emitted only while a route uses the lane; the
+        first one reloads once, as does removing the last.
+      #}
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- import "util-path-rewrite-lane" for PathRewriteLane -%}
+      {%- if incremental_value_count("haproxytech-rewrite-routes", "any") > 0 -%}
+      {%%
+        var mapsVal, _ = shared.ComputeIfAbsent("haproxytechRewriteMaps", func() any {
+          var lines = func(key string) []string {
+            var rows = []any{}
+            for _, v := range incremental_values("haproxytech-rewrite-routes", key) {
+              rows = append(rows, tostring(v))
+            }
+            var out = []string{}
+            for _, r := range sort_strings(rows) {
+              out = append(out, tostring(r))
+            }
+            return out
+          }
+          return map[string]any{
+            "routes": RegisterMap("haproxytech-rewrite-routes.map", lines("route"), map[string]any{"ordered": false}),
+            "prefix": RegisterMap("haproxytech-rewrite-prefix.map", lines("prefix"), map[string]any{"ordered": false}),
+          }
+        })
+        var maps = mapsVal.(map[string]any)
+      %%}
+      # haproxytech/path-rewrite
+      {{ PathRewriteLane(tostring(maps["routes"]), tostring(maps["prefix"]), "ht_rw") }}
       {%- end %}
 
   backend-directives-900-haproxytech-advanced:
@@ -2263,6 +2343,66 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: 'var\(txn\.cors_origin\) -m reg ''https://\.\*\\\.example\\\.com'''}
       - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Allow-Methods "GET, POST"'}
       - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Allow-Headers "X-H%%K"'}
+
+  test-haproxytech-path-rewrite-map-lane:
+    description: haproxy.org/path-rewrite prefix strips and the bare form ride the frontend maps; a pattern that is not a prefix strip keeps its backend replace-path.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: pr-strip
+            annotations:
+              haproxy.org/path-rewrite: "^/api/v1/(.*) /\\1"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: strip.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: pr-bare
+            annotations:
+              haproxy.org/path-rewrite: "/backend"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bare.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: pr-regex
+            annotations:
+              haproxy.org/path-rewrite: "/api/(.*) /v2/\\1"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: regex.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ht_rw_in\) path if \{ var\(txn\.resource_id\),map\(\S*/haproxytech-rewrite-routes\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ht_rw_v\) var\(txn\.resource_id\),concat\(\|,txn\.ht_rw_in\),map_beg\(\S*/haproxytech-rewrite-prefix\.map\) if \{ var\(txn\.ht_rw_in\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request set-path %\\[var\\(txn\\.ht_rw_v\\),field\\(2,' ',0\\)\\]%\\[var\\(txn\\.ht_rw_rest\\)\\] if \\{ var\\(txn\\.ht_rw_v\\) -m found \\}"}
+      - {type: contains, target: "map:haproxytech-rewrite-routes.map", pattern: '(?m)^default/pr-strip 1$'}
+      - {type: contains, target: "map:haproxytech-rewrite-routes.map", pattern: '(?m)^default/pr-bare 1$'}
+      - {type: not_contains, target: "map:haproxytech-rewrite-routes.map", pattern: 'pr-regex'}
+      - {type: contains, target: "map:haproxytech-rewrite-prefix.map", pattern: '(?m)^default/pr-strip\|/api/v1/ 8 /$'}
+      - {type: contains, target: "map:haproxytech-rewrite-prefix.map", pattern: '(?m)^default/pr-bare\| 1048576 /backend$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request replace-path /api/\(\.\*\) /v2/\\1'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'replace-path \^/api/v1/'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'replace-path \(\.\*\) /backend'}
 
   test-haproxytech-cors-origin-single-quote-rejected:
     description: A single quote in the regex cors-allow-origin is denied at admission (it would close the strong-quoted -m reg operand).

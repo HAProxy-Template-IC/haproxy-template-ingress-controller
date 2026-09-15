@@ -149,7 +149,7 @@ func TestHapticPathRewriteRouteAddRemoveIsReloadFree(t *testing.T) {
 			ns = NamespaceForTest(ctx, t, client)
 			DumpLogsOnFailure(t, ns)
 			echo = NewEchoServerBackend(ctx, t, client, ns)
-			NewIngress(ctx, t, client, ns, pathRewriteIngress(anchorName, anchorHost, echo))
+			NewIngress(ctx, t, client, ns, pathRewriteIngress(anchorName, anchorHost, echo, hapticPathRewrite))
 			httpclient.New(t).GET(anchorHost, "/api/v1/ping").ExpectEchoPath(t, "/ping")
 			return ctx
 		}).
@@ -163,7 +163,7 @@ func TestHapticPathRewriteRouteAddRemoveIsReloadFree(t *testing.T) {
 				// Created directly: NewIngress would register a forget-namespace
 				// wait on this sub-test, which blocks while the anchor still exists.
 				// The cycle deletes the route itself.
-				cycle := buildIngress(ns, pathRewriteIngress(cycleName, cycleHost, echo))
+				cycle := buildIngress(ns, pathRewriteIngress(cycleName, cycleHost, echo, hapticPathRewrite))
 				if err := client.Resources(ns).Create(ctx, cycle); err != nil {
 					t.Fatalf("create Ingress %s/%s: %v", ns, cycleName, err)
 				}
@@ -205,17 +205,21 @@ func echoPath(resp *httpclient.Response) string {
 	return resp.Echo.Path
 }
 
-// pathRewriteIngress is the whole-path rewrite route shape the anchor and the
-// cycled route share: /api/v1/<rest> reaches the upstream as /<rest>.
-func pathRewriteIngress(name, host string, echo BackendRef) *IngressSpec {
+const (
+	hapticPathRewrite      = "haproxy-haptic.org/path-rewrite"
+	haproxytechPathRewrite = "haproxy.org/path-rewrite"
+)
+
+// pathRewriteIngress is the prefix-strip route shape the anchor and the cycled
+// route share: /api/v1/<rest> reaches the upstream as /<rest>. annotation is
+// the library's path-rewrite key.
+func pathRewriteIngress(name, host string, echo BackendRef, annotation string) *IngressSpec {
 	return &IngressSpec{
 		Name:           name,
 		Host:           host,
 		Path:           "/",
 		BackendService: echo.Service,
 		BackendPort:    echo.Port,
-		Annotations: map[string]string{
-			"haproxy-haptic.org/path-rewrite": `^/api/v1/(.*) /\1`,
-		},
+		Annotations:    map[string]string{annotation: `^/api/v1/(.*) /\1`},
 	}
 }

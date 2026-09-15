@@ -14,15 +14,12 @@ templateSnippets:
   # Path rewrites
   # ============================================================================
 
-  # Resolves one Ingress's path-rewrite. result["lane"] is "" (no rewrite),
-  # "map" (a prefix strip: the bare form, or `^<prefix>(.*)` with `<new
-  # prefix>\1` or a plain `<new path>` as the replacement, <prefix> free of
-  # regex metacharacters) or "backend" (anything else keeps replace-path).
-  # A map-lane result carries prefix, offset (bytes to drop from the path;
-  # past any path length when the rest is dropped) and newPrefix.
+  # Resolves one Ingress's path-rewrite: result["lane"] is "" (no rewrite),
+  # "map" or "backend" (see util-path-rewrite-shape in ingress-annotations-compat).
   util-haptic-path-rewrite:
     template: |-
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-path-rewrite-shape" for PathRewriteShape -%}
       {%- macro HapticPathRewrite(ingress *resources.ingresses.T, result map[string]any) -%}
         {%- result["lane"] = "" -%}
         {%- var rewrite = ingress.Metadata.Annotations["haproxy-haptic.org/path-rewrite"] -%}
@@ -31,52 +28,7 @@ templateSnippets:
           {#- allowSpaces=true: the two-token form legitimately contains a space.
               ValidateConfigValue still rejects control characters (injection guard). -#}
           {%- var safe = ValidateConfigValue(rewrite, "haproxy-haptic.org/path-rewrite", key, true) -%}
-          {%- var from = "(.*)" -%}
-          {%- var to = safe -%}
-          {%- var prefix = "" -%}
-          {%- var group = true -%}
-          {%- var shape = true -%}
-          {%- if strings_contains(safe, " ") -%}
-            {%- var parts = split(safe, " ") -%}
-            {%- from = parts[0] -%}
-            {%- to = join(parts[1:], " ") -%}
-            {%- var rest = from -%}
-            {%- shape = hasPrefix(rest, "^") -%}
-            {%- if shape -%}{%- rest = rest[1:] -%}{%- end -%}
-            {%- if hasSuffix(rest, "$") -%}{%- rest = rest[:len(rest)-1] -%}{%- end -%}
-            {%- if hasSuffix(rest, "(.*)") -%}
-              {%- prefix = rest[:len(rest)-4] -%}
-            {%- else if hasSuffix(rest, ".*") -%}
-              {%- prefix = rest[:len(rest)-2] -%}
-              {%- group = false -%}
-            {%- else -%}
-              {%- shape = false -%}
-            {%- end -%}
-            {%- if !regex_search(prefix, "^[^\\\\^$.*+?()\\[\\]{}|]*$") -%}{%- shape = false -%}{%- end -%}
-          {%- end -%}
-          {%- result["from"] = from -%}
-          {%- result["to"] = to -%}
-          {%- result["lane"] = "backend" -%}
-          {#- The replacement is a log-format on the backend rule but a literal
-              map value: `%` keeps it there. A `\1` is honoured only as the
-              suffix of the replacement (the kept rest of the path). In the bare
-              form the prefix is empty, so a trailing `\1` keeps the whole path
-              from offset 0, exactly what `replace-path (.*)` captures. -#}
-          {%- if shape && !strings_contains(to, "%") -%}
-            {%- var newPrefix = to -%}
-            {%- var keepRest = false -%}
-            {%- if hasSuffix(to, "\\1") -%}
-              {%- newPrefix = to[:len(to)-2] -%}
-              {%- keepRest = group -%}
-            {%- end -%}
-            {%- if !strings_contains(newPrefix, "\\") && (keepRest || !hasSuffix(to, "\\1")) -%}
-              {%- result["lane"] = "map" -%}
-              {%- result["prefix"] = prefix -%}
-              {%- result["newPrefix"] = newPrefix -%}
-              {%- result["offset"] = 1048576 -%}
-              {%- if keepRest -%}{%- result["offset"] = len(prefix) -%}{%- end -%}
-            {%- end -%}
-          {%- end -%}
+          {{- PathRewriteShape(safe, result) -}}
         {%- end -%}
       {%- end macro -%}
 
@@ -173,28 +125,18 @@ templateSnippets:
     template: |
       {#
         Annotation: haproxy-haptic.org/path-rewrite (prefix strips and the bare
-        form; see util-haptic-path-rewrite).
-
-        haptic-rewrite-routes.map is an exact lookup by route id, so a request
-        to any other route pays one tree lookup and never touches the rest.
-        haptic-rewrite-prefix.map is a prefix-tree lookup on "<route id>|<path>"
-        giving "<offset> <new prefix>"; the new path is the new prefix plus the
-        path from <offset> on (bytes() yields nothing past the end, which is how
-        the bare form drops the whole path). No regex, so the cost does not
-        grow with the number of rewrite routes. Emitted only while a route uses
-        the lane; the first one reloads once, as does removing the last.
+        form; see util-haptic-path-rewrite). The lookups are the shared
+        util-path-rewrite-lane. Emitted only while a route uses the lane; the
+        first one reloads once, as does removing the last.
       #}
+      {%- import "util-path-rewrite-lane" for PathRewriteLane -%}
       {%- if incremental_value_count("haptic-rewrite-routes", "any") > 0 -%}
       {%- var routes, e1 = pathResolver.GetPath("haptic-rewrite-routes.map", "map") -%}
       {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
       {%- var prefixes, e2 = pathResolver.GetPath("haptic-rewrite-prefix.map", "map") -%}
       {%- if e2 != nil -%}{{ fail(tostring(e2)) }}{%- end -%}
       {{ "\n" }}# haptic/path-rewrite
-      http-request set-var(txn.rw_in) path if { var(txn.resource_id),map({{ routes }}) -m found }
-      http-request set-var(txn.rw_v) var(txn.resource_id),concat(|,txn.rw_in),map_beg({{ prefixes }}) if { var(txn.rw_in) -m found }
-      http-request set-var(txn.rw_off) var(txn.rw_v),field(1,' '),add(0) if { var(txn.rw_v) -m found }
-      http-request set-var(txn.rw_rest) var(txn.rw_in),bytes(txn.rw_off) if { var(txn.rw_v) -m found }
-      http-request set-path %[var(txn.rw_v),field(2,' ',0)]%[var(txn.rw_rest)] if { var(txn.rw_v) -m found }
+      {{ PathRewriteLane(routes, prefixes, "rw") }}
       {%- end %}
 
   # ============================================================================

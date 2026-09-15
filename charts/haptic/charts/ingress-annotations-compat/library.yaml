@@ -259,6 +259,81 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
+  # Classifies a validated path-rewrite value in the haproxytech form (a bare
+  # <new path>, or `<from> <to>`). result["lane"] is "map" for a prefix strip
+  # (the bare form, or `^<prefix>(.*)` with `<new prefix>\1` or a plain `<new
+  # path>` as the replacement, <prefix> free of regex metacharacters), with
+  # prefix, offset (bytes to drop from the path; past any path length when the
+  # rest is dropped) and newPrefix; "backend" for anything else. from and to
+  # always carry the replace-path form.
+  util-path-rewrite-shape:
+    template: |-
+      {%- macro PathRewriteShape(safe string, result map[string]any) -%}
+        {%- var from = "(.*)" -%}
+        {%- var to = safe -%}
+        {%- var prefix = "" -%}
+        {%- var group = true -%}
+        {%- var shape = true -%}
+        {%- if strings_contains(safe, " ") -%}
+          {%- var parts = split(safe, " ") -%}
+          {%- from = parts[0] -%}
+          {%- to = join(parts[1:], " ") -%}
+          {%- var rest = from -%}
+          {%- shape = hasPrefix(rest, "^") -%}
+          {%- if shape -%}{%- rest = rest[1:] -%}{%- end -%}
+          {%- if hasSuffix(rest, "$") -%}{%- rest = rest[:len(rest)-1] -%}{%- end -%}
+          {%- if hasSuffix(rest, "(.*)") -%}
+            {%- prefix = rest[:len(rest)-4] -%}
+          {%- else if hasSuffix(rest, ".*") -%}
+            {%- prefix = rest[:len(rest)-2] -%}
+            {%- group = false -%}
+          {%- else -%}
+            {%- shape = false -%}
+          {%- end -%}
+          {%- if !regex_search(prefix, "^[^\\\\^$.*+?()\\[\\]{}|]*$") -%}{%- shape = false -%}{%- end -%}
+        {%- end -%}
+        {%- result["from"] = from -%}
+        {%- result["to"] = to -%}
+        {%- result["lane"] = "backend" -%}
+        {#- The replacement is a log-format on the backend rule but a literal
+            map value: `%` keeps it there. A `\1` is honoured only as the
+            suffix of the replacement (the kept rest of the path). In the bare
+            form the prefix is empty, so a trailing `\1` keeps the whole path
+            from offset 0, exactly what `replace-path (.*)` captures. -#}
+        {%- if shape && !strings_contains(to, "%") -%}
+          {%- var newPrefix = to -%}
+          {%- var keepRest = false -%}
+          {%- if hasSuffix(to, "\\1") -%}
+            {%- newPrefix = to[:len(to)-2] -%}
+            {%- keepRest = group -%}
+          {%- end -%}
+          {%- if !strings_contains(newPrefix, "\\") && (keepRest || !hasSuffix(to, "\\1")) -%}
+            {%- result["lane"] = "map" -%}
+            {%- result["prefix"] = prefix -%}
+            {%- result["newPrefix"] = newPrefix -%}
+            {%- result["offset"] = 1048576 -%}
+            {%- if keepRest -%}{%- result["offset"] = len(prefix) -%}{%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  # The rules of a path-rewrite map lane. routes is an exact lookup by route
+  # id, so a request to any other route pays one tree lookup and never touches
+  # the rest. prefixes is a prefix-tree lookup on "<route id>|<path>" giving
+  # "<offset> <new prefix>"; the new path is the new prefix plus the path from
+  # <offset> on (bytes() yields nothing past the end, which is how the bare
+  # form drops the whole path). No regex, so the cost does not grow with the
+  # number of rewrite routes. v names the txn variables, one set per library.
+  util-path-rewrite-lane:
+    template: |-
+      {%- macro PathRewriteLane(routes string, prefixes string, v string) -%}
+      http-request set-var(txn.{{ v }}_in) path if { var(txn.resource_id),map({{ routes }}) -m found }
+      http-request set-var(txn.{{ v }}_v) var(txn.resource_id),concat(|,txn.{{ v }}_in),map_beg({{ prefixes }}) if { var(txn.{{ v }}_in) -m found }
+      http-request set-var(txn.{{ v }}_off) var(txn.{{ v }}_v),field(1,' '),add(0) if { var(txn.{{ v }}_v) -m found }
+      http-request set-var(txn.{{ v }}_rest) var(txn.{{ v }}_in),bytes(txn.{{ v }}_off) if { var(txn.{{ v }}_v) -m found }
+      http-request set-path %[var(txn.{{ v }}_v),field(2,' ',0)]%[var(txn.{{ v }}_rest)] if { var(txn.{{ v }}_v) -m found }
+      {%- end macro -%}
+
   util-emit-annotation-cors:
     template: |-
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
