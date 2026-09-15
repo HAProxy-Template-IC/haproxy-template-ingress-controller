@@ -158,107 +158,6 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
-  util-ingress-annotation-cors-fragment:
-    template: |
-      {#
-        Mirrors ingress-nginx: cors-allow-origin is a comma-separated allow-list
-        (single-level "*." wildcards allowed) matched against the request Origin;
-        a lone "*" or unset allows any origin. haproxytech CORS is structurally
-        different and lives in haproxytech's own library — it does NOT call this.
-      #}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn %}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind %}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue %}
-      {%- macro IngressAnnotationCORSFragment(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string, cond string) %}
-        {%- var corsEnabled = ingress.Metadata.Annotations[enabledAnn] %}
-        {%- if corsEnabled == "true" %}
-          {%- var hosts = []string{} %}
-          {%- for _, rule := range ingress.Spec.Rules %}
-            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-          {%- end %}
-          {%- if len(hosts) > 0 %}
-            {%- var ns = ingress.Metadata.Namespace %}
-            {%- var name = ingress.Metadata.Name %}
-            {%- var key = ns + "/" + name %}
-            {%- var rawOrigin = ingress.Metadata.Annotations[prefix + "/cors-allow-origin"] %}
-            {%- if rawOrigin == "" %}{%- rawOrigin = "*" %}{%- end %}
-            {%- var methods = ingress.Metadata.Annotations[prefix + "/cors-allow-methods"] %}
-            {%- if methods == "" %}{%- methods = "GET, PUT, POST, DELETE, PATCH, OPTIONS" %}{%- end %}
-            {%- var headers = ingress.Metadata.Annotations[prefix + "/cors-allow-headers"] %}
-            {%- if headers == "" %}{%- headers = "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" %}{%- end %}
-            {%- var credentials = ingress.Metadata.Annotations[prefix + "/cors-allow-credentials"] %}
-            {%- var exposeHeaders = ingress.Metadata.Annotations[prefix + "/cors-expose-headers"] %}
-            {%- var maxAge = ingress.Metadata.Annotations[prefix + "/cors-max-age"] %}
-            {%- if maxAge == "" %}{%- maxAge = defaultMaxAge %}{%- end %}
-            {#- These four values are emitted inside double quotes below; a control
-                character would split the frontend directive. Reject before any
-                emission so a warn-and-skip drops the whole CORS block, not part. -#}
-            {%- var corsInj = "" %}
-            {%- for _, cv := range []string{methods, headers, maxAge, exposeHeaders} %}
-              {%- if corsInj == "" %}{%- corsInj = ConfigInjectionKind(cv, "line") %}{%- end %}
-            {%- end %}
-            {%- if corsInj != "" %}
-              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " has a CORS annotation value containing " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the cors-allow-methods/-headers/-max-age/-expose-headers values.") -}}
-              {%- return %}
-            {%- end %}
-            {%- var allowAny = false %}
-            {%- var exact = []string{} %}
-            {%- var regexes = []string{} %}
-            {%- for _, tok := range split(rawOrigin, ",") %}
-              {%- var o = strip(tok) %}
-              {%- if o == "" %}{%- continue %}{%- end %}
-              {%- if o == "*" %}{%- allowAny = true %}{%- break %}{%- end %}
-              {%- if !regex_search(o, "^([a-z]+://(\\*\\.)?[A-Za-z0-9\\-.]*(:[0-9]+)?|null)$") %}
-                {{- fail("Invalid CORS origin '" + o + "' in annotation '" + prefix + "/cors-allow-origin' on Ingress '" + key + "' — must be scheme://host[:port], scheme://*.host[:port], null, or *.") -}}
-              {%- end %}
-              {%- if strings_contains(o, "*") %}
-                {%- regexes = append(regexes, "^" + replace(sanitize_regex(o), "\\*", "[A-Za-z0-9\\-]+") + "$") %}
-              {%- else %}
-                {%- exact = append(exact, o) %}
-              {%- end %}
-            {%- end %}
-            {%- var aclName = "cors_origin_" + replace(replace(prefix, ".", "_"), "/", "_") + "_" + ns + "_" + name %}
-            {%- var originHdr = "%[var(txn.cors_origin)]" %}
-            {%- if allowAny %}{%- originHdr = "*" %}{%- end %}
-      # {{ commentLabel }} ({{ key }})
-      {# CORS headers ride on http-after-response so they also cover the
-          synthetic preflight 204; http-response is dropped for a return. #}
-      http-request set-var(txn.cors_origin) req.hdr(Origin) if {{ cond }}
-            {%- if allowAny %}
-      acl {{ aclName }} var(txn.cors_origin) -m found
-            {%- else %}
-              {%- for i := 0; i < len(exact); i += 20 %}
-                {%- var hi = i + 20 %}{%- if hi > len(exact) %}{%- hi = len(exact) %}{%- end %}
-      acl {{ aclName }} var(txn.cors_origin) -m str {{ join(exact[i:hi], " ") }}
-              {%- end %}
-              {%- for i := 0; i < len(regexes); i += 20 %}
-                {%- var hi = i + 20 %}{%- if hi > len(regexes) %}{%- hi = len(regexes) %}{%- end %}
-      acl {{ aclName }} var(txn.cors_origin) -m reg {{ join(regexes[i:hi], " ") }}
-              {%- end %}
-            {%- end %}
-      http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Allow-Methods "{{ EscapeLogFormatValue(methods) }}" if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Allow-Headers "{{ EscapeLogFormatValue(headers) }}" if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Max-Age "{{ EscapeLogFormatValue(maxAge) }}" if {{ cond }} {{ aclName }}
-            {%- if credentials == "true" %}
-      http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ aclName }}
-            {%- end %}
-            {%- if exposeHeaders != "" %}
-      http-after-response set-header Access-Control-Expose-Headers "{{ EscapeLogFormatValue(exposeHeaders) }}" if {{ cond }} {{ aclName }}
-            {%- end %}
-            {%- if !allowAny %}
-      {# add-header, never set-header: Vary is a comma-combinable list per RFC 9110
-          and several producers contribute to it. set-header replaced the whole
-          field, destroying both the origin's own Vary and the one the cache tier
-          adds to declare its key — so a CDN in front of HAPTIC keyed on Origin
-          alone and served one caller's keyed body to another. #}
-      http-after-response add-header Vary Origin if {{ cond }} {{ aclName }}
-            {%- end %}
-      http-request return status 204 if {{ cond }} {{ aclName }} METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }
-          {%- end %}
-        {%- end %}
-      {%- end macro %}
-
   # Classifies a validated path-rewrite value in the haproxytech form (a bare
   # <new path>, or `<from> <to>`). result["lane"] is "map" for a prefix strip
   # (the bare form, or `^<prefix>(.*)` with `<new prefix>\1` or a plain `<new
@@ -334,17 +233,151 @@ templateSnippets:
       http-request set-path %[var(txn.{{ v }}_v),field(2,' ',0)]%[var(txn.{{ v }}_rest)] if { var(txn.{{ v }}_v) -m found }
       {%- end macro -%}
 
-  util-emit-annotation-cors:
+  # CORS in the ingress-nginx model: cors-allow-origin is a comma-separated
+  # allow-list (single-level "*." wildcards) matched against the request
+  # Origin; a lone "*" or unset allows any origin. Publishes the route's rows
+  # for the shared lane (util-cors-lane). haproxytech's regex model has its
+  # own publisher.
+  util-ingress-annotation-cors-publish:
     template: |-
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- import "util-ingress-annotation-cors-fragment" for IngressAnnotationCORSFragment -%}
-      {%- macro EmitAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) -%}
-        {%- var hosts = []string{} -%}
-        {%- for _, rule := range ingress.Spec.Rules -%}
-          {%- if rule.Host != "" -%}{%- hosts = append(hosts, rule.Host) -%}{%- end -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-cors-publish" for PublishCORS -%}
+      {%- macro IngressCORSPublish(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, family string) -%}
+        {%- if ingress.Metadata.Annotations[enabledAnn] == "true" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- var rawOrigin = ingress.Metadata.Annotations[prefix + "/cors-allow-origin"] -%}
+          {%- if rawOrigin == "" -%}{%- rawOrigin = "*" -%}{%- end -%}
+          {%- var methods = ingress.Metadata.Annotations[prefix + "/cors-allow-methods"] -%}
+          {%- if methods == "" -%}{%- methods = "GET, PUT, POST, DELETE, PATCH, OPTIONS" -%}{%- end -%}
+          {%- var headers = ingress.Metadata.Annotations[prefix + "/cors-allow-headers"] -%}
+          {%- if headers == "" -%}{%- headers = "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" -%}{%- end -%}
+          {%- var credentials = ingress.Metadata.Annotations[prefix + "/cors-allow-credentials"] == "true" -%}
+          {%- var exposeHeaders = ingress.Metadata.Annotations[prefix + "/cors-expose-headers"] -%}
+          {%- var maxAge = ingress.Metadata.Annotations[prefix + "/cors-max-age"] -%}
+          {%- if maxAge == "" -%}{%- maxAge = defaultMaxAge -%}{%- end -%}
+          {%- var corsInj = "" -%}
+          {%- for _, cv := range []string{methods, headers, maxAge, exposeHeaders} -%}
+            {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(cv, "line") -%}{%- end -%}
+          {%- end -%}
+          {%- if corsInj != "" -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " has a CORS annotation value containing " + corsInj + "; CORS is not applied. Remove control characters from the cors-allow-methods/-headers/-max-age/-expose-headers values.") -}}
+            {%- return -%}
+          {%- end -%}
+          {%- var allowAny = false -%}
+          {%- var exact = []string{} -%}
+          {%- var regexes = []string{} -%}
+          {%- for _, tok := range split(rawOrigin, ",") -%}
+            {%- var o = strip(tok) -%}
+            {%- if o == "" -%}{%- continue -%}{%- end -%}
+            {%- if o == "*" -%}{%- allowAny = true -%}{%- break -%}{%- end -%}
+            {%- if !regex_search(o, "^([a-z]+://(\\*\\.)?[A-Za-z0-9\\-.]*(:[0-9]+)?|null)$") -%}
+              {{- fail("Invalid CORS origin '" + o + "' in annotation '" + prefix + "/cors-allow-origin' on Ingress '" + key + "' — must be scheme://host[:port], scheme://*.host[:port], null, or *.") -}}
+            {%- end -%}
+            {%- if strings_contains(o, "*") -%}
+              {%- regexes = append(regexes, replace(sanitize_regex(o), "\\*", "[A-Za-z0-9\\-]+") + "$") -%}
+            {%- else -%}
+              {%- exact = append(exact, o) -%}
+            {%- end -%}
+          {%- end -%}
+          {{- PublishCORS(key, family, allowAny, exact, regexes, methods, headers, maxAge, credentials, exposeHeaders, !allowAny, 1) -}}
         {%- end -%}
-        {%- if len(hosts) > 0 -%}
-          {{- IngressAnnotationCORSFragment(ingress, prefix, enabledAnn, defaultMaxAge, commentLabel, HostMatchCondition(hosts)) -}}
+      {%- end macro -%}
+
+  # One route's rows for the CORS lane. The routes row is
+  # "<family>:<any|list> <credentials> <vary> <regex> <preflight>" (flags 0/1;
+  # preflight 1 answers OPTIONS with an allowed Origin and a request-method
+  # header, 2 answers every OPTIONS); regexes are matched from "<offset>" on
+  # against "<route id>|<Origin>"; header values are URL-encoded and read
+  # back with url_dec(1).
+  util-cors-publish:
+    template: |-
+      {%- macro PublishCORS(rid string, family string, allowAny bool, exact []string, regexes []string, methods string, headers string, maxAge string, credentials bool, expose string, vary bool, preflight int) -%}
+        {%- var mode = "list" -%}{%- if allowAny -%}{%- mode = "any" -%}{%- end -%}
+        {%- var cred = "0" -%}{%- if credentials -%}{%- cred = "1" -%}{%- end -%}
+        {%- var v = "0" -%}{%- if vary -%}{%- v = "1" -%}{%- end -%}
+        {%- var re = "0" -%}{%- if len(regexes) > 0 -%}{%- re = "1" -%}{%- end -%}
+        {{- shared.Publish(family, "any", "any") -}}
+        {{- shared.Publish("route", rid, rid + " " + family + ":" + mode + " " + cred + " " + v + " " + re + " " + tostring(preflight)) -}}
+        {%- for _, o := range exact -%}
+          {{- shared.Publish("origin", rid + "|" + o, rid + "|" + o + " 1") -}}
+        {%- end -%}
+        {%- for i, r := range regexes -%}
+          {{- shared.Publish("regex", rid + "#" + tostring(i), "^" + sanitize_regex(rid) + "\\|" + r + " 1") -}}
+        {%- end -%}
+        {{- shared.Publish("methods", rid, rid + " " + queryEscape(methods)) -}}
+        {%- if headers != "" -%}{{- shared.Publish("headers", rid, rid + " " + queryEscape(headers)) -}}{%- end -%}
+        {%- if maxAge != "" -%}{{- shared.Publish("maxage", rid, rid + " " + queryEscape(maxAge)) -}}{%- end -%}
+        {%- if expose != "" -%}{{- shared.Publish("expose", rid, rid + " " + queryEscape(expose)) -}}{%- end -%}
+      {%- end macro -%}
+
+  # Renders every family's publisher (ingress-cors-<band>-<library>, plus the
+  # declaration below) in one sorted pass: a shared incremental group must
+  # render its members in canonical order.
+  features-200-ingress-cors:
+    template: '{{- render_glob "ingress-cors-*" -}}'
+
+  ingress-cors-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-cors
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  # The CORS lane, one block per family at the band its per-route fragments
+  # had. Seven shared maps keyed by route id (built once per render); an
+  # exact-origin route costs two tree lookups, a wildcard route one map_reg
+  # scan over the wildcard rows. Emitted only while a route of the family
+  # uses CORS; the first one reloads once, as does removing the last. Vary is
+  # add-header, never set-header: a comma-combinable list (RFC 9110) that the
+  # origin and a cache tier also contribute to.
+  util-cors-lane:
+    template: |-
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- macro CorsLane(family string) -%}
+        {%- if incremental_value_count("ingress-cors", family) > 0 -%}
+          {%%
+            var mapsVal, _ = shared.ComputeIfAbsent("ingressCorsMaps", func() any {
+              var lines = func(key string) []string {
+                var rows = []any{}
+                for _, v := range incremental_values("ingress-cors", key) {
+                  rows = append(rows, tostring(v))
+                }
+                var out = []string{}
+                for _, r := range sort_strings(rows) {
+                  out = append(out, tostring(r))
+                }
+                return out
+              }
+              return map[string]any{
+                "routes": RegisterMap("ing-cors-routes.map", lines("route"), map[string]any{"ordered": false}),
+                "origins": RegisterMap("ing-cors-origins.map", lines("origin"), map[string]any{"ordered": false}),
+                "regex": RegisterMap("ing-cors-regex.map", lines("regex"), map[string]any{"ordered": false}),
+                "methods": RegisterMap("ing-cors-methods.map", lines("methods"), map[string]any{"ordered": false}),
+                "headers": RegisterMap("ing-cors-headers.map", lines("headers"), map[string]any{"ordered": false}),
+                "maxage": RegisterMap("ing-cors-maxage.map", lines("maxage"), map[string]any{"ordered": false}),
+                "expose": RegisterMap("ing-cors-expose.map", lines("expose"), map[string]any{"ordered": false}),
+              }
+            })
+            var maps = mapsVal.(map[string]any)
+            var v = "txn." + family + "_cors"
+          %%}
+      # {{ family }}/cors
+      http-request set-var({{ v }}) var(txn.resource_id),map({{ maps["routes"] }})
+      http-request set-var({{ v }}_origin) req.hdr(Origin) if { var({{ v }}) -m beg "{{ family }}:" }
+      http-request set-var({{ v }}_ok) str(1) if { var({{ v }}) -m beg "{{ family }}:any" } { var({{ v }}_origin) -m found }
+      http-request set-var({{ v }}_ok) str(1) if { var({{ v }}) -m beg "{{ family }}:list" } { var(txn.resource_id),concat(|,{{ v }}_origin),map({{ maps["origins"] }}) -m found }
+      http-request set-var({{ v }}_ok) str(1) if { var({{ v }}),field(4,' ') -m str 1 } !{ var({{ v }}_ok) -m found } { var(txn.resource_id),concat(|,{{ v }}_origin),map_reg({{ maps["regex"] }}) -m found }
+      http-request return status 204 if { var({{ v }}),field(5,' ') -m str 1 } { var({{ v }}_ok) -m found } METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }
+      http-request return status 204 if { var({{ v }}),field(5,' ') -m str 2 } METH_OPTIONS
+      http-after-response set-header Access-Control-Allow-Origin '*' if { var({{ v }}_ok) -m found } { var({{ v }}) -m beg "{{ family }}:any" }
+      http-after-response set-header Access-Control-Allow-Origin '%[var({{ v }}_origin)]' if { var({{ v }}_ok) -m found } { var({{ v }}) -m beg "{{ family }}:list" }
+      http-after-response set-header Access-Control-Allow-Methods %[var(txn.resource_id),map({{ maps["methods"] }}),url_dec(1)] if { var({{ v }}_ok) -m found }
+      http-after-response set-header Access-Control-Allow-Headers %[var(txn.resource_id),map({{ maps["headers"] }}),url_dec(1)] if { var({{ v }}_ok) -m found } { var(txn.resource_id),map({{ maps["headers"] }}) -m found }
+      http-after-response set-header Access-Control-Max-Age %[var(txn.resource_id),map({{ maps["maxage"] }}),url_dec(1)] if { var({{ v }}_ok) -m found } { var(txn.resource_id),map({{ maps["maxage"] }}) -m found }
+      http-after-response set-header Access-Control-Allow-Credentials 'true' if { var({{ v }}_ok) -m found } { var({{ v }}),field(2,' ') -m str 1 }
+      http-after-response set-header Access-Control-Expose-Headers %[var(txn.resource_id),map({{ maps["expose"] }}),url_dec(1)] if { var({{ v }}_ok) -m found } { var(txn.resource_id),map({{ maps["expose"] }}) -m found }
+      http-after-response add-header Vary Origin if { var({{ v }}_ok) -m found } { var({{ v }}),field(3,' ') -m str 1 }
         {%- end -%}
       {%- end macro -%}
 

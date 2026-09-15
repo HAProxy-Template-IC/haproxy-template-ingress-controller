@@ -315,7 +315,7 @@ Request/response header manipulation, capture, CORS, source-IP allow/deny, and u
 | `haproxy-haptic.org/cors-allow-headers` | ✅ Supported | Sets the `Access-Control-Allow-Headers` response header. |
 | `haproxy-haptic.org/cors-allow-methods` | ✅ Supported | Sets the `Access-Control-Allow-Methods` response header. |
 | `haproxy-haptic.org/cors-allow-origin` | ✅ Supported | Sets the allowed origins (comma-separated, with a single-level `*.` wildcard); the matching request `Origin` is echoed back (default `*`). |
-| `haproxy-haptic.org/cors-enable` | ✅ Supported | Enables CORS response headers and answers `OPTIONS` requests with `204`. |
+| `haproxy-haptic.org/cors-enable` | ✅ Supported | Enables CORS response headers and answers `OPTIONS` requests with `204`; the headers come from per-route maps, so the route stays reload-free. |
 | `haproxy-haptic.org/cors-expose-headers` | ✅ Supported | Sets the `Access-Control-Expose-Headers` response header. |
 | `haproxy-haptic.org/cors-max-age` | ✅ Supported | Sets the `Access-Control-Max-Age` response header (default `86400`). |
 | `haproxy-haptic.org/denylist-source-range` | ✅ Supported | Denies the listed CIDRs and allows all other source IPs for the host. |

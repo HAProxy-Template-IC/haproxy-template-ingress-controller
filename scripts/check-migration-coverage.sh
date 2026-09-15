@@ -36,7 +36,7 @@ CHARTS=charts/haptic/charts
 COMPAT_LIB=charts/haptic/charts/ingress-annotations-compat/library.yaml
 FAILED=0
 
-# The CORS suffixes read dynamically by util-emit-annotation-cors as
+# The CORS suffixes read dynamically by util-ingress-annotation-cors-publish as
 # `Annotations[prefix + "/<suffix>"]`.
 cors_suffixes() {
   perl -ne 'print "$1\n" if /Annotations\[prefix \+ "\/([a-z0-9-]+)"\]/' "$COMPAT_LIB" | sort -u

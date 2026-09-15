@@ -363,17 +363,13 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      # Shares the vendor CORS macro: exact origin -> -m str, echo the matched
-      # request Origin, headers via http-after-response (also cover the 204).
-      - type: contains
-        target: haproxy.cfg
-        pattern: "acl cors_origin_\\S+ var\\(txn\\.cors_origin\\) -m str https://example\\.com"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-after-response set-header Access-Control-Allow-Origin '%\\[var\\(txn\\.cors_origin\\)\\]'"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-after-response set-header Access-Control-Allow-Credentials 'true'"
+      # Feeds the shared lane: the exact origin is a membership row, the matched
+      # request Origin is echoed back on http-after-response (also covers the 204).
+      - {type: contains, target: "map:ing-cors-routes.map", pattern: '(?m)^default/cors-ingress hi:list 1 1 0 1$'}
+      - {type: contains, target: "map:ing-cors-origins.map", pattern: '(?m)^default/cors-ingress\|https://example\.com 1$'}
+      - {type: contains, target: "map:ing-cors-maxage.map", pattern: '(?m)^default/cors-ingress 86400$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-after-response set-header Access-Control-Allow-Origin ''%\[var\(txn\.hi_cors_origin\)\]'''}
+      - {type: contains, target: haproxy.cfg, pattern: "http-after-response set-header Access-Control-Allow-Credentials 'true' if \\{ var\\(txn\\.hi_cors_ok\\) -m found \\} \\{ var\\(txn\\.hi_cors\\),field\\(2,' '\\) -m str 1 \\}"}
       - {type: contains, target: haproxy.cfg, pattern: "status 204 .*METH_OPTIONS"}
 
   test-haproxy-ingress-app-root:

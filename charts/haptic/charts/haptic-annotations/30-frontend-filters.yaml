@@ -4,7 +4,7 @@
 # under the haproxy-haptic.org/* prefix:
 #   - forwardfor        (haproxy-ingress: add|update|ifmissing|ignore)
 #   - request/response-set-header, src-ip-header, request-capture (haproxytech)
-#   - cors              (the shared EmitAnnotationCORS macro — ingress-nginx model)
+#   - cors              (the shared CORS map lane — ingress-nginx model)
 #   - allow/deny-list   (the shared EmitAnnotationAccessControl macro)
 #   - response-cookie-*          (nginx proxy_cookie_* upstream Set-Cookie rewriting)
 #   - response-location-rewrite-* (nginx proxy_redirect Location/Refresh rewriting)
@@ -13,88 +13,6 @@
 # producers. Snippets sit in the 800-band (600s=haproxy-ingress, 700s=nginx).
 templateSnippets:
 
-
-  util-haptic-emit-annotation-cors:
-    template: |-
-      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-logformat-value" for EscapeLogFormatValue -%}
-      {%- macro EmitHapticAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) -%}
-        {%- if ingress.Metadata.Annotations[enabledAnn] == "true" -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {%- var key = ns + "/" + name -%}
-          {%- var cond = HapticHostMatchCondition(key) -%}
-          {%- if cond != "" -%}
-            {%- var rawOrigin = ingress.Metadata.Annotations[prefix + "/cors-allow-origin"] -%}
-            {%- if rawOrigin == "" -%}{%- rawOrigin = "*" -%}{%- end -%}
-            {%- var methods = ingress.Metadata.Annotations[prefix + "/cors-allow-methods"] -%}
-            {%- if methods == "" -%}{%- methods = "GET, PUT, POST, DELETE, PATCH, OPTIONS" -%}{%- end -%}
-            {%- var headers = ingress.Metadata.Annotations[prefix + "/cors-allow-headers"] -%}
-            {%- if headers == "" -%}{%- headers = "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" -%}{%- end -%}
-            {%- var credentials = ingress.Metadata.Annotations[prefix + "/cors-allow-credentials"] -%}
-            {%- var exposeHeaders = ingress.Metadata.Annotations[prefix + "/cors-expose-headers"] -%}
-            {%- var maxAge = ingress.Metadata.Annotations[prefix + "/cors-max-age"] -%}
-            {%- if maxAge == "" -%}{%- maxAge = defaultMaxAge -%}{%- end -%}
-            {%- var corsInj = "" -%}
-            {%- for _, value := range []string{methods, headers, maxAge, exposeHeaders} -%}
-              {%- if corsInj == "" -%}{%- corsInj = ConfigInjectionKind(value, "line") -%}{%- end -%}
-            {%- end -%}
-            {%- if corsInj != "" -%}
-              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " has a CORS annotation value containing " + corsInj + ", which would split the frontend directive; CORS is not applied. Remove control characters from the cors-allow-methods/-headers/-max-age/-expose-headers values.") -}}
-              {%- return -%}
-            {%- end -%}
-            {%- var allowAny = false -%}
-            {%- var exact = []string{} -%}
-            {%- var regexes = []string{} -%}
-            {%- for _, token := range split(rawOrigin, ",") -%}
-              {%- var origin = strip(token) -%}
-              {%- if origin == "" -%}{%- continue -%}{%- end -%}
-              {%- if origin == "*" -%}{%- allowAny = true -%}{%- break -%}{%- end -%}
-              {%- if !regex_search(origin, "^([a-z]+://(\\*\\.)?[A-Za-z0-9\\-.]*(:[0-9]+)?|null)$") -%}
-                {{- fail("Invalid CORS origin '" + origin + "' in annotation '" + prefix + "/cors-allow-origin' on Ingress '" + key + "' — must be scheme://host[:port], scheme://*.host[:port], null, or *.") -}}
-              {%- end -%}
-              {%- if strings_contains(origin, "*") -%}
-                {%- regexes = append(regexes, "^" + replace(sanitize_regex(origin), "\\*", "[A-Za-z0-9\\-]+") + "$") -%}
-              {%- else -%}
-                {%- exact = append(exact, origin) -%}
-              {%- end -%}
-            {%- end -%}
-            {%- var aclName = "cors_origin_" + replace(replace(prefix, ".", "_"), "/", "_") + "_" + ns + "_" + name -%}
-            {%- var originHdr = "%[var(txn.cors_origin)]" -%}
-            {%- if allowAny -%}{%- originHdr = "*" -%}{%- end %}
-      # {{ commentLabel }} ({{ key }})
-      http-request set-var(txn.cors_origin) req.hdr(Origin) if {{ cond }}{{ "\n" -}}
-            {%- if allowAny %}
-      acl {{ aclName }} var(txn.cors_origin) -m found
-            {%- else -%}
-              {%- for i := 0; i < len(exact); i += 20 -%}
-                {%- var hi = i + 20 -%}{%- if hi > len(exact) -%}{%- hi = len(exact) -%}{%- end %}
-      acl {{ aclName }} var(txn.cors_origin) -m str {{ join(exact[i:hi], " ") }}
-              {%- end -%}
-              {%- for i := 0; i < len(regexes); i += 20 -%}
-                {%- var hi = i + 20 -%}{%- if hi > len(regexes) -%}{%- hi = len(regexes) -%}{%- end %}
-      acl {{ aclName }} var(txn.cors_origin) -m reg {{ join(regexes[i:hi], " ") }}
-              {%- end -%}
-            {%- end %}
-      http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Allow-Methods "{{ EscapeLogFormatValue(methods) }}" if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Allow-Headers "{{ EscapeLogFormatValue(headers) }}" if {{ cond }} {{ aclName }}
-      http-after-response set-header Access-Control-Max-Age "{{ EscapeLogFormatValue(maxAge) }}" if {{ cond }} {{ aclName }}
-            {%- if credentials == "true" %}
-      http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ aclName }}
-            {%- end -%}
-            {%- if exposeHeaders != "" %}
-      http-after-response set-header Access-Control-Expose-Headers "{{ EscapeLogFormatValue(exposeHeaders) }}" if {{ cond }} {{ aclName }}
-            {%- end -%}
-            {%- if !allowAny %}
-      http-after-response add-header Vary Origin if {{ cond }} {{ aclName }}
-            {%- end %}
-      http-request return status 204 if {{ cond }} {{ aclName }} METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }
-          {%- end -%}
-        {%- end -%}
-      {%- end macro -%}
 
   features-900-haptic-fragment-800-forwardfor:
     requires: [ingresses]
@@ -220,66 +138,26 @@ templateSnippets:
           "haproxy-haptic.org/request-set-header", "haproxy-haptic.org/response-set-header", "\n", " ", "0820-haptic") -}}
       {%- end -%}
 
-  features-900-haptic-fragment-830-cors:
+  ingress-cors-0830-haptic:
     requires: [ingresses]
     incremental:
       source: ingresses
-      whenAnyPathExists:
-        - "metadata.annotations['haproxy-haptic.org/cors-enable']"
-        - "metadata.annotations['haproxy-haptic.org/cors-allow-origin']"
-        - "metadata.annotations['haproxy-haptic.org/cors-allow-methods']"
-        - "metadata.annotations['haproxy-haptic.org/cors-allow-headers']"
-        - "metadata.annotations['haproxy-haptic.org/cors-allow-credentials']"
-        - "metadata.annotations['haproxy-haptic.org/cors-expose-headers']"
-        - "metadata.annotations['haproxy-haptic.org/cors-max-age']"
-      consumes: [haptic-ingress-match-publications]
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/cors-enable']"]
+      group: ingress-cors
       effects: [publishValue, recordEvent]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-830-cors" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- import "util-ingress-annotation-cors-publish" for IngressCORSPublish -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {{- IngressCORSPublish(ingress, "haproxy-haptic.org", "haproxy-haptic.org/cors-enable", "86400", "haptic") -}}
       {%- end -%}
 
   frontend-filters-830-haptic-cors:
     requires: [ingresses]
     template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-830-cors", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-830-cors:
-    template: |
-      {#
-        HAPTIC CORS (best-of-breed: shared EmitAnnotationCORS macro).
-
-        The macro implements the ingress-nginx model — a comma-separated
-        cors-allow-origin allow-list (with single-level "*." wildcards) matched
-        against the request Origin, echoed back on http-after-response so the
-        headers also ride the synthetic preflight 204. The always-on preflight
-        204 IS the best-of-breed behaviour; there is no respond-to-options knob.
-
-        Annotations:
-          - haproxy-haptic.org/cors-enable: "true" (required to enable)
-          - haproxy-haptic.org/cors-allow-origin, cors-allow-methods,
-            cors-allow-headers, cors-allow-credentials, cors-expose-headers,
-            cors-max-age (all optional; read inside the macro).
-
-        Generated HAProxy Config (host-scoped):
-          http-request set-var(txn.cors_origin) req.hdr(Origin) if <host-match>
-          acl <name> var(txn.cors_origin) -m str|reg <allow-list>
-          http-after-response set-header Access-Control-* ... if <host-match> <acl>
-          http-request return status 204 if <host-match> <acl> METH_OPTIONS ...
-      #}
-      {%- import "util-haptic-emit-annotation-cors" for EmitHapticAnnotationCORS -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
-        {#- No enable annotation → the macro emits nothing; skip the call. A
-            present-but-invalid value still reaches the macro's own handling. -#}
-        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cors-enable"] == "" %}{%- continue %}{%- end %}
-        {{ EmitHapticAnnotationCORS(ingress,
-            "haproxy-haptic.org",
-            "haproxy-haptic.org/cors-enable",
-            "86400",
-            "haptic/cors") }}
-      {%- end -%}
+      {%- import "util-cors-lane" for CorsLane -%}
+      {{- CorsLane("haptic") -}}
 
   features-900-haptic-fragment-840-src-ip-header:
     requires: [ingresses]
