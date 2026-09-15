@@ -1,357 +1,370 @@
 # HAPTIC-native annotation library — API-gateway request gating.
 #
-# Stateless request-admission controls expressed as pure HAProxy config, all
-# host-scoped per Ingress and emitted into the frontend after routing:
+# Stateless request-admission controls, one rule block per HTTP frontend fed
+# by per-route maps (a route add or remove is a map edit), after routing:
 #   - fixed-response        (unconditional canned response — maintenance/sunset)
 #   - mock-response         (canned 200 stub — dev/testing)
 #   - allowed-methods       (deny 405 on disallowed HTTP methods)
 #   - require-content-type  (deny 415 when a body method lacks an allowed type)
 #   - require-headers       (deny 400 when a required header is absent)
 #
-# Snippet order (by numeric prefix) is load-bearing: fixed-response (802) and mock
-# (804) short-circuit with http-request return BEFORE the validators (806-809),
-# so a mocked or maintenance route is not also method/header-checked.
+# Band order is load-bearing: the canned responses (802) short-circuit with
+# http-request return BEFORE the validators (806-809), so a mocked or
+# maintenance route is not also method/header-checked.
 #
 # NOTE: HMAC auth and consumer-groups ACLs (also API-gateway security) land in
 # this fragment in Phase 2; Phase 1 is the stateless-native subset above.
 templateSnippets:
 
   # ==========================================================================
-  # fixed-response — unconditional canned response (first to run).
+  # Canned responses (fixed-response, mock-response) from per-route maps.
+  # haptic-return-routes.map: "<route id>" -> "<code>|<content type>" (an
+  # empty type is a bare status); haptic-return-body.map: the URL-encoded
+  # body. `status` and `content-type` take literals, so there is one return
+  # rule per distinct (code, type) pair: a new pair reloads once, a route on
+  # a known pair is a map edit. fixed-response wins over mock-response on
+  # the same Ingress, as its band did.
   # ==========================================================================
-  features-900-haptic-fragment-802-fixed-response:
+  util-haptic-return-route:
+    template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- macro HapticReturnRoute(ingress *resources.ingresses.T, kind string, result map[string]any) -%}
+        {%- result["lane"] = "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var ann = ingress.Metadata.Annotations -%}
+        {%- var code = "" -%}
+        {%- var body = "" -%}
+        {%- var ct = "" -%}
+        {%- var enabled = false -%}
+        {%- if kind == "fixed" && ann["haproxy-haptic.org/fixed-response"] == "true" -%}
+          {%- enabled = true -%}
+          {%- code = ann["haproxy-haptic.org/fixed-response-code"] -%}
+          {%- if code == "" -%}{%- code = "503" -%}{%- end -%}
+          {%- body = ann["haproxy-haptic.org/fixed-response-body"] -%}
+          {%- if body != "" -%}
+            {%- ct = ann["haproxy-haptic.org/fixed-response-content-type"] -%}
+            {%- if ct == "" -%}{%- ct = "text/plain" -%}{%- end -%}
+          {%- end -%}
+        {%- else if kind == "mock" && ann["haproxy-haptic.org/mock-response"] != "" && ann["haproxy-haptic.org/fixed-response"] != "true" -%}
+          {%- enabled = true -%}
+          {%- body = ann["haproxy-haptic.org/mock-response"] -%}
+          {%- code = ann["haproxy-haptic.org/mock-response-code"] -%}
+          {%- if code == "" -%}{%- code = "200" -%}{%- end -%}
+          {%- ct = ann["haproxy-haptic.org/mock-response-content-type"] -%}
+          {%- if ct == "" -%}{%- ct = "application/json" -%}{%- end -%}
+        {%- end -%}
+        {%- if enabled -%}
+          {%- var bodyAnn = "haproxy-haptic.org/" + kind + "-response" -%}
+          {%- if kind == "fixed" -%}{%- bodyAnn = bodyAnn + "-body" -%}{%- end -%}
+          {%- var inj = ConfigInjectionKind(body, "line") -%}
+          {%- if inj != "" -%}
+            {%- result["lane"] = "invalid" -%}
+            {%- result["message"] = "Ingress " + key + " annotation '" + bodyAnn + "' value contains " + inj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value." -%}
+            {%- return -%}
+          {%- end -%}
+          {%- if toint(code) < 100 || toint(code) > 599 -%}
+            {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/" + kind + "-response-code' on Ingress '" + key + "'. Must be a valid HTTP status code (100-599).") -}}
+          {%- end -%}
+          {%- inj = ConfigInjectionKind(ct, "line") -%}
+          {%- if inj != "" -%}
+            {%- result["lane"] = "invalid" -%}
+            {%- result["message"] = "Ingress " + key + " annotation 'haproxy-haptic.org/" + kind + "-response-content-type' value contains " + inj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value." -%}
+            {%- return -%}
+          {%- end -%}
+          {%- result["lane"] = "map" -%}
+          {%- result["pair"] = code + "|" + ct -%}
+          {%- result["body"] = body -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-haptic-publish-return-route:
+    template: |-
+      {%- import "util-haptic-return-route" for HapticReturnRoute -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- macro PublishHapticReturnRoute(kind string) -%}
+        {%- var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+        {%- if ingress != nil -%}
+          {%- var r = map[string]any{} -%}
+          {{- HapticReturnRoute(ingress, kind, r) -}}
+          {%- if r["lane"] == "invalid" -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", tostring(r["message"])) -}}
+          {%- else if r["lane"] == "map" -%}
+            {%- var rid = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+            {%- var pair = tostring(r["pair"]) -%}
+            {{- shared.Publish("return", "any", "any") -}}
+            {{- shared.Publish("ret-route", rid, rid + " " + pair) -}}
+            {{- shared.Publish("ret-pair", pair, pair) -}}
+            {%- if tostring(r["body"]) != "" -%}{{- shared.Publish("ret-body", rid, rid + " " + queryEscape(tostring(r["body"]))) -}}{%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  features-802-haptic-fixed-response:
     requires: [ingresses]
     incremental:
       source: ingresses
-      whenAnyPathExists:
-        - "metadata.annotations['haproxy-haptic.org/fixed-response']"
-        - "metadata.annotations['haproxy-haptic.org/fixed-response-code']"
-        - "metadata.annotations['haproxy-haptic.org/fixed-response-body']"
-        - "metadata.annotations['haproxy-haptic.org/fixed-response-content-type']"
-      consumes: [haptic-ingress-match-publications]
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/fixed-response']"]
+      group: haptic-gateway-security
       effects: [publishValue, recordEvent]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-802-fixed-response" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
-      {%- end -%}
+      {%- import "util-haptic-publish-return-route" for PublishHapticReturnRoute -%}
+      {{- PublishHapticReturnRoute("fixed") -}}
 
+  features-804-haptic-mock-response:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/mock-response']"]
+      group: haptic-gateway-security
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-haptic-publish-return-route" for PublishHapticReturnRoute -%}
+      {{- PublishHapticReturnRoute("mock") -}}
+
+  # One block per HTTP frontend, before the validators (806-809) so a canned
+  # route is not also method/header-checked.
   frontend-filters-802-haptic-fixed-response:
     requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-802-fixed-response", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-802-fixed-response:
     template: |
-      {#
-        HAPTIC fixed-response — return a fixed response for all requests
-        on this Ingress's host(s). Use for maintenance windows or sunset routes.
-
-        Annotations:
-          - haproxy-haptic.org/fixed-response: "true" (enables it)
-          - haproxy-haptic.org/fixed-response-code: HTTP status (default 503)
-          - haproxy-haptic.org/fixed-response-body: response body (optional)
-          - haproxy-haptic.org/fixed-response-content-type: (default text/plain
-            when a body is set)
-
-        Generated HAProxy Config (host-scoped):
-          http-request return status <code> [content-type "<ct>" string "<body>"] if <host-match>
-      #}
-      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-register-map" for RegisterMap -%}
       {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/fixed-response"] == "true" %}
-            {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/fixed-response-code"] %}
-            {%- if code == "" %}{%- code = "503" %}{%- end %}
-            {%- if toint(code) < 100 || toint(code) > 599 %}
-              {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/fixed-response-code' on Ingress '" + key + "'. Must be a valid HTTP status code (100-599).") -}}
-            {%- end %}
-            {%- var body = ingress.Metadata.Annotations["haproxy-haptic.org/fixed-response-body"] %}
-            {%- var ct = ingress.Metadata.Annotations["haproxy-haptic.org/fixed-response-content-type"] %}
-            {%- if ct == "" %}{%- ct = "text/plain" %}{%- end %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # haptic/fixed-response ({{ key }}){{ "\n" }}
-              {%- if body != "" %}
-                {%- var bodyInj = ConfigInjectionKind(body, "line") %}
-                {%- if bodyInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/fixed-response-body' value contains " + bodyInj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
-                {%- var ctInj = ConfigInjectionKind(ct, "line") %}
-                {%- if ctInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/fixed-response-content-type' value contains " + ctInj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
-      http-request return status {{ code }} content-type "{{ EscapeDquoteValue(ct) }}" string "{{ EscapeDquoteValue(body) }}" if {{ HapticHostMatchCondition(key) }}
-              {%- else %}
-      http-request return status {{ code }} if {{ HapticHostMatchCondition(key) }}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- if incremental_value_count("haptic-gateway-security", "return") > 0 -%}
+      {%%
+        var mapsVal, _ = shared.ComputeIfAbsent("hapticReturnMaps", func() any {
+          var lines = func(key string) []string {
+            var rows = []any{}
+            for _, v := range incremental_values("haptic-gateway-security", key) {
+              rows = append(rows, tostring(v))
+            }
+            var out = []string{}
+            for _, r := range sort_strings(rows) {
+              out = append(out, tostring(r))
+            }
+            return out
+          }
+          return map[string]any{
+            "routes": RegisterMap("haptic-return-routes.map", lines("ret-route"), map[string]any{"ordered": false}),
+            "body": RegisterMap("haptic-return-body.map", lines("ret-body"), map[string]any{"ordered": false}),
+          }
+        })
+        var maps = mapsVal.(map[string]any)
+        var pairs = []any{}
+        for _, v := range incremental_values("haptic-gateway-security", "ret-pair") {
+          pairs = append(pairs, tostring(v))
+        }
+      %%}
+      # haptic/fixed-response
+      {%- for _, p := range sort_strings(pairs) %}
+        {%- var parts = strings_splitn(tostring(p), "|", 2) %}
+        {%- if parts[1] != "" %}
+      http-request return status {{ parts[0] }} content-type "{{ EscapeDquoteValue(parts[1]) }}" lf-string %[var(txn.resource_id),map({{ maps["body"] }}),url_dec(1)] if { var(txn.resource_id),map({{ maps["routes"] }}) -m str "{{ EscapeDquoteValue(tostring(p)) }}" }
+        {%- else %}
+      http-request return status {{ parts[0] }} if { var(txn.resource_id),map({{ maps["routes"] }}) -m str "{{ tostring(p) }}" }
+        {%- end %}
+      {%- end %}
+      {%- end %}
 
   # ==========================================================================
-  # mock-response — canned 200 stub, short-circuits before the validators.
+  # allowed-methods — deny 405 on a method outside the route's list.
+  # haptic-methods.map: "<route id>|<METHOD>" -> 1; a route with a list is in
+  # haptic-method-routes.map.
   # ==========================================================================
-  features-900-haptic-fragment-804-mock-response:
-    requires: [ingresses]
-    incremental:
-      source: ingresses
-      whenAnyPathExists:
-        - "metadata.annotations['haproxy-haptic.org/mock-response']"
-        - "metadata.annotations['haproxy-haptic.org/mock-response-code']"
-        - "metadata.annotations['haproxy-haptic.org/mock-response-content-type']"
-      consumes: [haptic-ingress-match-publications]
-      effects: [publishValue, recordEvent]
-    template: |-
-      {%- var fragment = render "util-haptic-fragment-body-804-mock-response" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
-      {%- end -%}
-
-  frontend-filters-804-haptic-mock-response:
-    requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-804-mock-response", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-804-mock-response:
-    template: |
-      {#
-        HAPTIC mock-response — return a canned body for this Ingress's host(s),
-        short-circuiting the backend. For stubbing an API during development.
-
-        Enabled when haproxy-haptic.org/mock-response (the body) is non-empty.
-
-        Annotations:
-          - haproxy-haptic.org/mock-response: response body (non-empty enables it)
-          - haproxy-haptic.org/mock-response-code: HTTP status (default 200)
-          - haproxy-haptic.org/mock-response-content-type: (default application/json)
-
-        Generated HAProxy Config (host-scoped):
-          http-request return status <code> content-type "<ct>" string "<body>" if <host-match>
-      #}
-      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
-      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var body = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response"] %}
-          {%- if body != "" %}
-            {%- var bodyInj = ConfigInjectionKind(body, "line") %}
-            {%- if bodyInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/mock-response' value contains " + bodyInj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
-            {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response-code"] %}
-            {%- if code == "" %}{%- code = "200" %}{%- end %}
-            {%- if toint(code) < 100 || toint(code) > 599 %}
-              {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/mock-response-code' on Ingress '" + key + "'. Must be a valid HTTP status code (100-599).") -}}
-            {%- end %}
-            {%- var ct = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response-content-type"] %}
-            {%- if ct == "" %}{%- ct = "application/json" %}{%- end %}
-            {%- var ctInj = ConfigInjectionKind(ct, "line") %}
-            {%- if ctInj != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Ingress " + key + " annotation 'haproxy-haptic.org/mock-response-content-type' value contains " + ctInj + ", which would split the frontend directive; the response is not applied. Remove control characters from the value.") -}}{%- continue %}{%- end %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # haptic/mock-response ({{ key }})
-      http-request return status {{ code }} content-type "{{ EscapeDquoteValue(ct) }}" string "{{ EscapeDquoteValue(body) }}" if {{ HapticHostMatchCondition(key) }}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
-
-  # ==========================================================================
-  # allowed-methods — deny 405 on disallowed HTTP methods.
-  # ==========================================================================
-  features-900-haptic-fragment-806-allowed-methods:
+  features-806-haptic-allowed-methods:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/allowed-methods']"]
+      group: haptic-gateway-security
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-806-allowed-methods" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var methods = []string{} -%}
+        {%- for _, tok := range split(ingress.Metadata.Annotations["haproxy-haptic.org/allowed-methods"], ",") -%}
+          {%- var m = strip(tok) -%}
+          {%- if m == "" -%}{%- continue -%}{%- end -%}
+          {%- if !regex_search(m, "^[A-Z]+$") -%}
+            {{- fail("Invalid method '" + m + "' in annotation 'haproxy-haptic.org/allowed-methods' on Ingress '" + key + "'. Methods must be uppercase letters (e.g. GET, POST).") -}}
+          {%- end -%}
+          {%- methods = append(methods, m) -%}
+        {%- end -%}
+        {%- if len(methods) > 0 -%}
+          {{- shared.Publish("am", "any", "any") -}}
+          {{- shared.Publish("am-route", key, key + " 1") -}}
+          {%- for _, m := range methods -%}
+            {{- shared.Publish("am-method", key + "|" + m, key + "|" + m + " 1") -}}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   frontend-filters-806-haptic-allowed-methods:
     requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-806-allowed-methods", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-806-allowed-methods:
     template: |
-      {#
-        HAPTIC allowed-methods — restrict the HTTP methods this Ingress accepts.
-
-        Annotation:
-          - haproxy-haptic.org/allowed-methods: comma-separated method list,
-            e.g. "GET,POST,OPTIONS". Each token must be uppercase A-Z.
-
-        Generated HAProxy Config (host-scoped):
-          http-request deny deny_status 405 if <host-match> !{ method <M1> <M2> ... }
-      #}
-      {%- import "util-haptic-ingress-match" for HapticResourceMatchCondition -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var methodsRaw = ingress.Metadata.Annotations["haproxy-haptic.org/allowed-methods"] %}
-          {%- if methodsRaw != "" %}
-            {%- var methods = []string{} %}
-            {%- for _, tok := range split(methodsRaw, ",") %}
-              {%- var m = strip(tok) %}
-              {%- if m != "" %}
-                {%- if !regex_search(m, "^[A-Z]+$") %}
-                  {{- fail("Invalid method '" + m + "' in annotation 'haproxy-haptic.org/allowed-methods' on Ingress '" + key + "'. Methods must be uppercase letters (e.g. GET, POST).") -}}
-                {%- end %}
-                {%- methods = append(methods, m) %}
-              {%- end %}
-            {%- end %}
-            {%- if len(methods) > 0 %}
-            {%- var cond = HapticResourceMatchCondition(key) %}
-      # haptic/allowed-methods ({{ key }})
-      http-request set-var(txn.denied_by) str(method_not_allowed) if {{ cond }} !{ method {{ join(methods, " ") }} }
-      http-request deny deny_status 405 if {{ cond }} !{ method {{ join(methods, " ") }} }
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- if incremental_value_count("haptic-gateway-security", "am") > 0 -%}
+      {%%
+        var mapsVal, _ = shared.ComputeIfAbsent("hapticMethodMaps", func() any {
+          var lines = func(key string) []string {
+            var rows = []any{}
+            for _, v := range incremental_values("haptic-gateway-security", key) {
+              rows = append(rows, tostring(v))
+            }
+            var out = []string{}
+            for _, r := range sort_strings(rows) {
+              out = append(out, tostring(r))
+            }
+            return out
+          }
+          return map[string]any{
+            "routes": RegisterMap("haptic-method-routes.map", lines("am-route"), map[string]any{"ordered": false}),
+            "methods": RegisterMap("haptic-methods.map", lines("am-method"), map[string]any{"ordered": false}),
+          }
+        })
+        var maps = mapsVal.(map[string]any)
+      %%}
+      # haptic/allowed-methods
+      http-request set-var(txn.am_method) method if { var(txn.resource_id),map({{ maps["routes"] }}) -m found }
+      http-request set-var(txn.denied_by) str(method_not_allowed) if { var(txn.am_method) -m found } !{ var(txn.resource_id),concat(|,txn.am_method),map({{ maps["methods"] }}) -m found }
+      http-request deny deny_status 405 if { var(txn.am_method) -m found } !{ var(txn.resource_id),concat(|,txn.am_method),map({{ maps["methods"] }}) -m found }
+      {%- end %}
 
   # ==========================================================================
-  # require-content-type — deny 415 when a body method lacks an allowed type.
+  # require-content-type — 415 when a body method lacks an allowed type.
+  # haptic-content-types.map: "<route id>|<type>" -> 1, a map_beg lookup on
+  # "<route id>|<Content-Type>" so charset suffixes still match; an absent
+  # header looks up "<route id>|", which no row prefixes, and is refused.
+  # 415 has no built-in errorfile, hence return, not deny.
   # ==========================================================================
-  features-900-haptic-fragment-808-require-content-type:
+  features-808-haptic-require-content-type:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/require-content-type']"]
+      group: haptic-gateway-security
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-808-require-content-type" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var types = []string{} -%}
+        {%- for _, tok := range split(ingress.Metadata.Annotations["haproxy-haptic.org/require-content-type"], ",") -%}
+          {%- var ct = strip(tok) -%}
+          {%- if ct == "" -%}{%- continue -%}{%- end -%}
+          {%- if !regex_search(ct, "^[A-Za-z0-9./+-]+$") -%}
+            {{- fail("Invalid media type '" + ct + "' in annotation 'haproxy-haptic.org/require-content-type' on Ingress '" + key + "'. Allowed characters: letters, digits, '.', '/', '+', '-'.") -}}
+          {%- end -%}
+          {%- types = append(types, ct) -%}
+        {%- end -%}
+        {%- if len(types) > 0 -%}
+          {{- shared.Publish("ct", "any", "any") -}}
+          {{- shared.Publish("ct-route", key, key + " 1") -}}
+          {%- for _, ct := range types -%}
+            {{- shared.Publish("ct-type", key + "|" + ct, key + "|" + ct + " 1") -}}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   frontend-filters-808-haptic-require-content-type:
     requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-808-require-content-type", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-808-require-content-type:
     template: |
-      {#
-        HAPTIC require-content-type — enforce an allowed Content-Type on requests
-        that carry a body (POST/PUT/PATCH). Prefix-matched so charset suffixes
-        (e.g. "application/json; charset=utf-8") still match.
-
-        Annotation:
-          - haproxy-haptic.org/require-content-type: comma-separated media types,
-            e.g. "application/json,application/xml".
-
-        Uses `http-request return status 415` rather than `deny deny_status 415`
-        because HAProxy's deny_status only accepts codes that have a built-in
-        errorfile, and 415 is not one of them.
-
-        Generated HAProxy Config (host-scoped):
-          http-request return status 415 if <host-match> { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg <t1> <t2> ... }
-      #}
-      {%- import "util-haptic-ingress-match" for HapticResourceMatchCondition -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var ctRaw = ingress.Metadata.Annotations["haproxy-haptic.org/require-content-type"] %}
-          {%- if ctRaw != "" %}
-            {%- var types = []string{} %}
-            {%- for _, tok := range split(ctRaw, ",") %}
-              {%- var ct = strip(tok) %}
-              {%- if ct != "" %}
-                {%- if !regex_search(ct, "^[A-Za-z0-9./+-]+$") %}
-                  {{- fail("Invalid media type '" + ct + "' in annotation 'haproxy-haptic.org/require-content-type' on Ingress '" + key + "'. Allowed characters: letters, digits, '.', '/', '+', '-'.") -}}
-                {%- end %}
-                {%- types = append(types, ct) %}
-              {%- end %}
-            {%- end %}
-            {%- if len(types) > 0 %}
-            {%- var cond = HapticResourceMatchCondition(key) %}
-      # haptic/require-content-type ({{ key }})
-      http-request set-var(txn.denied_by) str(content_type) if {{ cond }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ join(types, " ") }} }
-      http-request return status 415 if {{ cond }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ join(types, " ") }} }
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- if incremental_value_count("haptic-gateway-security", "ct") > 0 -%}
+      {%%
+        var mapsVal, _ = shared.ComputeIfAbsent("hapticContentTypeMaps", func() any {
+          var lines = func(key string) []string {
+            var rows = []any{}
+            for _, v := range incremental_values("haptic-gateway-security", key) {
+              rows = append(rows, tostring(v))
+            }
+            var out = []string{}
+            for _, r := range sort_strings(rows) {
+              out = append(out, tostring(r))
+            }
+            return out
+          }
+          return map[string]any{
+            "routes": RegisterMap("haptic-content-type-routes.map", lines("ct-route"), map[string]any{"ordered": false}),
+            "types": RegisterMap("haptic-content-types.map", lines("ct-type"), map[string]any{"ordered": false}),
+          }
+        })
+        var maps = mapsVal.(map[string]any)
+      %%}
+      # haptic/require-content-type
+      http-request set-var(txn.ct_route) var(txn.resource_id),map({{ maps["routes"] }}) if { method POST PUT PATCH }
+      http-request set-var(txn.ct_in) req.hdr(Content-Type) if { var(txn.ct_route) -m found }
+      http-request set-var(txn.denied_by) str(content_type) if { var(txn.ct_route) -m found } !{ var(txn.resource_id),concat(|,txn.ct_in),map_beg({{ maps["types"] }}) -m found }
+      http-request return status 415 if { var(txn.ct_route) -m found } !{ var(txn.resource_id),concat(|,txn.ct_in),map_beg({{ maps["types"] }}) -m found }
+      {%- end %}
 
   # ==========================================================================
-  # require-headers — deny 400 when a required request header is absent.
+  # require-headers — 400 when a required request header is absent.
+  # haptic-required-headers.map: "<route id>|<Header>" -> 1. req.hdr() takes
+  # a literal, so there is one deny pair per distinct header name in use: a
+  # new name reloads once, a route on a known name is a map edit.
   # ==========================================================================
-  features-900-haptic-fragment-809-require-headers:
+  features-809-haptic-require-headers:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/require-headers']"]
+      group: haptic-gateway-security
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-809-require-headers" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var names = []string{} -%}
+        {%- for _, tok := range split(ingress.Metadata.Annotations["haproxy-haptic.org/require-headers"], ",") -%}
+          {%- var hn = strip(tok) -%}
+          {%- if hn == "" -%}{%- continue -%}{%- end -%}
+          {%- if !regex_search(hn, "^[A-Za-z0-9-]+$") -%}
+            {{- fail("Invalid header name '" + hn + "' in annotation 'haproxy-haptic.org/require-headers' on Ingress '" + key + "'. Allowed characters: letters, digits, '-'.") -}}
+          {%- end -%}
+          {%- names = append(names, hn) -%}
+        {%- end -%}
+        {%- if len(names) > 0 -%}
+          {{- shared.Publish("rh", "any", "any") -}}
+          {%- for _, hn := range names -%}
+            {{- shared.Publish("rh-route", key + "|" + hn, key + "|" + hn + " 1") -}}
+            {{- shared.Publish("rh-name", hn, hn) -}}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   frontend-filters-809-haptic-require-headers:
     requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-809-require-headers", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-809-require-headers:
     template: |
-      {#
-        HAPTIC require-headers — reject requests missing any required header.
-
-        Annotation:
-          - haproxy-haptic.org/require-headers: comma-separated header names,
-            e.g. "X-Api-Key,X-Tenant-Id". One deny rule per header.
-
-        Generated HAProxy Config (host-scoped):
-          http-request deny deny_status 400 if <host-match> !{ req.hdr(<H>) -m found }
-      #}
-      {%- import "util-haptic-ingress-match" for HapticResourceMatchCondition -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var hdrsRaw = ingress.Metadata.Annotations["haproxy-haptic.org/require-headers"] %}
-          {%- if hdrsRaw != "" %}
-            {%- var hdrs = []any{} %}
-            {%- for _, tok := range split(hdrsRaw, ",") %}
-              {%- var hn = strip(tok) %}
-              {%- if hn != "" %}
-                {%- if !regex_search(hn, "^[A-Za-z0-9-]+$") %}
-                  {{- fail("Invalid header name '" + hn + "' in annotation 'haproxy-haptic.org/require-headers' on Ingress '" + key + "'. Allowed characters: letters, digits, '-'.") -}}
-                {%- end %}
-                {%- hdrs = append(hdrs, hn) %}
-              {%- end %}
-            {%- end %}
-            {%- if len(hdrs) > 0 %}
-      # haptic/require-headers ({{ key }})
-              {%- var cond = HapticResourceMatchCondition(key) %}
-              {%- for _, hn := range hdrs %}
-      http-request set-var(txn.denied_by) str(required_header) if {{ cond }} !{ req.hdr({{ tostring(hn) }}) -m found }
-      http-request deny deny_status 400 if {{ cond }} !{ req.hdr({{ tostring(hn) }}) -m found }
-              {%- end %}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- if incremental_value_count("haptic-gateway-security", "rh") > 0 -%}
+      {%%
+        var routesVal, _ = shared.ComputeIfAbsent("hapticRequiredHeadersMap", func() any {
+          var rows = []any{}
+          for _, v := range incremental_values("haptic-gateway-security", "rh-route") {
+            rows = append(rows, tostring(v))
+          }
+          var lines = []string{}
+          for _, r := range sort_strings(rows) {
+            lines = append(lines, tostring(r))
+          }
+          return RegisterMap("haptic-required-headers.map", lines, map[string]any{"ordered": false})
+        })
+        var routes = tostring(routesVal)
+        var names = []any{}
+        for _, v := range incremental_values("haptic-gateway-security", "rh-name") {
+          names = append(names, tostring(v))
+        }
+      %%}
+      # haptic/require-headers
+      {%- for _, hn := range sort_strings(names) %}
+      http-request set-var(txn.denied_by) str(required_header) if { var(txn.resource_id),concat(|{{ hn }}),map({{ routes }}) -m found } !{ req.hdr({{ hn }}) -m found }
+      http-request deny deny_status 400 if { var(txn.resource_id),concat(|{{ hn }}),map({{ routes }}) -m found } !{ req.hdr({{ hn }}) -m found }
+      {%- end %}
+      {%- end %}
 
   # ==========================================================================
   # HMAC request-signature verification: one uniform block per HTTP frontend
