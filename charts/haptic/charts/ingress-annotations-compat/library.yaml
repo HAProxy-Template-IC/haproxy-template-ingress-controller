@@ -381,6 +381,127 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
+  # X-Forwarded-For from a per-route map: ing-xff-routes.map holds
+  # "<route id>" -> "<family>:<add|update|ifmissing>" (ignore publishes
+  # nothing). strict refuses an unknown value; haproxy-ingress treats it as
+  # add, as upstream does.
+  util-forwardfor-publish:
+    template: |-
+      {%- macro PublishForwardFor(ingress *resources.ingresses.T, annotation string, family string, strict bool) -%}
+        {%- var mode = ingress.Metadata.Annotations[annotation] -%}
+        {%- if mode != "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- if mode != "add" && mode != "update" && mode != "ifmissing" && mode != "ignore" -%}
+            {%- if strict -%}
+              {{- fail("Invalid value '" + mode + "' for annotation '" + annotation + "' on Ingress '" + key + "'. Valid values: add, update, ifmissing, ignore") -}}
+            {%- end -%}
+            {%- mode = "add" -%}
+          {%- end -%}
+          {%- if mode != "ignore" -%}
+            {{- shared.Publish(family, "any", "any") -}}
+            {{- shared.Publish("route", key, key + " " + family + ":" + mode) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  features-200-ingress-forwardfor:
+    template: '{{- render_glob "ingress-forwardfor-*" -}}'
+
+  ingress-forwardfor-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-forwardfor
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  util-forwardfor-lane:
+    template: |-
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- macro ForwardForLane(family string) -%}
+        {%- if incremental_value_count("ingress-forwardfor", family) > 0 -%}
+          {%%
+            var routesVal, _ = shared.ComputeIfAbsent("ingressForwardForMap", func() any {
+            var lines = func(key string) []string {
+              var rows = []any{}
+              for _, v := range incremental_values("ingress-forwardfor", key) {
+                rows = append(rows, tostring(v))
+              }
+              var out = []string{}
+              for _, r := range sort_strings(rows) {
+                out = append(out, tostring(r))
+              }
+              return out
+            }
+              return RegisterMap("ing-xff-routes.map", lines("route"), map[string]any{"ordered": false})
+            })
+            var routes = tostring(routesVal)
+          %%}
+      # {{ family }}/forwardfor
+      http-request set-var(txn.{{ family }}_xff) var(txn.resource_id),map({{ routes }})
+      http-request add-header X-Forwarded-For %[src] if { var(txn.{{ family }}_xff) -m str "{{ family }}:add" }
+      http-request set-header X-Forwarded-For %[src] if { var(txn.{{ family }}_xff) -m str "{{ family }}:update" }
+      http-request set-header X-Forwarded-For %[src] if { var(txn.{{ family }}_xff) -m str "{{ family }}:ifmissing" } !{ req.hdr(X-Forwarded-For) -m found }
+        {%- end -%}
+      {%- end macro -%}
+
+  # Client address from a trusted request header (set-src) from a per-route
+  # map: ing-src-ip-routes.map holds "<route id>" -> "<family>:<Header>".
+  # hdr() takes a literal, so the lane emits one set-src per distinct header
+  # name of the family: a new name reloads once, a route on a known name is a
+  # map edit. Callers validate the name (set-src must fail closed).
+  util-src-ip-publish:
+    template: |-
+      {%- macro PublishSrcIPHeader(key string, header string, family string) -%}
+        {{- shared.Publish(family, "any", "any") -}}
+        {{- shared.Publish("route", key, key + " " + family + ":" + header) -}}
+        {{- shared.Publish("name", family + ":" + header, family + ":" + header) -}}
+      {%- end macro -%}
+
+  features-200-ingress-src-ip:
+    template: '{{- render_glob "ingress-src-ip-*" -}}'
+
+  ingress-src-ip-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-src-ip
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  util-src-ip-lane:
+    template: |-
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- macro SrcIPHeaderLane(family string) -%}
+        {%- if incremental_value_count("ingress-src-ip", family) > 0 -%}
+          {%%
+            var routesVal, _ = shared.ComputeIfAbsent("ingressSrcIPMap", func() any {
+            var lines = func(key string) []string {
+              var rows = []any{}
+              for _, v := range incremental_values("ingress-src-ip", key) {
+                rows = append(rows, tostring(v))
+              }
+              var out = []string{}
+              for _, r := range sort_strings(rows) {
+                out = append(out, tostring(r))
+              }
+              return out
+            }
+              return RegisterMap("ing-src-ip-routes.map", lines("route"), map[string]any{"ordered": false})
+            })
+            var routes = tostring(routesVal)
+            var names = []any{}
+            for _, v := range incremental_values("ingress-src-ip", "name") {
+              if hasPrefix(tostring(v), family + ":") {
+                names = append(names, tostring(v))
+              }
+            }
+          %%}
+      # {{ family }}/src-ip-header
+          {%- for _, n := range sort_strings(names) %}
+      http-request set-src hdr({{ tostring(n)[len(family)+1:] }}) if { var(txn.resource_id),map({{ routes }}) -m str "{{ n }}" }
+          {%- end %}
+        {%- end -%}
+      {%- end macro -%}
+
   # aclPrefix must stay distinct per library — validation tests assert on the
   # resulting ACL names.
   # Renders every family's publisher (ingress-access-control-<band>-<library>,

@@ -2,7 +2,7 @@
 #
 # Generates a per-request unique ID (HAProxy `unique-id`) and forwards it to the
 # upstream in a configurable header (default X-Request-ID), so a request can be
-# correlated across HAProxy logs and the backend. Host-scoped per Ingress.
+# correlated across HAProxy logs and the backend. Keyed by route.
 #
 # This library only forwards the id upstream. `unique-id-format` itself belongs
 # to base.yaml (defaults-settings-150-access-log-request-id), which emits it
@@ -12,85 +12,68 @@
 templateSnippets:
 
   # ==========================================================================
-  # Per-Ingress set-header (host-scoped). frontend-filters-* inherit no locals.
+  # Per-route map lane. haptic-request-id-routes.map: "<route id>" ->
+  # "<Header> <accept-inbound 0|1>"; one set-header per distinct pair, since
+  # the header name is a literal: a new pair reloads once, a route on a known
+  # pair is a map edit. With accept-inbound a client-supplied value is kept
+  # only when it is a well-formed identifier (^[A-Za-z0-9._:-]{1,128}$):
+  # without that bound a client chooses what lands in the backend's logs,
+  # including a value crafted to collide with another request's id (Envoy
+  # takes the same position). The access log's req_id is always HAProxy's own
+  # id, so with accept-inbound join the two on the backend side.
   # ==========================================================================
-  features-900-haptic-fragment-880-request-id:
+  features-880-haptic-request-id:
     requires: [ingresses]
     incremental:
       source: ingresses
-      whenAnyPathExists:
-        - "metadata.annotations['haproxy-haptic.org/request-id']"
-        - "metadata.annotations['haproxy-haptic.org/request-id-accept-inbound']"
-        - "metadata.annotations['haproxy-haptic.org/request-id-header']"
-      consumes: [haptic-ingress-match-publications]
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/request-id']"]
+      group: haptic-request-id
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-880-request-id" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/request-id"] == "true" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var hdr = ingress.Metadata.Annotations["haproxy-haptic.org/request-id-header"] -%}
+        {%- if hdr == "" -%}{%- hdr = "X-Request-ID" -%}{%- end -%}
+        {%- var pair = ValidateConfigValue(hdr, "haproxy-haptic.org/request-id-header", key, false) + " 0" -%}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/request-id-accept-inbound"] == "true" -%}{%- pair = pair[:len(pair)-1] + "1" -%}{%- end -%}
+        {{- shared.Publish("any", "any", "any") -}}
+        {{- shared.Publish("route", key, key + " " + pair) -}}
+        {{- shared.Publish("pair", pair, pair) -}}
       {%- end -%}
 
   frontend-filters-880-haptic-request-id:
     requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-880-request-id", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-880-request-id:
     template: |
-      {#
-        HAPTIC request-id — forward a correlation ID upstream.
-
-        Annotations:
-          - haproxy-haptic.org/request-id: "true" (enables the feature)
-          - haproxy-haptic.org/request-id-header: "<name>" (default X-Request-ID)
-          - haproxy-haptic.org/request-id-accept-inbound: "true"
-              preserve a client-supplied header value instead of overwriting it
-              (default: always generate a fresh id, ignoring client input — a
-              client-set id can't be trusted for internal correlation).
-
-              A preserved value is only honoured when it is a well-formed
-              identifier (^[A-Za-z0-9._:-]{1,128}$); anything else is replaced
-              with a generated id. Without that bound a client chooses what lands
-              in the backend's own logs, including an arbitrarily long value or
-              one crafted to collide with another request's id. Envoy takes the
-              same position (a non-UUID x-request-id disables its id-derived
-              features).
-
-        Generated HAProxy Config (host-scoped):
-          accept-inbound=false (default):
-            http-request set-header <H> %[unique-id] if <host-match>
-          accept-inbound=true:
-            http-request set-header <H> %[unique-id] if <host-match> !{ req.hdr(<H>) -m reg ^[A-Za-z0-9._:-]{1,128}$ }
-
-        Note: the access log's `req_id` field is always HAProxy's own id
-        (unique-id, an RFC 9562 UUIDv7 from base.yaml's
-        defaults-settings-150-access-log-request-id). With accept-inbound the
-        upstream therefore sees the client's id while the log line carries
-        HAPTIC's — join them on the backend side if you enable it.
-      #}
-      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/request-id"] == "true" %}
-            {%- var hdr = ingress.Metadata.Annotations["haproxy-haptic.org/request-id-header"] %}
-            {%- if hdr == "" %}{%- hdr = "X-Request-ID" %}{%- end %}
-            {%- var h = ValidateConfigValue(hdr, "haproxy-haptic.org/request-id-header", key, false) %}
-            {%- var acceptInbound = ingress.Metadata.Annotations["haproxy-haptic.org/request-id-accept-inbound"] == "true" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # haptic/request-id ({{ key }})
-              {%- if acceptInbound %}
-      http-request set-header {{ h }} %[unique-id] if {{ HapticHostMatchCondition(key) }} !{ req.hdr({{ h }}) -m reg ^[A-Za-z0-9._:-]{1,128}$ }
-              {%- else %}
-      http-request set-header {{ h }} %[unique-id] if {{ HapticHostMatchCondition(key) }}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- if incremental_value_count("haptic-request-id", "any") > 0 -%}
+      {%%
+        var routesVal, _ = shared.ComputeIfAbsent("hapticRequestIDMap", func() any {
+          var rows = []any{}
+          for _, v := range incremental_values("haptic-request-id", "route") {
+            rows = append(rows, tostring(v))
+          }
+          var lines = []string{}
+          for _, r := range sort_strings(rows) {
+            lines = append(lines, tostring(r))
+          }
+          return RegisterMap("haptic-request-id-routes.map", lines, map[string]any{"ordered": false})
+        })
+        var routes = tostring(routesVal)
+        var pairs = []any{}
+        for _, v := range incremental_values("haptic-request-id", "pair") {
+          pairs = append(pairs, tostring(v))
+        }
+      %%}
+      # haptic/request-id
+      {%- for _, p := range sort_strings(pairs) %}
+        {%- var parts = split(tostring(p), " ") %}
+        {%- if parts[1] == "1" %}
+      http-request set-header {{ parts[0] }} %[unique-id] if { var(txn.resource_id),map({{ routes }}) -m str "{{ p }}" } !{ req.hdr({{ parts[0] }}) -m reg ^[A-Za-z0-9._:-]{1,128}$ }
+        {%- else %}
+      http-request set-header {{ parts[0] }} %[unique-id] if { var(txn.resource_id),map({{ routes }}) -m str "{{ p }}" }
+        {%- end %}
+      {%- end %}
+      {%- end %}

@@ -311,16 +311,42 @@ templateSnippets:
       {%- end -%}
 
   frontend-filters-500-haproxytech-logging:
+    requires: [ingresses]
     template: |-
+      {%- import "util-src-ip-lane" for SrcIPHeaderLane -%}
+      {{- SrcIPHeaderLane("haproxytech") -}}
       {%- for _, fragment := range incremental_values("haproxytech-logging", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
+
+  # src-ip-header from the shared map lane; a bad value must fail closed, not
+  # skip: emitting nothing would leave downstream trust ACLs judging the
+  # proxy's address. The header name is a bare token.
+  ingress-src-ip-0500-haproxytech:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy.org/src-ip-header']"]
+      group: ingress-src-ip
+      effects: [publishValue]
+    template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-src-ip-publish" for PublishSrcIPHeader -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy.org/src-ip-header"] != "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy.org/src-ip-header"] -%}
+        {%- var srcInj = ConfigInjectionKind(srcIpHeader, "token") -%}
+        {%- if srcInj != "" -%}
+          {{- fail("Invalid value for annotation 'haproxy.org/src-ip-header' on Ingress '" + key + "': contains " + srcInj + ", which would break the set-src directive. Use a plain header name.") -}}
+        {%- end -%}
+        {{- PublishSrcIPHeader(key, srcIpHeader, "haproxytech") -}}
+      {%- end -%}
 
   haproxytech-logging-publications:
     requires: [ingresses]
     incremental:
       source: ingresses
-      whenAnyPathExists:
-        - "metadata.annotations['haproxy.org/src-ip-header']"
-        - "metadata.annotations['haproxy.org/request-capture']"
+      whenAnyPathExists: ["metadata.annotations['haproxy.org/request-capture']"]
       group: haproxytech-logging
       effects: [publishValue, recordEvent]
     template: |-
@@ -339,25 +365,9 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy.org/src-ip-header"] %}
           {%- var reqCapture = ingress.Metadata.Annotations["haproxy.org/request-capture"] %}
           {%- var captureLen = ingress.Metadata.Annotations["haproxy.org/request-capture-len"] %}
           {%- if captureLen == "" %}{%- captureLen = "128" %}{%- end %}
-          {%- if srcIpHeader != "" %}
-            {#- src-ip-header rewrites the trusted client address (set-src), so a bad
-                value must fail closed, not skip: emitting nothing would leave downstream
-                trust ACLs judging the proxy's address. The header name is a bare token. -#}
-            {%- var srcInj = ConfigInjectionKind(srcIpHeader, "token") %}
-            {%- if srcInj != "" %}
-              {{- fail("Invalid value for annotation 'haproxy.org/src-ip-header' on Ingress '" + key + "': contains " + srcInj + ", which would break the set-src directive. Use a plain header name.") -}}
-            {%- end %}
-            {# Scoped by matched route. set-src rewrites the address every
-                src-based ACL then evaluates, so a wildcard or host-less rule
-                that skipped this left the CIDR allow/deny lists judging the
-                proxy's address instead of the client's. #}
-      # haproxytech/frontend-filters-haproxytech-logging (src-ip-header for {{ key }})
-      http-request set-src hdr({{ srcIpHeader }}) if { var(txn.resource_id) -m str {{ key }} }
-          {%- end %}
           {%- if reqCapture != "" %}
             {#- captureLen is a bare positive integer; toint() rejects any trailing
                 garbage (a newline, a second word) by returning 0, so this one check
@@ -2301,7 +2311,8 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "cookie SESSIONID insert indirect nocache dynamic"}
       - {type: contains, target: haproxy.cfg, pattern: "proto h2"}
       - {type: contains, target: haproxy.cfg, pattern: "option httpchk GET /healthz HTTP/1.1"}
-      - {type: contains, target: haproxy.cfg, pattern: 'set-src hdr\(X-Real-IP\)'}
+      - {type: contains, target: "map:ing-src-ip-routes.map", pattern: '(?m)^default/ok-be haproxytech:X-Real-IP$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-src hdr\(X-Real-IP\) if \{ var\(txn\.resource_id\),map\(\S*/ing-src-ip-routes\.map\) -m str "haproxytech:X-Real-IP" \}'}
       - {type: contains, target: haproxy.cfg, pattern: "capture request header X-Forwarded-For len 256"}
       # Header manipulation is reload-free: the value lives URL-encoded in
       # ing-reqhdr.map (a%b -> a%25b), read by one static line keyed on the backend.
@@ -2564,7 +2575,7 @@ _migrationCoverage:
         note: A single "<from> <to>" pair maps to replace-path; a bare value rewrites the whole path.
       haproxy.org/src-ip-header:
         status: different
-        note: Rewrites the source IP from the named header (set-src), but only for rules with an explicit host.
+        note: Rewrites the source IP from the named header (set-src) for the route, from a per-route map.
         doc: annotation-support
       haproxy.org/request-capture:
         status: supported

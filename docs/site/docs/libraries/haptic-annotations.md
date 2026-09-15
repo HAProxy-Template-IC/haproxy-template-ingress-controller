@@ -319,7 +319,7 @@ Request/response header manipulation, capture, CORS, source-IP allow/deny, and u
 | `haproxy-haptic.org/cors-expose-headers` | ✅ Supported | Sets the `Access-Control-Expose-Headers` response header. |
 | `haproxy-haptic.org/cors-max-age` | ✅ Supported | Sets the `Access-Control-Max-Age` response header (default `86400`). |
 | `haproxy-haptic.org/denylist-source-range` | ✅ Supported | Denies the listed CIDRs and allows all other source IPs for the host. |
-| `haproxy-haptic.org/forwardfor` | ✅ Supported | Controls the `X-Forwarded-For` header: `add`, `update`, `ifmissing`, or `ignore`. |
+| `haproxy-haptic.org/forwardfor` | ✅ Supported | Controls the `X-Forwarded-For` header: `add`, `update`, `ifmissing`, or `ignore`. Applied from a per-route map. |
 | `haproxy-haptic.org/response-cookie-domain` | ✅ Supported | Rewrites the `Domain` attribute of upstream `Set-Cookie` response headers, given a `<from> <to>` pair, preserving the rest of the cookie string. Host-scoped; a wrong-arity value fails the render. |
 | `haproxy-haptic.org/response-cookie-path` | ✅ Supported | Rewrites the `Path` attribute of upstream `Set-Cookie` response headers, given a `<from> <to>` pair, preserving the rest of the cookie string. Host-scoped; a wrong-arity value fails the render. |
 | `haproxy-haptic.org/response-location-rewrite-from` | ✅ Supported | Names the literal text to match in the `Location` and `Refresh` response headers; the matched text is regex-escaped and replaced with the value of `response-location-rewrite-to`. Host-scoped. |
@@ -328,7 +328,7 @@ Request/response header manipulation, capture, CORS, source-IP allow/deny, and u
 | `haproxy-haptic.org/request-capture-len` | ✅ Supported | Sets the capture length for `request-capture` (default `128`). |
 | `haproxy-haptic.org/request-set-header` | ✅ Supported | Sets request headers sent to the upstream, one `<name> <value>` per line. Reload-free: values move into `ing-reqhdr.map`, read by one static `http-request set-header` line per header name, keyed on the backend. |
 | `haproxy-haptic.org/response-set-header` | ✅ Supported | Sets response headers, one `<name> <value>` per line. Reload-free: values move into `ing-reshdr.map`, read by one static `http-response set-header` line per header name, keyed on the backend. |
-| `haproxy-haptic.org/src-ip-header` | ✅ Supported | Derives the client source IP from the named request header via `http-request set-src`. |
+| `haproxy-haptic.org/src-ip-header` | ✅ Supported | Derives the client source IP from the named request header via `http-request set-src`, from a per-route map; the first route to name a new header reloads once. |
 
 ### Canary and traffic mirroring
 
@@ -616,7 +616,7 @@ JSON request-body validation is opt-in via `controller.config.templatingSettings
 | `haproxy-haptic.org/mock-response` | ✅ Supported | A non-empty value returns it as a canned response body, short-circuiting the backend (for stubbing an API). The body comes from a per-route map; the first route with a new status and content-type pair reloads once. |
 | `haproxy-haptic.org/mock-response-code` | ✅ Supported | HTTP status for `mock-response` (default `200`). |
 | `haproxy-haptic.org/mock-response-content-type` | ✅ Supported | Content-Type for the `mock-response` body (default `application/json`). |
-| `haproxy-haptic.org/request-id` | ✅ Supported | The value `true` generates a per-request correlation id and forwards it upstream (HAProxy `unique-id`). |
+| `haproxy-haptic.org/request-id` | ✅ Supported | The value `true` generates a per-request correlation id and forwards it upstream (HAProxy `unique-id`), from a per-route map; the first route with a new header name reloads once. |
 | `haproxy-haptic.org/request-id-accept-inbound` | ✅ Supported | The value `true` preserves a client-supplied id (used only when the header is absent) instead of always generating a fresh one. |
 | `haproxy-haptic.org/request-id-header` | ✅ Supported | Header carrying the correlation id (default `X-Request-ID`). |
 | `haproxy-haptic.org/request-schema-configmap` | ✅ Supported | Enables JSON request-body validation using a ConfigMap schema reference: `[namespace/]name[:key]`, default key `schema.json`. Exactly one schema source is required. Requires `extraContext.apiGateway.requestSchemaValidation.enabled=true`. |

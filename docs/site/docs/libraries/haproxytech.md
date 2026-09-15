@@ -1748,7 +1748,8 @@ haproxy.org/src-ip-header: "True-Client-IP"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-request set-src hdr(CF-Connecting-IP)
+# one rule per header name in use, gated by the route's row in ing-src-ip-routes.map
+http-request set-src hdr(CF-Connecting-IP) if { var(txn.resource_id),map(/etc/haproxy/maps/ing-src-ip-routes.map) -m str "haproxytech:CF-Connecting-IP" }
 ```
 
 **Dependencies**: None

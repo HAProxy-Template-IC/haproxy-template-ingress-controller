@@ -38,6 +38,8 @@ const haproxyIngressSweepFailure = `{%- if tostring(extraContext | dig("failAfte
 
 var haproxyIngressSnippetDependencyPattern = regexp.MustCompile(`(?:import|render)\s+"([^"]+)"`)
 
+const haproxyIngressForwardForBlock = "frontend-filters-600-haproxy-ingress-forwardfor"
+
 func TestHAProxyIngressIncrementalSweepScalesWithChangedResources(t *testing.T) {
 	for _, resourceCount := range []int{300, 1000, 3000} {
 		t.Run(fmt.Sprintf("resources-%d", resourceCount), func(t *testing.T) {
@@ -63,7 +65,8 @@ func TestHAProxyIngressIncrementalSweepScalesWithChangedResources(t *testing.T) 
 				"haproxy-ingress.github.io/forwardfor": "add",
 			}, "v3"))
 			active := fixture.renderAndCommit(t)
-			assert.Contains(t, active.HAProxyConfig, "# haproxy-ingress/forwardfor (default/"+target+")")
+			assert.Contains(t, active.HAProxyConfig, "# hi/forwardfor")
+			assert.Contains(t, active.HAProxyConfig, `add-header X-Forwarded-For %[src] if { var(txn.hi_xff) -m str "hi:add" }`)
 			assert.Equal(t, map[string]int{"ingresses/" + target: 1}, fixture.engine.executionCounts())
 			assert.Equal(t, active.HAProxyConfig, fixture.renderAndCommit(t).HAProxyConfig)
 			assert.Equal(t, map[string]int{"ingresses/" + target: 1}, fixture.engine.executionCounts())
@@ -74,27 +77,13 @@ func TestHAProxyIngressIncrementalSweepScalesWithChangedResources(t *testing.T) 
 func TestHAProxyIngressIncrementalSweepMatchesDetachedLegacy(t *testing.T) {
 	snippets, components := loadHAProxyIngressSweepSnippets(t)
 	current := newHAProxyTechFixtureWithSnippets(t, haproxyIngressSweepRoot(components), snippets)
-	legacy := newHAProxyTechFixtureWithSnippets(t, `{{- render "legacy-haproxy-ingress-forwardfor" -}}`, map[string]config.TemplateSnippet{
-		"legacy-haproxy-ingress-forwardfor": {
-			Name: "legacy-haproxy-ingress-forwardfor",
-			Template: `{%- for _, ingress := range resources.ingresses.List() %}
-  {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-  {%- var forwardfor = ingress.Metadata.Annotations["haproxy-ingress.github.io/forwardfor"] %}
-  {%- if forwardfor != "" && forwardfor != "ignore" %}
-    {%- var cond = "{ var(txn.resource_id) -m str " + key + " }" %}
-# haproxy-ingress/forwardfor ({{ key }})
-    {%- if forwardfor == "ifmissing" %}
-http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ cond }}
-    {%- else if forwardfor == "update" %}
-http-request set-header X-Forwarded-For %[src] if {{ cond }}
-    {%- else %}
-http-request add-header X-Forwarded-For %[src] if {{ cond }}
-    {%- end %}
-  {%- end %}
-{%- end -%}`,
-		},
-	})
-	legacy.provider = current.provider
+	// A cold fixture over the same stores renders the lane from scratch; the
+	// incremental sweep must yield the same bytes after every change.
+	cold := func() string {
+		fresh := newHAProxyTechFixtureWithSnippets(t, haproxyIngressSweepRoot(components), snippets)
+		fresh.provider = current.provider
+		return fresh.renderAndCommit(t).HAProxyConfig
+	}
 
 	current.addIngress(t, haproxyTechIngress("z", map[string]any{
 		"haproxy-ingress.github.io/forwardfor": "ifmissing",
@@ -102,14 +91,14 @@ http-request add-header X-Forwarded-For %[src] if {{ cond }}
 	current.addIngress(t, haproxyTechIngress("a", map[string]any{
 		"haproxy-ingress.github.io/forwardfor": "update",
 	}, "v1"))
-	assert.Equal(t, legacy.renderAndCommit(t).HAProxyConfig, current.renderAndCommit(t).HAProxyConfig)
+	assert.Equal(t, cold(), current.renderAndCommit(t).HAProxyConfig)
 
 	current.updateIngress(t, haproxyTechIngress("z", map[string]any{
 		"haproxy-ingress.github.io/forwardfor": "add",
 	}, "v2"))
-	assert.Equal(t, legacy.renderAndCommit(t).HAProxyConfig, current.renderAndCommit(t).HAProxyConfig)
+	assert.Equal(t, cold(), current.renderAndCommit(t).HAProxyConfig)
 	current.deleteIngress(t, "a")
-	assert.Equal(t, legacy.renderAndCommit(t).HAProxyConfig, current.renderAndCommit(t).HAProxyConfig)
+	assert.Equal(t, cold(), current.renderAndCommit(t).HAProxyConfig)
 }
 
 func TestHAProxyIngressIncrementalSweepAbortsDoNotPoisonCache(t *testing.T) {
@@ -133,7 +122,7 @@ func TestHAProxyIngressIncrementalSweepAbortsDoNotPoisonCache(t *testing.T) {
 		rendercontext.WithAdmissionSubject("ingresses", "default", "subject"),
 	)
 	require.NoError(t, err)
-	assert.Contains(t, admission.HAProxyConfig, "haproxy-ingress/forwardfor")
+	assert.Contains(t, admission.HAProxyConfig, "hi/forwardfor")
 	assert.Equal(t, map[string]int{"ingresses/subject": 1}, fixture.engine.executionCounts())
 	assert.Equal(t, baseline.HAProxyConfig, fixture.renderAndCommit(t).HAProxyConfig)
 	assert.Equal(t, map[string]int{"ingresses/subject": 1}, fixture.engine.executionCounts())
@@ -147,7 +136,7 @@ func TestHAProxyIngressIncrementalSweepAbortsDoNotPoisonCache(t *testing.T) {
 
 	fixture.config.TemplatingSettings.ExtraContext["failAfterAuth"] = false
 	retried := fixture.renderAndCommit(t)
-	assert.Contains(t, retried.HAProxyConfig, "haproxy-ingress/forwardfor")
+	assert.Contains(t, retried.HAProxyConfig, "hi/forwardfor")
 	assert.Equal(t, map[string]int{"ingresses/subject": 3}, fixture.engine.executionCounts())
 	assert.Equal(t, retried.HAProxyConfig, fixture.renderAndCommit(t).HAProxyConfig)
 	assert.Equal(t, map[string]int{"ingresses/subject": 3}, fixture.engine.executionCounts())
@@ -196,7 +185,10 @@ func loadHAProxyIngressSweepSnippets(t *testing.T) (snippets map[string]config.T
 	require.NotEmpty(t, components)
 	sort.Strings(components)
 
-	expandHAProxyIngressSweepSelection(t, all, selected, components)
+	// The forwardfor block is not incremental itself; it reads the lane the
+	// publisher above fills, so the root renders it after the components.
+	selected[haproxyIngressForwardForBlock] = true
+	expandHAProxyIngressSweepSelection(t, all, selected, append(append([]string(nil), components...), haproxyIngressForwardForBlock))
 	return haproxyIngressSweepConfigSnippets(all, selected), components
 }
 
@@ -260,6 +252,7 @@ func haproxyIngressSweepRoot(components []string) string {
 	for _, name := range components {
 		fmt.Fprintf(&root, `{{- render %q -}}`, name)
 	}
+	fmt.Fprintf(&root, `{{- render %q -}}`, haproxyIngressForwardForBlock)
 	root.WriteString(haproxyIngressSweepFailure)
 	return root.String()
 }
