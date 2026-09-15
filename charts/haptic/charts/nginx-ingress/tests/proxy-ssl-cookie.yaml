@@ -132,12 +132,12 @@ validationTests:
                       backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-response replace-header Set-Cookie \\(.\\*\\)Domain=upstream\\.local\\(.\\*\\) \\\\1Domain=app\\.example\\.com\\\\2"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-response replace-header Set-Cookie \\(.\\*\\)Path=/api\\(.\\*\\) \\\\1Path=/\\\\2"
+      - {type: contains, target: "map:ing-cookie-rewrite-routes.map", pattern: '(?m)^default/cookie-ingress\|ni\|Domain\|upstream\.local\|app\.example\.com 1$'}
+      - {type: contains, target: "map:ing-cookie-rewrite-routes.map", pattern: '(?m)^default/cookie-ingress\|ni\|Path\|/api\|/ 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response replace-header Set-Cookie \(\.\*\)Domain=upstream\.local\(\.\*\) \\1Domain=app\.example\.com\\2 if \{ var\(txn\.resource_id\),concat\(\|ni\|Domain\|upstream\.local\|app\.example\.com\),map\(\S*/ing-cookie-rewrite-routes\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response replace-header Set-Cookie \(\.\*\)Path=/api\(\.\*\) \\1Path=/\\2 if'}
+      # The rewrite left the backend: it must not make the route structural.
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^backend default_cookie-ingress\S*\n(  [^\n]*\n)*  http-response replace-header'}
 
   test-nginx-ingress-proxy-ssl-name-default-off-verify-none:
     description: proxy-ssl-name alone (no proxy-ssl-verify) does NOT request verification — matching nginx's default-off it emits verify none + sni and omits verifyhost (not a fail-open; verification was never requested)

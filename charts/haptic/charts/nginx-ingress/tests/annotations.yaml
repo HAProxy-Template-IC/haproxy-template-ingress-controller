@@ -808,7 +808,8 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "http-response replace-header Location .* https://public.example.com"
+        pattern: 'http-response replace-header Location http://backend\\.local https://public\.example\.com if \{ var\(txn\.resource_id\),concat\(\|ni\|http://backend\.local\|https://public\.example\.com\),map\(\S*/ing-location-rewrite-routes\.map\) -m found \}'
+      - {type: contains, target: "map:ing-location-rewrite-routes.map", pattern: '(?m)^default/pr-ingress\|ni\|http://backend\.local\|https://public\.example\.com 1$'}
 
   test-nginx-ingress-rate-limit-rps:
     description: Nginx Ingress limit-rps annotation generates stick-table and deny 429
