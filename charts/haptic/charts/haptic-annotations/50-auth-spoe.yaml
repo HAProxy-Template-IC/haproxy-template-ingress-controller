@@ -174,9 +174,6 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  # ============================================================================
-  # Basic auth — backend challenge (backend-directives)
-  # ============================================================================
   # ==========================================================================
   # Runtime half of the mTLS fail-closed. features-110 registers a host here when
   # its auth-tls-secret cannot be resolved, which happens to an ALREADY ADMITTED
@@ -213,95 +210,143 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
-  backend-directives-820-haptic-auth:
-    template: |
-      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {#-
-        HAPTIC Basic Auth Backend Directive
+  # ============================================================================
+  # Basic auth — per-route map + frontend challenge
+  # ============================================================================
+  # Resolves one Ingress's basic-auth settings. result["state"] is "" when the
+  # route has no basic auth or is a satisfy=any route (backend-directives-825
+  # owns those), else "ok", "missing" (Secret absent) or "nosecret".
+  util-haptic-basic-auth-route:
+    template: |-
+      {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
+      {%- macro HapticBasicAuthRoute(ingress *resources.ingresses.T, result map[string]any) -%}
+        {%- result["state"] = "" -%}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/auth-type"] == "basic" && SatisfyAnyMode(ingress) == "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var key = ns + "/" + ingress.Metadata.Name -%}
+          {%- var authSecret = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret"] -%}
+          {%- if authSecret == "" -%}
+            {%- result["state"] = "nosecret" -%}
+          {%- else -%}
+            {#- The realm is a quoted config token and a map value that must
+                compare equal: no quotes, backslashes, `$` (weak-quote
+                expansion), tabs or newlines, and no padding (the map reader
+                trims it). -#}
+            {%- var realm = strip(ingress.Metadata.Annotations["haproxy-haptic.org/auth-realm"]) -%}
+            {%- if realm == "" -%}{%- realm = "Restricted" -%}{%- end -%}
+            {%- if !regex_search(realm, "^[^\"\\\\$\\r\\n\\t]*$") -%}
+              {{- fail("Invalid auth-realm '" + realm + "' on Ingress '" + key + "': must not contain double-quotes, backslashes, '$', tabs or newlines.") -}}
+            {%- end -%}
+            {%- var secretNs = ns -%}
+            {%- var secretName = authSecret -%}
+            {%- if strings_contains(authSecret, "/") -%}
+              {%- var parts = split(authSecret, "/") -%}
+              {%- secretNs = parts[0] -%}
+              {%- secretName = parts[1] -%}
+            {%- end -%}
+            {%- result["secretRef"] = secretNs + "/" + secretName -%}
+            {%- result["userlist"] = "haptic_auth_" + secretNs + "_" + secretName -%}
+            {%- result["realm"] = realm -%}
+            {%- result["state"] = "ok" -%}
+            {%- if resources.secrets.GetSingle(secretNs, secretName) == nil -%}{%- result["state"] = "missing" -%}{%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
 
+  map-haptic-basic-auth-routes-900-haptic:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-type']"]
+    template: |-
+      {%- import "util-haptic-basic-auth-route" for HapticBasicAuthRoute -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var route = map[string]any{} -%}
+        {{- HapticBasicAuthRoute(ingress, route) -}}
+        {%- var state = tostring(route["state"]) -%}
+        {%- if state == "ok" -%}
+      {{ "\n" }}{{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ok {{ route["userlist"] }} {{ route["realm"] }}
+        {%- else if state != "" -%}
+      {{ "\n" }}{{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} {{ state }}
+        {%- end -%}
+      {%- end -%}
+
+  # Distinct (userlist, realm) pairs, for the auth rules the frontend block has
+  # to spell out; also the fail-closed event. A component cannot both publish
+  # and emit text, hence the split from the map producer.
+  features-900-haptic-basic-auth-pairs:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/auth-type']"]
+      group: haptic-basic-auth-routes
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-haptic-basic-auth-route" for HapticBasicAuthRoute -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var route = map[string]any{} -%}
+        {{- HapticBasicAuthRoute(ingress, route) -}}
+        {%- var state = tostring(route["state"]) -%}
+        {%- if state != "" -%}
+          {{- shared.Publish("any", "any", "any") -}}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- if state == "ok" -%}
+            {%- var pair = tostring(route["userlist"]) + " " + tostring(route["realm"]) -%}
+            {{- shared.Publish("pair", pair, pair) -}}
+          {%- else if state == "missing" -%}
+            {#- A warning, never an admission rejection: the webhook's store lags
+                the API server, so "missing" and "not observed yet" are the same
+                here, and rejecting refused correct manifests applied in order. -#}
+            {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' with 'auth-secret: " + tostring(route["secretRef"]) + "', but that Secret does not exist. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
+          {%- else -%}
+            {{- WebhookRejectOrWarn(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' but no 'haproxy-haptic.org/auth-secret'. Basic auth cannot be enforced without the credentials Secret, so this route fails closed with 503. Set auth-secret, or remove auth-type.") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # ==========================================================================
+  # Basic-auth challenge: one block per HTTP frontend. Band 900: after every
+  # request check the backend rule used to follow (the rate limits at 863, the
+  # backend-TLS-unavailable 503 at 899), so an unauthenticated request is still
+  # rate-limited before it is challenged.
+  # ==========================================================================
+  frontend-filters-900-haptic-basic-auth:
+    requires: [ingresses]
+    template: |
+      {#
         Annotations:
           - haproxy-haptic.org/auth-type: "basic" (required)
-          - haproxy-haptic.org/auth-secret: "<ns/name>" or "<name>" (required)
-          - haproxy-haptic.org/auth-realm: "<realm>" (optional, default "Restricted")
+          - haproxy-haptic.org/auth-secret: "<ns/name>" | "<name>" (required)
+          - haproxy-haptic.org/auth-realm: "<realm>" (default "Restricted")
 
-        Generates:
-          http-request auth realm "<realm>" unless { http_auth(<userlist>) }
-
-        Suppressed under satisfy=any — the combined IP-or-auth gate emitted by
-        backend-directives-825-haptic-satisfy-any owns the challenge there so an
-        allow-listed source IP passes without authenticating.
-      -#}
-      {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var authType = ingress.Metadata.Annotations["haproxy-haptic.org/auth-type"] %}
-        {%- if authType == "basic" %}
-          {%- var authSecret = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret"] %}
-          {%- if authSecret != "" %}
-            {%- var authRealm = ingress.Metadata.Annotations["haproxy-haptic.org/auth-realm"] %}
-            {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
-            {#- Config-injection guard: the realm is interpolated into a quoted
-                HAProxy string, so reject double-quotes / newlines. -#}
-            {%- if !regex_search(authRealm, "^[^\"\\r\\n]*$") %}
-              {{- fail("Invalid auth-realm '" + authRealm + "' on Ingress '" + key + "': must not contain double-quotes or newlines.") -}}
-            {%- end %}
-            {%- var secretNs = ns %}
-            {%- var secretName = authSecret %}
-            {%- if strings_contains(authSecret, "/") %}
-              {%- var parts = split(authSecret, "/") %}
-              {%- secretNs = parts[0] %}
-              {%- secretName = parts[1] %}
-            {%- end %}
-            {%- var userlistName = "haptic_auth_" + secretNs + "_" + secretName %}
-            {#- Same cached lookup the userlist snippet uses so both agree on
-                whether the userlist exists (a boxed typed-nil passes != nil and
-                would emit an http_auth ref to a userlist that was never
-                produced — `haproxy -c` then fails with "unable to find
-                userlist"). -#}
-            {%- var authSecretObj = resources.secrets.GetSingle(secretNs, secretName) %}
-            {#- Under satisfy=any the challenge is folded into the combined
-                IP-or-auth gate (backend-directives-825); suppress the
-                unconditional challenge here so an allow-listed IP passes. -#}
-            {%- if authSecretObj != nil && SatisfyAnyMode(ingress) == "" %}
-      # haptic/auth-challenge ({{ key }})
-      http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
-            {%- else if authSecretObj == nil %}
-      {# Reject the Ingress at ADMISSION so a typo'd or absent Secret is caught
-          when the resource is written, rather than becoming a 503 nobody sees
-          until traffic arrives. Under reconcile this warns and falls through to
-          the deny below, so an already-admitted Ingress whose Secret is deleted
-          later degrades closed instead of aborting the whole render.
-
-          A WARNING, never an admission rejection: the webhook renders against
-          the watched-resource store, which lags the API server, so "Secret
-          missing" and "Secret not observed yet" are indistinguishable here.
-          Rejecting refused correct manifests applied in the correct order — the
-          e2e suite creates the Secret first and was still denied. That blocks a
-          deployment with no security incident behind it, which is the harm the
-          runtime 503 below already avoids without the false positive. #}
-      {{- recordEvent(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' with 'auth-secret: " + secretNs + "/" + secretName + "', but that Secret does not exist. Basic auth cannot be enforced without it, so this route fails closed with 503. Create the Secret, or remove the auth annotations.") -}}
-      {# The Secret could not be resolved, so there is no userlist to check
-          against. Emitting nothing would leave the backend with NO authentication
-          rule at all and serve every request — a deleted, renamed or mistyped
-          Secret silently turning the gate off. Fail closed instead, matching what
-          the JWT, api-key, HMAC and consumer-group paths already do for the same
-          event. #}
-      # WARNING haproxy-haptic.org/auth-secret: referenced Secret not found at render time; failing closed (503) for this route until it is present.
-      http-request set-var(txn.denied_by) str(basic_auth_unavailable)
-      http-request deny deny_status 503
-            {%- end %}
-          {%- else %}
-            {# auth-type basic without auth-secret: neither this snippet nor the
-                userlist one emitted anything, so the route served unauthenticated. #}
-            {{- WebhookRejectOrWarn(ingress, "AuthSecretMissing", "Ingress " + key + " sets 'haproxy-haptic.org/auth-type: basic' but no 'haproxy-haptic.org/auth-secret'. Basic auth cannot be enforced without the credentials Secret, so this route fails closed with 503. Set auth-secret, or remove auth-type.") -}}
-      # WARNING haproxy-haptic.org/auth-type: basic set without auth-secret on {{ key }}; failing closed (503) until it is set.
-      http-request set-var(txn.denied_by) str(basic_auth_unavailable)
-      http-request deny deny_status 503
-          {%- end %}
-        {%- end %}
-      {%- end -%}
+        The route's state, userlist and realm come from
+        haptic-basic-auth-routes.map. `auth realm` and http_auth() take
+        literals only, so there is one rule per distinct (userlist, realm)
+        pair, selected by comparing the whole map value. A route whose Secret
+        is absent or unset is denied 503. satisfy=any routes are not in the
+        map: backend-directives-825 owns their IP-or-auth gate. Emitted only
+        while a route uses basic auth; the first one reloads once, as does
+        removing the last or adding a pair.
+      #}
+      {%- if incremental_value_count("haptic-basic-auth-routes", "any") > 0 -%}
+      {%- var routes, e1 = pathResolver.GetPath("haptic-basic-auth-routes.map", "map") -%}
+      {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
+      {%- var pairs = []any{} -%}
+      {%- for _, v := range incremental_values("haptic-basic-auth-routes", "pair") -%}{%- pairs = append(pairs, tostring(v)) -%}{%- end -%}
+      {{ "\n" }}# haptic/basic-auth
+      http-request set-var(txn.ba_cfg) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.denied_by) str(basic_auth_unavailable) if { var(txn.ba_cfg) -m str missing nosecret }
+      http-request deny deny_status 503 if { var(txn.ba_cfg) -m str missing nosecret }
+      {%- for _, p := range sort_strings(pairs) %}
+      {%- var pair = strings_splitn(tostring(p), " ", 2) %}
+      http-request auth realm "{{ pair[1] }}" if { var(txn.ba_cfg) -m str "ok {{ p }}" } !{ http_auth({{ pair[0] }}) }
+      {%- end %}
+      {%- end %}
 
   # ============================================================================
   # satisfy — shared predicate + combined IP-or-auth gate
@@ -314,9 +359,9 @@ templateSnippets:
         (haproxy-haptic.org/allowlist-source-range) AND basic auth with a
         resolvable Secret are ALL present — i.e. there are genuinely two gates
         to OR together. The allowlist frontend deny (emitted by the
-        access-control fragment) and this library's backend auth challenge both
-        import this macro and suppress themselves when it returns "any", leaving
-        the combined gate below as the single OR check.
+        access-control fragment) and the basic-auth routes map both import this
+        macro and suppress themselves when it returns "any", leaving the
+        combined gate below as the single OR check.
       #}
       {%- macro SatisfyAnyMode(ingress *resources.ingresses.T) string -%}
         {%%
@@ -366,8 +411,9 @@ templateSnippets:
         The challenge fires only for requests whose source IP is NOT in the
         allow-list AND that have not authenticated — the OR semantics of
         satisfy=any. The standalone allowlist deny (access-control fragment) and
-        the unconditional auth challenge (backend-directives-820) suppress
-        themselves for this Ingress via SatisfyAnyMode().
+        the frontend basic-auth block (the route is left out of its map) suppress
+        themselves for this Ingress via SatisfyAnyMode(). The gate is a backend
+        rule, so a satisfy=any route stays structural.
       #}
       {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}

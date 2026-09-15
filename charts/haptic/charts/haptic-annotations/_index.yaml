@@ -187,6 +187,11 @@ maps:
       # <ns>/<name> → "<hdr|query|_> <name|_> <secret ns/name|_> <ok|missing|nosecret> <consumer-header|_>"
       # Populated by map-haptic-api-key-routes-*; read by frontend-filters-860-haptic-api-key.
       {{ render_glob "map-haptic-api-key-routes-*" -}}
+  haptic-basic-auth-routes.map:
+    template: |
+      # <ns>/<name> → "ok <userlist> <realm>" | "missing" | "nosecret"
+      # Populated by map-haptic-basic-auth-routes-*; read by frontend-filters-900-haptic-basic-auth.
+      {{ render_glob "map-haptic-basic-auth-routes-*" -}}
   haptic-apikeys.map:
     template: |
       # <secret ns/name>|<apikey> → <consumer>, for every Secret an Ingress references.
