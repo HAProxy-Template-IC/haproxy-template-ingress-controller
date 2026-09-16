@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An incremental render no longer fails with "incremental ranked text transitions collide" when a component's ranked publications change position within one result; the reorder was mistaken for a collision between identities and denied unrelated admissions while the batch was in flight.
 - Admission warnings report only the template-recorded events on the resource being admitted; events on other resources, such as governance audit violations elsewhere in the cluster, stay in their own Kubernetes Events.
 - Runtime and file-only updates are re-diffed if a paced HAProxy reload changes their worker baseline, preventing missed routing-map updates.
+- "Discovered HAProxy pods" logs at Info only when the admitted count changes or no pod is admitted; a steady fleet logs it at Debug instead of repeating it on every drift-prevention tick.
 
 - Incremental template batches retain optimized dispatch with large entrypoint sets instead of exceeding compiler register or function limits.
 

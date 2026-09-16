@@ -116,8 +116,11 @@ func (c *Component) publishDiscoveryResult(source string, candidateCount int, ad
 	c.lastEndpoints = currentEndpoints
 	c.mu.Unlock()
 
+	// Info only when the result is worth surfacing: an empty fleet, or a count
+	// that moved. A steady fleet re-reports the same numbers every drift-
+	// prevention tick, and at Info those drown every other line the leader logs.
 	log := c.Logger().Debug
-	if len(admittedEndpoints) > 0 || len(admittedEndpoints) != previousCount {
+	if len(admittedEndpoints) == 0 || len(admittedEndpoints) != previousCount {
 		log = c.Logger().Info
 	}
 	log("Discovered HAProxy pods",
