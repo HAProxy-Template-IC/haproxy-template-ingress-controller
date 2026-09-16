@@ -60,7 +60,7 @@ Merge Order (lowest to highest priority):
  2. kubernetes-backends     - Kubernetes Service/EndpointSlice backend capability
  3. ssl                     - HTTPS frontend, TLS certs, SSL passthrough infra
  4. ingress                 - Kubernetes Ingress support
- 5. gateway                 - Gateway API (only when GatewayClass CRD is present)
+ 5. gateway                 - Gateway API (optional watches resolved at runtime)
  6. ingress-annotations-compat - Shared scaffold for Ingress vendor annotation libraries (level 2.5)
  7. governance              - Declarative constraints over any watched resource
  8. haptic-annotations      - haproxy-haptic.org/* native vocabulary
@@ -153,7 +153,7 @@ _helm_load:
 Real examples in the source:
 
 - `charts/haptic/charts/ingress/library.yaml` — simple `enable` + one `inject` for the dynamic `ingressClassName` field selector.
-- `charts/haptic/charts/gateway/` — compound `enable` (values flag AND `Capabilities.APIVersions.Has`) + `inject`s for the gateway and gateway-class field selectors.
+- `charts/haptic/charts/gateway/` — values-only `enable` and `inject`s for the gateway and gateway-class field selectors. The controller resolves optional resources and their `requires` dependencies at runtime.
 - `charts/haptic/charts/base/library.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
 - `charts/haptic/charts/spoa-hub/` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
 
@@ -711,76 +711,66 @@ The `scripts/test-templates.sh` script automates the correct workflow (helm temp
 **Why use the script?**
 
 - Ensures you don't forget the helm template step
-- Automatically includes `--api-versions` flag for Gateway API tests
+- Extracts the config and its referenced libraries, and supplies offline schemas
 - Handles error checking and temp file cleanup
 - Provides helpful error messages
 
 **Manual Workflow (Advanced)**
 
-If you need custom Helm values or specific library combinations:
+For custom values, retain both the config and its referenced libraries:
 
 ```bash
-# 1. Render merged config with Helm and extract HAProxyTemplateConfig
-helm template charts/haptic \
-  --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+helm template haptic charts/haptic \
   --set controller.templateLibraries.ingress.enabled=true \
   --set controller.templateLibraries.gateway.enabled=false \
-  | yq 'select(.kind == "HAProxyTemplateConfig")' \
-  > /tmp/merged-config.yaml
+  | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
+  > /tmp/ingress-config.yaml
 
-# 2. Validate merged configuration
 make build
-./bin/haptic validate -f /tmp/merged-config.yaml
-
-# 3. Run specific validation test
-./bin/haptic validate -f /tmp/merged-config.yaml \
+./bin/haptic validate -f /tmp/ingress-config.yaml --schema-dir tests/schemas \
   --test test-ingress-duplicate-backend-different-ports
 ```
 
-**Why use `yq 'select(.kind == "HAProxyTemplateConfig")'`?**
+Filtering out the libraries leaves unresolved `libraryRefs`. The schema bundle is
+also required for typed access in the bundled templates during offline validation.
 
-`helm template` outputs **all** Kubernetes resources (Deployment, Service, ConfigMap, etc.). The `controller validate` command expects a single HAProxyTemplateConfig resource, so we filter for it using yq.
+**Gateway API tests**
 
-**IMPORTANT: Gateway API Tests**
-
-Gateway API tests require the `--api-versions=gateway.networking.k8s.io/v1/GatewayClass` flag to simulate the presence of Gateway API CRDs. Without this flag, Helm's Capabilities check will skip merging the gateway library, and gateway validation tests will not be available.
-
-The test script includes this flag automatically. If using the manual workflow, you MUST include it:
+Gateway availability is resolved at runtime from the configured `apiVersions`,
+`optional`, and `requires` fields. Helm's `--api-versions` doesn't select the
+controller's effective configuration. Run a focused test through the wrapper:
 
 ```bash
-# Manual workflow - MUST include --api-versions flag
-helm template charts/haptic \
-  --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
-  | yq 'select(.kind == "HAProxyTemplateConfig")' \
-  > /tmp/gateway-config.yaml
+./scripts/test-templates.sh --test test-httproute-method-matching
 ```
 
-This flag is already used in CI (see `.gitlab-ci.yml`). The gateway library uses a Capabilities check in its `_helm_load.enable` predicate (`charts/haptic/charts/gateway/_index.yaml`) to only merge when Gateway API CRDs are detected.
+The full wrapper run also exercises reduced schema bundles. When changing Gateway
+API support, regenerate dependency metadata and verify older-release coverage as
+described in the [upgrade playbook](../docs/site/docs/development/gateway-api-upgrade-playbook.md).
 
-### Testing Specific Libraries
+### Testing specific libraries
 
-Enable/disable libraries to test specific combinations:
+To test Gateway API's experimental fields alongside the default libraries, render
+both configuration kinds and validate with the schema bundle:
 
 ```bash
-# Test only ingress library (no gateway)
-helm template charts/haptic \
-  --set controller.templateLibraries.ingress.enabled=true \
-  --set controller.templateLibraries.gateway.enabled=false \
-  | yq 'select(.kind == "HAProxyTemplateConfig")' \
-  > /tmp/ingress-only.yaml
-
-# Test gateway library (no ingress)
-helm template charts/haptic \
-  --set controller.templateLibraries.ingress.enabled=false \
+helm template haptic charts/haptic \
   --set controller.templateLibraries.gateway.enabled=true \
-  | yq 'select(.kind == "HAProxyTemplateConfig")' \
-  > /tmp/gateway-only.yaml
+  --set controller.templateLibraries.gateway.experimentalChannel=true \
+  | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
+  > /tmp/gateway-config.yaml
 
-# Test with custom values
-helm template charts/haptic \
-  --values my-test-values.yaml \
-  | yq 'select(.kind == "HAProxyTemplateConfig")' \
+./bin/haptic validate -f /tmp/gateway-config.yaml --schema-dir tests/schemas
+```
+
+For custom values, pass the file to Helm before validating its output:
+
+```bash
+helm template haptic charts/haptic --values my-test-values.yaml \
+  | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
   > /tmp/custom-config.yaml
+
+./bin/haptic validate -f /tmp/custom-config.yaml --schema-dir tests/schemas
 ```
 
 ### Adding Validation Tests to Libraries

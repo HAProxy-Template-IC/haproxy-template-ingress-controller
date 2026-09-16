@@ -399,12 +399,8 @@ controller:
     ingress:
       enabled: true
     # gateway.networking.k8s.io/v1 support (HTTPRoute, GRPCRoute, TLSRoute).
-    # Packaged as a conditional subchart (the biggest library). On a cluster
-    # WITHOUT the Gateway API CRDs the library is never merged (its load
-    # predicate also checks for the GatewayClass CRD), but this flag still
-    # governs whether the subchart source ships in the Helm release Secret —
-    # set it false on Standard-channel clusters to prune the gateway source
-    # for a leaner install.
+    # Disable this library if you don't use Gateway API. When enabled, the
+    # controller resolves available resource versions at runtime.
     gateway:
       enabled: true
       # Set true only when the Gateway API *Experimental* channel is installed
@@ -418,7 +414,7 @@ controller:
       # present, so leaving this false on a Standard-channel cluster is safe —
       # it just skips the experimental-field self-tests.
       experimentalChannel: false
-    # Shared Ingress-scoped macros for the vendor annotation libraries
+    # Required shared Ingress-scoped macros for all enabled annotation libraries
     # below (level 2.5). Rationale:
     # https://gitlab.com/haproxy-haptic/haptic/-/blob/v0.2.0-alpha.3/docs/adr/0003-annotation-compat-scaffold-level-2-5.md
     ingressAnnotationsCompat:

@@ -26,7 +26,23 @@ applier := statusapplier.New(&statusapplier.Config{
 go applier.Start(ctx)
 ```
 
-`GVRResolver` is an interface so tests can supply a fake. `NewRestMapperResolver(mapper)` (the default) takes the controller's `meta.RESTMapper` and resolves `apiVersion + kind` → `GroupVersionResource` from the cluster's discovery data — including each CRD's own `spec.names.plural`, so irregular plurals work without any Go-side pluralisation table, which covers the well-known Kubernetes and Gateway-API kinds (Ingress → ingresses, HTTPRoute → httproutes, etc.). Custom resources with non-standard pluralisation need a custom `GVRResolver` implementation.
+`GVRResolver` is an interface so tests can supply a fake. `NewRestMapperResolver(mapper)`
+uses the controller's `meta.RESTMapper` to resolve `apiVersion + kind` from cluster
+discovery, including each CRD's `spec.names.plural`. Custom resources with irregular
+plurals need no special resolver.
+
+## Why templates register variants
+
+Templates supply the resource-specific condition fields and every outcome variant
+during rendering. Later pipeline events select a variant without rerendering the
+templates or adding resource-specific logic to Go. SSA respects the target schema's
+list-map merge keys, so another controller's condition entries can coexist with
+HAPTIC's entries.
+
+After a render failure, the coordinator supplies the status snapshot from its last
+successful render. A resource that has never appeared in a successful render has
+no registered failure variant; inspect the controller's render error rather than
+expecting a new status condition on that resource.
 
 ## Event Flow
 
@@ -36,7 +52,7 @@ go applier.Start(ctx)
 | `DeploymentCompletedEvent` | Read the authenticated occurrence and apply `deployed` when every pod runs it or `deployFailed` when a pod failed |
 | `DeploymentSkippedEvent` | Read the authenticated occurrence and apply `deployed` if leader |
 | `ReconciliationFailedEvent` | Apply `renderFailed` or `deployFailed` variant (depending on which phase failed) if leader |
-| `BecameLeaderEvent` | Flip the leader flag on; clear the SSA checksum cache so the new leader writes at least once for every active resource on the next reconciliation (triggered by the `Reconciler`) |
+| `BecameLeaderEvent` | Flip the leader flag on; clear the status apply cache so the next reconciliation writes the new leader's status |
 | `LostLeadershipEvent` | Flip the leader flag off; in-flight handlers re-check via `leaderRLocked()` |
 
 ## SSA Conflict Handling

@@ -400,9 +400,7 @@ func loadConfig(configYAML, schemasJSON []byte, haproxyVersion string, migration
 		return err
 	}
 
-	// Replace dataplane.DetectLocalVersion() (execs the haproxy binary, which is
-	// unavailable in the browser) with the supplied version — the only mandatory
-	// bypass on the render path.
+	// The browser has no HAProxy binary, so capabilities use the selected version.
 	ver, err := dataplane.ParseVersionString(haproxyVersion)
 	if err != nil {
 		return fmt.Errorf("parsing HAProxy version %q: %w", haproxyVersion, err)

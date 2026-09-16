@@ -1,6 +1,6 @@
 # `ingress-annotations-compat` library
 
-This library is a set of shared internal macros consumed by HAPTIC's native [haptic-annotations](haptic-annotations.md) library — its heaviest consumer, and the only annotation library on by default — and by the three vendor annotation libraries ([haproxytech](haproxytech.md), [haproxy-ingress](haproxy-ingress.md), [nginx-ingress](nginx-ingress.md)) — it emits nothing on its own, and there is nothing in it to configure. Leave it enabled: the vendor libraries `import` its macros, so disabling it while any of them is enabled breaks their template compilation.
+This library provides shared macros for [haptic-annotations](haptic-annotations.md), [haproxytech](haproxytech.md), [haproxy-ingress](haproxy-ingress.md), and [nginx-ingress](nginx-ingress.md). It emits no configuration on its own. Keep it enabled while you use any of those annotation libraries.
 
 ## Overview
 
@@ -19,7 +19,7 @@ controller:
       enabled: true  # Default; required by haptic-annotations (on by default) and by haproxytech, haproxy-ingress, and nginx-ingress
 ```
 
-Disabling the scaffold while `haptic-annotations` or any of the three vendor annotation libraries stays enabled produces an invalid configuration: their snippets `import` macros defined here, and the controller's template validation rejects the merged config when those imports don't resolve. Disable it only together with all three vendor libraries.
+Helm rejects disabling this library while any annotation library remains enabled, because their snippets import its macros. To disable it, also set `hapticAnnotations.enabled`, `haproxytech.enabled`, `haproxyIngress.enabled`, and `nginxIngress.enabled` to `false` under `controller.templateLibraries`.
 
 ## Hierarchy
 

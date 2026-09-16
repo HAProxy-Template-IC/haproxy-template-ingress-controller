@@ -115,7 +115,20 @@ including one with identical output, can't release or revert the held cycle.
 
 ## Orphan pruning
 
-Each successful pass populates an in-memory `lastAppliedKeys` map keyed
+### Full and partial ownership
+
+Full ownership is the default. To contribute fields to an object also managed by
+Helm or another controller, render the annotation
+`haproxy-haptic.org/ownership: partial`. The applier strips this internal annotation,
+omits its managed-by label and owner reference, and never tracks that object for
+orphan deletion. Changing from full to partial ownership also releases deletion
+tracking.
+
+To remove an SSA-owned list entry from a shared object, keep rendering the object
+with the reduced field set. Omitting the whole partial object from later renders
+doesn't issue a delete or an apply to release its fields.
+
+Each successful pass populates an in-memory `lastAppliedKeys` map for full-ownership resources keyed
 by `namespace/name/gvr`. The next pass computes the new desired set;
 any key in `lastAppliedKeys` not in the new set is *deleted* via the
 dynamic client. This handles the common case where a Gateway is
@@ -138,7 +151,9 @@ leader-acquire:
    applier issues `dynamicClient.Resource(gvr).Namespace(ownNs).List(opts)`
    with a label selector pinning the managed-by label
    (`haproxy-haptic.org/managed-by=<controller-name>`).
-3. Each returned resource is added to `lastAppliedKeys`.
+3. When an owner UID is configured, only objects with a matching owner reference
+   enter `lastAppliedKeys`. Production supplies the config object's UID; a managed-by
+   label alone doesn't authorize deletion of another controller's child objects.
 
 Errors are silent: types we don't have RBAC for return `403 Forbidden`,
 unsupported list operations return `405 MethodNotSupported`, CRDs that
@@ -174,29 +189,16 @@ unexpected behaviour or for migration scenarios.
 
 ## Namespace restriction
 
-`Config.RestrictToOwnNamespace=true` (default for the chart) refuses to
-apply any resource whose `Namespace` is empty (cluster-scoped) or
-differs from `OwnNamespace`. Refusals are logged with a clear hint
-about how to opt in.
-
-This is **defense in depth** on top of the chart's RBAC. The chart
-binds the controller's ServiceAccount to a namespace-scoped `Role`,
-not a `ClusterRole`, so the API server will reject foreign-namespace
-applies regardless of what this component sends. The applier-level
-guard catches the misbehaviour earlier, surfaces it in logs at WARN
-level (so a misbehaving template is visible), and prevents the failed
-API call from cluttering audit logs.
-
-To opt into cluster-scoped or cross-namespace provisioning, set
-`RestrictToOwnNamespace=false` in `Config` *and* grant the appropriate
-ClusterRole RBAC. Doing only one without the other will break the
-apply: RBAC denies the request before the in-process guard fires.
+`Config.RestrictToOwnNamespace=true` refuses resources whose namespace is empty
+or differs from `OwnNamespace`. The production wiring in `reconciliation.go` sets
+it to `false`, allowing templates to target other namespaces where the controller's
+RBAC permits writes. This setting grants no API permissions: the ServiceAccount
+still needs the appropriate verbs for every target resource and namespace.
 
 ## Field manager
 
-All applies use field manager `haptic` (same as `statusapplier` — both
-subsystems are part of the same controller and a single field-manager
-identity is the simplest audit story). With `Force=true`, the applier
+Resource applies use field manager `haptic`; status applies use their own
+phase-scoped managers. With `Force=true`, the resource applier
 takes ownership of any field it sets even if another manager
 previously claimed it.
 

@@ -22,7 +22,9 @@ it moves every consumer together. The listener is required by the probes, so
 don't disable it.
 
 After a controller completes staged initialization, its next reinitialization gets
-one 90-second `/healthz` grace episode. Failed retries don't renew the deadline;
+one 165-second `/healthz` grace episode: the 120-second load-validation budget
+plus 45 seconds for the rest of initialization. Initial startup gets no grace.
+Failed retries don't renew the deadline;
 an unresolved failure returns HTTP 503 after it expires. A fully healthy probe
 ends the episode and makes a later reinitialization eligible for a fresh one.
 

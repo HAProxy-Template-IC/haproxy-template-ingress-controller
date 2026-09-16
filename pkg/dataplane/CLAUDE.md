@@ -41,7 +41,7 @@ pkg/dataplane/
 ├── auxiliaryfiles/types.go     # Auxiliary-file types the renderer produces
 ├── validate_haproxy.go         # `haproxy -c`
 ├── haproxy_exec.go             #   its process runner
-├── validator.go                # ValidateConfiguration entry point
+├── validator.go                # ValidateConfigurationContext entry point
 ├── errors.go                   # ValidationError / SimplifyValidationError / ...
 ├── parser/                     # playground-only: the client-native syntax parse
 ├── validators/                 # playground-only: the OpenAPI schema check

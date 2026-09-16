@@ -42,13 +42,9 @@ var ErrPatchBaseMissing = errors.New("patch base is not the file held")
 
 // Staged is a verified part waiting in its target mount's temp directory.
 type Staged struct {
-	Rel  string
-	tmp  string
-	size int64
+	Rel string
+	tmp string
 }
-
-// Size is the verified byte count of the staged content.
-func (s *Staged) Size() int64 { return s.size }
 
 // Stage streams a received part into the temp directory of the mount that will
 // hold it and verifies it against the manifest digest and size before the
@@ -125,7 +121,7 @@ func (s *Store) stage(rel, digest string, size int64, fill func(io.Writer) (int6
 		}
 		return nil, fmt.Errorf("stage %q: %w", rel, err)
 	}
-	staged := &Staged{Rel: rel, tmp: f.Name(), size: written}
+	staged := &Staged{Rel: rel, tmp: f.Name()}
 	if written != size {
 		staged.Discard()
 		return nil, fmt.Errorf("%w: %q is %d bytes, manifest says %d", ErrDigestMismatch, rel, written, size)

@@ -215,4 +215,23 @@ A new validator (whether a haproxy-cfg validator, a third-party WAF, or anything
 6. Implement validation as a **pure function** of the input: no goroutine fan-out, no network I/O, no file I/O outside what the request carries, no global state mutation. This keeps one request's verdict independent of ambient state.
 7. Surface line numbers via the 1-based `line` field, columns via the 1-based `column` field, or `0` for "file-level". Self-explanatory `message` text — operators see this in `kubectl apply` denial reasons.
 
-Conforming implementations SHOULD pass the protocol-level conformance scenarios in [`openspec/specs/pluggable-validator-sidecar/spec.md`](../../openspec/specs/pluggable-validator-sidecar/spec.md).
+The controller’s [protocol tests](../../pkg/controller/pluggablevalidator/protocol_test.go) cover frame encoding, size limits, and malformed responses; its [client tests](../../pkg/controller/pluggablevalidator/client_test.go) cover connection reuse and failure handling. Use these cases when testing a new validator.
+
+## Conformance cases
+
+Use these cases to check a new implementation against the current contract:
+
+| Case | Required outcome |
+|------|------------------|
+| Prefix or body arrives in separate reads | Accumulate the complete frame before decoding; truncated input fails. |
+| Zero-length or oversized frame | Reject it; the controller discards the connection. The current limit is 8 MiB. |
+| Malformed response, unsupported version, or inconsistent `result` | Fail the current validation and discard the connection. |
+| Two requests on one connection | Return two framed responses in request order; a valid error verdict doesn't poison framing. |
+| Pooled connection closed while idle | Reconnect and retry once; repeated transport failure fails validation. |
+| Request cancelled while reading or dispatching | Return cancellation as a failure, including when some tasks haven't started. |
+| Identical input after a previous verdict or sidecar restart | Send a fresh request; version 1 cannot authenticate a reusable verdict. |
+| Referenced data changes while config bytes stay identical | Send the current data files and `staged_root` with the config. |
+
+The [manager tests](../../pkg/controller/pluggablevalidator/manager_test.go) cover
+dispatch, cancellation, data files, and repeat validation in addition to the
+protocol and client tests linked above.

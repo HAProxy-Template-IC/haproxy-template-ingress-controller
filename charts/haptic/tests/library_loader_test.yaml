@@ -103,8 +103,7 @@ tests:
 
   - it: drops a disabled library's object entirely
     set:
-      controller.templateLibraries.nginxIngress.enabled: false
-      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
+      controller.templateLibraries.governance.enabled: false
     asserts:
       - hasDocuments:
           count: 10
@@ -183,6 +182,51 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "controller.templateLibraries.kubernetesBackends.enabled=false leaves enabled consumers without Service/EndpointSlice helpers: ingress, gateway, ingressAnnotationsCompat, hapticAnnotations. Enable kubernetesBackends or disable those libraries."
+
+  - it: rejects disabling shared annotation macros while native annotations remain enabled
+    set:
+      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.templateLibraries.ingressAnnotationsCompat.enabled=false leaves enabled consumers without shared annotation macros: hapticAnnotations. Enable ingressAnnotationsCompat or disable those libraries."
+
+  - it: rejects disabling shared annotation macros while haproxytech remains enabled
+    set:
+      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
+      controller.templateLibraries.hapticAnnotations.enabled: false
+      controller.templateLibraries.haproxytech.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.templateLibraries.ingressAnnotationsCompat.enabled=false leaves enabled consumers without shared annotation macros: haproxytech. Enable ingressAnnotationsCompat or disable those libraries."
+
+  - it: rejects disabling shared annotation macros while haproxy-ingress remains enabled
+    set:
+      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
+      controller.templateLibraries.hapticAnnotations.enabled: false
+      controller.templateLibraries.haproxyIngress.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.templateLibraries.ingressAnnotationsCompat.enabled=false leaves enabled consumers without shared annotation macros: haproxyIngress. Enable ingressAnnotationsCompat or disable those libraries."
+
+  - it: rejects disabling shared annotation macros while nginx-ingress remains enabled
+    set:
+      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
+      controller.templateLibraries.hapticAnnotations.enabled: false
+      controller.templateLibraries.nginxIngress.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.templateLibraries.ingressAnnotationsCompat.enabled=false leaves enabled consumers without shared annotation macros: nginxIngress. Enable ingressAnnotationsCompat or disable those libraries."
+
+  - it: allows shared annotation macros to be disabled with all annotation consumers
+    set:
+      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
+      controller.templateLibraries.hapticAnnotations.enabled: false
+      controller.templateLibraries.haproxytech.enabled: false
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.nginxIngress.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 9
 
   - it: allows Kubernetes backends to be disabled with all consumers
     set:

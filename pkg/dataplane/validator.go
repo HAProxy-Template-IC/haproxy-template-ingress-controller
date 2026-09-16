@@ -36,22 +36,7 @@ type ValidationPaths struct {
 	ConfigFile        string
 }
 
-// ValidateSemantics asks the HAProxy binary whether it can load the configuration.
-//
-// Parameters:
-//   - mainConfig: The HAProxy configuration content (may have modified paths for temp directory)
-//   - auxFiles: All auxiliary files (maps, certificates, general files)
-//   - paths: Filesystem paths for validation (must be isolated for parallel execution)
-//   - skipDNSValidation: If true, adds -dr flag to skip DNS resolution failures
-//
-// Returns:
-//   - error: ValidationError with phase "semantic" if validation fails
-func ValidateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
-	return ValidateSemanticsContext(context.Background(), mainConfig, auxFiles, paths, skipDNSValidation, nil)
-}
-
-// ValidateSemanticsContext is ValidateSemantics with caller cancellation and a
-// caller-owned CheckGate; nil runs on the shared default gate.
+// ValidateSemanticsContext checks the configuration with HAProxy; a nil gate uses the shared default.
 func ValidateSemanticsContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate) error {
 	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate); err != nil {
 		return phaseSemantic.wrap(err)
@@ -59,21 +44,7 @@ func ValidateSemanticsContext(ctx context.Context, mainConfig string, auxFiles *
 	return nil
 }
 
-// ValidateConfiguration asks HAProxy whether it can load this configuration.
-//
-// The validation writes files to the directories specified in paths. Callers must ensure
-// that paths are isolated (e.g., per-worker temp directories) to allow parallel execution.
-//
-// skipDNSValidation adds -dr, which skips DNS resolution failures. Use true for
-// runtime validation (permissive, prevents blocking when DNS fails) and false
-// for webhook validation (strict, catches DNS issues before admission).
-func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
-	return ValidateConfigurationContext(context.Background(), mainConfig, auxFiles, paths, skipDNSValidation, nil)
-}
-
-// ValidateConfigurationContext is ValidateConfiguration with caller cancellation
-// and a caller-owned CheckGate (nil runs on the shared single-slot default gate;
-// a batch caller passes a multi-slot gate so its checks run across cores).
+// ValidateConfigurationContext checks isolated validation files with HAProxy; a nil gate uses the shared default.
 func ValidateConfigurationContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate) error {
 	if cause := context.Cause(ctx); cause != nil {
 		return cause

@@ -766,7 +766,7 @@ func loadHapticAnnotationsAuthHeaderSnippets(t *testing.T) map[string]config.Tem
 		"spoe-message-check-auth-extra-args-820-haptic":    true,
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))
-	for _, file := range []string{"spoa-hub/10-features.yaml", "haptic-annotations/50-auth-spoe.yaml"} {
+	for _, file := range []string{"ingress-annotations-compat/library.yaml", "haptic-annotations/50-auth-spoe.yaml"} {
 		content, err := os.ReadFile(filepath.Join(chartRoot, file))
 		require.NoError(t, err)
 		var library hapticAnnotationsHSTSLibrary

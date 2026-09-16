@@ -24,6 +24,14 @@ _helm_load: {enable: '{{ .Values.controller.templateLibraries.ingressAnnotations
 
 templateSnippets:
 
+  util-auth-validate-header-name:
+    template: |-
+      {%- macro ValidateAuthHeaderName(name string, annotation string, ns string, ingressName string) %}
+        {%- if !regex_search(name, "^[A-Za-z0-9!#$&'*+.^_`|~-]+$") -%}
+          {{- fail("Invalid HTTP header name '" + name + "' in annotation '" + annotation + "' on Ingress " + ns + "/" + ingressName + ". Header names must be RFC 7230 tokens (1*tchar): no whitespace, no special characters, no fetch syntax.") -}}
+        {%- end -%}
+      {%- end %}
+
   util-annotation-ssl-passthrough-component:
     template: |-
       {%- import "util-service-port-resolution" for ResolveServicePort -%}

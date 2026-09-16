@@ -209,6 +209,17 @@ the cost of its source being stored in the release Secret.
     {{- fail (printf "controller.templateLibraries.kubernetesBackends.enabled=false leaves enabled consumers without Service/EndpointSlice helpers: %s. Enable kubernetesBackends or disable those libraries." (join ", " $consumers)) }}
   {{- end }}
 {{- end }}
+{{- if not $templateLibraries.ingressAnnotationsCompat.enabled }}
+  {{- $consumers := list }}
+  {{- range $name := list "hapticAnnotations" "haproxytech" "haproxyIngress" "nginxIngress" }}
+    {{- if (dig $name "enabled" false $templateLibraries) }}
+      {{- $consumers = append $consumers $name }}
+    {{- end }}
+  {{- end }}
+  {{- if gt (len $consumers) 0 }}
+    {{- fail (printf "controller.templateLibraries.ingressAnnotationsCompat.enabled=false leaves enabled consumers without shared annotation macros: %s. Enable ingressAnnotationsCompat or disable those libraries." (join ", " $consumers)) }}
+  {{- end }}
+{{- end }}
 {{- /* Each entry is "subchart:<name>" — a subchart whose library YAML the
        parent reads via .Subcharts.<name>.Files. A subchart disabled by its
        `condition:` is pruned from the release Secret, so .Subcharts.<name> is

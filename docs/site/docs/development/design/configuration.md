@@ -42,6 +42,43 @@ each object on every chart-test run.
 
 Because templates are just strings inside a CRD, the chart layers and the user's own values can both contribute snippets and be composed at render time. See [Templating Guide](../../templating.md) for how snippets and extension points interact.
 
+## Runtime API resolution
+
+The merged config declares which resource versions the templates support. The
+controller resolves each ordered `apiVersions` list against live discovery and
+selects the first served candidate. It doesn't substitute the cluster's preferred
+version: a version absent from the list may have a shape the templates can't use.
+
+This produces an effective config before template compilation. Unavailable optional
+watches and entries whose `requires` dependencies are unavailable are removed;
+missing required resources fail initialization. A discovery error can't establish
+that an optional resource is absent. See [Watching resources](../../watching-resources.md)
+for the configuration fields and template access rules.
+
 ## Reloading behaviour
 
-Changes to any of the `HAProxyTemplateConfig` resources trigger an internal **reinitialization loop**: the controller re-merges the set, validates the new config on the running iteration, starts a new iteration against it while the current one keeps serving, and hands leadership over on the same replica once the new one is warm. Each resource has its own watcher, so a `helm upgrade` that rewrites several of them produces a burst of changes; the reinitialization debounce collapses them into one restart. No pod restart is required. The Secret referenced by `credentialsSecretRef` is watched the same way, so credential rotation is picked up live.
+Changes to the `HAProxyTemplateConfig` or its referenced libraries are merged and
+validated before replacement. A rejected proposal leaves the current iteration
+running. Accepted changes trigger an internal reinitialization; the debounce
+combines bursts such as a Helm upgrade. The Secret referenced by
+`credentialsSecretRef` is also watched, so credential rotation requires no pod
+restart.
+
+The serving iteration remains active while its successor starts from the accepted
+config, credentials, and discovery snapshot. The successor waits for its render
+graph to warm, with a bounded timeout, then takes over leadership on the same
+replica. Only after successful startup is the predecessor torn down. A failure
+before leadership handover leaves the predecessor serving; retries fetch live
+state instead of reusing the consumed snapshot. A reload during unfinished startup
+cancels that startup and carries the newer snapshot into the next attempt.
+
+Process-owned health and webhook listeners remain available across iterations;
+admission fails closed whenever no ready validator is installed. HAProxy continues
+serving its last applied configuration throughout the transition.
+
+Installing, upgrading, or removing a relevant CRD can change API resolution. The
+controller rechecks discovery and restarts the iteration when the effective config
+changes. Rebuilding watchers, schemas, templates, and admission together prevents
+them from using different resource versions. Re-resolution runs all config
+validators before activation, including when no embedded validation tests exist.
+The controller doesn't swap individual informers into a running iteration.

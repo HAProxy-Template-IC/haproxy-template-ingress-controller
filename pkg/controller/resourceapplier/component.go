@@ -187,12 +187,7 @@ type Config struct {
 	// when RestrictToOwnNamespace is true.
 	OwnNamespace string
 
-	// RestrictToOwnNamespace, when true (default for the chart), refuses
-	// to apply any rendered resource whose namespace is empty (cluster-
-	// scoped) or differs from OwnNamespace. Combined with the chart's
-	// namespace-scoped Role, this gives belt-and-suspenders safety: even
-	// a misbehaving template can't escalate beyond the controller's
-	// namespace.
+	// RestrictToOwnNamespace refuses cluster-scoped and foreign-namespace resources when enabled.
 	RestrictToOwnNamespace bool
 
 	// ManagedByValue is the label value injected as
