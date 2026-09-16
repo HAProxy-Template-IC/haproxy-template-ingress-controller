@@ -157,9 +157,13 @@ func TestComponent_DeploymentCompleted_UpdatesFleetConvergence(t *testing.T) {
 		Succeeded:  3,
 		DurationMs: 1000,
 	}))
+	// SetFleetConvergence writes fleet_size first and converged second, so
+	// waiting on fleet_size alone can observe the pair half-written and assert a
+	// converged that is still 0. Wait on both, as the other cases here do.
 	require.Eventually(t, func() bool {
-		return testutil.ToFloat64(metrics.HAProxyFleetSize) == 3.0
-	}, 2*time.Second, 20*time.Millisecond, "fleet_size should reflect the deploy's Total")
+		return testutil.ToFloat64(metrics.HAProxyFleetSize) == 3.0 &&
+			testutil.ToFloat64(metrics.HAProxyFleetConverged) == 3.0
+	}, 2*time.Second, 20*time.Millisecond, "fleet_size and converged should reflect the deploy")
 
 	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.HAProxyFleetConverged))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
