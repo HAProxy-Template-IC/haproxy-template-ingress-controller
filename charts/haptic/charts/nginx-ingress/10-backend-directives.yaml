@@ -233,30 +233,19 @@ templateSnippets:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/proxy-body-size']"]
       group: map-body-size
+      effects: [recordEvent]
     template: |
       {# "0" means unlimited in nginx, hence no map entry. #}
       {# base.yaml's frontend-filters-250-request-body-size enforces the map (deny 413) keyed on the resolved backend, so a cap change is map-only and reload-free. #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-byte-size" for BodySizeBytes -%}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil -%}
         {%- var bodySize = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-body-size"] -%}
         {%- if bodySize != "" -%}
-          {%%
-            var bytes = 0
-            var sizeLen = len(bodySize)
-            var lastChar = bodySize[sizeLen-1:]
-            if lastChar == "k" || lastChar == "K" {
-              bytes = toint(bodySize[:sizeLen-1]) * 1024
-            } else if lastChar == "m" || lastChar == "M" {
-              bytes = toint(bodySize[:sizeLen-1]) * 1048576
-            } else if lastChar == "g" || lastChar == "G" {
-              bytes = toint(bodySize[:sizeLen-1]) * 1073741824
-            } else {
-              bytes = toint(bodySize)
-            }
-          %%}
-          {%- if bytes > 0 -%}
+          {%- var bytes = BodySizeBytes(ingress, bodySize, "nginx.ingress.kubernetes.io/proxy-body-size") -%}
+          {%- if bytes != "" -%}
             {%- for _, rule := range ingress.Spec.Rules -%}
               {#- rule.Http is a value struct: .Paths is empty without an http block, so no nil guard. -#}
               {%- for _, path := range rule.Http.Paths -%}

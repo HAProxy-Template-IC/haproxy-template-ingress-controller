@@ -149,6 +149,7 @@ templateSnippets:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/max-request-body-size']"]
       group: map-body-size
+      effects: [recordEvent]
     template: |
       {#
         HAPTIC Request Body Size Limit (Strategy 1: relocated to a map)
@@ -166,26 +167,14 @@ templateSnippets:
         "map-body-size" first_seen namespace with the vendor emitters.
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-byte-size" for BodySizeBytes -%}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil -%}
         {%- var bodySize = ingress.Metadata.Annotations["haproxy-haptic.org/max-request-body-size"] -%}
         {%- if bodySize != "" -%}
-          {%%
-            var bytes = 0
-            var sizeLen = len(bodySize)
-            var lastChar = bodySize[sizeLen-1:]
-            if lastChar == "k" || lastChar == "K" {
-              bytes = toint(bodySize[:sizeLen-1]) * 1024
-            } else if lastChar == "m" || lastChar == "M" {
-              bytes = toint(bodySize[:sizeLen-1]) * 1048576
-            } else if lastChar == "g" || lastChar == "G" {
-              bytes = toint(bodySize[:sizeLen-1]) * 1073741824
-            } else {
-              bytes = toint(bodySize)
-            }
-          %%}
-          {%- if bytes > 0 -%}
+          {%- var bytes = BodySizeBytes(ingress, bodySize, "haproxy-haptic.org/max-request-body-size") -%}
+          {%- if bytes != "" -%}
             {%- for _, rule := range ingress.Spec.Rules -%}
               {%- for _, path := range rule.Http.Paths -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}

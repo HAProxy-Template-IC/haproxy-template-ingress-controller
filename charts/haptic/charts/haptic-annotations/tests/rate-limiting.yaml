@@ -532,6 +532,30 @@ validationTests:
     assertions:
       - {type: contains, target: rendering_error, pattern: "rate-limit-status-code' on Ingress 'default/rl-teapot'. HAProxy can only deny with a status that has a built-in error page"}
 
+  test-haptic-rate-limit-size-overflow-rejected:
+    description: >-
+      A rate-limit-size whose product overflows 64 bits is refused rather than wrapping
+      to a plausible table size.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-overflow
+            annotations:
+              haproxy-haptic.org/rate-limit-rps: "10"
+              haproxy-haptic.org/rate-limit-size: "17179869185g"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-overflow.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "rate-limit-size' on Ingress 'default/rl-overflow'. Must be no larger than 4T"}
+
   test-haptic-rate-limit-size-zero-rejected:
     description: >-
       A zero-magnitude table size passes the format check but would reach the
@@ -554,7 +578,7 @@ validationTests:
                   paths:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
-      - {type: contains, target: rendering_error, pattern: "rate-limit-size' on Ingress 'default/rl-zero-size'. Must be a positive size"}
+      - {type: contains, target: rendering_error, pattern: "rate-limit-size' on Ingress 'default/rl-zero-size'. Must be a positive byte size"}
 
   test-haptic-rate-limit-allowlist-overlap-partitions:
     description: >-
