@@ -4,7 +4,7 @@ Configuration validators (scatter-gather participants).
 
 ## Overview
 
-Four validators run as the responder side of the scatter-gather validation pattern. Each one wraps a shared `BaseValidator`, subscribes to `ConfigValidationRequest` on the EventBus, and responds with a `ConfigValidationResponse` flagged valid or invalid. The orchestrator that fans the request out and aggregates responses is **not** in this package — it lives in `pkg/controller/configchange.ConfigChangeHandler`. Rendered-HAProxy-config validation (syntax + OpenAPI schema + `haproxy -c`) runs synchronously inside `pkg/controller/pipeline.Pipeline` via `pkg/dataplane.ValidateConfiguration`, not through this package.
+Four validators run as the responder side of the scatter-gather validation pattern. Each one implements `ValidationHandler.Validate`, which receives a typed config and returns a verdict and errors. The shared `BaseValidator` owns the subscription, input checks, and response publishing, including rejection after a panic. The orchestrator that fans the request out and aggregates responses is **not** in this package — it lives in `pkg/controller/configchange.ConfigChangeHandler`. Rendered-HAProxy-config validation (syntax + OpenAPI schema + `haproxy -c`) runs synchronously inside `pkg/controller/pipeline.Pipeline` via `pkg/dataplane.ValidateConfiguration`, not through this package.
 
 ## Validators
 
@@ -33,13 +33,13 @@ go jp.Start(ctx)
 
 ### Subscribed
 
-- `ConfigValidationRequest` — scatter-gather validation request (handled by all three validators)
+- `ConfigValidationRequest` — scatter-gather validation request (handled by all four validators)
 
 ### Published
 
 - `ConfigValidationResponse` — one per validator, per request
 
-`ConfigValidatedEvent` and `ConfigInvalidEvent` are published by the orchestrator (`configchange.ConfigChangeHandler`) after collecting all three responses, not by these validators directly.
+`ConfigValidatedEvent` and `ConfigInvalidEvent` are published by the orchestrator (`configchange.ConfigChangeHandler`) after collecting all four responses, not by these validators directly.
 
 ## License
 

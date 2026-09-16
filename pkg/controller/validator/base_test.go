@@ -16,6 +16,7 @@ package validator
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -28,7 +29,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // stubTypeBootstrapper returns an empty Result — useful for the
@@ -42,42 +42,28 @@ func stubTypeBootstrapper(_ context.Context, _ *coreconfig.Config) (*typebootstr
 	}, nil
 }
 
-// panicHandler is a mock validation handler that panics.
-type panicHandler struct {
-	panicMessage string
-}
+type validationHandlerFunc func(context.Context, *coreconfig.Config, string) (bool, []string)
 
-func (h *panicHandler) HandleRequest(_ *events.ConfigValidationRequest) {
-	panic(h.panicMessage)
+func (f validationHandlerFunc) Validate(ctx context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
+	return f(ctx, cfg, version)
 }
 
 // successHandler is a mock validation handler that succeeds.
 type successHandler struct {
-	eventBus   *busevents.EventBus
-	name       string
 	handleChan chan struct{}
 }
 
-func (h *successHandler) HandleRequest(req *events.ConfigValidationRequest) {
-	response := events.NewConfigValidationResponse(
-		req.RequestID(),
-		h.name,
-		true,
-		nil,
-	)
-	h.eventBus.Publish(response)
+func (h *successHandler) Validate(context.Context, *coreconfig.Config, string) (valid bool, errors []string) {
 	if h.handleChan != nil {
 		close(h.handleChan)
 	}
+	return true, nil
 }
 
 func TestBaseValidator_Stop(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	handler := &successHandler{
-		eventBus: bus,
-		name:     "test",
-	}
+	handler := &successHandler{}
 	validator := NewBaseValidator(bus, logger, "test", handler)
 
 	bus.Start()
@@ -109,10 +95,7 @@ func TestBaseValidator_Stop(t *testing.T) {
 func TestBaseValidator_StopIdempotent(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	handler := &successHandler{
-		eventBus: bus,
-		name:     "test",
-	}
+	handler := &successHandler{}
 	validator := NewBaseValidator(bus, logger, "test", handler)
 
 	// Call Stop() multiple times - should not panic
@@ -128,7 +111,12 @@ func TestBaseValidator_StopIdempotent(t *testing.T) {
 func TestBaseValidator_PanicRecovery(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	handler := &panicHandler{panicMessage: "test panic"}
+	handler := validationHandlerFunc(func(_ context.Context, _ *coreconfig.Config, version string) (bool, []string) {
+		if version == "panic" {
+			panic("test panic")
+		}
+		return true, nil
+	})
 	validator := NewBaseValidator(bus, logger, "test-validator", handler)
 
 	// Subscribe to events to receive the error response
@@ -138,30 +126,59 @@ func TestBaseValidator_PanicRecovery(t *testing.T) {
 	ctx := t.Context()
 
 	go validator.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	cfg := createValidTestConfig()
 
 	// Send a validation request that will trigger the panic
-	req := events.NewConfigValidationRequest(cfg, "test-version")
+	req := events.NewConfigValidationRequest(cfg, "panic")
 	bus.Publish(req)
 
 	// Wait for the error response
 	response := testutil.WaitForEvent[*events.ConfigValidationResponse](t, eventChan, 2*time.Second)
 
+	assert.Equal(t, req.RequestID(), response.RequestID())
 	assert.Equal(t, "test-validator", response.ValidatorName)
 	assert.False(t, response.Valid)
 	require.Len(t, response.Errors, 1)
 	assert.Contains(t, response.Errors[0], "validator panicked: test panic")
+
+	recovery := events.NewConfigValidationRequest(cfg, "recovery")
+	bus.Publish(recovery)
+	response = testutil.WaitForEvent[*events.ConfigValidationResponse](t, eventChan, testutil.LongTimeout)
+	assert.Equal(t, recovery.RequestID(), response.RequestID())
+	assert.True(t, response.Valid)
+	assert.Empty(t, response.Errors)
+}
+
+func TestBaseValidator_PublishesHandlerVerdict(t *testing.T) {
+	for _, failures := range [][]string{nil, {"first failure", "second failure"}} {
+		t.Run(fmt.Sprintf("%d errors", len(failures)), func(t *testing.T) {
+			bus, logger := testutil.NewTestBusAndLogger()
+			cfg := createValidTestConfig()
+			handler := validationHandlerFunc(func(_ context.Context, actual *coreconfig.Config, version string) (bool, []string) {
+				assert.Same(t, cfg, actual)
+				assert.Equal(t, "test-version", version)
+				return false, failures
+			})
+			validator := NewBaseValidator(bus, logger, "test", handler)
+			responses := bus.SubscribeTypes("test-collector", 4, events.EventTypeConfigValidationResponse)
+			bus.Start()
+
+			req := events.NewConfigValidationRequest(cfg, "test-version")
+			validator.HandleRequest(req)
+			response := testutil.WaitForEvent[*events.ConfigValidationResponse](t, responses, testutil.LongTimeout)
+			assert.Equal(t, req.RequestID(), response.RequestID())
+			assert.Equal(t, "test", response.ValidatorName)
+			assert.False(t, response.Valid)
+			assert.Equal(t, failures, response.Errors)
+		})
+	}
 }
 
 func TestBaseValidator_ContextCancellation(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	handler := &successHandler{
-		eventBus: bus,
-		name:     "test",
-	}
+	handler := &successHandler{}
 	validator := NewBaseValidator(bus, logger, "test", handler)
 
 	bus.Start()
@@ -190,88 +207,37 @@ func TestBaseValidator_ContextCancellation(t *testing.T) {
 	}
 }
 
-func TestBasicValidator_InvalidConfigType(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	validator := NewBasicValidator(bus, logger)
-
-	eventChan := bus.Subscribe("test-sub", 50)
-	bus.Start()
-
-	ctx := t.Context()
-
-	go validator.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
-
-	// Send a request with invalid config type (string instead of *coreconfig.Config)
-	req := events.NewConfigValidationRequest("invalid-config-type", "test-version")
-	bus.Publish(req)
-
-	// Wait for error response
-	response := testutil.WaitForEventWithPredicate(t, eventChan, 2*time.Second,
-		func(resp *events.ConfigValidationResponse) bool {
-			return resp.ValidatorName == ValidatorNameBasic
+func TestValidators_InvalidConfigType(t *testing.T) {
+	for _, input := range []struct {
+		name   string
+		config any
+	}{
+		{name: "wrong type", config: "invalid-config-type"},
+		{name: "nil"},
+		{name: "typed nil", config: (*coreconfig.Config)(nil)},
+	} {
+		t.Run(input.name, func(t *testing.T) {
+			bus, logger := testutil.NewTestBusAndLogger()
+			validators := []*BaseValidator{
+				NewBasicValidator(bus, logger).BaseValidator,
+				NewTemplateValidator(bus, logger, stubTypeBootstrapper).BaseValidator,
+				NewJSONPathValidator(bus, logger).BaseValidator,
+				NewValidationTestsValidator(bus, logger, stubTypeBootstrapper).BaseValidator,
+			}
+			responses := bus.SubscribeTypes("test-collector", 4, events.EventTypeConfigValidationResponse)
+			bus.Start()
+			for _, validator := range validators {
+				req := events.NewConfigValidationRequest(input.config, "test-version")
+				validator.HandleRequest(req)
+				response := testutil.WaitForEvent[*events.ConfigValidationResponse](t, responses, testutil.LongTimeout)
+				assert.Equal(t, req.RequestID(), response.RequestID())
+				assert.Equal(t, validator.name, response.ValidatorName)
+				assert.False(t, response.Valid)
+				require.Len(t, response.Errors, 1)
+				assert.Contains(t, response.Errors[0], "invalid config type")
+			}
 		})
-
-	assert.False(t, response.Valid)
-	require.Len(t, response.Errors, 1)
-	assert.Contains(t, response.Errors[0], "invalid config type")
-}
-
-func TestTemplateValidator_InvalidConfigType(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	validator := NewTemplateValidator(bus, logger, stubTypeBootstrapper)
-
-	eventChan := bus.Subscribe("test-sub", 50)
-	bus.Start()
-
-	ctx := t.Context()
-
-	go validator.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
-
-	// Send a request with invalid config type
-	req := events.NewConfigValidationRequest("invalid-config-type", "test-version")
-	bus.Publish(req)
-
-	// Wait for error response
-	response := testutil.WaitForEventWithPredicate(t, eventChan, 2*time.Second,
-		func(resp *events.ConfigValidationResponse) bool {
-			return resp.ValidatorName == ValidatorNameTemplate
-		})
-
-	assert.False(t, response.Valid)
-	require.Len(t, response.Errors, 1)
-	assert.Contains(t, response.Errors[0], "invalid config type")
-}
-
-func TestJSONPathValidator_InvalidConfigType(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	validator := NewJSONPathValidator(bus, logger)
-
-	eventChan := bus.Subscribe("test-sub", 50)
-	bus.Start()
-
-	ctx := t.Context()
-
-	go validator.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
-
-	// Send a request with invalid config type
-	req := events.NewConfigValidationRequest("invalid-config-type", "test-version")
-	bus.Publish(req)
-
-	// Wait for error response
-	response := testutil.WaitForEventWithPredicate(t, eventChan, 2*time.Second,
-		func(resp *events.ConfigValidationResponse) bool {
-			return resp.ValidatorName == ValidatorNameJSONPath
-		})
-
-	assert.False(t, response.Valid)
-	require.Len(t, response.Errors, 1)
-	assert.Contains(t, response.Errors[0], "invalid config type")
+	}
 }
 
 func TestTemplateValidator_SnippetErrors(t *testing.T) {
@@ -503,8 +469,6 @@ func TestBaseValidator_IgnoresOtherEvents(t *testing.T) {
 
 	handleChan := make(chan struct{})
 	handler := &successHandler{
-		eventBus:   bus,
-		name:       "test",
 		handleChan: handleChan,
 	}
 	validator := NewBaseValidator(bus, logger, "test", handler)

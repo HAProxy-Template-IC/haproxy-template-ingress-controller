@@ -1,10 +1,10 @@
 package validator
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -26,62 +26,35 @@ import (
 // ConfigValidationResponse events with validation results.
 type BasicValidator struct {
 	*BaseValidator
-	eventBus *busevents.EventBus
-	logger   *slog.Logger
 }
 
 // NewBasicValidator creates a new basic validator component.
-//
-// Parameters:
-//   - eventBus: The EventBus to subscribe to and publish on
-//   - logger: Structured logger for diagnostics
-//
-// Returns:
-//   - *BasicValidator ready to start
 func NewBasicValidator(eventBus *busevents.EventBus, logger *slog.Logger) *BasicValidator {
-	v := &BasicValidator{
-		eventBus: eventBus,
-		logger:   logger,
-	}
+	v := &BasicValidator{}
 	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameBasic, v)
 	return v
 }
 
-// HandleRequest processes a ConfigValidationRequest by validating basic structure.
-// This implements the ValidationHandler interface.
-func (v *BasicValidator) HandleRequest(req *events.ConfigValidationRequest) {
+// Validate implements ValidationHandler.
+func (v *BasicValidator) Validate(_ context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
 	start := time.Now()
-	v.logger.Debug("Validating basic structure", "version", req.Version)
+	v.Logger().Debug("Validating basic structure", "version", version)
 
-	cfg, ok := v.assertConfigType(req)
-	if !ok {
-		return
-	}
+	errors = validateBasic(cfg)
 
-	errors := validateBasic(cfg)
-
-	// Publish validation response
-	valid := len(errors) == 0
-	response := events.NewConfigValidationResponse(
-		req.RequestID(),
-		ValidatorNameBasic,
-		valid,
-		errors,
-	)
-
-	v.eventBus.Publish(response)
-
+	valid = len(errors) == 0
 	duration := time.Since(start)
 	if valid {
-		v.logger.Debug("Basic validation successful",
-			"version", req.Version,
+		v.Logger().Debug("Basic validation successful",
+			"version", version,
 			"duration_ms", duration.Milliseconds())
 	} else {
-		v.logger.Warn("Basic validation failed",
-			"version", req.Version,
+		v.Logger().Warn("Basic validation failed",
+			"version", version,
 			"duration_ms", duration.Milliseconds(),
 			"error_count", len(errors))
 	}
+	return valid, errors
 }
 
 func validateBasic(cfg *coreconfig.Config) []string {

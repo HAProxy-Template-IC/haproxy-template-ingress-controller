@@ -18,7 +18,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -65,11 +66,7 @@ func (f SyncFailures) Error() string {
 	if len(f) == 0 {
 		return ""
 	}
-	names := make([]string, 0, len(f))
-	for name := range f {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(f))
 	parts := make([]string, 0, len(names))
 	for _, name := range names {
 		parts = append(parts, fmt.Sprintf("%s: %s", name, strings.Join(f[name], "; ")))
@@ -82,11 +79,7 @@ func (f SyncFailures) Flat() []string {
 	if len(f) == 0 {
 		return nil
 	}
-	names := make([]string, 0, len(f))
-	for name := range f {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(f))
 	flat := make([]string, 0, len(names))
 	for _, name := range names {
 		for _, failure := range f[name] {

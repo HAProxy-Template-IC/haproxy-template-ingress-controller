@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -41,8 +40,6 @@ type TypeBootstrapper func(ctx context.Context, cfg *coreconfig.Config) (*typebo
 // ConfigValidationResponse events with validation results.
 type TemplateValidator struct {
 	*BaseValidator
-	eventBus  *busevents.EventBus
-	logger    *slog.Logger
 	bootstrap TypeBootstrapper
 }
 
@@ -65,65 +62,38 @@ func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger, boo
 			"rejects valid charts that use typed Spec/Status access")
 	}
 	v := &TemplateValidator{
-		eventBus:  eventBus,
-		logger:    logger,
 		bootstrap: bootstrap,
 	}
 	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameTemplate, v)
 	return v
 }
 
-// HandleRequest processes a ConfigValidationRequest by validating all templates.
-// This implements the ValidationHandler interface.
-//
-// Templates are validated together as a complete set, matching production behavior.
-// This ensures snippets that reference each other via render/import work correctly.
-//
-// Schema acquisition for the request's watched resources happens
-// synchronously here so the engine compile sees the same typed
-// globals the Stage-5 production engine will see. A failure to
-// resolve every declared resource's schema fails validation —
-// template authors using typed access need the guarantee that
-// every declared watched resource has its real schema (RBAC, CRD
-// installation, apiserver health are all surfaced via this gate).
-func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
+// Validate implements ValidationHandler.
+func (v *TemplateValidator) Validate(ctx context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
 	start := time.Now()
-	v.logger.Debug("Validating templates", "version", req.Version)
+	v.Logger().Debug("Validating templates", "version", version)
 
-	cfg, ok := v.assertConfigType(req)
-	if !ok {
-		return
-	}
-
-	errors := validateTemplates(v.LifecycleContext(), cfg, v.bootstrap)
+	errors = validateTemplates(ctx, cfg, v.bootstrap)
 	extraction := helpers.ExtractTemplatesFromConfig(cfg)
 
-	valid := len(errors) == 0
-	response := events.NewConfigValidationResponse(
-		req.RequestID(),
-		ValidatorNameTemplate,
-		valid,
-		errors,
-	)
-
-	v.eventBus.Publish(response)
-
+	valid = len(errors) == 0
 	duration := time.Since(start)
 	templateCount := len(extraction.AllTemplates)
 
 	if valid {
-		v.logger.Debug("Template validation successful",
-			"version", req.Version,
+		v.Logger().Debug("Template validation successful",
+			"version", version,
 			"duration_ms", duration.Milliseconds(),
 			"template_count", templateCount)
 	} else {
-		v.logger.Error("Template validation failed",
-			"version", req.Version,
+		v.Logger().Error("Template validation failed",
+			"version", version,
 			"duration_ms", duration.Milliseconds(),
 			"template_count", templateCount,
 			"error_count", len(errors),
 			"errors", errors)
 	}
+	return valid, errors
 }
 
 // templateValidatorBootstrapTimeout caps the wall-clock cost of

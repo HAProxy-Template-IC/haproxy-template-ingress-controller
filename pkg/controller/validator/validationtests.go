@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configtest"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -125,8 +124,6 @@ func SuiteValidationEnvelope(testCount int) time.Duration {
 // reconciliation hot path.
 type ValidationTestsValidator struct {
 	*BaseValidator
-	eventBus  *busevents.EventBus
-	logger    *slog.Logger
 	bootstrap TypeBootstrapper
 	// budgetFor returns the test-execution budget for a suite of the given
 	// size. Defaults to SuiteRunBudget (a 25s floor scaled by suite size, so a
@@ -149,8 +146,6 @@ func NewValidationTestsValidator(eventBus *busevents.EventBus, logger *slog.Logg
 			"false-positively rejected")
 	}
 	v := &ValidationTestsValidator{
-		eventBus:  eventBus,
-		logger:    logger,
 		bootstrap: bootstrap,
 		budgetFor: SuiteRunBudget,
 	}
@@ -158,58 +153,41 @@ func NewValidationTestsValidator(eventBus *busevents.EventBus, logger *slog.Logg
 	return v
 }
 
-// HandleRequest runs the embedded validationTests for the candidate config and
-// publishes a ConfigValidationResponse. A config with no validationTests is a
-// no-op pass (the gate adds zero cost when the chart ships no tests).
-func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationRequest) {
+// Validate implements ValidationHandler.
+func (v *ValidationTestsValidator) Validate(ctx context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
 	start := time.Now()
 
-	cfg, ok := v.assertConfigType(req)
-	if !ok {
-		return
-	}
-
 	if len(cfg.ValidationTests) == 0 {
-		v.respond(req, true, nil)
-		return
+		return true, nil
 	}
 
 	budget := v.budgetFor(len(cfg.ValidationTests))
-	v.logger.Debug("Running validationTests",
-		"version", req.Version, "test_count", len(cfg.ValidationTests), "run_budget", budget)
+	v.Logger().Debug("Running validationTests",
+		"version", version, "test_count", len(cfg.ValidationTests), "run_budget", budget)
 
-	result, err := v.runTests(cfg, budget)
+	result, err := RunValidationTestsSync(ctx, cfg, v.bootstrap, budget, v.Logger())
 	if err != nil {
-		v.logger.Error("ValidationTests could not run",
-			"version", req.Version, "error", err)
-		v.respond(req, false, []string{err.Error()})
-		return
+		v.Logger().Error("ValidationTests could not run",
+			"version", version, "error", err)
+		return false, []string{err.Error()}
 	}
 
 	duration := time.Since(start)
 	switch {
 	case result.Incomplete:
-		// Daemon load gate fails CLOSED on an incomplete run: never accept a
-		// config we didn't finish validating.
-		v.logger.Error("ValidationTests did not complete in time",
-			"version", req.Version, "run_budget", budget, "duration_ms", duration.Milliseconds())
-		v.respond(req, false, []string{fmt.Sprintf(
-			"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", budget)})
+		v.Logger().Error("ValidationTests did not complete in time",
+			"version", version, "run_budget", budget, "duration_ms", duration.Milliseconds())
+		return false, []string{fmt.Sprintf(
+			"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", budget)}
 	case result.Passed:
-		v.logger.Debug("ValidationTests passed",
-			"version", req.Version, "duration_ms", duration.Milliseconds())
-		v.respond(req, true, nil)
+		v.Logger().Debug("ValidationTests passed",
+			"version", version, "duration_ms", duration.Milliseconds())
+		return true, nil
 	default:
-		v.logger.Error("ValidationTests failed",
-			"version", req.Version, "duration_ms", duration.Milliseconds(), "failures", result.Failures)
-		v.respond(req, false, result.Failures)
+		v.Logger().Error("ValidationTests failed",
+			"version", version, "duration_ms", duration.Milliseconds(), "failures", result.Failures)
+		return false, result.Failures
 	}
-}
-
-// runTests delegates to RunValidationTestsSync with this validator's bootstrap,
-// the suite-size-scaled run budget, and lifecycle context.
-func (v *ValidationTestsValidator) runTests(cfg *coreconfig.Config, budget time.Duration) (configtest.Result, error) {
-	return RunValidationTestsSync(v.LifecycleContext(), cfg, v.bootstrap, budget, v.logger)
 }
 
 // RunValidationTestsSync resolves typed schemas, builds a throwaway engine, and
@@ -249,14 +227,4 @@ func RunValidationTestsSync(ctx context.Context, cfg *coreconfig.Config, bootstr
 	}
 
 	return configtest.RunValidationTests(ctx, cfg, engine, bootstrapResult.Types, runTimeout, logger)
-}
-
-// respond publishes the validator's ConfigValidationResponse.
-func (v *ValidationTestsValidator) respond(req *events.ConfigValidationRequest, valid bool, errs []string) {
-	v.eventBus.Publish(events.NewConfigValidationResponse(
-		req.RequestID(),
-		ValidatorNameValidationTests,
-		valid,
-		errs,
-	))
 }

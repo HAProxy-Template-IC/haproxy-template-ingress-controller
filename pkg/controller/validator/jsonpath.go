@@ -1,13 +1,13 @@
 package validator
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
@@ -28,52 +28,23 @@ import (
 // ConfigValidationResponse events with validation results.
 type JSONPathValidator struct {
 	*BaseValidator
-	eventBus *busevents.EventBus
-	logger   *slog.Logger
 }
 
 // NewJSONPathValidator creates a new JSONPath validator component.
-//
-// Parameters:
-//   - eventBus: The EventBus to subscribe to and publish on
-//   - logger: Structured logger for diagnostics
-//
-// Returns:
-//   - *JSONPathValidator ready to start
 func NewJSONPathValidator(eventBus *busevents.EventBus, logger *slog.Logger) *JSONPathValidator {
-	v := &JSONPathValidator{
-		eventBus: eventBus,
-		logger:   logger,
-	}
+	v := &JSONPathValidator{}
 	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameJSONPath, v)
 	return v
 }
 
-// HandleRequest processes a ConfigValidationRequest by validating all JSONPath expressions.
-// This implements the ValidationHandler interface.
-func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
+// Validate implements ValidationHandler.
+func (v *JSONPathValidator) Validate(_ context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
 	start := time.Now()
-	v.logger.Debug("Validating JSONPath expressions", "version", req.Version)
+	v.Logger().Debug("Validating JSONPath expressions", "version", version)
 
-	cfg, ok := v.assertConfigType(req)
-	if !ok {
-		return
-	}
+	errors = validateJSONPaths(cfg)
 
-	errors := validateJSONPaths(cfg)
-
-	// Publish validation response
-	valid := len(errors) == 0
-	response := events.NewConfigValidationResponse(
-		req.RequestID(),
-		ValidatorNameJSONPath,
-		valid,
-		errors,
-	)
-
-	v.eventBus.Publish(response)
-
-	// Calculate metrics
+	valid = len(errors) == 0
 	duration := time.Since(start)
 	expressionCount := len(cfg.WatchedResourcesIgnoreFields)
 	for name := range cfg.WatchedResources {
@@ -91,17 +62,18 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	}
 
 	if valid {
-		v.logger.Debug("JSONPath validation successful",
-			"version", req.Version,
+		v.Logger().Debug("JSONPath validation successful",
+			"version", version,
 			"duration_ms", duration.Milliseconds(),
 			"expression_count", expressionCount)
 	} else {
-		v.logger.Warn("JSONPath validation failed",
-			"version", req.Version,
+		v.Logger().Warn("JSONPath validation failed",
+			"version", version,
 			"duration_ms", duration.Milliseconds(),
 			"expression_count", expressionCount,
 			"error_count", len(errors))
 	}
+	return valid, errors
 }
 
 func validateJSONPaths(cfg *coreconfig.Config) []string {

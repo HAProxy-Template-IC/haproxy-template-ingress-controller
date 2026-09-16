@@ -340,22 +340,22 @@ func (c *EventCommentator) Start(ctx context.Context) error {
 
 ### validator/ - Configuration Validation
 
-Implements the scatter-gather pattern for multi-phase validation. Three concrete validators (`BasicValidator`, `TemplateValidator`, `JSONPathValidator`) all wrap a shared `BaseValidator` and subscribe to `events.ConfigValidationRequest`. The orchestration that *issues* those requests does **not** live in this package — it's `pkg/controller/configchange.ConfigChangeHandler`, which subscribes to `ConfigParsedEvent` from the configloader, fans out via `bus.Request`, and publishes `ConfigValidatedEvent` / `ConfigInvalidEvent` based on the responses.
+Implements the scatter-gather pattern for multi-phase validation. Four concrete validators (`BasicValidator`, `TemplateValidator`, `JSONPathValidator`, `ValidationTestsValidator`) all wrap a shared `BaseValidator` and subscribe to `events.ConfigValidationRequest`. The orchestration that *issues* those requests does **not** live in this package — it's `pkg/controller/configchange.ConfigChangeHandler`, which subscribes to `ConfigParsedEvent` from the configloader, fans out via `bus.Request`, and publishes `ConfigValidatedEvent` / `ConfigInvalidEvent` based on the responses.
 
 ```go
 // configchange/handler.go (orchestration side)
 result, err := h.eventBus.Request(ctx, events.NewConfigValidationRequest(cfg, version),
     busevents.RequestOptions{
         Timeout:            10 * time.Second,
-        ExpectedResponders: h.validators, // ["basic", "template", "jsonpath"]
+        ExpectedResponders: h.validators, // ["basic", "template", "jsonpath", "validationtests"]
     })
 // aggregate result.Responses → ConfigValidatedEvent or ConfigInvalidEvent
 
 // validator/template.go (responder side)
-func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger) *TemplateValidator {
+func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger, bootstrap TypeBootstrapper) *TemplateValidator {
     // BaseValidator subscribes the component to ConfigValidationRequest
-    // and dispatches to the validator's HandleRequest method.
-    v := &TemplateValidator{eventBus: eventBus, logger: logger}
+    // and dispatches to the validator's Validate method.
+    v := &TemplateValidator{bootstrap: bootstrap}
     v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameTemplate, v)
     return v
 }
