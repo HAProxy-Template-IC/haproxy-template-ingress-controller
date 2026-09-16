@@ -1,87 +1,48 @@
 # pkg/controller/proposalvalidator
 
-Speculative render+validate of a hypothetical configuration change without deploying it. Composes a `BaseStoreProvider` (the live watched-resource stores) with caller-supplied overlays, drives `pkg/controller/pipeline.Pipeline` against the merged view, and reports the outcome.
+Validates hypothetical configuration changes by rendering live stores with temporary overlays. `Service` owns validation; `Component` connects it to proposal events.
 
-## Overview
+## Validation policies
 
-Two production paths need this:
+| Caller | Entry point | Failure policy |
+|--------|-------------|----------------|
+| Admission webhook | `Service.ValidateSyncWithAdmissionSubject` | May admit unchanged invalid output after an exact comparison with the live baseline |
+| Background HTTP refresh | `Component` handling `ProposalValidationRequestedEvent` | Rejects invalid proposed output, including output identical to an invalid baseline |
 
-| Caller | Mode | What's overlaid |
-|--------|------|-----------------|
-| `pkg/controller/dryrunvalidator` (admission webhook) | Sync — direct `ValidateSync` call | One `*stores.StoreOverlay` per affected resource type, built from the admission verb (CREATE / UPDATE / DELETE) |
-| `pkg/controller/httpstore` (background HTTP content refresh) | Async — `ProposalValidationRequestedEvent` | An `HTTPContentOverlay` containing newly fetched pending content; no K8s overlays |
+Cancellation and unavailable published files reject admission. Neither can use the unchanged-invalid exception. `CurrentFilesProvider` supplies one snapshot per decision, shared by the proposed and baseline renders.
 
-Both flows go through the same `Pipeline.Execute`, so anything that passes here will also pass leader-side reconciliation. Reconciliation itself does **not** use this component — the leader-only Coordinator calls `Pipeline.Execute` directly without going through proposalvalidator.
-
-Production supplies `CurrentFilesProvider` from the published auxiliary CRDs. The component reads it once per decision, so the proposed render and unchanged-invalid baseline use the same `currentFiles` snapshot. An unavailable publication rejects the proposal before either render, so the unchanged-invalid exception cannot bypass the authority failure.
-
-## Quick Start
+## Admission service
 
 ```go
-import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
-)
-
-pl := pipeline.New(/* renderer + validator services + paths */)
-
-// Sync mode (no event subscription; caller invokes ValidateSync directly).
-sync := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-    Pipeline:          pl,
-    BaseStoreProvider: storeProvider,
-    Logger:            logger,
-    SyncOnly:          true,
+service := proposalvalidator.NewService(&proposalvalidator.ServiceConfig{
+    Pipeline:             admissionPipeline,
+    BaseStoreProvider:    storeProvider,
+    CurrentFilesProvider: currentFilesProvider,
+    Logger:               logger,
 })
-
-overlays := map[string]*stores.StoreOverlay{
-    "ingresses": stores.NewStoreOverlayForCreate(newIngressObj),
-}
-pipelineResult, result := sync.ValidateSync(ctx, overlays) // (*pipeline.PipelineResult, *validation.ValidationResult)
-
-// Async mode (subscribes to ProposalValidationRequestedEvent during construction).
-async := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-    EventBus:          eventBus,
-    Pipeline:          pl,
-    BaseStoreProvider: storeProvider,
-    Logger:            logger,
-})
-go async.Start(ctx)
+pipelineResult, result := service.ValidateSync(ctx, overlays)
 ```
 
-`ValidateSync` returns `(*pipeline.PipelineResult, *validation.ValidationResult)`. The `PipelineResult` carries the rendered HAProxy config and auxiliary files (populated only on success); the `*validation.ValidationResult` carries the validation outcome:
+The service has no event subscription or lifecycle. `ValidateSync` returns `(*pipeline.PipelineResult, *validation.ValidationResult)`. An admitted result includes the proposed rendered output, including when admission uses the unchanged-invalid exception. Rejections include the failing phase, error, and any warnings.
+
+## HTTP-content event adapter
 
 ```go
-type ValidationResult struct {
-    Valid        bool
-    Error        error
-    Phase        string                   // failing pipeline subphase; empty when valid
-    DurationMs   int64
-    ParsedConfig *parser.StructuredConfig // pre-parsed; downstream sync can skip the parse
-}
+adapter := proposalvalidator.New(eventBus, &proposalvalidator.ServiceConfig{
+    Pipeline:             proposalPipeline,
+    BaseStoreProvider:    storeProvider,
+    CurrentFilesProvider: currentFilesProvider,
+    Logger:               logger,
+})
+eventBus.Start()
+go adapter.Start(ctx)
 ```
 
-The async path publishes `ProposalValidationCompletedEvent` (or its failure variant) keyed by the request ID so multiple in-flight proposals don't get correlated incorrectly.
+Construct every subscriber before starting the event bus. The adapter publishes a verdict carrying the request ID, including when validation panics. Cancelling its lifecycle context cancels active validation.
 
-Cancellation denies the proposal and retains the most specific pipeline phase.
-It cannot use the unchanged-invalid recovery exception.
+## Related packages
 
-## How It Works
-
-1. The caller hands over `overlays map[string]*stores.StoreOverlay` (one per resource type they want to perturb), and optionally an HTTP overlay for pending HTTP content.
-2. The component wraps `BaseStoreProvider` in an `OverlayStoreProvider` so the pipeline sees the merged view: live store + overlay on top.
-3. `Pipeline.ExecuteWithResult(ctx, mergedProvider)` runs the full render + validation pipeline against that view.
-4. Failures come back as `*PipelineError` (with `Phase` + `Cause`); the simplification helpers in `pkg/dataplane` (`SimplifyRenderingError` / `SimplifyValidationError`) turn the underlying library error into something a webhook user can act on.
-
-Because the merged view exists only for the duration of the call, a successful proposal validation never mutates live store state.
-
-## See Also
-
-- [`pkg/controller/pipeline`](../pipeline/) — the underlying render-validate composition this component drives
-- [`pkg/controller/dryrunvalidator`](../dryrunvalidator/) — sync-mode caller (admission webhook)
-- [`pkg/controller/httpstore`](../httpstore/) — async-mode caller (background HTTP content refresh)
-- [`pkg/stores`](../../stores/) — `NewStoreOverlayForCreate` / `…Update` / `…Delete` overlay constructors
-- [`pkg/controller/events`](../events/) — `ProposalValidationRequestedEvent` / `ProposalValidationCompletedEvent`
-
-## License
-
-Apache-2.0 — see root `LICENSE`.
+- [`pipeline`](../pipeline/) — render and validation execution
+- [`dryrunvalidator`](../dryrunvalidator/) — admission overlays and error reporting
+- [`httpstore`](../httpstore/) — pending HTTP-content promotion
+- [`stores`](../../stores/) — temporary resource and HTTP overlays

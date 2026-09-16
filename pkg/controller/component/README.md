@@ -4,7 +4,7 @@ Shared event-loop scaffold consumed by every controller component that subscribe
 
 ## Overview
 
-The pattern most controller components share — subscribe to the EventBus during `New(...)` so events buffered during startup aren't lost, run a single goroutine that dispatches one event at a time, recover from panics inside the handler, and shut down cleanly when the context is cancelled — used to be duplicated in `pkg/controller/resourceloader.BaseLoader` and `pkg/controller/validator.BaseValidator`. This package consolidates it. The two `Base*` types still exist as thin wrappers for familiarity, but new components should embed `*Base` directly.
+Components embed `*Base` and implement `EventHandler`. The base subscribes during construction, dispatches events on one goroutine, recovers from handler panics, and stops when its context is cancelled. `validator.BaseValidator` adds request decoding and response publication for the configuration validators.
 
 `*ReadySignal` (in `ready.go`) is a small one-shot helper for components that need to signal "I'm ready" exactly once — used by the deployer, coordinator, config publisher, and a few others.
 
@@ -102,8 +102,8 @@ Two rules, both load-bearing:
 
 ## See Also
 
-- [`pkg/controller/resourceloader`](../resourceloader/) — `BaseLoader` thin wrapper used by configloader / credentialsloader
-- [`pkg/controller/validator`](../validator/) — `BaseValidator` thin wrapper used by the scatter-gather validators
+- [`pkg/controller/configloader`](../configloader/) / [`credentialsloader`](../credentialsloader/) — loaders that embed `Base` directly
+- [`pkg/controller/validator`](../validator/) — shared request and response handling for the scatter-gather validators
 - [`pkg/events`](../../events/) — the bus this scaffold subscribes to
 - `ready.go` in this package — `ReadySignal` helper for one-shot ready signalling
 

@@ -166,8 +166,7 @@ func TestNew(t *testing.T) {
 	testPipeline := createTestPipeline(t, template)
 	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{})
 
-	component := New(&ComponentConfig{
-		EventBus:          bus,
+	component := New(bus, &ServiceConfig{
 		Pipeline:          testPipeline,
 		BaseStoreProvider: baseStore,
 		Logger:            slog.Default(),
@@ -175,20 +174,18 @@ func TestNew(t *testing.T) {
 
 	require.NotNil(t, component)
 	assert.NotNil(t, component.Base, "async mode must embed the component.Base event loop")
-	assert.NotNil(t, component.pipeline)
-	assert.NotNil(t, component.baseStore)
-	assert.NotNil(t, component.logger)
+	assert.NotNil(t, component.service.pipeline)
+	assert.NotNil(t, component.service.baseStore)
+	assert.NotNil(t, component.service.logger)
 }
 
-func TestComponent_ValidateSync_ValidConfig(t *testing.T) {
+func TestService_ValidateSync_ValidConfig(t *testing.T) {
 	template := testutil.MinimalHAProxyConfig
 
-	bus := busevents.NewEventBus(100)
 	pipelineInstance := createTestPipeline(t, template)
 	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{})
 
-	component := New(&ComponentConfig{
-		EventBus:          bus,
+	component := NewService(&ServiceConfig{
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: baseStore,
 		Logger:            slog.Default(),
@@ -211,7 +208,7 @@ func TestComponent_ValidateSync_ValidConfig(t *testing.T) {
 	assert.NotEmpty(t, pipelineResult.HAProxyConfig)
 }
 
-func TestComponent_ValidateSync_InvalidOverlay(t *testing.T) {
+func TestService_ValidateSync_InvalidOverlay(t *testing.T) {
 	template := `global
     daemon
 
@@ -219,13 +216,11 @@ defaults
     mode http
 `
 
-	bus := busevents.NewEventBus(100)
 	pipelineInstance := createTestPipeline(t, template)
 	// Empty base store - no stores registered
 	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{})
 
-	component := New(&ComponentConfig{
-		EventBus:          bus,
+	component := NewService(&ServiceConfig{
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: baseStore,
 		Logger:            slog.Default(),
@@ -245,7 +240,7 @@ defaults
 	assert.Nil(t, pipelineResult, "failed validation must not leak a partial pipeline result")
 }
 
-func TestComponent_ValidateSync_UnchangedInvalidContent_Admits(t *testing.T) {
+func TestService_ValidateSync_UnchangedInvalidContent_Admits(t *testing.T) {
 	t.Cleanup(dataplanetest.InstallFakeHAProxy(
 		dataplanetest.WithRejectAll("parsing [haproxy.cfg:3] : unknown keyword 'nosuch_directive_haproxy_will_reject'")))
 	template := `global
@@ -253,12 +248,10 @@ func TestComponent_ValidateSync_UnchangedInvalidContent_Admits(t *testing.T) {
     nosuch_directive_haproxy_will_reject this_is_an_alert_trigger
 `
 
-	bus := busevents.NewEventBus(100)
 	pipelineInstance := createTestPipeline(t, template)
 	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{"ingresses": &storetest.MockStore{}})
 
-	component := New(&ComponentConfig{
-		EventBus:          bus,
+	component := NewService(&ServiceConfig{
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: baseStore,
 		Logger:            slog.Default(),
@@ -277,22 +270,21 @@ func TestComponent_ValidateSync_UnchangedInvalidContent_Admits(t *testing.T) {
 	assert.NotEmpty(t, pipelineResult.ContentChecksum)
 }
 
-func TestComponent_ValidateSync_PinsCurrentFilesAcrossBaseline(t *testing.T) {
+func TestService_ValidateSync_PinsCurrentFilesAcrossBaseline(t *testing.T) {
 	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithRejectAll("invalid configuration")))
 	template := `global
     daemon
 # current-files: {{ currentFiles["gate"] }}
 `
 	calls := 0
-	component := New(&ComponentConfig{
+	component := NewService(&ServiceConfig{
 		Pipeline:          createCurrentFilesTestPipeline(t, template),
 		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{}),
 		CurrentFilesProvider: func() (map[string]string, error) {
 			calls++
 			return map[string]string{"gate": fmt.Sprintf("snapshot-%d", calls)}, nil
 		},
-		Logger:   slog.Default(),
-		SyncOnly: true,
+		Logger: slog.Default(),
 	})
 
 	pipelineResult, result := component.ValidateSync(context.Background(), nil)
@@ -303,15 +295,14 @@ func TestComponent_ValidateSync_PinsCurrentFilesAcrossBaseline(t *testing.T) {
 	assert.Equal(t, 1, calls)
 }
 
-func TestComponent_ValidateSyncRejectsUnavailableCurrentFiles(t *testing.T) {
+func TestService_ValidateSyncRejectsUnavailableCurrentFiles(t *testing.T) {
 	authorityErr := errors.New("published currentFiles unavailable")
-	component := New(&ComponentConfig{
+	component := NewService(&ServiceConfig{
 		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{}),
 		CurrentFilesProvider: func() (map[string]string, error) {
 			return nil, authorityErr
 		},
-		Logger:   slog.Default(),
-		SyncOnly: true,
+		Logger: slog.Default(),
 	})
 
 	pipelineResult, result := component.ValidateSync(t.Context(), nil)
@@ -323,7 +314,7 @@ func TestComponent_ValidateSyncRejectsUnavailableCurrentFiles(t *testing.T) {
 	assert.ErrorIs(t, result.Error, authorityErr)
 }
 
-func TestComponent_ValidateSync_CanceledUnchangedInvalidContent_Denies(t *testing.T) {
+func TestService_ValidateSync_CanceledUnchangedInvalidContent_Denies(t *testing.T) {
 	authorityErr := errors.New("admission authority expired")
 	ctx, cancel := context.WithCancelCause(context.Background())
 	outputValidator := &cancelingRejectingOutputValidator{
@@ -331,7 +322,7 @@ func TestComponent_ValidateSync_CanceledUnchangedInvalidContent_Denies(t *testin
 		cause:        authorityErr,
 		cancelOnCall: 1,
 	}
-	component := New(&ComponentConfig{
+	component := NewService(&ServiceConfig{
 		Pipeline: createTestPipelineWithOutputValidator(
 			t,
 			testutil.MinimalHAProxyConfig,
@@ -339,7 +330,6 @@ func TestComponent_ValidateSync_CanceledUnchangedInvalidContent_Denies(t *testin
 		),
 		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{}),
 		Logger:            slog.Default(),
-		SyncOnly:          true,
 	})
 
 	pipelineResult, result := component.ValidateSync(ctx, map[string]*stores.StoreOverlay{})
@@ -352,7 +342,7 @@ func TestComponent_ValidateSync_CanceledUnchangedInvalidContent_Denies(t *testin
 	assert.Equal(t, 1, outputValidator.calls)
 }
 
-func TestComponent_ValidateSync_CancellationDuringBaselineDenies(t *testing.T) {
+func TestService_ValidateSync_CancellationDuringBaselineDenies(t *testing.T) {
 	authorityErr := errors.New("admission authority expired")
 	ctx, cancel := context.WithCancelCause(context.Background())
 	outputValidator := &cancelingRejectingOutputValidator{
@@ -360,7 +350,7 @@ func TestComponent_ValidateSync_CancellationDuringBaselineDenies(t *testing.T) {
 		cause:        authorityErr,
 		cancelOnCall: 2,
 	}
-	component := New(&ComponentConfig{
+	component := NewService(&ServiceConfig{
 		Pipeline: createTestPipelineWithOutputValidator(
 			t,
 			testutil.MinimalHAProxyConfig,
@@ -368,7 +358,6 @@ func TestComponent_ValidateSync_CancellationDuringBaselineDenies(t *testing.T) {
 		),
 		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{}),
 		Logger:            slog.Default(),
-		SyncOnly:          true,
 	})
 
 	pipelineResult, result := component.ValidateSync(ctx, map[string]*stores.StoreOverlay{})
@@ -426,18 +415,17 @@ func TestPipelineFailurePhase(t *testing.T) {
 	}
 }
 
-func TestComponent_ValidateSync_AdmissionSubjectOnlyDifference_Admits(t *testing.T) {
+func TestService_ValidateSync_AdmissionSubjectOnlyDifference_Admits(t *testing.T) {
 	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithRejectAll("invalid configuration")))
 	template := `global
     daemon
 # subject: {{ admissionSubject | dig("name") | fallback("") }}
 `
 
-	component := New(&ComponentConfig{
+	component := NewService(&ServiceConfig{
 		Pipeline:          createTestPipeline(t, template),
 		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{"ingresses": &storetest.MockStore{}}),
 		Logger:            slog.Default(),
-		SyncOnly:          true,
 	})
 	overlays := map[string]*stores.StoreOverlay{
 		"ingresses": stores.NewStoreOverlayForCreate(unstructuredObj("default", "new-failure")),
@@ -452,18 +440,17 @@ func TestComponent_ValidateSync_AdmissionSubjectOnlyDifference_Admits(t *testing
 	require.NotNil(t, pipelineResult)
 }
 
-func TestComponent_ValidateSync_ChangedInvalidContent_Denies(t *testing.T) {
+func TestService_ValidateSync_ChangedInvalidContent_Denies(t *testing.T) {
 	t.Cleanup(dataplanetest.InstallFakeHAProxy(dataplanetest.WithRejectAll("invalid configuration")))
 	template := `global
     daemon
 # ingress-count: {{ len(resources.ingresses.List()) }}
 `
 
-	component := New(&ComponentConfig{
+	component := NewService(&ServiceConfig{
 		Pipeline:          createStoreTestPipeline(t, template),
 		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{"ingresses": &storetest.MockStore{}}),
 		Logger:            slog.Default(),
-		SyncOnly:          true,
 	})
 	overlays := map[string]*stores.StoreOverlay{
 		"ingresses": stores.NewStoreOverlayForCreate(unstructuredObj("default", "new-failure")),
@@ -540,8 +527,7 @@ func TestComponent_Start_AsyncPath_DeniesOnFailure(t *testing.T) {
 	})
 
 	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{})
-	component := New(&ComponentConfig{
-		EventBus:          bus,
+	component := New(bus, &ServiceConfig{
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: baseStore,
 		Logger:            slog.Default(),
@@ -595,8 +581,7 @@ func TestComponent_Start_ProcessesEvents(t *testing.T) {
 	pipelineInstance := createTestPipeline(t, template)
 	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{})
 
-	component := New(&ComponentConfig{
-		EventBus:          bus,
+	component := New(bus, &ServiceConfig{
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: baseStore,
 		Logger:            slog.Default(),

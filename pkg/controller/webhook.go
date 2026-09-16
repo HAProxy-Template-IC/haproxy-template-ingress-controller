@@ -37,7 +37,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
@@ -202,23 +201,9 @@ func monitorPersistentWebhookRun(
 // treating it as a failure.
 var errNoWebhookRules = errors.New("no watched-resource webhook rules")
 
-// createDryRunValidator creates a DryRunValidator component for webhook validation.
-//
-// This function is called BEFORE EventBus.Start() because the proposal
-// validator it constructs subscribes to ProposalValidationRequestedEvent in
-// its constructor and must be in place before buffered events are released.
-// The DryRunValidator itself is a synchronous library called via
-// ValidateDirect; it does not subscribe to anything.
-//
-// Returns (nil, nil) when no watched resource has enableValidationWebhook=true
-// — no GVK is routed to the watched-resource path, and the test runner's temp
-// directory + ProposalValidator would be wasted setup. HAProxyTemplateConfig
-// admission no longer exists: a per-object webhook cannot judge a multi-object
-// change set, so the config gate is the pre-upgrade preflight hook plus the
-// fail-closed load gate (ADR-0016).
+// createDryRunValidator builds admission validation when watched-resource rules exist.
 func createDryRunValidator(
 	cfg *coreconfig.Config,
-	bus *busevents.EventBus,
 	storeProvider stores.StoreProvider,
 	wiring *reconciliationWiring,
 	outputValidator pipeline.RenderedOutputValidator,
@@ -249,17 +234,11 @@ func createDryRunValidator(
 		GeneralDir:        dirConfig.GeneralDir,
 	})
 
-	return buildDryRunValidator(bus, renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, wiring.publishedCurrentFiles.get, logger)
+	return buildDryRunValidator(renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, wiring.publishedCurrentFiles.get, logger)
 }
 
-// buildDryRunValidator constructs the watched-resource admission validator.
-// Separate from createDryRunValidator so the call-site logic can decide
-// whether to build it based on whether any watched resource has
-// `enableValidationWebhook: true`. Wraps the sync-only ProposalValidator
-// (distinct from the leader-side instance to avoid duplicate event
-// subscriptions) and the DryRunValidator itself.
+// buildDryRunValidator connects the admission service to resource overlay handling.
 func buildDryRunValidator(
-	bus *busevents.EventBus,
 	renderService *renderer.RenderService,
 	validationService *validation.ValidationService,
 	baseStoreProvider stores.StoreProvider,
@@ -276,17 +255,11 @@ func buildDryRunValidator(
 		Logger:          logger,
 	})
 
-	// ProposalValidator in sync-only mode (only ValidateSync() is used for
-	// webhook). This avoids duplicate event subscriptions since the main
-	// ProposalValidator in createReconciliationComponents handles async
-	// HTTP content validation events.
-	proposalValidatorInstance := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-		EventBus:             bus,
+	proposalValidatorInstance := proposalvalidator.NewService(&proposalvalidator.ServiceConfig{
 		Pipeline:             pipelineInstance,
 		BaseStoreProvider:    baseStoreProvider,
 		CurrentFilesProvider: currentFilesProvider,
 		Logger:               logger,
-		SyncOnly:             true,
 	})
 
 	// The admission webhook only validates the *submitted* resource

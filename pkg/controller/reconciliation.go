@@ -251,9 +251,8 @@ func createReconciliationComponents(
 		Logger:        logger,
 	})
 
-	// ProposalValidator: admission webhook + HTTP-store content promotion.
-	proposalValidatorComponent := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-		EventBus:             setup.Bus,
+	// The event adapter validates HTTP-store content promotion.
+	proposalValidatorComponent := proposalvalidator.New(setup.Bus, &proposalvalidator.ServiceConfig{
 		Pipeline:             proposalPipeline,
 		BaseStoreProvider:    storeProvider,
 		CurrentFilesProvider: currentFiles.publishedSnapshot,

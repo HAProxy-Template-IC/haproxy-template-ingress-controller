@@ -166,28 +166,24 @@ func (v *ValidationTestsValidator) Validate(ctx context.Context, cfg *coreconfig
 		"version", version, "test_count", len(cfg.ValidationTests), "run_budget", budget)
 
 	result, err := RunValidationTestsSync(ctx, cfg, v.bootstrap, budget, v.Logger())
-	if err != nil {
-		v.Logger().Error("ValidationTests could not run",
-			"version", version, "error", err)
-		return false, []string{err.Error()}
-	}
-
+	valid, errors = validationTestsVerdict(result, err, fmt.Sprintf(
+		"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", budget))
 	duration := time.Since(start)
 	switch {
+	case err != nil:
+		v.Logger().Error("ValidationTests could not run",
+			"version", version, "error", err)
 	case result.Incomplete:
 		v.Logger().Error("ValidationTests did not complete in time",
 			"version", version, "run_budget", budget, "duration_ms", duration.Milliseconds())
-		return false, []string{fmt.Sprintf(
-			"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", budget)}
-	case result.Passed:
+	case valid:
 		v.Logger().Debug("ValidationTests passed",
 			"version", version, "duration_ms", duration.Milliseconds())
-		return true, nil
 	default:
 		v.Logger().Error("ValidationTests failed",
 			"version", version, "duration_ms", duration.Milliseconds(), "failures", result.Failures)
-		return false, result.Failures
 	}
+	return valid, errors
 }
 
 // RunValidationTestsSync resolves typed schemas, builds a throwaway engine, and
@@ -227,4 +223,17 @@ func RunValidationTestsSync(ctx context.Context, cfg *coreconfig.Config, bootstr
 	}
 
 	return configtest.RunValidationTests(ctx, cfg, engine, bootstrapResult.Types, runTimeout, logger)
+}
+
+func validationTestsVerdict(result configtest.Result, err error, incompleteMessage string) (valid bool, errors []string) {
+	switch {
+	case err != nil:
+		return false, []string{err.Error()}
+	case result.Incomplete:
+		return false, []string{incompleteMessage}
+	case result.Passed:
+		return true, nil
+	default:
+		return false, result.Failures
+	}
 }

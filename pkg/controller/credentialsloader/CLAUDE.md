@@ -17,7 +17,7 @@ Work in this package when:
 
 ## Package Purpose
 
-Stage-1 event adapter that converts a Kubernetes `Secret` change into the controller's `config.Credentials` value. It is built on the shared `pkg/controller/resourceloader.BaseLoader` scaffold (which itself wraps `pkg/controller/component.Base`), so the only loader-specific logic in this file is `ProcessEvent` → `processSecretChange`.
+Stage-1 event adapter that converts a Kubernetes `Secret` change into the controller's `config.Credentials` value. It is built on the shared `pkg/controller/component.Base` scaffold, so the only loader-specific logic in this file is `HandleEvent` → `processSecretChange`.
 
 ## Architecture
 
@@ -30,7 +30,7 @@ pkg/k8s/watcher.NewSingle                                          pkg/controlle
 events.SecretResourceChangedEvent{Resource: *unstructured.Unstructured}
         │
         ▼
-CredentialsLoaderComponent.ProcessEvent          (this package)
+CredentialsLoaderComponent.HandleEvent          (this package)
         ├─ extract `data` map (still base64 strings)
         ├─ config.ParseSecretData (base64 → []byte per key)
         ├─ config.LoadCredentials (rejects missing / empty username or password)
@@ -52,7 +52,7 @@ loader := credentialsloader.NewCredentialsLoaderComponent(bus, logger)
 go loader.Start(ctx)
 ```
 
-Subscription happens inside the constructor (via `BaseLoader`), which is why this is safe to call before `bus.Start()`. Buffered `SecretResourceChangedEvent`s from the watcher's initial sync are delivered correctly.
+Subscription happens inside the constructor (via `component.Base`), which is why this is safe to call before `bus.Start()`. Buffered `SecretResourceChangedEvent`s from the watcher's initial sync are delivered correctly.
 
 ## Common Pitfalls
 

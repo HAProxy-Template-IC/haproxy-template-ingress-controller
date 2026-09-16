@@ -22,30 +22,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-// handleValidationRequest is the event-driven entry point that
-// httpstore (and other producers) consume to validate a candidate
-// configuration overlay before promoting it. The existing
-// component_test.go covers the success-event path
-// (TestComponent_Start_ProcessesEvents) and a sync-API failure
-// path (TestComponent_ValidateSync_InvalidOverlay) but does NOT
-// cover the EVENT-DRIVEN failure path.
-//
-// Two contracts pinned for the setup-error branch:
-//
-//  1. An overlay referencing a non-existent base store MUST trigger
-//     the early return that publishes ProposalValidationCompletedEvent
-//     with Valid=false AND Phase="setup". Without this branch a
-//     malformed validation request would silently fall through to
-//     the pipeline executor and either crash on missing-store
-//     dereference or misreport the failure phase.
-//
-//  2. RequestID MUST be propagated unchanged from the request to
-//     the failed completion event. httpstore correlates pending
-//     validations by RequestID; without correlation the validator
-//     would publish "anonymous" failure events and the requester
-//     would never learn its specific request was rejected — leaving
-//     pending HTTP content stuck in the validation state forever.
-
 func TestHandleValidationRequest_SetupErrorPublishesFailedWithRequestID(t *testing.T) {
 	// Minimal pipeline — never reached on the setup-error branch
 	// because overlayProvider.Validate() fails first.
@@ -62,8 +38,7 @@ defaults
 	// fail Validate().
 	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{})
 
-	component := New(&ComponentConfig{
-		EventBus:          bus,
+	component := New(bus, &ServiceConfig{
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: baseStore,
 		Logger:            slog.Default(),

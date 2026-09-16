@@ -32,7 +32,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -393,9 +392,9 @@ func TestSimplifyError(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
+	logger := slog.Default()
 
-	proposalValidator := createMockProposalValidator(bus, logger)
+	proposalValidator := createMockProposalValidator(logger)
 
 	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
@@ -423,9 +422,9 @@ func TestNewRejectsInvalidFieldSelector(t *testing.T) {
 
 // TestValidateDirect_UpdateSuccess tests the full flow for an UPDATE operation.
 func TestValidateDirect_UpdateSuccess(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
+	logger := slog.Default()
 
-	proposalValidator := createMockProposalValidator(bus, logger)
+	proposalValidator := createMockProposalValidator(logger)
 
 	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
@@ -434,8 +433,6 @@ func TestValidateDirect_UpdateSuccess(t *testing.T) {
 		Logger:            logger,
 	})
 	require.NoError(t, err)
-
-	bus.Start()
 
 	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
@@ -453,9 +450,9 @@ func TestValidateDirect_UpdateSuccess(t *testing.T) {
 
 // TestValidateDirect_DeleteSuccess tests the full flow for a DELETE operation.
 func TestValidateDirect_DeleteSuccess(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
+	logger := slog.Default()
 
-	proposalValidator := createMockProposalValidator(bus, logger)
+	proposalValidator := createMockProposalValidator(logger)
 
 	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
@@ -464,8 +461,6 @@ func TestValidateDirect_DeleteSuccess(t *testing.T) {
 		Logger:            logger,
 	})
 	require.NoError(t, err)
-
-	bus.Start()
 
 	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
@@ -484,7 +479,7 @@ func TestValidateDirect_DeleteSuccess(t *testing.T) {
 // TestValidateDirect_OverlayReferencesInvalidStore tests that overlays
 // referencing non-existent stores produce a denial.
 func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
+	logger := slog.Default()
 
 	// Create proposal validator with store provider that has NO stores
 	engine, err := templating.New(map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate}, nil)
@@ -510,8 +505,7 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 	// Empty store provider — overlay for "ingresses" will fail validation
 	emptyStoreProvider := stores.NewRealStoreProvider(map[string]stores.Store{})
 
-	noStoreProposalValidator := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-		EventBus:          bus,
+	noStoreProposalValidator := proposalvalidator.NewService(&proposalvalidator.ServiceConfig{
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: emptyStoreProvider,
 		Logger:            logger,
@@ -524,8 +518,6 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 		Logger:            logger,
 	})
 	require.NoError(t, err)
-
-	bus.Start()
 
 	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
@@ -543,9 +535,9 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 
 // TestValidateDirect_Success tests the synchronous validation path.
 func TestValidateDirect_Success(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
+	logger := slog.Default()
 
-	proposalValidator := createMockProposalValidator(bus, logger)
+	proposalValidator := createMockProposalValidator(logger)
 
 	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
@@ -554,8 +546,6 @@ func TestValidateDirect_Success(t *testing.T) {
 		Logger:            logger,
 	})
 	require.NoError(t, err)
-
-	bus.Start()
 
 	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
@@ -572,8 +562,8 @@ func TestValidateDirect_Success(t *testing.T) {
 }
 
 func TestValidateDirect_ConfiguredAliasDiffersFromPlural(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	proposalValidator := createMockProposalValidatorWithStores(bus, logger, "application-routes")
+	logger := slog.Default()
+	proposalValidator := createMockProposalValidatorWithStores(logger, "application-routes")
 	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
@@ -583,7 +573,6 @@ func TestValidateDirect_ConfiguredAliasDiffersFromPlural(t *testing.T) {
 		Logger: logger,
 	})
 	require.NoError(t, err)
-	bus.Start()
 
 	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
@@ -601,9 +590,9 @@ func TestValidateDirect_ConfiguredAliasDiffersFromPlural(t *testing.T) {
 
 // TestValidateDirect_InvalidGVK tests that ValidateDirect rejects invalid GVKs.
 func TestValidateDirect_InvalidGVK(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
+	logger := slog.Default()
 
-	proposalValidator := createMockProposalValidator(bus, logger)
+	proposalValidator := createMockProposalValidator(logger)
 
 	component, err := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
@@ -612,8 +601,6 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 		Logger:            logger,
 	})
 	require.NoError(t, err)
-
-	bus.Start()
 
 	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
@@ -630,7 +617,7 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 }
 
 func TestValidateDirect_AlwaysFailingTemplate_Denies(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
+	logger := slog.Default()
 
 	failingEngine, err := templating.New(map[string]string{"haproxy.cfg": `{{ fail("invalid config") }}`}, nil)
 	require.NoError(t, err)
@@ -656,8 +643,7 @@ func TestValidateDirect_AlwaysFailingTemplate_Denies(t *testing.T) {
 		"ingresses": &storetest.MockStore{},
 	})
 
-	failingProposalValidator := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-		EventBus:          bus,
+	failingProposalValidator := proposalvalidator.NewService(&proposalvalidator.ServiceConfig{
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: baseStoreProvider,
 		Logger:            logger,
@@ -670,8 +656,6 @@ func TestValidateDirect_AlwaysFailingTemplate_Denies(t *testing.T) {
 		Logger:            logger,
 	})
 	require.NoError(t, err)
-
-	bus.Start()
 
 	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
@@ -688,11 +672,11 @@ func TestValidateDirect_AlwaysFailingTemplate_Denies(t *testing.T) {
 }
 
 // createMockProposalValidator creates a minimal ProposalValidator for testing.
-func createMockProposalValidator(bus *busevents.EventBus, logger *slog.Logger) *proposalvalidator.Component {
-	return createMockProposalValidatorWithStores(bus, logger, "ingresses", "services")
+func createMockProposalValidator(logger *slog.Logger) *proposalvalidator.Service {
+	return createMockProposalValidatorWithStores(logger, "ingresses", "services")
 }
 
-func createMockProposalValidatorWithStores(bus *busevents.EventBus, logger *slog.Logger, names ...string) *proposalvalidator.Component {
+func createMockProposalValidatorWithStores(logger *slog.Logger, names ...string) *proposalvalidator.Service {
 	// Create minimal render service
 	engine, _ := templating.New(map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate}, nil)
 
@@ -722,8 +706,7 @@ func createMockProposalValidatorWithStores(bus *busevents.EventBus, logger *slog
 	}
 	baseStoreProvider := stores.NewRealStoreProvider(storeMap)
 
-	return proposalvalidator.New(&proposalvalidator.ComponentConfig{
-		EventBus:          bus,
+	return proposalvalidator.NewService(&proposalvalidator.ServiceConfig{
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: baseStoreProvider,
 		Logger:            logger,

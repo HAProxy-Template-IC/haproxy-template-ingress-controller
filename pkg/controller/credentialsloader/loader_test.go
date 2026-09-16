@@ -45,7 +45,7 @@ func TestNewCredentialsLoaderComponent(t *testing.T) {
 	component := NewCredentialsLoaderComponent(bus, logger)
 
 	require.NotNil(t, component)
-	assert.NotNil(t, component.BaseLoader)
+	assert.NotNil(t, component.Base)
 	assert.Equal(t, bus, component.EventBus())
 	assert.NotNil(t, component.Logger())
 }
@@ -113,7 +113,7 @@ func TestCredentialsLoaderComponent_MissingDataField(t *testing.T) {
 	secret.SetKind("Secret")
 	secret.SetResourceVersion("12345")
 
-	component.ProcessEvent(events.NewSecretResourceChangedEvent(secret))
+	component.HandleEvent(events.NewSecretResourceChangedEvent(secret))
 
 	assert.Contains(t, logs.String(), "Secret has no data field")
 	assert.Contains(t, logs.String(), "version=12345")
@@ -141,7 +141,7 @@ func TestCredentialsLoaderComponent_NonStringDataValue(t *testing.T) {
 		},
 	}
 
-	component.ProcessEvent(events.NewSecretResourceChangedEvent(secret))
+	component.HandleEvent(events.NewSecretResourceChangedEvent(secret))
 
 	assert.Contains(t, logs.String(), "invalid type")
 	assert.Contains(t, logs.String(), "version=12345")
@@ -180,7 +180,7 @@ func TestCredentialsLoaderComponent_MissingRequiredCredentials(t *testing.T) {
 			component, logs := newCapturingCredentialsLoader()
 
 			secret := createCredentialsSecret("12345", tt.data)
-			component.ProcessEvent(events.NewSecretResourceChangedEvent(secret))
+			component.HandleEvent(events.NewSecretResourceChangedEvent(secret))
 
 			assert.Contains(t, logs.String(), tt.expectedError)
 			assert.Contains(t, logs.String(), "version=12345")

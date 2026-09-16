@@ -92,6 +92,8 @@ The defaults remain `haptic-e2e`, `/tmp/haproxy-e2e-kubeconfig`, the `kind`
 Docker network, and host ports `31080`, `31443`, and `31404`. The custom-cluster
 variables are an internal seam for a caller that owns and verifies the Docker
 network. Use `make bench-gateway-api` for an isolated benchmark environment.
+HTTP and gRPC clients use the isolated cluster's node address and service NodePorts;
+they reject requests until that endpoint is configured during setup.
 `HAPTIC_E2E_GWAPI_CHANNEL=experimental` installs the experimental CRDs and
 enables the chart's matching experimental-field validation tests.
 

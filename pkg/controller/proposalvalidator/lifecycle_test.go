@@ -53,8 +53,7 @@ func waitForSignal(t *testing.T, signal <-chan struct{}, message string) {
 func TestStartCancellationCancelsProposalValidation(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	validator := &blockingOutputValidator{started: make(chan struct{}), canceled: make(chan struct{})}
-	component := New(&ComponentConfig{
-		EventBus:          bus,
+	component := New(bus, &ServiceConfig{
 		Pipeline:          createTestPipelineWithOutputValidator(t, testutil.MinimalHAProxyConfig, validator),
 		BaseStoreProvider: stores.NewRealStoreProvider(map[string]stores.Store{}),
 		Logger:            slog.Default(),

@@ -96,7 +96,6 @@ haptic/
 │       ├── rendercontext/   # Builds the template context from stores and HTTP resources
 │       ├── renderer/        # Template rendering adapter
 │       ├── resourceapplier/ # Reconciles template-declared resources via Server-Side Apply
-│       ├── resourceloader/  # Thin wrapper over component.Base for loader components
 │       │                    #   (configloader, credentialsloader)
 │       ├── resourcewatcher/ # Lifecycle manager for all configured resource watchers
 │       ├── statusapplier/   # Applies status subresources on CRDs
@@ -130,7 +129,7 @@ The packages form a DAG, enforced at build time by `arch-go.yml`:
 
 ## Key patterns
 
-**Shared component scaffold.** `pkg/controller/component.Base` implements the event-loop boilerplate (subscribe-on-construction, single-flight dispatch, panic recovery, ready/done signalling). Components embed `*Base` and implement `EventHandler`. It consolidates what used to be two copies of the same scaffold in `BaseLoader` and `BaseValidator`; those types still exist as thin wrappers for familiarity.
+**Shared component scaffold.** `pkg/controller/component.Base` implements the event-loop boilerplate (subscribe-on-construction, single-flight dispatch, panic recovery, ready/done signalling). Components embed `*Base` and implement `EventHandler`. The configuration and credential loaders use it directly. `BaseValidator` adds request decoding and response publication for configuration validation.
 
 **Pure libraries, event adapters.** Business logic (`pkg/templating`, `pkg/dataplane`, `pkg/k8s`) exposes plain Go APIs. Corresponding adapters in `pkg/controller/renderer`, `pkg/controller/deployer`, `pkg/controller/resourcewatcher`, etc. translate events into calls and publish result events.
 

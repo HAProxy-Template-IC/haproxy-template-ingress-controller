@@ -200,7 +200,7 @@ Example - DryRunValidator is itself called directly by the webhook:
 ```go
 // pkg/controller/dryrunvalidator/component.go
 type Component struct {
-    proposalValidator *proposalvalidator.Component // Pure component (delegates render+validate)
+    proposalValidator *proposalvalidator.Service // Pure component (delegates render+validate)
     // ... config, engine, testRunner, logger ...
 }
 
