@@ -9,10 +9,10 @@
 # Snippets:
 #   - features-800-haptic-canary-colocation  — mark canary Ingresses so the main
 #     Ingress owns the base route (they only overlay a use_backend split).
-#   - frontend-switching-810-haptic-canary   — emit the use_backend split rules.
+#   - ingress-canary-0810-haptic              — canary rows for the shared canary lane.
 #   - frontend-filters-092-haptic-mirror-buffer  — buffer request bodies + fail loud
 #     when the spoa-hub mirror plugin is not enabled.
-#   - frontend-filters-820-haptic-mirror       — fire the per-Ingress SPOE mirror.
+#   - ingress-mirror-0820-haptic              — mirror rows for the shared mirror lane.
 templateSnippets:
   # ============================================================================
   # Canary co-location marker (features phase — runs before the aux-file render)
@@ -37,7 +37,7 @@ templateSnippets:
   # Canary use_backend split rules
   # ============================================================================
 
-  features-900-haptic-fragment-810-canary:
+  ingress-canary-0810-haptic:
     requires: [ingresses]
     incremental:
       source: ingresses
@@ -48,21 +48,10 @@ templateSnippets:
         - "metadata.annotations['haproxy-haptic.org/canary-by-header-pattern']"
         - "metadata.annotations['haproxy-haptic.org/canary-by-cookie']"
         - "metadata.annotations['haproxy-haptic.org/canary-weight']"
+      group: ingress-canary
       consumes: [haptic-ingress-match-publications]
       effects: [publishValue]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-810-canary" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
-      {%- end -%}
-
-  frontend-switching-810-haptic-canary:
-    requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-810-canary", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-810-canary:
-    template: |
       {#
         HAPTIC Canary Annotations
 
@@ -89,67 +78,74 @@ templateSnippets:
         annotation value passes ValidateConfigValue (config-injection guard) and
         canary-weight is bounds-checked to 0-100.
 
-        Generated HAProxy Config (per matching host):
+        Header, cookie and weight become rows in the shared canary maps
+        (util-canary-publish); only a header pattern emits its own line:
           use_backend <canary-backend> if { req.hdr(<header>) -m reg <pattern> } <host-match>
-          use_backend <canary-backend> if { req.hdr(<header>) -m str <value> } <host-match>
-          use_backend <canary-backend> if { req.cook(<cookie>) -m str always } <host-match>
-          use_backend <canary-backend> if { rand(100) lt <weight> } <host-match>
       #}
       {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-canary-publish" for PublishCanary -%}
       {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/canary"] == "true" %}
-          {%- var ns = ingress.Metadata.Namespace %}
-          {%- var name = ingress.Metadata.Name %}
-          {%- var key = ns + "/" + name %}
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/canary"] == "true" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- var key = ns + "/" + name -%}
             {#- Extract hosts and the first backend name from this canary Ingress -#}
-            {%- var hosts = []string{} %}
-            {%- var canaryBackend = "" %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-              {%- if canaryBackend == "" %}
-                {%- for _, path := range rule.Http.Paths %}
-                  {%- if canaryBackend == "" %}{%- canaryBackend = BackendNameIngress(ingress, path) %}{%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 && canaryBackend != "" %}
+            {%- var hosts = []string{} -%}
+            {%- var canaryBackend = "" -%}
+            {%- for _, rule := range ingress.Spec.Rules -%}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end -%}
+              {%- if canaryBackend == "" -%}
+                {%- for _, path := range rule.Http.Paths -%}
+                  {%- if canaryBackend == "" %}{%- canaryBackend = BackendNameIngress(ingress, path) %}{%- end -%}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+            {%- if len(hosts) > 0 && canaryBackend != "" -%}
               {%%
-                var cond = HapticHostMatchCondition(key)
                 var canaryHeader = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header"]
                 var canaryHeaderValue = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header-value"]
                 var canaryHeaderPattern = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-header-pattern"]
                 var canaryCookie = ingress.Metadata.Annotations["haproxy-haptic.org/canary-by-cookie"]
                 var canaryWeight = ingress.Metadata.Annotations["haproxy-haptic.org/canary-weight"]
               %%}
-      # haptic/canary ({{ key }})
-              {%- if canaryHeader != "" %}
-                {%- var safeHeader = ValidateConfigValue(canaryHeader, "haproxy-haptic.org/canary-by-header", key, false) %}
-                {%- if canaryHeaderPattern != "" %}
-                  {%- var safePattern = ValidateConfigValue(canaryHeaderPattern, "haproxy-haptic.org/canary-by-header-pattern", key, false) %}
-      use_backend {{ canaryBackend }} if { req.hdr({{ safeHeader }}) -m reg {{ safePattern }} } {{ cond }}
-                {%- else if canaryHeaderValue != "" %}
-                  {%- var safeValue = ValidateConfigValue(canaryHeaderValue, "haproxy-haptic.org/canary-by-header-value", key, false) %}
-      use_backend {{ canaryBackend }} if { req.hdr({{ safeHeader }}) -m str {{ safeValue }} } {{ cond }}
-                {%- else %}
-      use_backend {{ canaryBackend }} if { req.hdr({{ safeHeader }}) -m str always } {{ cond }}
-                {%- end %}
-              {%- end %}
-              {%- if canaryCookie != "" %}
-                {%- var safeCookie = ValidateConfigValue(canaryCookie, "haproxy-haptic.org/canary-by-cookie", key, false) %}
-      use_backend {{ canaryBackend }} if { req.cook({{ safeCookie }}) -m str always } {{ cond }}
-              {%- end %}
-              {%- if canaryWeight != "" %}
-                {%- var weightNum = toint(canaryWeight) %}
-                {%- if weightNum < 0 || weightNum > 100 %}
+              {%- var safeHeader = "" -%}
+              {%- var headerValue = "" -%}
+              {%- if canaryHeader != "" -%}
+                {%- safeHeader = ValidateConfigValue(canaryHeader, "haproxy-haptic.org/canary-by-header", key, false) -%}
+                {%- if !regex_search(safeHeader, "^[A-Za-z0-9_.-]+$") -%}
+                  {{- fail("Invalid value '" + safeHeader + "' for annotation 'haproxy-haptic.org/canary-by-header' on Ingress '" + key + "': may contain only letters, digits, '_', '.' and '-'.") -}}
+                {%- end -%}
+                {%- if canaryHeaderPattern != "" -%}
+                  {%- var safePattern = ValidateConfigValue(canaryHeaderPattern, "haproxy-haptic.org/canary-by-header-pattern", key, false) -%}
+                  {{- shared.Publish("pattern", key, "\n# haptic/canary (" + key + ")\nuse_backend " + canaryBackend + " if { req.hdr(" + safeHeader + ") -m reg " + safePattern + " } " + HapticHostMatchCondition(key)) -}}
+                  {%- safeHeader = "" -%}
+                {%- else if canaryHeaderValue != "" -%}
+                  {%- headerValue = ValidateConfigValue(canaryHeaderValue, "haproxy-haptic.org/canary-by-header-value", key, false) -%}
+                {%- else -%}
+                  {%- headerValue = "always" -%}
+                {%- end -%}
+              {%- end -%}
+              {%- var safeCookie = "" -%}
+              {%- if canaryCookie != "" -%}
+                {%- safeCookie = ValidateConfigValue(canaryCookie, "haproxy-haptic.org/canary-by-cookie", key, false) -%}
+                {%- if !regex_search(safeCookie, "^[A-Za-z0-9_.-]+$") -%}
+                  {{- fail("Invalid value '" + safeCookie + "' for annotation 'haproxy-haptic.org/canary-by-cookie' on Ingress '" + key + "': may contain only letters, digits, '_', '.' and '-'.") -}}
+                {%- end -%}
+              {%- end -%}
+              {%- var weight = "" -%}
+              {%- if canaryWeight != "" -%}
+                {%- var weightNum = toint(canaryWeight) -%}
+                {%- if weightNum < 0 || weightNum > 100 -%}
                   {{- fail("Invalid value '" + canaryWeight + "' for annotation 'haproxy-haptic.org/canary-weight' on Ingress '" + key + "': must be an integer 0-100.") -}}
-                {%- end %}
-      use_backend {{ canaryBackend }} if { rand(100) lt {{ weightNum }} } {{ cond }}
-              {%- end %}
-            {%- end %}
-        {%- end %}
+                {%- end -%}
+                {%- weight = tostring(weightNum) -%}
+              {%- end -%}
+              {{- PublishCanary(key, hosts, canaryBackend, safeHeader, headerValue, safeCookie, weight) -}}
+            {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   # ============================================================================
@@ -200,12 +196,12 @@ templateSnippets:
         {%- if !props["mirrorEnabled"].(bool) -%}
           {{- fail("Ingress " + key + " sets 'haproxy-haptic.org/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
         {%- end -%}
-        {%- var block = "\n# haptic/mirror-buffer (" + key + "): buffer the request body so it reaches the mirror plugin\n" +
+        {%- var block = "\n# haptic/mirror-buffer: buffer the request body so it reaches the mirror plugin\n" +
           "http-request wait-for-body time " + tostring(props["mirrorWait"]) + " if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map(" + tostring(props["requestBufferingMap"]) + ",on) -m str off }" -%}
         {{- block -}}
       {%- end %}
 
-  features-900-haptic-fragment-820-mirror:
+  ingress-mirror-0820-haptic:
     requires: [ingresses]
     incremental:
       bindingsTemplate: |-
@@ -214,22 +210,10 @@ templateSnippets:
           "targetRetries": extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0),
         }}) -}}
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/mirror-target']"]
-      consumes: [haptic-ingress-match-publications]
+      group: ingress-mirror
       effects: [publishValue, recordEvent]
     template: |-
-      {%- var fragment = render "util-haptic-fragment-body-820-mirror" -%}
-      {%- if fragment != "" -%}
-        {{- shared.Publish("fragments", dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name"), fragment) -}}
-      {%- end -%}
-
-  frontend-filters-820-haptic-mirror:
-    requires: [ingresses]
-    template: |-
-      {%- for _, fragment := range incremental_values("features-900-haptic-fragment-820-mirror", "fragments") -%}{{- tostring(fragment) -}}{%- end -%}
-
-  util-haptic-fragment-body-820-mirror:
-    template: |
-      {%- import "util-haptic-ingress-match" for HapticHostMatchCondition -%}
+      {%- import "util-mirror-publish" for PublishMirror -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
@@ -250,71 +234,64 @@ templateSnippets:
         target — the plugin re-attaches the live request path/query. Default
         port 80 (http) / 443 (https).
 
-        Each mirror-target Ingress appends one `scheme|host:port|timeout_ms|retries`
-        entry to the per-request txn.gw_mirror_targets list, gated by its host.
-        A request that matches several mirror-target Ingresses (they share a host)
-        appends several entries and the single mirror NOTIFY fans out to all of
-        them — no per-Ingress SPOE slot, so adding a mirror-target changes only the
-        frontend, never spoe.conf or the hub TOML. The single mirror-group is fired
-        once by frontend-filters-950-spoa-hub-mirror-fire. Mirroring is host-scoped:
-        a host-less Ingress is rejected.
-
-        Generated HAProxy Config (per mirror-target Ingress):
-          http-request set-var(txn.gw_mirror_targets) str(<scheme>|<host:port>|<ms>|<n>;),concat(,txn.gw_mirror_targets,) if <host-match>
+        Each mirror-target Ingress adds one `scheme|host:port|timeout_ms|retries`
+        entry per host to the shared mirror map (util-mirror-publish). A request
+        whose host carries several entries fans out to all of them from the
+        single NOTIFY in frontend-filters-950-spoa-hub-mirror-fire, so adding a
+        mirror-target touches neither spoe.conf nor the hub TOML. Mirroring is
+        host-scoped: a host-less Ingress is rejected.
       -#}
       {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-        {%- var mt = ingress.Metadata.Annotations["haproxy-haptic.org/mirror-target"] %}
-        {%- if mt != "" %}
-          {%- var ns = ingress.Metadata.Namespace %}
-          {%- var name = ingress.Metadata.Name %}
-          {%- var key = ns + "/" + name %}
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
+        {%- var mt = ingress.Metadata.Annotations["haproxy-haptic.org/mirror-target"] -%}
+        {%- if mt != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- var key = ns + "/" + name -%}
           {#- Host gate (mirroring is host-scoped). A mirror-target Ingress with no
               host can't be gated, so reject it rather than buffer-without-mirror. -#}
-          {%- var hosts = []string{} %}
-          {%- for _, rule := range ingress.Spec.Rules %}
-            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-          {%- end %}
-          {%- if len(hosts) == 0 %}
+          {%- var hosts = []string{} -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end -%}
+          {%- end -%}
+          {%- if len(hosts) == 0 -%}
             {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' sets 'haproxy-haptic.org/mirror-target' but defines no host; host-less / default-backend mirroring is not supported. Add a host to the Ingress rule.") -}}
-            {%- continue %}
-          {%- end %}
+            {%- continue -%}
+          {%- end -%}
           {#- Parse scheme + authority. The value is scheme://host[:port] optionally
               followed by a path (or an nginx $variable) appended with no '/'
               separator, so the authority ends at the first '/' or '$'. -#}
-          {%- var scheme = "http" %}
-          {%- var rest = mt %}
-          {%- if hasPrefix(mt, "https://") %}
-            {%- scheme = "https" %}
-            {%- rest = mt[8:] %}
-          {%- else if hasPrefix(mt, "http://") %}
-            {%- rest = mt[7:] %}
-          {%- end %}
-          {%- var cut = len(rest) %}
-          {%- var sl = index(rest, "/") %}
-          {%- var dl = index(rest, "$") %}
-          {%- if sl >= 0 && sl < cut %}{%- cut = sl %}{%- end %}
-          {%- if dl >= 0 && dl < cut %}{%- cut = dl %}{%- end %}
-          {%- var authority = rest[:cut] %}
-          {%- if !strings_contains(authority, ":") %}
-            {%- if scheme == "https" %}{%- authority = authority + ":443" %}{%- else %}{%- authority = authority + ":80" %}{%- end %}
-          {%- end %}
-          {%- if !regex_search(authority, "^[A-Za-z0-9._-]+:[0-9]{1,5}$") %}
+          {%- var scheme = "http" -%}
+          {%- var rest = mt -%}
+          {%- if hasPrefix(mt, "https://") -%}
+            {%- scheme = "https" -%}
+            {%- rest = mt[8:] -%}
+          {%- else if hasPrefix(mt, "http://") -%}
+            {%- rest = mt[7:] -%}
+          {%- end -%}
+          {%- var cut = len(rest) -%}
+          {%- var sl = index(rest, "/") -%}
+          {%- var dl = index(rest, "$") -%}
+          {%- if sl >= 0 && sl < cut %}{%- cut = sl %}{%- end -%}
+          {%- if dl >= 0 && dl < cut %}{%- cut = dl %}{%- end -%}
+          {%- var authority = rest[:cut] -%}
+          {%- if !strings_contains(authority, ":") -%}
+            {%- if scheme == "https" %}{%- authority = authority + ":443" %}{%- else %}{%- authority = authority + ":80" %}{%- end -%}
+          {%- end -%}
+          {%- if !regex_search(authority, "^[A-Za-z0-9._-]+:[0-9]{1,5}$") -%}
             {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + mt + "' for annotation 'haproxy-haptic.org/mirror-target' on Ingress '" + key + "'. Expected scheme://host[:port][/path]; could not derive a host:port authority (got '" + authority + "').") -}}
-            {%- continue %}
-          {%- end %}
+            {%- continue -%}
+          {%- end -%}
           {#- Bound the port to 1-65535 (the charset regex alone accepts :0 and :99999). -#}
-          {%- var portNum = toint(authority[index(authority, ":")+1:]) %}
-          {%- if portNum < 1 || portNum > 65535 %}
+          {%- var portNum = toint(authority[index(authority, ":")+1:]) -%}
+          {%- if portNum < 1 || portNum > 65535 -%}
             {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid port '" + tostring(portNum) + "' in 'haproxy-haptic.org/mirror-target' on Ingress '" + key + "'. Port must be 1-65535.") -}}
-            {%- continue %}
-          {%- end %}
-          {%- var safeAuthority = ValidateConfigValue(authority, "haproxy-haptic.org/mirror-target", key, false) %}
-          {%- var cond = HapticHostMatchCondition(key) %}
-          {%- var timeoutMs = toint(props["targetTimeoutMs"]) %}
-          {%- var retriesCount = toint(props["targetRetries"]) %}
-          {%- var entry = scheme + "|" + safeAuthority + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
-      # haptic/mirror-target ({{ key }})
-      http-request set-var(txn.gw_mirror_targets) str({{ entry }};),concat(,txn.gw_mirror_targets,) if {{ cond }}
-        {%- end %}
-      {%- end %}
+            {%- continue -%}
+          {%- end -%}
+          {%- var safeAuthority = ValidateConfigValue(authority, "haproxy-haptic.org/mirror-target", key, false) -%}
+          {%- var timeoutMs = toint(props["targetTimeoutMs"]) -%}
+          {%- var retriesCount = toint(props["targetRetries"]) -%}
+          {%- var entry = scheme + "|" + safeAuthority + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) -%}
+          {{- PublishMirror(key, hosts, entry) -}}
+        {%- end -%}
+      {%- end -%}

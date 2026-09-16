@@ -32,10 +32,9 @@ import (
 // canary Ingress (canary: "true") overlays a header-based use_backend split
 // onto a distinct canary backend (ENVIRONMENT="v2"). The
 // features-800-haptic-canary-colocation snippet keeps the canary out of
-// base-route ownership so normal traffic lands on the main; the
-// frontend-switching-810-haptic-canary snippet emits
-// `use_backend <canary> if { req.hdr(X-Canary) -m str true }` so a request
-// carrying the canary header is split off to the canary backend.
+// base-route ownership so normal traffic lands on the main; the shared canary
+// lane routes a request whose X-Canary header matches the value in its
+// host-keyed map to the canary backend.
 //
 // The assertions poll on the echoed ENVIRONMENT (via ExpectEchoEnvironment)
 // so they close the route-readiness race deterministically without sleeps:

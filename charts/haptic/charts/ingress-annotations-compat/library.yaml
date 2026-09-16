@@ -1119,6 +1119,192 @@ templateSnippets:
       {%- end %}
       {%- end %}
 
+  # Request mirroring from one host-keyed map. Every mirror-target Ingress used
+  # to append its own frontend line, so adding or retargeting one reloaded.
+  # ing-mirror-hosts.map holds "<host>" -> the concatenated txn.gw_mirror_targets
+  # entries of every mirror-target Ingress on that host.
+  util-mirror-publish:
+    template: |-
+      {%- macro PublishMirror(key string, hosts []string, entry string) -%}
+        {{- shared.Publish("any", "any", "any") -}}
+        {%- for _, host := range hosts -%}
+          {{- shared.Publish("target", host + "\t" + key, host + "\t" + key + "\t" + entry + ";") -}}
+        {%- end -%}
+      {%- end macro -%}
+
+  features-200-ingress-mirror:
+    template: '{{- render_glob "ingress-mirror-*" -}}'
+
+  ingress-mirror-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-mirror
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  frontend-filters-820-ingress-mirror:
+    requires: [ingresses]
+    template: |
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- if incremental_value_count("ingress-mirror", "any") > 0 -%}
+      {%%
+        var hostsVal, _ = shared.ComputeIfAbsent("ingressMirrorMap", func() any {
+          var rows = []any{}
+          for _, v := range incremental_values("ingress-mirror", "target") {
+            rows = append(rows, tostring(v))
+          }
+          var lines = []string{}
+          for _, r := range sort_strings(rows) {
+            var fields = split(tostring(r), "\t")
+            var n = len(lines)
+            if n > 0 && hasPrefix(lines[n-1], fields[0] + " ") {
+              lines[n-1] = lines[n-1] + fields[2]
+            } else {
+              lines = append(lines, fields[0] + " " + fields[2])
+            }
+          }
+          return RegisterMap("ing-mirror-hosts.map", lines, map[string]any{"ordered": false})
+        })
+        var hosts = tostring(hostsVal)
+      %%}
+      {{ "\n" }}# ingress/mirror-target
+      http-request set-var(txn.gw_mirror_targets) var(txn.host),map({{ hosts }}),concat(,txn.gw_mirror_targets,) if { var(txn.host),map({{ hosts }}) -m found }
+      {%- end %}
+
+  # Canary routing from host-keyed maps. Every canary Ingress used to emit its
+  # own use_backend lines, so adding one or stepping its weight reloaded. The
+  # filter picks txn.canary_backend in the documented precedence (header >
+  # cookie > weight, first match wins) and the switching rule routes to it. A
+  # header or cookie NAME is part of a fetch, so each distinct name keeps one
+  # rule; a regex header pattern can't come from a map, so a pattern canary
+  # still emits its own line. When canaries on one host collide, the first
+  # Ingress by namespace/name wins.
+  util-canary-publish:
+    template: |-
+      {%- macro PublishCanary(key string, hosts []string, backend string, header string, headerValue string, cookie string, weight string) -%}
+        {{- shared.Publish("any", "any", "any") -}}
+        {%- for _, host := range hosts -%}
+          {%- if header != "" -%}
+            {{- shared.Publish("header", host + "|" + header + "\t" + key, host + "|" + header + "\t" + key + "\t" + backend + "\t" + queryEscape(headerValue)) -}}
+          {%- end -%}
+          {%- if cookie != "" -%}
+            {{- shared.Publish("cookie", host + "|" + cookie + "\t" + key, host + "|" + cookie + "\t" + key + "\t" + backend) -}}
+          {%- end -%}
+          {%- if weight != "" -%}
+            {{- shared.Publish("weight", host + "\t" + key, host + "\t" + key + "\t" + backend + "\t" + weight) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  features-200-ingress-canary:
+    template: '{{- render_glob "ingress-canary-*" -}}'
+
+  ingress-canary-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-canary
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  util-canary-lane:
+    template: |-
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- var CanaryLane = func() map[string]any {
+          var laneVal, _ = shared.ComputeIfAbsent("ingressCanaryLane", func() any {
+            var first = func(kind string) [][]string {
+              var rows = []any{}
+              for _, v := range incremental_values("ingress-canary", kind) {
+                rows = append(rows, tostring(v))
+              }
+              var out = [][]string{}
+              var prev = ""
+              for _, r := range sort_strings(rows) {
+                var fields = split(tostring(r), "\t")
+                if len(out) == 0 || fields[0] != prev {
+                  out = append(out, fields)
+                }
+                prev = fields[0]
+              }
+              return out
+            }
+            var nameOf = func(k string) string { return k[index(k, "|")+1:] }
+            var headerBackend = []string{}
+            var headerValue = []string{}
+            var headerNames = []any{}
+            var seenHeader = map[string]bool{}
+            for _, fields := range first("header") {
+              headerBackend = append(headerBackend, fields[0] + " " + fields[2])
+              headerValue = append(headerValue, fields[0] + " " + fields[3])
+              if !seenHeader[nameOf(fields[0])] {
+                seenHeader[nameOf(fields[0])] = true
+                headerNames = append(headerNames, nameOf(fields[0]))
+              }
+            }
+            var cookieBackend = []string{}
+            var cookieNames = []any{}
+            var seenCookie = map[string]bool{}
+            for _, fields := range first("cookie") {
+              cookieBackend = append(cookieBackend, fields[0] + " " + fields[2])
+              if !seenCookie[nameOf(fields[0])] {
+                seenCookie[nameOf(fields[0])] = true
+                cookieNames = append(cookieNames, nameOf(fields[0]))
+              }
+            }
+            var weightBackend = []string{}
+            var weights = []string{}
+            for _, fields := range first("weight") {
+              weightBackend = append(weightBackend, fields[0] + " " + fields[2])
+              weights = append(weights, fields[0] + " " + fields[3])
+            }
+            return map[string]any{
+              "headerBackend": RegisterMap("ing-canary-header-backend.map", headerBackend, map[string]any{"ordered": false}),
+              "headerValue": RegisterMap("ing-canary-header-value.map", headerValue, map[string]any{"ordered": false}),
+              "headerNames": sort_strings(headerNames),
+              "cookieBackend": RegisterMap("ing-canary-cookie-backend.map", cookieBackend, map[string]any{"ordered": false}),
+              "cookieNames": sort_strings(cookieNames),
+              "weightBackend": RegisterMap("ing-canary-weight-backend.map", weightBackend, map[string]any{"ordered": false}),
+              "weight": RegisterMap("ing-canary-weight.map", weights, map[string]any{"ordered": false}),
+            }
+          })
+          return laneVal.(map[string]any)
+      } -%}
+
+  # The last filter band: the canary rules used to run at use_backend time,
+  # after every http-request rule, so they read headers after every rewrite.
+  frontend-filters-996-ingress-canary:
+    requires: [ingresses]
+    template: |
+      {%- import "util-canary-lane" for CanaryLane -%}
+      {%- if incremental_value_count("ingress-canary", "any") > 0 -%}
+      {%- var lane = CanaryLane() -%}
+      {{ "\n" }}# ingress/canary: header > cookie > weight, first match wins
+      {%- for _, name := range lane["headerNames"].([]string) %}
+      http-request set-var(txn.canary_hval) var(txn.host),concat(|{{ name }}),map({{ lane["headerValue"] }}),url_dec(1) if !{ var(txn.canary_backend) -m found }
+      http-request set-var(txn.canary_backend) var(txn.host),concat(|{{ name }}),map({{ lane["headerBackend"] }}) if { var(txn.canary_hval) -m found } { req.hdr({{ name }}),strcmp(txn.canary_hval) -m int eq 0 }
+      http-request unset-var(txn.canary_hval)
+      {%- end %}
+      {%- for _, name := range lane["cookieNames"].([]string) %}
+      http-request set-var(txn.canary_backend) var(txn.host),concat(|{{ name }}),map({{ lane["cookieBackend"] }}) if !{ var(txn.canary_backend) -m found } { req.cook({{ name }}) -m str always }
+      {%- end %}
+      http-request set-var(txn.canary_weight) var(txn.host),map_str_int({{ lane["weight"] }}) if !{ var(txn.canary_backend) -m found }
+      http-request set-var(txn.canary_backend) var(txn.host),map({{ lane["weightBackend"] }}) if { var(txn.canary_weight) -m found } { rand(100),sub(txn.canary_weight) -m int lt 0 }
+      {%- end %}
+
+  # Pattern canaries route first: each used to precede its Ingress's other
+  # canary rules.
+  frontend-switching-815-ingress-canary:
+    requires: [ingresses]
+    template: |-
+      {%- if incremental_value_count("ingress-canary", "any") > 0 -%}
+        {%- for _, fileAny := range incremental_values("ingress-canary", "files") -%}
+          {%- var file = fileAny.(map[string]any) -%}
+          {%- var _, err = fileRegistry.Register("file", tostring(file["filename"]), tostring(file["content"])) -%}
+          {%- if err != nil -%}{{ fail("Failed to register host match file '" + tostring(file["filename"]) + "': " + err.Error()) }}{%- end -%}
+        {%- end -%}
+        {%- for _, fragment := range incremental_values("ingress-canary", "pattern") -%}{{- tostring(fragment) -}}{%- end -%}
+        {{- "\n# ingress/canary\nuse_backend %[var(txn.canary_backend)] if { var(txn.canary_backend) -m found }\n" -}}
+      {%- end -%}
+
   # aclPrefix must stay distinct per library — validation tests assert on the
   # resulting ACL names.
   # Renders every family's publisher (ingress-access-control-<band>-<library>,

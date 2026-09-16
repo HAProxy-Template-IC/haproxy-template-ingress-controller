@@ -1,8 +1,8 @@
 # HAPTIC-native annotation library — canary + mirror validation tests.
 # Canary by header, header-pattern, cookie, and weight. Each canary Ingress
 # shares its host+path with a non-canary main Ingress; the main owns the base
-# route (features-800-haptic-canary-colocation) while the canary overlays a
-# use_backend split (frontend-switching-810-haptic-canary).
+# route (features-800-haptic-canary-colocation) while the canary adds rows to the
+# shared canary lane (ingress-annotations-compat util-canary-publish).
 #
 # The mirror test relies on the spoa-hub mirror plugin being enabled (mirror-target
 # fails loud otherwise). The plugin auto-enables with the gateway library, which
@@ -90,7 +90,12 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "use_backend default_canary-ingress_svc_canary-service_80 if \\{ req\\.hdr\\(X-Canary\\) -m str always \\}"
+        pattern: 'req\.hdr\(X-Canary\),strcmp\(txn\.canary_hval\) -m int eq 0'
+      - {type: contains, target: "map:ing-canary-header-backend.map", pattern: '(?m)^canary\.example\.com\|X-Canary default_canary-ingress_svc_canary-service_80$'}
+      - {type: contains, target: "map:ing-canary-header-value.map", pattern: '(?m)^canary\.example\.com\|X-Canary always$'}
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'use_backend %\[var\(txn\.canary_backend\)\] if \{ var\(txn\.canary_backend\) -m found \}'
       - type: not_contains
         target: haproxy.cfg
         pattern: '(?m)^[ \t]+use_backend[^\n]*\n(?:[ \t]+[^\n]*\n|\n)*[ \t]+http-request '
@@ -159,6 +164,7 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "req\\.cook\\(canary_stage\\) -m str always"}
+      - {type: contains, target: "map:ing-canary-cookie-backend.map", pattern: '(?m)^canary-cookie\.example\.com\|canary_stage default_canary-cookie-ingress_svc_canary-service_80$'}
 
   test-haptic-canary-by-weight:
     description: haproxy-haptic.org canary-weight overlays a randomized use_backend
@@ -191,7 +197,9 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "use_backend default_canary-weight-ingress_svc_canary-service_80 if \\{ rand\\(100\\) lt 20 \\}"
+        pattern: 'rand\(100\),sub\(txn\.canary_weight\) -m int lt 0'
+      - {type: contains, target: "map:ing-canary-weight.map", pattern: '(?m)^canary-weight\.example\.com 20$'}
+      - {type: contains, target: "map:ing-canary-weight-backend.map", pattern: '(?m)^canary-weight\.example\.com default_canary-weight-ingress_svc_canary-service_80$'}
 
   test-haptic-mirror-buffer-honours-per-route-optout:
     _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" . "name" "mirror")) }}true{{ end }}'
@@ -312,7 +320,8 @@ validationTests:
         pattern: "http-request wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\} !\\{ var\\(txn\\.backend_name\\),map\\(.*request-buffering\\.map,on\\) -m str off \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(https\\|mirror.internal:8443\\|2000\\|0;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str mirror.example.com \\}"
+        pattern: 'set-var\(txn\.gw_mirror_targets\) var\(txn\.host\),map\([^)]*ing-mirror-hosts\.map\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.host\),map\([^)]*ing-mirror-hosts\.map\) -m found \}'
+      - {type: contains, target: "map:ing-mirror-hosts.map", pattern: '(?m)^mirror\.example\.com https\|mirror\.internal:8443\|2000\|0;$'}
       - type: contains
         target: haproxy.cfg
         pattern: "send-spoe-group spoa-hub-mirror mirror-group if \\{ var\\(txn.gw_mirror_targets\\) -m found \\}"
@@ -409,10 +418,70 @@ validationTests:
         pattern: 'spoe-message mirror\n    args arg_targets=var\(txn\.gw_mirror_targets\)'
       - {type: not_contains, target: file:spoe.conf, pattern: 'spoe-message mirror-1'}
       - {type: not_contains, target: file:spoe.conf, pattern: 'spoe-message mirror-5'}
-      # Each of the five Ingresses appended its own entry, host-gated.
+      # Each of the five Ingresses is one map row under its own host.
+      - {type: contains, target: "map:ing-mirror-hosts.map", pattern: '(?m)^a\.example\.com http\|sink-a:9000\|2000\|0;$'}
+      - {type: contains, target: "map:ing-mirror-hosts.map", pattern: '(?m)^e\.example\.com http\|sink-e:9000\|2000\|0;$'}
+
+  test-haptic-canary-precedence-header-cookie-weight:
+    description: >-
+      One canary with a header, a cookie and a weight: the filter tries the header,
+      then the cookie, then the weight, each only while no canary backend is chosen.
+    fixtures:
+      services: *servicesServiceMainService
+      endpoints: *endpointsEndpointsliceMain
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: main-ingress}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary-all.example.com
+                http: *httpRootMainService
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: canary-all-ingress
+            annotations:
+              haproxy-haptic.org/canary: "true"
+              haproxy-haptic.org/canary-by-header: "X-Canary"
+              haproxy-haptic.org/canary-by-header-value: "blue"
+              haproxy-haptic.org/canary-by-cookie: "canary_stage"
+              haproxy-haptic.org/canary-weight: "5"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary-all.example.com
+                http: *httpRootCanaryService
+    assertions:
+      - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: 'str\(http\|sink-a:9000\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.host\) -m str a\.example\.com \}'
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'str\(http\|sink-e:9000\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.host\) -m str e\.example\.com \}'
+        pattern: '(?s)req\.hdr\(X-Canary\),strcmp\(txn\.canary_hval\) -m int eq 0 \}\n[^\n]*unset-var\(txn\.canary_hval\)\n[^\n]*if !\{ var\(txn\.canary_backend\) -m found \} \{ req\.cook\(canary_stage\) -m str always \}\n[^\n]*set-var\(txn\.canary_weight\)[^\n]*if !\{ var\(txn\.canary_backend\) -m found \}'
+      - {type: contains, target: "map:ing-canary-header-value.map", pattern: '(?m)^canary-all\.example\.com\|X-Canary blue$'}
+      - {type: contains, target: "map:ing-canary-weight.map", pattern: '(?m)^canary-all\.example\.com 5$'}
+
+  test-haptic-canary-cookie-name-comma-rejected:
+    description: >-
+      A comma in canary-by-cookie fails the render: the name is a converter argument
+      in the shared canary lane, where it would break every frontend.
+    fixtures:
+      services: *servicesServiceMainService
+      endpoints: *endpointsEndpointsliceMain
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: canary-comma-ingress
+            annotations:
+              haproxy-haptic.org/canary: "true"
+              haproxy-haptic.org/canary-by-cookie: "stage,x"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary-comma.example.com
+                http: *httpRootCanaryService
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "canary-by-cookie' on Ingress 'default/canary-comma-ingress': may contain only letters, digits"}

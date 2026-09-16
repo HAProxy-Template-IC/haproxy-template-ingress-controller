@@ -136,22 +136,7 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  frontend-switching-780-nginx-ingress-canary:
-    template: |-
-      {{- render "nginx-ingress-canary-publications" -}}
-      {%- for _, fileAny := range incremental_values("nginx-ingress-canary", "files") -%}
-        {%- var file = fileAny.(map[string]any) -%}
-        {%- var _, err = fileRegistry.Register("file", tostring(file["filename"]), tostring(file["content"])) -%}
-        {%- if err != nil -%}{{ fail("Failed to register host match file '" + tostring(file["filename"]) + "': " + err.Error()) }}{%- end -%}
-      {%- end -%}
-      {%- var fragments = incremental_values("nginx-ingress-canary", "fragments") -%}
-      {%- for index, fragment := range fragments -%}
-        {%- if index > 0 -%}{{ "\n        " }}{%- end -%}
-        {{- tostring(fragment) -}}
-      {%- end -%}
-      {{- "\n" -}}
-
-  nginx-ingress-canary-publications:
+  ingress-canary-0780-nginx-ingress:
     requires: [ingresses]
     incremental:
       bindingsTemplate: |-
@@ -159,12 +144,14 @@ templateSnippets:
         {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
         {{- toJSON(map[string]any{"ingresses": map[string]any{"fileDir": fileDir}}) -}}
       whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/canary']"]
-      group: nginx-ingress-canary
+      group: ingress-canary
       effects: [publishValue, recordEvent]
     template: |-
       {%- import "util-ingress-host-match-publication" for IngressHostMatchPublication -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-canary-publish" for PublishCanary -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil %}
@@ -189,8 +176,6 @@ templateSnippets:
             {%- end %}
             {%- if len(hosts) > 0 && canaryBackend != "" -%}
               {%%
-                var match = IngressHostMatchPublication(hosts, tostring(props["fileDir"]))
-                var cond = tostring(match["condition"])
                 var canaryHeader = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header"]
                 var canaryHeaderValue = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-value"]
                 var canaryHeaderPattern = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-pattern"]
@@ -225,36 +210,33 @@ templateSnippets:
                 {%- canaryInj = ConfigInjectionKind(canaryWeight, "token") %}
                 {%- if canaryInj != "" %}{%- canaryField = "canary-weight" %}{%- end %}
               {%- end %}
-              {%- if canaryInj != "" %}
+              {#- A header or cookie name is also a converter argument in the shared canary
+                  lane (concat(|<name>)), where a , ) or | would break every frontend. -#}
+              {%- var badName = "" %}
+              {%- if canaryHeader != "" && !regex_search(canaryHeader, "^[A-Za-z0-9_.-]+$") %}{%- badName = "canary-by-header" %}
+              {%- else if canaryCookie != "" && !regex_search(canaryCookie, "^[A-Za-z0-9_.-]+$") %}{%- badName = "canary-by-cookie" %}{%- end %}
+              {%- if canaryInj == "" && badName != "" %}
+                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/" + badName + "' may contain only letters, digits, '_', '.' and '-', so the canary route is not applied. Rename the header or cookie.") -}}
+              {%- else if canaryInj == "" && canaryWeight != "" && !regex_search(canaryWeight, "^[0-9]+$") %}
+                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/canary-weight' is '" + canaryWeight + "', not an integer, so the canary route is not applied. Set a weight from 0 to 100.") -}}
+              {%- else if canaryInj != "" %}
                 {%- var message = "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/" + canaryField + "' value contains " + canaryInj + ", which would break out of the canary routing condition; the canary route is not applied. Remove it from the value." -%}
                 {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
                   {{- fail(message) -}}
                 {%- else -%}
                   {{- recordEvent(ingress, "InvalidAnnotationValue", message) -}}
                 {%- end -%}
-              {%- else %}
-              {%- var fragment = "\n# nginx-ingress/canary (" + key + ")" -%}
-              {%- if canaryHeader != "" %}
-                {%- if canaryHeaderPattern != "" %}
-                  {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { req.hdr(" + canaryHeader + ") -m reg '" + canaryHeaderPattern + "' } " + cond -%}
-                {%- else if canaryHeaderValue != "" %}
-                  {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { req.hdr(" + canaryHeader + ") -m str '" + canaryHeaderValue + "' } " + cond -%}
-                {%- else %}
-                  {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { req.hdr(" + canaryHeader + ") -m str always } " + cond -%}
-                {%- end %}
-              {%- end %}
-              {%- if canaryCookie != "" %}
-                {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { req.cook(" + canaryCookie + ") -m str always } " + cond -%}
-              {%- end %}
-              {%- if canaryWeight != "" %}
-                {%- fragment = fragment + "\nuse_backend " + canaryBackend + " if { rand(100) lt " + canaryWeight + " } " + cond -%}
-              {%- end %}
-              {%- if canaryHeader != "" || canaryCookie != "" || canaryWeight != "" -%}
-                {{- shared.Publish("fragments", key, fragment) -}}
+              {%- else if canaryHeader != "" && canaryHeaderPattern != "" %}
+                {%- var match = IngressHostMatchPublication(hosts, tostring(props["fileDir"])) %}
+                {{- shared.Publish("pattern", key, "\n# nginx-ingress/canary (" + key + ")\nuse_backend " + canaryBackend + " if { req.hdr(" + canaryHeader + ") -m reg '" + canaryHeaderPattern + "' } " + tostring(match["condition"])) -}}
                 {%- if match["file"] != nil -%}
                   {{- shared.Publish("files", key, match["file"]) -}}
                 {%- end -%}
-              {%- end %}
+                {{- PublishCanary(key, hosts, canaryBackend, "", "", canaryCookie, canaryWeight) -}}
+              {%- else %}
+                {%- var headerValue = canaryHeaderValue %}
+                {%- if headerValue == "" %}{%- headerValue = "always" %}{%- end %}
+                {{- PublishCanary(key, hosts, canaryBackend, canaryHeader, headerValue, canaryCookie, canaryWeight) -}}
               {%- end %}
             {%- end %}
         {%- end %}
@@ -366,44 +348,26 @@ templateSnippets:
         {{- shared.Publish("fragments", "global", fragment) -}}
       {%- end -%}
 
-  frontend-filters-555-nginx-ingress-mirror:
-    template: |-
-      {{- render "nginx-ingress-mirror-publications" -}}
-      {%- for _, fileAny := range incremental_values("nginx-ingress-mirror", "files") -%}
-        {%- var file = fileAny.(map[string]any) -%}
-        {%- var _, err = fileRegistry.Register("file", tostring(file["filename"]), tostring(file["content"])) -%}
-        {%- if err != nil -%}{{ fail("Failed to register host match file '" + tostring(file["filename"]) + "': " + err.Error()) }}{%- end -%}
-      {%- end -%}
-      {%- var fragments = incremental_values("nginx-ingress-mirror", "fragments") -%}
-      {%- for _, fragment := range fragments -%}
-        {{- tostring(fragment) -}}
-      {%- end -%}
-      {{- "\n" -}}
-
-  nginx-ingress-mirror-publications:
+  ingress-mirror-0555-nginx-ingress:
     requires: [ingresses]
     incremental:
       bindingsTemplate: |-
-        {%- var fileDir, err = pathResolver.GetPath("", "file") -%}
-        {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
         {{- toJSON(map[string]any{"ingresses": map[string]any{
-          "fileDir": fileDir,
           "targetTimeoutMs": extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000),
           "targetRetries": extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0),
         }}) -}}
       whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/mirror-target']"]
-      group: nginx-ingress-mirror
+      group: ingress-mirror
       effects: [publishValue, recordEvent]
     template: |-
-      {%- import "util-ingress-host-match-publication" for IngressHostMatchPublication -%}
+      {%- import "util-mirror-publish" for PublishMirror -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {#- Only `mirror-target` is honoured: the plugin forces the mirrored Host to the
           target authority and always forwards the buffered body, so `mirror-host` and
           `mirror-request-body: off` cannot be supported without a plugin change. Only
           the authority is used — the plugin re-attaches the live path/query.
-          Entries accumulate in the per-request txn.gw_mirror_targets list that the
-          single NOTIFY in frontend-filters-950-spoa-hub-mirror-fire fans out, so a new
-          target touches neither spoe.conf nor the hub TOML. -#}
+          A new target touches neither spoe.conf nor the hub TOML: the lane's
+          entries share the single NOTIFY in frontend-filters-950-spoa-hub-mirror-fire. -#}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil %}
@@ -455,17 +419,10 @@ templateSnippets:
             {{- fail("Invalid port '" + tostring(portNum) + "' in 'nginx.ingress.kubernetes.io/mirror-target' on Ingress '" + key + "'. Port must be 1-65535.") -}}
           {%- end %}
           {%- var safeAuthority = ValidateConfigValue(authority, "nginx.ingress.kubernetes.io/mirror-target", key, false) %}
-          {%- var match = IngressHostMatchPublication(hosts, tostring(props["fileDir"])) %}
-          {%- var cond = tostring(match["condition"]) %}
           {%- var timeoutMs = toint(props["targetTimeoutMs"]) %}
           {%- var retriesCount = toint(props["targetRetries"]) %}
           {%- var entry = scheme + "|" + safeAuthority + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
-          {%- var fragment = "\n# nginx-ingress/mirror-target (" + key + ")\n" +
-            "http-request set-var(txn.gw_mirror_targets) str(" + entry + ";),concat(,txn.gw_mirror_targets,) if " + cond -%}
-          {{- shared.Publish("fragments", key, fragment) -}}
-          {%- if match["file"] != nil -%}
-            {{- shared.Publish("files", key, match["file"]) -}}
-          {%- end -%}
+          {{- PublishMirror(key, hosts, entry) -}}
           {%- end -%}
         {%- end %}
       {%- end %}

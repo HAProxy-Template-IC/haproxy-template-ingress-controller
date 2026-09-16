@@ -524,8 +524,12 @@ validationTests:
                       backend: {service: {name: canary-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "use_backend"}
       - {type: contains, target: haproxy.cfg, pattern: "req\\.hdr\\(X-Canary\\)"}
+      - {type: contains, target: "map:ing-canary-header-backend.map", pattern: '(?m)^canary\.example\.com\|X-Canary default_canary-ingress_svc_canary-service_80$'}
+      - {type: contains, target: "map:ing-canary-header-value.map", pattern: '(?m)^canary\.example\.com\|X-Canary always$'}
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'use_backend %\[var\(txn\.canary_backend\)\] if \{ var\(txn\.canary_backend\) -m found \}'
       - type: not_contains
         target: haproxy.cfg
         pattern: '(?m)^[ \t]+use_backend[^\n]*\n(?:[ \t]+[^\n]*\n|\n)*[ \t]+http-request '
@@ -603,7 +607,8 @@ validationTests:
                       backend: {service: {name: canary-weight-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "rand\\(100\\) lt 20"}
+      - {type: contains, target: "map:ing-canary-weight.map", pattern: '(?m)^canary-weight\.example\.com 20$'}
+      - {type: contains, target: "map:ing-canary-weight-backend.map", pattern: '(?m)^canary-weight\.example\.com default_canary-weight-ingress_svc_canary-weight-service_80$'}
 
   test-nginx-ingress-canary-main-owns-base-route:
     description: "A canary Ingress does not own its base route — it only overlays a use_backend split; the main Ingress owns the base map entry. Here two non-canary mains (main-old, main-new) and one canary all claim clash.example.com/. The canary is excluded from base-route ownership entirely, while the two real mains COMPETE under oldest-wins, so the OLDER main (main-old) owns the route. This pins both the canary exclusion and that a genuine second main still competes (unlike the canary)."
@@ -721,8 +726,8 @@ validationTests:
         pattern: "main-new-service"
         description: "the newer main competed for the route but lost to the older main (oldest-wins), unlike the canary which is excluded outright"
       - type: contains
-        target: haproxy.cfg
-        pattern: "rand\\(100\\) lt 20"
+        target: map:ing-canary-weight.map
+        pattern: '(?m)^clash\.example\.com 20$'
         description: "the canary weight split is still overlaid on the main's route"
       - type: contains
         target: events
@@ -820,7 +825,7 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: '-m reg ''release\\d'''}
 
   test-nginx-ingress-canary-by-header-value-backslash-renders:
-    description: A canary-by-header-value containing a backslash renders single-quoted, so the exact match value reaches HAProxy intact.
+    description: A canary-by-header-value containing a backslash reaches the header value map percent-encoded, so it survives intact.
     fixtures:
       services:
         - {apiVersion: v1, kind: Service, metadata: {namespace: default, name: bsv-service}, spec: {ports: [{port: 80}]}}
@@ -850,4 +855,137 @@ validationTests:
                     - {path: /, pathType: Prefix, backend: {service: {name: bsv-service, port: {number: 80}}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: '-m str ''blue\\green'''}
+      - {type: contains, target: "map:ing-canary-header-value.map", pattern: '(?m)^bsv-canary\.example\.com\|X-Canary blue%5cgreen$'}
+
+  test-nginx-ingress-canary-weight-non-integer-rejected-at-admission:
+    description: A canary-weight that isn't an integer is refused at admission.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: weightx-canary
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-weight: "twenty"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: weightx-canary.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "canary-weight' is 'twenty', not an integer"}
+
+  test-nginx-ingress-canary-weight-non-integer-warns-on-reconcile:
+    description: >-
+      A canary-weight that isn't an integer records a Warning Event and publishes no
+      canary row, so the rest of the fleet's config still renders.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: weightx-canary
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-weight: "twenty"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: weightx-canary.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: events, pattern: "InvalidAnnotationValue"}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'txn\.canary_backend'}
+
+  test-nginx-ingress-canary-shared-host-first-ingress-wins:
+    description: >-
+      Two canaries on one host: per kind, the first Ingress by namespace/name owns
+      the row, so a weight on both yields the first's weight while a header only the
+      second sets still routes to the second.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shared-a
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-weight: "10"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shared-canary.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shared-b
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-weight: "90"
+              nginx.ingress.kubernetes.io/canary-by-header: "X-Shared"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shared-canary.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "map:ing-canary-weight.map", pattern: '(?m)^shared-canary\.example\.com 10$'}
+      - {type: not_contains, target: "map:ing-canary-weight.map", pattern: ' 90$'}
+      - {type: contains, target: "map:ing-canary-weight-backend.map", pattern: '(?m)^shared-canary\.example\.com default_shared-a_'}
+      - {type: contains, target: "map:ing-canary-header-backend.map", pattern: '(?m)^shared-canary\.example\.com\|X-Shared default_shared-b_'}
+
+  test-nginx-ingress-canary-header-name-comma-rejected-at-admission:
+    description: >-
+      A comma in canary-by-header is refused at admission: the name is a converter
+      argument in the shared canary lane, where it would break every frontend.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: commahdr-canary
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-by-header: "X-A,X-B"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: commahdr-canary.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "canary-by-header' may contain only letters, digits"}
+
+  test-nginx-ingress-canary-cookie-name-pipe-warns-on-reconcile:
+    description: >-
+      A '|' in canary-by-cookie records a Warning Event on reconcile and publishes no
+      canary row, so the rest of the config still renders.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: pipecookie-canary
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-by-cookie: "stage|x"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pipecookie-canary.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: events, pattern: "canary-by-cookie' may contain only letters, digits"}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'txn\.canary_backend'}
