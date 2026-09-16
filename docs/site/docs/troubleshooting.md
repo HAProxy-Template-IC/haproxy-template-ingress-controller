@@ -340,7 +340,7 @@ kubectl get endpointslices -l kubernetes.io/service-name=<service>
 
 **Symptoms**: HAProxy answers `404 Not Found` (not `503`) for a host or path you expect to route.
 
-A `404` is distinct from a `503`: a `503` means a route matched but its backend has no ready servers ([Requests not reaching backend](#requests-not-reaching-backend)), whereas a `404` means *no route matched at all*. The request falls through to HAProxy's `default_backend`, which returns `404` (a gRPC request gets `grpc-status 12 Unimplemented` instead). Unless you configured a catch-all default backend, every unmatched request lands here.
+HAPTIC's default backend returns `404` for unmatched HTTP requests and `grpc-status: 12` (Unimplemented) for unmatched gRPC requests. A matched route with no ready servers commonly returns `503`; see [Requests not reaching backend](#requests-not-reaching-backend). Status alone doesn't identify the cause: applications and custom rules can return the same codes. Check the access log's backend and termination state.
 
 Check the three things that stop a route from matching:
 

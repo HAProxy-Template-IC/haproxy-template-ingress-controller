@@ -1,10 +1,10 @@
 # Base library
 
-The base library renders the entire `haproxyConfig` and defines the extension points every other library — and your own snippets — plug into.
+The base library supplies `haproxyConfig` and shared extension points for routing libraries and custom snippets.
 
 ## Overview
 
-The base library is **enabled by default** and provides the entire `haproxyConfig` template that the rest of the libraries plug into. It provides:
+Enabled by default, it provides:
 
 - Core HAProxy configuration structure (global, defaults, frontends, backends)
 - The plugin pattern via extension points for other libraries to inject content
@@ -13,7 +13,7 @@ The base library is **enabled by default** and provides the entire `haproxyConfi
 - Error page templates
 - Map file infrastructure for routing decisions
 
-Every render flows through base — here it's underpinning the Ingress preset live:
+The Ingress preset uses base to assemble its configuration:
 
 <div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Base library underpinning a render" data-height="440">
 
@@ -44,74 +44,42 @@ own `global-settings-*` snippet or, preferably, an explicit
 
 ## Try it: emit a header per map entry
 
-Every base extension point is just a Scriggo snippet that emits HAProxy directives from data. Here is that idea in miniature: iterate an inline map and emit one directive per entry.
+A snippet can use a loop to emit one directive per map entry:
 
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="11-12" data-title="Challenge: turn a map into response headers" data-difficulty="2">
+```go
+{%- for name, value := range headers %}
+http-response set-header {{ name }} {{ value }}
+{%- end %}
+```
 
-<p class="pg-task" markdown>The `frontend http` section already holds an `extraHeaders` map of header names to values, but emits nothing. Range it with <code>{% for k, v := range extraHeaders %}</code> and emit one `http-response set-header` per entry.</p>
+Try the same pattern with the map below.
 
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: extra-headers-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-      {%- var extraHeaders = map[string]any{
-        "X-Frame-Options": "DENY",
-        "X-Content-Type-Options": "nosniff",
-      } %}
-        # TODO(you): emit one http-response set-header per entry in extraHeaders
-        default_backend app
-      backend app
-        server s1 127.0.0.1:8080 check
+<div class="pg-embed" markdown data-scriggo data-title="Turn a map into response headers" data-difficulty="2" data-height="280">
+
+<p class="pg-task" markdown>Loop over `extraHeaders` and emit one `http-response set-header` directive per entry.</p>
+
+```go
+{%- var extraHeaders = map[string]string{
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+} %}
+{# Add the loop here. #}
 ```
 
 <details class="pg-solution" markdown>
-<summary>Peek at the solution</summary>
+<summary>Show the solution</summary>
 
-Loop the map with `{% for k, v := range extraHeaders %}` and show the key and value on an `http-response set-header` line. Go maps have no defined iteration order, so the two headers can render in either order — fine here, since they're independent.
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: extra-headers-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-      {%- var extraHeaders = map[string]any{
-        "X-Frame-Options": "DENY",
-        "X-Content-Type-Options": "nosniff",
-      } %}
-      {%- for k, v := range extraHeaders %}
-        http-response set-header {{ k }} {{ v | tostring() }}
-      {%- end %}
-        default_backend app
-      backend app
-        server s1 127.0.0.1:8080 check
+```go
+{%- var extraHeaders = map[string]string{
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+} %}
+{%- for name, value := range extraHeaders %}
+http-response set-header {{ name }} {{ value }}
+{%- end %}
 ```
+
+Map iteration order is unspecified. These independent header directives work in either order.
 
 </details>
 
@@ -119,7 +87,7 @@ spec:
 
 ## Configuration
 
-The base library has the standard enable/disable flag, but it's rarely useful to disable it: every other library plugs into the extension points base provides, so setting it to `false` produces a broken render with no `haproxyConfig` and no extension points.
+Keep base enabled when using its extension points. To disable it, supply your own `haproxyConfig` and the snippets required by any libraries you retain.
 
 ```yaml
 controller:

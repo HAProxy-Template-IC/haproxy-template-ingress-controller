@@ -31,7 +31,7 @@ Controller-pod sizing — the chart's request/limit defaults, the sizing table, 
 
 ## Service Architecture
 
-The chart deploys separate Services for the controller and HAProxy so data-plane traffic and operational endpoints never cross. The controller Service is for cluster-internal monitoring only; the HAProxy Service is what external traffic hits.
+Separate Services expose controller health and metrics, the admission webhook, HAProxy traffic and stats, and the HAPTIC agent.
 
 ### Controller Service
 
@@ -41,9 +41,10 @@ A single `ClusterIP` Service named after the chart's `fullname` (for example `<r
 |------|----------------|------------|---------|
 | `healthz` | 8080 | `controller.ports.healthz` | Single source for the process listener, liveness/readiness probes, Service, and `/debug/*` introspection endpoints |
 | `metrics` | 9090 | `controller.ports.metrics` | Single source for the process listener, Service, and Prometheus monitors; `0` disables metrics |
-| `webhook` | 9443 | `controller.ports.webhook` | Admission-webhook HTTPS endpoint |
 
-Override Service type, annotations, etc. under the `controller.service` block:
+The separate `<fullname>-webhook` Service exposes port `443` (`controller.webhook.service.port`) and forwards to port `9443` (`controller.ports.webhook`).
+
+Configure the health and metrics Service under `controller.service`:
 
 ```yaml
 controller:
@@ -62,24 +63,26 @@ A Service (`<fullname>-haproxy`, for example `<release>-haptic-haproxy`, `NodePo
 | `https` | 443 | 443 | 30443 |
 | `stats` | 8404 | 8404 | 30404 |
 
-The agent gets its own internal-only `ClusterIP` Service (`<fullname>-haproxy-dataplane`, for example `<release>-haptic-haproxy-dataplane`) on port 5555. The Service keeps its name across the cutover, because a Deployment selector can't be changed in place. Its type comes from `haproxy.agent.service.type`.
+The agent gets its own internal-only `ClusterIP` Service (`<fullname>-haproxy-dataplane`, for example `<release>-haptic-haproxy-dataplane`) on port 5555. Its type comes from `haproxy.agent.service.type`.
 
-**Development (kind cluster)** — NodePort default works out of the box; switch to LoadBalancer if you want `localhost` mapping via kind's port-forward:
+**Local access**, including kind clusters, works with `kubectl port-forward`
+regardless of Service type. For a release named `haptic` in namespace `haptic`:
 
-```yaml
-haproxy:
-  service:
-    type: LoadBalancer
+```bash
+kubectl port-forward -n haptic service/haptic-haproxy 8080:80
 ```
 
-**Cloud provider LoadBalancer**:
+In another terminal, send requests to `http://localhost:8080` with the hostname
+configured on your Ingress or Gateway route. NodePort access from the host also
+requires a reachable node address or matching kind port mappings.
+
+**LoadBalancer access** requires a load-balancer implementation in your cluster.
+Set the Service type and any annotations required by that implementation:
 
 ```yaml
 haproxy:
   service:
     type: LoadBalancer
-    annotations:
-      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
 ```
 
 **External / self-managed HAProxy** — turn off the chart's HAProxy deployment and manage pods yourself (see [HAProxy Pod Requirements](#haproxy-pod-requirements)):
@@ -484,9 +487,7 @@ Redirecting the stream changes who can read the records, not what they contain.
 
 #### Dropping records you don't need
 
-The access log is ~740 bytes per record, so about 700 MB per million requests. If
-that volume genuinely forces your hand, you can drop the records for successful
-requests:
+To reduce log volume, suppress successful HTTP requests:
 
 ```yaml
 controller:
@@ -498,26 +499,18 @@ controller:
             successful: true
 ```
 
-Denials, 4xx, and 5xx are always kept, so the failures a customer reports are
-never the ones you discarded.
+Suppression drops 2xx/3xx records only when no gate denied the request. Denials,
+4xx, and 5xx remain eligible for logging, subject to the transport's
+[loss behavior](#the-access-log-is-lossy-under-back-pressure).
 
-**This is off by default, and reaching for it first is usually a mistake.**
-Retaining a full access log for weeks is lawful under legitimate interest (GDPR
-Art. 6(1)(f)) — data minimisation doesn't require throwing it away. And the
-successful requests immediately before and after a failure are exactly what let
-you tell "this one request broke" from "everything was broken," or spot the retry
-that succeeded. Route the log somewhere access-controlled first; suppress only
-when volume, not privacy, is the problem.
+The default retains successful requests because they help diagnose retries and
+intermittent failures. Suppression also removes those requests from log-derived
+metrics and traces. Choose retention and access controls for the data you log;
+this setting doesn't remove sensitive fields from the records you keep.
 
-The rule is emitted as `http-after-response`, not `http-response`. That matters:
-`http-response` rules only run for responses that came from a *server*, so a WAF
-deny or any other HAProxy-generated response would never be evaluated. TCP-mode
-frontends are unaffected: `http-after-response` is HTTP-only, the internal TCP frontend
-already carries `option dontlog-normal`, and the
-TLS-passthrough frontend deliberately logs every connection because that record
-is the only one it produces.
-They still hold personal data, so retention limits and access controls still
-apply at the destination.
+The rule runs after HTTP responses, including responses HAProxy generates
+itself. TCP-mode frontends are unaffected. The internal TCP frontend already
+uses `option dontlog-normal`; TLS passthrough logs each connection.
 
 ### Vector sidecar
 
@@ -593,12 +586,9 @@ can affect pod readiness.
 `req_id` is an RFC 9562 **UUIDv7** (`unique-id-format %[uuid(7)]`): opaque, but
 time-ordered, which sorts and indexes better in a log store than a random UUIDv4.
 
-It deliberately carries no address. An identifier built from `%ci`/`%fi` — the
-shape HAProxy examples often show — puts the client IP (personal data under the
-GDPR, Article 4(1) and Recital 30) and the address of the load balancer itself
-into a value that's forwarded upstream, echoed back to clients, and copied into
-application logs and support tickets. Once the address is inside the id, dropping the `client_ip`
-field no longer redacts it.
+The ID contains no client or load-balancer address. Using `%ci` or `%fi` in an
+ID would copy those addresses into upstream headers, responses, and application
+logs; removing a separate `client_ip` field wouldn't remove them from the ID.
 
 For UUIDv4 instead, override the directive through a `defaults-settings-*`
 snippet with a band above 150:
@@ -612,12 +602,13 @@ controller:
           unique-id-format %[uuid()]
 ```
 
-`trace_id` comes from an inbound `traceparent` header, validated against the
-[W3C Trace Context](https://www.w3.org/TR/trace-context/) grammar. HAPTIC never
-invents a `traceparent` when the client sends none: a root span that no exporter
-emits produces a broken trace in the backend. To forward the id upstream in a
-header, use the [`haproxy-haptic.org/request-id`](libraries/haptic-annotations.md)
-annotation.
+With tracing disabled, `trace_id` records a valid inbound `traceparent` for log
+correlation; HAPTIC creates no trace context. With
+[`extraContext.tracing.enabled`](reference.md#logging-and-templating), HAPTIC
+adopts valid inbound context or creates a new trace, then propagates it to the
+backend. Trace-context propagation is separate from the
+[`haproxy-haptic.org/request-id`](libraries/haptic-annotations.md) annotation,
+which forwards the request ID in a header.
 
 ### Contribute a field from your own library
 

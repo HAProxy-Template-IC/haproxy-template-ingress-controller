@@ -15,7 +15,7 @@ By default, the NetworkPolicy allows egress to four targets:
 - **HAProxy pods** (release namespace, label-matched): The controller reaches the agent and stats ports on every pod whose labels match `controller.networkPolicy.egress.haproxyPods.podSelector`. With the default empty `controller.networkPolicy.egress.haproxyPods.namespaceSelector: {}`, no namespace selector is emitted, which in NetworkPolicy semantics restricts the rule to the policy's own namespace — set a non-empty selector to reach HAProxy pods in other namespaces.
 - **All in-cluster pods**: `controller.networkPolicy.egress.additionalRules` ships a default rule allowing egress to every pod in every namespace on any port, so template helpers like `http.Fetch()` reach cluster services out of the box.
 
-Helm replaces list values wholesale rather than merging them. When you override `kubernetesApi`, you restate the entire list — every `cidr` entry and its `ports` array — because your value fully replaces the default. The examples below are complete on purpose.
+Helm replaces list values wholesale rather than merging them. When you override `kubernetesApi`, you restate the entire list — every `cidr` entry and its `ports` array — because your value fully replaces the default.
 
 When an auxiliary edge tier is enabled, the chart adds a separate default-on
 policy for that tier:
@@ -29,9 +29,8 @@ policy for that tier:
   configuration, including when `haproxy.networkPolicy.allowExternal` is false:
   HAProxy's own stats port, and — while the Vector sidecar is enabled — its
   exporter ports (`vector.metricsPort`, plus `vector.sizeMetricsPort` when a
-  [request-metrics](./monitoring.md#request-metrics) size family is on). With the
-  sidecar on, HAProxy's own `/metrics` answers over loopback only, so allowing the
-  stats port alone would leave Prometheus nothing to reach.
+  [request-metrics](./monitoring.md#request-metrics) size family is on). Prometheus
+  scrapes HAProxy and the agent directly; Vector re-exports SPOA hub metrics.
 - `rateLimit.shared.managedStore.networkPolicy.enabled` admits Valkey and Sentinel
   only from the same release's HAProxy/SPOA pods and from the managed store pods
   themselves. Store egress is limited to DNS and store-internal replication,
@@ -64,6 +63,7 @@ On an IPv6 or dual-stack cluster, add the matching IPv6 CIDR — the IPv4 entry 
 controller:
   networkPolicy:
     egress:
+      additionalRules: []
       kubernetesApi:
         - cidr: 10.96.0.0/12  # Your cluster's IPv4 service CIDR
           ports:
@@ -77,7 +77,7 @@ controller:
 
 ## `kind` cluster specifics
 
-For kind clusters with network policy enforcement, keep the broad CIDRs and both ports. The chart default exposes `443` and `6443` because either may host the API server depending on the kind config, and it restates both the IPv4 and IPv6 catch-alls so the wholesale replacement (see [Default configuration](#default-configuration)) doesn't drop IPv6:
+The chart defaults allow API access on ports `443` and `6443` over both address families. Keep these defaults for a local kind setup, or restrict the CIDRs to the API endpoints your network plugin observes:
 
 ```yaml
 controller:
@@ -86,7 +86,7 @@ controller:
     egress:
       allowDNS: true
       kubernetesApi:
-        - cidr: 0.0.0.0/0  # kind requires broader access
+        - cidr: 0.0.0.0/0  # Default; narrow to your API endpoints
           ports:
             - port: 443
               protocol: TCP
@@ -102,36 +102,32 @@ controller:
 
 ## Replacing the shipped policies
 
-Set `controller.networkPolicy.enabled: false` (controller), `haproxy.networkPolicy.enabled: false` (HAProxy), `cache.varnish.networkPolicy.enabled: false` (Varnish), or `rateLimit.shared.managedStore.networkPolicy.enabled: false` (managed Valkey/Sentinel) only for the policies you replace yourself. The example below is a narrowed, controller-only variant — the shipped policy's selector matches **every** release pod (name + instance labels, no component discriminator) and therefore also carries the agent port 5555 ingress allowance for the HAProxy pods; if you replace it, cover the HAProxy pods separately:
+To supply your own policies, disable the corresponding chart policy:
 
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: haptic-controller
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: haptic
-      app.kubernetes.io/component: controller
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - ports:
-        - port: 8080   # /healthz, /debug/*
-        - port: 9090   # /metrics
-        - port: 9443   # webhook
-  egress:
-    - to:
-        - namespaceSelector: {}   # kube-apiserver is in every cluster, tighten if you know the selector
-      ports:
-        - port: 443
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: loadbalancer
-      ports:
-        - port: 5555   # HAPTIC agent
+| Component | Helm value |
+|-----------|------------|
+| Controller | `controller.networkPolicy.enabled: false` |
+| HAProxy | `haproxy.networkPolicy.enabled: false` |
+| Varnish | `cache.varnish.networkPolicy.enabled: false` |
+| Managed Valkey/Sentinel | `rateLimit.shared.managedStore.networkPolicy.enabled: false` |
+
+The controller policy selects only controller pods using release and component
+labels. Preserve DNS, API-server, and agent egress, plus health-probe, webhook,
+and monitoring ingress in a replacement. API-server egress may need the API
+server's endpoint IP and port rather than its Service IP, depending on where
+your network plugin enforces policy.
+
+Start from the rendered policy for your release so configured ports and
+selectors stay consistent:
+
+```bash
+helm get manifest haptic --namespace haptic > haptic-manifest.yaml
 ```
+
+Edit the `NetworkPolicy` documents you intend to manage separately, then disable
+only those chart policies in your Helm values. See
+[Kubernetes NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+for policy semantics.
 
 ## Allowing Prometheus scraping
 

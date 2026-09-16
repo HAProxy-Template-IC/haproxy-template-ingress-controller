@@ -19,12 +19,8 @@ Every replica renders, but only the leader's render goes anywhere: the leader-on
 
 ## Lease-based election
 
-HAPTIC uses `k8s.io/client-go/tools/leaderelection` with a `coordination.k8s.io` Lease lock — the industry standard for Kubernetes operator high availability:
-
-- **Lower overhead**: Leases create less watch traffic than ConfigMaps or Endpoints
-- **Purpose-built**: the Lease API exists exactly for coordination locks — no ConfigMap or Endpoints semantics repurposed as a lock
-- **Reliable**: used by core Kubernetes components (kube-controller-manager, kube-scheduler)
-- **Clock skew tolerant**: configurable tolerance for node clock differences
+HAPTIC uses `k8s.io/client-go/tools/leaderelection` with a
+`coordination.k8s.io` Lease lock in the controller namespace.
 
 ### Timing defaults
 
@@ -39,28 +35,32 @@ LeaderElectionConfig{
 }
 ```
 
-These are deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (`15s`/`10s`/`2s`). The renew deadline is the leader's budget for riding out apiserver unavailability or CPU starvation without losing the lease; multi-second stalls of 10 seconds or more have been observed on loaded nodes. A lost lease stops the leader-only components and re-enters election in place (client-go's `LeaderElector.Run` returns permanently on a lost lease, so the controller supervises it and starts a fresh election loop); the rest of the replica — its stores and admission validators — keeps serving throughout. The trade-off is hard-failover latency after a leader crash that never releases the lease: up to `LeaseDuration` (+ one `RetryPeriod`) instead of ~17 seconds. Voluntary handoffs release the lease immediately and are unaffected.
+The renewal deadline allows brief API-server or CPU stalls. Losing the lease
+stops the leader-only components and restarts election; stores and admission
+validators keep running. After a crash, election also depends on lease expiry,
+retry jitter, and API latency. Voluntary handoffs release the lease immediately.
 
-**Tolerance formula**: `LeaseDuration / RenewDeadline = clock skew tolerance ratio`
-
-With `30s`/`20s` the system tolerates nodes progressing 1.5× faster than others. Workloads on hosts with large clock skew should override these via the CRD; controllers that need a longer warm-up after election can raise both numbers proportionally so the ratio stays close to 1.5.
+Clock-rate tolerance is approximately `LeaseDuration / RenewDeadline`, or `1.5`
+with these defaults. This concerns clock speed, not the difference between clock
+readings. See [Timing parameters](../../operations/high-availability.md#timing-parameters)
+for tuning and the client-go contract.
 
 ## Component classification
 
 The actual classification lives in `pkg/controller/reconciliation.go` (search for `registerLifecycleComponents`, which registers all-replica components via `reg.Register(c, false)` and leader-only ones via `reg.Register(c, true)`); this section reflects that registration list.
 
-**All replicas run** (read-only or validation operations):
+**All replicas run** (components that write to Kubernetes check leadership):
 
 - ConfigLoader (`pkg/controller/configloader`) — Parses `HAProxyTemplateConfig` CRD updates from a SingleWatcher
 - CredentialsLoader (`pkg/controller/credentialsloader`) — Parses credentials Secret updates from a SingleWatcher
 - ResourceWatcher (`pkg/controller/resourcewatcher`) — Watches Kubernetes resources (Ingress, Service, etc.)
-- Reconciler (`pkg/controller/reconciler`) — Debounces changes and publishes `ReconciliationTriggeredEvent`
+- Reconciler (`pkg/controller/reconciler`) — Publishes `ReconciliationTriggeredEvent` without adding a debounce timer
 - Discovery (`pkg/controller/discovery`) — Discovers HAProxy pod endpoints; caches `HAProxyPodsDiscoveredEvent` for replay
 - HTTPStore (`pkg/controller/httpstore`) — Periodic HTTP refresh + two-version cache for content used in templates
 - ProposalValidator (`pkg/controller/proposalvalidator`) — Speculative render+validate driven by HTTPStore (async) and DryRunValidator (sync)
-- StatusApplier (`pkg/controller/statusapplier`) — Applies template-driven status patches via Server-Side Apply (SSA) (only the leader actually writes; followers cache state to take over instantly)
+- StatusApplier (`pkg/controller/statusapplier`) — Applies template-driven status patches via Server-Side Apply (SSA) (only the leader actually writes; followers cache state for takeover)
 - ResourceApplier (`pkg/controller/resourceapplier`) — Reconciles `spec.k8sResources`-declared resources via Server-Side Apply with field manager `haptic` (all-replica subscriber; only the leader writes)
-- EventEmitter (`pkg/controller/eventemitter`) — Emits the Kubernetes Events templates requested through `recordEvent()`
+- EventEmitter (`pkg/controller/eventemitter`) — The leader emits Kubernetes Events requested through `recordEvent()`
 - Validators (`pkg/controller/validator`) — Basic / Template / JSONPath validators participating in the config-validation scatter-gather
 - DryRunValidator (`pkg/controller/dryrunvalidator`) — Bridges admission-webhook requests into the proposal validator
 - Commentator (`pkg/controller/commentator`) — Logs events for observability
@@ -73,7 +73,7 @@ The renderer **isn't** a registered component. It lives in `pkg/controller/rende
 **Leader-only components** (lifecycle registry's `LeaderOnly(...)` group; only constructed and started while leadership is held, torn down on `LostLeadershipEvent`):
 
 - **Coordinator** (`pkg/controller/reconciler`) — Drives the render pipeline (calls `Pipeline.Execute` which in turn calls `RenderService.Render`)
-- **RenderGate** (`pkg/controller/rendergate`) — Runs `haproxy -c -dr` on each render off the reconcile path, reverts the pods that took a refused plan without loading it, and holds later renders until one passes
+- **RenderGate** (`pkg/controller/rendergate`) — Runs `haproxy -c -dr` asynchronously for plans without a cached verdict, reverts the pods that took a refused plan without loading it, and holds later renders until one passes
 - **Deployer** (`pkg/controller/deployer`) — Sends every HAProxy pod its apply in parallel via `pkg/dataplane/agent/client`
 - **DeploymentScheduler** (`pkg/controller/deployer`) — Rate-limits and queues deployments; coalesces back-to-back deployment requests via `pkg/controller/coalesce`
 - **DriftPreventionMonitor** (`pkg/controller/deployer`) — Periodic redeploy when nothing has changed for `driftPreventionInterval`, so a pod whose file tree drifted gets the controller's last-known-good set back
@@ -150,19 +150,22 @@ The Commentator logs all transitions, Metrics tracks leadership duration and tra
 
 ## Startup and leadership transitions
 
-The controller starts in stages — components subscribe in their constructors, `EventBus.Start()` releases the pre-start buffer, and the lease-backed elector starts last. The full staged-startup walkthrough lives in [Sequence Diagrams](./sequence-diagrams.md); the leader-election-relevant part is the ordering guarantee: every component's subscriptions exist *before* the elector can publish `BecameLeaderEvent`, so no replica misses a leadership event.
+All-replica components subscribe before `EventBus.Start()` releases buffered
+events. Leader-only components subscribe when their leadership term starts;
+state replay supplies the inputs they need. See
+[Sequence diagrams](./sequence-diagrams.md) for staged initialization.
 
-**Becoming leader.** On `BecameLeaderEvent`, the leader-only components start their goroutines and subscribe via `SubscribeTypesLeaderOnly` (which suppresses the late-subscription warning that normally guards against missed events). They don't start cold: all-replica components cache their latest state and replay it to the new leader — Discovery re-publishes the discovered HAProxy pod set for the new leader's DeploymentScheduler, the StatusApplier clears its checksum cache, and the Reconciler treats `BecameLeaderEvent` as an immediate trigger so the new leader produces a fresh render right away. This bootstrap-replay pattern is what makes failover instant despite the leader-only components being constructed on demand.
+**Becoming leader.** On `BecameLeaderEvent`, the leader-only components start their goroutines and subscribe via `SubscribeTypesLeaderOnly` (which suppresses the late-subscription warning that normally guards against missed events). They don't start cold: all-replica components cache their latest state and replay it to the new leader — Discovery re-publishes the discovered HAProxy pod set for the new leader's DeploymentScheduler, the StatusApplier clears its checksum cache, and the Reconciler treats `BecameLeaderEvent` as an immediate trigger so the new leader produces a fresh render right away. Replaying cached state lets the new leader reconcile without waiting for another resource change.
 
 **Losing leadership.** On `LostLeadershipEvent`, the lifecycle registry cancels the leader-only components' context and tears them down. The replica keeps watching resources and serving webhooks as a follower.
 
 **Graceful transition** (rolling update, voluntary handoff):
 
 1. Old leader releases the lease on shutdown (`ReleaseOnCancel`) and stops deployment components
-2. New leader acquires the lease immediately — no lease-expiry wait
+2. A follower acquires the released lease on its next successful election attempt
 3. New leader starts deployment components with hot cache and replayed state → immediate reconciliation
 
-A leader *crash* instead costs up to `LeaseDuration` + one `RetryPeriod` before a follower takes over; failure behaviour and recovery steps are covered in [High Availability](../../operations/high-availability.md#troubleshooting).
+After a leader crashes, followers wait for lease expiry before taking over. Election retries, API latency, and component startup also contribute to recovery time. See [High availability](../../operations/high-availability.md#troubleshooting).
 
 ## Testing
 

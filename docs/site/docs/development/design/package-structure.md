@@ -138,7 +138,13 @@ The packages form a DAG, enforced at build time by `arch-go.yml`:
 
 **Single-resource vs. bulk watching.** `pkg/k8s/watcher` provides `Watcher` (collections, debounced) and `SingleWatcher` (one named resource, immediate callbacks) so the `HAProxyTemplateConfig` CRD and credentials Secret don't pay indexing overhead.
 
-**HAProxy validation.** `pkg/dataplane` exposes context-aware validation: HAProxy's own `haproxy -c` verdict, which is what decides whether a configuration loads. Nothing in production parses the configuration itself (see [ADR-0022](https://gitlab.com/haproxy-haptic/haptic/blob/main/docs/adr/0022-haptic-agent.md)); the syntax + schema parse survives only behind the `playground` build tag, for the browser playground that has no HAProxy binary. Every validation occurrence invokes HAProxy, including byte-identical repeats, because the executable and runtime environment can change independently of the rendered content. The caller supplies `*ValidationPaths` (Maps/SSL/General/CRTList directories); `validateSemantics` clears those directories, writes the auxiliary files there, and serialises the binary through a cancellable gate. The `pkg/controller/validation.ValidationService` wrapper additionally allocates a per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin <baseDir>` to point at it before delegating, so the production HAProxy directories are never touched.
+**HAProxy validation.** `pkg/dataplane` runs `haproxy -c` against the rendered
+configuration and auxiliary files. Production binaries contain no HAProxy
+configuration parser; the browser playground uses a separate syntax/schema
+fallback. `pkg/controller/validation.ValidationService` isolates each call in a
+temporary directory and adjusts `default-path origin` accordingly. Admission
+checks run synchronously; reconciliation uses the render gate, which tracks
+verdicts by plan identity. See [ADR-0022](../adr/0022-haptic-agent.md).
 
 **Component lifecycle.** `pkg/lifecycle` centralises registration, dependency ordering, leader-only flags, and health tracking; the controller registers every component there instead of starting goroutines directly.
 

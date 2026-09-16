@@ -4,9 +4,9 @@ Builds the template rendering context shared by every code path that renders HAP
 
 ## Overview
 
-Four call sites need to render templates with the same context shape: production reconciliation (renderer), validation tests (test runner), benchmarks, and the webhook dry-run validator. This package consolidates that construction so the four can't drift — the context map you get back is identical regardless of who built it.
+The renderer, validation-test runner, and benchmarks use this builder. Admission delegates to the renderer through the proposal pipeline. Callers select stores, capabilities, and render mode through options; the builder supplies their shared context structure.
 
-The builder also produces a `*FileRegistry` (templates can register dynamically generated auxiliary files via this) and supports a `StoreWrapper` adapter that gives Scriggo templates the `List` / `Fetch` / `GetSingle` methods on top of plain `types.Store` instances.
+The builder also produces a `*FileRegistry` (templates can register dynamically generated auxiliary files via this) and supports a `StoreWrapper` adapter that gives Scriggo templates the `List` / `Fetch` / `GetSingle` methods on top of `stores.Store` instances.
 
 ## Quick Start
 
@@ -21,7 +21,7 @@ builder := rendercontext.NewBuilder(
     rendercontext.WithStores(storeMap),
     rendercontext.WithHAProxyPodStore(haproxyPodStore),
     rendercontext.WithHTTPFetcher(httpWrapper),
-    rendercontext.WithCurrentConfig(parsedCurrent),
+    rendercontext.WithCurrentConfig(currentConfig),
 )
 
 res := builder.Build()
@@ -30,7 +30,7 @@ res := builder.Build()
 // res.Err(ctx) reports cancellation or deferred resource-input failures
 ```
 
-`ctx`, `cfg`, `pathResolver`, and `logger` are required positional arguments. The context cancels API-backed store reads when the render ends. Everything else is supplied through functional options. Omitting an option just leaves the corresponding context key unset (templates that try to read it will see `nil`).
+`ctx`, `cfg`, `pathResolver`, and `logger` are required positional arguments. The context cancels API-backed store reads when the render ends. Everything else is supplied through functional options. Defaults depend on the option: for example, capabilities default to false and render mode defaults to `reconcile`; `http` is omitted without a fetcher.
 
 Store methods remain value-only for Scriggo, but they record read failures,
 ambiguous `GetSingle` results, and typed conversion failures in the returned
@@ -42,17 +42,17 @@ The context map produced by `Build()` carries the keys templates rely on:
 
 | Key | Type | Source |
 |-----|------|--------|
-| `resources` | `map[string]ResourceStore` (wrapped) | `WithStores` |
+| `resources` | Schema-derived struct of resource stores | `WithStores` and typed-resource options |
 | `controller` | `map[string]ResourceStore` containing `haproxy_pods` | `WithHAProxyPodStore` |
 | `templateSnippets` | `[]string` (sorted) | `cfg.TemplateSnippets` keys |
 | `fileRegistry` | `*FileRegistry` | always present |
-| `statusPatchCollector` | `*templating.StatusPatchCollector` | always present (collects `statusPatch()` calls from `filters_status.go`; also returned as `Build()`'s third value) |
+| `statusPatchCollector` | `*templating.StatusPatchCollector` | Always present; also exposed as `BuildResult.StatusPatchCollector` |
 | `pathResolver` | `*templating.PathResolver` | required |
 | `dataplane` | `config.DataplaneConfig` | from `cfg.Dataplane` |
 | `shared` | `*templating.SharedContext` | always present (per-render cache) |
-| `capabilities` | `map[string]any` | always present — `CapabilitiesToMap` of the `WithCapabilities` value, or an all-false map when the option is omitted, so validation and production expose the identical key |
+| `capabilities` | `map[string]any` | `CapabilitiesToMap` of the supplied value; all false when omitted |
 | `runtimeEnvironment` | `*templating.RuntimeEnvironment` | always present (`GOMAXPROCS` and friends) |
-| `currentConfig` | `*parserconfig.StructuredConfig` | `WithCurrentConfig` (optional; omitted when nil to dodge a Scriggo nil-pointer-initializer panic) |
+| `currentConfig` | `*renderplan.CurrentConfig` | `WithCurrentConfig` (optional; omitted when nil to dodge a Scriggo nil-pointer-initializer panic) |
 | `http` | `templating.HTTPFetcher` | `WithHTTPFetcher` (optional) |
 | `extraContext` | `map[string]any` | `cfg.TemplatingSettings.ExtraContext` (always set, possibly empty; top-level keys are also merged into the root context via `MergeExtraContextInto`) |
 
@@ -61,7 +61,7 @@ Adding a new context key means updating `Build()` plus the `pkg/templating/globa
 ## See Also
 
 - [`pkg/templating`](../../templating/) — runtime variable typing and the engine that consumes this context
-- [`pkg/controller/renderer`](../renderer/) — production caller (synchronous render service; builds context directly via its own `buildRenderingContext`, not via `NewBuilder`)
+- [`pkg/controller/renderer`](../renderer/) — production caller; prepares inputs before calling `NewBuilder`
 - [`pkg/controller/testrunner`](../testrunner/) — validation-test caller
 - [`pkg/controller/dryrunvalidator`](../dryrunvalidator/) — webhook caller
 - `pkg/controller/rendercontext/CLAUDE.md` — developer notes on adding new context keys

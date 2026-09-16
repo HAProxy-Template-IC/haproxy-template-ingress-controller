@@ -2,7 +2,7 @@
 
 ## Overview
 
-Validation tests render your templates against fixture resources and assert on the output — broken templates and invalid HAProxy config fail before they reach a cluster. Tests are embedded in the HAProxyTemplateConfig CRD. You run them locally with the CLI (this page), and the controller also runs them automatically before any config reaches HAProxy.
+Validation tests render templates against fixture resources and check the output. Define them in `HAProxyTemplateConfig` or its libraries, run them locally with `haptic validate`, and let the controller repeat them when loading configuration. A passing suite covers its fixtures; it doesn't prove every possible live resource state.
 
 Beyond running the controller (`haptic run`), the controller binary provides `validate` (this page) and `benchmark` (template render timing). To audit another controller's Ingresses before switching to HAPTIC, use the migration report in the [playground](/playground/) — see [Migrating: Step 0](migrating.md#step-0-check-what-changes).
 
@@ -14,7 +14,7 @@ Beyond running the controller (`haptic run`), the controller binary provides `va
 
     There is **no** admission webhook for `HAProxyTemplateConfig` — a configuration is a set (the config plus its `libraryRefs` libraries), and admission sees one object at a time, so a per-object webhook would deny change sets whose end state is correct. To gate a config *before* it reaches the cluster, run [`haptic preflight`](operations/validate-before-deploy.md) in your pipeline.
 
-    The `validate` CLI, `preflight`, and both in-cluster gates run the identical suite through the same runner, so a passing local `validate` run predicts a clean load.
+    The `validate` CLI, `preflight`, and both in-cluster gates run the identical suite through the same runner, but HAProxy versions, external validators, and runtime inputs must also match to reproduce a result.
 
 ## Quick start
 

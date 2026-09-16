@@ -371,7 +371,7 @@ backend default_my-app_svc_api-service_http
     server api-pod-2 10.0.0.2:8080 guid srv:default_my-app_svc_api-service_http:api-pod-2  # Pod: api-pod-2
 ```
 
-Each server is named after its pod (ADR-0011) and carries a stable `guid`, so a rolling update is an add/remove of named servers over the runtime API — no reload and no reserved slot pool. `check` lives on `default-server`, not on individual server lines. A not-yet-ready pod's line carries a `disabled` keyword until it passes its checks; a backend with no ready endpoints renders empty and serves 503.
+Each server is named after its pod (ADR-0011) and carries a stable `guid`, so a rolling update is an add/remove of named servers over the runtime API — no reload and no reserved slot pool. `check` lives on `default-server`, not on individual server lines. Not-ready and terminating endpoints carry `disabled`. With no usable servers, HAProxy returns 503; with no endpoint addresses at all, the backend has no server lines.
 
 #### Backend namespace scope
 

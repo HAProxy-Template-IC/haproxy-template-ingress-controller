@@ -13,21 +13,21 @@ same backend three times from three different inputs.
 
 ## The macros
 
-You declare a backend with `Backend()` and feed it servers with
-`BackendServers()`; you move per-route logic into a map with `RegisterMap()` and
-read it back with one static line via `HeaderModifierRules()`. All four live in
-the base library and see only strings and lists — never a resource kind.
+Use the base library's `Backend()` to describe a backend and `RegisterMap()`
+to register map entries. `HeaderModifierRules()` generates rules that read header
+values from a map. For Service and EndpointSlice resolution, the separate
+`kubernetes-backends` library provides `BackendServers()`.
 
 ```
-{{ Backend({
+{{ Backend(map[string]any{
      "name":     beName,            # required; the backend section name
      "mode":     "http",            # http|tcp, default http; carried by the profile
-     "balance":  "roundrobin",      # roundrobin|leastconn|random|hash-consistent keep servers dynamic
+     "balance":  "roundrobin",      # use consistent hashing with hash-based algorithms
      "profile":  profileLines,      # []string: directives shared by same-shape backends (timeouts, retries, cookie, http-request rules) → a named defaults
      "body":     bodyLines,         # []string: directives that must stay in THIS section (stick-table, filter, raw injections) → structural
      "servers":  BackendServers(serviceName, 0, port, serverOpts, portName, beName, namespace),
    }) }}
-{{ RegisterMap("my-route.map", entries, {"ordered": false}) }}
+{{ RegisterMap("my-route.map", entries, map[string]any{"ordered": false}) }}
 ```
 
 Every backend inherits a content-addressed named `defaults haptic-be-<hash> from
@@ -39,16 +39,15 @@ shape is added at runtime without a reload. The backend section itself is only
 
 `Backend()` is strict: it accepts `name`, `mode`, `balance`, `hashType`,
 `profile`, `body`, `servers`, `defaultServer`, `guid`, `comments`, `shape` and
-`shapeReason`, and fails the render on any other key. (The `serverLines` escape
-hatch the table below mentions isn't accepted yet — a library needing raw
-server lines passes `servers` records, or `body` for a structural section.)
+`shapeReason`, and fails the render on any other key. Put raw server lines in `body`; that
+makes the backend structural.
 
 ## Custom CRD first
 
-Suppose you watch a `Route` CRD with `spec.backend`, `spec.port` and a list of
-`spec.requestHeaders`. A custom kind carries no bundled schema, so you reach it
-through the resource-agnostic `resource("routes")` accessor and read its fields
-with `dig()` — the same way the governance library reads any kind. Generate one
+Suppose you watch a `Route` CRD with `spec.backend.address`, `spec.backend.port`,
+and `spec.requestHeaders`. This example uses `resource("routes")` and `dig()`
+to work without a bundled schema. In a cluster, HAPTIC can also provide typed
+access from the CRD's OpenAPI schema. Generate one
 backend per Route with a literal server list, and move its headers into a map
 keyed on the backend name:
 
@@ -120,31 +119,29 @@ watch both follow — reload-free.
 
 ## When a backend is static
 
-A backend is *dynamic-eligible* — created, deleted, and repopulated at runtime —
-unless one of these makes it *static*, in which case creating it, deleting it, or
-changing its body reloads HAProxy. Servers stay runtime-updatable either way.
+A backend is eligible for runtime creation when `Backend()` describes it as
+`dynamic`, its named defaults profile is already loaded, and the pod runs
+HAProxy 3.4 or later. These changes require a reload:
 
-<!-- vale off -->
-<!-- Reproduced verbatim from the design decision record; the directive names and
-     wording are authoritative and must match it exactly. -->
-| # | Condition | Effect | Where decided |
-|---|---|---|---|
-| 1 | The pod runs HAProxy < 3.4 (no `add backend`/`del backend`) | create/delete reload on that pod; server/map/cert changes still runtime; the config text is identical | `deployplan` per pod (`Caps.DynamicBackends`) |
-| 2 | `body` is non-empty — a directive that cannot live in a named `defaults`: `stick-table`/`stick on` (local rate limiting, bandwidth limiting), `filter …` (bwlim, explicit compression ordering, SPOE consumer limiter), `use-server`, `server-template`, `capture`, `redirect`, `dispatch`, `id`/`description`, raw operator injections (`config-backend`, `configuration-snippet`, `backend-config-snippet`), or `serverLines` (unix-socket loopbacks, `ring` servers); base's own static backends (`default_backend`, loopbacks, `gw-invalid-backend`, rate-limit table backends) | structural shape: create/delete/body change reload; server changes still runtime | `Backend()` (`ShapeReason`) |
-| 3 | The backend's profile (named `defaults`) is new or its body changed in this render | one reload for the profile section; the backend itself is dynamic afterwards, as is every later backend on that profile | `deployplan` rule 1 |
-| 4 | Backend-level attributes changed on an existing backend (`mode`, profile, `guid`, `balance`/`hashType`) or its text changed in a way the record does not explain | modification reload (HAProxy cannot alter these at runtime) | `deployplan` rules 1 + 4 |
-| 5 | LB algorithm not dynamic-capable: `static-rr`, an explicit `hashType: map-based`, or `first` if spike (d) shows it is not | `add server` is refused ⇒ the backend cannot be populated at runtime ⇒ create/delete and server adds reload (`set server` on existing servers still runtime) | `Backend()` + `deployplan` rule 4 |
-| 6 | A server keyword outside the verified `add server` set (`ssl-min-ver`/`ssl-max-ver`, `no-check`, `resolvers`, `init-addr`, `sni-auto`, `no-ssl`, …) | server adds — and therefore backend creation — reload; the keyword is named in `Reason` | `deployplan` A2 allow-list |
-| 7 | Spike (b) negative branch only: the profile carries `http-request`/`http-check` rules that `add backend … from` does not inherit | those backends are treated as structural until the rules are moved to the frontend | 0-pre exit criteria |
-| 8 | Name collision on `add backend` (a leftover from a deferred delete with the same name) | that apply reloads (no shape read-back exists in HAProxy) | agent A5 |
-| 9 | Deletion of a backend something references statically (`default_backend NAME`, literal `use_backend NAME`) — creation is dynamic, but HAProxy refuses `del backend` | delete reloads (fallback) | agent A2 fallback |
-| 10 | Backend text emitted outside `Backend()` (a library writing the section by hand) | lands in a `core` blob ⇒ every change reloads | assembler |
+| Condition | What requires a reload |
+|-----------|------------------------|
+| HAProxy 3.0–3.3 | Creating or deleting a backend. |
+| Non-empty `body`, such as a local `stick-table`, `filter`, or raw configuration injection | Creating, deleting, or changing that structural backend. |
+| New or changed named defaults profile | Loading the profile. Later backends can reuse it at runtime. |
+| Changed backend mode, profile, `guid`, balance algorithm, `hashType`, or `defaultServer` | Updating that backend. |
+| `static-rr` or map-based hashing | Adding a server. |
+| Server keywords unsupported by `add server`, such as `no-check`, `resolvers`, or `init-addr` | Adding the server, including as part of a new backend. |
+| Configuration emitted outside the structured helpers | Changing that configuration text. |
 
-Everything else is dynamic: per-server values (`ssl`/`ca-file`/`sni`/…, `maxconn`,
-check params, agent-check, weight, proxy protocol), profiles carrying values
-(timeouts, cookies, retries, health-check specs, auth configs) once the profile
-exists, all map and cert content, and route add/delete on HAProxy 3.4.
-<!-- vale on -->
+A runtime command can still fail, for example if a backend name is already in
+use or a static reference prevents deletion. The agent then attempts a reload.
+
+Server address, port, weight, and maintenance-state changes can run at runtime
+in both structural and dynamic backends. Changing other keywords on an existing
+server requires a reload, even if those keywords support runtime creation.
+`ssl-min-ver`, `ssl-max-ver`, `ca-file`, and `crt` support runtime creation;
+referenced files must already exist in the runtime store or be created in the
+same apply. See [Supported configuration](../supported-configuration.md).
 
 ## Where to put a directive
 
@@ -155,36 +152,28 @@ put it in.
 |---|---|---|
 | `profile` | Value-free or per-value directives shared by every backend of one shape: timeouts, cookies, retries, `http-request`/`http-check` rules, health-check specs | A new profile reloads once; from then on every backend on it becomes dynamic, and changing a profile value reloads that one profile |
 | a map + one static line | Per-route/per-backend values read at request time: header modifiers, path rewrites, redirect targets, timeouts (via `map_str_int`) | Adding or editing an entry is a map-only change — no reload |
-| the profile's `default-server` line | Per-server keywords in the verified `add server` set: `weight`, `maxconn`, `check` + params, `ssl`/`sni`/`ca-file`, `send-proxy`, agent-check | Read by `add server` when a pod joins — no reload (unless the keyword is outside the add-server set — `ca-file`/`crt` for instance — which then reloads) |
+| the profile's `default-server` line | Shared server keywords, such as `check`, `maxconn`, `ssl`, and `send-proxy` | HAPTIC passes these keywords to runtime server creation. Changing the defaults profile requires a reload. |
 | `body` | Directives that must stay in this section: `stick-table`, `filter`, `use-server`, raw operator injections | Makes the backend structural — create/delete/body change reload |
 
-Per-server keywords ride the profile's `default-server` line rather than a
-per-server `extra` list: splitting a free-form annotation flag into structured
-server keywords would need an HAProxy keyword grammar the chart must not carry
-(the resource-agnostic rule). `default-server` reaches every server and
-`add server` at once, at the cost of a profile per distinct `default-server`
-combination.
+The bundled libraries put shared server settings in `default-server` and
+backend settings in a named defaults profile. The controller copies those
+server defaults into runtime `add server` commands, which don't inherit them
+from the backend.
 
-The bundled ingress and gateway backends move their defaults-legal directives
-(`default-server`, timeouts, retries, cookie, the fail-closed 503, `balance` with
-`hash-type consistent`) into `profile`, and their namespace/service into
-`backend-service.map`, so a plain backend's body is empty and it's
-dynamic-eligible. Rate limiting (`stick-table`), bandwidth/compression `filter`s
-and raw operator injections keep their backends in `body` (structural).
+Keep per-route values in maps when HAProxy can read them at request time.
+Reserve `body` for directives that must appear in the backend itself.
 
 Session persistence (`cookie … dynamic`) needs a `dynamic-cookie-key`. It's
 shared per installation so same-shape cookie backends share one profile, and
-derived from the release identity so it's stable across upgrades yet not the same
-across installs — a world-known key would let anyone who learns a pod's address
-forge the affinity cookie and pin traffic to one replica. Override it with
+derived from the release identity so it's stable across upgrades. This derived
+value isn't a secret. Override it with
 `controller.config.templatingSettings.extraContext.dynamicCookieKey` (for a
 hand-written CR without the chart, set it explicitly to a per-install secret).
 
 HAProxy validates placement: `haproxy -c` (in the admission webhook, the
 config-load gate, and the asynchronous render gate) rejects a directive that's
 illegal where you put it, so there is no chart-side keyword grammar to satisfy —
-put a directive in the wrong slot and the render fails loudly rather than
-shipping a broken config.
+an invalid placement is reported as a validation error.
 
 ## Which per-object changes reload
 
@@ -196,7 +185,7 @@ shipping a broken config.
 - **A new or deleted route** (its backend section): where the pod's agent can
   add and remove a backend at runtime — HAProxy 3.4, whose `add backend`/`del
   backend` the `deployplan` drives — a route with a dynamic-eligible shape avoids
-  a reload; on 3.0–3.3, and wherever that runtime path isn't yet in effect, the
+  a reload; on 3.0–3.3, the
   backend section is created or removed by a paced reload.
 - **Always a reload**: a change to a `body` directive, a backend-level attribute
   (`mode`, `balance`, profile), a new profile section, or anything a library

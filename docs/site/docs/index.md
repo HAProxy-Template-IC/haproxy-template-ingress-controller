@@ -8,7 +8,7 @@ hide:
 
 **HAPTIC** (HAProxy Template Ingress Controller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and applies them to your HAProxy fleet — reloading only when the change needs one.
 
-<div class="hx-pipeline" role="img" aria-label="How HAPTIC works: cluster resources feed your templates, the rendered config is validated, then deployed to the HAProxy fleet">
+<div class="hx-pipeline" role="img" aria-label="How HAPTIC works: cluster resources feed your templates, and the HAPTIC agent applies the resulting configuration to HAProxy">
   <div class="hx-group">
     <span class="hx-cap">Your cluster</span>
     <span class="hx-chip">🌐 Ingress</span>
@@ -23,9 +23,9 @@ hide:
   </div>
   <div class="hx-link" aria-hidden="true"><i></i></div>
   <div class="hx-card">
-    <span class="hx-cap">Gate</span>
-    <strong>Validated</strong>
-    <small>schema&nbsp;+&nbsp;haproxy&nbsp;-c</small>
+    <span class="hx-cap">Deployment</span>
+    <strong>HAPTIC agent</strong>
+    <small>runtime updates or reload</small>
   </div>
   <div class="hx-link" aria-hidden="true"><i></i></div>
   <div class="hx-card">
@@ -46,7 +46,7 @@ HAPTIC is an event-driven Kubernetes controller that:
 
 - **Watches any Kubernetes resource** - Ingresses, Services, Secrets, Gateway API resources, or any custom resource type you configure
 - **Renders Scriggo templates** - A Go-native template engine
-- **Validates before deployment** - Every rendered config passes syntax, schema, and `haproxy -c` checks before it reaches your load balancers
+- **Checks configurations** - Admission and config loading run `haproxy -c` synchronously. Reconciliation checks HAProxy configuration alongside deployment and runs configured auxiliary-file validators before dispatch; see [validation behavior](operations/debugging.md#haproxy-refused-the-config-the-fleet-was-given-configvalidatedfalse).
 - **Applies configurations** to HAProxy pods through the HAPTIC agent, which runs map, certificate and server changes on the live worker instead of reloading
 
 Unlike traditional ingress controllers with hardcoded configuration logic, HAPTIC uses a template-driven approach that gives you full control over the generated HAProxy configuration. This means you can:
@@ -66,7 +66,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 - **Rich template context** - Access any Kubernetes resource, fetch external data via HTTP, and use controller state in your templates
 - **Everything is templatable** - Generate not just `haproxy.cfg` but also map files, SSL certificates, CRT-lists, and custom auxiliary files
 
-### Production ready
+### Validation and operations
 
 - **High availability** - Leader election with automatic failover
 - **Layered validation** - Admission webhook, template validation, and tests you can run in CI before anything reaches a cluster
@@ -76,13 +76,13 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
     This release is a pre-1.0 alpha, and the custom resources are served at API version `v1alpha1` — their schemas can still change before 1.0. Pin an exact chart version (`--version 0.2.0-alpha.3`) and read the [changelog](changelog.md) before you upgrade.
 
 !!! note "Ready to use out of the box"
-    The [Helm chart](deploying-with-helm.md) ships with [Template Libraries](template-libraries.md) enabled by default. They cover Kubernetes Ingress and Gateway API resources out of the box, with HAPTIC's native [`haproxy-haptic.org/*` annotations](libraries/haptic-annotations.md) — a best-of-breed superset of the common HAProxy and nginx ingress-controller annotations — enabled by default. No template authoring required, and the vendor annotation libraries are available opt-in for migration. Customizing or extending the templates is entirely optional.
+    The [Helm chart](deploying-with-helm.md) enables Ingress, Gateway API, and [HAPTIC annotations](libraries/haptic-annotations.md) by default. Enable a vendor annotation library when [migrating](migrating.md) from another controller. Write custom templates only for behavior the bundled libraries don't cover.
 
 ## Architecture
 
-The controller follows an event-driven architecture where changes to Kubernetes resources trigger a pipeline that renders templates, validates the output, and syncs configurations to HAProxy pods.
+Resource changes trigger rendering and per-pod deployment. Admission checks proposed changes; reconciliation runs auxiliary-file validation before dispatch and HAProxy checks alongside deployment.
 
-<div class="hx-pipeline hx-arch" role="img" aria-label="Runtime architecture: the controller pod watches the Kubernetes API, renders and validates the config, and applies it through the agent in each HAProxy pod">
+<div class="hx-pipeline hx-arch" role="img" aria-label="Runtime architecture: the controller watches the Kubernetes API, renders configuration, and sends each pod its changes through the HAPTIC agent">
   <div class="hx-group">
     <span class="hx-cap">Kubernetes API</span>
     <span class="hx-chip">🗂️ Any resource</span>
@@ -95,7 +95,7 @@ The controller follows an event-driven architecture where changes to Kubernetes 
     <span class="hx-vlink" aria-hidden="true"></span>
     <span class="hx-chip">📝 Template engine</span>
     <span class="hx-vlink" aria-hidden="true"></span>
-    <span class="hx-chip">🛡️ Validator</span>
+    <span class="hx-chip">📤 Deployer</span>
   </div>
   <div class="hx-link" aria-hidden="true"><i></i></div>
   <div class="hx-group hx-pod">
@@ -110,7 +110,7 @@ Key components:
 
 - **Watcher** - Subscribes to Kubernetes API for configured resource types
 - **Template Engine** - Renders Scriggo templates with resource data as context
-- **Validator** - Runs syntax, schema, and `haproxy -c` checks on the rendered config so broken configs never deploy
+- **Validator** - Checks admission requests and rendered output; the agent rejects configurations its HAProxy binary can't load
 - **Deployer** - Decides per pod whether a change can run on the live worker or needs a reload, and sends it to that pod's agent
 
 ## Quick start
@@ -123,32 +123,32 @@ This installs both the controller and a 2-replica HAProxy Deployment, plus the d
 
 ## What makes HAPTIC different
 
-Templates are the difference. Suppose your platform users want a custom annotation that injects an `X-Request-ID` header for tracing. One snippet — no controller fork, no waiting for a release (with the Helm chart you'd place it under `controller.config.templateSnippets` in your values):
+Add a custom annotation with a template snippet. This example lets each Ingress choose a request-ID header for its own backends. With Helm, put the snippet under `controller.config.templateSnippets`.
 
 <div class="pg-embed" markdown data-scenario="extend" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="A custom annotation, implemented as one snippet" data-height="440">
 
-<p class="pg-task" markdown>The `frontend-filters-300-request-id` snippet under `templateSnippets` implements the annotation. In the **Resources** panel, change the `shop` Ingress's `example.com/request-id-header` value to `X-Trace-ID` — or remove the annotation — and watch the `http-request set-header` line in `haproxy.cfg` follow.</p>
+<p class="pg-task" markdown>The `backend-directives-300-request-id` snippet adds the header to the annotated Ingress's backends. In the **Resources** panel, change the `shop` Ingress's `example.com/request-id-header` value to `X-Trace-ID` — or remove the annotation — and watch the `http-request set-header` line in `haproxy.cfg` follow.</p>
 
 ```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-spec:
-  templateSnippets:
-    # The frontend-filters-* glob picks this up automatically; the 300 prefix
-    # places it alongside the built-in header-manipulation snippets.
-    frontend-filters-300-request-id:
-      template: |
-        {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var header = ingress | dig("metadata", "annotations", "example.com/request-id-header") | fallback("") | tostring() %}
-        {%- if header != "" %}
-        http-request set-header {{ header }} %[uuid()]
-        {%- end %}
-        {%- end %}
+controller:
+  config:
+    templateSnippets:
+      backend-directives-300-request-id:
+        template: |
+          {%- if ingress != nil %}
+          {%- var header = ingress.metadata.annotations["example.com/request-id-header"] %}
+          {%- if header != "" %}
+          {%- if !regex_search(header, "^[A-Za-z0-9-]+$") %}
+          {{ fail("example.com/request-id-header must contain only letters, digits, or hyphens.") }}
+          {%- end %}
+          http-request set-header {{ header }} %[uuid()]
+          {%- end %}
+          {%- end %}
 ```
 
 </div>
 
-Users opt in per-Ingress with `example.com/request-id-header: "X-Request-ID"`. The same pattern works for rate limiting, header rewrites, custom ACLs — anything HAProxy can express. Override any snippet, replace the main template, or disable all libraries and start from scratch. See the [Templating Guide](templating.md).
+Set `example.com/request-id-header: "X-Request-ID"` on an Ingress to enable the header. This example accepts letters, digits, and hyphens in the header name. The backend hook scopes the rule to that Ingress; changing it requires a reload. See the [Templating Guide](templating.md) for more examples.
 
 ## Where to go next
 
@@ -166,7 +166,7 @@ Every page is also served as raw Markdown: append `index.md` to any page URL (fo
 - `llms.txt` — a link index of every page's Markdown endpoint, following the [llmstxt.org](https://llmstxt.org/) convention
 - `llms-full.txt` — every page's Markdown concatenated into one document
 
-Fetch them at the site root, for example `https://haproxy-haptic.org/docs/llms.txt`.
+Fetch them from the documentation version root, for example `https://haproxy-haptic.org/docs/dev/llms.txt`.
 
 ## Contributing to the docs
 

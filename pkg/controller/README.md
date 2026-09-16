@@ -54,8 +54,8 @@ This is why the docs consistently say "no pod restart on config change" — the 
 
 Two coordination modes via `pkg/events`:
 
-- **Publish/Subscribe** — fire-and-forget, buffered per subscriber. Used for everything on the main reconciliation path (resource index updates → reconciliation trigger → rendered → validated → deployed).
-- **Request/Response (scatter-gather)** — synchronous with timeout and expected-responder list. Used for admission-time validation, where multiple validators must independently approve a proposed config.
+- **Publish/Subscribe** — fire-and-forget, buffered per subscriber. Carries resource changes, reconciliation triggers, and render/deployment results. The pipeline itself uses synchronous calls.
+- **Request/Response (scatter-gather)** — synchronous with timeout and expected-responder list. Used for config-set validation, where registered validators must approve the proposed configuration. Watched-resource admission uses the synchronous proposal pipeline.
 
 Domain event types live in `pkg/controller/events`. `pkg/events` itself is domain-agnostic.
 

@@ -1,6 +1,6 @@
 # pkg/controller/credentialsloader
 
-Stage-1 event adapter that turns `Secret` updates into internal `Credentials`. Subscribes to `SecretResourceChangedEvent`, calls `config.ParseSecretData` + `config.LoadCredentials` (which rejects missing or empty `dataplane_username` / `dataplane_password`), and publishes `CredentialsUpdatedEvent` on success. Invalid updates are logged and leave the previously accepted credentials active. Stronger structural validation (`config.ValidateCredentials`) is applied separately at controller startup in `pkg/controller/config.go`.
+Stage-1 event adapter that turns `Secret` updates into internal `Credentials`. Subscribes to `SecretResourceChangedEvent`, calls `config.ParseSecretData` + `config.LoadCredentials` (which rejects missing or empty `dataplane_username` / `dataplane_password`), and publishes `CredentialsUpdatedEvent` on success. Invalid updates are logged and leave the previously accepted credentials active. `config.ValidateCredentials` repeats the required-field check and rejects nil credentials at controller startup in `pkg/controller/config.go`.
 
 Like its sibling [`configloader`](../configloader/), it's built on the `pkg/controller/resourceloader.BaseLoader` scaffold — the event-loop plumbing is shared, only the parse step differs.
 
@@ -20,7 +20,7 @@ Subscription happens in the constructor, so buffered `SecretResourceChangedEvent
 
 ## Required Secret Keys
 
-Two non-empty keys are required (both used to authenticate against every HAProxy Dataplane API instance the controller talks to — production deployment and local validation alike):
+Two non-empty keys authenticate requests to each HAPTIC agent. Local HAProxy validation needs no credentials:
 
 ```yaml
 apiVersion: v1
@@ -37,7 +37,7 @@ stringData:
 
 ## Event Contract
 
-**In** — `SecretResourceChangedEvent{Resource}` from a `SingleWatcher` that points at the `Secret` referenced by `spec.credentialsSecretRef`. The `resourceVersion` is read from the unstructured resource by the loader itself; there's no separate version field on the event.
+**In** — `SecretResourceChangedEvent{Resource}` from a `SingleWatcher` that points at the Secret selected by `--secret-name` / `SECRET_NAME`. The `resourceVersion` is read from the unstructured resource by the loader itself; there's no separate version field on the event.
 
 **Out** — `CredentialsUpdatedEvent{Credentials, SecretVersion}` on success. Failures are logged directly because no component coordinates on them.
 

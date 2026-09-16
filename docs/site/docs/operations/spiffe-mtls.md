@@ -357,7 +357,7 @@ spire-server:
 
 ## Controller validation
 
-The HAPTIC controller validates HAProxy configuration by running `haproxy -c` locally before deploying it. Since the SPIRE certificates only exist on the HAProxy pods (managed by spiffe-helper), the controller pod needs placeholder files at the same absolute paths so that validation passes.
+The HAPTIC controller checks rendered configuration with its local `haproxy -c` binary. Since the SPIRE certificates only exist on the HAProxy pods (managed by spiffe-helper), the controller pod needs placeholder files at the same absolute paths so that validation passes.
 
 Mount a ConfigMap with dummy PEM files on the **controller** pod:
 

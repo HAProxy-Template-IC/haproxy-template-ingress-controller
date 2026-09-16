@@ -1,49 +1,32 @@
 # pkg/dataplane/auxiliaryfiles
 
-Compare-and-sync helpers for the auxiliary files HAProxy serves alongside its main config: maps, general files, CRT lists, SSL certificates, and SSL CA files.
+Value types for files rendered alongside `haproxy.cfg`. This package performs no
+network or filesystem operations. The renderer produces the files, the render
+plan describes them, and the HAPTIC agent writes them.
 
-## Overview
+## File types
 
-Each file kind has a `Compare*` and a `Sync*` pair. `Compare` fetches the current contents from the Dataplane API's storage endpoints, diffs them against a desired list, and returns a typed `*FileDiffGeneric[T]`. `Sync` applies the diff (creates / updates / deletes). The two halves can be called separately so the orchestrator can decide whether and when to commit changes.
+| Type | Content | Identifier |
+|------|---------|------------|
+| `GeneralFile` | Error pages, policy files, or other auxiliary data | `Filename` |
+| `MapFile` | HAProxy map entries | `Path` |
+| `SSLCertificate` | PEM certificate and private key | `Path` |
+| `CRTListFile` | Certificate references, options, and SNI filters | `Path` |
+| `SSLCaFile` | PEM trust bundle | `Path` |
 
-The package only deals with auxiliary files. The main HAProxy config goes through `pkg/dataplane.Client.Sync` + the comparator pipeline; storage state on individual HAProxy pods (which file is on which pod) lives in `pkg/k8s/configpublisher`.
+All types implement `FileItem`: `GetIdentifier()` and `GetContent()`.
+`Content` is excluded from JSON serialization to keep key material out of debug
+responses.
 
-## File Kinds and Entry Points
+`GeneralFile.IsCaFile` marks a trust bundle for runtime CA-store updates.
+`ReloadsOnPush()` reads `ReloadOnPush`, treating nil as true. Set it false only
+for files whose consumer can accept updates without an HAProxy reload.
 
-| Kind | Type | Compare | Sync |
-|------|------|---------|------|
-| Maps | `MapFile` | `CompareMapFiles` | `SyncMapFiles` |
-| General files | `GeneralFile` | `CompareGeneralFiles` | `SyncGeneralFiles` |
-| SSL certificates | `SSLCertificate` | `CompareSSLCertificates` | `SyncSSLCertificates` |
-| CRT lists | `CRTListFile` | `CompareCRTLists` | `SyncCRTLists` |
-| SSL CA files | `SSLCaFile` | `CompareSSLCaFiles` | `SyncSSLCaFiles` |
+## Related packages
 
-All Compare functions return `*FileDiffGeneric[T]` (with type aliases `FileDiff`, `MapFileDiff`, `SSLCertificateDiff`, `CRTListDiff`, `SSLCaFileDiff` so call sites read naturally).
-
-## Quick Start
-
-```go
-import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-    "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
-)
-
-dpClient, _ := client.New(ctx, &client.Config{...})
-
-diff, err := auxiliaryfiles.CompareGeneralFiles(ctx, dpClient, desired)
-if err != nil { /* ... */ }
-
-changed, err := auxiliaryfiles.SyncGeneralFiles(ctx, dpClient, diff)
-// 'changed' is the list of file names that were actually written or removed.
-```
-
-CRT lists are special-cased — but **not** for the reason an older draft of this README claimed. `CompareCRTLists` / `SyncCRTLists` *always* go through general-file storage via `CRTListsToGeneralFiles`, regardless of HAProxy version. The reason is reload accounting: the native CRT-list API (`POST ssl_crt_lists`) triggers a reload and doesn't support `skip_reload`, while general-file `CREATE` returns 201 with no reload, letting the orchestrator batch every aux-file change into the single reload that the main config sync triggers. There's no `Capabilities.SupportsCrtList` branch here. (See the `Storage strategy` block in `crtlist.go` for the rationale.)
-
-## See Also
-
-- [`pkg/dataplane/client`](../client/) — provides the `*DataplaneClient` consumed here
-- [`pkg/dataplane`](../) — `Client.Sync` invokes these helpers transparently
-- [`pkg/k8s/configpublisher`](../../k8s/configpublisher/) — publishes per-pod auxiliary file state to Kubernetes CRDs
+- [`renderplan`](../renderplan/) — immutable description of the desired configuration
+- [`deployplan`](../deployplan/) — per-pod change decisions
+- [`agent/files`](../agent/files/) — file writes, journaling, and recovery
 
 ## License
 

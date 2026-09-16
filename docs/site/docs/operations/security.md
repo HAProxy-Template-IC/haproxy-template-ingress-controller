@@ -1,51 +1,54 @@
 # Security
 
-This page covers only the security settings HAPTIC itself owns. Anything that isn't HAPTIC-specific (how to issue certs with cert-manager, how to wire External Secrets Operator (ESO), etc.) is left to the upstream project's docs.
+This page covers HAPTIC's permissions, credentials, pod settings, and network exposure.
 
 ## What the controller needs
 
 ### RBAC
 
-The Helm chart provisions a `ServiceAccount`, a `ClusterRole`, and a namespace-scoped `Role` (names derive from the Helm release `fullname`). The ClusterRole grants:
+The Helm chart creates a ServiceAccount, a ClusterRole, and a Role in the release
+namespace. Role-based access control (RBAC) permissions depend on the enabled
+libraries and watched resources.
 
-| Resource | Verbs | Why |
-|----------|-------|-----|
-| `pods`, `namespaces` | get, list, watch | Discover HAProxy pods, target namespaces |
-| `<each watched resource>` | get, list, watch | Generated per `watchedResources` entry — Ingress, Service, EndpointSlice, Secret, etc. depending on the enabled libraries |
-| `<watched resource>/status` | patch | Generated for watched resources with `statusPatch: true` (for example, Ingress LoadBalancer status, Gateway / HTTPRoute conditions) |
-| `leases` (`coordination.k8s.io`) | get, create, update | Leader election |
-| `customresourcedefinitions` (`apiextensions.k8s.io`) | get, list, watch | Fetch watched-resource OpenAPI schemas from their CRDs so typed template access stays full-fidelity (degrades to the public OpenAPI endpoint otherwise) |
-| `haproxytemplateconfigs`, `haproxytemplatelibraries` (`haproxy-haptic.org`) | get, list, watch | The config CRD and the template libraries it references (the chart renders one per enabled library) |
-| `haproxytemplatelibraries` | patch | Stamp an `ownerReference` from the config onto each library it references, so resource-tree views show the relationship. The chart can't: an `ownerReference` needs the owner's UID, which doesn't exist until the config is applied |
-| `haproxytemplateconfigs/status` | update, patch | Report validation status back onto the CRD |
-| `haproxycfgs`, `haproxygeneralfiles`, `haproxycrtlistfiles`, `haproxymapfiles` (.haproxy-haptic.org) | get, list, watch, create, update, patch, delete | Publish rendered config + auxiliary files as observable CRDs (full read-write access because the controller owns these resources and prunes stale entries) |
-| `<above CRDs>/status` | update, patch | Report deployment status on the published artifacts |
-| `services` | get, list, watch, create, update, patch, delete | **Gateway library only** — cluster-wide Service writes for Gateway-API templates that emit owned Services into a Gateway's own namespace (for example, the per-Gateway infrastructure-propagation marker Service) |
-| `gatewayclasses` (`gateway.networking.k8s.io`) | create, update, patch, delete | **Gateway library only** — the GatewayClass is applied at runtime via Server-Side Apply, not by Helm (read verbs come from the watched-resource rules) |
-| `events` (core) | create, update, patch, delete | **Ingress library only** — Warning Events on Ingresses whose backend Service is missing |
+The **ClusterRole** grants:
 
-Anything else referenced from `watchedResources` needs matching RBAC. The Helm chart auto-generates the watched-resource rules from `controller.config.watchedResources` and the enabled libraries; if you manage RBAC yourself (`controller.rbac.create: false`), keep it in sync. The full template is `charts/haptic/templates/clusterrole.yaml`.
+| Resource | Verbs | Purpose |
+|----------|-------|---------|
+| Each watched resource | get, list, watch | Read the resources declared by the configuration and enabled libraries |
+| Watched resources with `statusPatch: true`, via `/status` | patch | Publish routing and policy conditions |
+| `customresourcedefinitions` | get, list, watch | Load schemas and detect CRD changes |
+| `events` | create, update, patch, delete | Publish template-generated Kubernetes Events |
+| `services` | get, list, watch, create, update, patch, delete | Gateway library only: manage Services in Gateway namespaces |
+| `gatewayclasses` | create, update, patch, delete | Gateway library only: manage the configured GatewayClass |
 
-Narrow the cluster-wide watch to a single namespace with `fieldSelector: "metadata.namespace=<ns>"` on each watched-resource entry — see [Watching Resources](../watching-resources.md#narrowing-the-watch). For label-based namespace filtering, see [Performance — Resource Watching Optimization](./performance.md#resource-watching-optimization).
+The **namespace Role** grants:
 
-A namespace-scoped `Role` (bound only in the controller's own namespace) additionally grants the writes the controller performs locally — kept off the `ClusterRole` to tighten the blast radius:
+| Resource | Verbs | Purpose |
+|----------|-------|---------|
+| `pods` | get, list, watch | Discover the HAProxy fleet |
+| `secrets` | get, list, watch, create, update, patch, delete | Read agent credentials and manage certificate Secrets |
+| `leases` | get, create, update | Coordinate leadership |
+| `haproxytemplateconfigs`, `haproxytemplatelibraries` | get, list, watch | Load the configuration and its libraries |
+| `haproxytemplatelibraries` | patch | Set ownership references |
+| `haproxytemplateconfigs/status` | update, patch | Report configuration validation status |
+| `haproxycfgs`, `haproxymapfiles`, `haproxygeneralfiles`, `haproxycrtlistfiles` | get, list, watch, create, update, patch, delete | Publish and prune rendered artifacts |
+| The four artifact kinds above, via `/status` | update, patch | Report deployment status |
+| `services` | get, list, watch, create, update, patch, delete | Manage Services in the release namespace |
+| `configmaps` | get, list, watch, create, update, patch, delete | Managed Varnish only: publish Varnish Configuration Language (VCL) |
+| `statefulsets`, `deployments` | get, list, watch, create, update, patch, delete | Managed Varnish or Valkey only: manage workloads |
+| `poddisruptionbudgets` | get, list, watch, create, update, patch, delete | Managed Varnish or Valkey with disruption budgets enabled |
+| `horizontalpodautoscalers` | get, list, watch, create, update, patch, delete | Managed Varnish with autoscaling enabled |
 
-| Resource | Verbs | Why |
-|----------|-------|-----|
-| `secrets` | get, list, watch, create, update, patch, delete | Read the agent credentials; read/write SSL certificate Secrets |
-| `haproxycfgs`, `haproxymapfiles` | get, list, watch, create, update, patch, delete | Publish rendered config + map files as observable CRDs in the controller's own namespace |
-| `haproxycfgs/status`, `haproxymapfiles/status` | get, update, patch | Status on the published artifacts |
-| `services` | get, list, watch, create, update, patch, delete | Namespace-scoped counterpart to the gateway Service grant above — Gateway StaticAddresses LoadBalancer Services emitted into the controller's own namespace |
-| `configmaps` | get, list, watch, create, update, patch, delete | **Only with `cache.varnish.enabled`** — the annotation library emits the Varnish Configuration Language (VCL) ConfigMap into the controller's namespace via Server-Side Apply |
-| `statefulsets`, `deployments` (`apps`) | get, list, watch, create, update, patch, delete | **Only with the Varnish tier or the managed rate-limit store** — those templates own a Varnish StatefulSet/Deployment and a Valkey StatefulSet |
-| `poddisruptionbudgets` (`policy`) | get, list, watch, create, update, patch, delete | **Only when one of those auxiliary workloads emits a PDB** |
-| `horizontalpodautoscalers` (`autoscaling`) | get, list, watch, create, update, patch, delete | **Only with `cache.varnish.autoscaling.enabled`** — the cache tier's HPA is applied via Server-Side Apply |
+Inspect your release's rendered grants with `helm get manifest haptic -n haptic`.
+If you set `controller.rbac.create: false`, maintain these permissions yourself.
+The chart sources are `templates/clusterrole.yaml` and `templates/role.yaml`.
 
-The full template is `charts/haptic/templates/role.yaml`.
+[Watch selectors](../watching-resources.md#narrowing-the-watch) limit what templates
+consume; they don't narrow the ServiceAccount's RBAC permissions.
 
 ### Credentials
 
-The CRD references a `Secret` via `spec.credentialsSecretRef`. It must contain two keys:
+The controller reads the Secret named by `--secret-name` or `SECRET_NAME`; the Helm chart sets this for you. The Secret must contain two keys:
 
 ```yaml
 apiVersion: v1
@@ -58,12 +61,12 @@ stringData:
   dataplane_password: <random>
 ```
 
-The controller watches the Secret and picks up rotations live — no pod restart needed. Use whatever secret-management tool you already run (ESO, Vault agent, `SOPS`, …); the controller just reads the Secret.
+The controller watches the Secret and picks up changes live. The chart passes agent credentials through environment variables, so roll the HAProxy pods when rotating them. Keep both ends on matching credentials.
 
-!!! warning "Set the agent password explicitly under GitOps"
-    If you install via the Helm chart and leave `credentials.dataplane.password` empty, the chart generates a **random** 32-char password and preserves it across upgrades by reading the existing Secret via `lookup`. GitOps tools that render without cluster access (ArgoCD/Flux) can't `lookup`, so an empty value regenerates on every sync and churns the credential — set `credentials.dataplane.password` explicitly (SealedSecret / external secret) for those deployments.
+!!! warning "Credentials with offline Helm rendering"
+    With `credentials.dataplane.password` empty, Helm generates a random password and uses `lookup` to preserve the existing Secret on upgrades. Offline rendering tools, such as `helm template` and Argo CD, can't read that Secret. Supply a stable `credentials.dataplane.password` through your deployment's secret management.
 
-Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true` — the key keeps its name), never passwords — `pkg/controller/debug/setup.go` enforces that. See [Debugging](./debugging.md#accessing-the-server) for access control if you run with the debug port enabled.
+`/debug/vars/credentials` returns the credential version and `has_dataplane_creds`, without credential values. Other debug endpoints expose configuration and rendered files. See [Debugging](./debugging.md#accessing-the-server) for access controls.
 
 ## Pod hardening
 
@@ -105,11 +108,11 @@ The controller pod exposes three HTTP ports (all chart defaults):
 
 | Port | Endpoint | Notes |
 |------|----------|-------|
-| `8080` | `/healthz`, `/debug/vars`, `/debug/events`, `/debug/pprof/` | `controller.ports.healthz` configures the process, pod, Service, probes, and policy together. `/healthz` is required by the probes; shield `/debug/*` with NetworkPolicy rather than disabling the listener |
+| `8080` | `/healthz`, `/debug/vars`, `/debug/events`, `/debug/pprof/` | `controller.ports.healthz` configures the process, pod, Service, probes, and policy together. `/healthz` serves probes; `/debug/*` accepts loopback connections only. Restrict `pods/portforward` with RBAC |
 | `9090` | `/metrics` | `controller.ports.metrics` configures the process, pod, Service, and monitors together; set it to `0` to disable metrics |
 | `9443` | Validating webhook | Required when the webhook is enabled |
 
-Outbound, the controller talks to the Kubernetes API server and to the agent on each HAProxy pod (default port `5555`). That traffic is plain HTTP over the pod network — the agent has no TLS server configuration. Rely on pod-network protection (NetworkPolicy, service mesh, Container Network Interface (CNI) encryption) rather than transport-level authentication for that hop.
+Outbound, the controller talks to the Kubernetes API server and to the agent on each HAProxy pod (default port `5555`). That traffic is plain HTTP over the pod network — the agent has no TLS server configuration. Rely on pod-network protection (NetworkPolicy, service mesh, Container Network Interface (CNI) encryption) to protect that hop.
 
 An apply carries the rendered configuration and every auxiliary file, which includes SSL private keys. That's the same content the pod already holds on disk, but it's one more reason the hop deserves network-level protection.
 
@@ -121,7 +124,7 @@ The agent is authenticated with a basic-auth password stored in the `<release>-h
 - The HAProxy policy defaults to `allowExternal: true`, which renders a permissive all-port ingress rule — deliberate, because Gateway listeners bind dynamic ports.
 - The Varnish policy admits only same-release HAProxy cache requests and permits egress only to DNS and the same HAProxy HTTP origin. The managed Valkey/Sentinel policy admits only same-release HAProxy/SPOA and store-internal traffic.
 
-To tighten, replace, or debug these policies — including a copy-pastable replacement policy and its selector caveat — see [Networking](./networking.md#replacing-the-shipped-policies). If you keep the debug port enabled, pair it with a NetworkPolicy that restricts ingress to your observability namespace.
+To tighten, replace, or debug these policies — including the required traffic and selectors — see [Networking](./networking.md#replacing-the-shipped-policies). NetworkPolicy doesn't grant remote access to loopback-only diagnostics. Use `kubectl port-forward` and restrict that permission with RBAC.
 
 ## Secrets in templates
 
@@ -173,15 +176,13 @@ items:
 
 </div>
 
-Store *hashes*, not plaintext. For HAProxy basic auth:
+Store password hashes in the Secret. To generate a bcrypt hash interactively:
 
 ```bash
-htpasswd -nbB admin mypassword | cut -d: -f2
-kubectl create secret generic basic-auth -n auth \
-  --from-literal=password_hash='$2y$05$...'
+htpasswd -n -B -C 10 admin | cut -d: -f2
 ```
 
-Bcrypt is slow to verify on every request; for large userbases use `htpasswd -n -5` (SHA-512 crypt) and see [Performance](./performance.md#password-hash-performance) for the trade-off.
+Hash checks cost CPU on authentication and configuration parsing. Choose a work factor for your authentication policy and measure it; see [Password hash performance](./performance.md#password-hash-performance).
 
 ## Annotation input as a trust boundary
 
@@ -191,9 +192,17 @@ The `*-config-snippet` annotations (`haproxy.org/backend-config-snippet`, `nginx
 
 ## Admission validation coverage
 
-The admission webhook renders the whole configuration with the submitted object applied and runs `haproxy -c`, so a change that would break the fleet is rejected at `kubectl apply` time. It covers `Ingress`, `HTTPRoute`, `GRPCRoute`, `Gateway`, `BackendTLSPolicy`, `TLSRoute`, and `TCPRoute`.
+The admission webhook renders the proposed state and runs `haproxy -c` before
+accepting creates and updates for watched resources with
+`enableValidationWebhook: true`. The bundled libraries enable this for Ingress
+and Gateway routing resources and BackendTLSPolicy. See
+[Webhook integration](../watching-resources.md#validating-webhook-scope).
 
-`GatewayClass` is deliberately not admitted. The controller emits its own `GatewayClass` via Server-Side Apply (it's the operator's operational identity, not a routing object you author), so an admission rule on `GatewayClass` would intercept the controller's own write. A malformed `GatewayClass` from another source is still caught: the config-load gate re-validates the whole rendered configuration and fails closed, so a bad object surfaces as a rejected config load on the `HAProxyTemplateConfig` status rather than at admission.
+The Gateway library leaves GatewayClass admission disabled because the controller
+manages the configured class itself. GatewayClass changes therefore reach
+reconciliation without a HAPTIC admission check; config-load tests don't validate
+arbitrary future changes to live resources. For checks during reconciliation, see
+[Render validation](./debugging.md#haproxy-refused-the-config-the-fleet-was-given-configvalidatedfalse).
 
 ## Audit trail
 
@@ -220,11 +229,11 @@ Replace `<namespace>`/`<release>` with your Helm release. The SA name is the rel
 
 Before exposing a HAPTIC deployment to production traffic:
 
-- [ ] Random, rotated passwords in `credentialsSecretRef`.
-- [ ] NetworkPolicy that pins `/debug/*` ingress to trusted namespaces (the port also serves `/healthz`, so keep `controller.ports.healthz` enabled).
+- [ ] A managed agent password, with both controller and HAProxy pods updated during rotation.
+- [ ] RBAC that limits `pods/portforward` access to loopback-only `/debug/*` endpoints.
 - [ ] Watched-resource selectors scoped to the namespaces you intend to serve.
 - [ ] Release namespace labelled with `pod-security.kubernetes.io/enforce=restricted`.
-- [ ] NetworkPolicy allowing only kube-apiserver + agent egress.
+- [ ] NetworkPolicy allowing DNS, Kubernetes API, agent traffic, and any configured HTTP resources.
 - [ ] Audit policy in place for `HAProxyTemplateConfig` changes.
 - [ ] Image signature verification (`cosign verify …`) wired into your admission policy — see [Releasing](../development/releasing.md#supply-chain-security).
 

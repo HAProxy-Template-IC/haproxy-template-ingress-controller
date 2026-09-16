@@ -1,14 +1,9 @@
 # Template libraries
 
-Template libraries are modular, composable configuration packages that extend HAProxy's capabilities. You enable or disable each library independently in values.yaml.
+Template libraries provide routing rules, helper snippets, and validation tests.
+Enable or disable them through Helm values.
 
 ## Overview
-
-HAPTIC uses a library-based architecture where each library is a YAML configuration file. This enables:
-
-- **Modularity**: Enable only the features you need
-- **Extensibility**: Add custom configuration via extension points
-- **Customization**: Override or extend library behavior through values.yaml
 
 The chart renders each enabled library as its own `HAProxyTemplateLibrary`, plus
 a single `HAProxyTemplateConfig` for your own `controller.config` that lists them
@@ -20,9 +15,8 @@ winning over all of them. To see the merged result:
 haptic config view --input --namespace haptic
 ```
 
-Splitting the configuration this way keeps each object well clear of the ~1.5 MiB
-size limit Kubernetes enforces per object, so you can enable as many libraries as
-you need.
+Separate library objects reduce the size of each custom resource. The complete
+Helm release still has a size limit; enabling libraries adds to that total.
 
 See the full library stack compose into one HAProxy config live:
 
@@ -44,12 +38,13 @@ The Ingress library's `map-host-500-ingress` snippet emits one `host host` line 
 | Library | Default | Purpose |
 |---------|---------|---------|
 | [Base](libraries/base.md) | Enabled | Core HAProxy configuration, extension point definitions; disabling drops the `haproxyConfig` the other libraries plug into |
+| kubernetes-backends | Enabled | Service port and EndpointSlice resolution for the routing libraries |
 | [SSL](libraries/ssl.md) | Enabled | TLS certificate management, HTTPS frontend |
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTP, gRPC, TLS and TCP routes) support |
 | [ingress-annotations-compat](libraries/ingress-annotations-compat.md) | Enabled | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
 | [governance](operations/governance.md) | Enabled | Declarative constraints over any watched resource. Inert until you define `controller.config.templatingSettings.extraContext.governance.rules` |
-| [haptic-annotations](libraries/haptic-annotations.md) | Enabled | `haproxy-haptic.org/*` — HAPTIC's native vocabulary; a best-of-breed superset of the three vendor libraries. The only annotation library on by default |
+| [haptic-annotations](libraries/haptic-annotations.md) | Enabled | `haproxy-haptic.org/*` — HAPTIC's native vocabulary; the only annotation library enabled by default |
 | [haproxytech](libraries/haproxytech.md) | Disabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) — opt-in migration aid |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Disabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) — opt-in migration aid |
 | [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) — opt-in migration aid |
@@ -72,7 +67,7 @@ controller:
     gateway:
       enabled: true   # Gateway API
     hapticAnnotations:
-      enabled: true   # haproxy-haptic.org native annotations (default; best-of-breed superset)
+      enabled: true   # haproxy-haptic.org native annotations (default)
     haproxytech:
       enabled: false  # haproxy.org compat — opt-in migration aid
     haproxyIngress:
@@ -95,7 +90,7 @@ Path-based routing inside the rendered `frontend-routing-logic` snippet evaluate
 | `default` (default) | Exact > Regex > Prefix-exact > Prefix | De-facto standard; matches typical Ingress controller behaviour |
 | `last` | Exact > Prefix-exact > Prefix > Regex | Performance-first; evaluates faster matchers before regex |
 
-The chart swaps in the `frontend-routing-logic-regex-last` variant of the snippet at Helm load time when `last` is set. No runtime difference.
+When set to `last`, a matching prefix takes precedence over a matching regex. The chart selects the corresponding routing snippet during Helm rendering.
 
 ## Library merge order
 
@@ -274,7 +269,7 @@ To override a built-in snippet, use the **same key name**; values-file entries t
 
 | Library | Extension Points Used |
 |---------|----------------------|
-| Base | Defines all extension points; provides `global-settings-*`, `defaults-settings-*` snippets |
+| Base | Defines the shared extension points; provides `global-settings-*`, `defaults-settings-*` snippets |
 | SSL | `global-settings-*`, `features-*`, `frontends-*`, `backends-*`, `frontend-filters-*`, `log-fields-*`, `https-bind-extra-*`, `ssl-tcp-bind-extra-*` |
 | Ingress | `features-*`, `backends-*`, `map-host-*`, `map-path-*`, `status-patches-*` |
 | Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*`, `status-patches-*` |

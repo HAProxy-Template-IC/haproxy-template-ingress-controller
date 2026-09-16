@@ -1928,7 +1928,7 @@ http-request auth realm "API-Access" if { var(txn.ht_ba) -m str "ok auth_default
 - Secret format: Opaque secret where key=username, value=base64-encoded password hash
 - Supports cross-namespace secrets: `namespace/secretname`
 - Automatic deduplication: multiple ingresses sharing the same secret generate a single userlist
-- HAProxy parses `$1$` (MD5 crypt), `$5$` (SHA-256), `$6$` (SHA-512), and `$2y$` (bcrypt). It **doesn't** parse `$apr1$` (Apache MD5 — the htpasswd *default* without `-B` / `-5` / `-6`); generate hashes with `htpasswd -nbB` (bcrypt), `-nb5` (SHA-256), or `-nb6` (SHA-512). See [Performance — Password hash validation](../operations/performance.md#password-hash-performance) for the cost/perf trade-off.
+- HAProxy parses `$1$` (MD5 crypt), `$5$` (SHA-256), `$6$` (SHA-512), and `$2y$` (bcrypt). It **doesn't** parse `$apr1$` (Apache MD5 — the htpasswd *default* without an explicit algorithm); use `htpasswd -n -B` (bcrypt), `-n -2` (SHA-256), or `-n -5` (SHA-512). See [Performance — Password hash validation](../operations/performance.md#password-hash-performance) for the cost/perf trade-off.
 
 !!! note "Implementation Difference from HAProxy Ingress Controller"
     This controller uses **per-secret** userlist naming (`auth_{secretNs}_{secretName}`) rather than the official HAProxy Ingress Controller's per-ingress naming (`{namespace}-{ingressName}`). This deduplicates userlists when multiple Ingresses reference the same secret, significantly improving configuration validation performance for expensive password hashes like bcrypt (~85 ms per hash validation).
@@ -1969,14 +1969,14 @@ data:
 **Generate password hash**:
 
 ```bash
-# SHA-512 ($6$) — recommended: ~3ms validation per hash
-htpasswd -nb6 admin mypassword | cut -d: -f2 | base64 -w0
+# SHA-512 crypt ($6$)
+htpasswd -n -5 admin | cut -d: -f2 | base64 -w0
 
-# bcrypt ($2y$) — strongest, but ~85ms validation per hash at cost 10
-htpasswd -nbB admin mypassword | cut -d: -f2 | base64 -w0
+# bcrypt ($2y$), with an explicit cost factor
+htpasswd -n -B -C 10 admin | cut -d: -f2 | base64 -w0
 ```
 
-Hash validation runs on every config parse and reconciliation, so with many users or bcrypt it can dominate reconciliation time — prefer SHA-512 unless you need bcrypt's tunable work factor. See [Performance — Password hash validation](../operations/performance.md#password-hash-performance).
+HAProxy checks password hashes when parsing a configuration. Cost depends on the algorithm, work factor, and number of users; see [Password hash performance](../operations/performance.md#password-hash-performance). Algorithm flags are documented in [Apache htpasswd](https://httpd.apache.org/docs/2.4/programs/htpasswd.html).
 
 **Dependencies**: Requires `auth-type: basic-auth`
 
@@ -1984,7 +1984,7 @@ Hash validation runs on every config parse and reconciliation, so with many user
 
 - Value must be **only** the password hash, **not** "username:hash" (htpasswd format)
 - Multiple usernames supported: add multiple keys to the secret
-- The hash must be in a format HAProxy parses (`$1$` MD5 crypt, `$5$` SHA-256, `$6$` SHA-512, or `$2y$` bcrypt). `$apr1$` (Apache MD5 — what plain `htpasswd -nb` produces) **isn't** parsed; pass `-B`, `-5`, or `-6` to `htpasswd` instead.
+- The hash must be in a format HAProxy parses (`$1$` MD5 crypt, `$5$` SHA-256, `$6$` SHA-512, or `$2y$` bcrypt). `$apr1$` (Apache MD5 — what plain `htpasswd -nb` produces) **isn't** parsed; pass `-B`, `-2`, or `-5` to `htpasswd` instead.
 
 ---
 

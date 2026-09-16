@@ -10,7 +10,7 @@
 [![Build Status](https://gitlab.com/haproxy-haptic/haptic/badges/main/pipeline.svg)](https://gitlab.com/haproxy-haptic/haptic/-/pipelines)
 [![Coverage](https://gitlab.com/haproxy-haptic/haptic/badges/main/coverage.svg)](https://gitlab.com/haproxy-haptic/haptic/-/graphs/main/charts)
 
-**HAPTIC** (**HA**Proxy **T**emplate **I**ngress **C**ontroller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
+**HAPTIC** (**HAP**roxy **T**emplate **I**ngress **C**ontroller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them through the HAPTIC agent in each HAProxy pod.
 
 > **Documentation**: <https://haproxy-haptic.org/>
 
@@ -25,7 +25,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 - **Rich template context** - Access any Kubernetes resource, fetch external data via HTTP, and use controller state in your templates
 - **Everything is templatable** - Generate not just `haproxy.cfg` but also map files, SSL certificates, CRT-lists, and custom auxiliary files
 
-### Production Ready
+### Validation and operations
 
 - **High availability** - Leader election with automatic failover
 - **Layered validation** - Admission webhook, template validation, and tests you can run in CI before anything reaches a cluster
@@ -37,7 +37,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.3
 ```
 
-The chart ships with [template libraries](https://haproxy-haptic.org/docs/dev/template-libraries/) for Kubernetes Ingress and Gateway API enabled by default — standard routing works immediately without any template configuration.
+The chart ships with [template libraries](https://haproxy-haptic.org/docs/dev/template-libraries/) for Kubernetes Ingress and Gateway API enabled by default. Use them for standard routing, or extend them with your own templates.
 
 For complete setup instructions including HAProxy pod deployment, see the [Getting Started](https://haproxy-haptic.org/docs/dev/getting-started/) guide.
 
@@ -55,20 +55,16 @@ make test
 # Run integration tests (requires kind cluster)
 make test-integration
 
-# Run upstream Gateway API conformance suite (requires `make test-e2e` cluster).
-# Imports sigs.k8s.io/gateway-api/conformance as a Go library.
+# Run Gateway API conformance (requires the test-e2e cluster)
 make test-gateway-conformance
 
-# Run upstream Kubernetes Ingress conformance suite (requires `make test-e2e` cluster).
-# Builds the upstream binary from a pinned `git clone` of
-# kubernetes-sigs/ingress-controller-conformance. Note: upstream is
-# dormant (last commit 2023-08-28); we pin the SHA and do not auto-follow.
+# Run Ingress conformance (requires the test-e2e cluster)
 make test-ingress-conformance
 
 # Run linting checks
 make lint
 
-# Run all checks (tests + linting)
+# Run tests, linting, and security checks
 make check-all
 
 # Build Docker image
@@ -148,5 +144,5 @@ Copyright 2025 Philipp Hossner
 This project builds on open source software:
 
 - [Kubernetes client-go](https://github.com/kubernetes/client-go) - Kubernetes API client library
-- [HAProxy client-native](https://github.com/haproxytech/client-native) - HAProxy Dataplane API client
+- [HAProxy client-native](https://github.com/haproxytech/client-native) - HAProxy models and parsing used by the playground and test oracles
 - [Scriggo](https://scriggo.com/) - Go-native templating engine

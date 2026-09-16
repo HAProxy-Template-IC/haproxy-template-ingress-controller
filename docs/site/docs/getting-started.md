@@ -13,118 +13,23 @@ This guide installs HAPTIC and shows it turning an Ingress into a live HAProxy c
 - Install the controller and HAProxy with Helm
 - Point an Ingress at HAPTIC and inspect the config it generates
 
-Installing takes a few minutes on a local Kubernetes cluster. The sample-app walkthrough that follows is optional.
+The sample-app walkthrough is optional.
 
-Want a taste first? This is a complete, minimal HAPTIC config rendering an Ingress
-into an HAProxy config — in your browser, no install. Click **Run live**, then edit
-the template or the Ingress and watch the output change.
+Try the bundled Ingress configuration in your browser. Click **Run live**, then
+edit the sample Ingress resources to see the generated backends and routing maps.
 
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="14-15" data-controls="tabs,resources" data-title="An Ingress becomes an HAProxy config" data-height="480">
-
-```yaml
-# One HAProxy backend per Ingress, routed by host. Typed field access —
-# the schema is bundled, so no dig() needed. Edit this, or the Ingress, and watch the output.
-haproxyConfig:
-  template: |
-    global
-      log stdout format raw local0
-
-    defaults
-      mode http
-      timeout connect 5s
-      timeout client 30s
-      timeout server 30s
-
-    frontend http
-      bind :80
-      use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
-      default_backend unmatched
-    {%- for _, ing := range resources.ingresses.List() %}
-    {%- for _, rule := range ing.spec.rules %}
-    {%- for _, path := range rule.http.paths %}
-    backend {{ ing.metadata.name }}
-      server app {{ path.backend.service.name }}:{{ path.backend.service.port.number | fallback(80) }}
-    {%- end %}
-    {%- end %}
-    {%- end %}
-
-    backend unmatched
-      http-request deny deny_status 404
-
-watchedResources:
-  ingresses:
-    apiVersion: networking.k8s.io/v1
-    resources: ingresses
-    indexBy:
-      - metadata.name
-
-maps:
-  host.map:
-    template: |
-      {%- for _, ing := range resources.ingresses.List() %}
-      {%- for _, rule := range ing.spec.rules %}
-      {{ rule.host }} {{ ing.metadata.name }}
-      {%- end %}
-      {%- end %}
-```
-
-```yaml
-# The Ingress the config renders. Add another, or change the host or service.
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: shop
-spec:
-  rules:
-    - host: shop.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: shop
-                port:
-                  number: 8080
-```
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress resources become an HAProxy config" data-height="480">
 
 </div>
 
-The playground accepts this bare `spec` content directly; on a cluster the same
-blocks nest under `spec` of the `HAProxyTemplateConfig` custom resource:
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: haptic-config
-  namespace: haptic
-spec:
-  credentialsSecretRef:        # agent credentials Secret
-    name: haptic-credentials
-  podSelector:                 # which HAProxy pods receive the config
-    matchLabels:
-      app.kubernetes.io/component: loadbalancer
-  haproxyConfig:
-    template: |
-      # ... as above ...
-  watchedResources:
-    # ... as above ...
-  maps:
-    # ... as above ...
-```
-
-The Helm chart installs a complete resource of this shape for you; see
-the [CRD Reference](./crd-reference.md) for every field.
-
 ## Prerequisites
 
-- Kubernetes cluster (1.21+) - kind, minikube, or cloud provider
+- Kubernetes 1.33+ cluster, as required by the Helm chart
 - kubectl configured to access your cluster
 - Helm 3.8+ (the `oci://` chart reference below needs OCI registry support, generally available since Helm 3.8)
 
 !!! note "Webhook validation"
-    A validating admission webhook is **enabled by default and works out of the box** — it rejects Ingress, HTTPRoute, and GRPCRoute changes that would break template rendering, using a self-signed certificate the chart issues itself (no cert-manager required). For rotation and certificate alternatives, see [Webhook certificates](./ssl-certificates.md#webhook-certificates).
+    The admission webhook is enabled by default. It rejects Ingress, HTTPRoute, and GRPCRoute changes that fail validation. The chart issues its certificate; cert-manager is optional. For rotation and certificate alternatives, see [Webhook certificates](./ssl-certificates.md#webhook-certificates).
 
 ## Install with Helm
 
@@ -159,16 +64,16 @@ kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer
 You should see two controller pods (the chart defaults to two replicas with leader election) and two HAProxy pods, all in `Running` state with full readiness (`2/2` and `4/4`). The controller pod runs the controller plus its validator sidecar; each HAProxy pod runs `haproxy`, the HAPTIC agent, the SPOA hub, and the Vector log/metrics sidecar.
 
 !!! note "HAProxy version"
-    The chart defaults to HAProxy 3.4, the latest Long-Term Support (LTS) release. To pin a different series, set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for the full list and support status.
+    The chart defaults to HAProxy 3.4. To pin a different series, set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for the full list and support status.
 
 ## HAPTIC is running
 
-That's the whole install. HAPTIC now watches Ingress and Gateway API resources with a production-ready default configuration — **no templating required**:
+The bundled libraries handle Ingress and Gateway API routing without custom templates:
 
-- **Ingress** — any Ingress with `ingressClassName: haptic` is picked up automatically. HAPTIC's native [`haproxy-haptic.org/*` annotation library](./libraries/haptic-annotations.md) is on by default — a best-of-breed vocabulary covering timeouts, TLS, authentication, CORS, rate-limiting, redirects, canary routing, and more. The vendor annotation libraries ([HAProxy Technologies](./libraries/haproxytech.md), [haproxy-ingress](./libraries/haproxy-ingress.md), [ingress-nginx](./libraries/nginx-ingress.md)) are opt-in aids for migrating from those controllers. See the [Ingress library](./libraries/ingress.md).
+- **Ingress** — any Ingress with `ingressClassName: haptic` is picked up automatically. HAPTIC's native [`haproxy-haptic.org/*` annotation library](./libraries/haptic-annotations.md) is on by default — covering timeouts, TLS, authentication, CORS, rate-limiting, redirects, canary routing, and more. The vendor annotation libraries ([HAProxy Technologies](./libraries/haproxytech.md), [haproxy-ingress](./libraries/haproxy-ingress.md), [ingress-nginx](./libraries/nginx-ingress.md)) are opt-in aids for migrating from those controllers. See the [Ingress library](./libraries/ingress.md).
 - **Gateway API** — create a `Gateway` with `gatewayClassName: haptic` and attach `HTTPRoute` resources; see the [Gateway library](./libraries/gateway.md) and [GatewayClass setup](./gateway-class.md).
 
-Point your existing resources at HAPTIC and they route immediately. You only reach for [templating](./templating.md) to go beyond what these libraries already do.
+Select HAPTIC's class on your routing resources and ensure their backend Services have ready endpoints. Install the Gateway API CRDs before creating Gateways or routes; see [GatewayClass setup](./gateway-class.md).
 
 ## Optional walkthrough: route a sample app
 
@@ -253,7 +158,7 @@ Save as `echo-ingress.yaml` and apply:
 kubectl apply -f echo-ingress.yaml
 ```
 
-The controller automatically detects this new Ingress, renders the HAProxy configuration, validates it, and deploys it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
+The controller detects the Ingress, renders the HAProxy configuration, and deploys it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
 
 !!! tip "TLS for a host"
     This Ingress is already served over both HTTP and HTTPS. HTTPS uses the chart's [default certificate](./ssl-certificates.md) — a self-signed cert out of the box — which HAPTIC binds on the https port for every Ingress, no `spec.tls` required. To present a host-specific certificate instead of the default, add a `spec.tls` entry backed by a `kubernetes.io/tls` Secret; to serve plain HTTP only, turn off the default HTTPS bind. See [Ingress library — TLS configuration](./libraries/ingress.md#tls-configuration) for both.
@@ -274,11 +179,11 @@ At the default `info` log level, each change produces a single consolidated `Rec
 level=INFO msg=Reconciliation trigger=resource_change instances=2/2 reloads=2 ops=30 render_ms=1 validate_ms=1 deploy_ms=184 total_ms=289 backend_create=2 server_create=20 server_update=8 map_update=6
 ```
 
-It reports the trigger, how many HAProxy instances were updated (`instances`), the reloads and runtime operations applied (with a per-operation breakdown such as `backend_create` / `server_create`), and per-phase timings. The `pod_*` and `agent_*` fields split `deploy_ms` for the slowest instance: reading the agent's state, composing the change, waiting for the plan blob's encoding, the apply round trip and the bytes it uploaded, and how long the agent spent receiving the files, writing them, and running the runtime commands or reload. For the individual stages — the resource change, template render, validation, and per-instance deploy — raise the controller to the `debug` level (see [Enable debug logging](./troubleshooting.md#enable-debug-logging)).
+The summary reports the trigger, updated instances, reloads, runtime operations, and phase timings. For individual stages, [enable debug logging](./troubleshooting.md#enable-debug-logging).
 
 #### Inspect the rendered HAProxy configuration
 
-The controller writes the rendered HAProxy config to a read-only `HAProxyCfg` resource on every reconciliation, so you can inspect exactly what it deployed straight from the Kubernetes API — no pod access needed:
+Inspect the rendered configuration in the controller-managed `HAProxyCfg` resource:
 
 ```bash
 kubectl describe haproxycfg -n haptic
@@ -291,13 +196,13 @@ You should see:
 - Server entries pointing to the echo pod endpoints
 
 !!! note "Output vs input"
-    `HAProxyCfg` (singular `haproxycfg`, short name `hpcfg`) is the controller's *output* — it republishes it from the templates whenever the rendered configuration changes, so editing it directly has no lasting effect and isn't advised: the next config change overwrites your edit. To change the configuration, edit the *input* instead — the templates, watched resources, and `dataplane` settings in `HAProxyTemplateConfig` (short names `htplcfg`, `haptpl`). Use `kubectl describe` rather than `kubectl get -o yaml`, since the latter renders multiline configs as literal `\n`.
+    `HAProxyCfg` is controller output. To change the configuration durably, update `controller.config` in your Helm values and upgrade the release. Editing the output doesn't change the templates. The rendered config alone doesn't confirm that every pod has applied it; check deployment status and test the route.
 
 ### Test the routing
 
 #### Port-forward to HAProxy
 
-HAProxy is running inside the cluster and isn't directly reachable from your machine. Port-forward creates a temporary tunnel from your local port to the HAProxy service:
+Use a port-forward to reach HAProxy locally:
 
 ```bash
 kubectl port-forward -n haptic svc/haptic-haproxy 8080:80
@@ -315,7 +220,7 @@ The echo server echoes back the request it saw. Repeat the request a few times t
 
 ## What's happening behind the scenes
 
-When you created the Ingress, the controller detected the change via the Kubernetes watch API and rendered the templates from the default HAProxyTemplateConfig with your Ingress data. It then decided, per pod, what the change needs: a map or server update runs on the live worker, and only a change to the configuration's structure reloads. The agent in each HAProxy pod wrote the files and ran what it was told, in parallel across the fleet — typically completing the whole cycle in under 1 second. For the full pipeline, see the [Architecture Overview](./development/design/architecture-overview.md).
+The admission webhook validates the proposed Ingress before Kubernetes stores it. The controller then renders the templates and sends each HAProxy pod the changes it needs. The agent applies supported changes at runtime and reloads for structural changes. See the [Architecture Overview](./development/design/architecture-overview.md).
 
 ## Next steps
 
@@ -329,16 +234,15 @@ The default [template libraries](template-libraries.md) already handle path-base
 ### Replacing another Ingress controller?
 
 See [Migrating to HAPTIC](./migrating.md)
-for the zero-downtime, one-Ingress-at-a-time cutover — and the three settings
-that silently break a migration if you miss them.
+for the cutover procedure and compatibility checks.
 
 ### Customize the configuration
 
-The running configuration is the HAProxyTemplateConfig resource Helm created — `kubectl edit haproxytemplateconfig -n haptic haptic-config` — and the [CRD Reference](./crd-reference.md) documents every field.
+Put configuration changes under `controller.config` in your Helm values and [upgrade the release](./deploying-with-helm.md#upgrading). The [CRD Reference](./crd-reference.md) documents the fields.
 
 ### Watch additional resources
 
-Extend the controller to watch EndpointSlices, Secrets, ConfigMaps, or your own CRDs — see [Watching Resources](./watching-resources.md).
+Add watches for ConfigMaps or your own CRDs — see [Watching Resources](./watching-resources.md).
 
 ### Extend with templates (advanced)
 
@@ -360,22 +264,30 @@ For detailed diagnosis steps, see the [Troubleshooting Guide](./troubleshooting.
 
 ## Clean up
 
-Remove all resources created in this guide:
+Remove the sample app if you deployed it:
 
 ```bash
-# Remove Ingress and echo application
 kubectl delete ingress echo-ingress -n default
 kubectl delete deployment echo -n default
 kubectl delete service echo -n default
+```
 
-# Uninstall HAPTIC (removes controller, HAProxy, and all related resources)
+To remove the HAPTIC installation used in this guide:
+
+```bash
 helm uninstall haptic -n haptic
+```
 
-# Remove namespace
+Delete the namespace only if it contains nothing else you need:
+
+```bash
 kubectl delete namespace haptic
+```
 
-# Remove CRDs (optional). The chart installs six — keep them in place if you plan
-# to reinstall, otherwise delete all six so the API group disappears cleanly.
+Helm retains the CRDs. If no other HAPTIC installation uses them, you can remove
+them and all remaining instances of those resources:
+
+```bash
 kubectl delete crd \
   haproxytemplateconfigs.haproxy-haptic.org \
   haproxytemplatelibraries.haproxy-haptic.org \

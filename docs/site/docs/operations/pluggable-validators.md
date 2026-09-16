@@ -2,52 +2,26 @@
 
 ## Overview
 
-You declare one or more validator sidecars in `spec.validators`, each pointing at a Unix domain socket inside the controller pod and listing file glob patterns. On every pipeline invocation, the controller routes each rendered file to every validator whose globs match. An error blocks publication and deployment. For admission requests, line-numbered diagnostics also appear in the admission response, so `kubectl apply` identifies the offending row.
+You declare one or more validator sidecars in `spec.validators`, each pointing at a Unix domain socket inside the controller pod and listing file glob patterns. Before publication or deployment, the controller sends each rendered file to every validator whose globs match. An error blocks publication and deployment. For admission requests, line-numbered diagnostic logs also appear in the admission response, so `kubectl apply` identifies the offending row.
 
-**Why this exists:** HAPTIC's shared pipeline catches template, HAProxy syntax, schema, and HAProxy semantic errors, but rendered auxiliary files can contain payloads that HAProxy doesn't interpret. Examples include Coraza Web Application Firewall (WAF) directives for the Stream Processing Offload Agent (SPOA) hub and OpenID Connect (OIDC) configuration. A typo like `SecResquestBodyAccess On` must fail before that file is published. Pluggable validators add the payload-specific gate to every render path.
-
-The validator on the other side of the socket is an **opaque program** as far as the controller is concerned: it speaks the [validator wire protocol](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/development/validator-protocol.md) and returns diagnostics. What it does internally — whether it has plugins, how it dispatches files, how it parses content — is its own concern. This page is about how operators declare and run validators; the wire protocol itself is the reference for anyone implementing a new one.
-
-## When to use this
-
-Enable pluggable validators when your templates render any file whose contents the validator program understands:
-
-- **SPOA hub TOML configs** with Coraza WAF directives, OIDC single sign-on configs, etc. (validator: `haproxy-spoa-hub --validate-socket`).
-- **Future** specialised validators (custom map-file linter, gateway-config validator, etc.) — anything that conforms to the wire protocol can plug in.
-
-Skip this feature if your templates only produce HAProxy config — the core HAProxy syntax dry-run already catches everything that matters in that case.
+HAProxy doesn't interpret every auxiliary file. For example, the SPOA hub
+validator checks its TOML configuration and embedded WAF directives. The
+controller sends matching files over a Unix socket and uses the returned
+diagnostic logs. Implementations follow the
+[validator wire protocol](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/development/validator-protocol.md).
 
 ## How it works
 
-```text
-Watched resource, config, HTTP content, or drift trigger
-        │
-        ▼
-HAPTIC shared render-validation pipeline
-        │
-        ▼
-Controller renders the proposed state → produces a set of
-{path, content} files (haproxy.cfg + auxiliary files).
-        │
-        ▼
-For each rendered file: match the file's path against every
-configured validator's `files` globs. Files that match are sent
-to that validator (one file per request frame, in parallel).
-        │  (length-prefixed JSON over Unix socket; protocol details:
-        │   docs/development/validator-protocol.md)
-        ▼
-Validators return per-file diagnostics with line numbers.
-        │
-        ▼
-Pipeline aggregates warnings and errors:
-  - result=valid     → continue to publication/deployment.
-  - result=warning   → continue and record warnings; admission also
-                       populates AdmissionResponse.Warnings.
-  - result=error     → stop before publication/deployment; admission
-                       denies the request with formatted diagnostics.
-```
+Each sidecar receives matching files over a Unix socket shared through an
+`emptyDir` volume. It returns diagnostics for the controller to aggregate:
 
-The sidecar runs in the controller pod alongside the controller container. The two share a Unix domain socket via an `emptyDir` volume — no network exposure, no firewall rules.
+- **Valid:** continue.
+- **Warning:** continue and include warnings in admission responses.
+- **Error:** stop publication and deployment, and deny admission requests.
+
+Use these validators for auxiliary formats such as SPOA hub TOML, including
+Coraza WAF and OpenID Connect (OIDC) settings. HAProxy configuration itself is
+checked by `haproxy -c`.
 
 ## Configuration
 
@@ -71,12 +45,12 @@ spec:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | yes | RFC 1123 label, unique across the array. Surfaces in diagnostics so operators can identify which validator rejected a render. |
+| `name` | yes | RFC 1123 label, unique across the array. Surfaces in diagnostic logs so operators can identify which validator rejected a render. |
 | `socketPath` | yes | Absolute path inside the controller pod to the validator's Unix domain socket. The chart-rendered shared `emptyDir` mounts at `/var/run/haptic-validators/`. |
 | `files` | yes | List of glob patterns matched against rendered file paths to decide which files to send to this validator. Patterns follow Go's `path/filepath.Match` rules and must use the same relative or absolute form as the rendered path. Malformed patterns are rejected during config validation. At least one entry is required. |
 | `dataFiles` | no | Glob patterns for files this validator needs in order to check the files it validates, but must not validate on its own. Every match is attached to **every** request sent to this validator, marked `kind: "data"`, in the same frame as the config file. A file matching both `files` and `dataFiles` is treated as data. Same glob rules as `files`. |
 | `timeoutMs` | no | Per-call deadline in milliseconds covering one (file, validator) round-trip (acquire + write + read). Defaults to 5000. Range: 1–60000. |
-| `maxConnections` | no | Cap on the controller's connection pool to this validator. Defaults to 4. Range: 1–32. The pool is adaptive: it starts small (one idle connection), grows on contention up to this cap, and shrinks back when traffic dies down. |
+| `maxConnections` | no | Cap on the controller's connection pool to this validator. Defaults to 4. Range: 1–32. Connections open on demand and close after an idle period. |
 
 ### Routing examples
 
@@ -98,7 +72,7 @@ Two validators can claim overlapping globs:
   files: ["/etc/haproxy-spoa-hub/*.toml"]
 ```
 
-The `config.toml` file matches both globs, so it's sent to both validators in parallel; their diagnostics are aggregated. (This is unusual but supported — useful when you want a fast structural check alongside a slow deep semantic check.)
+The `config.toml` file is sent to both validators in parallel, and their diagnostics are combined.
 
 A file that matches no validator's globs isn't validated by any sidecar; it still flows through the existing template + HAProxy syntax dry-run.
 
@@ -140,7 +114,7 @@ Validators return one of three outcomes per file. The pipeline maps them as foll
 | `warning` | Continue and record the warning count | `kubectl apply` prints each warning as a soft warning. |
 | `error` | Stop before publication or deployment | `kubectl apply` prints the formatted errors and rejects the resource. |
 
-When multiple validators check the same file (or different files), all their diagnostics are aggregated. The aggregate `result` is computed the same way: any error wins; any warning without errors wins; otherwise valid.
+When multiple validators check the same file (or different files), all their diagnostic logs are aggregated. The aggregate `result` is computed the same way: any error wins; any warning without errors wins; otherwise valid.
 
 ### `/healthz` integration
 
@@ -159,24 +133,13 @@ The controller's `/healthz` endpoint stat()s and then briefly dials every config
 }
 ```
 
-Configure the controller's liveness probe to hit `/healthz` so a stuck validator triggers a pod restart (the chart does this by default). Both containers share the pod lifecycle: when the validator crashes hard, Kubernetes restarts the pod, the sidecar comes back, and admission flows resume.
+The chart probes the controller at `/healthz`. Repeated liveness failures restart the controller container. Kubernetes restarts a crashed validator container separately; a controller restart doesn't restart the validator. Check both containers when diagnosing a persistent socket failure.
 
 ### Validation execution
 
-Built-in HAProxy validation and every configured protocol-v1 validator execute
-on every applicable invocation, even when the rendered bytes match an earlier
-request. Persistent connections are reused only as transport; they don't reuse
-a verdict.
-
-Exact bytes don't identify the environment that judged them. HAProxy, its
-executor, or a sidecar can change while the controller stays alive. Future
-verdict reuse requires all the following:
-
-- An authenticated hermetic-environment root obtained through a `linearizable` lookup.
-- Coverage of the executable, configuration, dependencies, and runtime generation.
-- An exact canonical input witness covering the complete request.
-- Defensive copies both when a response is stored and when it's returned.
-- Fail-closed handling for cancelled, partial, missing, stale, or otherwise incomplete observations.
+Each matching protocol-v1 validator receives a request on every applicable
+validation run, including repeated output. Persistent connections reuse
+transport, not validation results.
 
 ### Connection pooling and parallelism
 
@@ -194,7 +157,7 @@ For a typical webhook call with one validator and a handful of matched files, th
 | Validator returns an error response | The pipeline fails with the validator's message and row + column. |
 | Validator returns a warning response | The pipeline continues. Admission surfaces the warning through `AdmissionResponse.Warnings`. |
 | Validator times out | The pipeline fails with `validator <name>: validation timed out after Ns`. |
-| Validator returns garbage, a wrong `protocol_version`, or a `result` that disagrees with its diagnostics | The pipeline fails with a protocol error identifying the validator. The next pipeline invocation calls the validator again. |
+| Validator returns garbage, a wrong `protocol_version`, or a `result` that disagrees with its diagnostic logs | The pipeline fails with a protocol error identifying the validator. The next pipeline invocation calls the validator again. |
 | Validator panics mid-validation | The sidecar returns a synthetic error diagnostic and continues serving subsequent requests. The current render fails. |
 | Idle-closed connection on first reuse | Transparently reconnected and retried once. The operator sees no failure. |
 
@@ -240,7 +203,7 @@ Any program that conforms to the [wire protocol](https://gitlab.com/haproxy-hapt
 1. Listen on a Unix domain socket at the configured path.
 2. Accept multiple concurrent persistent connections.
 3. On each connection, loop on read-frame / process / write-response until the client closes or the connection goes idle.
-4. Reply with a length-prefixed JSON response carrying line-numbered diagnostics.
+4. Reply with a length-prefixed JSON response carrying line-numbered diagnostic logs.
 
 See [`development/validator-protocol.md`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/development/validator-protocol.md) for the full schema, error semantics, and an end-to-end worked example.
 
@@ -248,7 +211,7 @@ See [`development/validator-protocol.md`](https://gitlab.com/haproxy-haptic/hapt
 
 **Admission denied with `connect: no such file or directory`.** The validator sidecar isn't running, or its socket path doesn't match the controller's `spec.validators[i].socketPath`. Check `kubectl logs <controller-pod> -c <validator-container>` and verify the socket path in `values.yaml` matches the path your validator binary actually opens.
 
-**Admission denied with `unknown directive "..."` or similar specific errors.** This is the feature working — the validator caught a broken config in a rendered file. The diagnostic carries the row + column; use that to find the offending Ingress annotation.
+**Admission denied with `unknown directive "..."`.** Use the reported row and column to locate the invalid directive and fix the annotation or template that emits it.
 
 **Admission denied with `validation timed out after 5s`.** The validator is too slow on this file. First, check the validator container's logs for the panic / hang. If the slowness is real (very large Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) bundle, slow regex compile), bump `spec.validators[i].timeoutMs` to a higher value (max 60000).
 
@@ -256,7 +219,7 @@ See [`development/validator-protocol.md`](https://gitlab.com/haproxy-haptic/hapt
 
 **The validator is called again for unchanged files.** This is required for protocol v1. The protocol doesn't authenticate the live validator runtime, so HAPTIC can't safely reuse an earlier response. The persistent connection pool and parallel dispatch reduce the round-trip cost.
 
-**Latency spikes after a long quiet period.** The connection pool reaps idle connections to free file descriptors. The first admission after a quiet stretch may pay one extra connect. If this is a problem, bump `spec.validators[i].maxConnections` so the pool keeps a warmer set of connections (each gets the same idle close — they're just less likely to all be reaped simultaneously).
+**Latency spikes after a long quiet period.** Idle connections close after about 30 seconds. The next call opens a new connection. Raising `maxConnections` increases concurrency but doesn't keep idle connections open.
 
 ## See also
 

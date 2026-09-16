@@ -1,45 +1,31 @@
 # Key design decisions
 
-This page summarizes the standing architectural choices: what was decided and
-why it holds, one screen per decision. Point-in-time decisions with full
-context, alternatives, and "don't re-suggest" guards live in the
-Architecture Decision Records (published under *Development → Architecture
-Decision Records*); each summary links the governing Architecture Decision Record (ADR) where one exists.
-Mechanism detail — API surfaces, metric catalogues, event-type lists — lives
-in the package READMEs referenced below, not here.
+This page summarizes the current architecture. The linked Architecture Decision
+Records (ADRs) explain the alternatives and tradeoffs.
 
 ## Configuration validation strategy
 
-**Decision**: Validate rendered configs in-process with three phases —
-client-native syntax parse, OpenAPI schema check, `haproxy -c` semantic
-check — instead of running a validation sidecar.
+**Decision**: Let HAProxy validate its own configuration. Production binaries
+contain no HAProxy configuration parser or Dataplane API schema validator.
 
-The parse phase takes ~10 ms and the binary check ~50–100 ms, so full
-validation fits inside the reconciliation hot path. There is no sidecar to
-build, schedule, or keep version-matched with the controller, and the
-verdict still comes from a real `haproxy -c` run. Two content-addressed
-caches (a controller-side checksum cache and a dataplane-level
-`(configHash, auxHash, versionHash)` cache) let drift-prevention cycles
-short-circuit before any file is written; failures are never cached.
+Admission and configuration loading run `haproxy -c` synchronously.
+Reconciliation runs that check in the asynchronous render gate; a refusal holds
+subsequent renders until one passes. Each pod's HAProxy binary must also accept
+a reload. Configured auxiliary-file validators run before dispatch.
 
-Implementation: `pkg/dataplane/validator.go` (plus `validate_syntax.go` /
-`validate_schema.go` / `validate_haproxy.go`), wrapped by
-`pkg/controller/validation.ValidationService`. Two operational facts worth
-knowing: the validation paths under the CRD's `spec.dataplane` must match
-the paths the agent writes on the pod, and `haproxy -c`
-invocations are serialized process-wide because concurrent runs interfere
-with each other even when their temp directories are isolated.
+[ADR-0022](../adr/0022-haptic-agent.md) defines these paths and the recovery
+behavior. See [Pluggable validators](../../operations/pluggable-validators.md)
+for auxiliary-file validation.
 
 ## Template engine selection
 
 **Decision**: Use Scriggo (consumed via the `gitlab.com/haproxy-haptic/scriggo`
 fork) as the template engine.
 
-Scriggo is pure Go with Go-like template syntax, and ships control flow,
-macros, and template inheritance without extra dependencies. The decisive
-feature is its custom file-system support: include paths resolve at render
-time, which is what makes the `render_glob` extension-point pattern — and
-with it the whole chart library architecture — possible.
+Scriggo provides Go-like control flow, macros, and template inheritance in a
+Go library. Its virtual filesystem lets HAPTIC compile named snippets into one
+program. HAPTIC's `render_glob` extension includes snippets matching a pattern,
+which supports the chart's extension points.
 
 Related: [ADR-0010](../adr/0010-typed-watched-resources.md) records the
 follow-on decision to expose watched resources as typed top-level globals
@@ -62,15 +48,12 @@ project informer bodies down to metadata to bound memory.
 
 ## Concurrency model
 
-**Decision**: Goroutines and channels with structured concurrency — every
-component runs a `Start(ctx)` loop, lifecycles compose via `errgroup`, and
-`context.Context` propagates through every call chain.
+**Decision**: Use goroutines and channels for concurrent components, with
+cancellable contexts managed by the lifecycle registry.
 
-Event processing uses buffered channels with debouncing at the watcher
-layer; deployment fans out to HAProxy instances through bounded worker
-pools; cancellation reaches every operation because contexts are passed,
-not recreated. Shutdown publishes a shutdown event, cancels the component
-context, and waits for the errgroup with a timeout.
+Watchers debounce resource events. Deployment uses bounded per-pod concurrency.
+Components and blocking operations receive contexts so shutdown can cancel
+work and wait for it to finish.
 
 ## Observability Integration
 
@@ -79,39 +62,33 @@ event correlation via the Event Commentator (see
 [below](#event-commentator-pattern)). Distributed tracing is out of scope —
 the controller emits no OpenTelemetry spans.
 
-The event stream already carries every state transition, so observability
-subscribes to it instead of instrumenting business logic: a metrics event
-adapter (`pkg/controller/metrics`) updates an instance-based Prometheus
-registry, and the commentator produces correlated log lines. If end-to-end
-trace correlation is ever needed, an OTel exporter would be one more
-subscriber on the same stream. The metric catalogue lives in
-`pkg/controller/metrics/README.md`; `metrics.go` in that package is the
-authoritative list.
+The metrics adapter (`pkg/controller/metrics`) observes domain events and updates
+Prometheus counters and histograms. The commentator groups related events into
+log messages. See `pkg/controller/metrics/README.md` for the metric catalog.
+HAProxy request tracing is separate: the chart can export spans from access logs
+through Vector.
 
 ## Error handling strategy
 
 **Decision**: Wrapped errors (`fmt.Errorf` + `%w`) with a small set of
 custom error types at package boundaries.
 
-`pkg/dataplane` defines `*ValidationError` (carrying the failed phase:
-syntax / schema / semantic) and `*ParseError`; `pkg/templating` defines
-`*RenderError`, `*CompilationError`, `*RenderTimeoutError`, and
-`*TemplateNotFoundError`. Every type carries a cause and implements
-`Unwrap()`, so `errors.Is` / `errors.As` chains work end to end and callers
-can branch on failure mode without string matching.
+`pkg/dataplane.ValidationError` identifies the failed validation phase;
+`pkg/controller/pipeline.PipelineError` identifies the failed pipeline stage.
+Template errors distinguish compilation, rendering, timeouts, and missing
+templates. Callers use `errors.Is` and `errors.As` to inspect wrapped causes.
 
 ## Event-driven architecture
 
 **Decision**: Components coordinate through a homegrown EventBus
 (`pkg/events`): async pub/sub, scatter-gather requests, pre-start
-buffering, and a Pause/Resume hook for leadership transitions. Business
+buffering, and subscriptions scoped to leadership. Business
 logic lives in pure libraries (`pkg/templating`, `pkg/dataplane`,
 `pkg/k8s`) with no event dependencies; only `pkg/controller` contains event
 adapters.
 
 Decoupling is the point: publishers don't know their consumers, new
-features subscribe to existing events, and the full event stream doubles as
-a system-wide audit trail. Pure libraries stay testable without event
+features subscribe to existing events, and observers can correlate events across components. Pure libraries stay testable without event
 infrastructure. The bus API surface (typed and lossy subscription variants,
 drop accounting, `Publish` semantics) is documented in
 `pkg/events/README.md`.
