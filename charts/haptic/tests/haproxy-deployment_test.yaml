@@ -702,3 +702,30 @@ tests:
             labelSelector:
               matchLabels:
                 app: haproxy
+
+  # Bootstrap-copy init containers must declare resources: a ResourceQuota'd
+  # namespace rejects the whole pod when any container omits requests/limits.
+  - it: vector-bootstrap-copy declares resources
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers
+          content:
+            name: vector-bootstrap-copy
+          any: true
+      - exists:
+          path: spec.template.spec.initContainers[?(@.name == 'vector-bootstrap-copy')].resources.requests.cpu
+      - exists:
+          path: spec.template.spec.initContainers[?(@.name == 'vector-bootstrap-copy')].resources.requests.memory
+      - exists:
+          path: spec.template.spec.initContainers[?(@.name == 'vector-bootstrap-copy')].resources.limits.memory
+
+  - it: spoa-hub-bootstrap-copy declares resources
+    set:
+      spoaHub.plugins.coraza.enabled: true
+    asserts:
+      - exists:
+          path: spec.template.spec.initContainers[?(@.name == 'spoa-hub-bootstrap-copy')].resources.requests.cpu
+      - exists:
+          path: spec.template.spec.initContainers[?(@.name == 'spoa-hub-bootstrap-copy')].resources.requests.memory
+      - exists:
+          path: spec.template.spec.initContainers[?(@.name == 'spoa-hub-bootstrap-copy')].resources.limits.memory

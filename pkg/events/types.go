@@ -61,6 +61,30 @@ type FanoutIsolatedEvent interface {
 	CloneForSubscriber() Event
 }
 
+// PreStartCoalescibleEvent lets the buffering bus (before Start(), or between
+// Pause() and Start()) keep ONE entry per PreStartCoalesceKey, merging a new
+// event into the buffered one instead of appending. A level-triggered stream —
+// many events, each meaning "re-read the store", published per change by an
+// undebounced watcher — can outrun MaxPreStartBufferSize on a large or busy
+// cluster, and dropping such an event is a critical failure that aborts the
+// controller iteration. Merging is bounded by the number of distinct keys and,
+// unlike CoalescibleEvent's skip-older semantics, loses nothing: CoalesceWith
+// combines both payloads, so delta payloads (counters) survive.
+//
+// The merged entry replays at the EARLIEST occurrence's buffer position.
+// Implement this only for events whose consumers read current state rather
+// than interpreting cross-event order.
+type PreStartCoalescibleEvent interface {
+	Event
+	// PreStartCoalesceKey groups mergeable events; only events whose keys are
+	// equal merge. Include every subject dimension in the key (e.g. the watched
+	// resource kind), or merging collapses subjects that must stay distinct.
+	PreStartCoalesceKey() string
+	// CoalesceWith returns one event carrying both payloads. prev is an
+	// earlier buffered event with the same key; the receiver is the newer one.
+	CoalesceWith(prev Event) Event
+}
+
 // CoalescibleEvent is an optional interface for events that support coalescing.
 // Events implementing this interface can be safely skipped when a newer event
 // of the same type is available in the queue.

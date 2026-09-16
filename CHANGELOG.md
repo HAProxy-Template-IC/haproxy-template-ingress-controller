@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Index-update events merge per watched kind while the event bus is buffering (startup and leadership transitions), so a large or busy cluster can no longer overflow the pre-start buffer and restart the controller iteration in a loop; the merged event carries the summed change counts.
+
 - Empty auxiliary files publish with an explicit `empty: true` declaration; missing or contradictory content remains invalid.
 - Playground presets contain complete configuration resources; the custom request-ID example validates header names and applies only to the annotated Ingress.
 - Agent state reads wait for startup recovery before publishing the deployment baseline.
@@ -85,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+- The vector and SPOA-hub bootstrap-copy init containers declare resources, so a ResourceQuota'd namespace no longer rejects the HAProxy pod.
 - Ingress templates compile when Gateway API and the SPOA hub are disabled.
 - Helm rejects disabling the shared Ingress annotation library while an annotation library still needs it.
 - The controller waits for its external validator to start before reconciling; generated self-signed certificates have a non-empty subject.

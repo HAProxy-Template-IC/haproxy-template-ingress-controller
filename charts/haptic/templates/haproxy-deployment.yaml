@@ -103,6 +103,14 @@ spec:
           args:
             - |
               cp /etc/vector-bootstrap/vector.yaml /etc/haproxy/general/vector.yaml
+          # A ResourceQuota'd namespace rejects the pod when any container
+          # omits requests/limits; sized for a one-file cp.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
           volumeMounts:
             - name: general-storage
               mountPath: /etc/haproxy/general
@@ -125,6 +133,14 @@ spec:
           args:
             - |
               cp /etc/spoa-hub-bootstrap/config.toml /etc/haproxy/general/spoa-hub-config.toml
+          # A ResourceQuota'd namespace rejects the pod when any container
+          # omits requests/limits; sized for a one-file cp.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
           volumeMounts:
             # general-storage (not haproxy-runtime) so the bootstrap
             # placeholder lands in the same volume the spoa-hub
