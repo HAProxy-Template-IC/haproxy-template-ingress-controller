@@ -431,7 +431,17 @@ Addresses are discovered from the controller's LoadBalancer Service. Once an add
 
 ### Degraded backend events
 
-An Ingress backend that references its Service port **by name** renders in a degraded shape while that Service is absent from the controller's store: the backend gets placeholder-only server slots and serves 503 until the Service appears. The render doesn't fail because an Ingress may legally be created before the Service it references — the base library resolves the missing reference to a port-less value and lets the backend converge on a later reconcile. That's correct during a propagation race — but a permanent Service-name typo looks exactly the same.
+An Ingress backend that references its Service port **by name** can arrive before
+its Service reaches the controller's store. The `kubernetes-backends` library
+preserves the requested name so an EndpointSlice can resolve it independently.
+Until either source resolves the port and supplies endpoints, the backend has no
+server lines and serves 503. The render continues so a propagation race doesn't
+block other routes. A permanent Service-name typo produces the same symptom.
+
+If the Service is present but lacks the requested port name, rendering fails and
+the error lists the available ports. Numeric references use the supplied number;
+an absent or invalid port reference fails. Resolution never silently substitutes
+port 80. Correct the reference to match the Service's declared port.
 
 To make the difference visible, the controller emits a `Warning` Event (reason `BackendUnresolved`) on each affected Ingress, in the Ingress's namespace. The Event names every unresolvable Service and port name, so a typo shows up in:
 
@@ -440,7 +450,7 @@ kubectl describe ingress <name>
 kubectl get events --field-selector reason=BackendUnresolved -A
 ```
 
-The Event exists only while the backend stays placeholder-only:
+The Event exists only while the backend stays unresolved:
 
 - When the Service appears (or an EndpointSlice that carries the named port arrives), the Event is deleted on the next reconcile.
 - Backends that already found real endpoints through an EndpointSlice never get an Event, even if the Service itself hasn't reached the store yet.

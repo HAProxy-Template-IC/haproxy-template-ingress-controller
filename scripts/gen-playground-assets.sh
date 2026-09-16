@@ -2,8 +2,7 @@
 # Generate the browser-playground's runtime assets (schema bundle + preset
 # configs/resources) into an output directory. These are build artifacts, not
 # committed — the shell (cmd/playground/web/) references them by relative path,
-# and CI regenerates them per release (see the browser-wasm-template-playground
-# OpenSpec change, Milestones 4/5).
+# and CI regenerates them per release.
 #
 # Each preset is one `helm template` render with a specific set of template
 # libraries enabled, so the config shown demonstrates exactly that library's

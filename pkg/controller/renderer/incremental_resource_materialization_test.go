@@ -284,27 +284,37 @@ func TestResourceMaterializationCannotCrossGeneration(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestNormalizeOwnedResourceMaterializationMatchesCodec(t *testing.T) {
-	values := []any{
-		nil, false, "value",
-		int(-1), int8(-2), int16(-3), int32(-4), int64(-5),
-		uint(1), uint8(2), uint16(3), uint32(4), uint64(math.MaxInt64), uint64(math.MaxUint64),
-		float32(0.1), float32(1), math.Copysign(0, -1), float64(1), float64(1.5), 1e-7, 1e20, 1e21,
-		map[string]any{"nested": []any{float32(2), uint64(math.MaxUint64)}},
+func TestResourceMaterializationNormalizesValues(t *testing.T) {
+	cases := []struct {
+		value any
+		want  any
+	}{
+		{nil, nil}, {false, false}, {"value", "value"},
+		{int(-1), int64(-1)}, {int8(-2), int64(-2)}, {int16(-3), int64(-3)},
+		{int32(-4), int64(-4)}, {int64(-5), int64(-5)},
+		{uint(1), int64(1)}, {uint8(2), int64(2)}, {uint16(3), int64(3)},
+		{uint32(4), int64(4)}, {uint64(math.MaxInt64), int64(math.MaxInt64)},
+		{uint64(math.MaxUint64), uint64(math.MaxUint64)},
+		{float32(0.1), float64(0.1)}, {float32(1), int64(1)},
+		{math.Copysign(0, -1), int64(0)}, {float64(1), int64(1)},
+		{float64(1.5), float64(1.5)}, {1e-7, 1e-7}, {1e20, 1e20}, {1e21, 1e21},
+		{
+			map[string]any{"nested": []any{float32(2), uint64(math.MaxUint64)}},
+			map[string]any{"nested": []any{int64(2), uint64(math.MaxUint64)}},
+		},
 	}
-	for index, value := range values {
-		encoded, err := encodeResourceValue(value)
-		require.NoError(t, err, "case %d", index)
-		want, err := decodeResourceValue(encoded)
-		require.NoError(t, err, "case %d", index)
-		owned := value
-		if index == len(values)-1 {
-			owned = map[string]any{"nested": []any{float32(2), uint64(math.MaxUint64)}}
+	for index, tc := range cases {
+		snapshot := &retainedResourceMaterializationSnapshot{
+			items: []any{map[string]any{"value": tc.value}},
 		}
-		visits := incrementalResourceMaterializationVisitSet{}
-		got, err := normalizeOwnedResourceMaterialization(owned, &visits, 0)
+		spec := resourceInputSpec{resourceType: "routes", scope: resourceInputList}
+		entry, supported, err := newIncrementalResourceMaterializationArena().ensure(t.Context(), snapshot, &spec)
 		require.NoError(t, err, "case %d", index)
-		assert.True(t, reflect.DeepEqual(want, got), "case %d: want %#v (%T), got %#v (%T)", index, want, want, got, got)
+		require.True(t, supported, "case %d", index)
+		items, err := entry.rawItems()
+		require.NoError(t, err, "case %d", index)
+		require.Len(t, items, 1, "case %d", index)
+		assert.Equal(t, tc.want, items[0].(map[string]any)["value"], "case %d", index)
 	}
 }
 

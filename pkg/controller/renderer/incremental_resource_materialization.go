@@ -18,10 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"reflect"
 	"slices"
-	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -32,10 +30,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
-
-var errIncrementalResourceMaterializationAlias = errors.New("incremental resource value contains shared mutable storage")
-
-const incrementalResourceMaterializationInlineVisits = 16
 
 type incrementalResourceMaterializationAuthority struct {
 	seal    atomic.Pointer[incrementalResourceMaterializationAuthority]
@@ -173,12 +167,6 @@ type incrementalResourceMaterializationProof struct {
 	projected    *incrementalResourceMaterializationProjectedState
 	source       stores.RevisionSource
 	sequence     uint64
-}
-
-type incrementalResourceMaterializationVisitSet struct {
-	small  [incrementalResourceMaterializationInlineVisits]resourceCodecVisit
-	count  int
-	values map[resourceCodecVisit]struct{}
 }
 
 func newIncrementalResourceMaterializationArena() *incrementalResourceMaterializationArena {
@@ -909,164 +897,4 @@ func decodeResourceMaterialization(
 		)
 	}
 	return input, canonical, nil
-}
-
-func normalizeOwnedResourceMaterialization(
-	value any,
-	seen *incrementalResourceMaterializationVisitSet,
-	depth int,
-) (any, error) {
-	if depth > resourceValueMaxDepth {
-		return nil, errors.New("resource value exceeds the maximum depth")
-	}
-	switch typed := value.(type) {
-	case nil, bool, string:
-		return typed, nil
-	case int:
-		return int64(typed), nil
-	case int8:
-		return int64(typed), nil
-	case int16:
-		return int64(typed), nil
-	case int32:
-		return int64(typed), nil
-	case int64:
-		return typed, nil
-	case uint:
-		return normalizeOwnedResourceUint(uint64(typed)), nil
-	case uint8:
-		return int64(typed), nil
-	case uint16:
-		return int64(typed), nil
-	case uint32:
-		return int64(typed), nil
-	case uint64:
-		return normalizeOwnedResourceUint(typed), nil
-	case float32:
-		return normalizeOwnedResourceFloat(float64(typed), 32)
-	case float64:
-		return normalizeOwnedResourceFloat(typed, 64)
-	case map[string]any:
-		return normalizeOwnedResourceMaterializationMap(typed, seen, depth)
-	case []any:
-		return normalizeOwnedResourceMaterializationList(typed, seen, depth)
-	default:
-		return nil, fmt.Errorf("resource value type %T is unavailable", value)
-	}
-}
-
-func normalizeOwnedResourceMaterializationMap(
-	value map[string]any,
-	seen *incrementalResourceMaterializationVisitSet,
-	depth int,
-) (any, error) {
-	if value == nil {
-		// A nil map normalizes to untyped nil so callers' == nil checks work.
-		var untyped any
-		return untyped, nil
-	}
-	if err := recordOwnedResourceMaterialization(reflect.ValueOf(value), seen); err != nil {
-		return nil, err
-	}
-	for key, item := range value {
-		normalized, err := normalizeOwnedResourceMaterialization(item, seen, depth+1)
-		if err != nil {
-			return nil, fmt.Errorf("resource map key %q: %w", key, err)
-		}
-		value[key] = normalized
-	}
-	return value, nil
-}
-
-func normalizeOwnedResourceMaterializationList(
-	value []any,
-	seen *incrementalResourceMaterializationVisitSet,
-	depth int,
-) (any, error) {
-	if value == nil {
-		// A nil list normalizes to untyped nil so callers' == nil checks work.
-		var untyped any
-		return untyped, nil
-	}
-	if err := recordOwnedResourceMaterialization(reflect.ValueOf(value), seen); err != nil {
-		return nil, err
-	}
-	for index, item := range value {
-		normalized, err := normalizeOwnedResourceMaterialization(item, seen, depth+1)
-		if err != nil {
-			return nil, fmt.Errorf("resource list index %d: %w", index, err)
-		}
-		value[index] = normalized
-	}
-	return value, nil
-}
-
-func normalizeOwnedResourceUint(value uint64) any {
-	if value <= math.MaxInt64 {
-		return int64(value)
-	}
-	return value
-}
-
-func normalizeOwnedResourceFloat(value float64, bits int) (any, error) {
-	format := byte('f')
-	absolute := math.Abs(value)
-	if absolute != 0 && (absolute < 1e-6 || absolute >= 1e21) {
-		format = 'e'
-	}
-	var storage [32]byte
-	encoded := strconv.AppendFloat(storage[:0], value, format, -1, bits)
-	text := string(encoded)
-	if format == 'f' && !slices.Contains(encoded, byte('.')) {
-		if integer, err := strconv.ParseInt(text, 10, 64); err == nil {
-			return integer, nil
-		}
-		if integer, err := strconv.ParseUint(text, 10, 64); err == nil {
-			return integer, nil
-		}
-	}
-	decimal, err := strconv.ParseFloat(text, 64)
-	if err != nil || math.IsNaN(decimal) || math.IsInf(decimal, 0) {
-		return nil, fmt.Errorf("invalid resource number %q", text)
-	}
-	return decimal, nil
-}
-
-func recordOwnedResourceMaterialization(
-	value reflect.Value,
-	seen *incrementalResourceMaterializationVisitSet,
-) error {
-	visit := resourceCodecVisit{kind: value.Kind(), pointer: value.Pointer()}
-	if !seen.add(visit) {
-		return errIncrementalResourceMaterializationAlias
-	}
-	return nil
-}
-
-func (s *incrementalResourceMaterializationVisitSet) add(visit resourceCodecVisit) bool {
-	if s.values != nil {
-		if _, exists := s.values[visit]; exists {
-			return false
-		}
-		s.values[visit] = struct{}{}
-		return true
-	}
-	for index := range s.count {
-		if s.small[index] == visit {
-			return false
-		}
-	}
-	if s.count < len(s.small) {
-		s.small[s.count] = visit
-		s.count++
-		return true
-	}
-	s.values = make(map[resourceCodecVisit]struct{}, len(s.small)*2)
-	for _, existing := range s.small {
-		s.values[existing] = struct{}{}
-	}
-	s.values[visit] = struct{}{}
-	s.small = [incrementalResourceMaterializationInlineVisits]resourceCodecVisit{}
-	s.count = 0
-	return true
 }

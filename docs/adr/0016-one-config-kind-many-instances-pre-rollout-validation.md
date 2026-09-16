@@ -322,8 +322,9 @@ image-embedded chart, fed the release's values.** All parts exist or are small:
 
 ### 4a. What replaces the webhook — two things, named
 
-Decision 4 removes one of **three** strict entry points (the normative SHALL in
-`openspec/specs/reconciliation-pipeline/spec.md` lists them); watched-resource
+Decision 4 removes one of **three** strict entry points listed in the
+[then-current reconciliation specification](https://gitlab.com/haproxy-haptic/haptic/-/blob/d3d7615ee40201061177d257c89dc02b001bb660/openspec/specs/reconciliation-pipeline/spec.md);
+watched-resource
 admission keeps rendering the full config and running `haproxy -c` on every
 Ingress create/update. What is genuinely lost is narrower, and each piece gets
 a replacement that does not depend on a per-object view of a multi-object

@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# test-templates.sh - Test HAProxy template libraries
-#
-# This script wraps the correct workflow for testing template libraries:
-# 1. Render merged HAProxyTemplateConfig using helm template
-# 2. Extract the HAProxyTemplateConfig resource with yq
-# 3. Pass to controller validate for testing
-#
-# This ensures you don't forget the helm template step when testing library changes.
+# Render config and library objects with Helm before validating their combined spec.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -72,9 +65,9 @@ Test HAProxy template libraries by rendering the merged Helm chart and running
 validation tests.
 
 This script automates the correct workflow:
-  1. helm template (with --api-versions for Gateway API)
-  2. yq to extract HAProxyTemplateConfig
-  3. controller validate to run tests
+  1. helm template to render the selected libraries
+  2. yq to extract HAProxyTemplateConfig and HAProxyTemplateLibrary objects
+  3. controller validate with offline schemas to run tests
 
 OPTIONS:
   --test NAME           Run specific test by name
@@ -296,6 +289,24 @@ fi
 echo -e "${YELLOW}Running validation tests...${NC}" >&2
 FULL_RC=0
 "$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@" || FULL_RC=$?
+
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
+    INGRESS_CONFIG=$(mktemp /tmp/haptic-ingress-without-hub-XXXXXX.yaml)
+    echo -e "${YELLOW}Validating Ingress with Gateway API and SPOA hub disabled...${NC}" >&2
+    if ! helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.gateway.enabled=false \
+        --set controller.templateLibraries.hapticAnnotations.enabled=true \
+        --set controller.templateLibraries.spoaHub.enabled=false \
+        --set spoaHub.enabled=false \
+        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
+        > "$INGRESS_CONFIG"; then
+        rm -f "$INGRESS_CONFIG"
+        exit 1
+    fi
+    "$CONTROLLER_BIN" validate --file "$INGRESS_CONFIG" "${SCHEMA_DIR_ARGS[@]}" \
+        --test test-ingress-duplicate-backend-different-ports || FULL_RC=$?
+    rm -f "$INGRESS_CONFIG"
+fi
 
 if ! single_test_requested "$@"; then
     # Access-log coverage invariant: every frontend the chart renders must carry a

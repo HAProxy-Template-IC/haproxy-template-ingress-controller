@@ -98,9 +98,9 @@ backend servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, testValidationPaths(t), false, nil)
 	if err != nil {
-		t.Fatalf("ValidateConfiguration() failed on valid config: %v", err)
+		t.Fatalf("ValidateConfigurationContext() failed on valid config: %v", err)
 	}
 }
 
@@ -141,9 +141,9 @@ backend api-servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, testValidationPaths(t), false, nil)
 	if err != nil {
-		t.Fatalf("ValidateConfiguration() failed on valid complex config: %v", err)
+		t.Fatalf("ValidateConfigurationContext() failed on valid complex config: %v", err)
 	}
 }
 
@@ -166,9 +166,9 @@ backend
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, testValidationPaths(t), false, nil)
 	if err == nil {
-		t.Fatal("ValidateConfiguration() should fail on malformed config")
+		t.Fatal("ValidateConfigurationContext() should fail on malformed config")
 	}
 
 	// Verify it's a validation error
@@ -194,9 +194,9 @@ func TestValidateConfiguration_EmptyConfig(t *testing.T) {
 	// (unit tests never shell out) with HAProxy's own message.
 	installRejectingHAProxy(t, "no <listen|frontend|backend> line. Nothing to do !")
 
-	err := ValidateConfiguration("", &AuxiliaryFiles{}, testValidationPaths(t), false)
+	err := ValidateConfigurationContext(t.Context(), "", &AuxiliaryFiles{}, testValidationPaths(t), false, nil)
 	if err == nil {
-		t.Fatal("ValidateConfiguration() should surface HAProxy's refusal of an empty config")
+		t.Fatal("ValidateConfigurationContext() should surface HAProxy's refusal of an empty config")
 	}
 
 	valErr, ok := err.(*ValidationError)
@@ -235,9 +235,9 @@ backend servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, testValidationPaths(t), false, nil)
 	if err == nil {
-		t.Fatal("ValidateConfiguration() should fail on semantic error")
+		t.Fatal("ValidateConfigurationContext() should fail on semantic error")
 	}
 
 	// Verify it's a validation error
@@ -291,8 +291,8 @@ backend servers
 		},
 	}
 
-	if err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false); err != nil {
-		t.Fatalf("ValidateConfiguration() failed with SSL certificate: %v", err)
+	if err := ValidateConfigurationContext(t.Context(), config, auxFiles, testValidationPaths(t), false, nil); err != nil {
+		t.Fatalf("ValidateConfigurationContext() failed with SSL certificate: %v", err)
 	}
 }
 
@@ -328,9 +328,9 @@ backend servers
 		},
 	}
 
-	err := ValidateConfiguration(config, auxFiles, paths, false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, paths, false, nil)
 	if err != nil {
-		t.Fatalf("ValidateConfiguration() failed with absolute path map files: %v", err)
+		t.Fatalf("ValidateConfigurationContext() failed with absolute path map files: %v", err)
 	}
 }
 
@@ -372,9 +372,9 @@ Content-Type: text/html
 		},
 	}
 
-	err := ValidateConfiguration(config, auxFiles, paths, false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, paths, false, nil)
 	if err != nil {
-		t.Fatalf("ValidateConfiguration() failed with absolute path general files: %v", err)
+		t.Fatalf("ValidateConfigurationContext() failed with absolute path general files: %v", err)
 	}
 }
 
@@ -397,7 +397,7 @@ backend servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, testValidationPaths(t), false, nil)
 	// This may or may not fail depending on the HAProxy version.
 	// Just verify the function doesn't panic
 	_ = err
@@ -447,9 +447,9 @@ backend mysql-servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, testValidationPaths(t), false, nil)
 	if err != nil {
-		t.Fatalf("ValidateConfiguration() should pass on valid TCP request rules: %v", err)
+		t.Fatalf("ValidateConfigurationContext() should pass on valid TCP request rules: %v", err)
 	}
 }
 
@@ -479,9 +479,9 @@ backend dynamic-servers
 
 	auxFiles := &AuxiliaryFiles{}
 
-	err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, testValidationPaths(t), false, nil)
 	if err != nil {
-		t.Fatalf("ValidateConfiguration() should pass on valid server templates: %v", err)
+		t.Fatalf("ValidateConfigurationContext() should pass on valid server templates: %v", err)
 	}
 }
 
@@ -542,7 +542,7 @@ func TestValidateConfiguration_RevalidatesIdenticalBytesAfterExecutorSwap(t *tes
 		acceptChecks++
 		return nil, nil
 	}})
-	err := ValidateConfiguration(config, auxFiles, paths, false)
+	err := ValidateConfigurationContext(t.Context(), config, auxFiles, paths, false, nil)
 	restoreAccepting()
 	require.NoError(t, err)
 	require.Equal(t, 1, acceptChecks)
@@ -554,7 +554,7 @@ func TestValidateConfiguration_RevalidatesIdenticalBytesAfterExecutorSwap(t *tes
 	}})
 	t.Cleanup(restoreRejecting)
 
-	err = ValidateConfiguration(config, auxFiles, paths, false)
+	err = ValidateConfigurationContext(t.Context(), config, auxFiles, paths, false, nil)
 	require.Error(t, err)
 	assert.Equal(t, 1, rejectChecks, "identical bytes must reach the replacement executor")
 	var validationErr *ValidationError

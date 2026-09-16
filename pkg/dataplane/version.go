@@ -167,14 +167,7 @@ func ParseVersionString(version string) (*Version, error) {
 	return v, nil
 }
 
-// DetectLocalVersion runs "haproxy -v" (via the installed HAProxyExecutor)
-// and returns the local HAProxy version.
-// Returns an error if haproxy is not found or version cannot be parsed.
-func DetectLocalVersion() (*Version, error) {
-	return DetectLocalVersionContext(context.Background())
-}
-
-// DetectLocalVersionContext is DetectLocalVersion with caller cancellation.
+// DetectLocalVersionContext runs "haproxy -v" with caller cancellation.
 func DetectLocalVersionContext(ctx context.Context) (*Version, error) {
 	if cause := context.Cause(ctx); cause != nil {
 		return nil, cause

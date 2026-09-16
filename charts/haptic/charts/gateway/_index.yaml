@@ -1,8 +1,7 @@
 # Gateway API Template Library
 #
 # Provides Kubernetes Gateway API v1 (Standard channel) support, plus TLSRoute
-# (Standard as of v1.5) and TCPRoute (Experimental channel, wired only when its
-# CRD is served — see the _helm_load.unset block below).
+# (Standard as of v1.5) and TCPRoute (Experimental channel, resolved at runtime).
 # Documentation: ../docs/libraries/gateway.md
 #
 # Resources: GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute,

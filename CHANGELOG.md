@@ -84,6 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+- Ingress templates compile when Gateway API and the SPOA hub are disabled.
+- Helm rejects disabling the shared Ingress annotation library while an annotation library still needs it.
 - The controller waits for its external validator to start before reconciling; generated self-signed certificates have a non-empty subject.
 - Byte sizes with a `k`/`m`/`g` suffix no longer overflow: a value such as `17179869185g` wrapped to exactly 1 GiB and shipped that as the limit. `rate-limit-size` (HAPTIC and haproxytech) and the bandwidth limits now refuse it. `proxy-body-size` (nginx-ingress, haproxy-ingress) and `max-request-body-size` also no longer drop the limit silently on a malformed value like `10x`, which used to convert to 0: such a value is refused at admission and reported as a Warning Event on reconcile, where the body stays unlimited as before. `0` still means unlimited.
 - The frontend filter chain renders through one macro instead of expanding its glob in each HTTP frontend. A `render_glob` expands into the function table of the compiled function holding it, and that table is capped at 256 entries, so expanding the chain in the main template left almost no room for a library to add snippets.

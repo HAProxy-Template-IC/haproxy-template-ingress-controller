@@ -82,10 +82,6 @@ func (r *ColdIncrementalRender) Context(ctx context.Context) context.Context {
 }
 
 // ValidateIncrementalCalls verifies complete canonical group placement.
-func (r *ColdIncrementalRender) HasIncrementalCalls() bool {
-	return r.renderer != nil && r.renderer.HasIncrementalCalls()
-}
-
 func (r *ColdIncrementalRender) ValidateIncrementalCalls() error {
 	if r == nil || r.renderer == nil {
 		return nil

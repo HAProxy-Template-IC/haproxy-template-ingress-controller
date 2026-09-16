@@ -228,7 +228,6 @@ type persistentInfra struct {
 	// silently ignored.
 	webhookServerConfig *pkgwebhook.ServerConfig
 
-	// Reinitialization grace state; see the metrics-and-observability OpenSpec.
 	graceMu              sync.Mutex
 	graceNow             func() time.Time
 	currentIterationID   iterationID
