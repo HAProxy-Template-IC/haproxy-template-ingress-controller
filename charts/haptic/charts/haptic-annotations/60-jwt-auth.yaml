@@ -89,10 +89,7 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  # Resolves one Ingress's JWT settings into result: enabled, alg, keyFile,
-  # state (ok|missing|nosecret), iss, aud, req ([]string), fwd ([]string "claim:Header"),
-  # intent (the jwt-* annotation set without jwt-secret, "" otherwise). "_" marks
-  # an unset scalar in the map. Shared by the map producer and the publisher.
+  # Presence flags distinguish an unset claim from the literal "_".
   util-haptic-jwt-route:
     template: |-
       {%- import "util-haptic-jwt-key" for ResolveHapticJWTKey -%}
@@ -104,6 +101,8 @@ templateSnippets:
         {%- var jwtSecret = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/jwt-secret") -%}
         {%- result["enabled"] = false -%}
         {%- result["intent"] = "" -%}
+        {%- result["issSet"] = false -%}
+        {%- result["audSet"] = false -%}
         {%- result["req"] = []string{} -%}
         {%- result["fwd"] = []string{} -%}
         {%- if jwtSecret == "" -%}
@@ -146,6 +145,7 @@ templateSnippets:
             {%- var issV = ValidateConfigValue(issRaw, "haproxy-haptic.org/jwt-issuer", key, false) -%}
             {%- if regex_search(issV, "[\"{}\\\\]") -%}{{ fail("Invalid value for annotation 'haproxy-haptic.org/jwt-issuer' on Ingress '" + key + "': must not contain '\"', '{', '}' or '\\'.") }}{%- end -%}
             {%- result["iss"] = issV -%}
+            {%- result["issSet"] = true -%}
           {%- end -%}
           {%- result["aud"] = "_" -%}
           {%- var audRaw = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/jwt-audience") -%}
@@ -153,6 +153,7 @@ templateSnippets:
             {%- var audV = ValidateConfigValue(audRaw, "haproxy-haptic.org/jwt-audience", key, false) -%}
             {%- if regex_search(audV, "[\"{}\\\\]") -%}{{ fail("Invalid value for annotation 'haproxy-haptic.org/jwt-audience' on Ingress '" + key + "': must not contain '\"', '{', '}' or '\\'.") }}{%- end -%}
             {%- result["aud"] = audV -%}
+            {%- result["audSet"] = true -%}
           {%- end -%}
           {%- var claims = []string{} -%}
           {%- for _, claim := range split(dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/jwt-required-claims"), ",") -%}
@@ -204,7 +205,7 @@ templateSnippets:
         {%- if len(route["req"].([]string)) > 0 -%}{%- req = "," + join(route["req"].([]string), ",") + "," -%}{%- end -%}
         {%- var fwd = "_" -%}
         {%- if len(route["fwd"].([]string)) > 0 -%}{%- fwd = "," + join(route["fwd"].([]string), ",") + "," -%}{%- end -%}
-      {{ "\n" }}{{ dig_string(item, "", "metadata", "namespace") }}/{{ dig_string(item, "", "metadata", "name") }} {{ route["alg"] }} {{ route["keyFile"] }} {{ route["state"] }} {{ route["iss"] }} {{ route["aud"] }} {{ req }} {{ fwd }}
+      {{ "\n" }}{{ dig_string(item, "", "metadata", "namespace") }}/{{ dig_string(item, "", "metadata", "name") }} {{ route["alg"] }} {{ route["keyFile"] }} {{ route["state"] }} {{ route["iss"] }} {{ route["aud"] }} {{ req }} {{ fwd }} {{ route["issSet"] }} {{ route["audSet"] }}
       {%- end -%}
 
   # Distinct (algorithm, key file) pairs, required claims and forwarded claims
@@ -317,10 +318,10 @@ templateSnippets:
       http-request set-var(txn.haptic_jwt_nbf) http_auth_bearer,jwt_payload_query('$.nbf','int') if { var(txn.jwt_state) -m str ok }
       http-request set-var(txn.denied_by) str(jwt_not_yet_valid) if { var(txn.jwt_state) -m str ok } { var(txn.haptic_jwt_nbf) -m found } { var(txn.haptic_jwt_nbf),sub(txn.haptic_jwt_now) -m int gt 0 }
       http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.haptic_jwt_nbf) -m found } { var(txn.haptic_jwt_nbf),sub(txn.haptic_jwt_now) -m int gt 0 }
-      http-request set-var(txn.denied_by) str(jwt_issuer) if { var(txn.jwt_state) -m str ok } !{ var(txn.jwt_iss) -m str _ } !{ http_auth_bearer,jwt_payload_query('$.iss'),strcmp(txn.jwt_iss) -m int 0 }
-      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } !{ var(txn.jwt_iss) -m str _ } !{ http_auth_bearer,jwt_payload_query('$.iss'),strcmp(txn.jwt_iss) -m int 0 }
-      http-request set-var(txn.denied_by) str(jwt_audience) if { var(txn.jwt_state) -m str ok } !{ var(txn.jwt_aud) -m str _ } !{ http_auth_bearer,jwt_payload_query('$.aud'),strcmp(txn.jwt_aud) -m int 0 }
-      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } !{ var(txn.jwt_aud) -m str _ } !{ http_auth_bearer,jwt_payload_query('$.aud'),strcmp(txn.jwt_aud) -m int 0 }
+      http-request set-var(txn.denied_by) str(jwt_issuer) if { var(txn.jwt_state) -m str ok } { var(txn.jwt_cfg),field(8,' ') -m str true } !{ http_auth_bearer,jwt_payload_query('$.iss'),strcmp(txn.jwt_iss) -m int 0 }
+      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.jwt_cfg),field(8,' ') -m str true } !{ http_auth_bearer,jwt_payload_query('$.iss'),strcmp(txn.jwt_iss) -m int 0 }
+      http-request set-var(txn.denied_by) str(jwt_audience) if { var(txn.jwt_state) -m str ok } { var(txn.jwt_cfg),field(9,' ') -m str true } !{ http_auth_bearer,jwt_payload_query('$.aud'),strcmp(txn.jwt_aud) -m int 0 }
+      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.jwt_cfg),field(9,' ') -m str true } !{ http_auth_bearer,jwt_payload_query('$.aud'),strcmp(txn.jwt_aud) -m int 0 }
       {%- for _, cl := range sort_strings(reqs) %}
       http-request set-var(txn.denied_by) str(jwt_required_claim) if { var(txn.jwt_state) -m str ok } { var(txn.jwt_req) -m sub ,{{ cl }}, } !{ http_auth_bearer,jwt_payload_query('$.{{ cl }}') -m found }
       http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.jwt_req) -m sub ,{{ cl }}, } !{ http_auth_bearer,jwt_payload_query('$.{{ cl }}') -m found }

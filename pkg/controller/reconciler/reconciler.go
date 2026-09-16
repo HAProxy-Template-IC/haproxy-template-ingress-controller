@@ -34,6 +34,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
@@ -222,7 +223,7 @@ func (r *Reconciler) handleIndexSynchronized(event *events.IndexSynchronizedEven
 // triggers a re-render to incorporate the new content.
 func (r *Reconciler) handleHTTPResourceChange(event *events.HTTPResourceUpdatedEvent) {
 	r.Logger().Debug("HTTP resource change detected, triggering reconciliation",
-		"url", event.URL,
+		"url", httpstore.RedactURL(event.URL),
 		"content_size", event.ContentSize)
 	r.triggerReconciliation(reasonHTTPResourceChange)
 }
@@ -234,7 +235,7 @@ func (r *Reconciler) handleHTTPResourceChange(event *events.HTTPResourceUpdatedE
 // with the new accepted content.
 func (r *Reconciler) handleHTTPResourceAccepted(event *events.HTTPResourceAcceptedEvent) {
 	r.Logger().Debug("HTTP resource accepted, triggering immediate reconciliation",
-		"url", event.URL,
+		"url", httpstore.RedactURL(event.URL),
 		"content_size", event.ContentSize)
 	r.triggerReconciliation(reasonHTTPResourceAccepted)
 }

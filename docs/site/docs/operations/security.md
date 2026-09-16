@@ -68,6 +68,8 @@ The controller watches the Secret and picks up changes live. The chart passes ag
 
 `/debug/vars/credentials` returns the credential version and `has_dataplane_creds`, without credential values. Other debug endpoints expose configuration and rendered files. See [Debugging](./debugging.md#accessing-the-server) for access controls.
 
+Watcher logs record resource identities, versions, and index-key counts. Resource contents and index values stay out of those logs. HTTP source logs and errors omit URL user information, query strings, and fragments, which can contain credentials.
+
 ## Pod hardening
 
 The chart ships with a restrictive default pod spec. The relevant `securityContext` (container-level) / `controller.podSpec.podSecurityContext` (pod-level) defaults:

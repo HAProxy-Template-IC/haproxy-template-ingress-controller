@@ -41,6 +41,8 @@ type HAProxyMapFile struct {
 }
 
 // HAProxyMapFileSpec contains the map file content.
+// +kubebuilder:validation:XValidation:rule="has(self.entries) != (has(self.empty) && self.empty)",message="set nonempty entries or empty: true"
+// +kubebuilder:validation:XValidation:rule="!has(self.empty) || !self.empty || ((!has(self.compressed) || !self.compressed) && self.checksum == 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')",message="empty files must be uncompressed and use the checksum of zero bytes"
 type HAProxyMapFileSpec struct {
 	// MapName is the logical name of the map file.
 	//
@@ -62,9 +64,13 @@ type HAProxyMapFileSpec struct {
 	// Example:
 	//   /api backend-api
 	//   /web backend-web
-	// +kubebuilder:validation:Required
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	Entries string `json:"entries"`
+	Entries string `json:"entries,omitempty"`
+
+	// Empty explicitly represents a zero-byte file without omitting its content declaration.
+	// +optional
+	Empty bool `json:"empty,omitempty"`
 
 	// Checksum is the SHA-256 hash of the map file entries.
 	//
@@ -144,6 +150,8 @@ type HAProxyGeneralFile struct {
 }
 
 // HAProxyGeneralFileSpec contains the general file content.
+// +kubebuilder:validation:XValidation:rule="has(self.content) != (has(self.empty) && self.empty)",message="set nonempty content or empty: true"
+// +kubebuilder:validation:XValidation:rule="!has(self.empty) || !self.empty || ((!has(self.compressed) || !self.compressed) && self.checksum == 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')",message="empty files must be uncompressed and use the checksum of zero bytes"
 type HAProxyGeneralFileSpec struct {
 	// FileName is the logical name of the file.
 	//
@@ -163,9 +171,13 @@ type HAProxyGeneralFileSpec struct {
 	//
 	// This can be any content the HAProxy configuration references,
 	// such as custom error pages or response files.
-	// +kubebuilder:validation:Required
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	Content string `json:"content"`
+	Content string `json:"content,omitempty"`
+
+	// Empty explicitly represents a zero-byte file without omitting its content declaration.
+	// +optional
+	Empty bool `json:"empty,omitempty"`
 
 	// Checksum is the SHA-256 hash of the file content.
 	//
@@ -249,6 +261,8 @@ type HAProxyCRTListFile struct {
 }
 
 // HAProxyCRTListFileSpec contains the crt-list file content.
+// +kubebuilder:validation:XValidation:rule="has(self.entries) != (has(self.empty) && self.empty)",message="set nonempty entries or empty: true"
+// +kubebuilder:validation:XValidation:rule="!has(self.empty) || !self.empty || ((!has(self.compressed) || !self.compressed) && self.checksum == 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')",message="empty files must be uncompressed and use the checksum of zero bytes"
 type HAProxyCRTListFileSpec struct {
 	// ListName is the logical name of the crt-list file.
 	//
@@ -271,9 +285,13 @@ type HAProxyCRTListFileSpec struct {
 	// Example:
 	//   /etc/haproxy/ssl/example.com.pem [ocsp-update on] example.com
 	//   /etc/haproxy/ssl/wildcard.pem *.example.org
-	// +kubebuilder:validation:Required
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	Entries string `json:"entries"`
+	Entries string `json:"entries,omitempty"`
+
+	// Empty explicitly represents a zero-byte file without omitting its content declaration.
+	// +optional
+	Empty bool `json:"empty,omitempty"`
 
 	// Checksum is the SHA-256 hash of the crt-list entries.
 	//

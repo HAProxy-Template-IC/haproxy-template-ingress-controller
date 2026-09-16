@@ -193,6 +193,8 @@ Or read the last *published* config straight from the `HAProxyCfg` CRD — this 
 kubectl exec -n haptic deployment/haptic-controller -- haptic config view > current.cfg
 ```
 
+The auxiliary output resources (`HAProxyMapFile`, `HAProxyGeneralFile`, and `HAProxyCRTListFile`) use `spec.empty: true` for a zero-byte file. In that case, `spec.entries` or `spec.content` is absent, compression is off, and the checksum identifies zero bytes. A missing content field without this marker is invalid.
+
 **What configuration is the controller actually using?**
 
 A Helm install splits the configuration across one `HAProxyTemplateLibrary` per

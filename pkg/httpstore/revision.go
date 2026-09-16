@@ -611,15 +611,15 @@ func (s *HTTPStore) validateInitialCandidatesLocked(
 			return errors.New("initial HTTP candidate does not belong to this store")
 		}
 		if _, exists := seen[candidate.url]; exists {
-			return fmt.Errorf("initial HTTP candidate for %s appears more than once", candidate.url)
+			return fmt.Errorf("initial HTTP candidate for %s appears more than once", RedactURL(candidate.url))
 		}
 		seen[candidate.url] = struct{}{}
 		if s.candidateTokenLocked(candidate) != candidate.token {
-			return fmt.Errorf("HTTP source %s has an invalid initial candidate token", candidate.url)
+			return fmt.Errorf("HTTP source %s has an invalid initial candidate token", RedactURL(candidate.url))
 		}
 		if candidate.source != nil {
 			if sources[candidate.url] != candidate.source || candidate.sourceDescriptor != candidate.source.Descriptor() {
-				return fmt.Errorf("HTTP source %s is missing its staged declaration", candidate.url)
+				return fmt.Errorf("HTTP source %s is missing its staged declaration", RedactURL(candidate.url))
 			}
 			if candidate.source.Changed() {
 				continue
@@ -629,7 +629,7 @@ func (s *HTTPStore) validateInitialCandidatesLocked(
 		if !exists || entry != candidate.entry || entry.sourceDescriptor != candidate.sourceDescriptor ||
 			entry.sourceGeneration != candidate.sourceGeneration ||
 			entry.mutationRevision != candidate.mutationRevision || entry.AcceptedChecksum != "" || entry.HasPending {
-			return fmt.Errorf("HTTP source %s changed before its validated content could be accepted", candidate.url)
+			return fmt.Errorf("HTTP source %s changed before its validated content could be accepted", RedactURL(candidate.url))
 		}
 	}
 	return nil

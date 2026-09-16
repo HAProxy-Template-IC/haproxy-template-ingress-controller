@@ -17,16 +17,25 @@
 package e2e
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/e2e-framework/klient"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
 // TestHapticHMAC verifies HMAC request-signature verification (64-gateway-
@@ -87,4 +96,79 @@ func TestHapticHMAC(t *testing.T) {
 			},
 		},
 	})
+}
+
+func TestHapticHMACBodyIntegrity(t *testing.T) {
+	t.Parallel()
+	const rawKey = "body-verification-key"
+	cases := []struct {
+		name    string
+		body    string
+		chunked bool
+		invalid bool
+		status  int
+	}{
+		{name: "complete body", body: "verified body", status: http.StatusOK},
+		{name: "empty body", status: http.StatusOK},
+		{name: "invalid signature", body: "verified body", invalid: true, status: http.StatusUnauthorized},
+		{name: "body exceeds buffer", body: strings.Repeat("x", 128<<10), status: http.StatusRequestEntityTooLarge},
+		{name: "unknown length", body: "verified body", chunked: true, status: http.StatusLengthRequired},
+	}
+	assertions := make([]SimpleIngressAssertion, 0, len(cases)+1)
+	for _, tc := range cases {
+		assertions = append(assertions, SimpleIngressAssertion{
+			Name: tc.name,
+			Check: func(t *testing.T, host string) {
+				t.Helper()
+				mac := hmac.New(sha256.New, []byte(rawKey))
+				mac.Write([]byte(tc.body))
+				signature := hex.EncodeToString(mac.Sum(nil))
+				if tc.invalid {
+					signature = strings.Repeat("0", len(signature))
+				}
+				request := httpclient.New(t).GET(host, "/").WithMethod(http.MethodPost).
+					WithHeader("X-Signature", signature).WithBody(tc.body)
+				if tc.chunked {
+					request.WithChunkedBody(tc.body)
+				}
+				request.ExpectStatus(t, tc.status)
+			},
+		})
+	}
+	assertions = append(assertions, SimpleIngressAssertion{
+		Name:  "declared length beyond the signed integer range",
+		Check: expectIncompleteHMACBodyRejected,
+	})
+	RunSimpleIngressTest(t, &SimpleIngressTest{
+		Description: "HMAC body verification requires the complete declared body",
+		Host:        "ingress-haptic-hmac-body.localdev.me",
+		Annotations: map[string]string{
+			"haproxy-haptic.org/hmac-secret": "body-key",
+		},
+		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+			t.Helper()
+			mustCreateSecret(ctx, t, client, namespace, "body-key", map[string][]byte{
+				"secret": []byte(rawKey),
+			})
+		},
+		Assess: assertions,
+	})
+}
+
+func expectIncompleteHMACBodyRejected(t *testing.T, host string) {
+	t.Helper()
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	address := net.JoinHostPort(kindutil.GetNodePortHost(), strconv.Itoa(HTTPHostPort))
+	connection, err := dialer.DialContext(t.Context(), "tcp4", address)
+	require.NoError(t, err)
+	defer connection.Close()
+	require.NoError(t, connection.SetDeadline(time.Now().Add(5*time.Second)))
+	request := fmt.Sprintf("POST / HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+		host, uint64(3)<<62, strings.Repeat("x", 64<<10))
+	_, err = io.WriteString(connection, request)
+	require.NoError(t, err)
+	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode)
 }

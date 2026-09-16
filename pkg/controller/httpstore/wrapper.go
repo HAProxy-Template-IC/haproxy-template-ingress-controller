@@ -386,7 +386,7 @@ func (w *HTTPStoreWrapper) declare(url string, descriptor httpstore.SourceDescri
 	if exists && previous != descriptor {
 		return fmt.Errorf(
 			"http.Fetch: URL %s uses conflicting authentication or options in one render; use one declaration per URL",
-			url,
+			httpstore.RedactURL(url),
 		)
 	}
 	w.declared[url] = descriptor
@@ -411,7 +411,7 @@ func (w *HTTPStoreWrapper) rejectOverlaySourceConflict(
 	}
 	return fmt.Errorf(
 		"http.Fetch: URL %s has pending content from different authentication or options; retry after the source change settles",
-		url,
+		httpstore.RedactURL(url),
 	)
 }
 
@@ -453,7 +453,7 @@ func (w *HTTPStoreWrapper) getCachedSnapshot(
 	if w.overlay.HasPendingURL(url) {
 		return httpstore.ContentSnapshot{}, false, fmt.Errorf(
 			"http.Fetch: URL %s has pending content from different authentication or options; retry after the source change settles",
-			url,
+			httpstore.RedactURL(url),
 		)
 	}
 	return missing, false, nil

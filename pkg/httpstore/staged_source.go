@@ -200,7 +200,7 @@ func (s *HTTPStore) validateStagedSourceLocked(source *StagedSource) error {
 		return errors.New("staged HTTP source does not belong to this store")
 	}
 	if !s.stagedSourceCurrentLocked(source) {
-		return fmt.Errorf("HTTP source %s %w", source.url, ErrInputsMoved)
+		return fmt.Errorf("HTTP source %s %w", RedactURL(source.url), ErrInputsMoved)
 	}
 	return nil
 }
@@ -215,7 +215,7 @@ func (s *HTTPStore) planStagedSourcesLocked(
 			return nil, nil, err
 		}
 		if _, exists := byURL[source.url]; exists {
-			return nil, nil, fmt.Errorf("staged HTTP source for %s appears more than once", source.url)
+			return nil, nil, fmt.Errorf("staged HTTP source for %s appears more than once", RedactURL(source.url))
 		}
 		byURL[source.url] = source
 		plans = append(plans, preparedSourcePlan{source: source})

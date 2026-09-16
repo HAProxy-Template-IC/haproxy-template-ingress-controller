@@ -387,7 +387,20 @@ templateSnippets:
         {%- var key = ns + "/" + dig_string(ingress, "", "metadata", "name") -%}
         {%- var hmacSecret = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/hmac-secret") -%}
         {%- result["enabled"] = hmacSecret != "" -%}
-        {%- if hmacSecret != "" -%}
+        {%- result["intent"] = "" -%}
+        {%- if hmacSecret == "" -%}
+          {%- for _, a := range []string{"hmac-algorithm", "hmac-header", "hmac-signed-string"} -%}
+            {%- if result["intent"] == "" && dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/" + a) != "" -%}
+              {%- result["intent"] = a -%}
+              {%- result["enabled"] = true -%}
+              {%- result["alg"] = "_" -%}
+              {%- result["hdr"] = "_" -%}
+              {%- result["signed"] = "_" -%}
+              {%- result["state"] = "nosecret" -%}
+              {%- result["key"] = "_" -%}
+            {%- end -%}
+          {%- end -%}
+        {%- else -%}
           {%- var alg = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/hmac-algorithm") -%}
           {%- if alg == "" -%}{%- alg = "sha256" -%}{%- end -%}
           {%- if !regex_search(alg, "^(sha1|sha224|sha256|sha384|sha512)$") -%}
@@ -456,16 +469,21 @@ templateSnippets:
       effects: [publishValue, recordEvent]
     template: |-
       {%- import "util-haptic-hmac-route" for HapticHMACRoute -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var route = map[string]any{} -%}
       {{- HapticHMACRoute(item, route) -}}
       {%- if route["enabled"] == true -%}
         {{- shared.Publish("any", "any", "any") -}}
-        {{- shared.Publish("alg", tostring(route["alg"]), tostring(route["alg"])) -}}
-        {{- shared.Publish("hdr", tostring(route["hdr"]), tostring(route["hdr"])) -}}
-        {%- if tostring(route["state"]) == "missing" -%}
-          {%- var ns = dig_string(item, "", "metadata", "namespace") -%}
-          {%- var name = dig_string(item, "", "metadata", "name") -%}
-          {{- recordEvent(resources.ingresses.GetSingle(ns, name), "HMACSecretMissing", "Ingress " + ns + "/" + name + " references Secret '" + tostring(route["secretRef"]) + "' in 'haproxy-haptic.org/hmac-secret', but it could not be resolved. Requests are denied with 503 until the Secret is present.") -}}
+        {%- var ns = dig_string(item, "", "metadata", "namespace") -%}
+        {%- var name = dig_string(item, "", "metadata", "name") -%}
+        {%- if route["intent"] != "" -%}
+          {{- WebhookRejectOrWarn(resources.ingresses.GetSingle(ns, name), "HMACSecretMissing", "Ingress " + ns + "/" + name + " sets 'haproxy-haptic.org/" + tostring(route["intent"]) + "' but no 'haproxy-haptic.org/hmac-secret'. Signatures cannot be checked, so requests return 503. Set hmac-secret.") -}}
+        {%- else -%}
+          {{- shared.Publish("alg", tostring(route["alg"]), tostring(route["alg"])) -}}
+          {{- shared.Publish("hdr", tostring(route["hdr"]), tostring(route["hdr"])) -}}
+          {%- if tostring(route["state"]) == "missing" -%}
+            {{- recordEvent(resources.ingresses.GetSingle(ns, name), "HMACSecretMissing", "Ingress " + ns + "/" + name + " references Secret '" + tostring(route["secretRef"]) + "' in 'haproxy-haptic.org/hmac-secret', but it could not be resolved. Requests are denied with 503 until the Secret is present.") -}}
+          {%- end -%}
         {%- end -%}
       {%- end -%}
 
@@ -504,9 +522,15 @@ templateSnippets:
       http-request set-var(txn.hm_signed) var(txn.hm_cfg),field(3,' ') if { var(txn.hm_cfg) -m found }
       http-request set-var(txn.hm_state) var(txn.hm_cfg),field(4,' ') if { var(txn.hm_cfg) -m found }
       http-request set-var(txn.hm_key) var(txn.hm_cfg),field(5,' ') if { var(txn.hm_cfg) -m found }
-      http-request set-var(txn.denied_by) str(hmac_unavailable) if { var(txn.hm_state) -m str missing }
-      http-request deny deny_status 503 if { var(txn.hm_state) -m str missing }
+      http-request set-var(txn.denied_by) str(hmac_unavailable) if { var(txn.hm_state) -m str missing nosecret }
+      http-request deny deny_status 503 if { var(txn.hm_state) -m str missing nosecret }
+      http-request set-var(txn.denied_by) str(hmac_no_content_length) if { var(txn.hm_state) -m str ok } { var(txn.hm_signed) -m str body } !{ req.hdr(Content-Length) -m found }
+      http-request return status 411 if { var(txn.hm_state) -m str ok } { var(txn.hm_signed) -m str body } !{ req.hdr(Content-Length) -m found }
+      http-request set-var(txn.hm_body_size) req.body_size if { var(txn.hm_state) -m str ok } { var(txn.hm_signed) -m str body }
       http-request wait-for-body time {{ bodyWait }} if { var(txn.hm_state) -m str ok } { var(txn.hm_signed) -m str body }
+      {# wait-for-body also returns when the buffer fills: https://docs.haproxy.org/3.0/configuration.html#4.2-http-request%20wait-for-body #}
+      http-request set-var(txn.denied_by) str(hmac_body_incomplete) if { var(txn.hm_state) -m str ok } { var(txn.hm_signed) -m str body } !{ req.body_len,sub(txn.hm_body_size) -m int 0 }
+      http-request return status 413 if { var(txn.hm_state) -m str ok } { var(txn.hm_signed) -m str body } !{ req.body_len,sub(txn.hm_body_size) -m int 0 }
       {%- for _, a := range sort_strings(algs) %}
       http-request set-var(txn.haptic_hmac) req.body,hmac({{ a }},txn.hm_key),hex,lower if { var(txn.hm_state) -m str ok } { var(txn.hm_signed) -m str body } { var(txn.hm_alg) -m str {{ a }} }
       http-request set-var(txn.haptic_hmac) path,hmac({{ a }},txn.hm_key),hex,lower if { var(txn.hm_state) -m str ok } { var(txn.hm_signed) -m str path } { var(txn.hm_alg) -m str {{ a }} }

@@ -10,6 +10,8 @@ import (
 	"k8s.io/client-go/util/jsonpath"
 )
 
+const jsonPathExecute = "execute"
+
 // JSONPathEvaluator evaluates JSONPath expressions against Kubernetes resources.
 type JSONPathEvaluator struct {
 	expression string
@@ -66,7 +68,7 @@ func (e *JSONPathEvaluator) Evaluate(resource any) (string, error) {
 	if err != nil {
 		return "", &JSONPathError{
 			Expression: e.expression,
-			Operation:  "execute",
+			Operation:  jsonPathExecute,
 			Cause:      err,
 		}
 	}
@@ -75,7 +77,7 @@ func (e *JSONPathEvaluator) Evaluate(resource any) (string, error) {
 	if len(results) == 0 || len(results[0]) == 0 {
 		return "", &JSONPathError{
 			Expression: e.expression,
-			Operation:  "execute",
+			Operation:  jsonPathExecute,
 			Cause:      errors.New("no results found"),
 		}
 	}
@@ -144,6 +146,10 @@ type JSONPathError struct {
 }
 
 func (e *JSONPathError) Error() string {
+	// client-go's evaluator can include resource values in execution errors.
+	if e.Operation == jsonPathExecute {
+		return fmt.Sprintf("JSONPath expression '%s' cannot be evaluated; check the resource fields and array indexes", e.Expression)
+	}
 	return fmt.Sprintf("JSONPath error in %s for expression '%s': %v",
 		e.Operation, e.Expression, e.Cause)
 }

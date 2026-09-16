@@ -536,7 +536,7 @@ func (c *Component) reconcilePreparedURLLocked(url string, state httpstore.Sourc
 	c.stopRefresherLocked(url)
 
 	c.logger.Debug("Registering URL for periodic refresh",
-		"url", url,
+		"url", httpstore.RedactURL(url),
 		"delay", state.Delay.String())
 
 	c.refreshGeneration[url]++
@@ -597,20 +597,20 @@ func (c *Component) refreshURLForGeneration(url string, generation uint64) {
 	// EvictUnused() and StopRefresher() calls.
 	state, exists := c.store.GetSourceState(url)
 	if !exists {
-		c.logger.Log(context.Background(), logging.LevelTrace, "skipping refresh for evicted URL", "url", url)
+		c.logger.Log(context.Background(), logging.LevelTrace, "skipping refresh for evicted URL", "url", httpstore.RedactURL(url))
 		return
 	}
 	if generation != 0 && state.Generation != sourceGeneration {
 		return
 	}
 
-	c.logger.Log(context.Background(), logging.LevelTrace, "refreshing HTTP URL", "url", url)
+	c.logger.Log(context.Background(), logging.LevelTrace, "refreshing HTTP URL", "url", httpstore.RedactURL(url))
 
 	// Perform refresh
 	version, err := c.refreshStoreURL(ctx, url, sourceGeneration)
 	if err != nil {
 		c.logger.Warn("HTTP refresh failed",
-			"url", url,
+			"url", httpstore.RedactURL(url),
 			"error", err)
 	}
 
@@ -690,7 +690,7 @@ func (c *Component) triggerProposalValidation(changedURL string) {
 	}
 
 	c.logger.Debug("HTTP content changed, triggering proposal validation",
-		"url", changedURL,
+		"url", httpstore.RedactURL(changedURL),
 		"new_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...")
 
 	c.mu.Lock()
@@ -804,7 +804,7 @@ func (c *Component) stopAllRefreshers() {
 			c.refreshPending[url] = false
 			c.refreshCallbacks.Done()
 		}
-		c.logger.Log(context.Background(), logging.LevelTrace, "stopped refresh timer", "url", url)
+		c.logger.Log(context.Background(), logging.LevelTrace, "stopped refresh timer", "url", httpstore.RedactURL(url))
 	}
 
 	c.refreshers = make(map[string]*time.Timer)
@@ -849,6 +849,6 @@ func (c *Component) stopRefresherLocked(url string) {
 		delete(c.refreshPending, url)
 		delete(c.refreshImmediate, url)
 		delete(c.refreshSourceGeneration, url)
-		c.logger.Log(context.Background(), logging.LevelTrace, "stopped refresh timer", "url", url)
+		c.logger.Log(context.Background(), logging.LevelTrace, "stopped refresh timer", "url", httpstore.RedactURL(url))
 	}
 }

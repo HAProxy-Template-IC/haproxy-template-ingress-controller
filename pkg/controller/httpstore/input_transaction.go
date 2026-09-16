@@ -103,7 +103,7 @@ func (t *InputTransaction) fetch(
 			return purehttpstore.ContentSnapshot{}, resultErr
 		}
 		if !t.component.store.VerifyStagedSource(source) {
-			return purehttpstore.ContentSnapshot{}, fmt.Errorf("HTTP source %s changed within one render", url)
+			return purehttpstore.ContentSnapshot{}, fmt.Errorf("HTTP source %s changed within one render", purehttpstore.RedactURL(url))
 		}
 		return result.snapshot, result.err
 	}
@@ -150,7 +150,7 @@ func (t *InputTransaction) fetchAndRecord(
 	}
 	if candidate != nil {
 		if previous, exists := t.candidates[url]; exists && previous != candidate {
-			return nil, fmt.Errorf("HTTP source %s changed within one render", url)
+			return nil, fmt.Errorf("HTTP source %s changed within one render", purehttpstore.RedactURL(url))
 		}
 		t.candidates[url] = candidate
 	}
@@ -179,7 +179,7 @@ func (t *InputTransaction) replay(
 	}
 	if previous, exists := t.results[snapshot.URL]; exists {
 		if previous.err != nil || !sameObservedHTTPSnapshot(&previous.snapshot, snapshot) {
-			return fmt.Errorf("HTTP source %s changed within one render", snapshot.URL)
+			return fmt.Errorf("HTTP source %s changed within one render", purehttpstore.RedactURL(snapshot.URL))
 		}
 		return nil
 	}
@@ -236,7 +236,7 @@ func (t *InputTransaction) enrollSource(
 	if previous, exists := t.sources[source.URL()]; exists {
 		if previous.Descriptor() != source.Descriptor() {
 			t.mu.Unlock()
-			return nil, fmt.Errorf("HTTP source %s changed within one render", source.URL())
+			return nil, fmt.Errorf("HTTP source %s changed within one render", purehttpstore.RedactURL(source.URL()))
 		}
 		selected = previous
 	} else {
@@ -244,7 +244,7 @@ func (t *InputTransaction) enrollSource(
 	}
 	t.mu.Unlock()
 	if !t.component.store.VerifyStagedSource(selected) {
-		return nil, fmt.Errorf("HTTP source %s changed within one render", source.URL())
+		return nil, fmt.Errorf("HTTP source %s changed within one render", purehttpstore.RedactURL(source.URL()))
 	}
 	return selected, nil
 }
