@@ -45,11 +45,10 @@ func (s *contextProbeStore) ListCached() ([]any, error) {
 	return s.cached, nil
 }
 
-func TestContextStorePropagationThroughAdapters(t *testing.T) {
+func TestCompositeStorePropagatesContext(t *testing.T) {
 	inner := &contextProbeStore{mockStore: newMockStore(), cached: []any{"warm"}}
 	require.NoError(t, inner.Add("value", []string{"key"}))
-	adapter := &TypesStoreAdapter{Inner: inner}
-	composite := NewCompositeStore(adapter, NewStoreOverlay())
+	composite := NewCompositeStore(inner, NewStoreOverlay())
 	ctx := context.WithValue(t.Context(), storeContextKey{}, "render")
 
 	items, err := composite.GetContext(ctx, "key")
@@ -67,17 +66,65 @@ func TestContextStorePropagationThroughAdapters(t *testing.T) {
 	assert.Equal(t, []any{"warm"}, items)
 }
 
-func TestTypesStoreAdapterContextFallbackPreservesLegacyStore(t *testing.T) {
+func TestCompositeStoreContextFallbackPreservesLegacyStore(t *testing.T) {
 	inner := newMockStore()
 	require.NoError(t, inner.Add("value", []string{"key"}))
-	adapter := &TypesStoreAdapter{Inner: inner}
+	composite := NewCompositeStore(inner, NewStoreOverlay())
 
-	items, err := adapter.GetContext(t.Context(), "key")
+	items, err := composite.GetContext(t.Context(), "key")
 	require.NoError(t, err)
 	assert.Equal(t, []any{"value"}, items)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = adapter.ListContext(ctx)
+	_, err = composite.ListContext(ctx)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+type cancelOnReadStore struct {
+	*mockStore
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (s *cancelOnReadStore) Get(keys ...string) ([]any, error) {
+	s.calls++
+	s.cancel()
+	return s.mockStore.Get(keys...)
+}
+
+func (s *cancelOnReadStore) List() ([]any, error) {
+	s.calls++
+	s.cancel()
+	return s.mockStore.List()
+}
+
+func TestContextReadsRejectResultsAfterCancellation(t *testing.T) {
+	reads := map[string]func(context.Context, Store) ([]any, error){
+		"get": func(ctx context.Context, store Store) ([]any, error) {
+			return GetContext(ctx, store, "key")
+		},
+		"list": ListContext,
+	}
+	for name, read := range reads {
+		t.Run(name, func(t *testing.T) {
+			for phase, cancelBeforeRead := range map[string]bool{"before read": true, "during read": false} {
+				t.Run(phase, func(t *testing.T) {
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					store := &cancelOnReadStore{mockStore: newMockStore(), cancel: cancel}
+					require.NoError(t, store.Add("value", []string{"key"}))
+					wantCalls := 1
+					if cancelBeforeRead {
+						cancel()
+						wantCalls = 0
+					}
+					items, err := read(ctx, store)
+					require.ErrorIs(t, err, context.Canceled)
+					require.Nil(t, items)
+					require.Equal(t, wantCalls, store.calls)
+				})
+			}
+		})
+	}
 }

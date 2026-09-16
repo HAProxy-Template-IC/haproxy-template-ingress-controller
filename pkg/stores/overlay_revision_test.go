@@ -1,7 +1,6 @@
 package stores
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -184,31 +183,18 @@ func TestCompositeStoreOverlayJournalRequiresNewSnapshot(t *testing.T) {
 	require.ErrorIs(t, snapshotErr, ErrSnapshotUnsupported)
 }
 
-func TestTypesStoreAdapterDelegatesOptionalRevisionAPIs(t *testing.T) {
-	inner := newRevisionMockStore()
-	adapter := &TypesStoreAdapter{Inner: inner}
-	require.Equal(t, inner.ListRevision(), adapter.ListRevision())
-	require.Equal(t, inner.RevisionSource(), adapter.RevisionSource())
-	require.Equal(t, inner.GetRevision("default"), adapter.GetRevision("default"))
-	require.Equal(t,
-		inner.IdentityRevision("default", "target"),
-		adapter.IdentityRevision("default", "target"),
-	)
-	_, sequence, err := adapter.ListSnapshot()
-	require.NoError(t, err)
-	require.Equal(t, uint64(7), sequence)
-	_, _, complete := adapter.ChangesSince(sequence)
-	require.True(t, complete)
-
-	unsupported := &TypesStoreAdapter{Inner: newMockStore()}
-	require.Empty(t, unsupported.ListRevision())
-	require.Zero(t, unsupported.RevisionSource())
-	items, sequence, err := unsupported.ListSnapshot()
+func TestCompositeStoreWithoutRevisionCapabilities(t *testing.T) {
+	composite := NewCompositeStore(newMockStore(), NewStoreOverlay())
+	require.Empty(t, composite.ListRevision())
+	require.Zero(t, composite.RevisionSource())
+	require.False(t, SupportsExactRevisionJournal(composite))
+	items, revision, sequence, err := composite.GetSnapshot("default", "target")
 	require.Nil(t, items)
+	require.Empty(t, revision)
 	require.Zero(t, sequence)
 	require.ErrorIs(t, err, ErrSnapshotUnsupported)
-	_, _, complete = unsupported.ChangesSince(0)
+	_, _, complete := composite.ChangesSince(0)
 	require.False(t, complete)
-	_, _, err = unsupported.GetIdentity("default", "target")
-	require.True(t, errors.Is(err, ErrIdentityLookupUnsupported))
+	_, _, err = composite.GetIdentity("default", "target")
+	require.ErrorIs(t, err, ErrIdentityLookupUnsupported)
 }

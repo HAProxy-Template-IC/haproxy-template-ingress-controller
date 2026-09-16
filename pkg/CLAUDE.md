@@ -118,7 +118,7 @@ For the canonical layout (with sub-packages), see [`docs/site/docs/development/d
 **pkg/stores/**
 
 - `Store` overlay/provider used to inject hypothetical resources during webhook dry-run validation
-- Depends on: pkg/k8s/types via the `TypesStoreAdapter` bridge (no direct import — `arch-go.yml` enforces isolation)
+- Depends on: no internal packages; its `Store` interface accepts Kubernetes stores directly by structural typing (`arch-go.yml` enforces isolation)
 - Imported by: controller package
 
 ### Layer 3: Coordination (Depends on Everything)

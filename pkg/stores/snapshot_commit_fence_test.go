@@ -50,37 +50,22 @@ func TestSnapshotCommitMutexHonorsCancellationAndRelease(t *testing.T) {
 	nextRelease()
 }
 
-func TestSnapshotCommitFencerAdaptersDelegate(t *testing.T) {
+func TestCompositeStoreDelegatesCommitFence(t *testing.T) {
 	base := &snapshotFenceMockStore{mockStore: newMockStore()}
-	targets := map[string]SnapshotCommitFencer{
-		"types adapter": &TypesStoreAdapter{Inner: base},
-		"composite":     NewCompositeStore(base, NewStoreOverlay()),
-	}
-	for name, target := range targets {
-		t.Run(name, func(t *testing.T) {
-			release, err := target.AcquireSnapshotCommitFence(t.Context())
-			require.NoError(t, err)
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
-			_, err = base.AcquireSnapshotCommitFence(ctx)
-			require.ErrorIs(t, err, context.Canceled)
-			release()
-		})
-	}
+	composite := NewCompositeStore(base, NewStoreOverlay())
+	release, err := composite.AcquireSnapshotCommitFence(t.Context())
+	require.NoError(t, err)
+	defer release()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = base.AcquireSnapshotCommitFence(ctx)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestSnapshotCommitFencerAdaptersRejectUnsupportedStores(t *testing.T) {
-	base := newMockStore()
-	targets := map[string]SnapshotCommitFencer{
-		"types adapter": &TypesStoreAdapter{Inner: base},
-		"composite":     NewCompositeStore(base, NewStoreOverlay()),
-	}
-	for name, target := range targets {
-		t.Run(name, func(t *testing.T) {
-			_, err := target.AcquireSnapshotCommitFence(t.Context())
-			require.ErrorIs(t, err, ErrSnapshotCommitFenceUnsupported)
-		})
-	}
+func TestCompositeStoreRejectsUnsupportedCommitFence(t *testing.T) {
+	composite := NewCompositeStore(newMockStore(), NewStoreOverlay())
+	_, err := composite.AcquireSnapshotCommitFence(t.Context())
+	require.ErrorIs(t, err, ErrSnapshotCommitFenceUnsupported)
 }
 
 var _ SnapshotCommitFencer = (*snapshotFenceMockStore)(nil)

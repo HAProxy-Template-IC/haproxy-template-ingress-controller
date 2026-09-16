@@ -136,11 +136,11 @@ func TestRenderServiceIncrementalIgnoresUnreadControllerResourceChanges(t *testi
 	assert.Equal(t, uint64(1), fixture.executions())
 }
 
-func TestRenderServiceIncrementalUsesProductionStoreAdapters(t *testing.T) {
+func TestRenderServiceIncrementalUsesRealStoreProvider(t *testing.T) {
 	fixture := newAmbientResourceFixture(t, false)
 	fixture.provider = stores.NewRealStoreProvider(map[string]stores.Store{
-		"routes":   &stores.TypesStoreAdapter{Inner: fixture.routes},
-		"services": &stores.TypesStoreAdapter{Inner: fixture.services},
+		"routes":   fixture.routes,
+		"services": fixture.services,
 	})
 
 	assert.Equal(t, "route=v1\n", fixture.render(t))

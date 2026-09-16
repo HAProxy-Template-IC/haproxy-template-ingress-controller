@@ -19,6 +19,10 @@ func (*exactSnapshotProtocolStore) ChangesSince(uint64) (uint64, []RevisionChang
 	return 0, nil, true
 }
 
+func (*exactSnapshotProtocolStore) ExactRevisionJournalSource() RevisionSource {
+	return 42
+}
+
 func TestSnapshotProtocolSupportFollowsAdapters(t *testing.T) {
 	supported := &exactSnapshotProtocolStore{
 		snapshotFenceMockStore: &snapshotFenceMockStore{mockStore: newMockStore()},
@@ -30,21 +34,34 @@ func TestSnapshotProtocolSupportFollowsAdapters(t *testing.T) {
 	}{
 		"direct supported":   {store: supported, wantSupported: true},
 		"direct unsupported": {store: unsupported},
-		"typed supported": {
-			store:         &TypesStoreAdapter{Inner: supported},
-			wantSupported: true,
-		},
-		"typed unsupported": {store: &TypesStoreAdapter{Inner: unsupported}},
+		"nil":                {},
+		"nil composite":      {store: (*CompositeStore)(nil)},
+		"nil overlay":        {store: &CompositeStore{base: supported}},
 		"composite supported": {
 			store:         NewCompositeStore(supported, NewStoreOverlay()),
 			wantSupported: true,
 		},
 		"composite unsupported": {store: NewCompositeStore(unsupported, NewStoreOverlay())},
+		"pending overlay": {
+			store: NewCompositeStore(supported, NewStoreOverlayForDelete("default", "target")),
+		},
+		"nested supported": {
+			store:         NewCompositeStore(NewCompositeStore(supported, NewStoreOverlay()), NewStoreOverlay()),
+			wantSupported: true,
+		},
+		"nested unsupported": {
+			store: NewCompositeStore(NewCompositeStore(unsupported, NewStoreOverlay()), NewStoreOverlay()),
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tt.wantSupported, SupportsRevisionJournal(tt.store))
 			assert.Equal(t, tt.wantSupported, SupportsSnapshotCommitFence(tt.store))
+			assert.Equal(t, tt.wantSupported, SupportsExactRevisionJournal(tt.store))
+			if tt.wantSupported {
+				assert.Equal(t, RevisionSource(42), ExactRevisionJournalSource(tt.store))
+			} else {
+				assert.Zero(t, ExactRevisionJournalSource(tt.store))
+			}
 		})
 	}
 }

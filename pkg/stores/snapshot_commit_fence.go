@@ -56,14 +56,6 @@ func (m *SnapshotCommitMutex) initialize() {
 	})
 }
 
-func (a *TypesStoreAdapter) AcquireSnapshotCommitFence(ctx context.Context) (func(), error) {
-	fencer, ok := a.Inner.(SnapshotCommitFencer)
-	if !ok {
-		return nil, ErrSnapshotCommitFenceUnsupported
-	}
-	return fencer.AcquireSnapshotCommitFence(ctx)
-}
-
 func (s *CompositeStore) AcquireSnapshotCommitFence(ctx context.Context) (func(), error) {
 	fencer, ok := s.base.(SnapshotCommitFencer)
 	if !ok {
@@ -72,7 +64,4 @@ func (s *CompositeStore) AcquireSnapshotCommitFence(ctx context.Context) (func()
 	return fencer.AcquireSnapshotCommitFence(ctx)
 }
 
-var (
-	_ SnapshotCommitFencer = (*TypesStoreAdapter)(nil)
-	_ SnapshotCommitFencer = (*CompositeStore)(nil)
-)
+var _ SnapshotCommitFencer = (*CompositeStore)(nil)

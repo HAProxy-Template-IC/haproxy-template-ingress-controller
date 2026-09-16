@@ -15,7 +15,6 @@
 package stores
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -246,85 +245,4 @@ func TestOverlayStoreProvider_Validate(t *testing.T) {
 			assert.NoError(t, err)
 		})
 	}
-}
-
-// inner is the minimal embedded store interface used by TypesStoreAdapter.
-type recordingInner struct {
-	getCalls    [][]string
-	listCalled  bool
-	addCalls    []addCall
-	updateCalls []addCall
-	deleteCalls []deleteCall
-	clearCalled bool
-	returnErr   error
-}
-
-type addCall struct {
-	resource any
-	keys     []string
-}
-
-type deleteCall struct {
-	namespace string
-	name      string
-	keys      []string
-}
-
-func (r *recordingInner) Get(keys ...string) ([]any, error) {
-	r.getCalls = append(r.getCalls, keys)
-	return nil, r.returnErr
-}
-func (r *recordingInner) List() ([]any, error) {
-	r.listCalled = true
-	return nil, r.returnErr
-}
-func (r *recordingInner) Add(resource any, keys []string) error {
-	r.addCalls = append(r.addCalls, addCall{resource, keys})
-	return r.returnErr
-}
-func (r *recordingInner) Update(resource any, keys []string) error {
-	r.updateCalls = append(r.updateCalls, addCall{resource, keys})
-	return r.returnErr
-}
-func (r *recordingInner) Delete(namespace, name string, keys []string) error {
-	r.deleteCalls = append(r.deleteCalls, deleteCall{namespace, name, keys})
-	return r.returnErr
-}
-func (r *recordingInner) Clear() error {
-	r.clearCalled = true
-	return r.returnErr
-}
-
-func TestTypesStoreAdapter_Delegation(t *testing.T) {
-	inner := &recordingInner{}
-	adapter := &TypesStoreAdapter{Inner: inner}
-
-	_, _ = adapter.Get("k1", "k2")
-	_, _ = adapter.List()
-	_ = adapter.Add("res", []string{"a"})
-	_ = adapter.Update("res", []string{"b"})
-	_ = adapter.Delete("ns", "obj", []string{"c"})
-	_ = adapter.Clear()
-
-	assert.Equal(t, [][]string{{"k1", "k2"}}, inner.getCalls)
-	assert.True(t, inner.listCalled)
-	assert.Equal(t, []addCall{{"res", []string{"a"}}}, inner.addCalls)
-	assert.Equal(t, []addCall{{"res", []string{"b"}}}, inner.updateCalls)
-	assert.Equal(t, []deleteCall{{"ns", "obj", []string{"c"}}}, inner.deleteCalls)
-	assert.True(t, inner.clearCalled)
-}
-
-func TestTypesStoreAdapter_PropagatesErrors(t *testing.T) {
-	wantErr := errors.New("boom")
-	inner := &recordingInner{returnErr: wantErr}
-	adapter := &TypesStoreAdapter{Inner: inner}
-
-	_, err := adapter.Get("x")
-	assert.ErrorIs(t, err, wantErr)
-	_, err = adapter.List()
-	assert.ErrorIs(t, err, wantErr)
-	assert.ErrorIs(t, adapter.Add("r", nil), wantErr)
-	assert.ErrorIs(t, adapter.Update("r", nil), wantErr)
-	assert.ErrorIs(t, adapter.Delete("ns", "obj", []string{"k"}), wantErr)
-	assert.ErrorIs(t, adapter.Clear(), wantErr)
 }

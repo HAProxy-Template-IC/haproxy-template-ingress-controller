@@ -126,7 +126,7 @@ The packages form a DAG, enforced at build time by `arch-go.yml`:
 3. `pkg/controller` is the only package allowed to import everything. It owns the event adapters and the startup/shutdown choreography.
 4. Domain event types live in `pkg/controller/events`, never in `pkg/events`.
 
-`pkg/stores` is deliberately isolated from `pkg/k8s` (see `arch-go.yml`); the two declare the same `Store` interface shape, and `pkg/stores.TypesStoreAdapter` bridges across the package boundary.
+`pkg/stores` is deliberately isolated from `pkg/k8s` (see `arch-go.yml`); the two declare the same `Store` interface shape, so callers can assign stores directly across the package boundary.
 
 ## Key patterns
 

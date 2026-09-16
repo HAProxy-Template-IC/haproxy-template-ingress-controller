@@ -108,7 +108,7 @@ func newColdIncrementalResourceView(
 			}
 			continue
 		}
-		items, err := listColdIncrementalStore(ctx, store)
+		items, err := stores.ListContext(ctx, store)
 		if err != nil {
 			return nil, nil, fmt.Errorf("snapshotting cold incremental resource %q: %w", name, err)
 		}
@@ -145,7 +145,7 @@ func addColdIncrementalControllerResources(
 		if _, exists := view.snapshots[alias]; exists {
 			return fmt.Errorf("controller resource %q conflicts with watched resource %q", field, alias)
 		}
-		items, err := listColdIncrementalStore(ctx, wrapper.Store)
+		items, err := stores.ListContext(ctx, wrapper.Store)
 		if err != nil {
 			return fmt.Errorf("snapshotting cold controller resource %q: %w", field, err)
 		}
@@ -157,20 +157,6 @@ func addColdIncrementalControllerResources(
 		view.snapshots[alias] = snapshot
 	}
 	return nil
-}
-
-func listColdIncrementalStore(ctx context.Context, store stores.Store) ([]any, error) {
-	if contextual, ok := store.(stores.ContextLister); ok {
-		return contextual.ListContext(ctx)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	items, err := store.List()
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
-	}
-	return items, err
 }
 
 func newColdIncrementalStoreSnapshot(

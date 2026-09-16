@@ -211,7 +211,7 @@ func (s *CompositeStore) Get(keys ...string) ([]any, error) {
 
 // GetContext returns the overlaid keyed view while propagating cancellation to the base store.
 func (s *CompositeStore) GetContext(ctx context.Context, keys ...string) ([]any, error) {
-	baseResults, err := getWithContext(ctx, s.base, keys...)
+	baseResults, err := GetContext(ctx, s.base, keys...)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +249,7 @@ func (s *CompositeStore) List() ([]any, error) {
 // ListContext returns the overlaid full view while propagating cancellation to the base store.
 func (s *CompositeStore) ListContext(ctx context.Context) ([]any, error) {
 	// Get all base resources
-	baseResults, err := listWithContext(ctx, s.base)
+	baseResults, err := ListContext(ctx, s.base)
 	if err != nil {
 		return nil, err
 	}

@@ -258,33 +258,11 @@ func (w *StoreWrapper) beginBoundStoreInvocation(
 }
 
 func (w *StoreWrapper) getStore(keys ...string) ([]any, error) {
-	ctx := w.storeContext()
-	if store, ok := w.Store.(stores.ContextGetter); ok {
-		return store.GetContext(ctx, keys...)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	items, err := w.Store.Get(keys...)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
-	}
-	return items, err
+	return stores.GetContext(w.storeContext(), w.Store, keys...)
 }
 
 func (w *StoreWrapper) listStore() ([]any, error) {
-	ctx := w.storeContext()
-	if store, ok := w.Store.(stores.ContextLister); ok {
-		return store.ListContext(ctx)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	items, err := w.Store.List()
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
-	}
-	return items, err
+	return stores.ListContext(w.storeContext(), w.Store)
 }
 
 func (w *StoreWrapper) warnReadFailure(message string, args ...any) {
