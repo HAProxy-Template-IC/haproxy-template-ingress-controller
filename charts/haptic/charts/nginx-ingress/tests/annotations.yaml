@@ -741,6 +741,129 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "retry-on conn-failure response-timeout 502 503"}
       - {type: contains, target: haproxy.cfg, pattern: "retries 2"}
 
+  test-nginx-ingress-limit-rate-shares-one-filter:
+    description: Two routes with the same limit-rate-after share one filter; a route without it uses the plain one.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: lr-service}
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lr-a
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rate: "100k"
+              nginx.ingress.kubernetes.io/limit-rate-after: "1m"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: lr-a.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: lr-service, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lr-b
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rate: "200k"
+              nginx.ingress.kubernetes.io/limit-rate-after: "1m"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: lr-b.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: lr-service, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lr-plain
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rate: "50k"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: lr-plain.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: lr-service, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      # Different rates, one shared filter: the rate is a map value.
+      - {type: contains, target: "map:ing-bw-routes.map", pattern: '(?m)^default/lr-a 102400 1048576$'}
+      - {type: contains, target: "map:ing-bw-routes.map", pattern: '(?m)^default/lr-b 204800 1048576$'}
+      - {type: contains, target: "map:ing-bw-routes.map", pattern: '(?m)^default/lr-plain 51200 _$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'filter bwlim-out ing_bw_out_1048576[^\n]*\n\s*filter bwlim-out ing_bw_out_1048576'}
+      # The route with no limit-rate-after takes the plain filter.
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-bandwidth-limit ing_bw_out limit var\(txn\.ibw_rate\) if \{ var\(txn\.ibw_min\) -m str _ \}'}
+
+  test-nginx-ingress-limit-rate-overflow-rejected:
+    description: >-
+      A magnitude large enough to overflow the 64-bit product is refused. '17179869185g'
+      wraps to exactly 1 GiB, which would ship a wrong throttle instead of failing.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: lr-service}
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lr-overflow
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rate: "17179869185g"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: lr-overflow.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: lr-service, port: {number: 80}}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "limit-rate' on Ingress 'default/lr-overflow'. Must be no larger than 4T"}
+
+  test-nginx-ingress-limit-rate-zero-rejected:
+    description: A zero rate would install a filter that throttles to nothing; the render fails naming the annotation.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: lr-service}
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lr-zero
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rate: "0k"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: lr-zero.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: lr-service, port: {number: 80}}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "limit-rate' on Ingress 'default/lr-zero'. Must be a positive byte size"}
+
   test-nginx-ingress-limit-rate:
     description: limit-rate / limit-rate-after map to a per-stream bwlim-out download throttle
     fixtures:
@@ -771,11 +894,14 @@ validationTests:
                       backend: {service: {name: lr-service, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: "filter bwlim-out ni_limitrate_default_lr-ingress default-limit 100k default-period 1s min-size 1m"
-      - {type: contains, target: haproxy.cfg, pattern: "set-bandwidth-limit ni_limitrate_default_lr-ingress"}
-
+      # The rate comes from the map; only the min-size is spelled out, because a
+      # filter's min-size is part of its declaration and can't come from a map.
+      # Both values are stored as bytes, so "1m" and "1048576" share one filter.
+      - {type: contains, target: "map:ing-bw-routes.map", pattern: '(?m)^default/lr-ingress 102400 1048576$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'filter bwlim-out ing_bw_out_1048576 default-limit 1m default-period 1s min-size 1048576'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-bandwidth-limit ing_bw_out_1048576 limit var\(txn\.ibw_rate\) if \{ var\(txn\.ibw_min\) -m str 1048576 \}'}
+      # The route's backend keeps no filter, which is what makes it dynamic.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'ni_limitrate_default_lr-ingress'}
   test-nginx-ingress-proxy-redirect:
     description: proxy-redirect-from/-to rewrites the upstream Location response header
     fixtures:

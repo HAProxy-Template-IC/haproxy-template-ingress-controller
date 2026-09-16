@@ -989,6 +989,100 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
+  util-byte-size:
+    template: |-
+      {%- macro ByteSize(value string, annotation string, key string) string -%}
+        {%- if !regex_search(value, "^[0-9]+[kKmMgG]?$") -%}
+          {{- fail("Invalid value '" + value + "' for annotation '" + annotation + "' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
+        {%- end -%}
+        {%- var digits = value -%}
+        {%- if !regex_search(value, "^[0-9]+$") -%}{%- digits = value[0:len(value)-1] -%}{%- end -%}
+        {%- var factor = 1 -%}
+        {%- if hasSuffix(value, "k") || hasSuffix(value, "K") -%}{%- factor = 1024 -%}{%- end -%}
+        {%- if hasSuffix(value, "m") || hasSuffix(value, "M") -%}{%- factor = 1048576 -%}{%- end -%}
+        {%- if hasSuffix(value, "g") || hasSuffix(value, "G") -%}{%- factor = 1073741824 -%}{%- end -%}
+        {%- var n = toint(digits) -%}
+        {%- if n <= 0 -%}
+          {{- fail("Invalid value '" + value + "' for annotation '" + annotation + "' on Ingress '" + key + "'. Must be a positive byte size.") -}}
+        {%- end -%}
+        {#- Bound the magnitude BEFORE multiplying. The product is a native
+            64-bit int, so an unbounded value wraps: `17179869185g` is 2^64 +
+            2^30, which lands on exactly 1 GiB and would ship a wrong throttle
+            instead of failing. 4 TiB is far past any real rate or table size. -#}
+        {%- if n > 4398046511104 / factor -%}
+          {{- fail("Invalid value '" + value + "' for annotation '" + annotation + "' on Ingress '" + key + "'. Must be no larger than 4T.") -}}
+        {%- end -%}
+        {{- tostring(n * factor) -}}
+      {%- end macro -%}
+
+  # Per-stream download throttle from one frontend lane. The filter plus its
+  # `set-bandwidth-limit` rule lived in the route's backend, and a filter cannot
+  # live in a `defaults`, so every throttled route was structural.
+  # `set-bandwidth-limit <filter> limit <expr>` takes the rate from a variable,
+  # but a filter's `min-size` is part of its declaration, so the lane emits one
+  # filter per distinct min-size plus the plain one, and ing-bw-routes.map holds
+  # "<route id>" -> "<rate bytes> <min-size bytes|_>". A route on a min-size that
+  # already exists is a map edit; a new one reloads once.
+  util-bandwidth-publish:
+    template: |-
+      {%- macro PublishBandwidth(key string, rateBytes string, minSizeBytes string) -%}
+        {{- shared.Publish("any", "any", "any") -}}
+        {{- shared.Publish("route", key, key + " " + rateBytes + " " + minSizeBytes) -}}
+        {%- if minSizeBytes != "_" -%}{{- shared.Publish("minsize", minSizeBytes, minSizeBytes) -}}{%- end -%}
+      {%- end macro -%}
+
+  features-200-ingress-bandwidth:
+    template: '{{- render_glob "ingress-bandwidth-*" -}}'
+
+  ingress-bandwidth-9999-declaration:
+    incremental:
+      bindingsTemplate: '{}'
+      group: ingress-bandwidth
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  # Declared after the compression filter (110), so a download cap meters the
+  # compressed bytes that go on the wire — the same ordering the HAPTIC-native
+  # bandwidth lane relies on. `default-limit` is only a fallback: every rule
+  # passes `limit <expr>`.
+  frontend-filters-725-ingress-bandwidth:
+    requires: [ingresses]
+    template: |
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- if incremental_value_count("ingress-bandwidth", "any") > 0 -%}
+      {%%
+        var routesVal, _ = shared.ComputeIfAbsent("ingressBandwidthMap", func() any {
+          var rows = []any{}
+          for _, v := range incremental_values("ingress-bandwidth", "route") {
+            rows = append(rows, tostring(v))
+          }
+          var lines = []string{}
+          for _, r := range sort_strings(rows) {
+            lines = append(lines, tostring(r))
+          }
+          return RegisterMap("ing-bw-routes.map", lines, map[string]any{"ordered": false})
+        })
+        var routes = tostring(routesVal)
+        var unsorted = []any{}
+        for _, v := range incremental_values("ingress-bandwidth", "minsize") {
+          unsorted = append(unsorted, tostring(v))
+        }
+        var sizes = sort_strings(unsorted)
+      %%}
+      {{ "\n" }}# ingress/limit-rate
+      filter bwlim-out ing_bw_out default-limit 1m default-period 1s
+      {%- for _, s := range sizes %}
+      filter bwlim-out ing_bw_out_{{ s }} default-limit 1m default-period 1s min-size {{ s }}
+      {%- end %}
+      http-request set-var(txn.ibw_cfg) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.ibw_rate) var(txn.ibw_cfg),field(1,' ') if { var(txn.ibw_cfg) -m found }
+      http-request set-var(txn.ibw_min) var(txn.ibw_cfg),field(2,' ') if { var(txn.ibw_cfg) -m found }
+      http-request set-bandwidth-limit ing_bw_out limit var(txn.ibw_rate) if { var(txn.ibw_min) -m str _ }
+      {%- for _, s := range sizes %}
+      http-request set-bandwidth-limit ing_bw_out_{{ s }} limit var(txn.ibw_rate) if { var(txn.ibw_min) -m str {{ s }} }
+      {%- end %}
+      {%- end %}
+
   # aclPrefix must stay distinct per library — validation tests assert on the
   # resulting ACL names.
   # Renders every family's publisher (ingress-access-control-<band>-<library>,
