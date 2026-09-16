@@ -947,41 +947,33 @@ items:
 
 ### Servers named after their pods (avoid reloads)
 
-Each endpoint becomes one `server` line named after its pod, so adding or removing a pod is an add or remove of a named server over the runtime API — no reload, and no pre-allocated slot pool (ADR-0011). Run this, then add a third endpoint and re-run to watch a new server line appear:
+This loop emits one server line per endpoint. Add an endpoint and run it again:
 
 <div class="pg-embed" markdown data-scriggo data-title="Servers named after pods" data-height="360">
 
 ```go
-{# One server per endpoint, named after its pod. Adding or removing a pod is
-   an add/remove of a named server at runtime — no reload, no reserved slots.
-   Add a third endpoint and re-run to watch a new server line appear. #}
 {%- var active_endpoints = []any{
     map[string]any{"pod": "echo-pod-1", "address": "10.244.1.10", "port": 8080},
     map[string]any{"pod": "echo-pod-2", "address": "10.244.2.11", "port": 8080},
 } %}
 default-server check
 {%- for _, ep := range active_endpoints %}
-server {{ ep["pod"] }} {{ ep["address"] }}:{{ ep["port"] }}  # Pod: {{ ep["pod"] }}
+server {{ ep["pod"] }} {{ ep["address"] }}:{{ ep["port"] }}
 {%- end %}
 ```
 
 </div>
 
-**Benefit**: A rolling update or scale event changes only the set of named servers at runtime; established connections to unaffected pods keep flowing.
+Plain text demonstrates the output but doesn't describe runtime operations to
+HAPTIC. For reload-free updates, use the bundled `BackendServers` and `Backend`
+macros: they record server identities and options as well as emitting text.
+See [Reload-free routing](libraries/reload-free.md).
 
-The bundled libraries' `BackendServers` macro does exactly this — one server per endpoint, named after the pod and keyed by a stable `guid` — so a real backend needs no hand-written loop. See [Reload-free updates](libraries/reload-free.md).
-
-!!! tip "Maximize Runtime API Usage"
-    Keep server lines minimal — only `address:port` plus the pod name and its `guid`. Place all other options (`check`, `proto h2`, SSL settings) on the `default-server` directive:
-
-    ```haproxy
-    backend my-backend
-        default-server check proto h2
-        server api-pod-1 10.0.0.1:8080 guid srv:my-backend:api-pod-1  # Pod: api-pod-1
-        server api-pod-2 10.0.0.2:8080 guid srv:my-backend:api-pod-2  # Pod: api-pod-2
-    ```
-
-    HAProxy's runtime API can add and remove named servers and update their address and port without reloading. Options like `check` on individual server lines trigger reloads on any change, so they belong on `default-server`.
+Put shared server options on `default-server` to avoid repeating them. HAPTIC
+copies those options into runtime server-creation commands because HAProxy
+doesn't inherit them during `add server`. Changing an existing server's options,
+such as `check` or `proto`, still requires a reload; address, port, weight, and
+maintenance-state changes can use the Runtime API.
 
 ### Cross-Resource Lookups
 

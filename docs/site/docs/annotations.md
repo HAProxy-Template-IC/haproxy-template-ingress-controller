@@ -6,7 +6,7 @@ HAPTIC supports annotations on Ingress resources through template libraries. Sta
 
 | Library | Annotation prefix | Library docs |
 |---------|-------------------|--------------|
-| HAPTIC native (best-of-breed **superset** of all three below) | `haproxy-haptic.org/` | [haptic-annotations library →](./libraries/haptic-annotations.md) |
+| HAPTIC native | `haproxy-haptic.org/` | [haptic-annotations library →](./libraries/haptic-annotations.md) |
 | [haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) (vendor ingress controller) | `haproxy.org/` | [haproxytech library →](./libraries/haproxytech.md) |
 | [jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) (community ingress controller) | `haproxy-ingress.github.io/` | [haproxy-ingress library →](./libraries/haproxy-ingress.md) |
 | [kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) (nginx ingress controller) | `nginx.ingress.kubernetes.io/` | [nginx-ingress library →](./libraries/nginx-ingress.md) |

@@ -4,17 +4,22 @@ Pure render service that turns the controller's templates + Kubernetes state int
 
 ## Overview
 
-`RenderService` (`service.go`) is the synchronous, library-style API. The render-validate pipeline (`pkg/controller/pipeline.Pipeline`) calls `service.Render(ctx, storeProvider)` directly, with no event hop. The leader-only Coordinator drives the pipeline; it then publishes `TemplateRenderedEvent` itself.
+`RenderService` (`service.go`) is synchronous. The reconciliation coordinator,
+follower warmer, and admission/proposal pipeline call it directly; only the
+leader deploys the resulting plan. The coordinator publishes `TemplateRenderedEvent`.
 
 The renderer is a library, not an event-driven component. See `docs/adr/0001-renderer-is-synchronous-not-event-adapter.md` for the rationale.
 
 ## Quick Start (RenderService)
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+import (
+    "gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+    "gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+)
 
 svc := renderer.NewRenderService(&renderer.RenderServiceConfig{
-    Engine:             templateEngine,        // pre-compiled *templating.Engine
+    Engine:             templateEngine,        // pre-compiled templating.Engine
     Config:             cfg,                   // built from the HAProxyTemplateConfig CRD
     Logger:             logger,
     Capabilities:       capabilities,          // from local HAProxy probe
@@ -22,34 +27,29 @@ svc := renderer.NewRenderService(&renderer.RenderServiceConfig{
     HTTPStoreComponent: httpStoreComponent,    // optional; needed for {{ http.Fetch(...) }}
 })
 
-// The servers templates read as `currentConfig` for slot-aware assignment come
-// from the plan the fleet ACKed (SetAckedPlan), or the last reconcile render
-// until a pod ACKs one — the renderer holds them in memory, no config field.
-
-result, err := svc.Render(ctx, storeProvider) // *RenderResult, error
+result, err := svc.Render(ctx, storeProvider, rendercontext.RenderModeReconcile) // *RenderResult, error
 ```
 
-`RenderResult` carries everything downstream consumers need:
+`RenderResult` binds the configuration, deployment plan, auxiliary files, status
+patches, Events, and owned resources in immutable snapshots. Production callers
+use `CycleSnapshot` and the output-specific snapshots. The mutable compatibility
+fields (`AuxiliaryFiles`, `StatusPatches`, `Events`, and `RenderedResources`) stay
+nil; use the `Materialize*` methods when a detached copy is required.
 
-- `HAProxyConfig string` — the rendered config
-- `AuxiliaryFiles *dataplane.AuxiliaryFiles` — maps + general files + SSL certificates + crt-list files
-- `StatusPatchSnapshot *templating.StatusPatchSnapshot` — authenticated immutable status mutations; detach only at phase application
-- `Events []templating.RenderedEvent` — Kubernetes Events templates asked to emit via `recordEvent()`
-- `RenderedResources []templating.RenderedResource` — full Kubernetes resources rendered from `spec.k8sResources`, consumed by `pkg/controller/resourceapplier`
-- `IncludeStats []templating.IncludeStats` — per-snippet render counts and timings; nil unless the engine was built with profiling enabled
-- `DurationMs int64` — wall time
-- `AuxFileCount int` — convenience aggregate
+`PlanID` identifies the desired plan. `DurationMs`, `AuxFileCount`, and optional
+`IncludeStats` report render cost.
 
 Path resolution uses *relative* paths derived from `cfg.Dataplane.{MapsDir,SSLCertsDir,GeneralStorageDir}`. The rendered config relies on HAProxy's `default-path origin <baseDir>` directive, so the same render output works in:
 
 - Local validation, where the validation service swaps `baseDir` for a temp directory.
-- Production deployment, where `baseDir` is wherever the Dataplane API actually writes auxiliary files.
+- Production deployment, where `baseDir` is the agent's configuration directory.
 
 ## Template Context
 
-The rendering context is assembled by `service.go`'s own `buildRenderingContext` method (not via `rendercontext.NewBuilder`; see `pkg/controller/rendercontext` README for the full key list). The `resources` map exposes one `*rendercontext.StoreWrapper` per `spec.watchedResources` entry; templates iterate them with `.List()` / `.Fetch(keys...)` / `.GetSingle(keys...)`.
-
-`StoreWrapper` lazy-caches `.List()` per render — every resource is unwrapped from `*unstructured.Unstructured` to a plain map on the first call and reused for the rest of the reconciliation. `.Get` / `.GetSingle` unwrap on demand for the matched subset only.
+`buildRenderingContext` prepares the resource stores, acknowledged configuration,
+and HTTP input view, then delegates to `rendercontext.NewBuilder`. Watched
+resources expose `List`, `Fetch`, and `GetSingle`; schema-backed resources support
+typed field access. Store reads and typed projections are cached for reuse.
 
 A Kubernetes read failure, typed-resource conversion failure, or ambiguous
 `.GetSingle()` result aborts the render. Only a stale on-demand reference whose
@@ -60,7 +60,7 @@ live API object is already gone is treated as ordinary absence.
 - [`pkg/controller/pipeline`](../pipeline/) — calls `RenderService.Render` then runs validation
 - [`pkg/controller/rendercontext`](../rendercontext/) — the Builder that assembles every render's template context
 - [`pkg/templating`](../../templating/) — the template engine `RenderService` wraps
-- [`pkg/controller/reconciler`](../reconciler/) — Coordinator that drives the pipeline (leader-only)
+- [`pkg/controller/reconciler`](../reconciler/) — leader coordinator that drives deployment reconciliation
 
 ## License
 

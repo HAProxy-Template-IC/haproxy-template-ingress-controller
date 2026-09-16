@@ -16,7 +16,7 @@ graph TB
             HTPLCFG[HAProxyTemplateConfig CRD<br/>Templates, watched resources, settings]
             CREDS[Secret<br/>agent credentials]
 
-            CTRL_SVC[Controller Service<br/>ClusterIP<br/>:8080 healthz + /debug<br/>:9090 metrics<br/>:9443 webhook]
+            CTRL_SVC[Controller Service<br/>ClusterIP<br/>:8080 healthz<br/>:9090 metrics<br/>:9443 webhook]
 
             subgraph "HAProxy Deployment (2+ replicas)"
                 subgraph "haproxy pod A"
@@ -62,12 +62,12 @@ graph TB
 **Deployment Components:**
 
 1. **Controller Deployment** — defaults to 2 replicas with leader election
-    - All replicas watch Kubernetes resources, run admission webhooks, and discover HAProxy pods (hot standby — keeps caches warm so failover is instant)
-    - Only the elected leader runs the render Pipeline and applies configuration through each pod's HAPTIC agent
+    - All replicas watch Kubernetes resources, run admission webhooks, and discover HAProxy pods and keep their render graphs warm
+    - Only the elected leader applies configuration through each pod's HAPTIC agent
     - See [High Availability](../../operations/high-availability.md) for tuning failover and [Leader Election](./leader-election.md) for the full all-replica vs leader-only component split
 
 2. **Controller Service** (ClusterIP) — operational endpoints only
-    - `:8080` → healthz probes and `/debug/*` introspection
+    - `:8080` → healthz probes; `/debug/*` accepts loopback connections through port-forwarding
     - `:9090` → Prometheus metrics
     - `:9443` → validating webhook
 
@@ -84,7 +84,7 @@ graph TB
     - Apply tuning (`minDeploymentInterval`, `driftPreventionInterval`, storage paths)
     - Validation tests shipped alongside the templates
 
-6. **Credentials Secret** referenced by `spec.credentialsSecretRef` — holds the agent's username and password. The controller watches it live; the HAProxy pods read it through their environment, so a rotation needs a pod roll on their side.
+6. **Credentials Secret** selected by `--secret-name` / `SECRET_NAME` — holds the agent's username and password. The controller watches it live; the HAProxy pods read it through their environment, so a rotation needs a pod roll on their side.
 
 ## Container Architecture
 

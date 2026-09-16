@@ -1,13 +1,12 @@
-# Playground "extend" preset fragment: the exact request-id snippet from the
-# landing --extend terminal (docs/landing/overrides/home.html). gen-playground-
-# assets.sh merges this into the ingress preset's spec.templateSnippets.
-# render_glob "frontend-filters-*" in haproxyConfig.template auto-invokes it in
-# name order (after -250-request-body-size); no config-template edit is needed.
-frontend-filters-300-request-id:
+# Keep the request-id example in the docs and landing page in sync.
+backend-directives-300-request-id:
   template: |
-    {%- for _, ingress := range resources.ingresses.List() %}
-    {%- var header = ingress | dig("metadata", "annotations", "example.com/request-id-header") | fallback("") | tostring() %}
+    {%- if ingress != nil %}
+    {%- var header = ingress.metadata.annotations["example.com/request-id-header"] %}
     {%- if header != "" %}
+    {%- if !regex_search(header, "^[A-Za-z0-9-]+$") %}
+    {{ fail("example.com/request-id-header must contain only letters, digits, or hyphens.") }}
+    {%- end %}
     http-request set-header {{ header }} %[uuid()]
     {%- end %}
     {%- end %}

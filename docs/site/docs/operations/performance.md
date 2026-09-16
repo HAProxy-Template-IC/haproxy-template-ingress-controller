@@ -10,7 +10,7 @@ Tune HAPTIC in three areas:
 
 ## Measured render cost by object count
 
-A full render walks the whole watched-object store, so its cost scales with cluster size. This is what you pay on startup, on a configuration change, and on every admission review. For the cost of a steady-state render after a single object changes, see [Incremental render cost](#incremental-render-cost).
+A full render walks the whole watched-object store, so its cost scales with cluster size. This cost applies when the render cache is cold, such as on startup or after a configuration change. For the cost of a steady-state render after a single object changes, see [Incremental render cost](#incremental-render-cost).
 
 These numbers come from `scripts/test-benchmark.sh` against the bundled chart's default libraries, with a realistic mix of one Ingress, one Service, and two EndpointSlices per step:
 
@@ -26,9 +26,9 @@ Reproduce them with:
 ./scripts/test-benchmark.sh --ingress-only --steps 100,1000,5000 --iterations 3
 ```
 
-Two things to read off this table. The overall cost is close to linear at roughly 0.11–0.15 ms per Ingress, so a 5,000-Ingress cluster spends under a second per render. But the **path maps grow faster than the object count** — `path-prefix-exact` alone goes from 6 ms at N=1,000 to 94 ms at N=5,000, a 15× rise for 5× the objects — and by N=5,000 the three path maps are about 40% of the render.
+In this measurement, total cost grows roughly with object count. Path-map rendering accounts for about 40% of the 5,000-Ingress render; measure your templates to identify their dominant cost.
 
-The admission webhook renders the entire configuration once per admitted object, so this is also the per-admission cost. On a cluster where a single render approaches `controller.webhook.timeoutSeconds` (10 seconds by default), a burst of `kubectl apply`s starts failing admission under `failurePolicy: Fail`. Measure your own cluster with the command above before assuming headroom.
+Admission uses the same render service and can reuse its warm graph. Each admission still runs synchronous HAProxy validation, so render-only timings aren't admission latency. Measure the complete request against `controller.webhook.timeoutSeconds` (10 seconds by default).
 
 ## Incremental render cost
 
@@ -49,15 +49,15 @@ HAPTIC_BENCHMARK_BARE_ENGINE=1 HAPTIC_BENCHMARK_SKIP_ORACLE=1 \
 
 `HAPTIC_BENCHMARK_BARE_ENGINE=1` renders on the chart's engine, as the controller does. Without it the benchmark wraps the engine to count component executions, and the document caches refuse a wrapped engine, so the timings then describe a controller without them. `HAPTIC_BENCHMARK_SKIP_ORACLE=1` skips the cold render the benchmark otherwise runs after every iteration to prove the incremental output equal to a cold one; leave it unset to run that check.
 
-Read four things off this table.
+Cold renders cost more as the watched set grows. A follower also renders changes
+to keep its graph warm, so it pays render CPU and cache memory even while only
+the leader deploys.
 
-**The cold column is what a controller pays with an empty cache**, and it's linear in the object count. You pay it on startup and on a configuration or chart change. You don't pay it on a steady-state reconcile, and you don't pay it on a leader failover: a follower renders every change too, without deploying anything, so its graph is warm when it takes over. That costs each follower the same render CPU and graph memory as the leader; `haptic_render_total{cache_state}` on every replica shows what each one pays.
-
-**A render with no relevant change is flat and cheap.** It costs about 2.3 ms whether you run 300 routes or 3,000, and executes zero components. That 2.3 ms is the cost of proving nothing changed and re-publishing the existing output, not of rendering it.
-
-**The work that's incremental is exactly incremental.** Thirteen components re-execute for one changed route, fourteen for an added one, and none for an endpoint change, whose servers reach the backend through a published value. Those counts don't move as the fleet grows tenfold. This is the guarantee the dependency journal buys: component re-execution tracks what changed, not how much exists.
-
-**One changed route still costs more on a bigger cluster** — about 5 µs per route, and 11 µs per route when the change adds a backend. The root document template runs once per render, and while the per-route rules it used to re-emit are now declared as plan fragments and spliced from text the engine already caches, the template still visits every fragment and the changed frontend maps are still written whole. An auxiliary file whose template observed nothing new isn't rendered again; the maps a route change touches are. Component execution is flat; whole-document production isn't.
+In this measurement, unchanged output costs about 2.3 ms across all three sizes.
+A changed route re-executes 13 components; an added route re-executes 14. Total
+latency still rises with route count because document assembly and changed maps
+also contribute. These are measurements of this workload, not fixed costs for
+other templates.
 
 ## Gateway API implementation benchmark
 
@@ -65,37 +65,91 @@ Read four things off this table.
 
 Pinned source doesn't make the resulting numbers interchangeable with the public report. The report used joined, multi-controller runs with shared status-write contention and imported results through VictoriaMetrics. This runner uses one HAPTIC target in a dedicated Kind cluster, executes each self-paced upstream program from a static sibling container, and analyzes its raw logs directly. Use the result to find material gaps; don't present it as a reproduced public score.
 
-The supported scenarios retain the upstream workload behavior and add HAPTIC-specific evidence:
+### Workloads and verdicts
 
-- `probe` applies 3,000 HTTPRoutes sequentially and waits for each route's first HTTP `200` before applying the next one. Before the program starts, the runner pre-creates its backend Deployment and Service from the exact manifest in the pinned source and waits for a ready endpoint, so the first sample, route `0`, measures route propagation rather than the backend's image pull and pod start-up; the program's own apply of the same manifest is a no-op. (The published joined runs shared one long-lived backend across tests.) The raw-log analyzer requires one unique latency sample for every Gateway and route ID from `0` through `2999`. Unexpected responses, including HTTP `5xx`, remain attached diagnostics: the upstream program continues until `200`, while HAPTIC's separate scenario-quality verdict fails if any unexpected status occurred. Complete evidence with a `5xx` is a valid negative measurement, not a broken run.
-- `routechange` uses the upstream availability test: it sends continuous traffic while applying 20 route changes 200 ms apart. An upstream request failure during active churn produces a negative availability result. HAPTIC adds a separate non-vacuity gate that must observe `my-added-header: added-value` through every Gateway and every HAProxy pod while the matching route variant is live. The pinned workload places this response modifier on a `backendRef`. HAPTIC emits one `http-response add-header` directive per header name on the Gateway's frontend and reads the value from a map keyed by rule and backend, so the first route on a Gateway to use a header name needs an HAProxy reload, paced by `minDeploymentInterval`, while later value changes and removals are runtime map operations. Measured on the e2e cluster with a serving Gateway: removing the filter was visible 40 ms after the `kubectl apply` call returned, adding it 2.4 s after, on the next paced reload. The pinned workload adds the header on every other 200 ms flip, so the observer can't see it on every pod inside a window; the gate stays product-negative and isn't weakened to a generic HTTP response check. After cleanup, the same pods and Services must return `404` without the marker, and the `HAProxyCfg` and map checksums must return to their baseline. Reload counts remain diagnostic only.
-- `scale` captures the Part 2 route-scale configuration and substitutes only the HAPTIC Gateway list. The defaults create 50 namespaces with 100 applications each, one Pod, Service, and HTTPRoute per application, plus 20 simulated nodes, a 500 ms grace period, 1 s configuration jitter, and 2 s workload jitter. The upstream sync marker and 5,000-object count aren't the readiness verdict. Every HTTPRoute must have HAPTIC-owned `Accepted=True` and `ResolvedRefs=True` status at or beyond the synchronized snapshot generation; a new `HAProxyCfg` and all referenced maps must be deployed to the exact HAProxy fleet; and two reads of the current HAProxy worker in every load-balancer pod must show runtime `host.map` entries that exactly match the snapshot's route hostnames and Gateway target ports. The runner re-resolves the current map checksum, path, and fleet-runtime token after those reads and retries if that semantic token moved; unrelated config generations may advance while churn remains active.
+| Scenario | Upstream workload | Additional HAPTIC checks |
+|----------|-------------------|--------------------------|
+| `probe` | Create 3,000 HTTPRoutes sequentially; wait for each route's first HTTP `200` | Start with a ready backend. Require one sample per route and Gateway. Unexpected HTTP responses make the result negative even if each route eventually returns `200`. |
+| `routechange` | Send continuous traffic through 20 route changes, 200 ms apart | Observe the response-header marker on every Gateway and HAProxy pod while its route variant is active. After cleanup, require `404`, no marker, and baseline config and map checksums. |
+| `scale` | Create 50 namespaces with 100 applications each: one Pod, Service, and HTTPRoute per application, plus 20 simulated nodes | Require current route status, deployed config and maps, and two matching runtime-map reads from every current HAProxy worker before starting the 10-minute measurement window. |
 
-Only after the scale readiness proof does the runner start its HAPTIC-defined 10-minute analysis window. If valid observations reach the scale-startup deadline at the route-status, exact-current configuration, referenced-map, runtime-map, or semantic-token gate, the runner records a stage-specific negative result, stops the workload, and performs full cleanup without reporting steady CPU or memory. Evidence acquisition failures and cleanup deadlines still invalidate the run. At both window boundaries, it captures the exact 5,000-route UID, generation, and `PathPrefix` path inventory, plus the upstream log line boundary. The same UIDs must remain, at least one route's generation and path must advance, and the bounded log segment must contain at least one `refreshed config HTTPRoute/...` line. Controller identities must remain unchanged, all captured counters must be monotonic per pod, reconciliation must advance, and at least one deployment, apply, or HAProxy reload counter must advance. Together, these checks prove that route mutation and upstream refresh output occurred within the captured interval that brackets HAPTIC activity and resource sampling; they don't prove per-mutation causality. `scale/steady-activity.json` records this under `route_refresh_activity` with `temporal_overlap: true` and `causal_mapping: false`. Deltas for the reconciliation errors, deployment errors, validation errors, rejected applies, runtime-map divergence, and dropped events must remain zero for the outcome-quality verdict. The same window supplies strict CPU and memory samples. Cleanup must restore the route, namespace, node, configuration, and map baselines.
+Scale retains the upstream 500 ms grace period, 1 s configuration jitter, and
+2 s workload jitter. During the measurement window, route identities must stay
+stable, route paths and generations must advance, upstream refresh logs must
+show activity, and HAPTIC must reconcile and deploy changes. These checks prove
+temporal overlap between churn and controller activity; they don't map each
+mutation to a deployment. A readiness deadline produces a negative result
+without steady-state CPU or memory figures.
 
-Every scenario also checks these adverse counters from before workload creation through cleanup and baseline convergence. `lifecycle-outcomes.json` records each controller's deltas; a ramp or cleanup error makes the scenario negative even if steady activity is clean. Missing scalar counters and duplicate series invalidate the evidence. A counter series that decreases or disappears, or a changed controller identity, also invalidates it. Unused rejected-apply and runtime-map-divergence label vectors may be absent until their first event.
+Across every scenario, error-counter increases or restarted/unhealthy supervised
+children make the product result negative. Missing evidence, changed controller
+identities, decreasing counters, or incomplete cleanup invalidate the run.
+Cleanup must restore the workload, configuration, and map baselines.
 
-The probe and route-change programs' upstream backend uses an untagged, mutable image reference; the runner pre-creates it from the program's own manifest and records the applied manifest's digest and the ready pod. Before deleting it, the runner records the Deployment, owning ReplicaSet, and exact ready pod identity, including the declared image, runtime image, immutable image digest, container ID, and restart count. Raw workload inventories prove that no matching ReplicaSet or pod existed before the scenario and none remained after cleanup.
+Read `runner-summary.json`:
 
-Before every workload, the runner derives the supervised `spoa-hub` and `vector` child topology from the live load-balancer Deployment and Pods. It requires a healthy, unique child with the expected executable and executable-file identity, boot ID, process identifier, parent process identifier, and `/proc` start time. After cleanup, it repeats the capture and listener health checks. Missing or malformed baseline evidence invalidates the run; a stable Kubernetes container whose child restarted, disappeared, became ambiguous, or ended unhealthy remains a complete measurement but makes HAPTIC's scenario-quality verdict negative. Each scenario retains timestamped logs from every load-balancer container.
+| Field | Meaning |
+|-------|---------|
+| `measured_result.pass`, `negative_scenarios` | Product quality: propagation, availability, convergence, and error outcomes |
+| `harness.pass`, `harness.final_exit_code` | Evidence and cleanup validity, finalized after terminal checks |
 
-These are the Part 2 control-plane scenarios that this target covers. It doesn't run the attached-routes, traffic, ListenerSet, or backend-failover tests, or the 100-route propagation variant concurrently with route scale. Don't describe its output as a result for those tests or for the entire upstream suite.
+A valid negative measurement exits `0`. A nonzero exit means the evidence or
+cleanup is incomplete or invalid. **Check the measured result as well as the
+process exit code.** Reload counts are diagnostic, not an availability verdict.
 
-Read `runner-summary.json` for the result. Its `measured_result.pass` and `negative_scenarios` fields report HAPTIC quality gaps independently from `harness.pass`. The runner finalizes `harness.pass` and `harness.final_exit_code` only after its terminal cleanup and artifact-security gates. When the evidence and cleanup complete, a probe with `5xx` diagnostics, route-change downtime, or adverse scale outcome counters keeps the runner exit code at `0` and remains a negative measured result. A nonzero exit means the workload, provenance, identities, cleanup, or evidence were incomplete or invalid; it doesn't mean HAPTIC was merely slower than another controller.
+The runner covers these three Part 2 control-plane scenarios. It doesn't cover
+attached routes, traffic throughput, ListenerSet, backend failover, or the
+100-route propagation test running alongside scale.
 
-The runner also installs the Prometheus manifest from the same upstream commit. For each metric, it retains a 5-second `query_range` value matrix and a companion `timestamp(selector)` matrix. The analyzer requires identical labels and evaluation grids, advancing source timestamps within the workload window, and a maximum source age of 20 seconds (four scrape intervals, accommodating exporter timestamps from the node metrics exporter). This prevents repeated stale values from looking like fresh samples.
+### Resource measurements and provenance
 
-The `upstream_compatible_pod_cgroups` summary uses the pod-root CPU and working-set series selected by the upstream dashboard. It also requires empty image and name labels so current kubelet metrics don't include the pause sandbox as a second pod series. The separate `haptic_container_diagnostics` summary uses exact real-container CPU, working-set, and resident-set-size series for every controller and load-balancer container. Both report time-aligned mean, p95, maximum, and last values. CPU also reports the counter delta, sampled window, and normalized cores. Missing, duplicate, restarted, replaced, stale, or timestamp-misaligned series fail analysis.
+The runner installs the pinned upstream Prometheus manifest and samples every
+5 seconds. It retains values and source timestamps, requiring matching labels
+and grids, advancing timestamps, and source ages no greater than 20 seconds.
+Missing, duplicate, restarted, replaced, stale, or misaligned series fail analysis.
 
-The `probe` and `routechange` resource windows cover only the upstream process. After discarding leading evaluations whose underlying samples predate that process, every series needs at least two retained evaluations and two distinct source timestamps. Genuine sample insufficiency produces a non-gating `resources.json` with `analysis_status: not_gated`, `gating: false`, and `pass: null`; malformed or stale samples still fail. The `scale` resource summary is strict when the proven steady-churn window starts; a readiness deadline makes that summary not applicable.
+- `upstream_compatible_pod_cgroups` uses pod-root CPU and working-set series,
+  excluding pause-container duplicates.
+- `haptic_container_diagnostics` reports CPU, working set, and resident set for
+  each real container.
+- Both report time-aligned mean, p95, maximum, and last values. CPU also reports
+  counter deltas, window length, and normalized cores.
 
-The fresh-cluster path resets the release to chart defaults before applying only the local runtime identity, benchmark timings, load-balancer exposure, and no-limit measurement settings. Because the pinned CRD bundle is Experimental, it also enables `controller.templateLibraries.gateway.experimentalChannel` and verifies that HAPTIC retained the experimental-field validation tests. The runner removes CPU and memory limits and explicit `GOMEMLIMIT` from measured HAPTIC pods so those controls don't cap the observation. Redacted Helm values and manifests, effective timings, and resource methodology record the resulting profile. The result directory also includes upstream and HAPTIC commits, the parameterized scale configuration and its upstream diff, image, binary, pod, container, and supervised-child identities, process-boundary timestamps, raw workload and load-balancer logs, scenario analyses, Prometheus responses, and the terminal runner exit code and timestamp.
+Probe and route-change resource windows cover the upstream process only. Too few
+fresh samples yield `analysis_status: not_gated`, `gating: false`, and `pass: null`;
+malformed or stale samples still invalidate the evidence. Scale requires a
+complete resource series for its proven steady-churn window.
 
-Before it appends fixed terminal metadata and accepts a result, the runner scans the workload artifact tree for exact byte sequences matching the raw and base64 forms of sensitive live Kubernetes Secret values that are at least eight bytes long. It excludes only the `path` metadata key in controller-owned HAPTIC SSL auxiliary Secrets because that value names the deployed certificate file and appears in the rendered configuration; the `certificate` value in the same Secret remains covered. A selected match is replaced with `<redacted>`, recorded in `cluster/artifact-secret-scan.json`, and fails the run. If the runner can't establish a complete live Secret inventory, complete the scan, or verify the redaction, it replaces the artifact tree with `artifact-security-invalid.json`, `runner-summary.json`, and runner exit and timestamp files. Structured redaction also removes agent passwords, Secret data, and webhook CA bundles from captured Helm data.
+The default profile starts from chart defaults, enables experimental Gateway API
+fields to match the pinned CRDs, and removes CPU/memory limits and explicit
+`GOMEMLIMIT` from measured pods. Artifacts retain effective settings, source digests, manifest digests,
+image/binary/pod/container identities, child-process identities,
+logs, metric responses, and terminal status. The mutable upstream backend image
+is recorded by its actual runtime digest. The local SPOA bundle is checked
+against `versions-spoa.env` before and after measurement.
 
-The manual `gateway-api-benchmark-smoke` GitLab job is a hosted-runner integration smoke, not the controlled default profile. It pins the published upstream commit, Gateway API v1.4.0 Experimental bundle, HAPTIC Gateway, HAProxy 3.4, 50-by-100 scale workload, and 20-by-200 ms route-change workload. It reduces the probe to 300 routes with a 45-minute timeout and sets the deployment and watcher intervals to 100 ms. The scale-startup, scale-window, and route-change bounds are 20, 10, and 10 minutes. A 135-minute outer watchdog, followed by at most 20 minutes of forced-termination grace, leaves 10 minutes for safe artifact staging before the job's 2-hour-45-minute limit. These bounds fit below GitLab.com's three-hour limit; the full 3,000-route product-default run remains local. Its metadata must report `published_workload_inputs_match: false` and `controlled_default_profile: false`, so don't use the CI smoke for Part 2 gap numbers. The job writes raw results outside `CI_PROJECT_DIR`. It stages a full result tree only when the terminal summary has `secret_inventory_trusted: true` and the final artifact scan report passed, or stages the runner's five-file invalid verdict after validating its exact names and contents. Every other shape produces only `ci-wrapper-invalid.json`. The job preserves a nonzero runner exit code; a staging failure after a zero runner exit changes the job exit to `1`.
+Before accepting artifacts, the runner scans for raw and base64 forms of live
+Secret values at least eight bytes long. Only the controller-owned SSL Secret's
+`path` metadata is exempt; its certificate remains covered. A match is redacted
+and fails the run. An incomplete Secret inventory, scan, or redaction replaces
+the artifact tree with five files recording the invalid result. Helm captures
+also redact passwords, Secret data, and webhook CA bundles.
 
-The local runtime includes a SPOA bundle built from `versions-spoa.env`, not the chart's last release tag. Before and after measurement, the runner compares the hub executable, every plugin library, and the embedded version pins in each hub and validator container against the local image. The `cluster/spoa-bundle-*` artifacts retain those checksums and identities; a mismatch invalidates the run.
+### CI smoke profile
+
+The manual `gateway-api-benchmark-smoke` GitLab job uses the same pinned source,
+Gateway API bundle, HAProxy 3.4, 5,000-route scale workload, and route-change
+workload. It reduces the probe to 300 routes and sets deployment and watcher
+intervals to 100 ms. Its probe, scale-startup, scale-window, and route-change
+bounds are 45, 20, 10, and 10 minutes. An outer watchdog and cleanup grace leave
+time for checked artifact staging within the 2-hour-45-minute job limit.
+
+This hosted-runner smoke records `published_workload_inputs_match: false` and
+`controlled_default_profile: false`. Use it to check runner integration; use the
+local 3,000-route default profile for Part 2 gap measurements. CI publishes full
+artifacts only after trusted Secret inventory and scan verdicts, otherwise the
+validated five-file failure result or `ci-wrapper-invalid.json`. It preserves
+runner failures and fails if artifact staging fails.
 
 ### Results
 
@@ -233,17 +287,12 @@ floor, the consumers that scale with your workload are the watched-resource
 caches and render buffers (memory) and rendering plus watch streams (CPU).
 
 !!! tip "Scaling past a few thousand Ingresses"
-    At the very-large scale, the resource numbers above are a starting point, not the main lever — the controller holds every watched resource in memory and re-renders the whole config on change, so what keeps that bounded is *watching less*, not sizing bigger. Reach for these first:
+    Start by measuring the watched-resource cache, render graph, and startup tests. Narrow watches to relevant resources and use on-demand storage for large, infrequently read objects; see [Resource watching optimization](#resource-watching-optimization). Check `haproxy.shmStats.maxObjects` if you enable shared-memory stats.
 
-    - **Narrow the watch** to the namespaces or labels that actually route through HAPTIC, so unrelated Ingresses, Services, and EndpointSlices never enter the cache — see [Resource watching optimization](#resource-watching-optimization).
-    - **Move large, infrequently read resources to the on-demand store** (TLS Secrets especially) so their bodies aren't held resident — see [Watching resources — store types](../watching-resources.md). Both cut memory and per-render CPU more than raising limits does.
+!!! note "Chart defaults"
+    The controller container requests `100m` CPU and `1Gi` memory, limits memory to `1Gi`, and has no CPU limit. The table above provides starting points if you choose CPU limits; measure your workload before adopting them.
 
-    HAProxy-side, watch `haproxy.shmStats.maxObjects` if you enabled shm-stats — thousands of backends and servers can exhaust the fixed-size stats file (see [Troubleshooting — Shared Memory Stats Limit](../troubleshooting.md#shared-memory-stats-limit)).
-
-!!! note "Chart defaults differ — deliberately"
-    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Burstable QoS — no CPU limit, by design), which differs from the table above for two reasons: omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel's out-of-memory killer from preferring this pod over Burstable neighbours (see [Robusta on Kubernetes memory limits](https://home.robusta.dev/blog/kubernetes-memory-limit) for the rationale). The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
-
-Configure via Helm values. `controller.resources` applies to the controller pod; HAProxy and the agent have their own blocks under `haproxy.resources` and `haproxy.agent.resources` (see [HAProxy Deployment](../haproxy-deployment.md)):
+Configure via Helm values. `controller.resources` applies to the controller container; HAProxy and the agent have their own blocks under `haproxy.resources` and `haproxy.agent.resources` (see [HAProxy Deployment](../haproxy-deployment.md)):
 
 ```yaml
 # values.yaml
@@ -251,26 +300,26 @@ controller:
   resources:
     requests:
       cpu: 100m
-      memory: 512Mi
+      memory: 1Gi
     limits:
       # No CPU limit — avoids throttling GOMAXPROCS-aware Go under bursts.
-      memory: 512Mi   # memory request == limit; no CPU limit → Burstable QoS (by design)
+      memory: 1Gi   # memory request == limit; no CPU limit → Burstable QoS (by design)
 ```
 
 ### Container awareness (`GOMAXPROCS` and `GOMEMLIMIT`)
 
 The controller automatically detects and respects the limits you set above — no tuning env vars are needed:
 
-- **CPU limits (GOMAXPROCS):** native cgroup-aware GOMAXPROCS (added upstream in Go 1.25; the controller currently builds with Go 1.27). The Go runtime detects cgroup CPU limits (v1 and v2), sets GOMAXPROCS to match the container's CPU limit rather than the host's core count, and adjusts dynamically if the limit changes at runtime. Proper GOMAXPROCS prevents over-scheduling goroutines and the CPU throttling that comes with it.
-- **Memory limits (GOMEMLIMIT):** the controller uses the `automemlimit` library to set GOMEMLIMIT to 90% of the container memory limit (10% headroom for non-heap memory), with both cgroups v1 and v2. GOMEMLIMIT helps the Go GC keep heap memory under control and prevents out-of-memory kills.
+- **CPU limits (GOMAXPROCS):** native cgroup-aware GOMAXPROCS (added upstream in Go 1.25; the controller currently builds with Go 1.27). The runtime adjusts GOMAXPROCS using the CPU quota and available cores, with a minimum of two unless fewer cores are available. This reduces scheduling overhead but doesn't prevent quota throttling.
+- **Memory limits (GOMEMLIMIT):** the controller uses the `automemlimit` library to set GOMEMLIMIT to 90% of the container memory limit (10% headroom for non-heap memory), with both cgroups v1 and v2. GOMEMLIMIT is a soft garbage-collection target; it doesn't prevent all out-of-memory kills.
 
 At startup the controller logs the detected limits, for example:
 
 ```
-INFO HAPTIC starting ... gomaxprocs=8 gomemlimit="483183820 bytes (460.80 MiB)"
+INFO HAPTIC starting ... gomaxprocs=8 gomemlimit="966367641 bytes (921.60 MiB)"
 ```
 
-`gomemlimit` is 90% of the 512Mi memory limit (≈460.8 MiB). Because the chart omits a CPU limit, `gomaxprocs` matches the node's core count (8 here) rather than a container CPU limit — you only see `gomaxprocs=1` when you set a 1-CPU limit.
+`gomemlimit` is about 90% of the 1Gi memory limit (921.6 MiB). Without a CPU limit, `gomaxprocs` follows the CPU cores available to the process. Check the startup log for the effective values.
 
 The `AUTOMEMLIMIT` environment variable adjusts the memory limit ratio (default: 0.9; valid range `0.0 < AUTOMEMLIMIT <= 1.0`). Set `AUTOMEMLIMIT=off` to skip the automatic detection entirely; setting `GOMEMLIMIT` yourself also takes precedence, and the controller then leaves it alone. Set it via the chart's `controller.extraEnv` list, which is injected into the controller container:
 
@@ -293,7 +342,7 @@ Memory usage scales with:
 Monitor memory usage:
 
 ```promql
-container_memory_working_set_bytes{container="haptic"}
+container_memory_working_set_bytes{container="controller"}
 ```
 
 ### CPU considerations
@@ -307,7 +356,7 @@ CPU spikes occur during:
 Monitor CPU usage:
 
 ```promql
-rate(container_cpu_usage_seconds_total{container="haptic"}[5m])
+rate(container_cpu_usage_seconds_total{container="controller"}[5m])
 ```
 
 ## Reconciliation tuning
@@ -327,10 +376,13 @@ watchedResources:
   endpointslices:
     apiVersion: discovery.k8s.io/v1
     resources: endpointslices
-    debounceInterval: "0"      # fire immediately — pod-IP rotations reach HAProxy instantly (chart default)
+    debounceInterval: "0"      # fire immediately — no watcher delay for pod-IP changes (chart default)
 ```
 
-Empty / invalid strings fall back to the `100ms` default silently; `"0"` disables debouncing so every change fires immediately. This is the only debounce layer — the Reconciler fires immediately on every event with no separate refractory window, and reload throttling lives in the deployer (see [Deployment Pacing](#deployment-pacing) below and [architecture-overview](../development/design/architecture-overview.md)).
+Empty or invalid durations use the `100ms` default; `"0"` disables watcher
+debouncing. The Reconciler adds no timer, but its coordinator coalesces triggers
+that arrive during a render. Reload pacing is separate; see
+[Deployment pacing](#deployment-pacing).
 
 ### Deployment pacing
 
@@ -341,7 +393,7 @@ CRD fields on `spec.dataplane` bound how often each pod reloads and how long the
 | `dataplane.minDeploymentInterval` | `2s` (Helm chart ships `5s`) | Shortest interval between two reloads of one pod. A reload inside the window is scheduled, never dropped |
 | `dataplane.driftPreventionInterval` | `60s` | How often each pod re-hashes its tree and the controller re-applies on a disagreement; corrects external drift |
 | `dataplane.configPublishInterval` | `10s` | Throttle for republishing the rendered config as the `HAProxyCfg` observability CRD; not on the deployment hot path |
-| `dataplane.reloadVerificationTimeout` | `60s` (the agent's ceiling) | How long the agent waits for HAProxy to confirm a graceful reload before restoring the last known good file set |
+| `dataplane.reloadVerificationTimeout` | `10s` (Helm chart ships `60s`, the agent's ceiling) | How long the agent waits for HAProxy to confirm a graceful reload before restoring the last known good file set |
 | `dataplane.syncTimeout` | 2m | How long the controller waits for one pod to answer an apply |
 
 ```yaml
@@ -378,13 +430,13 @@ production because a connection that never drains can otherwise retain an old
 worker until its pod restarts. If you replace `haproxy.initialConfig` entirely,
 include your own `hard-stop-after` directive in that custom bootstrap config.
 
-A resource deletion follows the same front end as any change: the watch delete fires, the leading-edge debouncer forwards it (the first change in a quiet window fires immediately, so an isolated delete isn't held for the refractory window), and the reconciler re-renders without the resource. Whether that re-render reloads HAProxy depends on the route, exactly as adding one does — see [Reload-free route changes](#reload-free-route-changes) below. On HAProxy 3.4, deleting a plain route drains and removes its backend over the runtime API with no reload; a route whose backend carries a filter, and any route on HAProxy 3.0-3.3, reloads paced by `minDeploymentInterval`. An isolated deletion converges in well under a second when it's reload-free, or in about one to a few seconds when it reloads.
+Resource deletions trigger reconciliation through the same watch and debounce path as updates. Removing a dynamic backend can use the Runtime API on HAProxy 3.4; removing a structural backend requires a paced reload. Deleting a route that shares its backend may only change maps. See [Reload-free route changes](#reload-free-route-changes).
 
 **Tuning guidelines:**
 
 - Raise `minDeploymentInterval` in very high-churn environments to absorb more updates per reload (trades latency for fewer reloads), up to the agent's 60-second ceiling. It doesn't pace reload-free applies, which never fork the process.
 - Keep `driftPreventionInterval` at or below 2 minutes so that a misbehaving external client can't hold HAProxy in a drifted state for long.
-- Lower `reloadVerificationTimeout` to fail a stuck reload sooner and restore the last known good file set earlier. You can't raise it: the default is already the agent's 60-second ceiling, and the agent exits at startup on a larger value.
+- Lower `reloadVerificationTimeout` to fail a stuck reload sooner and restore the last known good file set earlier. The agent rejects values above 60 seconds; the Helm chart already uses that ceiling.
 
 ### Reconciliation metrics
 
@@ -570,7 +622,7 @@ The chart sizes `nbthread` for you — you rarely set it by hand:
   this uses every core without inflating CPU requests (which only fence off CPU
   from other pods rather than granting more cores).
 - **CPU limit set.** The chart renders `nbthread = ceil(limits.cpu)`, matching
-  the CPU quota so threads aren't throttled. In the cloud, where the node is
+  the thread count to the CPU quota. The quota can still throttle busy threads. In the cloud, where the node is
   sized to fit the pod, set a limit to pin threads to that size.
 
 ```yaml
@@ -614,38 +666,22 @@ To measure the effect before changing anything, watch `haproxy_backend_http_comp
 
 ### Password hash performance
 
-!!! warning "Read this if your templates use password hashes"
-    Password hash validation during configuration parsing can dominate reconciliation time. Review the table below before choosing a hash algorithm.
+HAProxy checks password hashes while parsing `userlist` entries. Expensive hashes
+therefore affect `haproxy -c`, admission latency, reload time, and authentication
+requests. Cost depends on the algorithm, work factor, user count, and CPU; measure
+the complete configuration with the HAProxy binary you deploy.
 
-HAProxy validates password hash formats during configuration parsing by running the full hashing algorithm. This can significantly slow down config validation when using expensive hash algorithms.
+For example, if one hash check takes 85 ms on your machine, 200 occurrences add
+about 17 seconds to a parse. This is a sizing example, not a portable benchmark.
+Avoid duplicate userlist entries. For large user sets, consider external
+authentication rather than reducing password protection to fit a validation
+budget.
 
-**Hash algorithm validation times:**
-
-| Algorithm | Example | Time per hash |
-|-----------|---------|---------------|
-| MD5 | `$1$salt$hash` | ~0.004 ms |
-| SHA-256 | `$5$salt$hash` | ~3 ms |
-| SHA-512 | `$6$salt$hash` | ~3 ms |
-| bcrypt (cost 10) | `$2y$10$salt$hash` | **~85 ms** |
-
-!!! warning "bcrypt with high cost factors is expensive"
-    A configuration with 200 bcrypt passwords at cost factor 10 adds **~17 seconds** to every config validation. This directly impacts reconciliation time and webhook validation latency.
-
-**Recommendations:**
-
-- **Prefer SHA-512 (`$6$`)** for password hashes - cryptographically strong with fast validation
-- **Avoid bcrypt cost factors above 8** in high-frequency validation scenarios
-- **Consolidate userlists** to avoid duplicate password entries - HAProxy validates each occurrence separately, even for identical hashes
-- **Consider external authentication** (OAuth, OpenID Connect) for large user bases instead of embedding passwords in config
-
-**Checking your config:**
-
-```bash
-# Count expensive bcrypt hashes
-grep -c '\$2[aby]\$' /path/to/haproxy.cfg
-
-# Estimate validation overhead (bcrypt count × 85ms)
-```
+[`htpasswd`](https://httpd.apache.org/docs/2.4/programs/htpasswd.html) uses `-B` for
+bcrypt, `-2` for SHA-256 crypt, and `-5` for SHA-512 crypt. `-C` sets bcrypt's cost
+factor; `-r` sets SHA-2 rounds. Its default Apache MD5 format (`$apr1$`) isn't
+supported by HAProxy's system crypt implementation. Choose the algorithm and
+work factor to meet your authentication policy, then measure the resulting cost.
 
 ## Scaling strategies
 
@@ -717,7 +753,18 @@ Adding or removing a route can update the running HAProxy worker over the runtim
 | 3.4 | Add and remove are reload-free — the backend is created and published, or drained and deleted, over the runtime API | Reloads on add and remove |
 | 3.0-3.3 | Reloads on add and remove; the backend's servers are still added and removed at runtime | Reloads on add and remove |
 
-A backend is *plain* when its section is only `from`/`guid`/`server` lines; comment lines don't count. Per-route settings that HAProxy accepts in a `defaults` section — response compression (on by default for Ingress), the non-settable timeouts, `fullconn`, `retries` and `retry-on`, the health-check URI, cookie affinity — live in the backend's shared profile rather than in its section, so they don't make it structural: the first route with a new combination of them reloads once to add the profile, and every later route with the same settings is added and removed at runtime. The API-gateway features (API key, JWT, HMAC, consumer groups), the per-pod rate limit, the bandwidth limits, the consumer-keyed shared limit, the source-IP allow and deny lists, the per-source rate limits and the CORS headers of every annotation library, the HAPTIC-native request gates (allowed methods, required content types and headers, fixed and mock responses), and the `forwardfor`, `src-ip-header`, `request-id`, client-certificate header, `satisfy: any` and upstream cookie/redirect rewrite annotations are one rule block per frontend fed by per-route maps, so they don't touch the backend either; each block exists only while a route uses its feature, so the first route to adopt one reloads once, as does removing the last. The Gateway API redirect, rewrite and mirror blocks and the SPOA hub's WAF and external-auth dispatch blocks follow the same rule. A prefix-strip path rewrite is a prefix-tree lookup, not a regex: measured on one HAProxy thread with 500 rewrite routes, a rewritten request costs about 2 µs more and every other request about 0.3 µs, whatever the route count. What still reloads is per-route config with no map form: a path rewrite that isn't a prefix strip (`^<prefix>(.*)` to `<new prefix>\1`) or a bare value, a raw `config-backend` injection, and a `satisfy: any` route whose allowlist carries an IPv6 entry (no disjoint cover exists across address families) or whose realm needs escaping; a new basic-auth credentials Secret (its `userlist` section); and the first appearance of a literal the frontend spells out (a new API-key header name, JWT key file, HMAC algorithm, basic-auth realm, rate window or shared-scope bandwidth rate). A backend client certificate (`backend-crt-secret`, `secure-crt-secret`, `proxy-ssl-secret`, `server-crt`, a BackendTLSPolicy client certificate) rides the server line as a runtime-store certificate, so it doesn't make the backend structural either. Server (pod) churn within an existing backend is always reload-free on every supported version.
+A plain backend has no custom body directives. Shared settings live in a named
+`defaults` profile; adding the first backend with a new profile requires a
+reload, while later backends can reuse it.
+
+Map-based header values, redirects, timeouts, and routing changes can run at
+runtime when their processing rules already exist. Introducing a new rule,
+header name, userlist, or raw configuration directive can require a reload.
+An IPv6 allowlist or a realm that needs escaping keeps `satisfy: any` in the
+backend and requires a reload. Server additions also depend on the balance
+algorithm and server keywords.
+See [Reload-free routing](../libraries/reload-free.md) for the complete
+conditions.
 
 Watch the fleet's reload rate to confirm route churn isn't reloading:
 
@@ -732,7 +779,7 @@ The `tests/e2e` reload-free suites (`gateway_reloadfree_test.go`, `ingress_reloa
 
 The controller deploys to multiple HAProxy pods in parallel. If deployment is slow:
 
-1. Check the agent's apply latency (`haptic_deploy_apply_total`, the pod's logs at `debug`)
+1. Check apply timings in the agent logs and deployment summaries; `haptic_deploy_apply_total` counts applies, not latency
 2. Verify network connectivity to HAProxy pods
 3. Consider reducing config complexity
 

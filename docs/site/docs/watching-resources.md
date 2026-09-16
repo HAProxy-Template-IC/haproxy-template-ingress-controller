@@ -27,7 +27,7 @@ watchedResources:
     ignoreFields: []                        # JSONPath expressions dropped from this resource, added to watchedResourcesIgnoreFields
 ```
 
-All selector fields are plain label-selector strings — the `matchLabels`/`matchExpressions` object form that Prometheus Operator and others use is *not* accepted here.
+`labelSelector` accepts an equality-based selector string, such as `"app=shop"`; it doesn't accept a `matchLabels`/`matchExpressions` object. `fieldSelector` uses JSONPath equality syntax. See [Narrowing the watch](#narrowing-the-watch).
 
 `watchedResources` is an unbounded map — there's no maximum number of watched kinds. Each entry costs one informer and one apiserver watch stream, and a `store: full` entry holds its objects resident in memory, so the ceiling is apiserver watch capacity and controller memory, not a fixed count. See [Resource watching optimization](./operations/performance.md#resource-watching-optimization).
 
@@ -57,7 +57,7 @@ Every entry is exposed to templates **two equivalent ways** when a schema is loa
 1. As a store under `resources.<key>` — `.List()`, `.Fetch(...)`, and `.GetSingle(...)` return typed pointers (`[]*resources.<key>.T` / `*resources.<key>.T`).
 2. As a typed top-level global named `<key>` — a typed slice of the same shape (`[]*resources.<key>.T`).
 
-Both surfaces share the same typed pointer; iterating either way yields `*resources.<key>.T` with strongly typed `.Metadata.Namespace`, `.Spec.X`, etc. Without a schema, both surfaces fall back to `[]any` / `map[string]any` and the chart's `dig()`-based snippets work unchanged.
+Both surfaces share the same typed pointer; iterating either way yields `*resources.<key>.T` with typed field access such as `.metadata.namespace` and `.spec.rules`. Without a schema, both surfaces fall back to `[]any` / `map[string]any` and the chart's `dig()`-based snippets work unchanged.
 
 The typed shape comes from the resource's OpenAPI v3 schema — fetched live from the kube-apiserver in production, or from `--schema-dir` when running offline; see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for the full schema-source story and the repo's bundled `tests/schemas/` directory.
 
@@ -148,7 +148,7 @@ items:
 | Resource | `indexBy` | Why |
 |----------|-----------|-----|
 | Ingress / Service / ConfigMap | `["metadata.namespace", "metadata.name"]` | Standard unique lookup |
-| EndpointSlice | `["metadata.labels.kubernetes\\.io/service-name"]` | One-to-many: many slices per Service |
+| EndpointSlice | `["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]` | One-to-many lookup scoped to the Service's namespace |
 | Secret (when sharded by type) | `["metadata.namespace", "type"]` | Group TLS vs. basic-auth vs. opaque |
 | Cluster-scoped resource (Namespace, GatewayClass) | `["metadata.name"]` | No namespace to index by |
 
@@ -169,7 +169,7 @@ empty slice.
 
 Two filters narrow what actually lands in the store:
 
-- `labelSelector:` — equality-only label-selector string applied to the resource itself (`"app=myapp"` or `"app=nginx,env=prod"`). Comma-separated `key=value` pairs only; set-based syntax (`"tier in (frontend,api)"`, `"!disabled"`) **isn't** supported — `pkg/controller/conversion.parseLabelSelector` splits on `,` and `=`, dropping anything else.
+- `labelSelector:` — equality-only label-selector string applied to the resource itself (`"app=myapp"` or `"app=nginx,env=prod"`). Set-based syntax (`"tier in (frontend,api)"`, `"!disabled"`) and malformed selectors fail configuration validation. Use comma-separated equality pairs.
 - `fieldSelector:` — a client-side JSONPath equality filter applied *after* the list is fetched (format `"field.path=value"`, for example `"spec.ingressClassName=haproxy"`). Unlike Kubernetes' native field selectors it can target **any** field, not just the server-supported ones, because the watcher evaluates it itself (at the cost of fetching the full list first). A resource that stops matching is handled as a delete; one that starts matching, as an add. This is what the bundled ingress / gateway libraries use to scope by `ingressClassName` / `gatewayClassName`. To pin a watch to a single namespace, filter on `"metadata.namespace=<ns>"`.
 
 Watch the filter in action: two Ingresses reach the playground, but only the `haptic`-class one survives the `fieldSelector` and reaches a backend.
@@ -285,7 +285,7 @@ Response bodies are capped at 10 MiB. A larger response fails the fetch with `re
 
 ### Example
 
-This backend denies any client IP listed in a remotely hosted blocklist. The list refreshes every 5 minutes; `critical: false` keeps a transient fetch failure from taking down the whole render:
+This backend denies client IPs in a remotely hosted blocklist. The list refreshes every 5 minutes. `critical: true` stops a failed fetch from silently removing the blocklist:
 
 ```yaml
 spec:
@@ -300,7 +300,7 @@ spec:
         timeout server 30s
       frontend web
         bind :80
-        {%- var blocklist = http.Fetch("https://example.com/ip-blocklist.txt", map[string]any{"interval": "5m", "critical": false}) %}
+        {%- var blocklist = http.Fetch("https://example.com/ip-blocklist.txt", map[string]any{"interval": "5m", "critical": true}) %}
         {%- for _, ip := range split(tostring(blocklist), "\n") %}
         {%- if strip(ip) != "" %}
         http-request deny if { src {{ strip(ip) }} }
@@ -321,7 +321,13 @@ Set the flag only on the kinds you want validated in-band. The default is off to
 
 ## Debounce override
 
-Each watcher uses a leading-edge refractory window to coalesce bursts of changes into a single store-update event before forwarding to the Reconciler. This is the only debounce layer — the Reconciler itself fires immediately on every event, and reload throttling lives in the deployer's `minDeploymentInterval` (see the [architecture overview](./development/design/architecture-overview.md)). The default is 2 seconds (set in `pkg/k8s/types.DefaultDebounceInterval`) and works well for most workloads. Override per-resource via `debounceInterval` (the bundled chart sets it to `"0"` on EndpointSlice so pod-IP rotations react instantly during rolling restarts):
+Watchers coalesce change notifications for `100ms` by default. The Reconciler
+adds no timer, but the coordinator combines triggers that arrive while a render
+is running. The deployer's `minDeploymentInterval` separately paces reloads; see
+the [architecture overview](./development/design/architecture-overview.md).
+
+Set `debounceInterval` per watched resource. The bundled EndpointSlice watch uses
+`"0"` to report pod-IP changes without a debounce delay:
 
 ```yaml
 watchedResources:

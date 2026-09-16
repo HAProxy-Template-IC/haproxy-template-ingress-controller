@@ -8,6 +8,11 @@ The Helm chart enables the debug server on port `8080` (same port as `/healthz`,
 
 ```bash
 kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
+```
+
+In another terminal:
+
+```bash
 curl http://localhost:8080/debug/vars
 ```
 
@@ -160,7 +165,7 @@ List every file the agent holds with its digest and size:
 kubectl exec -n haptic "$POD" -c agent -- haptic agent state --files
 ```
 
-A `running` plan behind the `applied` one means a reload is pending. `last
+A different `running` and `applied` plan can reflect runtime updates since the last reload. Check `reload_pending_at` to determine whether a reload is scheduled. `last
 apply` carries the stage that failed and HAProxy's own message when an apply was
 refused, which is what an alert on `haptic_apply_rejected_total` or
 `haptic_agent_invariant_violations_total` sends you here for. `--output json`
@@ -218,10 +223,12 @@ curl -s 'http://localhost:8080/debug/vars/errors?field={.haproxy_validation_erro
 
 The keys (`template_render_error`, `haproxy_validation_error`, `deployment_errors`) tell you which phase rejected the change; pair with `/debug/vars/pipeline` to see whether the controller has retried since.
 
+<a id="haproxy-refused-the-config-the-fleet-was-given-configvalidatedfalse"></a>
+
 **HAProxy refused the config the fleet was given (`ConfigValidated=False`)**
 
-The render gate runs `haproxy -c` on every render after dispatching it, so a
-refusal describes a configuration the pods may already hold. Read HAProxy's own
+The render gate checks rendered plans with `haproxy -c` alongside deployment
+and reuses known verdicts. A refusal can describe a plan the pods already hold. Read HAProxy's own
 message off the `HAProxyCfg`:
 
 ```bash
@@ -298,7 +305,7 @@ Per-line "this config line came from snippet X" mapping is a feature of the [int
 
 - `/debug/vars/credentials` returns metadata only — the controller never exposes the actual agent passwords here, the state dump, or any other endpoint.
 - `/debug/vars/state` includes the full rendered `haproxy.cfg` (which may reference internal hostnames and backend addresses). Restrict reachability, don't forward the port from CI systems you wouldn't trust with the rendered output.
-- See [Security — Network Exposure](./security.md#network-exposure) for a NetworkPolicy pinning the debug port to your observability namespace.
+- The debug routes accept loopback connections only. Restrict `pods/portforward` through RBAC; see [Security — Network Exposure](./security.md#network-exposure).
 
 ## See also
 

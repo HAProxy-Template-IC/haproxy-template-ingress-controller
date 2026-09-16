@@ -10,7 +10,7 @@ Components communicate through a central EventBus using pub/sub and request-resp
 
 - Event-driven design allows components to evolve independently
 - Template-based approach provides maximum flexibility without annotation constraints
-- Multi-phase validation prevents invalid configurations from reaching production
+- Admission checks, config-load tests, and the render gate detect invalid configurations
 - Runtime API optimization minimizes service disruption during updates
 
 ## Navigation
@@ -55,14 +55,14 @@ Generate HAProxy configurations using Scriggo templates with access to any Kuber
 **Dynamic Resource Watching**
 Monitor any Kubernetes resource types (Ingress, Service, ConfigMap, custom CRDs) you specify. Resources are indexed using JSONPath expressions for fast template lookups.
 
-**Validation-First Deployment**
-Watched-resource admission and HTTP-store promotion run `haproxy -c` and every configured rendered-output validator through the proposal pipeline ([ADR-0020](adr/0020-authoritative-render-validation-pipeline.md)). Reconciliation runs the rendered-output validators in its pipeline and `haproxy -c` in the leader-side render gate. The `HAProxyTemplateConfig` itself has no webhook (ADR-0016); the leader validates its complete merged set, while the startup load gate and chart pre-rollout `preflight` hook also run its embedded validation tests. Built-in and protocol-v1 external checks execute on every occurrence, including exact output repeats; a content checksum never reuses a verdict.
+**Configuration validation**
+Watched-resource admission and HTTP-store promotion run `haproxy -c` and every configured rendered-output validator through the proposal pipeline ([ADR-0020](adr/0020-authoritative-render-validation-pipeline.md)). Reconciliation runs the rendered-output validators in its pipeline and `haproxy -c` in the leader-side render gate. The `HAProxyTemplateConfig` itself has no webhook (ADR-0016); the leader validates its complete merged set, while the startup load gate and chart pre-rollout `preflight` hook also run its embedded validation tests. Protocol-v1 external validators run on every applicable invocation. The render gate tracks HAProxy verdicts by plan identity; see [ADR-0022](adr/0022-haptic-agent.md).
 
 **Zero-Reload Optimization**
 Configuration changes that only modify server weight, address, port, or maintenance state are applied through HAProxy's runtime API without process reloads. This maintains existing connections and minimizes service disruption. Changes requiring structural modifications trigger a reload.
 
 **Structured Configuration Comparison**
-The controller parses both current and desired configurations into structured representations and performs fine-grained comparison at the attribute level. This minimizes unnecessary deployments and maximizes use of runtime API operations.
+Templates declare sections, backends, servers, and files in a render plan. The controller compares that plan with each pod's acknowledged state to choose runtime updates, file writes, or a reload; it doesn't parse HAProxy configuration text.
 
 **Declarative Kubernetes Resource Emission**
 Templates declared under `spec.k8sResources` produce one or more Kubernetes resources per render (multi-doc YAML, `---`-separated). The renderer parses the rendered YAML, validates required fields, and feeds the result into the controller's `resourceapplier`, which reconciles the set to the cluster via Server-Side Apply with field manager `haptic`, prunes orphans across renders, and injects an `OwnerReference` to the `HAProxyTemplateConfig` CR so cascade-delete (for example, `helm uninstall`) GCs the rendered resources. Same engine context as the main `haproxyConfig` template (resources, filters, snippets, file registry, shared cache) — chart libraries can compose extension points and shared state across the two passes.
@@ -73,13 +73,15 @@ Templates declared under `spec.k8sResources` produce one or more Kubernetes reso
 The Go code must be agnostic to every Kubernetes resource you choose to watch. If you decide to use some CRD instead of Gateway or Ingress resources, you should only need to touch HAPTIC templates and config — **no Go code**. Writing templates for an arbitrary CRD must be just as comfortable as for Ingress or Gateway API resources, with **no preferential treatment for well-known resources**. Resource shape comes from the kube-apiserver (live) or `--schema-dir` (offline) at runtime; the controller never bakes in a fixed list of supported kinds. This applies to all Go-side machinery — engine filters, runtime-context types, generated wrappers, helpers — and to chart-side scaffolding that crosses the Go/template boundary. The corollary on the chart side: resource-specific behavior lives in resource-specific template libraries (`ingress.yaml`, `gateway/*.yaml`, vendor annotation libs), never in `base.yaml`.
 
 **Fail-Safe Operation**
-Invalid configurations are rejected before reaching production. The validation phase catches syntax errors, semantic issues, and configuration conflicts. If validation fails, the current production configuration remains unchanged.
+Admission rejects invalid watched-resource changes. A failed config-load test keeps the last accepted configuration active. During reconciliation, a render-gate refusal holds later renders and reverts eligible pods to their last known good files; see [Render validation](../operations/debugging.md#haproxy-refused-the-config-the-fleet-was-given-configvalidatedfalse).
 
 **Performance Through Indexing**
-Resource indexing using JSONPath expressions enables O(1) lookups in templates. Debouncing at the per-watcher level coalesces rapid resource changes into a single `ResourceIndexUpdatedEvent` before the reconciler fires; the reconciler itself triggers immediately with no added latency. Rate limiting (the deployer's `minDeploymentInterval`) prevents deployment conflicts.
+Composite indexes let templates fetch matching resources without scanning the
+whole store. Watchers debounce change notifications, the coordinator coalesces
+queued triggers, and the deployer's `minDeploymentInterval` paces reloads.
 
 **Observable Event Flow**
-All component interactions flow through the EventBus. The Event Commentator subscribes to all events and produces structured logs with contextual insights. Metrics track reconciliation cycles, validation results, and deployment success rates.
+Components publish lifecycle and result events through the EventBus; the render pipeline uses direct calls. The Event Commentator subscribes to all events and produces structured logs with contextual insights. Metrics track reconciliation cycles, validation results, and deployment success rates.
 
 **Clean Component Separation**
 Pure business logic components (`templating`, `k8s`, `dataplane`) have no event dependencies and can be tested in isolation. Event adapters in the controller package coordinate these pure components through EventBus messages.

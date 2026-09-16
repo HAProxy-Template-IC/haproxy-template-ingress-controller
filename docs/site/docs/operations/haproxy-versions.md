@@ -11,15 +11,15 @@ The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.x`) 
 
 ## Supported versions
 
-| Series | Status | Community image | Enterprise image |
+| Series | HAPTIC build | Community image | Enterprise image |
 |--------|--------|-----------------|------------------|
 | 3.0 | Supported (LTS) | `haproxytech/haproxy-debian:3.0.x` | `...:3.0r1` |
-| 3.1 | Supported (non-LTS) | `haproxytech/haproxy-debian:3.1.x` | `...:3.1r1` |
+| 3.1 | Supported; upstream unmaintained | `haproxytech/haproxy-debian:3.1.x` | `...:3.1r1` |
 | 3.2 | Supported (LTS) | `haproxytech/haproxy-debian:3.2.x` | `...:3.2r1` |
 | 3.3 | Supported (non-LTS) | `haproxytech/haproxy-debian:3.3.x` | — |
 | 3.4 | Supported (LTS, default) | `haproxytech/haproxy-debian:3.4.x` | — |
 
-HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of support; odd-numbered series (3.1, 3.3) get a shorter maintenance window. The chart's default is always the latest LTS — currently 3.4.
+HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of support; odd-numbered series (3.1, 3.3) get a shorter maintenance window. This chart defaults to 3.4. HAProxy 3.1 remains in HAPTIC's build matrix but no longer receives upstream maintenance; check [HAProxy's maintenance table](https://www.haproxy.org/) when choosing a series.
 
 !!! note "One version, both images"
     The series above is the **HAProxy binary** version, and it's the only version
@@ -32,7 +32,8 @@ HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of 
 
     During a rolling upgrade the fleet can briefly run two series. HAPTIC renders
     for the lowest version it sees, and a pod whose agent it cannot compose ops
-    for gets the complete file set plus a reload — never a refusal.
+    for gets the complete file set plus a reload. That reload still has to pass
+    the pod's HAProxy checks.
 
 ## Feature version requirements
 
@@ -42,11 +43,12 @@ Most chart features work on every supported series. A few require a minimum HAPr
 |---------|----------------|----------------------------|
 | SSL/TLS termination, [CRT-list management](../libraries/ssl.md#crt-list-certificate-management), [OCSP stapling](../libraries/ssl.md#ocsp-stapling) | 3.0 | Not applicable — 3.0 is the minimum supported series |
 | [SPOA hub](spoa-hub.md) native transport (`mode spop`) | 3.1 | Auto-falls back to `mode tcp`; the hub still works |
-| Reload-free server adds (`add server ... init-state`) | 3.1 | A new server still joins, but the pod reloads to pick it up |
+| Runtime server creation (`add server`) | 3.0 | Not applicable — all supported series provide it |
+| Initial health state on runtime server creation (`init-state`) | 3.1 | HAPTIC omits `init-state`; health checks establish readiness |
 | Reload-free route adds and removals (`add backend` / `del backend`) | 3.4 | Routes still work, but adding or removing one reloads the pod |
 | [Shared-memory stats persistence](../libraries/base.md#shared-memory-stats-haproxy-33) (`shm-stats-file`) | 3.3 | Silently omitted; stats counters reset on every reload |
 
-Only `mode spop` (3.1) and shm-stats (3.3) gate chart behavior you can't otherwise get. The rest is about what a change costs: 3.1 adds `add server ... init-state`, so a new server joins without a reload, and 3.4 adds dynamic backends, so adding or removing a route stops reloading altogether.
+Runtime server creation works on every supported series. Runtime backend creation requires 3.4 and an eligible backend shape; see [Reload-free routing](../libraries/reload-free.md).
 
 ## Selecting a version
 
@@ -85,7 +87,7 @@ haproxy:
 
 ## Keeping patches up to date
 
-The chart ships with a `haproxyPatchVersions` map whose entries are kept current by the project's own Renovate setup. Each chart release picks up the latest patch within every series and ships it as the new default. If you don't override `haproxy.image.tag`, you inherit those patches automatically when you bump the chart.
+Renovate maintains the chart's `haproxyPatchVersions` map. Unless you override `haproxy.image.tag`, a chart upgrade adopts the patch pinned by that chart version. An installed release keeps its current image until you upgrade it.
 
 If you pin `haproxy.image.tag` yourself in a GitOps repository and want Renovate to track patches **within the pinned series**, add a regex custom manager to your `renovate.json`. The trick is to extract the major.minor from the current value and bake it back into the versioning regex so Renovate stays inside the series:
 
@@ -158,19 +160,24 @@ Check [HAProxy Enterprise release notes](https://www.haproxy.com/documentation/h
 
 ## Upgrading to a new series
 
-To move from one major.minor to another (for example 3.2 → 3.3):
+For a chart-managed Community Edition deployment, this example selects HAProxy
+3.3 and clears explicit image tags so the chart selects matching controller and
+HAProxy images. It preserves the release's other values:
 
-1. Verify the new series is supported in the chart version you are using
-2. Update `haproxyVersion` in your values
-3. Clear any `haproxy.image.tag` override, or update it to a patch in the new series
-4. Run `helm upgrade`:
+```bash
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic --reuse-values \
+  --set-string haproxyVersion=3.3 \
+  --set-string haproxy.image.tag= --set-string controller.image.tag=
+```
 
-    ```bash
-    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-      --namespace haptic \
-      --reuse-values --set haproxyVersion=3.3
-    ```
+If you manage values in Git, make the same changes there before your next
+reconciliation. Custom or Enterprise images require tags built for the selected
+series; use the [Enterprise setup](#haproxy-enterprise) for those deployments.
 
-The controller and HAProxy pods restart with the new images.
-
-HAProxy rolls without dropping the fleet. The chart runs `haproxy.replicaCount` pods (2 by default) behind a `RollingUpdate` strategy set to `maxUnavailable: 0` and `maxSurge: 1` (`haproxy.updateStrategy`). Kubernetes starts a new-version pod and waits for it to pass its readiness probe before terminating an old one, so the number of serving pods never drops below the replica count during the roll. Keep `haproxy.replicaCount` at 2 or more for a no-downtime series bump — a single replica has nowhere to shift traffic while it restarts.
+The chart defaults to two HAProxy replicas and a `RollingUpdate` strategy with
+`maxUnavailable: 0` and `maxSurge: 1`. Kubernetes waits for a replacement pod to
+be ready before removing an old one. This also works with one replica if the
+cluster has capacity for the replacement. Two or more replicas additionally
+allow for an unexpected pod failure. Existing connections drain subject to the
+[graceful reload and shutdown limits](./performance.md#graceful-reload-drain-bound).

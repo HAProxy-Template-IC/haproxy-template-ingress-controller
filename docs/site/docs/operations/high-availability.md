@@ -1,21 +1,21 @@
 # High availability with leader election
 
-Run multiple controller replicas so a leader crash, node drain, or upgrade never stalls HAProxy configuration delivery.
+Run multiple controller replicas so configuration delivery can recover after a leader failure.
 
 ## Overview
 
-The controller supports running multiple replicas for high availability using leader election based on Kubernetes Leases. Only the elected leader deploys; all replicas keep their Kubernetes-resource caches and their incremental render graph warm and serve admission webhook requests so failover is instant.
+The controller supports running multiple replicas for high availability using leader election based on Kubernetes Leases. Only the elected leader deploys; all replicas keep their Kubernetes-resource caches and their incremental render graph warm and serve admission webhook requests to reduce the work needed after election.
 
 **Benefits of HA deployment:**
 
-- Zero-downtime during controller upgrades (rolling updates)
-- Automatic failover if leader pod crashes (~30-35 seconds; voluntary handoffs like rolling updates release the lease immediately)
-- All replicas ready to take over immediately (hot caches, ready webhooks)
+- Standby replicas remain available during controller rolling updates
+- Automatic election after a leader failure; voluntary handoffs release the lease without waiting for expiry
+- Warm resource caches and render graphs on standby replicas
 - Replicas spread across nodes and zones via anti-affinity (see [Anti-Affinity](#anti-affinity))
 
 **How it works:**
 
-1. All replicas watch Kubernetes resources, run the admission webhook, discover HAProxy pods, and render every change to keep their incremental render graph warm. Only the elected leader validates and deploys what it renders. See [Leader Election](../development/design/leader-election.md) for the full all-replica vs leader-only component split.
+1. All replicas watch Kubernetes resources, run the admission webhook, discover HAProxy pods, and render every change to keep their incremental render graph warm. Only the elected leader deploys. Admission and new HTTP inputs are validated on the replica handling them. See [Leader Election](../development/design/leader-election.md) for the full all-replica vs leader-only component split.
 2. Leader election determines which replica drives the pipeline and applies configs to the fleet.
 3. When the leader fails, followers automatically elect a new one. Cached state from all-replica components (validated config, discovered HAProxy pods) is replayed on `BecameLeaderEvent` so the new leader starts with current state; the reconciler also fires immediately so the new leader produces a fresh render, from the graph it kept warm as a follower.
 4. Leadership transitions are logged and tracked via Prometheus metrics.
@@ -24,7 +24,7 @@ The controller supports running multiple replicas for high availability using le
 
 ### Enable leader election
 
-Leader election is **enabled by default** when deploying with 2+ replicas via Helm:
+Leader election is **enabled by default** in the Helm chart:
 
 ```yaml
 # values.yaml (chart defaults)
@@ -35,13 +35,13 @@ controller:
       leaderElection:
         enabled: true
         leaseName: ""         # Defaults to the Helm release fullname
-        leaseDuration: 30s    # Max time followers wait before taking over
+        leaseDuration: 30s    # Lease-expiry delay before takeover attempts
         renewDeadline: 20s    # Leader retries renewal for this long
         retryPeriod: 5s       # Interval between renewal attempts
 ```
 
 !!! note
-    These match the controller's built-in defaults (`pkg/core/config/defaults.go`: `30s` / `20s` / `5s`) — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (`15s` / `10s` / `2s`). The extra `renewDeadline` headroom lets the leader ride out multi-second API-server or CPU starvation stalls without losing the lease; losing it costs a full controller reinitialization before the replica can lead again. Tune down toward the client-go convention if you prefer faster crash-failover over starvation headroom.
+    The defaults allow brief API-server and CPU stalls without surrendering leadership. Shorter lease and renewal periods can reduce failover time but make the controller more sensitive to those stalls.
 
 ### Disable leader election
 
@@ -54,7 +54,7 @@ controller:
   config:
     controller:
       leaderElection:
-        enabled: false  # Disabled in single-replica mode
+        enabled: false
 ```
 
 ### Timing Parameters
@@ -63,27 +63,23 @@ The timing parameters control failover speed and tolerance:
 
 | Parameter | Chart default | Purpose | Recommendations |
 |-----------|---------------|---------|-----------------|
-| `leaseDuration` | `30s` | Max time followers wait before taking over | Increase for flaky networks (`60s`+) |
+| `leaseDuration` | `30s` | Lease-expiry delay before takeover attempts | Increase for flaky networks (`60s`+) |
 | `renewDeadline` | `20s` | How long leader retries before giving up | Must be < `leaseDuration` |
 | `retryPeriod` | `5s` | Interval between leader renewal attempts | Should be < `renewDeadline` |
 
-**Failover time calculation:**
+After a crash, a follower waits `leaseDuration` from its last observation of a
+lease renewal before attempting election. Retry jitter and API latency add to
+that delay; `leaseDuration + retryPeriod` isn't a hard upper bound. A voluntary
+handoff releases the lease without waiting for expiry. HAProxy keeps serving its
+current configuration while a new leader is elected.
 
-```
-Worst-case failover = leaseDuration + retryPeriod
-Chart default       = 30s + 5s = ~35s (typically faster)
-```
+**Clock-rate tolerance:**
 
-When the leader crashes without releasing, followers must wait for the lease to expire (`leaseDuration` from the last renewal) plus at most one acquire retry (`retryPeriod`) before one of them takes over; `renewDeadline` only bounds when the failed leader itself gives up, it doesn't gate the standby. During this window, HAProxy continues serving traffic with its last known configuration — no traffic is dropped, but new resource changes aren't processed until a new leader is elected.
-
-**Clock skew tolerance:**
-
-```
-Skew tolerance = leaseDuration - renewDeadline
-Chart default  = 30s - 20s = 10s
-```
-
-If clock skew exceeds this tolerance, brief split-brain may occur where two replicas both believe they're leader. NTP-synchronized nodes typically have sub-second skew, well within the default tolerance. In environments with looser time sync, raise `leaseDuration` (and `renewDeadline` proportionally).
+Client-go tolerates differences in clock readings, but not arbitrary differences
+in clock speed. Its approximate clock-rate tolerance is
+`leaseDuration / renewDeadline`: `30s / 20s = 1.5` with these defaults. Increasing
+both durations proportionally leaves that ratio unchanged. See the
+[client-go leader-election documentation](https://pkg.go.dev/k8s.io/client-go/tools/leaderelection).
 
 ## Deployment
 
@@ -95,7 +91,8 @@ Deploy with 2-3 replicas (default Helm configuration):
 
 ```bash
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 --set controller.replicaCount=2
+  --version 0.2.0-alpha.3 --namespace haptic --create-namespace \
+  --set controller.replicaCount=2
 ```
 
 ### Scaling
@@ -123,7 +120,10 @@ controller:
     targetCPUUtilizationPercentage: 80
 ```
 
-Because the controller is leader-elected, autoscaling adds webhook-serving and warm-cache capacity (and faster failover) — **not** render/validate/deploy throughput. The reconciliation pipeline always runs on the single elected leader regardless of replica count, so CPU-based scaling driven by the leader's reconcile load adds standbys rather than parallel workers. To scale HAProxy data-plane throughput, scale HAProxy instead (`haproxy.keda` autoscaling or more HAProxy replicas).
+Adding controller replicas increases admission capacity and maintains more warm
+standbys. Each replica renders, but only the leader deploys; replicas don't divide
+one rendering workload between them. To increase traffic capacity, scale HAProxy
+with `haproxy.keda` or `haproxy.replicaCount`.
 
 ### RBAC requirements
 
@@ -135,7 +135,7 @@ resources: ["leases"]
 verbs: ["get", "create", "update"]
 ```
 
-These are automatically configured in the Helm chart's ClusterRole.
+The Helm chart grants these permissions through a Role in the release namespace.
 
 ## Monitoring leadership
 
@@ -147,12 +147,12 @@ The Lease resource is named after the chart `fullname` — `haptic` for `helm in
 # List leases in the release namespace
 kubectl get lease -n haptic
 
-# View Lease resource (replace <release> with your Helm release name)
-kubectl get lease -n haptic <release> -o yaml
+# View the lease for the haptic release
+kubectl get lease -n haptic haptic -o yaml
 
 # Output shows current leader:
 # spec:
-#   holderIdentity: <release>-controller-7d9f8b4c6d-abc12
+#   holderIdentity: haptic-controller-7d9f8b4c6d-abc12
 ```
 
 ### View leadership status in logs
@@ -172,6 +172,11 @@ Monitor leader election via metrics endpoint:
 
 ```bash
 kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
+```
+
+In another terminal:
+
+```bash
 curl http://localhost:9090/metrics | grep leader_election
 ```
 
@@ -213,9 +218,9 @@ Check these areas in order of likelihood:
 
     ```bash
     SA=$(kubectl get deployment haptic-controller -n haptic -o jsonpath='{.spec.template.spec.serviceAccountName}')
-    kubectl auth can-i get leases    --as=system:serviceaccount:haptic:$SA
-    kubectl auth can-i create leases --as=system:serviceaccount:haptic:$SA
-    kubectl auth can-i update leases --as=system:serviceaccount:haptic:$SA
+    kubectl auth can-i get leases -n haptic --as=system:serviceaccount:haptic:$SA
+    kubectl auth can-i create leases -n haptic --as=system:serviceaccount:haptic:$SA
+    kubectl auth can-i update leases -n haptic --as=system:serviceaccount:haptic:$SA
     ```
 
 2. **Missing environment variables:**
@@ -244,7 +249,7 @@ Check these areas in order of likelihood:
 - Multiple pods deploying configs simultaneously
 - Conflicting deployments in HAProxy
 
-Lease-based election rules this out unless clocks are badly skewed or the API server is unhealthy. If you see it:
+First restrict the metric query to one HAPTIC release; separate releases each have a leader. If multiple replicas of the same release report leadership, check that they use the same lease name and namespace, then inspect clock stability and API connectivity:
 
 1. Check for severe clock skew between nodes:
 
@@ -269,7 +274,7 @@ Lease-based election rules this out unless clocks are badly skewed or the API se
 
 **Symptoms:**
 
-- `rate(haptic_leader_election_transitions_total[1h]) > 5`
+- `increase(haptic_leader_election_transitions_total[1h]) > 5`
 - Logs show frequent "Lost leadership" / "Became leader" messages
 - Deployments failing intermittently
 
@@ -323,7 +328,7 @@ kubectl logs -n haptic <leader-pod> | grep -i "deployer starting\|deployment sch
 **Common causes:**
 
 - Deployment components failed to start (check logs for errors)
-- Rate limiting preventing deployment (check drift prevention interval)
+- Deployment pacing delaying structural changes (check `minDeploymentInterval`)
 - HAProxy instances unreachable (check network connectivity)
 
 ## Best practices
@@ -365,7 +370,7 @@ controller:
       memory: 1Gi      # CPU limit deliberately omitted to avoid GOMAXPROCS throttling
 ```
 
-For larger or smaller workloads see the sizing table in [Performance — Controller Resource Sizing](./performance.md#controller-resource-sizing). Don't shrink memory below what the watch-set needs (rule of thumb: ~1KB per Ingress + EndpointSlice churn) or the leader gets OOMKilled mid-deploy and the lease flaps.
+For larger or smaller workloads see the sizing table in [Performance — Controller Resource Sizing](./performance.md#controller-resource-sizing). Measure startup and steady-state memory for your watched resources and template libraries before lowering the limit.
 
 ### Anti-affinity
 

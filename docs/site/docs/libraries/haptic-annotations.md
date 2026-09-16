@@ -1,6 +1,6 @@
 # `haptic-annotations` library
 
-The `haptic-annotations` library is HAPTIC's **native** annotation vocabulary, under the `haproxy-haptic.org/*` prefix. Its capabilities are a best-of-breed **superset** of the three vendor annotation libraries ([`haproxytech`](./haproxytech.md), [`haproxy-ingress`](./haproxy-ingress.md), [`nginx-ingress`](./nginx-ingress.md)) combined: for every capability it adopts whichever vendor's semantics is strongest and exposes it under one clean name.
+The `haptic-annotations` library provides HAPTIC's native annotations under `haproxy-haptic.org/*`. It's enabled by default. For existing vendor annotations, enable the matching compatibility library: [`haproxytech`](./haproxytech.md), [`haproxy-ingress`](./haproxy-ingress.md), or [`nginx-ingress`](./nginx-ingress.md).
 
 Where the vendor libraries exist to ease migration *from* an upstream ingress controller, this is the vocabulary to reach for when writing HAPTIC configuration from scratch. It's enabled by default.
 
@@ -118,9 +118,13 @@ Speak TLS to the backend Service — protocol, verification, client certs, SNI, 
 
 Per-source request-rate caps (reload-surviving stick-tables), shared fleet-wide request budgets through the rate-limit SPOA plugin, and download/upload bandwidth throttling.
 
-Every limiter is enforced on the client leg of every route, before the request reaches a cache — so cache hits consume the budget, and a burst of cached responses is throttled the same as origin traffic. The per-pod caps and the shared bandwidth scopes meter into shared string-keyed tables under `<route>|<client>`, so a budget is still per route and per client, and a shared bandwidth scope and a per-source cap may coexist on one route. A route's limits are entries in `haptic-rate-limit-routes.map` and `haptic-bandwidth-routes.map`, so adding, changing or removing them is a map operation: the route's backend stays dynamic and nothing reloads, except that the first route with a new rate window, deny status or shared-scope rate adds a line the frontend spells out. A `rate-limit-allowlist` is two map lookups: `haptic-rate-limit-allow-partitions.map` names the block of the disjoint cover of every list that the client falls in, and `haptic-rate-limit-allow-members.map` says whether the route exempts that block, so editing or removing a list is a map operation too.
+Limiters run before cache lookup, so cache hits consume the same budget as origin
+requests. Per-source caps and shared bandwidth limits are keyed by route and
+client and can coexist. Limit values and allowlists live in maps; updates avoid
+a reload unless a new rate window, denial status, or shared-scope rate requires
+a new frontend directive.
 
-Two facts about bandwidth limits surprise people, so check them against what you intend:
+Bandwidth limits have two scopes to consider:
 
 - **The limit applies per stream, not per connection.** An HTTP/2 or HTTP/3 client that opens ten streams gets ten times the configured rate. Use `bandwidth-limit-scope: client` when you want one budget per client regardless of how many streams it opens.
 - **Only the HTTP payload is metered.** Headers are never counted toward the limit.
@@ -224,7 +228,20 @@ CPU cost and the two global limits that bound it are covered in
 
 ### Shared response cache
 
-Routes cache-eligible GET and HEAD requests through a chart-deployed, consistent-hash-sharded Varnish tier, so the cache is shared across the whole HAProxy fleet. Other methods go directly to the application. If every Varnish shard is unhealthy, HAProxy uses the application backend and records `cache_degraded`. A local dispatch stage also retries a failed cache attempt directly, including when another shard still looks healthy. HTTP health checks verify Varnish's path back to the internal origin before a shard receives traffic. `cache.haproxy.responseTimeoutMs` is the inactivity timeout on the Varnish hop; a cache miss spends it while waiting for the application's response headers. Before headers reach the client, a timeout or transport failure retries the GET or HEAD directly. After response delivery starts, HAProxy can't safely replay it; an idle partial response is terminated instead. Set the value above your application's normal time to first byte to avoid duplicate fetches. These annotations take effect only when the tier is enabled (`cache.varnish.enabled`). The tier's default-on NetworkPolicy admits cache requests only from the same release's HAProxy pods and limits Varnish egress to DNS plus the same HAProxy HTTP origin; disable `cache.varnish.networkPolicy.enabled` only when replacing it with equivalent isolation. Per-route behaviour is driven by internal `X-Haptic-Cache-*` headers that HAProxy strips from the client request before both cached and direct paths, so a client can't influence the cache key, origin routing, or exclusion rules. Cache-miss fetches enter HAProxy through a dedicated backend-fetch frontend that runs no limiter, so one external request consumes one budget — no double counting, no cache-cold self-throttling.
+With `cache.varnish.enabled`, eligible GET and HEAD requests use a Varnish cache
+shared across the HAProxy fleet and sharded by consistent hashing. Other methods
+go directly to the application.
+
+Unhealthy shards are bypassed. Before response headers reach the client, a failed
+or timed-out cache attempt retries against the application; after delivery
+starts, an idle partial response is terminated. Set
+`cache.haproxy.responseTimeoutMs` above the application's normal time to first
+byte to avoid duplicate fetches on cache misses.
+
+Health checks verify Varnish's path to the origin. Its default NetworkPolicy
+allows only same-release HAProxy requests and egress to DNS and that origin.
+HAProxy strips client-supplied `X-Haptic-Cache-*` headers before routing. Internal
+cache-miss requests bypass limiters, so one external request consumes one budget.
 
 Caching authenticated content requires `consumer` specifically. A request carrying `Authorization` or a `Cookie` is normally never served from cache, and HAPTIC only overrides that when the key is `consumer`, whose value is the authenticated identity — so one caller can never be served a response belonging to someone else. `api-key-secret`, `jwt-secret`, `hmac-secret` and `consumer-groups-secret` are enforced on the client leg of every route, before a cache is consulted, so combining any of them with `cache-enable` is supported: a caller presenting no credential is denied rather than served the cached authenticated response. Keying on `header:`, `cookie:`, `query:` or `src` doesn't lift the restriction: those may or may not correlate with the caller, so authenticated requests on such a route go to the origin every time while unauthenticated ones still cache under the key you chose.
 
@@ -472,36 +489,58 @@ metadata:
 
 Each policy supports `description`, `enforcement`, nested `requestBody.mode`/`maxBytes`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `crsSettings`, `ruleExclusions`, and `secLang`.
 
-`crsSettings` fine-tunes a rule's *inputs* instead of disabling the rule — the preferred first response to a false positive. It's a curated allowlist of Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) tuning variables. `allowedRequestContentTypes` merges your media types into the standard CRS content-type allowlist — HAPTIC carries a copy of that default because upstream CRS ships it commented out, so it emits the full list (standard types plus yours), keeping rule 920420 active for every other content type. `maxFileSize`, `maxNumArgs`, and `totalArgLength` set a bounded scalar. The git example above is the model: adding the git `application/x-git-upload-pack-request` content type to the allowlist keeps 920420 active, where `ruleExclusions: [920420]` would switch content-type inspection off entirely. Reach for `ruleExclusions` only when a rule is categorically wrong for the application (for example CRS 930130 on a code host); it disables CRS rules by numeric ID — optionally scoped to a URL path by `onPathPrefix`, `onPathSuffix`, `onPathExact`, or `onPathContains` — or removes an exact variable such as `ARGS:q` from a rule or CRS tag. All of these work without application teams writing SecLang; `secLang` remains available to trusted policy authors for cases the structured fields can't express.
+Use `crsSettings` to adjust the Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) inputs before excluding a rule.
+`allowedRequestContentTypes` adds media types to the standard allowlist;
+`maxFileSize`, `maxNumArgs`, and `totalArgLength` set bounded limits. For example,
+allowing `application/x-git-upload-pack-request` keeps rule 920420 active for
+other content types.
+
+`ruleExclusions` disables a rule by numeric ID, optionally limited by
+`onPathPrefix`, `onPathSuffix`, `onPathExact`, or `onPathContains`. It can also
+exclude an exact variable, such as `ARGS:q`, from a rule or CRS tag. Use exclusions
+when a rule doesn't fit the application. Trusted policy authors can use
+`secLang` for cases these structured fields don't cover.
 
 `requestBody.mode: none` inspects metadata without buffering or limiting uploads. `any` inspects a complete bounded body; `json` additionally requires a JSON media type. Body routes require an unambiguous `Content-Length`; oversized or incomplete bodies are rejected before Coraza. A policy that omits `requestBody.maxBytes` uses `policies.requestBody.defaultMaxBytes`; it may never exceed `policies.requestBody.maxBytes`. Keeping those two settings separate lets an administrator approve one larger policy without silently enlarging every policy that relied on the default. The effective per-policy cap is set both in HAProxy and in that Coraza application, so neither layer silently inspects a different amount. Template body behavior lives under `extraContext.waf.policies.requestBody`; SPOA timeout/concurrency live only under `spoaHub.plugins.coraza`; the process-global HAProxy buffer lives under `extraContext.requestBodyInspection.haproxyBuffer`.
 
 ##### WAF and gRPC streaming
 
-Set `requestBody.mode: none` on any route carrying gRPC client-streaming or bidirectional-streaming calls. Metadata inspection — method, path, headers, source IP — still runs, so the route keeps WAF coverage of everything the engine can actually read.
+Set `requestBody.mode: none` for gRPC routes. Method, path, header, and source-IP
+inspection still runs. Coraza's bundled [body processors](https://www.coraza.io/docs/reference/body-processing/)
+don't decode protobuf or gRPC messages.
 
-This isn't a HAPTIC limitation to work around. Coraza buffers a complete request body because that's what makes blocking reliable, and it ships body processors for urlencoded, multipart, JSON, and (partially) XML — [there is no protobuf or gRPC processor](https://www.coraza.io/docs/reference/body-processing/). So even a fully buffered gRPC body is an opaque length-prefixed binary blob to the rule set: CRS finds nothing in it, while every byte still costs buffering. Other Coraza integrations hit the same wall and say so plainly — Solo's WAF server [doesn't support streaming](https://docs.solo.io/kgateway/2.2.x/security/waf/overview/) either, and ModSecurity has carried an [open request to parse gRPC bodies since 2021](https://github.com/owasp-modsecurity/ModSecurity/issues/2645).
+Enforced body inspection waits for a complete request before forwarding it.
+A client-streaming or bidirectional call that keeps its body open past
+`policies.requestBody.waitTimeout` receives `408`. Buffering also prevents the
+backend from processing messages as they arrive. Unary calls have finite bodies,
+but still face buffering, size limits, and content-type checks: `json` rejects a
+non-JSON content type when `Content-Length` is present.
 
-A body-inspecting mode (`any` or `json`) therefore can't be combined with a streaming route. Those modes wait for a complete, bounded body, and a streaming request never provides one: it declares no `Content-Length` and holds the body open until the peer is done. The wait runs to `policies.requestBody.waitTimeout` and HAProxy answers `408`, having never contacted the backend. That's fail-closed, not a bypass — a body the WAF can't bound is never forwarded uninspected — but the route stops working, so pick `none` deliberately rather than discovering it in production.
+Detect mode skips the body-contract rejections and waits only when
+`Content-Length` is present. An unbounded body remains uninspected; a detect
+verdict on that request doesn't establish that enforced body inspection is safe.
 
-Unary gRPC is unaffected in every mode: its body is complete on arrival, so the wait returns immediately.
+Admission rejects an Ingress that combines a body-inspecting policy with
+`haproxy-haptic.org/backend-protocol: grpc`/`grpcs` or nginx-compatible
+`GRPC`/`GRPCS`. This check also applies to detect policies. An existing combination
+records a `WafBodyPolicyOnGRPCRoute` Warning Event and retains its runtime rules,
+including their body rejections. Set the policy's body mode to `none` to remove
+the conflict. Plain `h2`/`h2-ssl` doesn't trigger this check because it also serves
+non-gRPC HTTP/2 applications.
 
-Detect (shadow) mode never blocks a streaming request. It waits only for a body whose length is declared and leaves an unbounded one uninspected, so switching a buffered policy to `detect` can't take a streaming route down. A declared body is still buffered in detect mode, keeping shadow verdicts faithful to what enforcement would have decided. Where the wait is skipped the body is reported to the engine as incomplete, so a shadow verdict is never computed over a partly arrived request and then read as a sign that enforcement would have been safe.
+Partial-body inspection leaves the uninspected remainder unchecked. HAPTIC uses
+rejection instead of Coraza's `SecRequestBodyLimitAction ProcessPartial`.
+Use controls that don't require decoding the message body:
 
-HAPTIC enforces this rather than leaving it to be discovered in production. An Ingress that declares a gRPC backend (`haproxy-haptic.org/backend-protocol: grpc`/`grpcs`, or the nginx-compat `GRPC`/`GRPCS`) **and** selects a policy with a body-inspecting `requestBody.mode` is rejected when you apply it, with a message naming the policy and the fix. A route that already carries the combination isn't taken down: it records a `Warning` Event with reason `WafBodyPolicyOnGRPCRoute` and keeps serving, because the runtime already refuses exactly the calls it can't inspect and the unary ones are inspected correctly — there's nothing to fail closed.
-
-Plain `h2`/`h2-ssl` backends aren't affected. HTTP/2 to the backend is how gRPC travels, but it's equally an ordinary HTTP API backend whose bodies are bounded and can be inspected, so the check keys on the unambiguous gRPC declarations only.
-
-**Don't reach for partial-body inspection.** Coraza's `SecRequestBodyLimitAction ProcessPartial` truncates at the limit and runs the rules on what it has, which looks like a way to inspect a stream. It isn't: an attacker prepends padding up to the inspected size and the payload lands in the uninspected remainder. [Coraza documents that bypass](https://www.coraza.io/docs/seclang/directives/), and HAPTIC's `reject` posture is deliberate.
-
-Because body rules can't protect a streaming route, protect it with the controls that don't need the body — all available as annotations on the same route:
-
-| Control | Annotation |
-|---------|-----------|
-| Per-method authorization (a gRPC path is `/package.Service/Method`) | `allowed-methods`, `allowlist-source-range` |
+| Control | Annotation or setting |
+|---------|-----------------------|
+| Source-IP access | `allowlist-source-range` |
 | Caller identity | `jwt-*`, `api-key-*`, client mTLS |
-| Abuse and volume limits | `rate-limit-*` |
-| Message size cap | `max-request-body-size` |
+| Request rate | `rate-limit-*` |
+
+`allowed-methods` filters HTTP methods, not gRPC method paths.
+`max-request-body-size` limits the HTTP request body, not individual gRPC messages;
+configure per-message limits in the gRPC application.
 
 For an immutable cluster baseline, configure a default and disable selection:
 

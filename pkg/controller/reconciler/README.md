@@ -30,9 +30,12 @@ go r.Start(ctx)
 | `IndexSynchronizedEvent` | Immediate — first reconciliation always runs with a complete store |
 | `HTTPResourceAcceptedEvent` | Immediate — content is only promoted from pending to accepted after validation |
 | `DriftPreventionTriggeredEvent` | Immediate — periodic redeploy path |
-| `BecameLeaderEvent` | Immediate — bootstraps the new leader's pipeline so the (leader-only) renderer produces fresh `TemplateRenderedEvent` instead of relying on a stale replay |
+| `BecameLeaderEvent` | Immediate — bootstraps the new leader's pipeline so the leader coordinator produces fresh `TemplateRenderedEvent` instead of relying on a stale replay |
 
-The Reconciler adds zero latency: every event it handles fires a reconciliation immediately. Coalescing of rapid changes is the per-watcher debounce window's job (default 100ms, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice watchers use `debounceInterval: "0"` so pod-IP rotations react instantly during rolling restarts). Reload throttling is the deployer's `minDeploymentInterval` (bypassed by the runtime-eligible fast path). This split keeps single ingress flips and rolling-restart endpoint rotations both fast without a reconciler-level refractory.
+The Reconciler emits a trigger without adding a timer. Watchers debounce resource
+changes (100 ms by default); the bundled EndpointSlice watches disable that delay.
+The coordinator coalesces queued triggers while rendering, and the deployer paces
+reloads with `minDeploymentInterval`. Runtime-eligible updates bypass reload pacing.
 
 The initial-sync filter exists because `ResourceIndexUpdatedEvent` fires for every object as stores hydrate. Early reconciliations there would run against an incomplete store, so `IndexSynchronizedEvent` (which fires once every watcher finishes its initial list) is the correct first-reconciliation trigger.
 
@@ -52,7 +55,7 @@ Leader-only adapter around `pkg/controller/pipeline`:
 
 1. Subscribe in `Start` (leader-only subscription pattern — not in the constructor, because followers must not subscribe).
 2. On `ReconciliationTriggeredEvent`, publish `ReconciliationStartedEvent`.
-3. Call `Pipeline.Execute(ctx, storeProvider)` synchronously — render + validate + build render context in one atomic step.
+3. Call `Pipeline.Execute(ctx, storeProvider, rendercontext.RenderModeReconcile)` to render, validate new HTTP inputs, and check auxiliary files before publication.
 4. Publish the results: `TemplateRenderedEvent` on success, `ReconciliationFailedEvent` (with a `PipelineError` carrying the failing phase via `errors.As`) on error. Either path ends with `ReconciliationCompletedEvent` so the metrics adapter can close its histogram observation. HAProxy's verdict on the render follows asynchronously as `RenderGateCompletedEvent`, which the Coordinator consumes to settle the term's auxiliary baseline.
 
 The pipeline is called directly, not through another event hop. That's deliberate: from the controller's perspective a reconciliation is one atomic stage, so making it a function call keeps error propagation straightforward and avoids inter-stage synchronization events.

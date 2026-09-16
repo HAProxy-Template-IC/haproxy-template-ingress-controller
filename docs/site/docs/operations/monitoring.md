@@ -12,12 +12,12 @@ The controller's `haptic_*` metrics cover:
 - Kubernetes resource counts
 - Leader election for HA deployments
 
-!!! note "Two metric sources"
+!!! note "Controller and data-plane metrics"
     Most of this guide is about the **controller's** metrics — the `haptic_*` family on port `9090`, which describe reconciliation, deployment, and leader-election health. HAProxy itself exposes a *separate* Prometheus endpoint on port `8404` carrying live traffic, backend health, and response-code data — see [HAProxy Data-Plane Metrics](#haproxy-data-plane-metrics). The controller's bundled `ServiceMonitor`/`PodMonitor` scrape the controller only; the HAProxy pod has its own (`haproxy.monitoring.podMonitor`).
 
 ## Enabling metrics
 
-Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (default `:9090`), which is separate from the debug port. No additional configuration is needed beyond pointing Prometheus at this endpoint.
+Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (default `:9090`), which is separate from the debug port. With the default NetworkPolicy, also enable controller monitoring ingress; see [Networking](./networking.md#allowing-prometheus-scraping).
 
 The chart sets the controller process, container port, Service, and monitors from
 one value. To disable the metrics server, set `controller.ports.metrics: 0`:
@@ -47,6 +47,9 @@ scrape_configs:
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
         regex: haptic
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+        regex: controller
         action: keep
       - source_labels: [__meta_kubernetes_pod_container_port_number]
         regex: "9090"
@@ -215,7 +218,7 @@ time() - haptic_last_full_sync_timestamp_seconds
 haptic_deployment_consecutive_failures
 ```
 
-The bundled `HAProxyFleetDiverged` alert (see [Alerting Rules](#alerting-rules)) fires when pods stay behind the desired config — the robust, cadence-independent signal. A staleness alert on `time() - haptic_last_full_sync_timestamp_seconds` is left to you: in steady state that value tracks the drift-prevention cadence, so a safe threshold depends on your configured `driftPreventionInterval` (a fixed default would false-fire for operators who raise it).
+The bundled [`HAProxyFleetDiverged` alert](#alerting-rules) detects pods that remain behind the desired configuration. If you add an alert on `time() - haptic_last_full_sync_timestamp_seconds`, set its threshold above your `driftPreventionInterval` to avoid alerting between scheduled checks.
 
 ### Runtime operation metrics
 
@@ -487,6 +490,9 @@ scrape_configs:
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
         regex: loadbalancer
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+        regex: controller
         action: keep
       - source_labels: [__meta_kubernetes_pod_container_port_number]
         regex: "8404"
@@ -891,8 +897,8 @@ rate(haptic_reconciliation_total[1h]) * 3600
 deriv(haptic_resource_count{type="ingresses"}[1d])
 
 # Average reconciliation overhead
-avg_over_time(haptic_reconciliation_duration_seconds_sum[1d]) /
-avg_over_time(haptic_reconciliation_duration_seconds_count[1d])
+sum(increase(haptic_reconciliation_duration_seconds_sum[1d])) /
+sum(increase(haptic_reconciliation_duration_seconds_count[1d]))
 ```
 
 ### Troubleshooting with metrics

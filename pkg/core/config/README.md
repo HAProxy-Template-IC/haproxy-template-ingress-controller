@@ -27,7 +27,7 @@ The Go fields are `PodSelector`, `Controller`, `Logging`, `Dataplane`, `Templati
 - **YAML keys (`yaml:` struct tags)** — snake_case at the top level (`pod_selector`, `templating_settings`, `watched_resources`, `haproxy_config`); a few nested fields use camelCase (`httpResources`, `currentConfig`, `extraContext`, `minHAProxyVersion`). `types.go`'s `yaml:` tags are authoritative.
 - **CRD JSON keys (kubectl, ParseCRD)** — camelCase, per Kubernetes convention. The controller goes through `pkg/controller/conversion.ParseCRD` which deserialises into the typed CRD first and then maps it onto `*Config` field-by-field.
 
-Use snake_case in YAML files; use camelCase in CRD manifests. The `types.go` source is the authoritative schema for either.
+The YAML tags describe internal serialization. Author `HAProxyTemplateConfig` manifests with camelCase keys from `pkg/apis/haproxytemplate/v1alpha1`; the CLI and controller use that public schema.
 
 ## Validation Layers
 
@@ -57,7 +57,7 @@ Authoritative list is `defaults.go`. Ones operators commonly look up:
 - `dataplane.driftPreventionInterval`: 60s
 - `dataplane.deploymentTimeout`: 30s
 - `dataplane.{mapsDir,sslCertsDir,generalStorageDir,configFile}`: `/etc/haproxy/...`
-- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, 30s, 20s, 5s — deliberately 2x the client-go / kube-controller-manager convention of 15s/10s/2s, to ride out apiserver stalls (see the rationale comment above `DefaultLeaderElectionLeaseDuration` in defaults.go)
+- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, 30s, 20s, 5s
 - `controller.configPublishing.compressionThreshold`: 1 MiB
 - `templatingSettings.engine`: `scriggo`
 
@@ -68,7 +68,11 @@ Authoritative list is `defaults.go`. Ones operators commonly look up:
 - `dataplane_username`
 - `dataplane_password`
 
-These are used to authenticate against the production HAProxy pods' Dataplane API instances. The controller's local `haproxy -c` validation step does not need credentials — it shells out to the binary directly with the rendered config and auxiliary files. `ValidateCredentials` rejects empty strings after base64 decode. No `String()` / `GoString()` methods are defined on `Credentials` — helps prevent accidental password leaks via `%v` or `log.Info("…", creds)`.
+These credentials authenticate controller requests to the HAPTIC agent in each
+HAProxy pod. Local `haproxy -c` validation needs no credentials.
+`ParseSecretData` decodes base64; `LoadCredentials` and `ValidateCredentials`
+reject empty values. `Credentials` stores plain strings and has no redacting
+formatter, so don't log the struct or format it with `%v`.
 
 ## See Also
 
