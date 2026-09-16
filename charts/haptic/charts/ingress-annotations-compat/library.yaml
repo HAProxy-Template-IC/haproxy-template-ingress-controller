@@ -991,6 +991,7 @@ templateSnippets:
 
   util-byte-size:
     template: |-
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- macro ByteSize(value string, annotation string, key string) string -%}
         {%- if !regex_search(value, "^[0-9]+[kKmMgG]?$") -%}
           {{- fail("Invalid value '" + value + "' for annotation '" + annotation + "' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
@@ -1013,6 +1014,33 @@ templateSnippets:
           {{- fail("Invalid value '" + value + "' for annotation '" + annotation + "' on Ingress '" + key + "'. Must be no larger than 4T.") -}}
         {%- end -%}
         {{- tostring(n * factor) -}}
+      {%- end macro -%}
+      {#- BodySizeBytes: a request-body cap in bytes, or "" for no cap. "0" means
+          unlimited upstream, so it yields "" like an unset annotation. A malformed
+          or oversized value used to convert to 0 and silently drop the cap; it is
+          now refused at admission and reported on reconcile, and still yields "",
+          so an Ingress already carrying one keeps today's behaviour instead of
+          failing every render. -#}
+      {%- macro BodySizeBytes(ingress *resources.ingresses.T, value string, annotation string) string -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- if regex_search(value, "^0+[kKmMgG]?$") -%}
+          {{- "" -}}
+        {%- else if !regex_search(value, "^[0-9]+[kKmMgG]?$") -%}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + value + "' for annotation '" + annotation + "' on Ingress '" + key + "': the request body is not limited. Use a byte size like '10m', or '0' for unlimited.") -}}
+        {%- else -%}
+          {%- var factor = 1 -%}
+          {%- if hasSuffix(value, "k") || hasSuffix(value, "K") -%}{%- factor = 1024 -%}{%- end -%}
+          {%- if hasSuffix(value, "m") || hasSuffix(value, "M") -%}{%- factor = 1048576 -%}{%- end -%}
+          {%- if hasSuffix(value, "g") || hasSuffix(value, "G") -%}{%- factor = 1073741824 -%}{%- end -%}
+          {%- var digits = value -%}
+          {%- if factor > 1 -%}{%- digits = value[0:len(value)-1] -%}{%- end -%}
+          {%- var n = toint(digits) -%}
+          {%- if n > 4398046511104 / factor -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + value + "' for annotation '" + annotation + "' on Ingress '" + key + "': it exceeds 4T, so the request body is not limited. Use a size of 4T or less.") -}}
+          {%- else -%}
+            {{- tostring(n * factor) -}}
+          {%- end -%}
+        {%- end -%}
       {%- end macro -%}
 
   # Per-stream download throttle from one frontend lane. The filter plus its

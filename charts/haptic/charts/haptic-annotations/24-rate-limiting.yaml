@@ -21,6 +21,7 @@ templateSnippets:
   # ==========================================================================
   util-haptic-rate-limit-route:
     template: |-
+      {%- import "util-byte-size" for ByteSize -%}
       {#-
         Annotations (the block applies when one of the three caps is set):
           - haproxy-haptic.org/rate-limit-rps: per-source requests/second cap
@@ -72,20 +73,8 @@ templateSnippets:
           {%- end -%}
           {%- result["window"] = window -%}
           {%- var size = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/rate-limit-size") -%}
-          {%- if size == "" -%}
-            {%- size = "100k" -%}
-          {%- else if !regex_search(size, "^[0-9]+[kKmMgG]?$") -%}
-            {{- fail("Invalid value '" + size + "' for annotation 'haproxy-haptic.org/rate-limit-size' on Ingress '" + key + "'. Expected a size like '100k', '1m'.") -}}
-          {%- end -%}
-          {#- A zero magnitude passes the format check and would reach the shared
-              table as `size 0`, which HAProxy rejects only at config parse, far
-              from the annotation that caused it. -#}
-          {%- var sizeDigits = size -%}
-          {%- if !regex_search(size, "^[0-9]+$") -%}{%- sizeDigits = size[0:len(size)-1] -%}{%- end -%}
-          {%- if toint(sizeDigits) <= 0 -%}
-            {{- fail("Invalid value '" + size + "' for annotation 'haproxy-haptic.org/rate-limit-size' on Ingress '" + key + "'. Must be a positive size like '100k', '1m'.") -}}
-          {%- end -%}
-          {%- result["size"] = size -%}
+          {%- if size == "" -%}{%- size = "100k" -%}{%- end -%}
+          {%- result["size"] = ByteSize(size, "haproxy-haptic.org/rate-limit-size", key) -%}
           {%- var status = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/rate-limit-status-code") -%}
           {%- if status == "" -%}
             {%- status = "429" -%}
@@ -256,13 +245,7 @@ templateSnippets:
       {%- for _, cfgAny := range incremental_values("haptic-rate-limit-routes", "tables") -%}
         {%- var cfg = cfgAny.(map[string]any) -%}
         {%- var name = tostring(cfg["counter"]) + "|" + tostring(cfg["window"]) -%}
-        {%- var size = tostring(cfg["size"]) -%}
-        {%- var digits = size -%}
-        {%- if !regex_search(size, "^[0-9]+$") -%}{%- digits = size[0:len(size)-1] -%}{%- end -%}
-        {%- var n = toint(digits) -%}
-        {%- if hasSuffix(size, "k") || hasSuffix(size, "K") -%}{%- n = n * 1024 -%}{%- end -%}
-        {%- if hasSuffix(size, "m") || hasSuffix(size, "M") -%}{%- n = n * 1048576 -%}{%- end -%}
-        {%- if hasSuffix(size, "g") || hasSuffix(size, "G") -%}{%- n = n * 1073741824 -%}{%- end -%}
+        {%- var n = toint(tostring(cfg["size"])) -%}
         {%- if n > tables[name] -%}{%- tables[name] = n -%}{%- end -%}
       {%- end -%}
       {%- var names = []any{} -%}
@@ -324,6 +307,7 @@ templateSnippets:
   # ==========================================================================
   util-haptic-bandwidth-route:
     template: |-
+      {%- import "util-byte-size" for ByteSize -%}
       {#-
         Annotations:
           - haproxy-haptic.org/download-bandwidth-limit: bytes/sec sent toward the
@@ -336,16 +320,12 @@ templateSnippets:
               service           every stream of this route shares it
       -#}
       {%- macro HapticBandwidthBytes(value string, annotation string, key string) -%}
-        {%- if !regex_search(value, "^[0-9]+[kKmMgG]?$") -%}
-          {{- fail("Invalid value '" + value + "' for annotation '" + annotation + "' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
+        {#- A zero limit converts to 0 as it always has; ByteSize refuses zero. -#}
+        {%- if regex_search(value, "^0+[kKmMgG]?$") -%}
+          {{- "0" -}}
+        {%- else -%}
+          {{- ByteSize(value, annotation, key) -}}
         {%- end -%}
-        {%- var digits = value -%}
-        {%- if !regex_search(value, "^[0-9]+$") -%}{%- digits = value[0:len(value)-1] -%}{%- end -%}
-        {%- var n = toint(digits) -%}
-        {%- if hasSuffix(value, "k") || hasSuffix(value, "K") -%}{%- n = n * 1024 -%}{%- end -%}
-        {%- if hasSuffix(value, "m") || hasSuffix(value, "M") -%}{%- n = n * 1048576 -%}{%- end -%}
-        {%- if hasSuffix(value, "g") || hasSuffix(value, "G") -%}{%- n = n * 1073741824 -%}{%- end -%}
-        {{- tostring(n) -}}
       {%- end macro -%}
       {%- macro HapticBandwidthRoute(ingress any, result map[string]any) -%}
         {%- var key = dig_string(ingress, "", "metadata", "namespace") + "/" + dig_string(ingress, "", "metadata", "name") -%}

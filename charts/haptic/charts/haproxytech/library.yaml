@@ -666,6 +666,7 @@ templateSnippets:
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-rate-limit-publish" for PublishRateLimit -%}
+      {%- import "util-byte-size" for ByteSize -%}
       {%- var ingress = resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil && ingress.Metadata.Annotations["haproxy.org/rate-limit-requests"] != "" -%}
@@ -702,28 +703,14 @@ templateSnippets:
         {%- if !regex_search(period, "^[0-9]+(us|ms|s|m|h|d)?$") -%}
           {{- fail("Invalid value '" + period + "' for annotation 'haproxy.org/rate-limit-period' on Ingress '" + key + "'. Expected a HAProxy time value like '1s', '10s', '1m'.") -}}
         {%- end -%}
-        {%- if !regex_search(size, "^[0-9]+[kKmMgG]?$") -%}
-          {{- fail("Invalid value '" + size + "' for annotation 'haproxy.org/rate-limit-size' on Ingress '" + key + "'. Expected a size like '100k', '1m'.") -}}
-        {%- end -%}
         {%- if !regex_search(status, "^(200|400|401|403|404|405|407|408|410|413|414|425|429|431|500|501|502|503|504)$") -%}
           {{- fail("Invalid value '" + status + "' for annotation 'haproxy.org/rate-limit-status-code' on Ingress '" + key + "'. HAProxy can only deny with a status that has a built-in error page: 200, 400, 401, 403, 404, 405, 407, 408, 410, 413, 414, 425, 429, 431, 500, 501, 502, 503 or 504.") -}}
         {%- end -%}
-        {%- var digits = size -%}
-        {%- if !regex_search(size, "^[0-9]+$") -%}{%- digits = size[0:len(size)-1] -%}{%- end -%}
-        {%- var bytes = toint(digits) -%}
-        {%- if hasSuffix(size, "k") || hasSuffix(size, "K") -%}{%- bytes = bytes * 1024 -%}{%- end -%}
-        {%- if hasSuffix(size, "m") || hasSuffix(size, "M") -%}{%- bytes = bytes * 1048576 -%}{%- end -%}
-        {%- if hasSuffix(size, "g") || hasSuffix(size, "G") -%}{%- bytes = bytes * 1073741824 -%}{%- end -%}
-        {#- A zero magnitude passes the format check and would reach the shared
-            table as `size 0`, which HAProxy rejects only at config parse, far
-            from the annotation that caused it. -#}
-        {%- if bytes <= 0 -%}
-          {{- fail("Invalid value '" + size + "' for annotation 'haproxy.org/rate-limit-size' on Ingress '" + key + "'. Must be a positive size like '100k', '1m'.") -}}
-        {%- end -%}
+        {%- var bytes = ByteSize(size, "haproxy.org/rate-limit-size", key) -%}
         {%- var allow = "" -%}
         {%- var whitelist = ingress.Metadata.Annotations["haproxy.org/rate-limit-whitelist"] -%}
         {%- if whitelist != "" -%}{%- allow = ValidateCidrList(whitelist, "haproxy.org/rate-limit-whitelist", key) -%}{%- end -%}
-        {{- PublishRateLimit(key, "req", period, tostring(bytes), tostring(toint(requests)), status, allow) -}}
+        {{- PublishRateLimit(key, "req", period, bytes, tostring(toint(requests)), status, allow) -}}
       {%- end -%}
 
   map-reqhdr-host-250-haproxytech:
@@ -1896,7 +1883,7 @@ validationTests:
                   paths:
                     - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
     assertions:
-      - {type: contains, target: rendering_error, pattern: "rate-limit-size' on Ingress 'default/rl-zero-size'. Must be a positive size"}
+      - {type: contains, target: rendering_error, pattern: "rate-limit-size' on Ingress 'default/rl-zero-size'. Must be a positive byte size"}
 
   test-haproxytech-rate-limit-no-whitelist:
     description: >-

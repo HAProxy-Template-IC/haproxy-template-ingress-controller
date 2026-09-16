@@ -1305,6 +1305,30 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*app-root\\.map\\),url_dec\\(1\\)\\] code 302 if \\{ path / \\}"
 
+  test-nginx-ingress-proxy-body-size-malformed-warns-on-reconcile:
+    description: >-
+      A malformed proxy-body-size records a Warning Event and emits no entry. It used
+      to convert to 0 and drop the cap silently; the Event needs the component's
+      recordEvent effect, without which the whole render fails on reconcile.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bodyx-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-body-size: "10x"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bodyx-ingress.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: events, pattern: "InvalidAnnotationValue"}
+      - {type: not_contains, target: map:body-size.map, pattern: "bodyx-ingress"}
+
   test-nginx-ingress-proxy-body-size:
     description: Nginx Ingress proxy-body-size limits request body via body-size.map (relocated from the backend)
     fixtures:
