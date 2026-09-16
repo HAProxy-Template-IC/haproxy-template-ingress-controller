@@ -70,6 +70,10 @@ spec:
 
                   When true, consumers must decompress before use.
                 type: boolean
+              empty:
+                description: Empty explicitly represents a zero-byte file without
+                  omitting its content declaration.
+                type: boolean
               entries:
                 description: |-
                   Entries is the map file content in HAProxy map format.
@@ -96,10 +100,16 @@ spec:
                 type: string
             required:
             - checksum
-            - entries
             - mapName
             - path
             type: object
+            x-kubernetes-validations:
+            - message: 'set nonempty entries or empty: true'
+              rule: has(self.entries) != (has(self.empty) && self.empty)
+            - message: empty files must be uncompressed and use the checksum of zero
+                bytes
+              rule: '!has(self.empty) || !self.empty || ((!has(self.compressed) ||
+                !self.compressed) && self.checksum == ''sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'')'
           status:
             description: HAProxyMapFileStatus tracks deployment state to HAProxy pods.
             properties:

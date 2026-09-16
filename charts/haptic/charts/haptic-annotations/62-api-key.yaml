@@ -7,7 +7,7 @@
 #
 # Everything per route lives in two maps, so a route is added, changed or
 # removed with map operations only and its backend stays dynamic:
-#   haptic-api-key-routes.map  <ns>/<name> → "<hdr|query> <name> <secret> <ok|missing> <forward-header|->"
+#   haptic-api-key-routes.map  <ns>/<name> → "<source> <name> <secret> <state> <forward-header> <forward-enabled>"
 #   haptic-apikeys.map         <secret ns/name>|<apikey> → <consumer>
 # One uniform rule block on every HTTP frontend (frontend-filters-860) reads
 # them. The only per-value text is one fetch rule per distinct header or query
@@ -45,6 +45,7 @@ templateSnippets:
         {%- var apiKeySecret = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/api-key-secret") -%}
         {%- result["enabled"] = apiKeySecret != "" -%}
         {%- result["intent"] = "" -%}
+        {%- result["fwdSet"] = false -%}
         {%- if apiKeySecret == "" -%}
           {#- Without the Secret the other api-key-* annotations are inert, so the
               route would be served with no key check while reading as protected. -#}
@@ -77,6 +78,7 @@ templateSnippets:
           {%- var consumerHdr = dig_string(ingress, "", "metadata", "annotations", "haproxy-haptic.org/api-key-consumer-header") -%}
           {%- if consumerHdr != "" -%}
             {%- result["fwd"] = ValidateConfigValue(consumerHdr, "haproxy-haptic.org/api-key-consumer-header", key, false) -%}
+            {%- result["fwdSet"] = true -%}
           {%- end -%}
           {%- var secretRef = HapticSecretRef(ns, apiKeySecret, "haproxy-haptic.org/api-key-secret", key) -%}
           {%- var refParts = split(secretRef, "/") -%}
@@ -102,7 +104,7 @@ templateSnippets:
       {%- var route = map[string]any{} -%}
       {{- HapticApiKeyRoute(item, route) -}}
       {%- if route["enabled"] == true -%}
-      {{ "\n" }}{{ dig_string(item, "", "metadata", "namespace") }}/{{ dig_string(item, "", "metadata", "name") }} {{ route["source"] }} {{ route["name"] }} {{ route["secretRef"] }} {{ route["state"] }} {{ route["fwd"] }}
+      {{ "\n" }}{{ dig_string(item, "", "metadata", "namespace") }}/{{ dig_string(item, "", "metadata", "name") }} {{ route["source"] }} {{ route["name"] }} {{ route["secretRef"] }} {{ route["state"] }} {{ route["fwd"] }} {{ route["fwdSet"] }}
       {%- end -%}
 
   # Distinct header, query and forward-header names in use, for the fetch rules
@@ -134,7 +136,7 @@ templateSnippets:
         {%- else -%}
           {%- var fetchName = tostring(route["name"]) -%}
           {{- shared.Publish(tostring(route["source"]), fetchName, fetchName) -}}
-          {%- if tostring(route["fwd"]) != "_" -%}{{- shared.Publish("fwd", tostring(route["fwd"]), tostring(route["fwd"])) -}}{%- end -%}
+          {%- if route["fwdSet"] == true -%}{{- shared.Publish("fwd", tostring(route["fwd"]), tostring(route["fwd"])) -}}{%- end -%}
           {%- if tostring(route["state"]) == "missing" -%}
             {{- recordEvent(resources.ingresses.GetSingle(ns, name), "ApiKeySecretMissing", "Ingress " + key + " references Secret '" + tostring(route["secretRef"]) + "' in 'haproxy-haptic.org/api-key-secret', but it could not be resolved. Requests are denied with 503 until the Secret is present.") -}}
           {%- end -%}
@@ -236,7 +238,7 @@ templateSnippets:
       http-request deny deny_status 401 if { var(txn.ak_state) -m str ok } !{ var(txn.ak_consumer) -m found }
       http-request set-var(txn.haptic_consumer) var(txn.ak_consumer) if { var(txn.ak_consumer) -m found } !{ var(txn.haptic_consumer) -m found }
       {%- for _, f := range sort_strings(fwds) %}
-      http-request del-header {{ f }} if { var(txn.ak_fwd) -m str {{ f }} }
-      http-request set-header {{ f }} %[var(txn.haptic_consumer)] if { var(txn.ak_fwd) -m str {{ f }} } { var(txn.haptic_consumer) -m found }
+      http-request del-header {{ f }} if { var(txn.ak_fwd) -m str {{ f }} } { var(txn.ak_cfg),field(6,' ') -m str true }
+      http-request set-header {{ f }} %[var(txn.haptic_consumer)] if { var(txn.ak_fwd) -m str {{ f }} } { var(txn.ak_cfg),field(6,' ') -m str true } { var(txn.haptic_consumer) -m found }
       {%- end %}
       {%- end %}

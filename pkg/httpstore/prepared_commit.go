@@ -201,7 +201,7 @@ func (c *PreparedInitialCandidateCommit) validateSourcePlansLocked() (
 			return nil, 0, err
 		}
 		if _, exists := sourceByURL[plan.source.url]; exists {
-			return nil, 0, fmt.Errorf("staged HTTP source for %s appears more than once", plan.source.url)
+			return nil, 0, fmt.Errorf("staged HTTP source for %s appears more than once", RedactURL(plan.source.url))
 		}
 		sourceByURL[plan.source.url] = plan.source
 		if !plan.source.Changed() {
@@ -738,14 +738,14 @@ func validateActiveLeasesSurvivePublication(
 		if source.Changed() && activeLeasePlanReferencesTransition(
 			active, source.url, source.baseDescriptor, source.spec.descriptor,
 		) {
-			return fmt.Errorf("leased HTTP source %s changes during cache publication", source.url)
+			return fmt.Errorf("leased HTTP source %s changes during cache publication", RedactURL(source.url))
 		}
 	}
 	for _, candidate := range candidates {
 		if activeLeasePlanReferencesTransition(
 			active, candidate.url, candidate.sourceDescriptor, candidate.sourceDescriptor,
 		) {
-			return fmt.Errorf("leased HTTP content %s changes during cache publication", candidate.url)
+			return fmt.Errorf("leased HTTP content %s changes during cache publication", RedactURL(candidate.url))
 		}
 	}
 	return nil
@@ -889,7 +889,7 @@ func (c *PreparedInitialCandidateCommit) validatePublishedReplaySnapshotsLocked(
 	for index := range validated {
 		snapshot := &validated[index]
 		if _, exists := seenURLs[snapshot.URL]; exists {
-			return nil, fmt.Errorf("published HTTP replay lease duplicates source %s", snapshot.URL)
+			return nil, fmt.Errorf("published HTTP replay lease duplicates source %s", RedactURL(snapshot.URL))
 		}
 		seenURLs[snapshot.URL] = struct{}{}
 		if candidate := committed[snapshot.Token]; candidate != nil {
@@ -900,21 +900,21 @@ func (c *PreparedInitialCandidateCommit) validatePublishedReplaySnapshotsLocked(
 				Watermark: c.watermark,
 			}
 			if *snapshot != expected {
-				return nil, fmt.Errorf("published HTTP replay lease has an invalid candidate snapshot for %s", snapshot.URL)
+				return nil, fmt.Errorf("published HTTP replay lease has an invalid candidate snapshot for %s", RedactURL(snapshot.URL))
 			}
 			seenCandidates[snapshot.Token] = struct{}{}
 			continue
 		}
 		if !c.store.verifySnapshotLocked(&snapshot.Token) {
-			return nil, fmt.Errorf("published HTTP replay lease has a stale snapshot for %s", snapshot.URL)
+			return nil, fmt.Errorf("published HTTP replay lease has a stale snapshot for %s", RedactURL(snapshot.URL))
 		}
 		entry := c.store.cache[snapshot.URL]
 		if entry == nil {
-			return nil, fmt.Errorf("published HTTP replay lease has no source %s", snapshot.URL)
+			return nil, fmt.Errorf("published HTTP replay lease has no source %s", RedactURL(snapshot.URL))
 		}
 		expected := c.store.acceptedSnapshotLocked(entry, c.watermark)
 		if *snapshot != expected {
-			return nil, fmt.Errorf("published HTTP replay lease has an invalid snapshot for %s", snapshot.URL)
+			return nil, fmt.Errorf("published HTTP replay lease has an invalid snapshot for %s", RedactURL(snapshot.URL))
 		}
 	}
 	if len(seenCandidates) != len(committed) {
@@ -942,7 +942,7 @@ func (c *PreparedInitialCandidateCommit) preparePublishedReplayStateLocked(
 		candidate := c.candidates[index]
 		entry := c.entries[index]
 		if entry == nil {
-			return nil, fmt.Errorf("published HTTP replay lease has no planned source %s", candidate.url)
+			return nil, fmt.Errorf("published HTTP replay lease has no planned source %s", RedactURL(candidate.url))
 		}
 		committed[c.commits[index].Accepted] = plannedCandidate{candidate: candidate, entry: entry}
 	}
@@ -966,14 +966,14 @@ func (c *PreparedInitialCandidateCommit) preparePublishedReplayStateLocked(
 			var ok bool
 			proof, ok = c.store.captureAcceptedReplayProofLocked(&snapshot)
 			if !ok {
-				return nil, fmt.Errorf("published HTTP replay lease cannot authenticate source %s", snapshot.URL)
+				return nil, fmt.Errorf("published HTTP replay lease cannot authenticate source %s", RedactURL(snapshot.URL))
 			}
 		}
 		if _, replaced := txn.Insert([]byte(snapshot.URL), acceptedReplayStateEntry{
 			snapshot: snapshot,
 			proof:    proof,
 		}); replaced {
-			return nil, fmt.Errorf("published HTTP replay lease duplicates source %s", snapshot.URL)
+			return nil, fmt.Errorf("published HTTP replay lease duplicates source %s", RedactURL(snapshot.URL))
 		}
 	}
 	semanticChanges := changedSources + uint64(len(c.candidates))

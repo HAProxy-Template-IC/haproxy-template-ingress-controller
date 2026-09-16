@@ -57,7 +57,7 @@ func (s *HTTPStore) PrepareStagedSnapshot(
 	}
 
 	s.logger.Info("Performing initial HTTP fetch",
-		"url", source.url,
+		"url", RedactURL(source.url),
 		"timeout", source.spec.options.Timeout.String(),
 		"retries", source.spec.options.Retries,
 		"critical", source.spec.options.Critical)
@@ -80,9 +80,9 @@ func (s *HTTPStore) PrepareStagedSnapshot(
 		s.mu.Unlock()
 		if source.spec.options.Critical {
 			return ContentSnapshot{}, nil,
-				fmt.Errorf("critical HTTP fetch failed for %s: %w", source.url, fetchErr)
+				fmt.Errorf("critical HTTP fetch failed for %s: %w", RedactURL(source.url), fetchErr)
 		}
-		s.logger.Warn("HTTP fetch failed, returning empty content", "url", source.url, "error", fetchErr)
+		s.logger.Warn("HTTP fetch failed, returning empty content", "url", RedactURL(source.url), "error", fetchErr)
 		return ContentSnapshot{
 			URL:         source.url,
 			Descriptor:  source.spec.descriptor,
@@ -147,7 +147,7 @@ func (s *HTTPStore) stagedCandidateSnapshot(
 	}
 	if entry.HasPending {
 		return stagedCandidateSnapshot{}, ContentSnapshot{},
-			fmt.Errorf("HTTP source %s has content awaiting another validation; retry the render", source.url)
+			fmt.Errorf("HTTP source %s has content awaiting another validation; retry the render", RedactURL(source.url))
 	}
 	prepared.entry = entry
 	prepared.mutationRevision = entry.mutationRevision
@@ -167,7 +167,7 @@ func (s *HTTPStore) validateStagedCandidateSnapshotLocked(snapshot *stagedCandid
 	entry := s.cache[snapshot.source.url]
 	if entry != snapshot.entry || entry.mutationRevision != snapshot.mutationRevision ||
 		entry.AcceptedChecksum != "" || entry.HasPending {
-		return fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", snapshot.source.url)
+		return fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", RedactURL(snapshot.source.url))
 	}
 	return nil
 }
@@ -221,13 +221,13 @@ func (s *HTTPStore) PrepareInitialSnapshot(
 		accepted := s.AcceptedSnapshot(url, state.Descriptor)
 		if !accepted.Found {
 			return ContentSnapshot{}, nil,
-				fmt.Errorf("HTTP source %s changed before its cached content could be read; retry the render", url)
+				fmt.Errorf("HTTP source %s changed before its cached content could be read; retry the render", RedactURL(url))
 		}
 		return accepted, nil, nil
 	}
 
 	s.logger.Info("Performing initial HTTP fetch",
-		"url", url,
+		"url", RedactURL(url),
 		"timeout", snapshot.options.Timeout.String(),
 		"retries", snapshot.options.Retries,
 		"critical", snapshot.options.Critical)
@@ -250,9 +250,9 @@ func (s *HTTPStore) PrepareInitialSnapshot(
 		watermark := s.semanticRevision
 		s.mu.Unlock()
 		if snapshot.options.Critical {
-			return ContentSnapshot{}, nil, fmt.Errorf("critical HTTP fetch failed for %s: %w", url, fetchErr)
+			return ContentSnapshot{}, nil, fmt.Errorf("critical HTTP fetch failed for %s: %w", RedactURL(url), fetchErr)
 		}
-		s.logger.Warn("HTTP fetch failed, returning empty content", "url", url, "error", fetchErr)
+		s.logger.Warn("HTTP fetch failed, returning empty content", "url", RedactURL(url), "error", fetchErr)
 		return ContentSnapshot{
 			URL:         url,
 			Descriptor:  snapshot.sourceDescriptor,
@@ -310,14 +310,14 @@ func (s *HTTPStore) initialCandidateSnapshot(
 	entry, exists := s.cache[url]
 	if !exists || entry.sourceDescriptor != state.Descriptor || entry.sourceGeneration != state.Generation {
 		return initialCandidateSnapshot{}, false,
-			fmt.Errorf("HTTP source %s changed before it could be fetched; retry the render", url)
+			fmt.Errorf("HTTP source %s changed before it could be fetched; retry the render", RedactURL(url))
 	}
 	if entry.AcceptedChecksum != "" {
 		return initialCandidateSnapshot{}, true, nil
 	}
 	if entry.HasPending {
 		return initialCandidateSnapshot{}, false,
-			fmt.Errorf("HTTP source %s has content awaiting another validation; retry the render", url)
+			fmt.Errorf("HTTP source %s has content awaiting another validation; retry the render", RedactURL(url))
 	}
 	return initialCandidateSnapshot{
 		entry:            entry,
@@ -334,7 +334,7 @@ func (s *HTTPStore) validateInitialSnapshotLocked(url string, snapshot *initialC
 	if !exists || entry != snapshot.entry || entry.sourceDescriptor != snapshot.sourceDescriptor ||
 		entry.sourceGeneration != snapshot.sourceGeneration ||
 		entry.mutationRevision != snapshot.mutationRevision || entry.AcceptedChecksum != "" || entry.HasPending {
-		return fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", url)
+		return fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", RedactURL(url))
 	}
 	return nil
 }

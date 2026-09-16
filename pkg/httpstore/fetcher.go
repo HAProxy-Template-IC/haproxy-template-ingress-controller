@@ -68,7 +68,7 @@ func (s *HTTPStore) fetchWithRetry(
 			exp := min(attempt-1, 5)
 			delay := opts.RetryDelay * time.Duration(1<<exp)
 			s.logger.Log(context.Background(), levelTrace, "retrying HTTP fetch",
-				"url", url,
+				"url", RedactURL(url),
 				"attempt", attempt+1,
 				"delay", delay.String())
 
@@ -92,7 +92,7 @@ func (s *HTTPStore) fetchWithRetry(
 
 		lastErr = err
 		s.logger.Log(context.Background(), levelTrace, "HTTP fetch attempt failed",
-			"url", url,
+			"url", RedactURL(url),
 			"attempt", attempt+1,
 			"error", err)
 	}
@@ -116,7 +116,7 @@ func (s *HTTPStore) doFetch(
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return "", "", "", fmt.Errorf("creating request: %w", err)
+		return "", "", "", fmt.Errorf("creating request: %w", redactURLError(err, url))
 	}
 
 	// Add conditional request headers
@@ -140,7 +140,7 @@ func (s *HTTPStore) doFetch(
 	// Perform request
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return "", "", "", fmt.Errorf("request failed: %w", err)
+		return "", "", "", fmt.Errorf("request failed: %w", redactURLError(err, url))
 	}
 	defer resp.Body.Close()
 

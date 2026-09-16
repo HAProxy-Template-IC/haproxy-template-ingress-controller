@@ -39,6 +39,14 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: "map:haptic-hmac-routes.map", pattern: '(?m)^default/hmac-ingress sha256 X-Signature body ok czNjcjN0LWtleQ==$'}
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'http-request return status 411 if \{ var\(txn\.hm_state\) -m str ok \} \{ var\(txn\.hm_signed\) -m str body \} !\{ req\.hdr\(Content-Length\) -m found \}'
+          - 'http-request set-var\(txn\.hm_body_size\) req\.body_size'
+          - 'http-request wait-for-body time 10s if \{ var\(txn\.hm_state\) -m str ok \} \{ var\(txn\.hm_signed\) -m str body \}'
+          - 'http-request return status 413 if \{ var\(txn\.hm_state\) -m str ok \} \{ var\(txn\.hm_signed\) -m str body \} !\{ req\.body_len,sub\(txn\.hm_body_size\) -m int 0 \}'
+          - 'http-request set-var\(txn\.haptic_hmac\) req\.body,hmac'
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request wait-for-body time 10s if \{ var\(txn\.hm_state\) -m str ok \} \{ var\(txn\.hm_signed\) -m str body \}'
@@ -234,8 +242,84 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: "map:haptic-hmac-routes.map", pattern: '(?m)^default/hmac-missing sha256 X-Signature body missing _$'}
       - {type: contains, target: haproxy.cfg, pattern: '(?m)^ *# haptic/hmac$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.hm_state\) -m str missing \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.hm_state\) -m str missing nosecret \}'}
       - {type: contains, target: events, pattern: "HMACSecretMissing"}
+
+  test-haptic-hmac-options-without-secret-fail-closed:
+    description: HMAC options require a secret before a route can accept requests.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - &hmacHeaderOnly
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hmac-header-only
+            annotations: {haproxy-haptic.org/hmac-header: X-Signature}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hmac-header.example.com
+                http: *httpRoot
+        - &hmacAlgorithmOnly
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hmac-algorithm-only
+            annotations: {haproxy-haptic.org/hmac-algorithm: sha256}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hmac-algorithm.example.com
+                http: *httpRoot
+        - &hmacSignedOnly
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hmac-signed-only
+            annotations: {haproxy-haptic.org/hmac-signed-string: path}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hmac-signed.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "map:haptic-hmac-routes.map", pattern: '(?m)^default/hmac-header-only _ _ _ nosecret _$'}
+      - {type: contains, target: "map:haptic-hmac-routes.map", pattern: '(?m)^default/hmac-algorithm-only _ _ _ nosecret _$'}
+      - {type: contains, target: "map:haptic-hmac-routes.map", pattern: '(?m)^default/hmac-signed-only _ _ _ nosecret _$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.hm_state\) -m str missing nosecret \}'}
+      - {type: contains, target: events, pattern: "HMACSecretMissing.*hmac-header-only"}
+      - {type: contains, target: events, pattern: "HMACSecretMissing.*hmac-algorithm-only"}
+      - {type: contains, target: events, pattern: "HMACSecretMissing.*hmac-signed-only"}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'req\.hdr\(X-Signature\)'}
+
+  test-haptic-hmac-header-without-secret-rejected:
+    description: Admission rejects an HMAC header without a secret.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses: [*hmacHeaderOnly]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "hmac-header.*but no.*hmac-secret"}
+
+  test-haptic-hmac-algorithm-without-secret-rejected:
+    description: Admission rejects an HMAC algorithm without a secret.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses: [*hmacAlgorithmOnly]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "hmac-algorithm.*but no.*hmac-secret"}
+
+  test-haptic-hmac-signed-string-without-secret-rejected:
+    description: Admission rejects an HMAC signing mode without a secret.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses: [*hmacSignedOnly]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "hmac-signed-string.*but no.*hmac-secret"}
 
   test-haptic-authz-blocks-absent-without-routes:
     description: >-

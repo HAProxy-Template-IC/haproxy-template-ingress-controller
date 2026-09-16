@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Empty auxiliary files publish with an explicit `empty: true` declaration; missing or contradictory content remains invalid.
 - Playground presets contain complete configuration resources; the custom request-ID example validates header names and applies only to the annotated Ingress.
 - Agent state reads wait for startup recovery before publishing the deployment baseline.
 - Component name, health, and error callbacks can access the lifecycle registry without deadlocking it.
@@ -40,9 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Admission webhooks reject oversized or malformed request envelopes and return only the admission response.
 - Agent applies reject oversized manifest parts before changing files or rollback state.
 - Debug endpoints enforce loopback access for custom routes with method or host patterns.
+- HTTP source logs and errors redact URL user information, query strings, and fragments.
+- Watcher logs retain resource identities and versions without recording resource contents or index values.
 - SPOA plugin signature verification now requires the exact pinned release tag, not any tag from the upstream project.
 
 ### Helm chart
+
+#### Security
+
+- JWT issuer and audience checks remain enforced when the required value is `_`.
+- API-key consumer forwarding replaces client-supplied identity headers when the configured header name is `_`.
+- HMAC options without `hmac-secret` are rejected at admission and fail closed with 503 during reconciliation.
+- HMAC body verification requires `Content-Length` and the complete buffered body; unknown-length requests return 411 and bodies exceeding the buffer return 413.
 
 #### Added
 

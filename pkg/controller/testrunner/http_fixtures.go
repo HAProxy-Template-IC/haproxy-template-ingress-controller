@@ -82,11 +82,11 @@ func (w *FixtureHTTPStoreWrapper) Fetch(args ...any) (any, error) {
 	// Look up fixture content
 	content, ok := w.store.Get(url)
 	if !ok {
-		return nil, fmt.Errorf("http.Fetch: no fixture defined for URL: %s (add an httpResources fixture for this URL)", url)
+		return nil, fmt.Errorf("http.Fetch: no fixture defined for URL: %s (add an httpResources fixture for this URL)", httpstore.RedactURL(url))
 	}
 
 	w.logger.Debug("Returning fixture content",
-		"url", url,
+		"url", httpstore.RedactURL(url),
 		"size", len(content))
 
 	return content, nil
@@ -118,7 +118,7 @@ func CreateHTTPStoreFromFixtures(fixtures []config.HTTPResourceFixture, logger *
 	for _, fixture := range fixtures {
 		store.LoadFixture(fixture.URL, fixture.Content)
 		logger.Debug("Loaded HTTP fixture",
-			"url", fixture.URL,
+			"url", httpstore.RedactURL(fixture.URL),
 			"size", len(fixture.Content))
 	}
 

@@ -65,7 +65,7 @@ func (s *HTTPStore) finalizePending(
 
 	if promote {
 		s.logger.Debug("Promoting pending content to accepted",
-			"url", url,
+			"url", RedactURL(url),
 			"old_checksum", checksumPrefix(entry.AcceptedChecksum),
 			"new_checksum", checksumPrefix(entry.PendingChecksum))
 		contentChanged := entry.AcceptedChecksum == "" || entry.AcceptedContent != entry.PendingContent
@@ -83,12 +83,12 @@ func (s *HTTPStore) finalizePending(
 		}
 	} else if quiet {
 		s.logger.Debug("Discarding pending content from retired HTTP refresh",
-			"url", url,
+			"url", RedactURL(url),
 			"checksum", checksumPrefix(entry.PendingChecksum))
 		entry.ValidationState = StateAccepted
 	} else {
 		s.logger.Warn("Rejecting pending content, keeping accepted version",
-			"url", url,
+			"url", RedactURL(url),
 			"rejected_checksum", checksumPrefix(entry.PendingChecksum),
 			"keeping_checksum", checksumPrefix(entry.AcceptedChecksum))
 		entry.ValidationState = StateRejected
@@ -163,7 +163,7 @@ func (s *HTTPStore) EvictUnused() []string {
 		// Evict if last access time is before cutoff
 		if entry.LastAccessTime.Before(cutoff) {
 			s.logger.Debug("Evicting unused HTTP cache entry",
-				"url", url,
+				"url", RedactURL(url),
 				"last_access", entry.LastAccessTime,
 				"age", now.Sub(entry.LastAccessTime))
 			delete(s.cache, url)

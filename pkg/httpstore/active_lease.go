@@ -403,7 +403,7 @@ func (s *HTTPStore) validatePreparedActiveLeaseActivationsLocked(plan *preparedA
 		}
 		for setID, descriptor := range s.activeLeaseURLs[url] {
 			if setID != plan.set.id && descriptor != value.descriptor {
-				return fmt.Errorf("HTTP source %s has conflicting active declarations", url)
+				return fmt.Errorf("HTTP source %s has conflicting active declarations", RedactURL(url))
 			}
 		}
 	}
@@ -554,7 +554,7 @@ func (s *HTTPStore) validatePlannedActivationsLocked(
 		}
 		for otherSet, descriptor := range s.activeLeaseURLs[url] {
 			if otherSet != setID && descriptor != value.descriptor {
-				return fmt.Errorf("HTTP source %s has conflicting active declarations", url)
+				return fmt.Errorf("HTTP source %s has conflicting active declarations", RedactURL(url))
 			}
 		}
 	}
@@ -625,7 +625,7 @@ func acceptedReplayLeaseUpdatesFromSnapshots(
 			return nil, errors.New("published HTTP replay lease has an invalid snapshot")
 		}
 		if _, exists := desired[snapshot.URL]; exists {
-			return nil, fmt.Errorf("published HTTP replay lease duplicates source %s", snapshot.URL)
+			return nil, fmt.Errorf("published HTTP replay lease duplicates source %s", RedactURL(snapshot.URL))
 		}
 		desired[snapshot.URL] = snapshot.Descriptor
 	}
@@ -715,7 +715,7 @@ func buildActiveLeaseReplacement(
 			return nil, errors.New("HTTP active lease replacement has an invalid reference")
 		}
 		if _, exists := txn.Get([]byte(reference.URL)); exists {
-			return nil, fmt.Errorf("HTTP source %s has conflicting active declarations", reference.URL)
+			return nil, fmt.Errorf("HTTP source %s has conflicting active declarations", RedactURL(reference.URL))
 		}
 		txn.Insert([]byte(reference.URL), activeLeaseValue{
 			descriptor: reference.Descriptor,
@@ -774,7 +774,7 @@ func applyActiveLeaseURLUpdates(
 	for _, update := range updates {
 		count := counts[update.Descriptor]
 		if count < update.Removed || ^uint64(0)-(count-update.Removed) < update.Added {
-			return false, fmt.Errorf("HTTP source %s active reference count is inconsistent", url)
+			return false, fmt.Errorf("HTTP source %s active reference count is inconsistent", RedactURL(url))
 		}
 		count = count - update.Removed + update.Added
 		if count == 0 {
@@ -784,7 +784,7 @@ func applyActiveLeaseURLUpdates(
 		}
 	}
 	if len(counts) > 1 {
-		return false, fmt.Errorf("HTTP source %s has conflicting active declarations", url)
+		return false, fmt.Errorf("HTTP source %s has conflicting active declarations", RedactURL(url))
 	}
 	if len(counts) == 0 {
 		if found {

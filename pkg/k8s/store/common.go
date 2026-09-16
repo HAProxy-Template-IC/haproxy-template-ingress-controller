@@ -36,7 +36,7 @@ func (e *StoreError) Error() string {
 	if len(e.Keys) == 0 {
 		return fmt.Sprintf("store error during %s: %v", e.Operation, e.Cause)
 	}
-	return fmt.Sprintf("store error during %s for keys %q: %v", e.Operation, e.Keys, e.Cause)
+	return fmt.Sprintf("store error during %s (key count %d): %v", e.Operation, len(e.Keys), e.Cause)
 }
 
 func (e *StoreError) Unwrap() error {

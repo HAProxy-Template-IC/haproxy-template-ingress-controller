@@ -209,6 +209,7 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 	result := p.compressIfNeeded(mapFile.Content, req.CompressionThreshold, "HAProxyMapFile/"+name)
 
 	spec := haproxyv1alpha1.HAProxyMapFileSpec{
+		Empty:      mapFile.Content == "",
 		MapName:    path.Base(mapFile.Path),
 		Path:       mapFile.Path,
 		Entries:    result.content,
@@ -333,6 +334,7 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 	result := p.compressIfNeeded(generalFile.Content, req.CompressionThreshold, "HAProxyGeneralFile/"+name)
 
 	spec := haproxyv1alpha1.HAProxyGeneralFileSpec{
+		Empty:      generalFile.Content == "",
 		FileName:   generalFile.Filename,
 		Path:       generalFile.Path,
 		Content:    result.content,
@@ -390,6 +392,7 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 	result := p.compressIfNeeded(crtListFile.Content, req.CompressionThreshold, "HAProxyCRTListFile/"+name)
 
 	spec := haproxyv1alpha1.HAProxyCRTListFileSpec{
+		Empty:      crtListFile.Content == "",
 		ListName:   path.Base(crtListFile.Path),
 		Path:       crtListFile.Path,
 		Entries:    result.content,

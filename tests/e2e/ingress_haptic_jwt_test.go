@@ -135,3 +135,72 @@ func TestHapticJWT(t *testing.T) {
 		},
 	})
 }
+
+func TestHapticJWTClaimConstraints(t *testing.T) {
+	t.Parallel()
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	pubDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal public key: %v", err)
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+	for _, tc := range []struct {
+		name, issuer, audience string
+	}{
+		{"ordinary", "https://issuer.example.com", "api"},
+		{"underscore", "_", "_"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			RunSimpleIngressTest(t, &SimpleIngressTest{
+				Description: "JWT issuer and audience constraints",
+				Host:        "jwt-claims-" + tc.name + ".localdev.me",
+				Annotations: map[string]string{
+					"haproxy-haptic.org/jwt-secret":   "jwt-keys",
+					"haproxy-haptic.org/jwt-issuer":   tc.issuer,
+					"haproxy-haptic.org/jwt-audience": tc.audience,
+				},
+				PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+					t.Helper()
+					mustCreateSecret(ctx, t, client, namespace, "jwt-keys", map[string][]byte{"pubkey.pem": pubPEM})
+				},
+				Assess: jwtClaimAssertions(t, priv, tc.issuer, tc.audience),
+			})
+		})
+	}
+}
+
+func jwtClaimAssertions(t *testing.T, priv *rsa.PrivateKey, issuer, audience string) []SimpleIngressAssertion {
+	t.Helper()
+	assertions := make([]SimpleIngressAssertion, 0, 5)
+	for _, tc := range []struct {
+		name, issuer, audience string
+		status                 int
+	}{
+		{"matching claims", issuer, audience, http.StatusOK},
+		{"wrong issuer", "wrong", audience, http.StatusUnauthorized},
+		{"missing issuer", "", audience, http.StatusUnauthorized},
+		{"wrong audience", issuer, "wrong", http.StatusUnauthorized},
+		{"missing audience", issuer, "", http.StatusUnauthorized},
+	} {
+		claims := map[string]any{"sub": "alice", "exp": time.Now().Add(time.Hour).Unix()}
+		if tc.issuer != "" {
+			claims["iss"] = tc.issuer
+		}
+		if tc.audience != "" {
+			claims["aud"] = tc.audience
+		}
+		token := signRS256(t, priv, map[string]any{"alg": "RS256", "typ": "JWT"}, claims)
+		assertions = append(assertions, SimpleIngressAssertion{
+			Name: tc.name,
+			Check: func(t *testing.T, host string) {
+				t.Helper()
+				httpclient.New(t).GET(host, "/").WithHeader("Authorization", "Bearer "+token).ExpectStatus(t, tc.status)
+			},
+		})
+	}
+	return assertions
+}

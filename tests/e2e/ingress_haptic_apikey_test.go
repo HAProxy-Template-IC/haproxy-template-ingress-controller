@@ -91,6 +91,32 @@ func TestHapticAPIKey(t *testing.T) {
 	})
 }
 
+func TestHapticAPIKeyUnderscoreConsumerHeader(t *testing.T) {
+	t.Parallel()
+	RunSimpleIngressTest(t, &SimpleIngressTest{
+		Description: "API-key identity replaces a forged underscore header",
+		Host:        "apikey-underscore.localdev.me",
+		Annotations: map[string]string{
+			"haproxy-haptic.org/api-key-secret":          "api-keys",
+			"haproxy-haptic.org/api-key-consumer-header": "_",
+		},
+		PreSetup: func(ctx context.Context, t *testing.T, client klient.Client, namespace string) {
+			t.Helper()
+			mustCreateSecret(ctx, t, client, namespace, "api-keys", map[string][]byte{
+				"keys": []byte("apikey-abc123:alice\n"),
+			})
+		},
+		Assess: []SimpleIngressAssertion{{
+			Name: "forged identity is replaced",
+			Check: func(t *testing.T, host string) {
+				t.Helper()
+				httpclient.New(t).GET(host, "/").WithHeader("X-API-Key", "apikey-abc123").
+					WithHeader("_", "admin").ExpectEchoHeader(t, "_", "alice")
+			},
+		}},
+	})
+}
+
 // TestHapticAPIKeyMissingSecretFailsClosed verifies that an Ingress can be
 // admitted before its referenced Secret reaches the controller's watch cache
 // without opening the protected route or producing an internally inconsistent

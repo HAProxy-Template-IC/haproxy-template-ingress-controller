@@ -157,7 +157,7 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	// confidential, so only an https:// origin gets downgrade protection.
 	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
 		return fmt.Errorf("refusing redirect from https to %s (%s): plaintext hop can rewrite the fetched content",
-			req.URL.Scheme, req.URL.Redacted())
+			req.URL.Scheme, RedactURL(req.URL.String()))
 	}
 	if req.URL.Host != via[0].URL.Host {
 		for name := range req.Header {
@@ -201,7 +201,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 		return "", err
 	}
 	s.logger.Info("Performing initial HTTP fetch",
-		"url", url,
+		"url", RedactURL(url),
 		"timeout", snapshot.options.Timeout.String(),
 		"retries", snapshot.options.Retries,
 		"critical", snapshot.options.Critical)
@@ -210,14 +210,14 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 		ctx, url, snapshot.options, snapshot.auth, "", "",
 	)
 	if !s.sourceCurrent(url, &snapshot) {
-		return "", fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", url)
+		return "", fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", RedactURL(url))
 	}
 	if err != nil {
 		if snapshot.options.Critical {
-			return "", fmt.Errorf("critical HTTP fetch failed for %s: %w", url, err)
+			return "", fmt.Errorf("critical HTTP fetch failed for %s: %w", RedactURL(url), err)
 		}
 		s.logger.Warn("HTTP fetch failed, returning empty content",
-			"url", url,
+			"url", RedactURL(url),
 			"error", err)
 		return "", nil
 	}
@@ -231,7 +231,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 		entry.sourceGeneration != snapshot.sourceGeneration ||
 		entry.mutationRevision != snapshot.mutationRevision || entry.HasPending {
 		s.mu.Unlock()
-		return "", fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", url)
+		return "", fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", RedactURL(url))
 	}
 	if entry.AcceptedChecksum != "" {
 		content = entry.AcceptedContent
@@ -255,7 +255,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	s.mu.Unlock()
 
 	s.logger.Debug("Cached HTTP content",
-		"url", url,
+		"url", RedactURL(url),
 		"size", len(content),
 		"checksum", checksum[:16]+"...")
 
@@ -354,7 +354,7 @@ func (s *HTTPStore) initialFetchSnapshot(url string, state SourceState) (initial
 
 	entry, exists := s.cache[url]
 	if !exists || entry.sourceDescriptor != state.Descriptor || entry.sourceGeneration != state.Generation {
-		return initialFetchSnapshot{}, fmt.Errorf("HTTP source %s changed before it could be fetched; retry the render", url)
+		return initialFetchSnapshot{}, fmt.Errorf("HTTP source %s changed before it could be fetched; retry the render", RedactURL(url))
 	}
 	return initialFetchSnapshot{
 		entry:            entry,
@@ -462,12 +462,12 @@ func (s *HTTPStore) GetForValidation(url string) (string, bool) {
 // accepted content for the process lifetime.
 func (s *HTTPStore) abandonStuckValidation(url string, stuckFor time.Duration) bool {
 	if stuckFor <= s.validationStuckAfter {
-		s.logger.Log(context.Background(), levelTrace, "skipping refresh, validation in progress", "url", url)
+		s.logger.Log(context.Background(), levelTrace, "skipping refresh, validation in progress", "url", RedactURL(url))
 		return false
 	}
 
 	s.logger.Warn("Abandoning stuck HTTP content validation, no verdict arrived",
-		"url", url,
+		"url", RedactURL(url),
 		"stuck_for", stuckFor.Round(time.Second),
 		"timeout", s.validationStuckAfter)
 	s.RejectPending(url)
@@ -539,7 +539,7 @@ func (s *HTTPStore) refreshSnapshot(url string, sourceGeneration uint64) (refres
 	entry, exists := s.cache[url]
 	if !exists {
 		s.mu.RUnlock()
-		return refreshSnapshot{}, false, fmt.Errorf("URL not in cache: %s", url)
+		return refreshSnapshot{}, false, fmt.Errorf("URL not in cache: %s", RedactURL(url))
 	}
 	if sourceGeneration != 0 && entry.sourceGeneration != sourceGeneration {
 		s.mu.RUnlock()
@@ -558,7 +558,7 @@ func (s *HTTPStore) refreshSnapshot(url string, sourceGeneration uint64) (refres
 		entry, exists = s.cache[url]
 		if !exists {
 			s.mu.RUnlock()
-			return refreshSnapshot{}, false, fmt.Errorf("URL not in cache: %s", url)
+			return refreshSnapshot{}, false, fmt.Errorf("URL not in cache: %s", RedactURL(url))
 		}
 		if sourceGeneration != 0 && entry.sourceGeneration != sourceGeneration {
 			s.mu.RUnlock()
@@ -652,12 +652,12 @@ func (s *HTTPStore) refreshURL(
 	if err != nil {
 		if errors.Is(err, errNotModified) {
 			s.logger.Log(context.Background(), levelTrace, "content not modified (304)",
-				"url", url,
+				"url", RedactURL(url),
 				"etag", snapshot.etag)
 			return refreshOutcome{}, nil
 		}
 		s.logger.Warn("Refresh fetch failed",
-			"url", url,
+			"url", RedactURL(url),
 			"error", err)
 		return refreshOutcome{}, err
 	}
@@ -665,7 +665,7 @@ func (s *HTTPStore) refreshURL(
 	newChecksum := checksum(content)
 	if content == snapshot.acceptedContent {
 		s.logger.Log(context.Background(), levelTrace, "content unchanged",
-			"url", url,
+			"url", RedactURL(url),
 			"checksum", newChecksum[:16]+"...")
 		s.updateRefreshMetadata(url, &snapshot, newEtag, newLastModified)
 		return refreshOutcome{}, nil
@@ -677,7 +677,7 @@ func (s *HTTPStore) refreshURL(
 	}
 
 	s.logger.Debug("Content changed, stored as pending",
-		"url", url,
+		"url", RedactURL(url),
 		"old_checksum", snapshot.acceptedChecksum[:min(16, len(snapshot.acceptedChecksum))]+"...",
 		"new_checksum", newChecksum[:16]+"...",
 		"new_size", len(content))
@@ -805,7 +805,7 @@ func (s *HTTPStore) LoadFixture(url, content string) {
 	)
 
 	s.logger.Debug("Loaded HTTP fixture",
-		"url", url,
+		"url", RedactURL(url),
 		"size", len(content),
 		"checksum", checksum[:min(16, len(checksum))]+"...")
 }

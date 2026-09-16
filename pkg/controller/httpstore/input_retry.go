@@ -100,7 +100,7 @@ func (t *InputTransaction) adoptRetryInput(
 		return result, true, nil
 	}
 	if previous := t.sources[url]; previous != nil && previous.Descriptor() != descriptor {
-		return nil, false, fmt.Errorf("HTTP source %s changed within one render", url)
+		return nil, false, fmt.Errorf("HTTP source %s changed within one render", purehttpstore.RedactURL(url))
 	}
 	result := seed.result
 	t.sources[url] = seed.source

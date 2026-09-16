@@ -32,7 +32,7 @@ func TestStoreError_Error(t *testing.T) {
 				Keys:      []string{"default", "my-resource"},
 				Cause:     errors.New("invalid key count"),
 			},
-			contains: []string{"add", `["default" "my-resource"]`, "invalid key count"},
+			contains: []string{"add", "key count 2", "invalid key count"},
 		},
 		{
 			name: "without keys",
@@ -59,13 +59,18 @@ func TestStoreError_Error(t *testing.T) {
 				Keys:      []string{""},
 				Cause:     errors.New("missing resource"),
 			},
-			contains: []string{"get", `[""]`, "missing resource"},
+			contains: []string{"get", "key count 1", "missing resource"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			errMsg := tt.err.Error()
+			for _, key := range tt.err.Keys {
+				if key != "" && contains(errMsg, key) {
+					t.Errorf("store error exposes index value %q: %q", key, errMsg)
+				}
+			}
 
 			for _, substring := range tt.contains {
 				if !contains(errMsg, substring) {
