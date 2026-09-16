@@ -28,21 +28,18 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-// buildStoreProvider builds a stores.StoreProvider from the resource watcher's
-// live k8s stores. Each types.Store is wrapped in a stores.TypesStoreAdapter so
-// it satisfies the stores.Store interface — Go treats the two identical method
-// sets as distinct types. Nil stores are skipped.
-func buildStoreProvider(resourceWatcher *resourcewatcher.ResourceWatcherComponent) stores.StoreProvider {
-	k8sStores := resourceWatcher.GetAllStores()
+// buildStoreProvider preserves the concrete stores and their optional capabilities.
+func buildStoreProvider(k8sStores map[string]types.Store) stores.StoreProvider {
 	converted := make(map[string]stores.Store, len(k8sStores))
 	for resourceType, store := range k8sStores {
 		if store == nil {
 			continue
 		}
-		converted[resourceType] = &stores.TypesStoreAdapter{Inner: store}
+		converted[resourceType] = store
 	}
 	return stores.NewRealStoreProvider(converted)
 }

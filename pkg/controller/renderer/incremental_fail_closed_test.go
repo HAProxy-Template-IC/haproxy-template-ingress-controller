@@ -156,8 +156,7 @@ func TestRenderServiceIncrementalFailsClosedForUnsupportedLiveInputs(t *testing.
 			prepare: func(t *testing.T, _ *RenderService, _ *config.Config) (stores.StoreProvider, []rendercontext.Option, func()) {
 				t.Helper()
 				store := newUnfencedSnapshotStore(t, failClosedResource())
-				adapter := &stores.TypesStoreAdapter{Inner: store}
-				return stores.NewRealStoreProvider(map[string]stores.Store{"routes": adapter}), nil, func() {
+				return stores.NewRealStoreProvider(map[string]stores.Store{"routes": store}), nil, func() {
 					assert.Zero(t, store.listCallCount())
 				}
 			},

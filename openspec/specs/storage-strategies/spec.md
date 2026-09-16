@@ -257,11 +257,16 @@ THEN it SHALL obtain the HTTP overlay via GetHTTPOverlay and apply pending conte
 WHEN an OverlayStoreProvider is created with a nil ValidationContext
 THEN GetStore SHALL return base stores directly and GetHTTPOverlay SHALL return nil.
 
-### Requirement: TypesStoreAdapter
+### Requirement: Preserve concrete store capabilities
 
-TypesStoreAdapter SHALL bridge the structurally identical Store interfaces defined in pkg/k8s/types and pkg/stores by delegating all Store method calls to an inner store. It SHALL preserve optional context-aware reads and warm-cache listing when the inner store provides them, without changing the legacy Store interface.
+The controller SHALL assign `pkg/k8s/types.Store` values directly to the structurally identical `pkg/stores.Store` interface. The provider SHALL preserve the concrete store and its optional capabilities, including context-aware reads, warm-cache listing, revision journals, snapshots, and commit fences.
 
-#### Scenario: Adapter delegates Get to inner store
+#### Scenario: Store supports an optional capability
 
-WHEN Get is called on a TypesStoreAdapter
-THEN the call SHALL be forwarded to the inner store's Get method with the same arguments.
+WHEN a store implements an optional interface
+THEN consumers SHALL access that interface through the provider.
+
+#### Scenario: Store lacks an optional capability
+
+WHEN a store does not implement an optional interface
+THEN the provider SHALL NOT advertise that capability.

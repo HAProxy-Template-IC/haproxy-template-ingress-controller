@@ -9,7 +9,7 @@ The controller's renderer takes a `StoreProvider` rather than a raw `map[string]
 - A `RealStoreProvider` during normal reconciliation — backed directly by the live `pkg/k8s/store` instances.
 - An `OverlayStoreProvider` during webhook validation or proposal-validator runs — wraps the live providers with a `ValidationContext` of overlays so the proposed change appears in templates without modifying the actual stores.
 
-The package also defines its own `Store` interface (structurally identical to `pkg/k8s/types.Store`) and the `TypesStoreAdapter` that bridges them. The optional `ContextGetter` and `ContextLister` interfaces let API-backed reads inherit a render's cancellation without changing the legacy `Store` method set. The two Store interfaces stay structurally identical but are kept apart by `arch-go.yml` so `pkg/stores` can be consumed by the templating pipeline without dragging in `client-go`.
+The package defines a `Store` interface with the same methods as `pkg/k8s/types.Store`. Go allows direct assignment between them, preserving the concrete store's optional capabilities, including context-aware reads and immutable snapshots. Separate interfaces keep `pkg/stores` independent of `client-go`; `arch-go.yml` enforces this boundary.
 
 ## Quick Start
 
@@ -59,7 +59,7 @@ The `*CompositeStore` returned by `OverlayStoreProvider.GetStore` is read-only �
 
 ## See Also
 
-- [`pkg/k8s/types`](../k8s/types/) — the structurally-identical `Store` interface that `TypesStoreAdapter` bridges from
+- [`pkg/k8s/types`](../k8s/types/) — the structurally identical `Store` interface used by resource watchers
 - [`pkg/k8s/store`](../k8s/store/) — concrete `MemoryStore` / `CachedStore` implementations
 - [`pkg/controller/dryrunvalidator`](../controller/dryrunvalidator/) / [`proposalvalidator`](../controller/proposalvalidator/) — primary `OverlayStoreProvider` consumers
 - [`pkg/httpstore`](../httpstore/) — implements `HTTPContentOverlay`

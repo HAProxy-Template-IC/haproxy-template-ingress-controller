@@ -197,16 +197,16 @@ func TestOverlayReadSnapshotElidesSemanticNoOps(t *testing.T) {
 	require.Same(t, baseSnapshot, pinned)
 }
 
-func TestTypesStoreAdapterDelegatesPin(t *testing.T) {
+func TestCompositeStoreDelegatesPin(t *testing.T) {
 	inner := newRevisionMockStore()
-	adapter := &TypesStoreAdapter{Inner: inner}
-	pinned, err := adapter.Pin()
+	composite := NewCompositeStore(inner, NewStoreOverlay())
+	pinned, err := composite.Pin()
 	require.NoError(t, err)
 	require.Equal(t, inner.RevisionSource(), pinned.RevisionSource())
 	require.Equal(t, uint64(7), pinned.Sequence())
 	require.Implements(t, (*ContextReadSnapshot)(nil), pinned)
 
-	unsupported := &TypesStoreAdapter{Inner: newMockStore()}
+	unsupported := NewCompositeStore(newMockStore(), NewStoreOverlay())
 	_, err = unsupported.Pin()
 	require.ErrorIs(t, err, ErrSnapshotUnsupported)
 }

@@ -104,8 +104,7 @@ func TestRenderCancelsOnDemandStoreFetch(t *testing.T) {
 	releaseStore := func() { releaseOnce.Do(func() { close(blocking.release) }) }
 	defer releaseStore()
 
-	adapter := &stores.TypesStoreAdapter{Inner: blocking}
-	composite := stores.NewCompositeStore(adapter, stores.NewStoreOverlay())
+	composite := stores.NewCompositeStore(blocking, stores.NewStoreOverlay())
 	svc := NewRenderService(&RenderServiceConfig{
 		Engine: engine,
 		Config: cfg,

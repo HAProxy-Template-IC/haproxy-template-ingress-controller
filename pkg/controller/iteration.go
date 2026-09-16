@@ -231,7 +231,7 @@ func startIteration(
 
 	// Build the store provider (used for webhook dry-run validation) from the
 	// resource watcher's live stores.
-	storeProvider := buildStoreProvider(resourceWatcher)
+	storeProvider := buildStoreProvider(resourceWatcher.GetAllStores())
 
 	// 4. Setup config watchers
 	if err := setupConfigWatchers(

@@ -90,8 +90,7 @@ func TestStoreWrapperPropagatesReadContext(t *testing.T) {
 			releaseStore := func() { releaseOnce.Do(func() { close(inner.release) }) }
 			defer releaseStore()
 
-			adapter := &stores.TypesStoreAdapter{Inner: inner}
-			composite := stores.NewCompositeStore(adapter, stores.NewStoreOverlay())
+			composite := stores.NewCompositeStore(inner, stores.NewStoreOverlay())
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			wrapper := &StoreWrapper{

@@ -56,7 +56,7 @@ The DAG rules in `arch-go.yml` prevent the coordination layer from leaking into 
 - **`pkg/controller/**`** may import anything under `pkg/`.
 - **`pkg/core/**`** may not import `controller`, `dataplane`, `k8s`, `templating`, `httpstore`, `introspection`, `webhook`.
 - **`pkg/events/**`** must not import any other `pkg/**` package.
-- **`pkg/stores/**`** is isolated from `pkg/k8s/**`; the two declare structurally identical `Store` interfaces and `pkg/stores.TypesStoreAdapter` bridges them.
+- **`pkg/stores/**`** is isolated from `pkg/k8s/**`; the two declare structurally identical `Store` interfaces, so callers can assign stores directly without an adapter.
 - Domain libraries (`pkg/k8s`, `pkg/dataplane`, `pkg/templating`) may not cross-import each other.
 
 The exact allow/deny lists evolve with new packages, so consult `arch-go.yml` rather than memorising the rules.
