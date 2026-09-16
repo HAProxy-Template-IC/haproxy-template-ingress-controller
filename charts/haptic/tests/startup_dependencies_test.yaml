@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: startup dependencies
+templates:
+  - deployment.yaml
+  - default-ssl-certificate-certmanager.yaml
+  - webhook-certificate.yaml
+tests:
+  - it: starts the validator before the controller while preserving custom init containers
+    template: deployment.yaml
+    set:
+      controller.validators.enabled: true
+      controller.initContainers:
+        - name: prepare
+          image: busybox:1.37
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: prepare
+      - equal:
+          path: spec.template.spec.initContainers[1].name
+          value: validators
+      - equal:
+          path: spec.template.spec.initContainers[1].restartPolicy
+          value: Always
+      - equal:
+          path: spec.template.spec.initContainers[1].startupProbe.exec.command
+          value: [test, -S, /var/run/haptic-validators/spoa-hub.sock]
+      - exists:
+          path: spec.template.spec.initContainers[1].readinessProbe
+      - equal:
+          path: spec.template.spec.containers[0].name
+          value: controller
+      - notExists:
+          path: spec.template.spec.containers[?(@.name=="validators")]
+
+  - it: omits the validator when disabled
+    template: deployment.yaml
+    set:
+      controller.validators.enabled: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.initContainers
+
+  - it: gives a self-signed default certificate a non-empty subject
+    template: default-ssl-certificate-certmanager.yaml
+    capabilities:
+      apiVersions: [cert-manager.io/v1]
+    asserts:
+      - exists:
+          path: spec.subject.organizations[0]
+
+  - it: gives a self-signed webhook certificate a non-empty subject
+    template: webhook-certificate.yaml
+    capabilities:
+      apiVersions: [cert-manager.io/v1]
+    set:
+      controller.webhook.certManager.enabled: true
+    asserts:
+      - exists:
+          path: spec.subject.organizations[0]

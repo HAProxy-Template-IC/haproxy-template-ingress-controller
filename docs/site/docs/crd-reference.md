@@ -804,6 +804,8 @@ controller:
 
 When the rendered configuration exceeds the threshold, it's compressed with zstd and base64-encoded; the `HAProxyCfg` resource stores it with `spec.compressed: true`, reducing etcd storage and speeding up watch events for large configurations. To read a published config back in plaintext, use `haptic config view` — see [Debugging](./operations/debugging.md#common-recipes).
 
+The controller rejects compressed auxiliary files that expand beyond 64 MiB per file, including concatenated zstd frames.
+
 ### `logging`
 
 Log level configuration.

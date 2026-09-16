@@ -1,12 +1,49 @@
 package compression
 
 import (
+	"bytes"
+	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDecompressSizeBoundary(t *testing.T) {
+	const limit = 64 << 20
+	for _, size := range []int{limit, limit + 1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			content := strings.Repeat("x", size)
+			got, err := Decompress(Compress(content))
+			if size > limit {
+				require.ErrorIs(t, err, zstd.ErrDecoderSizeExceeded)
+				assert.Empty(t, got)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, content, got)
+		})
+	}
+}
+
+func TestDecompressLimitsCombinedFrames(t *testing.T) {
+	var frame bytes.Buffer
+	stream, err := zstd.NewWriter(&frame, zstd.WithEncoderConcurrency(1))
+	require.NoError(t, err)
+	_, err = stream.Write([]byte(strings.Repeat("x", 32<<20)))
+	require.NoError(t, err)
+	require.NoError(t, stream.Close())
+	var header zstd.Header
+	require.NoError(t, header.Decode(frame.Bytes()))
+	require.False(t, header.HasFCS)
+	joined := bytes.Repeat(frame.Bytes(), 3)
+	got, err := Decompress(base64.StdEncoding.EncodeToString(joined))
+	require.ErrorIs(t, err, zstd.ErrDecoderSizeExceeded)
+	assert.Empty(t, got)
+}
 
 func TestCompressDecompress(t *testing.T) {
 	tests := []struct {

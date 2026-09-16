@@ -34,7 +34,7 @@ import (
 // is read and fenced before any part touches the disk, so a rejected apply
 // leaves the tree exactly as it was.
 func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
-	if !s.ready.Load() {
+	if !s.Ready() {
 		writeJSON(w, http.StatusServiceUnavailable, api.ApplyError{Stage: "startup", Message: "agent is initialising"})
 		return
 	}
@@ -123,9 +123,12 @@ func readManifest(reader *multipart.Reader) (*api.Manifest, error) {
 	if part.FormName() != api.PartManifest {
 		return nil, fmt.Errorf("first part is %q, expected %q", part.FormName(), api.PartManifest)
 	}
-	raw, err := io.ReadAll(io.LimitReader(part, api.MaxPlanBlobBytes))
+	raw, err := io.ReadAll(io.LimitReader(part, api.MaxPlanBlobBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(raw) > api.MaxPlanBlobBytes {
+		return nil, fmt.Errorf("manifest exceeds the %d-byte limit", api.MaxPlanBlobBytes)
 	}
 	manifest := &api.Manifest{}
 	if err := json.Unmarshal(raw, manifest); err != nil {

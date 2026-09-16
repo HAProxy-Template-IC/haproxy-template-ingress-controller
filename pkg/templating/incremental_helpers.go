@@ -509,14 +509,6 @@ func incrementalUnixTime(seconds, nanoseconds int64) builtin.Time {
 	return builtin.UnixTime(seconds, nanoseconds).UTC()
 }
 
-func incrementalUntarGz(archive string) (map[string]string, error) {
-	return untarGz(archive, archiveLimits{
-		maxEntries:    4096,
-		maxEntryBytes: 8 << 20,
-		maxTotalBytes: 32 << 20,
-	})
-}
-
 func incrementalParseTime(env native.Env, layout, value string) builtin.Time {
 	if layout == "" {
 		incrementalStop(env, builtinParseTime, errors.New("incremental templates require an explicit layout"))

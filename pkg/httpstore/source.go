@@ -122,7 +122,7 @@ func normalizeAuth(auth *AuthConfig) (AuthConfig, error) {
 			return AuthConfig{}, nil
 		}
 		normalized.Token = auth.Token
-	default:
+	case AuthTypeHeader, "":
 		headers := make(map[string]string, len(auth.Headers))
 		canonicalValues := make(map[string]string, len(auth.Headers))
 		for name, value := range auth.Headers {
@@ -138,6 +138,8 @@ func normalizeAuth(auth *AuthConfig) (AuthConfig, error) {
 		} else {
 			return AuthConfig{}, nil
 		}
+	default:
+		return AuthConfig{}, fmt.Errorf("unknown HTTP authentication type %q; fetch refused; use basic, bearer, or header", auth.Type)
 	}
 	return normalized, nil
 }

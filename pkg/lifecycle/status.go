@@ -28,13 +28,17 @@ func (r *Registry) updateStatus(name string, status Status, err error) {
 // Status returns the current status of all registered components.
 func (r *Registry) Status() map[string]ComponentInfo {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	components := make([]registeredComponent, len(r.components))
+	for i, comp := range r.components {
+		components[i] = *comp
+	}
+	r.mu.RUnlock()
 
-	result := make(map[string]ComponentInfo, len(r.components))
+	result := make(map[string]ComponentInfo, len(components))
 
-	for _, comp := range r.components {
+	for _, comp := range components {
 		info := ComponentInfo{
-			Name:       comp.component.Name(),
+			Name:       comp.name,
 			Status:     comp.status,
 			LeaderOnly: comp.leaderOnly,
 		}

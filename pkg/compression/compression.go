@@ -7,6 +7,9 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// MaxDecompressedSize bounds one decoded configuration or auxiliary file.
+const MaxDecompressedSize = 64 << 20
+
 // encoder is reused for compression with level 3 (SpeedDefault), which provides
 // a good compression ratio at fast speed. decoder is reused for decompression.
 // Both are safe for concurrent use by the zstd package.
@@ -25,7 +28,7 @@ func init() {
 		panic("failed to create zstd encoder: " + err.Error())
 	}
 
-	decoder, err = zstd.NewReader(nil)
+	decoder, err = zstd.NewReader(nil, zstd.WithDecoderMaxMemory(MaxDecompressedSize))
 	if err != nil {
 		panic("failed to create zstd decoder: " + err.Error())
 	}
@@ -37,7 +40,7 @@ func Compress(data string) string {
 	return base64.StdEncoding.EncodeToString(compressed)
 }
 
-// Decompress decodes base64 and decompresses zstd data.
+// Decompress decodes base64 and zstd data, rejecting output above MaxDecompressedSize.
 func Decompress(data string) (string, error) {
 	decoded, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {

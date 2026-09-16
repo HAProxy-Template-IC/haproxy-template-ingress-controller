@@ -73,7 +73,7 @@ func (r *Registry) prepareComponentsToStart(isLeader bool) []*registeredComponen
 				comp.status = StatusStandby
 			}
 			r.logger.Debug("Setting leader-only component to standby (not leader)",
-				"name", comp.component.Name())
+				"name", comp.name)
 			continue
 		}
 
@@ -89,7 +89,7 @@ func (r *Registry) prepareComponentsToStart(isLeader bool) []*registeredComponen
 // Components that subscribe in Start must implement SubscriptionReadySignaler;
 // all others are ready because their subscriptions were created by the constructor.
 func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent) error {
-	name := comp.component.Name()
+	name := comp.name
 
 	r.logger.Debug("Starting component", "name", name)
 

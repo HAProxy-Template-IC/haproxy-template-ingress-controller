@@ -28,6 +28,11 @@ spec:
   secretName: {{ $secretName }}
   duration: {{ $cm.duration | default "8760h" }}
   renewBefore: {{ $cm.renewBefore | default "720h" }}
+  {{- if $cm.createIssuer }}
+  subject:
+    organizations:
+      - {{ include "haptic.fullname" . | quote }}
+  {{- end }}
   dnsNames:
     - {{ $svcName }}
     - {{ $svcName }}.{{ $ns }}

@@ -16,6 +16,7 @@ package introspection
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 )
@@ -144,11 +145,12 @@ func (r *Registry) GetWithField(path, field string) (any, error) {
 //	}
 func (r *Registry) All() (map[string]any, error) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	vars := maps.Clone(r.vars)
+	r.mu.RUnlock()
 
-	result := make(map[string]any, len(r.vars))
+	result := make(map[string]any, len(vars))
 
-	for path, v := range r.vars {
+	for path, v := range vars {
 		value, err := v.Get()
 		if err != nil {
 			return nil, fmt.Errorf("getting variable %q: %w", path, err)

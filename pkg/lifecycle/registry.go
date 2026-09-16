@@ -30,6 +30,7 @@ import (
 
 // registeredComponent holds a component and its registration configuration.
 type registeredComponent struct {
+	name       string
 	component  Component
 	leaderOnly bool
 	status     Status
@@ -85,11 +86,12 @@ func (r *Registry) WithLogger(logger *slog.Logger) *Registry {
 //	registry.Register(reconciler.New(bus, logger), false)
 //	registry.Register(deployer.New(bus, logger), true)
 func (r *Registry) Register(c Component, leaderOnly bool) {
+	name := c.Name()
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	// Allocate separately to avoid pointer invalidation when slice grows
 	comp := &registeredComponent{
+		name:       name,
 		component:  c,
 		leaderOnly: leaderOnly,
 		status:     StatusPending,
@@ -97,10 +99,11 @@ func (r *Registry) Register(c Component, leaderOnly bool) {
 	}
 
 	r.components = append(r.components, comp)
-	r.byName[c.Name()] = comp
+	r.byName[name] = comp
+	r.mu.Unlock()
 
 	r.logger.Debug("Component registered",
-		"name", c.Name(),
+		"name", name,
 		"leader_only", leaderOnly)
 }
 

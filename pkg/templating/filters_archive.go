@@ -24,60 +24,29 @@ import (
 	"strings"
 )
 
-// archiveLimits bounds what one archive may expand to. The input is
-// attacker-influenced whenever it came off the network, and a few KB of gzip
-// expands to gigabytes if nothing stops it.
 type archiveLimits struct {
-	maxEntries    int
-	maxEntryBytes int64
-	maxTotalBytes int64
+	maxEntries     int
+	maxEntryBytes  int64
+	maxTotalBytes  int64
+	maxStreamBytes int64
 }
 
-// defaultArchiveLimits leaves ~40x headroom over the OWASP CRS release
-// (48 files, 812 KB) — the archive this was written for — while keeping a
-// decompression bomb to a bounded, recoverable allocation.
-var defaultArchiveLimits = archiveLimits{
-	maxEntries:    4096,
-	maxEntryBytes: 8 << 20,
-	maxTotalBytes: 32 << 20,
+func defaultArchiveLimits() archiveLimits {
+	return archiveLimits{
+		maxEntries:     4096,
+		maxEntryBytes:  8 << 20,
+		maxTotalBytes:  32 << 20,
+		maxStreamBytes: 64 << 20,
+	}
 }
 
-// scriggoUntarGz expands a gzip-compressed tar archive into a map of entry
-// path to entry content.
-//
-// It reports failure through its error return and never panics, so a corrupt
-// or hostile archive costs the caller a fallback rather than the whole render.
-// Callers decide what to do:
-//
-//	{%- var files, err = untar_gz(archive) %}
-//	{%- if err != nil %}
-//	  {#- fall back to a known-good ruleset -#}
-//	{%- end %}
-//
-// Extraction is all-or-nothing: any error returns a nil map, never the entries
-// read so far. A partially expanded archive is the dangerous outcome — half a
-// WAF ruleset renders, deploys and validates exactly like a whole one, so the
-// caller must be able to tell "complete" from "as much as we could get".
-//
-// Entry paths are returned verbatim, so a release tarball's version directory
-// is preserved (`coreruleset-4.25.0/rules/…`). Stripping it would make the
-// filter's output depend on whether the archive happens to have a single root.
-// Match with a glob instead — `*` does not cross `/`:
-//
-//	{%- for _, name := range keys(files) | glob_match("*/rules/*.conf") %}
-//
-// Only regular files are returned; directories, symlinks, hardlinks and
-// devices carry no content the caller can use and are skipped.
+// scriggoUntarGz returns regular files only after the complete archive passes validation.
 func scriggoUntarGz(archive string) (map[string]string, error) {
-	return untarGz(archive, defaultArchiveLimits)
+	return untarGz(archive, defaultArchiveLimits())
 }
 
-// untarGz is scriggoUntarGz with injectable limits so tests can trip the
-// guards without allocating the real ones.
 func untarGz(archive string, lim archiveLimits) (map[string]string, error) {
 	if archive == "" {
-		// The empty string is what http.Fetch returns for a failed
-		// non-critical fetch, so this is the common path, not an edge case.
 		return nil, errors.New("untar_gz: empty archive")
 	}
 
@@ -87,29 +56,39 @@ func untarGz(archive string, lim archiveLimits) (map[string]string, error) {
 	}
 	defer gz.Close()
 
+	stream := &io.LimitedReader{R: gz, N: lim.maxStreamBytes + 1}
+	files, err := readTarFiles(stream, lim)
+	if err == nil {
+		// tar EOF can precede the gzip checksum and trailing compressed members.
+		if _, drainErr := io.Copy(io.Discard, stream); drainErr != nil {
+			err = fmt.Errorf("untar_gz: invalid gzip stream: %w", drainErr)
+		}
+	}
+	if stream.N == 0 {
+		return nil, fmt.Errorf("untar_gz: decompressed stream exceeds %d bytes; use a smaller archive", lim.maxStreamBytes)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+func readTarFiles(stream io.Reader, lim archiveLimits) (map[string]string, error) {
 	files := make(map[string]string)
 	var total int64
 	var examined int
 
-	tr := tar.NewReader(gz)
+	tr := tar.NewReader(stream)
 	for {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			// Covers a truncated stream, which is where all-or-nothing earns
-			// its keep: entries already read are discarded with the error.
 			return nil, fmt.Errorf("untar_gz: reading archive: %w", err)
 		}
 
-		// Counted before the entry type is considered. Bounding only the
-		// entries we keep would leave the loop itself unbounded: headers for
-		// directories and links carry no content, so an archive made of
-		// millions of them adds nothing to the map or to `total` while still
-		// costing a parse each. They compress to almost nothing, which is the
-		// same shape as a decompression bomb — it just spends CPU on the
-		// render path instead of memory.
+		// Skipped entries consume parsing work too.
 		examined++
 		if examined > lim.maxEntries {
 			return nil, fmt.Errorf("untar_gz: archive has more than %d entries", lim.maxEntries)

@@ -78,6 +78,8 @@ Unknown GVKs are rejected with a denial message — the server never calls an un
 - `POST <Path>` — admission endpoint.
 - `GET /healthz` — 200 OK when the server is running. Useful as a liveness probe without interacting with the cert pipeline.
 
+The admission endpoint accepts a JSON `admission.k8s.io/v1` `AdmissionReview` with a nonempty `request.uid`. Malformed envelopes return HTTP 400; bodies larger than 16 MiB return HTTP 413 before validation. The limit includes the new object, old object, and admission metadata. Responses contain the decision and matching UID without echoing the request objects.
+
 ## Graceful Shutdown
 
 `Start(ctx)` blocks until either the HTTP serve loop fails or `ctx` is cancelled. On cancellation it calls `http.Server.Shutdown` with a 30-second deadline and joins the serve loop. Any in-flight admission calls run to completion subject to that deadline.

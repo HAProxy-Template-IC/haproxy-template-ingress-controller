@@ -12,6 +12,11 @@ spec:
   secretName: {{ $default.secretName }}
   duration: {{ $cm.duration | default "8760h" }}
   renewBefore: {{ $cm.renewBefore | default "720h" }}
+  {{- if $cm.createIssuer }}
+  subject:
+    organizations:
+      - {{ include "haptic.fullname" . | quote }}
+  {{- end }}
   dnsNames:
     {{- toYaml (required "defaultSSLCertificate.certManager.dnsNames is required when using cert-manager for SSL certificates" $cm.dnsNames) | nindent 4 }}
   issuerRef:

@@ -37,6 +37,25 @@ func TestNewRegistry(t *testing.T) {
 	assert.Equal(t, []string{}, reg.Paths())
 }
 
+func TestRegistryAllAllowsProviderToPublish(t *testing.T) {
+	registry := NewRegistry()
+	registry.Publish("parent", Func(func() (any, error) {
+		if !registry.mu.TryLock() {
+			return nil, errors.New("provider called while registry is locked")
+		}
+		registry.mu.Unlock()
+		registry.Publish("child", Func(func() (any, error) { return 2, nil }))
+		return 1, nil
+	}))
+
+	values, err := registry.All()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"parent": 1}, values)
+	child, err := registry.Get("child")
+	require.NoError(t, err)
+	assert.Equal(t, 2, child)
+}
+
 func TestPublish(t *testing.T) {
 	reg := NewRegistry()
 

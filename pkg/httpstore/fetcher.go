@@ -129,7 +129,9 @@ func (s *HTTPStore) doFetch(
 
 	// Add authentication headers
 	if auth != nil {
-		addAuthHeaders(req, auth)
+		if err := addAuthHeaders(req, auth); err != nil {
+			return "", "", "", err
+		}
 	}
 
 	// Add user agent
@@ -189,7 +191,7 @@ func (s *HTTPStore) doFetch(
 }
 
 // addAuthHeaders adds authentication headers to the request.
-func addAuthHeaders(req *http.Request, auth *AuthConfig) {
+func addAuthHeaders(req *http.Request, auth *AuthConfig) error {
 	switch auth.Type {
 	case AuthTypeBasic:
 		if auth.Username != "" || auth.Password != "" {
@@ -203,16 +205,12 @@ func addAuthHeaders(req *http.Request, auth *AuthConfig) {
 			req.Header.Set("Authorization", "Bearer "+auth.Token)
 		}
 
-	case AuthTypeHeader:
-		// Custom headers for API key authentication etc.
+	case AuthTypeHeader, "":
 		for key, value := range auth.Headers {
 			req.Header.Set(key, value)
 		}
-
 	default:
-		// Unknown auth type - add custom headers if present
-		for key, value := range auth.Headers {
-			req.Header.Set(key, value)
-		}
+		return fmt.Errorf("unknown HTTP authentication type %q; fetch refused; use basic, bearer, or header", auth.Type)
 	}
+	return nil
 }

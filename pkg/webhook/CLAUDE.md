@@ -33,7 +33,9 @@ Dependencies: Only standard library + k8s.io/api + k8s.io/apimachinery + k8s.io/
 ```
 pkg/webhook/
 ├── types.go         # ServerConfig, ValidationContext, ValidationFunc
-├── server.go        # HTTPS server, validator generations, AdmissionReview dispatch
+├── server.go        # HTTPS lifecycle and validator generations
+├── admission.go     # Bounded AdmissionReview transport
+├── validation.go    # Resource decoding and validator dispatch
 ├── server_test.go   # Server tests
 ├── README.md        # User documentation
 └── CLAUDE.md        # This file

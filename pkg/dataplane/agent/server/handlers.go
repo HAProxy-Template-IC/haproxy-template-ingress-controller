@@ -27,6 +27,12 @@ import (
 // handleState answers the controller's view of this pod. With verify=1 the
 // digests are a fresh observation of the tree rather than the last one.
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
+	// A baseline is usable only after disk adoption and crash recovery finish.
+	select {
+	case <-s.initialized:
+	case <-r.Context().Done():
+		return
+	}
 	state, err := s.stateResponse(r.URL.Query().Get("verify") == "1", r.URL.Query().Get("plan") != "0")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, api.ApplyError{Stage: "state", Message: err.Error()})
@@ -111,7 +117,7 @@ func (s *Server) refreshTree() error {
 // that landed it, so the apply itself carries none: the controller encodes and
 // uploads the blob in the background, and a cold leader still finds it here.
 func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
-	if !s.ready.Load() {
+	if !s.Ready() {
 		writeJSON(w, http.StatusServiceUnavailable, api.ApplyError{Stage: "startup", Message: "agent is initialising"})
 		return
 	}
