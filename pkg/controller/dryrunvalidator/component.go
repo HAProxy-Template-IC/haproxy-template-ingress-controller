@@ -43,7 +43,7 @@ const ComponentName = "dryrun-validator"
 // It creates store overlays from admission requests and delegates validation
 // to ProposalValidator and returns the shared pipeline's diagnostics.
 type Component struct {
-	proposalValidator *proposalvalidator.Component
+	proposalValidator *proposalvalidator.Service
 	restMapper        meta.RESTMapper
 	aliasesByGVR      map[schema.GroupVersionResource][]resourceAlias
 	logger            *slog.Logger
@@ -51,8 +51,7 @@ type Component struct {
 
 // ComponentConfig contains configuration for creating a DryRunValidator.
 type ComponentConfig struct {
-	// ProposalValidator is the component that performs render-validate pipeline.
-	ProposalValidator *proposalvalidator.Component
+	ProposalValidator *proposalvalidator.Service
 
 	// RESTMapper resolves an admission request's GVK to its GVR.
 	RESTMapper meta.RESTMapper

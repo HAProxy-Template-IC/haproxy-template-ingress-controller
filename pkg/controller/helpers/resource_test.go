@@ -12,30 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resourceloader
+package helpers
 
 import (
-	"io"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// TestAssertUnstructured_TypedNil pins the boundary against a typed nil, which
-// satisfies the type assertion but panics on the first method call (#140).
-func TestAssertUnstructured_TypedNil(t *testing.T) {
-	loader := NewBaseLoader(
-		busevents.NewEventBus(1),
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"test", 1, &panickyProcessor{},
-		events.EventTypeConfigResourceChanged,
-	)
-
+func TestAsUnstructured_TypedNil(t *testing.T) {
 	tests := []struct {
 		name     string
 		resource any
@@ -46,33 +32,24 @@ func TestAssertUnstructured_TypedNil(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := loader.AssertUnstructured("TestEvent", tt.resource)
-			assert.False(t, ok, "a resource that cannot be dereferenced must not be reported usable")
+			got, err := AsUnstructured(tt.resource)
+			assert.Error(t, err)
 			assert.Nil(t, got)
 		})
 	}
 
 	t.Run("a real resource still passes", func(t *testing.T) {
 		want := &unstructured.Unstructured{Object: map[string]any{"kind": "X"}}
-		got, ok := loader.AssertUnstructured("TestEvent", want)
-		assert.True(t, ok)
+		got, err := AsUnstructured(want)
+		assert.NoError(t, err)
 		assert.Same(t, want, got)
 	})
 }
 
-// TestAssertUnstructured_TypedNilDoesNotPanicCaller demonstrates the actual
-// crash: the caller's first method call on the asserted value.
-func TestAssertUnstructured_TypedNilDoesNotPanicCaller(t *testing.T) {
-	loader := NewBaseLoader(
-		busevents.NewEventBus(1),
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"test", 1, &panickyProcessor{},
-		events.EventTypeConfigResourceChanged,
-	)
-
+func TestAsUnstructured_TypedNilDoesNotPanicCaller(t *testing.T) {
 	assert.NotPanics(t, func() {
-		resource, ok := loader.AssertUnstructured("TestEvent", (*unstructured.Unstructured)(nil))
-		if !ok {
+		resource, err := AsUnstructured((*unstructured.Unstructured)(nil))
+		if err != nil {
 			return
 		}
 		_ = resource.GetName()

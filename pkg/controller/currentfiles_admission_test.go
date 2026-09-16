@@ -35,7 +35,6 @@ import (
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -107,7 +106,6 @@ backend http_back
 			}
 			validator, err := createDryRunValidator(
 				cfg,
-				busevents.NewEventBus(100),
 				stores.NewRealStoreProvider(map[string]stores.Store{"ingresses": &storetest.MockStore{}}),
 				wiring,
 				nil,
@@ -149,7 +147,6 @@ func (e *renderCountingEngine) RenderWithProfiling(ctx context.Context, template
 func TestCreateDryRunValidatorRequiresReconciliationRenderService(t *testing.T) {
 	_, err := createDryRunValidator(
 		currentFilesAdmissionConfig(testutil.MinimalHAProxyConfig),
-		busevents.NewEventBus(10),
 		stores.NewRealStoreProvider(nil),
 		&reconciliationWiring{},
 		nil,

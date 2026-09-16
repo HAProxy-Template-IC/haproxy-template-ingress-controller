@@ -50,13 +50,9 @@ func ValidateConfigSync(
 	}
 
 	result, err := RunValidationTestsSync(ctx, cfg, bootstrap, runTimeout, logger)
-	switch {
-	case err != nil:
-		failures[ValidatorNameValidationTests] = []string{err.Error()}
-	case result.Incomplete:
-		failures[ValidatorNameValidationTests] = []string{"validationTests did not complete within the suite timeout"}
-	case !result.Passed:
-		failures[ValidatorNameValidationTests] = result.Failures
+	valid, errors := validationTestsVerdict(result, err, "validationTests did not complete within the suite timeout")
+	if !valid {
+		failures[ValidatorNameValidationTests] = errors
 	}
 	return failures
 }

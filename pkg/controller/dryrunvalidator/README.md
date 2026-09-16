@@ -9,7 +9,7 @@ The validating admission webhook needs a synchronous answer to "would this propo
 1. Receiving the proposed and old objects from the webhook adapter (`ValidateDirect`).
 2. Resolving the request GVK to its GVR, then finding every configured store alias for that GVR.
 3. Building one selector-aware `*stores.StoreOverlay` per alias.
-4. Delegating render+validate to `pkg/controller/proposalvalidator.Component`, which merges the overlays on top of the live stores for the duration of the call.
+4. Delegating render+validate to `pkg/controller/proposalvalidator.Service`, which merges the overlays on top of the live stores for the duration of the call.
 5. Returning a flat allow/deny + simplified reason string (plus soft warnings) for the webhook response. Pluggable validators run inside the shared pipeline before this component receives the result.
 
 The component does not subscribe to any events. It does **not** run the chart's embedded `validationTests` — those are chart-author scenarios with their own fixtures, run in CI via `haptic validate` / `make test-templates`, not per admission request.
@@ -22,7 +22,7 @@ import (
 )
 
 component, err := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
-    ProposalValidator: proposalValidator, // sync-mode *proposalvalidator.Component
+    ProposalValidator: proposalValidator, // *proposalvalidator.Service
     RESTMapper:        restMapper,
     WatchedResources:  cfg.WatchedResources,
     Logger:            logger,

@@ -234,7 +234,7 @@ func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, name
 						Image:           echoServerImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Ports: []corev1.ContainerPort{{
-							Name:          "http",
+							Name:          HTTPPortName,
 							ContainerPort: 80,
 							Protocol:      corev1.ProtocolTCP,
 						}},
@@ -267,7 +267,7 @@ func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, name
 							ProbeHandler: corev1.ProbeHandler{
 								HTTPGet: &corev1.HTTPGetAction{
 									Path: "/",
-									Port: intstr.FromString("http"),
+									Port: intstr.FromString(HTTPPortName),
 								},
 							},
 							// 1 s period + threshold 1 keeps the
@@ -299,9 +299,9 @@ func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, name
 		Spec: corev1.ServiceSpec{
 			Selector: labels,
 			Ports: []corev1.ServicePort{{
-				Name:       "http",
+				Name:       HTTPPortName,
 				Port:       ref.Port,
-				TargetPort: intstr.FromString("http"),
+				TargetPort: intstr.FromString(HTTPPortName),
 				Protocol:   corev1.ProtocolTCP,
 			}},
 		},

@@ -178,6 +178,7 @@ func TestMain(m *testing.M) {
 			}
 			return ctx, WaitForE2EEnvironmentReady(ctx, client)
 		}),
+		phase("configure-traffic-endpoint", configureTrafficEndpoint),
 		phase("verify-controller-binary", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			if os.Getenv(scaleEnableEnv) == "1" {
 				return ctx, nil

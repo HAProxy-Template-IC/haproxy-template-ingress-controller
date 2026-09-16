@@ -1,6 +1,6 @@
 # pkg/controller/helpers
 
-Shared utility for constructing a template engine from a `*config.Config`.
+Shared controller utilities for template-engine construction and resource input checks.
 
 ## Overview
 
@@ -43,6 +43,10 @@ extraction := helpers.ExtractTemplatesFromConfig(cfg)
 ```
 
 For Scriggo with `inherit_context`, only entry points are compiled explicitly; snippets are compiled on demand when referenced via `render` / `render_glob`.
+
+## Resource input checks
+
+`AsUnstructured` returns a non-nil `*unstructured.Unstructured` or an error. The configuration and credential loaders use it before parsing event payloads.
 
 ## See Also
 

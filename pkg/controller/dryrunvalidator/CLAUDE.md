@@ -216,11 +216,11 @@ returns the result as the admission denial reason — there's no separate
 
 ## Direct Component Calls Pattern
 
-The DryRunValidator delegates the render+validate work to a `*proposalvalidator.Component` rather than holding its own engine / validator / store-manager directly. This keeps the validator small (overlay setup + result mapping) and ensures the admission path uses exactly the same pipeline as the leader-driven reconciliation.
+The DryRunValidator delegates the render+validate work to a `*proposalvalidator.Service` rather than holding its own engine / validator / store-manager directly. This keeps the validator small (overlay setup + result mapping) and ensures the admission path uses exactly the same pipeline as the leader-driven reconciliation.
 
 ```go
 type Component struct {
-    proposalValidator *proposalvalidator.Component // Performs the full pipeline
+    proposalValidator *proposalvalidator.Service // Performs the full pipeline
     restMapper        meta.RESTMapper              // GVK -> GVR
     aliasesByGVR      map[schema.GroupVersionResource][]resourceAlias
     logger            *slog.Logger

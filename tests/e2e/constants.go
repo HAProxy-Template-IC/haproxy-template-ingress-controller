@@ -54,6 +54,7 @@ const (
 	// NetworkPolicy e2e covers Service-port to container-port translation.
 	DefaultHAProxyServiceHTTPPort = 80
 	CacheHAProxyServiceHTTPPort   = 18080
+	HTTPPortName                  = "http"
 
 	// HTTPHostPort is the host-side TCP port the kind cluster exposes for
 	// HAProxy HTTP traffic. Distinct from the dev cluster's 30080 so the

@@ -131,6 +131,10 @@ Tests are in `templating_test.go`. They verify:
 - Engine creation with various configurations
 - Error handling for invalid configurations
 
+## Resource input checks
+
+`AsUnstructured` returns a non-nil `*unstructured.Unstructured` or an error. The configuration and credential loaders use it before parsing event payloads.
+
 ## Resources
 
 - Template engine: `pkg/templating/CLAUDE.md`

@@ -36,13 +36,8 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 )
-
-// DefaultHTTPSNodePort is the host-side NodePort the e2e kind cluster
-// maps to HAProxy's :443 (see tests/e2e/constants.go HTTPSHostPort).
-// Kept in sync with the httpclient's default.
-const DefaultHTTPSNodePort = 31443
 
 // Client is a TLS-aware gRPC dialer for the e2e suite. Construct with
 // New(t) and call Dial(ctx, host) to get a *grpc.ClientConn whose TLS
@@ -54,16 +49,14 @@ type Client struct {
 	caBundle  *x509.CertPool // nil → InsecureSkipVerify (test-only default)
 }
 
-// New returns a Client wired to the e2e cluster's HTTPS NodePort. The
-// nodeIP follows the DinD-aware resolution httpclient uses: 127.0.0.1
-// outside DinD, the docker-host IP inside.
+// New constructs a client targeting the suite's selected cluster.
 func New(t *testing.T) *Client {
 	t.Helper()
-	ip, err := resolveNodeIP()
+	endpoint, err := e2ecluster.ResolveTrafficEndpoint()
 	if err != nil {
 		t.Fatalf("resolve node IP: %v", err)
 	}
-	return &Client{t: t, httpsPort: DefaultHTTPSNodePort, nodeIP: ip}
+	return &Client{t: t, httpsPort: endpoint.HTTPSPort, nodeIP: endpoint.Host}
 }
 
 // ForForwarded returns a Client targeting a local kubectl port-forward
@@ -137,24 +130,4 @@ func buildTLSConfig(host string, caBundle *x509.CertPool) *tls.Config {
 		cfg.InsecureSkipVerify = true
 	}
 	return cfg
-}
-
-// resolveNodeIP returns an IPv4 NodePort IP, or 127.0.0.1 outside DinD.
-// Mirrors httpclient.resolveNodeIP — kept in sync because the two
-// clients dial the same NodePort.
-func resolveNodeIP() (string, error) {
-	if !kindutil.IsDockerInDocker() {
-		return "127.0.0.1", nil
-	}
-	host := kindutil.GetDindHostname()
-	addrs, err := net.LookupIP(host)
-	if err != nil {
-		return "", fmt.Errorf("lookup %q: %w", host, err)
-	}
-	for _, a := range addrs {
-		if v4 := a.To4(); v4 != nil {
-			return v4.String(), nil
-		}
-	}
-	return "", errors.New("no IPv4 address for DinD hostname")
 }

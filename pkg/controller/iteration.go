@@ -264,16 +264,8 @@ func startIteration(
 	// 6.1. EventBuffer was already created early (step 0.25) for /debug/events handler
 	// It subscribes in constructor before EventBus.Start() for proper subscription ordering
 
-	// 6.3. Create DryRunValidator for webhook validation.
-	// The validator is a synchronous library (ValidateDirect); the proposal
-	// validator it wires up subscribes to ProposalValidationRequestedEvent in
-	// its constructor, so this must run before EventBus.Start(). The same output
-	// validator used by reconciliation is injected into the
-	// admission pipeline so every path applies one validation contract.
-	// The webhook server runs whenever the chart mounted a TLS cert directory
-	// (the maybeSetupWebhook caller gates on `webhookCertDir != ""`).
-	// The DryRunValidator is nil when no watched-resource rules exist.
-	dryrunValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, logger)
+	// Reconciliation and admission share the same output validator.
+	dryrunValidator, err := createDryRunValidator(cfg, storeProvider, wiring, pluggableMgr, logger)
 	if err != nil && !errors.Is(err, errNoWebhookRules) {
 		return nil, fmt.Errorf("creating webhook validators: %w", err)
 	}

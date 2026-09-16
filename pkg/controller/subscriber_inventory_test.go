@@ -120,9 +120,13 @@ var subscriberInventory = map[string]mailboxDecision{
 		mailbox: true,
 		why:     "server-side apply of rendered resources per render",
 	},
-	"resourceloader": {
+	"configloader": {
 		mailbox: false,
-		why:     "shared loader scaffold; its events are per-config-change",
+		why:     "parses config and library changes without blocking I/O",
+	},
+	"credentialsloader": {
+		mailbox: false,
+		why:     "parses credential changes without blocking I/O",
 	},
 	"warmer": {
 		mailbox: true,

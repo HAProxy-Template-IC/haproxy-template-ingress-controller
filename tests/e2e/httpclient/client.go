@@ -33,7 +33,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -41,16 +40,8 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
-)
-
-// Default ports are the *host-side* ports the e2e kind cluster exposes
-// (via extraPortMappings). Distinct from the dev cluster's 30080/30443 so
-// the two clusters can coexist; see tests/e2e/constants.go HTTPHostPort.
-const (
-	defaultHTTPPort  = 31080
-	defaultHTTPSPort = 31443
 )
 
 // Client is a fluent HTTP client targeting the dev-env HAProxy NodePorts.
@@ -121,28 +112,19 @@ func SetDefaultPollTimeoutSnapshot(fn PollTimeoutSnapshot) {
 	defaultPollTimeoutSnapshot = fn
 }
 
-// New constructs a Client targeting the running dev environment.
-//
-// Resolution order for the NodePort host:
-//  1. If DOCKER_HOST is set to tcp://..., use that hostname's IPv4 address.
-//     Kind's extraPortMappings only listen on IPv4 (listenAddress: "0.0.0.0"),
-//     so we cannot use IPv6 even when the docker hostname has an AAAA record.
-//  2. Otherwise, use 127.0.0.1.
-//
-// Calls t.Fatalf if the NodePort cannot be reached at all (resolution
-// failure). This is a setup error, not a test failure.
+// New constructs a client targeting the suite's selected cluster.
 func New(t *testing.T) *Client {
 	t.Helper()
-	nodeIP, err := resolveNodeIP()
+	endpoint, err := e2ecluster.ResolveTrafficEndpoint()
 	if err != nil {
 		t.Fatalf("httpclient: resolve NodePort host: %v", err)
 	}
-	t.Logf("httpclient: NodePort host = %s", nodeIP)
+	t.Logf("httpclient: NodePort host = %s, HTTP = %d, HTTPS = %d", endpoint.Host, endpoint.HTTPPort, endpoint.HTTPSPort)
 
 	return &Client{
-		nodeIP:    nodeIP,
-		httpPort:  defaultHTTPPort,
-		httpsPort: defaultHTTPSPort,
+		nodeIP:    endpoint.Host,
+		httpPort:  endpoint.HTTPPort,
+		httpsPort: endpoint.HTTPSPort,
 		waitCfg: testutil.WaitConfig{
 			InitialInterval: 100 * time.Millisecond,
 			MaxInterval:     2 * time.Second,
@@ -156,7 +138,7 @@ func New(t *testing.T) *Client {
 			Timeout:    15 * time.Second,
 			Multiplier: 2.0,
 		},
-		transport:     newSharedTransport(nodeIP, defaultHTTPSPort),
+		transport:     newSharedTransport(endpoint.Host, endpoint.HTTPSPort),
 		onPollTimeout: defaultPollTimeoutSnapshot,
 	}
 }
@@ -190,24 +172,6 @@ func ForForwarded(t *testing.T, httpPort, httpsPort int) *Client {
 // keeps answering with the old config until it closes; forcing a fresh dial lets
 // the retry reach a current worker generation.
 func (c *Client) CloseIdleConnections() { c.transport.CloseIdleConnections() }
-
-// resolveNodeIP returns an IPv4 NodePort IP, or 127.0.0.1 outside DinD.
-func resolveNodeIP() (string, error) {
-	if !kindutil.IsDockerInDocker() {
-		return "127.0.0.1", nil
-	}
-	host := kindutil.GetDindHostname()
-	addrs, err := net.LookupIP(host)
-	if err != nil {
-		return "", fmt.Errorf("lookup %q: %w", host, err)
-	}
-	for _, a := range addrs {
-		if v4 := a.To4(); v4 != nil {
-			return v4.String(), nil
-		}
-	}
-	return "", fmt.Errorf("no IPv4 address for %q (got %v)", host, addrs)
-}
 
 // newSharedTransport returns an *http.Transport whose DialContext rewrites
 // any "<host>:443" target to the NodePort. This is the curl --resolve

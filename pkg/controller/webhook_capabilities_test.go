@@ -28,7 +28,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 )
@@ -78,7 +77,6 @@ backend http_back
 	capabilities.Add(renderService)
 	validator, err := createDryRunValidator(
 		cfg,
-		busevents.NewEventBus(100),
 		stores.NewRealStoreProvider(map[string]stores.Store{"ingresses": &storetest.MockStore{}}),
 		&reconciliationWiring{
 			renderService:         renderService,

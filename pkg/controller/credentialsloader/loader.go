@@ -6,8 +6,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceloader"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -34,7 +35,7 @@ const (
 // Kubernetes. It reacts to SecretResourceChangedEvent and produces
 // CredentialsUpdatedEvent when parsing succeeds.
 type CredentialsLoaderComponent struct {
-	*resourceloader.BaseLoader
+	*component.Base
 }
 
 // NewCredentialsLoaderComponent creates a new CredentialsLoader component.
@@ -47,15 +48,19 @@ type CredentialsLoaderComponent struct {
 //   - *CredentialsLoaderComponent ready to start
 func NewCredentialsLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *CredentialsLoaderComponent {
 	c := &CredentialsLoaderComponent{}
-	c.BaseLoader = resourceloader.NewBaseLoader(
-		eventBus, logger, ComponentName, EventBufferSize, c,
-		events.EventTypeSecretResourceChanged,
-	)
+	c.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: EventBufferSize,
+		Handler:    c,
+		EventTypes: []string{events.EventTypeSecretResourceChanged},
+	})
 	return c
 }
 
-// ProcessEvent handles a single event from the EventBus.
-func (c *CredentialsLoaderComponent) ProcessEvent(event busevents.Event) {
+// HandleEvent handles a single event from the EventBus.
+func (c *CredentialsLoaderComponent) HandleEvent(event busevents.Event) {
 	if secretEvent, ok := event.(*events.SecretResourceChangedEvent); ok {
 		c.processSecretChange(secretEvent)
 	}
@@ -63,8 +68,9 @@ func (c *CredentialsLoaderComponent) ProcessEvent(event busevents.Event) {
 
 // processSecretChange handles a SecretResourceChangedEvent by parsing the Secret.
 func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretResourceChangedEvent) {
-	resource, ok := c.AssertUnstructured("SecretResourceChangedEvent", event.Resource)
-	if !ok {
+	resource, err := helpers.AsUnstructured(event.Resource)
+	if err != nil {
+		c.Logger().Error("SecretResourceChangedEvent contains invalid resource", "error", err)
 		return
 	}
 

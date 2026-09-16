@@ -39,7 +39,7 @@ ConfigValidatedEvent  or  ConfigInvalidEvent
 
 ## Validators
 
-`BaseValidator` decodes each request and publishes its response. The handler receives the lifecycle context, typed config, and version, and returns a verdict with errors. A panic produces a rejection through the same response path.
+`BaseValidator` decodes each request and publishes its response. The handler receives the lifecycle context, typed config, and version, and returns a verdict with errors. A panic produces a rejection through the same response path. Startup and live validation share `validationTestsVerdict`; each caller supplies its existing timeout message and keeps its own execution budget.
 
 - **BasicValidator**: Structural validation (required fields, types)
 - **TemplateValidator**: Template syntax validation. Calls `helpers.ExtractTemplatesFromConfig`, which walks `spec.haproxyConfig`, `spec.templateSnippets`, `spec.maps`, `spec.files`, and `spec.sslCertificates` (there is no flat `spec.templates` field), then compiles them with `templating.NewScriggoWithDeclarations`.

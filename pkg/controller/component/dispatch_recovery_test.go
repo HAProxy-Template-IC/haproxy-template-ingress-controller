@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resourceloader
+package component
 
 import (
 	"io"
@@ -38,7 +38,7 @@ type panickyProcessor struct {
 	observeOnce bool
 }
 
-func (p *panickyProcessor) ProcessEvent(event busevents.Event) {
+func (p *panickyProcessor) HandleEvent(event busevents.Event) {
 	// Record the event so the test can observe recovery via subsequent deliveries.
 	p.received.Add(1)
 	p.lastEvent.Store(&event)
@@ -54,26 +54,23 @@ func (p *panickyProcessor) ProcessEvent(event busevents.Event) {
 	}
 }
 
-// TestBaseLoader_PanicRecovery proves the loader keeps processing events after
-// a processor panic.
-func TestBaseLoader_PanicRecovery(t *testing.T) {
+func TestHandlerContinuesAfterPanic(t *testing.T) {
 	bus := busevents.NewEventBus(16)
 	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	p := &panickyProcessor{observed: make(chan struct{})}
 	p.panicArmed.Store(true)
 
-	loader := NewBaseLoader(
-		bus,
-		discardLogger,
-		"loader-test",
-		16,
-		p,
-		events.EventTypeConfigResourceChanged,
-	)
+	loader := New(&Config{
+		EventBus:   bus,
+		Logger:     discardLogger,
+		Name:       "loader-test",
+		BufferSize: 16,
+		Handler:    p,
+		EventTypes: []string{events.EventTypeConfigResourceChanged},
+	})
 
-	ctx, cancel := t.Context(), func() {}
-	defer cancel()
+	ctx := t.Context()
 
 	done := make(chan struct{})
 	go func() {

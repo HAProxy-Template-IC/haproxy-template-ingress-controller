@@ -5,9 +5,10 @@ import (
 	"log/slog"
 	"sync"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceloader"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,7 +35,7 @@ const (
 // Kubernetes. It simply reacts to ConfigResourceChangedEvent and produces
 // ConfigParsedEvent.
 type ConfigLoaderComponent struct {
-	*resourceloader.BaseLoader
+	*component.Base
 
 	// name is the HAProxyTemplateConfig this controller serves. A change event
 	// for any other name is ignored.
@@ -78,16 +79,19 @@ func NewConfigLoaderComponent(
 	c := &ConfigLoaderComponent{
 		name: crdName,
 	}
-	c.BaseLoader = resourceloader.NewBaseLoader(
-		eventBus, logger, ComponentName, EventBufferSize, c,
-		events.EventTypeConfigResourceChanged,
-		events.EventTypeLibrarySetChanged,
-	)
+	c.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: EventBufferSize,
+		Handler:    c,
+		EventTypes: []string{events.EventTypeConfigResourceChanged, events.EventTypeLibrarySetChanged},
+	})
 	return c
 }
 
-// ProcessEvent handles a single event from the EventBus.
-func (c *ConfigLoaderComponent) ProcessEvent(event busevents.Event) {
+// HandleEvent handles a single event from the EventBus.
+func (c *ConfigLoaderComponent) HandleEvent(event busevents.Event) {
 	switch e := event.(type) {
 	case *events.ConfigResourceChangedEvent:
 		c.processConfigChange(e)
@@ -104,8 +108,9 @@ func (c *ConfigLoaderComponent) ProcessEvent(event busevents.Event) {
 // and therefore a burst of intermediate merges; the ConfigChangeHandler's
 // reinit debounce collapses those into one reinitialisation.
 func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResourceChangedEvent) {
-	resource, ok := c.AssertUnstructured("ConfigResourceChangedEvent", event.Resource)
-	if !ok {
+	resource, err := helpers.AsUnstructured(event.Resource)
+	if err != nil {
+		c.Logger().Error("ConfigResourceChangedEvent contains invalid resource", "error", err)
 		return
 	}
 
@@ -206,8 +211,8 @@ func (c *ConfigLoaderComponent) recordConfig(name string, resource *unstructured
 			"name", name, "serves", c.name)
 		return nil, false
 	}
-	// Last write wins, with no staleness check: BaseLoader dispatches
-	// ProcessEvent from a single goroutine and the informer delivers events for
+	// Last write wins, with no staleness check: Base dispatches
+	// HandleEvent from a single goroutine and the informer delivers events for
 	// one object in order, so the newest observation is always the last one to
 	// arrive. resourceVersion is opaque and not ordered, so it cannot be
 	// compared to do better than this.
