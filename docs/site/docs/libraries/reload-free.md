@@ -179,9 +179,15 @@ an invalid placement is reported as a validation error.
 
 - **Reload-free now** (map or runtime updates): a header modifier value, a path
   rewrite, a redirect target, a server/tunnel timeout, a Host/Connection/
-  X-Forwarded-Prefix override, a body-size limit, and any map the libraries
-  already drive; endpoint churn (scaling a Service) as `set server`/`add server`;
-  cert and CA content, and new SNI certs.
+  X-Forwarded-Prefix override, a body-size limit, a per-stream bandwidth
+  throttle, and any map the libraries already drive; endpoint churn (scaling a
+  Service) as `set server`/`add server`; cert and CA content, and new SNI certs.
+- **Reload-free once one route has paid for it**: a value the frontend must spell
+  out as a literal, because no converter takes it from a variable. The first route
+  introducing one reloads. Every later route reusing that value needs only a map
+  entry. These values are an API-key header name, a JWT key file, an HMAC
+  algorithm, a basic-auth realm, a rate-limit window, a bandwidth filter's
+  `min-size` (`limit-rate-after`), and a shared-scope bandwidth rate.
 - **A new or deleted route** (its backend section): where the pod's agent can
   add and remove a backend at runtime — HAProxy 3.4, whose `add backend`/`del
   backend` the `deployplan` drives — a route with a dynamic-eligible shape avoids

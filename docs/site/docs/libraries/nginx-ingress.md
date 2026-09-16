@@ -50,7 +50,7 @@ The Nginx Ingress library implements these extension points:
 | Backend Directives | `backend-directives-710-nginx-ingress-load-balance` | Load balancing algorithm |
 | Backend Directives | `backend-directives-715-nginx-ingress-next-upstream` | Retry conditions (`proxy-next-upstream`, `proxy-next-upstream-tries`) |
 | Map (body-size) | `map-body-size-720-nginx-ingress` | Request body size limit (per-backend entry in `body-size.map`) |
-| Backend Directives | `backend-directives-725-nginx-ingress-limit-rate` | Per-stream bandwidth throttle (`limit-rate`, `limit-rate-after`) |
+| Publications | `ingress-bandwidth-0725-nginx-ingress` | Per-stream bandwidth throttle (`limit-rate`, `limit-rate-after`) — publishes the route into the shared frontend lane |
 | Backend Directives | `backend-directives-730-nginx-ingress-backend-protocol` | Backend protocol (HTTPS, gRPC) |
 | Backend Directives | `backend-directives-740-nginx-ingress-proxy-protocol` | PROXY protocol to backend |
 | Backend Directives | `backend-directives-750-nginx-ingress-rewrite-target` | URL rewriting (capture rewrites; literal rewrites go to `path-rewrite.map` via `map-path-rewrite-750-nginx-ingress`) |
@@ -449,10 +449,20 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-backend my-backend
-    filter bwlim-out ni_limitrate_default_my-ingress default-limit 100k default-period 1s min-size 1m
-    http-request set-bandwidth-limit ni_limitrate_default_my-ingress
+frontend https
+    # ingress/limit-rate
+    filter bwlim-out ing_bw_out default-limit 1m default-period 1s
+    filter bwlim-out ing_bw_out_1048576 default-limit 1m default-period 1s min-size 1048576
+    http-request set-var(txn.ibw_cfg) var(txn.resource_id),map(/etc/haproxy/maps/ing-bw-routes.map)
+    http-request set-var(txn.ibw_rate) var(txn.ibw_cfg),field(1,' ') if { var(txn.ibw_cfg) -m found }
+    http-request set-var(txn.ibw_min) var(txn.ibw_cfg),field(2,' ') if { var(txn.ibw_cfg) -m found }
+    http-request set-bandwidth-limit ing_bw_out limit var(txn.ibw_rate) if { var(txn.ibw_min) -m str _ }
+    http-request set-bandwidth-limit ing_bw_out_1048576 limit var(txn.ibw_rate) if { var(txn.ibw_min) -m str 1048576 }
 ```
+
+The rate reaches the rule as an expression, so it lives in `ing-bw-routes.map` (`<namespace>/<name>` → `<rate bytes> <min-size bytes or _>`) and a route's throttle is changed with a map operation. A filter's `min-size` is part of its declaration and can't come from a map, so the lane emits one filter per distinct `limit-rate-after`, plus the plain one for routes that don't set it. Routes sharing a `limit-rate-after` share a filter whatever their rates, and both values are stored as bytes, so `1m` and `1048576` are the same filter. A new `limit-rate-after` size reloads once; the route's own backend stays plain, and therefore dynamic.
+
+The filter is declared after the compression filter, so a download cap meters the compressed bytes that go on the wire. The per-backend filter it replaces ran after the frontend filters too, so this ordering is unchanged.
 
 ---
 

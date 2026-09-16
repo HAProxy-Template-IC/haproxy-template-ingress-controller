@@ -268,35 +268,36 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  backend-directives-725-nginx-ingress-limit-rate:
-    template: |
-      {# bwlim-out throttles data sent toward the client. limit-rate-after maps to
-          min-size, which is HAProxy's forward-chunk size, NOT nginx's "throttle after
-          N bytes" — HAProxy has no equivalent. Kept as the closest available knob and
-          declared `different` in migration coverage rather than silently claimed
-          equivalent; see docs/site/docs/libraries/nginx-ingress.md. #}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var rate = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rate"] %}
-        {%- var after = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rate-after"] %}
-        {%- if rate != "" %}
-          {%- if !regex_search(rate, "^[0-9]+[kKmMgG]?$") %}
-            {{- fail("Invalid value '" + rate + "' for 'nginx.ingress.kubernetes.io/limit-rate' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
-          {%- end %}
-          {%- var fname = "ni_limitrate_" + ns + "_" + name %}
-          {%- var filterLine = "filter bwlim-out " + fname + " default-limit " + rate + " default-period 1s" %}
-          {%- if after != "" %}
-            {%- if !regex_search(after, "^[0-9]+[kKmMgG]?$") %}
-              {{- fail("Invalid value '" + after + "' for 'nginx.ingress.kubernetes.io/limit-rate-after' on Ingress '" + key + "'. Expected a byte size like '1m'.") -}}
-            {%- end %}
-            {%- filterLine = filterLine + " min-size " + after %}
-          {%- end %}
-      # nginx-ingress/limit-rate ({{ key }})
-      {{ filterLine }}
-      http-request set-bandwidth-limit {{ fname }}
-        {%- end %}
+  # limit-rate is a per-stream cap, so it maps onto `set-bandwidth-limit … limit
+  # <expr>` with the rate from the lane's map. limit-rate-after becomes the
+  # filter's min-size, which is HAProxy's forward-chunk size and NOT nginx's
+  # "throttle after N bytes" — the closest available knob, declared `different`
+  # in migration coverage rather than claimed equivalent.
+  ingress-bandwidth-0725-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/limit-rate']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/limit-rate-after']"
+      group: ingress-bandwidth
+      effects: [publishValue]
+    template: |-
+      {%- import "util-bandwidth-publish" for PublishBandwidth -%}
+      {%- import "util-byte-size" for ByteSize -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var rate = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rate"] -%}
+        {%- if rate != "" -%}
+          {%- var after = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rate-after"] -%}
+          {%- var minSize = "_" -%}
+          {%- if after != "" -%}
+            {%- minSize = ByteSize(after, "nginx.ingress.kubernetes.io/limit-rate-after", key) -%}
+          {%- end -%}
+          {{- PublishBandwidth(key, ByteSize(rate, "nginx.ingress.kubernetes.io/limit-rate", key), minSize) -}}
+        {%- end -%}
       {%- end -%}
 
   backend-directives-730-nginx-ingress-backend-protocol:
