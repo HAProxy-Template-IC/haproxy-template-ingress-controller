@@ -138,7 +138,7 @@ validationTests:
         patterns:
           - "http-request del-header X-Haptic-Backend"
           - "http-request unset-var\\(txn\\.cache_eligible\\) if \\{ var\\(txn\\.cache_excl_key\\),map_beg"
-          - "use_backend default_cache-canary_svc_echo_80 if \\{ req\\.hdr\\(X-Canary\\) -m str always \\}"
+          - "use_backend %\\[var\\(txn\\.canary_backend\\)\\] if \\{ var\\(txn\\.canary_backend\\) -m found \\}"
           - "use_backend varnish_cache if"
       # Dedicated backend-fetch frontend: internal-only bind, routes by the
       # validated X-Haptic-Backend header, refuses infrastructure backends.

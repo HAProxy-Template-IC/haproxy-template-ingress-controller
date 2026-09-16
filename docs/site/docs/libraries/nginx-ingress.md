@@ -75,7 +75,8 @@ The Nginx Ingress library implements these extension points:
 | Features | `features-140-nginx-ingress-redirects` | Permanent (301) / temporal (302) redirect — registers host→location in the shared `redirect-loc-<code>.map` |
 | Features | `features-150-nginx-ingress-mtls-error` | mTLS error-page redirect — registers host→URL into the shared `mtls-error.map` |
 | Frontend Filters | `frontend-filters-775-nginx-ingress-from-to-www-redirect` | apex↔www redirect via `from-to-www.map` |
-| Frontend Switching | `frontend-switching-780-nginx-ingress-canary` | Canary routing rules |
+| Publications | `ingress-canary-0780-nginx-ingress` | Canary routing — publishes the canary into the shared frontend lane |
+| Publications | `ingress-mirror-0555-nginx-ingress` | Request mirroring (`mirror-target`) — publishes the target into the shared frontend lane |
 | Frontend Filters | `frontend-filters-790-nginx-ingress-mtls-error` | mTLS cert passthrough (set-headers; the error-page redirect moved to features-150) |
 | Features | `features-100-nginx-ingress-ssl-passthrough` | SSL passthrough registration |
 | Backends | `backends-501-nginx-ingress-ssl-passthrough` | SSL passthrough backends |
@@ -1355,12 +1356,21 @@ spec:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-use_backend default_my-app-canary_svc_my-app-canary_http if { req.hdr(X-Canary) -m str always } { hdr(host) -i app.example.com }
-use_backend default_my-app-canary_svc_my-app-canary_http if { rand(100) lt 20 } { hdr(host) -i app.example.com }
+frontend https
+    # ingress/canary: header > cookie > weight, first match wins
+    http-request set-var(txn.canary_hval) var(txn.host),concat(|X-Canary),map(/etc/haproxy/maps/ing-canary-header-value.map),url_dec(1) if !{ var(txn.canary_backend) -m found }
+    http-request set-var(txn.canary_backend) var(txn.host),concat(|X-Canary),map(/etc/haproxy/maps/ing-canary-header-backend.map) if { var(txn.canary_hval) -m found } { req.hdr(X-Canary),strcmp(txn.canary_hval) -m int eq 0 }
+    http-request unset-var(txn.canary_hval)
+    http-request set-var(txn.canary_weight) var(txn.host),map_str_int(/etc/haproxy/maps/ing-canary-weight.map) if !{ var(txn.canary_backend) -m found }
+    http-request set-var(txn.canary_backend) var(txn.host),map(/etc/haproxy/maps/ing-canary-weight-backend.map) if { var(txn.canary_weight) -m found } { rand(100),sub(txn.canary_weight) -m int lt 0 }
+    # ingress/canary
+    use_backend %[var(txn.canary_backend)] if { var(txn.canary_backend) -m found }
 ```
 
+The canary's backend, header value and weight are map rows keyed by host (`app.example.com|X-Canary` → the backend and `always`, `app.example.com` → `20`), so adding a canary or stepping its weight is a map operation. The rules above are the same for every canary; only a header or cookie name the frontend hasn't seen yet adds a rule, which reloads once. A `canary-by-header-pattern` is a regex, which HAProxy can't read from a map, so a pattern canary still emits its own `use_backend` line and reloads when it changes. When two canaries on one host set the same kind of rule, the one first by namespace/name wins.
+
 !!! note "Canary and rate limiting compose per backend"
-    Canary selection happens in the frontend (`use_backend ... if { rand(100) lt <weight> }`) before backend selection, and [rate limits](#rate-limiting) count against a key built from the matched route. The main and canary Ingresses are separate routes, so each enforces the rate limit set on its own Ingress. A `limit-rps` on the main Ingress alone does *not* limit canary traffic — the split-off portion is attributed to the canary route, which has no limit of its own. To bound both, set the rate-limit annotation on the canary Ingress too. Gateway API weighted splitting has no rate-limit annotation, so there's nothing to combine there.
+    Canary selection happens in the frontend (`use_backend %[var(txn.canary_backend)]`) before backend selection, and [rate limits](#rate-limiting) count against a key built from the matched route. The main and canary Ingresses are separate routes, so each enforces the rate limit set on its own Ingress. A `limit-rps` on the main Ingress alone does *not* limit canary traffic — the split-off portion is attributed to the canary route, which has no limit of its own. To bound both, set the rate-limit annotation on the canary Ingress too. Gateway API weighted splitting has no rate-limit annotation, so there's nothing to combine there.
 
 ---
 
@@ -1490,7 +1500,7 @@ http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { var(txn.resourc
 
 ## Request mirroring
 
-`nginx.ingress.kubernetes.io/mirror-target` **is** supported, via the bundled SPOA hub **mirror** plugin (the same machinery the Gateway API `RequestMirror` filter uses) — enable it with `spoaHub.plugins.mirror`. Mirroring is fire-and-forget: a copy of each matching request is sent to the target and its response is discarded. Only the authority (`host[:port]`) of the `scheme://host[:port]$request_uri` value is used; the plugin re-attaches the live request path/query. Any number of mirror-target Ingresses is supported: each appends its target to a per-request list that the single mirror SPOE message ships to the plugin, so adding or removing a mirror-target changes only the HAProxy frontend — never the SPOA hub's configuration, and the hub never reloads for it.
+`nginx.ingress.kubernetes.io/mirror-target` **is** supported, via the bundled SPOA hub **mirror** plugin (the same machinery the Gateway API `RequestMirror` filter uses) — enable it with `spoaHub.plugins.mirror`. Mirroring is fire-and-forget: a copy of each matching request is sent to the target and its response is discarded. Only the authority (`host[:port]`) of the `scheme://host[:port]$request_uri` value is used; the plugin re-attaches the live request path/query. Any number of mirror-target Ingresses is supported: each target is a row in `ing-mirror-hosts.map` under the Ingress's hosts, one frontend rule appends the host's targets to the per-request list, and the single mirror SPOE message ships that list to the plugin. Adding a mirror-target, changing its target, and removing it are map operations — no HAProxy reload, and never a change to the SPOA hub's configuration.
 
 These constraints **fail the config** with an actionable message rather than silently doing nothing: the mirror plugin must be enabled, and the Ingress must define a `host` (host-less / default-backend mirroring is unsupported). `mirror-host` and `mirror-request-body: off` **aren't** honoured — the plugin always forces the mirrored Host to the target authority and always forwards the buffered request body.
 

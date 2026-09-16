@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -37,176 +37,25 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-const nginxFrontendPublicationRoot = `{%- var incremental = render "frontend-filters-555-nginx-ingress-mirror" +
-  render "frontend-switching-780-nginx-ingress-canary" -%}
-{%- var legacy = render "legacy-nginx-ingress-mirror" +
-  render "legacy-nginx-ingress-canary" -%}
-{{ "BEGIN-I\n" }}{{ incremental }}{{ "\nEND-I\nBEGIN-L\n" -}}
-{{ legacy }}
-{{ "\nEND-L\n" -}}
+const nginxFrontendPublicationRoot = `{{ planRegistry.ProfileGroup() }}
+{{- render "features-200-ingress-mirror" -}}
+{{- render "features-200-ingress-canary" -}}
+{{ render "frontend-filters-820-ingress-mirror" }}
+{{ render "frontend-filters-996-ingress-canary" }}
+{{ render "frontend-switching-815-ingress-canary" }}
 {%- if tostring(extraContext | dig("poisonRead") | fallback(false)) == "true" -%}
-  {%- var files = incremental_values("nginx-ingress-mirror", "files") -%}
+  {%- var files = incremental_values("ingress-canary", "files") -%}
   {%- if len(files) > 0 -%}{%- files[0].(map[string]any)["content"] = "poison" -%}{%- end -%}
 {%- end -%}
 {%- if tostring(extraContext | dig("failAfterReplay") | fallback(false)) == "true" -%}
   {{- fail("forced failure after nginx frontend replay") -}}
 {%- end -%}`
 
-const legacyNginxMirrorTemplate = `{%- import "util-ingress-helpers" for HostMatchCondition -%}
-{%- import "util-validate-config-value" for ValidateConfigValue -%}
-{%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-{#- Only 'mirror-target' is honoured: the plugin forces the mirrored Host to the
-    target authority and always forwards the buffered body, so 'mirror-host' and
-    'mirror-request-body: off' cannot be supported without a plugin change. Only
-    the authority is used — the plugin re-attaches the live path/query.
-    Entries accumulate in the per-request txn.gw_mirror_targets list that the
-    single NOTIFY in frontend-filters-950-spoa-hub-mirror-fire fans out, so a new
-    target touches neither spoe.conf nor the hub TOML. -#}
-{%- for _, ingress := range resources.ingresses.List() %}
-  {%- var mt = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/mirror-target"] %}
-  {%- if mt != "" %}
-    {%- var ns = ingress.Metadata.Namespace %}
-    {%- var name = ingress.Metadata.Name %}
-    {%- var key = ns + "/" + name %}
-    {%- var hosts = []string{} %}
-    {%- for _, rule := range ingress.Spec.Rules %}
-      {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-    {%- end %}
-    {%- if len(hosts) == 0 %}
-      {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' sets 'nginx.ingress.kubernetes.io/mirror-target' but defines no host; host-less / default-backend mirroring is not supported. Add a host to the Ingress rule.") -}}{%- continue %}
-    {%- end %}
-    {#- nginx appends the path/variable (e.g. $request_uri) with no '/' separator,
-        so the authority ends at the first '/' or '$'. -#}
-    {%- var scheme = "http" %}
-    {%- var rest = mt %}
-    {%- if hasPrefix(mt, "https://") %}
-      {%- scheme = "https" %}
-      {%- rest = mt[8:] %}
-    {%- else if hasPrefix(mt, "http://") %}
-      {%- rest = mt[7:] %}
-    {%- end %}
-    {%- var cut = len(rest) %}
-    {%- var sl = index(rest, "/") %}
-    {%- var dl = index(rest, "$") %}
-    {%- if sl >= 0 && sl < cut %}{%- cut = sl %}{%- end %}
-    {%- if dl >= 0 && dl < cut %}{%- cut = dl %}{%- end %}
-    {%- var authority = rest[:cut] %}
-    {%- if !strings_contains(authority, ":") %}
-      {%- if scheme == "https" %}{%- authority = authority + ":443" %}{%- else %}{%- authority = authority + ":80" %}{%- end %}
-    {%- end %}
-    {%- if !regex_search(authority, "^[A-Za-z0-9._-]+:[0-9]{1,5}$") %}
-      {{- fail("Invalid value '" + mt + "' for annotation 'nginx.ingress.kubernetes.io/mirror-target' on Ingress '" + key + "'. Expected scheme://host[:port][/path]; could not derive a host:port authority (got '" + authority + "').") -}}
-    {%- end %}
-    {#- The charset regex above still accepts :0 and :99999. -#}
-    {%- var portNum = toint(authority[index(authority, ":")+1:]) %}
-    {%- if portNum < 1 || portNum > 65535 %}
-      {{- fail("Invalid port '" + tostring(portNum) + "' in 'nginx.ingress.kubernetes.io/mirror-target' on Ingress '" + key + "'. Port must be 1-65535.") -}}
-    {%- end %}
-    {%- var safeAuthority = ValidateConfigValue(authority, "nginx.ingress.kubernetes.io/mirror-target", key, false) %}
-    {%- var cond = HostMatchCondition(hosts) %}
-    {%- var timeoutMs = toint(extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000)) %}
-    {%- var retriesCount = toint(extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0)) %}
-    {%- var entry = scheme + "|" + safeAuthority + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
-# nginx-ingress/mirror-target ({{ key }})
-http-request set-var(txn.gw_mirror_targets) str({{ entry }};),concat(,txn.gw_mirror_targets,) if {{ cond }}
-  {%- end %}
-{%- end %}
-`
-
-const legacyNginxCanaryTemplate = `{# HAProxy takes the first matching use_backend, so emission order is the
-    documented canary precedence: header > cookie > weight. #}
-{%- import "util-ingress-helpers" for HostMatchCondition -%}
-{%- import "util-backend-name-ingress" for BackendNameIngress -%}
-{%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-{%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-{%- for _, ingress := range resources.ingresses.List() %}
-  {%- var isCanary = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary"] %}
-  {%- if isCanary == "true" %}
-    {%- var ns = ingress.Metadata.Namespace %}
-    {%- var name = ingress.Metadata.Name %}
-    {%- var key = ns + "/" + name %}
-      {%- var hosts = []string{} %}
-      {%- var canaryBackend = "" %}
-      {%- for _, rule := range ingress.Spec.Rules %}
-        {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-        {%- if canaryBackend == "" %}
-          {%- var http = rule | dig("http") %}
-          {%- if http != nil %}
-            {%- var paths []any = http | dig("paths") | toSlice() %}
-            {%- if len(paths) > 0 %}
-              {%- canaryBackend = BackendNameIngress(ingress, paths[0]) %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-      {%- if len(hosts) > 0 && canaryBackend != "" %}
-        {%%
-          var cond = HostMatchCondition(hosts)
-          var canaryHeader = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header"]
-          var canaryHeaderValue = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-value"]
-          var canaryHeaderPattern = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-pattern"]
-          var canaryCookie = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-cookie"]
-          var canaryWeight = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-weight"]
-        %%}
-        {#- The header/cookie NAMES and the numeric weight are emitted unquoted
-            (req.hdr(<h>), req.cook(<c>), rand(100) lt <w>), so a space or quote
-            there breaks out of the ACL — token context. The regex/exact match
-            VALUES are single-quoted below (-m reg '<p>' / -m str '<v>'), where
-            HAProxy strong-quoting passes a backslash (e.g. \d+) literally with no
-            $ expansion — only a ' or a control character is a danger, so squote.
-            Only the operands that will actually be emitted are checked. -#}
-        {%- var canaryInj = "" %}
-        {%- var canaryField = "" %}
-        {%- if canaryHeader != "" %}
-          {%- canaryInj = ConfigInjectionKind(canaryHeader, "token") %}
-          {%- if canaryInj != "" %}{%- canaryField = "canary-by-header" %}{%- end %}
-          {%- if canaryInj == "" && canaryHeaderPattern != "" %}
-            {%- canaryInj = ConfigInjectionKind(canaryHeaderPattern, "squote") %}
-            {%- if canaryInj != "" %}{%- canaryField = "canary-by-header-pattern" %}{%- end %}
-          {%- else if canaryInj == "" && canaryHeaderValue != "" %}
-            {%- canaryInj = ConfigInjectionKind(canaryHeaderValue, "squote") %}
-            {%- if canaryInj != "" %}{%- canaryField = "canary-by-header-value" %}{%- end %}
-          {%- end %}
-        {%- end %}
-        {%- if canaryInj == "" && canaryCookie != "" %}
-          {%- canaryInj = ConfigInjectionKind(canaryCookie, "token") %}
-          {%- if canaryInj != "" %}{%- canaryField = "canary-by-cookie" %}{%- end %}
-        {%- end %}
-        {%- if canaryInj == "" && canaryWeight != "" %}
-          {%- canaryInj = ConfigInjectionKind(canaryWeight, "token") %}
-          {%- if canaryInj != "" %}{%- canaryField = "canary-weight" %}{%- end %}
-        {%- end %}
-        {%- if canaryInj != "" %}
-          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' annotation 'nginx.ingress.kubernetes.io/" + canaryField + "' value contains " + canaryInj + ", which would break out of the canary routing condition; the canary route is not applied. Remove it from the value.") -}}
-          {%- continue %}
-        {%- end %}
-# nginx-ingress/canary ({{ key }})
-        {%- if canaryHeader != "" %}
-          {%- if canaryHeaderPattern != "" %}
-use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m reg '{{ canaryHeaderPattern }}' } {{ cond }}
-          {%- else if canaryHeaderValue != "" %}
-use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m str '{{ canaryHeaderValue }}' } {{ cond }}
-          {%- else %}
-use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m str always } {{ cond }}
-          {%- end %}
-        {%- end %}
-        {%- if canaryCookie != "" %}
-use_backend {{ canaryBackend }} if { req.cook({{ canaryCookie }}) -m str always } {{ cond }}
-        {%- end %}
-        {%- if canaryWeight != "" %}
-use_backend {{ canaryBackend }} if { rand(100) lt {{ canaryWeight }} } {{ cond }}
-        {%- end %}
-      {%- end %}
-  {%- end %}
-{%- end -%}
-`
-
 type nginxFrontendPublicationFixture struct {
 	config    *config.Config
 	service   *RenderService
 	engine    *dynamicBindingCountingEngine
 	ingresses *k8sstore.MemoryStore
-	services  *k8sstore.MemoryStore
 	provider  stores.StoreProvider
 }
 
@@ -215,17 +64,17 @@ type nginxFrontendSnapshot struct {
 	files  map[string]string
 }
 
-func TestNginxFrontendPublicationsPreserveColdBytesAndLargeHostFiles(t *testing.T) {
+func TestNginxFrontendPublicationsMatchColdRenderAcrossChanges(t *testing.T) {
 	fixture := newNginxFrontendPublicationFixture(t)
-	fixture.addIngress(t, nginxFrontendIngress("subject", nginxFrontendHosts(31), true, "v1"))
+	subject := nginxFrontendIngress("subject", nginxFrontendHosts(31), true, "v1")
+	fixture.addIngress(t, subject)
 
 	first := fixture.renderAndCommit(t)
-	requireNginxFrontendDifferential(t, first)
-	firstFiles := requireAuxiliaryFiles(t, first)
-	require.Len(t, firstFiles.GeneralFiles, 1)
-	expectedContent := strings.Join(nginxFrontendHosts(31), "\n") + "\n"
-	assert.Equal(t, expectedContent, firstFiles.GeneralFiles[0].GetContent())
-	assert.Contains(t, first.HAProxyConfig, "-f files/host-match-")
+	require.Equal(t, nginxFrontendColdSnapshot(t, subject), nginxFrontendResultSnapshot(t, first))
+	mirror := nginxFrontendMapContent(t, first, "ing-mirror-hosts.map")
+	assert.Contains(t, mirror, "host-30.example.com https|mirror.example:8443|2500|2;\n")
+	assert.Contains(t, nginxFrontendMapContent(t, first, "ing-canary-weight.map"), "host-00.example.com 10\n")
+	assert.Empty(t, requireAuxiliaryFiles(t, first).GeneralFiles, "no host-match file without a header pattern")
 	assert.Equal(t, 2, fixture.engine.executionCounts()["ingresses/subject"])
 
 	beforeWarm := fixture.engine.executionCounts()
@@ -238,45 +87,43 @@ func TestNginxFrontendPublicationsPreserveColdBytesAndLargeHostFiles(t *testing.
 	require.Equal(t, nginxFrontendResultSnapshot(t, first), nginxFrontendResultSnapshot(t, unrelated))
 	require.Empty(t, fixture.engine.executionCounts()["ingresses/unrelated"])
 
-	fixture.updateIngress(t, nginxFrontendIngress("unrelated", []string{"changed.example.com"}, false, "v2"))
-	unrelatedChanged := fixture.renderAndCommit(t)
-	require.Equal(t, nginxFrontendResultSnapshot(t, first), nginxFrontendResultSnapshot(t, unrelatedChanged))
-	require.Empty(t, fixture.engine.executionCounts()["ingresses/unrelated"])
-
 	beforeChanged := fixture.engine.executionCounts()
 	changedHosts := nginxFrontendHosts(31)
 	changedHosts[0] = "changed.example.com"
-	fixture.updateIngress(t, nginxFrontendIngress("subject", changedHosts, true, "v2"))
+	changedSubject := nginxFrontendIngress("subject", changedHosts, true, "v2")
+	fixture.updateIngress(t, changedSubject)
 	changed := fixture.renderAndCommit(t)
-	requireNginxFrontendDifferential(t, changed)
 	assert.Equal(t, beforeChanged["ingresses/subject"]+2, fixture.engine.executionCounts()["ingresses/subject"])
-	assert.Equal(t, strings.Join(changedHosts, "\n")+"\n", requireAuxiliaryFiles(t, changed).GeneralFiles[0].GetContent())
+	require.Equal(t, nginxFrontendColdSnapshot(t, changedSubject), nginxFrontendResultSnapshot(t, changed))
+	assert.Equal(t, first.HAProxyConfig, changed.HAProxyConfig, "a host change is a map edit, not a config change")
+	assert.NotContains(t, nginxFrontendMapContent(t, changed, "ing-mirror-hosts.map"), "host-00.example.com")
 }
 
-func TestNginxFrontendPublicationDeletionAndFileCollisionPromotion(t *testing.T) {
+func TestNginxFrontendPublicationDeletionOnSharedHost(t *testing.T) {
 	fixture := newNginxFrontendPublicationFixture(t)
-	hosts := nginxFrontendHosts(31)
-	fixture.addIngress(t, nginxFrontendIngress("a", hosts, true, "v1"))
-	fixture.addIngress(t, nginxFrontendIngress("b", hosts, true, "v1"))
+	hosts := []string{"shared.example.com"}
+	a := nginxFrontendIngress("a", hosts, true, "v1")
+	b := nginxFrontendIngress("b", hosts, true, "v1")
+	b["metadata"].(map[string]any)["annotations"].(map[string]any)["nginx.ingress.kubernetes.io/canary-weight"] = "90"
+	fixture.addIngress(t, a)
+	fixture.addIngress(t, b)
 
 	first := fixture.renderAndCommit(t)
-	requireNginxFrontendDifferential(t, first)
-	require.Len(t, requireAuxiliaryFiles(t, first).GeneralFiles, 1)
-	assert.Contains(t, first.HAProxyConfig, "nginx-ingress/mirror-target (default/a)")
-	assert.Contains(t, first.HAProxyConfig, "nginx-ingress/mirror-target (default/b)")
+	require.Equal(t, nginxFrontendColdSnapshot(t, a, b), nginxFrontendResultSnapshot(t, first))
+	entry := "https|mirror.example:8443|2500|2;"
+	assert.Contains(t, nginxFrontendMapContent(t, first, "ing-mirror-hosts.map"), "shared.example.com "+entry+entry+"\n")
+	assert.Contains(t, nginxFrontendMapContent(t, first, "ing-canary-weight.map"), "shared.example.com 10\n")
 
 	fixture.deleteIngress(t, "a")
 	promoted := fixture.renderAndCommit(t)
-	requireNginxFrontendDifferential(t, promoted)
-	require.Len(t, requireAuxiliaryFiles(t, promoted).GeneralFiles, 1)
-	assert.NotContains(t, promoted.HAProxyConfig, "(default/a)")
-	assert.Contains(t, promoted.HAProxyConfig, "(default/b)")
+	require.Equal(t, nginxFrontendColdSnapshot(t, b), nginxFrontendResultSnapshot(t, promoted))
+	assert.Contains(t, nginxFrontendMapContent(t, promoted, "ing-mirror-hosts.map"), "shared.example.com "+entry+"\n")
+	assert.Contains(t, nginxFrontendMapContent(t, promoted, "ing-canary-weight.map"), "shared.example.com 90\n")
 
 	fixture.deleteIngress(t, "b")
 	empty := fixture.renderAndCommit(t)
-	requireNginxFrontendDifferential(t, empty)
-	assert.Empty(t, requireAuxiliaryFiles(t, empty).GeneralFiles)
-	assert.NotContains(t, empty.HAProxyConfig, "nginx-ingress/mirror-target")
+	assert.NotContains(t, empty.HAProxyConfig, "ingress/mirror-target")
+	assert.NotContains(t, empty.HAProxyConfig, "txn.canary_backend")
 }
 
 func TestNginxFrontendPublicationsStayConstantWithInactiveIngresses(t *testing.T) {
@@ -307,9 +154,10 @@ func TestNginxFrontendPublicationsStayConstantWithInactiveIngresses(t *testing.T
 
 func TestNginxFrontendFailedRootAndAdmissionCannotPoisonCache(t *testing.T) {
 	fixture := newNginxFrontendPublicationFixture(t)
-	baselineResource := nginxFrontendIngress("subject", nginxFrontendHosts(31), true, "v1")
+	baselineResource := nginxFrontendPatternIngress(nginxFrontendIngress("subject", nginxFrontendHosts(31), true, "v1"))
 	fixture.addIngress(t, baselineResource)
 	baseline := fixture.renderAndCommit(t)
+	require.Len(t, requireAuxiliaryFiles(t, baseline).GeneralFiles, 1, "a header pattern over 30 hosts registers a host-match file")
 
 	fixture.config.TemplatingSettings.ExtraContext["poisonRead"] = true
 	poisoned, err := fixture.render(rendercontext.RenderModeReconcile)
@@ -321,7 +169,7 @@ func TestNginxFrontendFailedRootAndAdmissionCannotPoisonCache(t *testing.T) {
 	require.Equal(t, nginxFrontendResultSnapshot(t, baseline), nginxFrontendResultSnapshot(t, afterPoison))
 	require.Equal(t, beforeWarm, fixture.engine.executionCounts())
 
-	changedResource := nginxFrontendIngress("subject", append([]string{"changed.example.com"}, nginxFrontendHosts(30)...), true, "v2")
+	changedResource := nginxFrontendPatternIngress(nginxFrontendIngress("subject", append([]string{"changed.example.com"}, nginxFrontendHosts(30)...), true, "v2"))
 	fixture.updateIngress(t, changedResource)
 	fixture.config.TemplatingSettings.ExtraContext["failAfterReplay"] = true
 	failed, err := fixture.render(rendercontext.RenderModeReconcile)
@@ -330,7 +178,7 @@ func TestNginxFrontendFailedRootAndAdmissionCannotPoisonCache(t *testing.T) {
 	afterFailure := fixture.engine.executionCounts()
 	fixture.config.TemplatingSettings.ExtraContext["failAfterReplay"] = false
 	retried := fixture.renderAndCommit(t)
-	requireNginxFrontendDifferential(t, retried)
+	require.Equal(t, nginxFrontendColdSnapshot(t, changedResource), nginxFrontendResultSnapshot(t, retried))
 	require.Equal(t, afterFailure["ingresses/subject"]+2, fixture.engine.executionCounts()["ingresses/subject"])
 
 	invalid := nginxFrontendIngress("subject", nginxFrontendHosts(31), true, "v3")
@@ -355,13 +203,6 @@ func TestNginxFrontendFailedRootAndAdmissionCannotPoisonCache(t *testing.T) {
 
 func newNginxFrontendPublicationFixture(t *testing.T) *nginxFrontendPublicationFixture {
 	t.Helper()
-	snippets := loadNginxFrontendPublicationSnippets(t)
-	snippets["legacy-nginx-ingress-mirror"] = config.TemplateSnippet{
-		Name: "legacy-nginx-ingress-mirror", Template: legacyNginxMirrorTemplate,
-	}
-	snippets["legacy-nginx-ingress-canary"] = config.TemplateSnippet{
-		Name: "legacy-nginx-ingress-canary", Template: legacyNginxCanaryTemplate,
-	}
 	cfg := &config.Config{
 		Dataplane: testDataplaneConfig(),
 		TemplatingSettings: config.TemplatingSettings{ExtraContext: map[string]any{
@@ -374,7 +215,7 @@ func newNginxFrontendPublicationFixture(t *testing.T) *nginxFrontendPublicationF
 			"endpoints": {APIVersion: "discovery.k8s.io/v1", Resources: "endpointslices", IndexBy: []string{"metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"}},
 			"secrets":   {APIVersion: "v1", Resources: "secrets", IndexBy: []string{"metadata.namespace", "metadata.name"}},
 		},
-		TemplateSnippets: snippets,
+		TemplateSnippets: loadNginxFrontendPublicationSnippets(t),
 		HAProxyConfig:    config.HAProxyConfig{Template: nginxFrontendPublicationRoot},
 	}
 	types := ingressBackendSchemaTypes(t)
@@ -387,14 +228,12 @@ func newNginxFrontendPublicationFixture(t *testing.T) *nginxFrontendPublicationF
 		TypedResourceTypes: types.Types,
 	})
 	ingresses := k8sstore.NewMemoryStore(2)
-	services := k8sstore.NewMemoryStore(2)
-	endpoints := k8sstore.NewMemoryStore(2)
-	secrets := k8sstore.NewMemoryStore(2)
 	provider := stores.NewRealStoreProvider(map[string]stores.Store{
-		"ingresses": ingresses, "services": services, "endpoints": endpoints, "secrets": secrets,
+		"ingresses": ingresses, "services": k8sstore.NewMemoryStore(2),
+		"endpoints": k8sstore.NewMemoryStore(2), "secrets": k8sstore.NewMemoryStore(2),
 	})
 	return &nginxFrontendPublicationFixture{
-		config: cfg, service: service, engine: engine, ingresses: ingresses, services: services, provider: provider,
+		config: cfg, service: service, engine: engine, ingresses: ingresses, provider: provider,
 	}
 }
 
@@ -412,8 +251,12 @@ func loadNginxFrontendPublicationSnippets(t *testing.T) map[string]config.Templa
 		"util-validate-config-value": true, "util-config-injection-kind": true,
 		"util-escape-dquote-value": true, "util-escape-logformat-value": true,
 		"util-backend-name-ingress": true, "util-ingress-host-match-publication": true,
-		"frontend-filters-555-nginx-ingress-mirror": true, "nginx-ingress-mirror-publications": true,
-		"frontend-switching-780-nginx-ingress-canary": true, "nginx-ingress-canary-publications": true,
+		"util-register-map": true, "util-mirror-publish": true, "util-canary-publish": true, "util-canary-lane": true,
+		"features-200-ingress-mirror": true, "ingress-mirror-9999-declaration": true,
+		"frontend-filters-820-ingress-mirror": true, "ingress-mirror-0555-nginx-ingress": true,
+		"features-200-ingress-canary": true, "ingress-canary-9999-declaration": true,
+		"frontend-filters-996-ingress-canary": true, "frontend-switching-815-ingress-canary": true,
+		"ingress-canary-0780-nginx-ingress": true,
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))
 	for _, relativePath := range files {
@@ -458,6 +301,8 @@ func nginxFrontendIngress(name string, hosts []string, active bool, revision str
 			"nginx.ingress.kubernetes.io/canary":                 "true",
 			"nginx.ingress.kubernetes.io/canary-by-header":       "X-Canary",
 			"nginx.ingress.kubernetes.io/canary-by-header-value": "always",
+			"nginx.ingress.kubernetes.io/canary-by-cookie":       "stage",
+			"nginx.ingress.kubernetes.io/canary-weight":          "10",
 		}
 	}
 	rules := make([]any, 0, len(hosts))
@@ -481,6 +326,11 @@ func nginxFrontendIngress(name string, hosts []string, active bool, revision str
 		},
 		"spec": map[string]any{"rules": rules},
 	}
+}
+
+func nginxFrontendPatternIngress(resource map[string]any) map[string]any {
+	resource["metadata"].(map[string]any)["annotations"].(map[string]any)["nginx.ingress.kubernetes.io/canary-by-header-pattern"] = "^v[0-9]+$"
+	return resource
 }
 
 func (f *nginxFrontendPublicationFixture) addIngress(t *testing.T, resource map[string]any) {
@@ -515,39 +365,37 @@ func (f *nginxFrontendPublicationFixture) renderAndCommit(t *testing.T) *RenderR
 	return result
 }
 
+// nginxFrontendColdSnapshot renders the given Ingresses on a fresh fixture: the
+// oracle a warm render has to match byte for byte.
+func nginxFrontendColdSnapshot(t *testing.T, resources ...map[string]any) nginxFrontendSnapshot {
+	t.Helper()
+	cold := newNginxFrontendPublicationFixture(t)
+	for _, resource := range resources {
+		cold.addIngress(t, resource)
+	}
+	return nginxFrontendResultSnapshot(t, cold.renderAndCommit(t))
+}
+
 func nginxFrontendResultSnapshot(t *testing.T, result *RenderResult) nginxFrontendSnapshot {
 	t.Helper()
+	files := requireAuxiliaryFiles(t, result)
 	snapshot := nginxFrontendSnapshot{config: result.HAProxyConfig, files: map[string]string{}}
-	for _, file := range requireAuxiliaryFiles(t, result).GeneralFiles {
+	for _, file := range files.GeneralFiles {
 		snapshot.files[file.GetIdentifier()] = file.GetContent()
+	}
+	for _, file := range files.MapFiles {
+		snapshot.files[file.Path] = file.Content
 	}
 	return snapshot
 }
 
-func requireNginxFrontendDifferential(t *testing.T, result *RenderResult) {
+func nginxFrontendMapContent(t *testing.T, result *RenderResult, name string) string {
 	t.Helper()
-	text := result.HAProxyConfig
-	incrementalStart := strings.Index(text, "BEGIN-I\n")
-	incrementalEnd := strings.Index(text, "\nEND-I\n")
-	legacyStart := strings.Index(text, "BEGIN-L\n")
-	legacyEnd := strings.Index(text, "\nEND-L\n")
-	require.NotEqual(t, -1, incrementalStart)
-	require.NotEqual(t, -1, incrementalEnd)
-	require.NotEqual(t, -1, legacyStart)
-	require.NotEqual(t, -1, legacyEnd)
-	incremental := text[incrementalStart+len("BEGIN-I\n") : incrementalEnd]
-	legacy := text[legacyStart+len("BEGIN-L\n") : legacyEnd]
-	require.Equal(t, withoutBlankLines(legacy), withoutBlankLines(incremental))
-}
-
-// withoutBlankLines drops whitespace-only lines: HAProxy ignores them, and
-// the legacy and incremental roots join their blocks with different padding.
-func withoutBlankLines(text string) string {
-	kept := make([]string, 0, strings.Count(text, "\n")+1)
-	for _, line := range strings.Split(text, "\n") {
-		if strings.TrimSpace(line) != "" {
-			kept = append(kept, line)
+	for _, file := range requireAuxiliaryFiles(t, result).MapFiles {
+		if path.Base(file.Path) == name {
+			return file.Content
 		}
 	}
-	return strings.Join(kept, "\n")
+	require.FailNow(t, name+" is missing")
+	return ""
 }
