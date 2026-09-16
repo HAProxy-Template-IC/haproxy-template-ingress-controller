@@ -306,6 +306,7 @@ templateSnippets:
     template: |
       {# HAPTIC shared cache — route cache-eligible requests to varnish_cache. #}
       {%- import "util-haptic-cache-private-request-header-deletes" for HapticCachePrivateRequestHeaderDeletes -%}
+      {%- import "util-register-map" for RegisterMap -%}
       {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
         {%- var enMap, _ = pathResolver.GetPath("haptic-cache-enable.map", "map") %}
@@ -318,8 +319,27 @@ templateSnippets:
       http-after-response replace-value Cache-Control (?i)^[[:space:]]*public[[:space:]]*$ private if { var(txn.resource_id),map({{ privateMap }}) -m found }
       http-after-response add-header Cache-Control private if { var(txn.resource_id),map({{ privateMap }}) -m found }
       http-request set-var(txn.cache_eligible) bool(true) if { var(txn.resource_id),map({{ enMap }}) -m found } { method GET HEAD }
-      {%- var routeFragments = incremental_values("features-900-haptic-fragment-865-cache-route-items", "fragments") -%}
-      {%- for _, fragment := range routeFragments -%}{{ "\n" }}{{- tostring(fragment) -}}{%- end -%}{{ "\n" }}
+      {%- if incremental_value_count("features-900-haptic-fragment-865-cache-route-items", "exclude") > 0 %}
+        {%%
+          var excludeVal, _ = shared.ComputeIfAbsent("hapticCacheExcludeMap", func() any {
+            var rows = []any{}
+            for _, v := range incremental_values("features-900-haptic-fragment-865-cache-route-items", "exclude") {
+              rows = append(rows, tostring(v))
+            }
+            var lines = []string{}
+            for _, r := range sort_strings(rows) {
+              lines = append(lines, tostring(r))
+            }
+            return RegisterMap("haptic-cache-exclude.map", lines, map[string]any{"ordered": false})
+          })
+          var excludeMap = tostring(excludeVal)
+        %%}
+      {#- `<route>|<request path>` against `<route>|<excluded prefix>` keys: map_beg
+          matches when a key is a prefix of the input, which is exactly path_beg
+          scoped to the route. #}
+      http-request set-var-fmt(txn.cache_excl_key) %[var(txn.resource_id)]|%[path] if { var(txn.cache_eligible) -m bool }
+      http-request unset-var(txn.cache_eligible) if { var(txn.cache_excl_key),map_beg({{ excludeMap }}) -m found }
+      {%- end %}
       acl haptic_varnish_available srv_is_up(varnish_cache/CACHE_DISPATCH)
       http-request set-var(txn.cache_degraded) str(1) if { var(txn.cache_eligible) -m bool } !haptic_varnish_available
       {%- end %}
@@ -329,8 +349,6 @@ templateSnippets:
     template: |
       {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
-      {%- var routeFragments = incremental_values("features-900-haptic-fragment-865-cache-route-items", "switching") -%}
-      {%- for _, fragment := range routeFragments -%}{{ "\n" }}{{- tostring(fragment) -}}{%- end -%}{{ "\n" }}
       use_backend varnish_cache if { var(txn.cache_eligible) -m bool } haptic_varnish_available
       {%- end %}
 
@@ -343,11 +361,9 @@ templateSnippets:
         - "metadata.annotations['haproxy-haptic.org/cache-exclude-paths']"
       effects: [publishValue]
     template: |-
-      {%- var condition = render "util-haptic-cache-exclusion-condition" -%}
-      {%- if condition != "" -%}
-        {%- var key = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name") -%}
-        {{- shared.Publish("fragments", key, "http-request unset-var(txn.cache_eligible) if " + condition) -}}
-        {{- shared.Publish("switching", key, "use_backend %[var(txn.backend_name)] if " + condition) -}}
+      {%- var rows = render "util-haptic-cache-exclusion-condition" -%}
+      {%- for _, row := range split(rows, "\n") -%}
+        {%- if row != "" -%}{{- shared.Publish("exclude", row, row + " 1") -}}{%- end -%}
       {%- end -%}
 
   util-haptic-cache-exclusion-condition:
@@ -363,11 +379,12 @@ templateSnippets:
             {%- var path = strip(tok) -%}
             {%- if path != "" -%}
               {%- if !regex_search(path, "^/[!-~]*$") -%}{{ fail("Invalid path '" + path + "' in 'haproxy-haptic.org/cache-exclude-paths' on Ingress '" + rid + "'. Must start with '/' and contain no spaces.") }}{%- end -%}
+              {%- if strings_contains(path, "|") -%}{{ fail("Invalid path '" + path + "' in 'haproxy-haptic.org/cache-exclude-paths' on Ingress '" + rid + "'. '|' is not allowed: it separates the route from the path in the exclusion map.") }}{%- end -%}
               {%- paths = append(paths, path) -%}
             {%- end -%}
           {%- end -%}
-          {%- if len(paths) > 0 -%}
-      { var(txn.resource_id) -m str {{ rid }} } { path_beg {{ join(paths, " ") }} }
+          {%- for _, path := range paths -%}
+      {{ rid }}|{{ path }}{{ "\n" }}
           {%- end -%}
         {%- end -%}
       {%- end -%}

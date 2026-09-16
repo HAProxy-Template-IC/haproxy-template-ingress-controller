@@ -180,7 +180,7 @@ an invalid placement is reported as a validation error.
 - **Reload-free now** (map or runtime updates): a header modifier value, a path
   rewrite, a redirect target, a server/tunnel timeout, a Host/Connection/
   X-Forwarded-Prefix override, a body-size limit, a per-stream bandwidth
-  throttle, and any map the libraries already drive; endpoint churn (scaling a
+  throttle, a cache path exclusion, and any map the libraries already drive; endpoint churn (scaling a
   Service) as `set server`/`add server`; cert and CA content, and new SNI certs.
 - **Reload-free once one route has paid for it**: a value the frontend must spell
   out as a literal, because no converter takes it from a variable. The first route
