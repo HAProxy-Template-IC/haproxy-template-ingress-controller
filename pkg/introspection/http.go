@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"strings"
 )
 
 // WriteJSON writes data as JSON to the HTTP response with status 200 OK.
@@ -46,14 +47,14 @@ func WriteJSON(w http.ResponseWriter, data any) {
 //	    "components": components,
 //	})
 func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data any) {
+	body, err := json.Marshal(data)
+	if err != nil {
+		statusCode = http.StatusInternalServerError
+		body = []byte(`{"error":"could not encode diagnostic response"}`)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Headers already sent, cannot change status code.
-		// The partial/empty response body signals the error to the client.
-		return
-	}
+	_, _ = w.Write(append(body, '\n'))
 }
 
 // WriteError writes an error response with the specified HTTP status code.
@@ -65,20 +66,7 @@ func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data any) {
 //	WriteError(w, http.StatusNotFound, "variable not found")
 //	// Response: {"error": "variable not found"}
 func WriteError(w http.ResponseWriter, code int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-
-	response := map[string]string{
-		"error": message,
-	}
-
-	// Best effort encoding - if this fails after headers are sent,
-	// there is no way to report the encoding error to the client.
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		// Headers already sent, cannot change status code.
-		// The partial/empty response body signals the error to the client.
-		return
-	}
+	WriteJSONWithStatus(w, code, map[string]string{"error": message})
 }
 
 // requireGET wraps an HTTP handler to enforce GET method only.
@@ -92,6 +80,17 @@ func requireGET(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			WriteError(w, http.StatusMethodNotAllowed, "only GET is allowed")
+			return
+		}
+		handler(w, r)
+	}
+}
+
+func protectDiagnostics(handler http.HandlerFunc) http.HandlerFunc {
+	local := requireLoopback(handler)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/debug" || strings.HasPrefix(r.URL.Path, "/debug/") {
+			local(w, r)
 			return
 		}
 		handler(w, r)

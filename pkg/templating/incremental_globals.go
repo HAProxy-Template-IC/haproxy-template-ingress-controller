@@ -367,7 +367,7 @@ func registerIncrementalEncodingDeclarations(decl native.Declarations) {
 	decl[builtinDate] = incrementalDate
 	decl[builtinParseTime] = incrementalParseTime
 	decl[builtinUnixTime] = incrementalUnixTime
-	decl[FuncUntarGz] = incrementalUntarGz
+	decl[FuncUntarGz] = scriggoUntarGz
 	decl[FuncDeriveResource] = incrementalDeriveResource
 	decl[FuncRecordEvent] = incrementalRecordEvent
 	decl[FuncStatusPatch] = incrementalStatusPatch

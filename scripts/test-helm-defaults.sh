@@ -3,9 +3,9 @@
 # Helm Chart Default Values Test
 #
 # Tests that the helm chart works out-of-the-box with default values when
-# cert-manager is installed. Verifies: pods running, SSL certificate created,
-# warning-free config admission and HAProxy configuration, and HTTP/HTTPS
-# connectivity.
+# cert-manager is installed. Verifies pod readiness, certificate resources,
+# warning-free config admission and HAProxy configuration, and HTTP health
+# and metrics endpoints.
 #
 # Usage:
 #   ./scripts/test-helm-defaults.sh [options]
@@ -31,7 +31,7 @@
 #   4 - Pod readiness timeout
 #   5 - Certificate verification failed
 #   6 - HTTP smoke test failed
-#   7 - HTTPS smoke test failed
+#   7 - Metrics smoke test failed
 #   8 - HAProxy configuration check failed or emitted warnings
 #   9 - HAProxy bootstrap worker-retirement check failed
 #  10 - HAProxyTemplateConfig admission failed or emitted warnings
@@ -680,6 +680,9 @@ verify_certificates() {
 # Start port-forward in background and return the PID
 # This is more reliable than NodePort in DinD environments
 PORT_FORWARD_PID=""
+PORT_FORWARD_LOG=""
+HTTPS_FORWARD_PORT=""
+STATS_FORWARD_PORT=""
 start_port_forward() {
     info "Starting port-forward to HAProxy service..."
 
@@ -710,7 +713,8 @@ start_port_forward() {
     # HTTPS frontends only bind when an Ingress / Gateway / annotation
     # turns them on, so a chart-default install has no listener on 80
     # or 443; the status frontend is always rendered).
-    kubectl port-forward -n "$NAMESPACE" "svc/${RELEASE_NAME}-haproxy" 8080:80 8443:443 8404:8404 >/dev/null 2>&1 &
+    PORT_FORWARD_LOG=$(mktemp)
+    kubectl port-forward --address 127.0.0.1 -n "$NAMESPACE" "svc/${RELEASE_NAME}-haproxy" :80 :443 :8404 >"$PORT_FORWARD_LOG" 2>&1 &
     PORT_FORWARD_PID=$!
 
     # Wait for port-forward to be ready (probe stats — always bound).
@@ -718,13 +722,17 @@ start_port_forward() {
     local attempt=1
 
     while [[ $attempt -le $max_attempts ]]; do
-        if curl -s -o /dev/null --connect-timeout 1 "http://localhost:8404/healthz" 2>/dev/null; then
-            ok "Port-forward is ready (pid: $PORT_FORWARD_PID)"
-            return 0
+        if ! kill -0 "$PORT_FORWARD_PID" 2>/dev/null; then
+            cat "$PORT_FORWARD_LOG" >&2
+            die "Port-forward process died unexpectedly" 6
         fi
 
-        if ! kill -0 "$PORT_FORWARD_PID" 2>/dev/null; then
-            die "Port-forward process died unexpectedly" 6
+        HTTPS_FORWARD_PORT=$(forwarded_port 443)
+        STATS_FORWARD_PORT=$(forwarded_port 8404)
+        if [[ "$HTTPS_FORWARD_PORT" =~ ^[0-9]+$ && "$STATS_FORWARD_PORT" =~ ^[0-9]+$ ]] &&
+            curl -s -o /dev/null --connect-timeout 1 "http://127.0.0.1:${STATS_FORWARD_PORT}/healthz" 2>/dev/null; then
+            ok "Port-forward is ready (pid: $PORT_FORWARD_PID)"
+            return 0
         fi
 
         if [[ $attempt -lt $max_attempts ]]; then
@@ -738,12 +746,20 @@ start_port_forward() {
     die "Port-forward not accessible after $max_attempts attempts" 6
 }
 
+forwarded_port() {
+    awk -v remote="$1" '$1 == "Forwarding" && $3 ~ /^127[.]0[.]0[.]1:/ && $5 == remote {split($3, address, ":"); print address[2]; exit}' "$PORT_FORWARD_LOG"
+}
+
 stop_port_forward() {
     if [[ -n "$PORT_FORWARD_PID" ]] && kill -0 "$PORT_FORWARD_PID" 2>/dev/null; then
         info "Stopping port-forward (pid: $PORT_FORWARD_PID)"
         kill "$PORT_FORWARD_PID" 2>/dev/null || true
         wait "$PORT_FORWARD_PID" 2>/dev/null || true
         PORT_FORWARD_PID=""
+    fi
+    if [[ -n "$PORT_FORWARD_LOG" ]]; then
+        rm -f "$PORT_FORWARD_LOG"
+        PORT_FORWARD_LOG=""
     fi
 }
 
@@ -758,7 +774,7 @@ smoke_test_http() {
     # unbound). Probing /healthz on stats covers the smoke-test scope —
     # "the chart deployed cleanly and HAProxy is alive" — without
     # requiring routing fixtures.
-    local url="http://localhost:8404/healthz"
+    local url="http://127.0.0.1:${STATS_FORWARD_PORT}/healthz"
 
     info "Testing: $url (via port-forward)"
 
@@ -777,14 +793,14 @@ smoke_test_http() {
     fi
 }
 
-smoke_test_https() {
-    info "Running HTTPS smoke test (Prometheus metrics endpoint)..."
+smoke_test_metrics() {
+    info "Running Prometheus metrics smoke test..."
 
     # Same rationale as smoke_test_http: probe the always-bound stats
     # port (which also serves /metrics) instead of the optional HTTPS
     # frontend. The metrics endpoint confirms the prometheus exporter
     # is wired and HAProxy is producing data.
-    local url="http://localhost:8404/metrics"
+    local url="http://127.0.0.1:${STATS_FORWARD_PORT}/metrics"
 
     info "Testing: $url (via port-forward)"
 
@@ -794,12 +810,12 @@ smoke_test_https() {
     info "HAProxy /metrics response code: $http_code"
 
     if [[ "$http_code" == "200" ]]; then
-        ok "HTTPS smoke test passed (HAProxy /metrics returned 200 — Prometheus exporter is wired)"
+        ok "Metrics smoke test passed (HAProxy /metrics returned 200)"
         return 0
     elif [[ "$http_code" == "000" ]]; then
-        die "HTTPS smoke test failed — connection refused or timeout on stats port" 7
+        die "Metrics smoke test failed — connection refused or timeout on stats port" 7
     else
-        die "HTTPS smoke test failed — /metrics returned $http_code (expected 200)" 7
+        die "Metrics smoke test failed — /metrics returned $http_code (expected 200)" 7
     fi
 }
 
@@ -809,13 +825,13 @@ verify_ssl_certificate() {
     # The chart's HTTPS frontend (libraries/ssl.yaml) only renders when
     # an Ingress / Gateway / annotation requests HTTPS routing. The
     # chart-default install has no routing fixtures, so port 443 isn't
-    # bound and an openssl/curl probe at localhost:8443 (forwarded to
+    # bound and an openssl/curl probe at the forwarded HTTPS port (forwarded to
     # pod:443) gets connection-refused — not a chart bug, just nothing
     # to verify against. Skip the SSL chain check and report that
     # cleanly; the previous smoke tests have already confirmed HAProxy
     # is alive (stats /healthz + /metrics).
     local cert_info
-    if cert_info=$(timeout 10 openssl s_client -connect "localhost:8443" -servername localhost </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer 2>/dev/null); then
+    if cert_info=$(timeout 10 openssl s_client -connect "127.0.0.1:${HTTPS_FORWARD_PORT}" -servername localhost </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer 2>/dev/null); then
         if [[ -n "$cert_info" ]]; then
             info "Certificate info:"
             echo "$cert_info"
@@ -824,7 +840,7 @@ verify_ssl_certificate() {
         fi
     fi
 
-    info "openssl could not retrieve a certificate at localhost:8443 — chart-default install has no HTTPS frontend (libraries/ssl.yaml renders only when an Ingress / Gateway / annotation turns it on); SSL chain verification is therefore not applicable to this smoke test scope."
+    info "openssl could not retrieve a certificate at 127.0.0.1:${HTTPS_FORWARD_PORT} — chart-default install has no HTTPS frontend (libraries/ssl.yaml renders only when an Ingress / Gateway / annotation turns it on); SSL chain verification is therefore not applicable to this smoke test scope."
     ok "SSL certificate verification skipped (no HTTPS frontend in chart-default install)"
 }
 
@@ -1026,7 +1042,7 @@ main() {
     # Start port-forward for smoke tests (more reliable than NodePort in DinD)
     start_port_forward
     smoke_test_http
-    smoke_test_https
+    smoke_test_metrics
     verify_ssl_certificate
     verify_controller_applies_clean
     stop_port_forward

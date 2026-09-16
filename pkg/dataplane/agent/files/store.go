@@ -102,7 +102,7 @@ func NewStore(baseDir string, logger *slog.Logger, reserved ...string) (*Store, 
 func (s *Store) BaseDir() string { return s.baseDir }
 
 // Mounts lists the probed mounts, deepest root first.
-func (s *Store) Mounts() []Mount { return s.mounts }
+func (s *Store) Mounts() []Mount { return slices.Clone(s.mounts) }
 
 // CrossDeviceCopies counts renames that fell back to a copy. The mount probe
 // is supposed to keep this at zero; the server reports a non-zero count as an

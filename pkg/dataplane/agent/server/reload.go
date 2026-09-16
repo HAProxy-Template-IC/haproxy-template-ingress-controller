@@ -146,7 +146,7 @@ func (s *Server) pacer(ctx context.Context) error {
 // firePendingReload performs the reload an earlier apply scheduled. A failure
 // here restores the last known good set, exactly like a synchronous one.
 func (s *Server) firePendingReload() {
-	if !s.ready.Load() {
+	if !s.Ready() {
 		return
 	}
 	s.apply.Lock()

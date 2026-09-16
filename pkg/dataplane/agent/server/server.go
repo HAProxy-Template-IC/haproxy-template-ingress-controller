@@ -115,9 +115,9 @@ type Server struct {
 	// file names the plan it belongs to, so a stale one is never handed out.
 	appliedPlan []byte
 
-	ready atomic.Bool
-	addr  atomic.Pointer[string]
-	http  *http.Server
+	initialized chan struct{}
+	addr        atomic.Pointer[string]
+	http        *http.Server
 
 	// background tracks the read-backs that outlive their apply handler, so
 	// Start returns only after the last one is done and stopped is what
@@ -172,16 +172,17 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	}
 	metrics := NewMetrics(cfg.Registry, cfg.Logger)
 	s := &Server{
-		cfg:        *cfg,
-		logger:     cfg.Logger,
-		store:      store,
-		runtime:    runtimeClient,
-		deferrals:  cli.NewDeferrals(runtimeClient, cfg.Logger, metrics),
-		metrics:    metrics,
-		states:     newStateStore(store.BaseDir(), cfg.StateFile),
-		reloadWake: make(chan struct{}, 1),
-		drainPoll:  drainPollInterval,
-		drainStop:  make(chan struct{}),
+		cfg:         *cfg,
+		logger:      cfg.Logger,
+		store:       store,
+		runtime:     runtimeClient,
+		deferrals:   cli.NewDeferrals(runtimeClient, cfg.Logger, metrics),
+		metrics:     metrics,
+		states:      newStateStore(store.BaseDir(), cfg.StateFile),
+		reloadWake:  make(chan struct{}, 1),
+		drainPoll:   drainPollInterval,
+		drainStop:   make(chan struct{}),
+		initialized: make(chan struct{}),
 	}
 	s.drainCounter = runtimeClient.FrontendConnections
 	if s.state, err = s.states.load(); err != nil {
@@ -224,6 +225,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.addr.Store(&bound)
 
 	group, groupCtx := errgroup.WithContext(ctx)
+	s.http.BaseContext = func(net.Listener) context.Context { return groupCtx }
 	group.Go(func() error { return s.deferrals.Start(groupCtx) })
 	group.Go(func() error { return s.pacer(groupCtx) })
 	group.Go(func() error { return s.initialise(groupCtx) })
@@ -261,7 +263,14 @@ func (s *Server) Addr() string {
 }
 
 // Ready reports whether startup initialisation finished.
-func (s *Server) Ready() bool { return s.ready.Load() }
+func (s *Server) Ready() bool {
+	select {
+	case <-s.initialized:
+		return true
+	default:
+		return false
+	}
+}
 
 // initialise runs the startup sequence readiness reports: both sockets answer,
 // the tree is hashed against the state file, crash recovery has run and the
@@ -288,7 +297,7 @@ func (s *Server) initialise(ctx context.Context) error {
 	if err := s.recoverFromCrash(); err != nil {
 		return err
 	}
-	s.ready.Store(true)
+	close(s.initialized)
 	s.logger.Info("agent ready",
 		"applied_plan_id", s.snapshot().AppliedPlanID,
 		"worker_pid", s.workerIdentity().WorkerPID)
@@ -359,7 +368,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
-	if !s.ready.Load() {
+	if !s.Ready() {
 		writeText(w, http.StatusServiceUnavailable, "initialising")
 		return
 	}

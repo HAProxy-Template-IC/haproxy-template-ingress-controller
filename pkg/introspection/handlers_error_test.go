@@ -100,38 +100,14 @@ func TestHandleAllVars_PropagatesVarErrorAs500(t *testing.T) {
 			"operator sees the actual failure cause, not just 'something failed'")
 }
 
-func TestWriteJSONWithStatus_HeadersWrittenBeforeEncodeError(t *testing.T) {
-	// WriteJSONWithStatus has a documented contract: if json.Encode
-	// fails AFTER the status header is written, the function silently
-	// returns (no panic, no second WriteHeader call) — the partial or
-	// empty body signals the error to the client.
-	//
-	// The existing TestWriteJSONWithStatus only covers the success
-	// path. This test pins the silent-failure path by passing a value
-	// that json.Encoder cannot encode (a channel — channels have no
-	// JSON representation).
-	w := httptest.NewRecorder()
-
-	// chan int is the canonical un-encodable type. Wrapping it in any
-	// is what json.Encoder will choke on.
-	unencodable := map[string]any{"ch": make(chan int)}
-
-	require.NotPanics(t, func() {
-		WriteJSONWithStatus(w, http.StatusServiceUnavailable, unencodable)
-	}, "encode failure must NOT panic — the partial body is the "+
-		"signal, not a process crash")
-
-	// Status code: the WriteHeader call happens BEFORE the encode
-	// attempt, so the requested status must be visible to the client
-	// even though the body is empty/partial. A regression that
-	// reordered the calls would change the wire-visible status to 200
-	// and silently mask the original status the caller asked for.
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
-		"WriteHeader fires BEFORE Encode; the status the caller asked for "+
-			"must be visible to the client even when the body is partial")
-
-	// Content-Type is also set before the encode attempt.
-	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+func TestWriteJSONEncodingFailure(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusServiceUnavailable} {
+		w := httptest.NewRecorder()
+		WriteJSONWithStatus(w, status, map[string]any{"unsupported": make(chan int)})
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+		assert.JSONEq(t, `{"error":"could not encode diagnostic response"}`, w.Body.String())
+	}
 }
 
 func TestWriteError_ProducesStructuredErrorBody(t *testing.T) {

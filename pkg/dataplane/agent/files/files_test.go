@@ -39,6 +39,16 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+func TestMountsCannotChangeStagingDestination(t *testing.T) {
+	s := newTestStore(t)
+	mounts := s.Mounts()
+	require.NotEmpty(t, mounts)
+	mounts[0].Root = t.TempDir()
+	staged := stage(t, s, "test.cfg", "content")
+	defer staged.Discard()
+	assert.Equal(t, filepath.Join(s.BaseDir(), TempDirName), filepath.Dir(staged.tmp))
+}
+
 // The haproxytech images ship /etc/haproxy as a symlink to
 // /usr/local/etc/haproxy; the store must own the target, not refuse the link.
 func TestNewStoreFollowsASymlinkedBaseDir(t *testing.T) {

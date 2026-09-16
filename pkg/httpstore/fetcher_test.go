@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,6 +33,7 @@ func TestAddAuthHeaders(t *testing.T) {
 		auth        *AuthConfig
 		wantHeaders map[string]string
 		wantMissing []string
+		wantError   string
 	}{
 		{
 			name: "basic with username and password",
@@ -86,16 +88,17 @@ func TestAddAuthHeaders(t *testing.T) {
 			},
 		},
 		{
-			name: "unknown type falls back to custom headers",
+			name: "omitted type uses custom headers",
 			auth: &AuthConfig{
-				Type:    "custom",
+				Type:    "",
 				Headers: map[string]string{"X-API-Key": "abc"},
 			},
 			wantHeaders: map[string]string{"X-Api-Key": "abc"},
 		},
 		{
-			name:        "unknown type with no headers does nothing",
+			name:        "unknown type is rejected",
 			auth:        &AuthConfig{Type: "unsupported"},
+			wantError:   "unknown HTTP authentication type",
 			wantMissing: []string{"Authorization", "X-Api-Key"},
 		},
 	}
@@ -103,7 +106,12 @@ func TestAddAuthHeaders(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := req.Clone(req.Context())
-			addAuthHeaders(r, tt.auth)
+			err := addAuthHeaders(r, tt.auth)
+			if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+			} else {
+				require.NoError(t, err)
+			}
 			for k, want := range tt.wantHeaders {
 				assert.Equal(t, want, r.Header.Get(k), "header %s", k)
 			}
@@ -114,13 +122,28 @@ func TestAddAuthHeaders(t *testing.T) {
 	}
 }
 
-// TestAddAuthHeaders_DoesNotOverwriteCustomHeaderForBasicAndBearer verifies
-// that the basic/bearer paths don't accidentally write to a header conflict.
 func TestAddAuthHeaders_OverwriteSameHeaderTwice(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
 	req.Header.Set("Authorization", "Original")
 
-	addAuthHeaders(req, &AuthConfig{Type: AuthTypeBearer, Token: "newtoken"})
+	require.NoError(t, addAuthHeaders(req, &AuthConfig{Type: AuthTypeBearer, Token: "newtoken"}))
 
 	require.Equal(t, "Bearer newtoken", req.Header.Get("Authorization"))
+}
+
+func TestDoFetchRejectsUnknownAuthBeforeSending(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	store := &HTTPStore{httpClient: server.Client()}
+	content, etag, modified, err := store.doFetch(t.Context(), server.URL, FetchOptions{}.WithDefaults(),
+		&AuthConfig{Type: "unsupported", Headers: map[string]string{"X-API-Key": "key"}}, "", "")
+	require.ErrorContains(t, err, "unknown HTTP authentication type")
+	assert.Empty(t, content)
+	assert.Empty(t, etag)
+	assert.Empty(t, modified)
+	assert.Zero(t, requests.Load())
 }

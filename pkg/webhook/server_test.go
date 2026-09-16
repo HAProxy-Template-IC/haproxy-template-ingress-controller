@@ -190,8 +190,6 @@ func TestServer_RegisterValidator(t *testing.T) {
 }
 
 func TestServer_GetGVK(t *testing.T) {
-	server := newTestServer(t, &ServerConfig{})
-
 	tests := []struct {
 		name     string
 		request  *admissionv1.AdmissionRequest
@@ -234,7 +232,7 @@ func TestServer_GetGVK(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := server.getGVK(tt.request)
+			result := getGVK(tt.request)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -704,8 +702,6 @@ func TestServer_Start_Integration(t *testing.T) {
 }
 
 func TestServer_ExtractMetadata(t *testing.T) {
-	server := newTestServer(t, &ServerConfig{})
-
 	tests := []struct {
 		name              string
 		objectJSON        string
@@ -742,7 +738,7 @@ func TestServer_ExtractMetadata(t *testing.T) {
 			// Create unstructured object
 			unstructuredObj := &unstructured.Unstructured{Object: obj}
 
-			namespace, name := server.extractMetadata(unstructuredObj)
+			namespace, name := extractMetadata(unstructuredObj)
 			assert.Equal(t, tt.expectedNamespace, namespace)
 			assert.Equal(t, tt.expectedName, name)
 		})
@@ -750,9 +746,7 @@ func TestServer_ExtractMetadata(t *testing.T) {
 }
 
 func TestServer_ExtractMetadata_NilObject(t *testing.T) {
-	server := newTestServer(t, &ServerConfig{})
-
-	namespace, name := server.extractMetadata(nil)
+	namespace, name := extractMetadata(nil)
 	assert.Empty(t, namespace)
 	assert.Empty(t, name)
 }

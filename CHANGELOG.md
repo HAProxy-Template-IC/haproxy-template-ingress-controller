@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Playground presets contain complete configuration resources; the custom request-ID example validates header names and applies only to the annotated Ingress.
+- Agent state reads wait for startup recovery before publishing the deployment baseline.
+- Component name, health, and error callbacks can access the lifecycle registry without deadlocking it.
+- Diagnostic providers can publish variables while serving the full variable list without deadlocking.
+- Diagnostic JSON encoding failures return HTTP 500 instead of an empty success response.
 - `rate-limit-allowlist` also exempts clients from the shared limiter (`rate-limit-requests`); it only reached the per-pod limiter before. An allowlist on a route with no rate limit is refused at admission and reported as a `RateLimitAllowlistIgnored` Warning Event on reconcile instead of being ignored silently (#232).
 - An incremental render no longer fails with "incremental ranked text transitions collide" when a component's ranked publications change position within one result; the reorder was mistaken for a collision between identities and denied unrelated admissions while the batch was in flight.
 - Admission warnings report only the template-recorded events on the resource being admitted; events on other resources, such as governance audit violations elsewhere in the cluster, stay in their own Kubernetes Events.
@@ -30,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- HTTP fetches reject unknown authentication types before sending a request or replacing cached content.
+- Archive extraction validates gzip trailers and bounds decompression of skipped entries and metadata.
+- Compressed auxiliary files reject expansion beyond 64 MiB per file.
+- Admission webhooks reject oversized or malformed request envelopes and return only the admission response.
+- Agent applies reject oversized manifest parts before changing files or rollback state.
+- Debug endpoints enforce loopback access for custom routes with method or host patterns.
 - SPOA plugin signature verification now requires the exact pinned release tag, not any tag from the upstream project.
 
 ### Helm chart
@@ -61,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+- The controller waits for its external validator to start before reconciling; generated self-signed certificates have a non-empty subject.
 - The frontend filter chain renders through one macro instead of expanding its glob in each HTTP frontend. A `render_glob` expands into the function table of the compiled function holding it, and that table is capped at 256 entries, so expanding the chain in the main template left almost no room for a library to add snippets.
 - Response compression no longer makes every Ingress backend structural: the compression filter is declared on the frontends and a route's algorithm and types are inherited from its profile, so adding or removing a route with the default compression is reload-free on HAProxy 3.4 (#230). A route that opts out keeps its request and response untouched.
 - API-key, JWT, HMAC, consumer-group, per-pod rate-limit, bandwidth-limit and consumer-keyed shared rate-limit routes no longer carry rules in their backend: each feature is one rule block per HTTP frontend that reads the route's settings from a map, so such a route is added, changed or removed without a reload and its backend stays dynamic. Consequences: all of them now run on the client leg of every route (a cached route no longer needs `api-key-secret` for consumer groups or consumer-keyed limits, JWT identity is available there too), the per-pod limiter and shared bandwidth scopes meter into shared per-route-per-client tables so a shared scope coexists with a per-source cap, the HMAC key travels in a map instead of the config, missing-Secret and ignored-cap conditions are Kubernetes Events instead of config comments, and a `rate-limit-allowlist` is two map lookups over the disjoint cover of every list (`cidr_partition`), so it never reloads either. The `rate_limit_consumer_unavailable` deny reason is removed from `vector.logMetrics.deniedBy.values`: a cached route with a consumer-keyed shared limit and no API key is no longer refused.

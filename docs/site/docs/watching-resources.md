@@ -277,7 +277,7 @@ The second argument is an options map. All keys are optional:
 
 Set `critical: true` only when an empty body would produce a dangerously wrong config (for example, a security blocklist that must not silently become empty); leave it `false` when a stale-or-empty body is safer than blocking every render on one unreachable URL.
 
-A third optional argument supplies authentication: `{"type": "bearer", "token": "..."}`, `{"type": "basic", "username": "...", "password": "..."}`, or `{"type": "header", "headers": {"X-API-Key": "..."}}`.
+A third optional argument supplies authentication: `{"type": "bearer", "token": "..."}`, `{"type": "basic", "username": "...", "password": "..."}`, or `{"type": "header", "headers": {"X-API-Key": "..."}}`. Unknown authentication types fail the render before any request is sent, regardless of `critical`.
 
 Use one set of options and authentication settings for each URL in a render. Two calls for the same URL with different declarations fail the render instead of sharing ambiguous cached content. Calls that repeat the same declaration in one render reuse its exact response. On a later render, changing either declaration invalidates the old accepted body and timer, then fetches a new render-local response. A successful complete validation accepts that response and applies its interval; a failure leaves no accepted body or timer, so the next live reconciliation fetches it again.
 

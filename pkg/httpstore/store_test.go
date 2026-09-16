@@ -16,6 +16,7 @@ package httpstore
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -791,28 +792,39 @@ func TestHTTPStore_FetchWithHeaderAuth(t *testing.T) {
 }
 
 func TestHTTPStore_FetchWithUnknownAuthType(t *testing.T) {
-	var receivedHeaders http.Header
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedHeaders = r.Header.Clone()
-		w.Write([]byte("content"))
-	}))
-	defer server.Close()
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger, 0)
-
-	ctx := context.Background()
-	// Unknown auth type falls through to default which uses Headers
-	auth := &AuthConfig{
-		Type: "unsupported",
-		Headers: map[string]string{
-			"X-Custom-Auth": "some-token",
-		},
+	for _, cached := range []bool{false, true} {
+		for _, critical := range []bool{false, true} {
+			t.Run(fmt.Sprintf("cached=%t/critical=%t", cached, critical), func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					requests.Add(1)
+					_, _ = w.Write([]byte("content"))
+				}))
+				defer server.Close()
+				store := newRevisionTestStore(0)
+				opts := FetchOptions{Critical: critical}
+				if cached {
+					content, err := store.Fetch(t.Context(), server.URL, opts, nil)
+					require.NoError(t, err)
+					require.Equal(t, "content", content)
+				}
+				beforeRequests := requests.Load()
+				beforeEntry := store.GetEntry(server.URL)
+				beforeRevision := store.Watermark()
+				for _, auth := range []*AuthConfig{
+					{Type: "bearre", Token: "secret"},
+					{Type: "unsupported", Headers: map[string]string{"X-Custom-Auth": "secret"}},
+				} {
+					content, err := store.Fetch(t.Context(), server.URL, opts, auth)
+					require.ErrorContains(t, err, "unknown HTTP authentication type")
+					assert.Empty(t, content)
+					assert.Equal(t, beforeRequests, requests.Load())
+					assert.Equal(t, beforeEntry, store.GetEntry(server.URL))
+					assert.Equal(t, beforeRevision, store.Watermark())
+				}
+			})
+		}
 	}
-	content, err := store.Fetch(ctx, server.URL, FetchOptions{}, auth)
-	require.NoError(t, err)
-	assert.Equal(t, "content", content)
-	assert.Equal(t, "some-token", receivedHeaders.Get("X-Custom-Auth"))
 }
 
 func TestHTTPStore_RefreshURLNotInCache(t *testing.T) {

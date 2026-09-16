@@ -17,33 +17,15 @@ package webhook
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"net"
 	"net/http"
 	"path/filepath"
 	"sync"
 	"time"
-
-	admissionv1 "k8s.io/api/admission/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
 )
-
-var (
-	scheme = runtime.NewScheme()
-	codecs = serializer.NewCodecFactory(scheme)
-)
-
-func init() {
-	// Register AdmissionReview types
-	_ = admissionv1.AddToScheme(scheme)
-}
 
 // Server is an HTTPS webhook server that validates Kubernetes resources.
 //
@@ -124,7 +106,11 @@ func (g *ValidatorGeneration) retire() {
 // loaded eagerly — from CertDir (reloading, on change) or from CertPEM/KeyPEM
 // (fixed) — so configuration errors surface here rather than at the first TLS
 // handshake.
-func NewServer(config *ServerConfig) (*Server, error) {
+func NewServer(input *ServerConfig) (*Server, error) {
+	if input == nil {
+		return nil, errors.New("webhook server configuration is required")
+	}
+	config := *input
 	// Apply defaults
 	if config.Port == 0 {
 		config.Port = 9443
@@ -146,14 +132,14 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		config.IdleTimeout = 120 * time.Second
 	}
 
-	getCertificate, err := newGetCertificate(config)
+	getCertificate, err := newGetCertificate(&config)
 	if err != nil {
 		return nil, err
 	}
 
 	generation := newValidatorGeneration(make(map[string]ValidationFunc), config.OnUnregisteredGVK, nil)
 	return &Server{
-		config:            *config,
+		config:            config,
 		validators:        generation.validators,
 		onUnregisteredGVK: config.OnUnregisteredGVK,
 		getCertificate:    getCertificate,
@@ -386,169 +372,6 @@ func (s *Server) Start(ctx context.Context) error {
 	case err := <-serveDone:
 		return err
 	}
-}
-
-// handleValidation handles AdmissionReview requests.
-func (s *Server) handleValidation(w http.ResponseWriter, r *http.Request) {
-	// Only accept POST requests
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Read request body
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("reading request: %v", err), http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	// Decode AdmissionReview request
-	review := &admissionv1.AdmissionReview{}
-	deserializer := codecs.UniversalDeserializer()
-	if _, _, err := deserializer.Decode(body, nil, review); err != nil {
-		http.Error(w, fmt.Sprintf("decoding request: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	response := s.validate(review.Request)
-
-	// Create AdmissionReview response
-	review.Response = response
-	review.Response.UID = review.Request.UID
-
-	// Encode response
-	responseBytes, err := json.Marshal(review)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("encoding response: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Send response
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(responseBytes)
-}
-
-// validate validates an AdmissionRequest.
-func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
-	// Get validator for this resource type
-	gvk := s.getGVK(request)
-
-	s.mu.RLock()
-	generation := s.generation
-	generation.inFlight.Add(1)
-	validator, exists := generation.validators[gvk]
-	onUnregistered := generation.onUnregisteredGVK
-	s.mu.RUnlock()
-	defer generation.inFlight.Done()
-
-	if !exists {
-		if onUnregistered != nil {
-			onUnregistered(gvk)
-		}
-		return deniedResponse(
-			fmt.Sprintf("no validator registered for %s; retry after controller initialization", gvk),
-			http.StatusServiceUnavailable,
-		)
-	}
-
-	// DELETE requests may carry only OldObject. The controller's structural
-	// gate decides whether the operation has enough object data to validate.
-	var obj *unstructured.Unstructured
-	if len(request.Object.Raw) > 0 {
-		obj = &unstructured.Unstructured{}
-		if err := json.Unmarshal(request.Object.Raw, obj); err != nil {
-			return deniedResponse(fmt.Sprintf("parsing object: %v", err), http.StatusBadRequest)
-		}
-	}
-
-	// Parse old object (if present - for UPDATE/DELETE operations)
-	var oldObj *unstructured.Unstructured
-	if len(request.OldObject.Raw) > 0 {
-		oldObj = &unstructured.Unstructured{}
-		if err := json.Unmarshal(request.OldObject.Raw, oldObj); err != nil {
-			return deniedResponse(fmt.Sprintf("parsing old object: %v", err), http.StatusBadRequest)
-		}
-	}
-
-	metadataObject := obj
-	if metadataObject == nil {
-		metadataObject = oldObj
-	}
-	namespace, name := s.extractMetadata(metadataObject)
-
-	// Build validation context
-	ctx := &ValidationContext{
-		Object:    obj,
-		OldObject: oldObj,
-		Operation: string(request.Operation),
-		Namespace: namespace,
-		Name:      name,
-		UID:       string(request.UID),
-		UserInfo:  request.UserInfo,
-	}
-
-	// Call validator with full context
-	allowed, reason, warnings, err := validator(ctx)
-
-	if err != nil {
-		return deniedResponse(fmt.Sprintf("validation error: %v", err), http.StatusInternalServerError)
-	}
-
-	if !allowed {
-		// Validation failed; warnings still surface so the user sees both
-		// the denial reason and any non-fatal diagnostics that ran before
-		// the denial path was taken.
-		resp := deniedResponse(reason, http.StatusForbidden)
-		resp.Warnings = warnings
-		return resp
-	}
-
-	// Validation passed
-	return &admissionv1.AdmissionResponse{
-		Allowed:  true,
-		Warnings: warnings,
-	}
-}
-
-// deniedResponse builds an AdmissionResponse with Allowed=false carrying a
-// metav1.Status with the supplied message and HTTP-style code, used for the
-// four reject paths in validate (parse failures, validator errors, denials).
-func deniedResponse(message string, code int32) *admissionv1.AdmissionResponse {
-	return &admissionv1.AdmissionResponse{
-		Allowed: false,
-		Result: &metav1.Status{
-			Message: message,
-			Code:    code,
-		},
-	}
-}
-
-// extractMetadata extracts namespace and name from a resource object.
-//
-// Returns empty strings if metadata is not found.
-func (s *Server) extractMetadata(obj *unstructured.Unstructured) (namespace, name string) {
-	if obj == nil {
-		return "", ""
-	}
-
-	// Use unstructured API to extract metadata
-	namespace = obj.GetNamespace()
-	name = obj.GetName()
-
-	return namespace, name
-}
-
-// getGVK returns the GVK string for an AdmissionRequest.
-//
-// Format: "group/version.Kind" or "version.Kind" for core types.
-func (s *Server) getGVK(request *admissionv1.AdmissionRequest) string {
-	if request.Kind.Group == "" {
-		return fmt.Sprintf("%s.%s", request.Kind.Version, request.Kind.Kind)
-	}
-	return fmt.Sprintf("%s/%s.%s", request.Kind.Group, request.Kind.Version, request.Kind.Kind)
 }
 
 // handleHealthz handles health check requests.

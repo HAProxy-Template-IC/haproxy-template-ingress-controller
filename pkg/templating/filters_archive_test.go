@@ -195,7 +195,7 @@ func TestUntarGz_EnforcesLimits(t *testing.T) {
 				tarEntry{name: "b", content: "2"},
 				tarEntry{name: "c", content: "3"},
 			),
-			limits:  archiveLimits{maxEntries: 2, maxEntryBytes: 1024, maxTotalBytes: 1024},
+			limits:  archiveLimits{maxStreamBytes: defaultArchiveLimits().maxStreamBytes, maxEntries: 2, maxEntryBytes: 1024, maxTotalBytes: 1024},
 			wantErr: "more than 2 entries",
 		},
 		{
@@ -211,13 +211,13 @@ func TestUntarGz_EnforcesLimits(t *testing.T) {
 				tarEntry{name: "l1", typeflag: tar.TypeSymlink},
 				tarEntry{name: "l2", typeflag: tar.TypeSymlink},
 			),
-			limits:  archiveLimits{maxEntries: 2, maxEntryBytes: 1024, maxTotalBytes: 1024},
+			limits:  archiveLimits{maxStreamBytes: defaultArchiveLimits().maxStreamBytes, maxEntries: 2, maxEntryBytes: 1024, maxTotalBytes: 1024},
 			wantErr: "more than 2 entries",
 		},
 		{
 			name:    "single entry too large",
 			archive: makeTarGz(t, tarEntry{name: "big", content: strings.Repeat("x", 100)}),
-			limits:  archiveLimits{maxEntries: 10, maxEntryBytes: 50, maxTotalBytes: 1024},
+			limits:  archiveLimits{maxStreamBytes: defaultArchiveLimits().maxStreamBytes, maxEntries: 10, maxEntryBytes: 50, maxTotalBytes: 1024},
 			wantErr: "larger than 50 bytes",
 		},
 		{
@@ -226,7 +226,7 @@ func TestUntarGz_EnforcesLimits(t *testing.T) {
 				tarEntry{name: "a", content: strings.Repeat("x", 40)},
 				tarEntry{name: "b", content: strings.Repeat("y", 40)},
 			),
-			limits:  archiveLimits{maxEntries: 10, maxEntryBytes: 50, maxTotalBytes: 60},
+			limits:  archiveLimits{maxStreamBytes: defaultArchiveLimits().maxStreamBytes, maxEntries: 10, maxEntryBytes: 50, maxTotalBytes: 60},
 			wantErr: "expands to more than 60 bytes",
 		},
 	}
@@ -260,7 +260,7 @@ func TestUntarGz_LyingHeaderSizeCannotBypassLimit(t *testing.T) {
 	require.NoError(t, tw.Close())
 	require.NoError(t, gz.Close())
 
-	files, err := untarGz(buf.String(), archiveLimits{maxEntries: 10, maxEntryBytes: 10, maxTotalBytes: 1024})
+	files, err := untarGz(buf.String(), archiveLimits{maxStreamBytes: defaultArchiveLimits().maxStreamBytes, maxEntries: 10, maxEntryBytes: 10, maxTotalBytes: 1024})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "larger than 10 bytes")

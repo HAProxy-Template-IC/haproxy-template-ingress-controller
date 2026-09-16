@@ -443,7 +443,7 @@ HAProxy's built-in Prometheus exporter answers on the `stats` port (`8404`, `/me
 
 ## Pluggable Validators
 
-The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-socket` mode next to the controller. The shared render pipeline consults it before publishing or deploying output, so broken plugin TOML (for example a bad `modsecurity-snippet`) is rejected regardless of whether a watched resource, config, HTTP refresh, or drift check triggered the render. See [Pluggable validators](./operations/pluggable-validators.md).
+The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-socket` mode next to the controller. The controller starts after the validator socket is available. The shared render pipeline consults it before publishing or deploying output, so broken plugin TOML (for example a bad `modsecurity-snippet`) is rejected regardless of whether a watched resource, config, HTTP refresh, or drift check triggered the render. See [Pluggable validators](./operations/pluggable-validators.md).
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|

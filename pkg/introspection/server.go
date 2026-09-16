@@ -23,7 +23,6 @@ import (
 	"net"
 	"net/http"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -184,19 +183,14 @@ func (s *Server) Listening() <-chan struct{} {
 
 // setupRoutes registers all HTTP handlers.
 func (s *Server) setupRoutes(mux *http.ServeMux) {
-	// Register custom handlers first (allow overriding defaults)
 	for _, h := range s.customHandlers {
-		if strings.HasPrefix(h.pattern, "/debug/") {
-			mux.HandleFunc(h.pattern, requireLoopback(h.handler))
-			continue
-		}
 		mux.HandleFunc(h.pattern, h.handler)
 	}
 
 	// Variable endpoints (GET only)
-	mux.HandleFunc("/debug/vars", requireLoopback(requireGET(s.handleIndex)))
-	mux.HandleFunc("/debug/vars/", requireLoopback(requireGET(s.handleVar))) // Trailing slash for path matching
-	mux.HandleFunc("/debug/vars/all", requireLoopback(requireGET(s.handleAllVars)))
+	mux.HandleFunc("/debug/vars", requireGET(s.handleIndex))
+	mux.HandleFunc("/debug/vars/", requireGET(s.handleVar)) // Trailing slash for path matching
+	mux.HandleFunc("/debug/vars/all", requireGET(s.handleAllVars))
 
 	// Health check endpoints (GET only)
 	mux.HandleFunc("/health", requireGET(s.handleHealth))
@@ -204,11 +198,11 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 
 	// Forward pprof requests to DefaultServeMux where net/http/pprof registers its handlers.
 	// The pprof import side-effect registers on http.DefaultServeMux, so we forward to it.
-	mux.Handle("/debug/pprof/", requireLoopback(http.DefaultServeMux.ServeHTTP))
+	mux.Handle("/debug/pprof/", http.DefaultServeMux)
 
 	// Heap dump: the full object graph, which pprof does not carry. pprof answers
 	// where memory was allocated; this answers what still holds it.
-	mux.HandleFunc("/debug/heapdump", requireLoopback(requireGET(s.handleHeapDump)))
+	mux.HandleFunc("/debug/heapdump", requireGET(s.handleHeapDump))
 
 	// Catch-all for 404
 	mux.HandleFunc("/", s.handleNotFound)
@@ -226,7 +220,9 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 //	server.Setup()
 //	go server.Serve(ctx)
 func (s *Server) Setup() {
-	s.setupRoutes(s.mux)
+	routes := http.NewServeMux()
+	s.setupRoutes(routes)
+	s.mux.HandleFunc("/", protectDiagnostics(routes.ServeHTTP))
 	s.setupDone = true
 }
 
