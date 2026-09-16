@@ -17,6 +17,7 @@ package events
 import (
 	"maps"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
@@ -45,6 +46,33 @@ func NewResourceIndexUpdatedEvent(resourceTypeName string, changeStats types.Cha
 }
 
 func (e *ResourceIndexUpdatedEvent) EventType() string { return EventTypeResourceIndexUpdated }
+
+// PreStartCoalesceKey merges per watched kind: an undebounced watcher can
+// publish per change and outrun the pre-start buffer on a busy cluster, and a
+// dropped index update is a critical failure that aborts the iteration. The
+// kind stays in the key so merging never collapses distinct watch subjects —
+// the reason this type must NOT implement the type-string-keyed
+// CoalescibleEvent (see coalescible_inventory_test.go).
+func (e *ResourceIndexUpdatedEvent) PreStartCoalesceKey() string {
+	return EventTypeResourceIndexUpdated + "/" + e.ResourceTypeName
+}
+
+// CoalesceWith sums the additive ChangeStats counters, so the delta payload
+// survives the merge in full — unlike skip-older coalescing, which would lose
+// the skipped increments. IsInitialSync ORs: a merged event that includes the
+// bulk-load flush still reports it.
+func (e *ResourceIndexUpdatedEvent) CoalesceWith(prev events.Event) events.Event {
+	p, ok := prev.(*ResourceIndexUpdatedEvent)
+	if !ok || p.ResourceTypeName != e.ResourceTypeName {
+		return e
+	}
+	merged := *e
+	merged.ChangeStats.Created += p.ChangeStats.Created
+	merged.ChangeStats.Modified += p.ChangeStats.Modified
+	merged.ChangeStats.Deleted += p.ChangeStats.Deleted
+	merged.ChangeStats.IsInitialSync = e.ChangeStats.IsInitialSync || p.ChangeStats.IsInitialSync
+	return &merged
+}
 
 // ResourceSyncCompleteEvent is published when a resource watcher has completed.
 // its initial sync with the Kubernetes API.

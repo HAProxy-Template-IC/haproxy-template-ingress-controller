@@ -177,6 +177,10 @@ func (b *EventBus) Publish(event Event) int {
 	// Check if bus has started
 	b.startMu.Lock()
 	if !b.started {
+		if b.coalesceIntoBuffer(event) {
+			b.startMu.Unlock()
+			return 0
+		}
 		// Buffer event for replay after Start(), with capacity limit
 		overflowed := len(b.preStartBuffer) >= MaxPreStartBufferSize
 		if !overflowed {
@@ -202,6 +206,32 @@ func (b *EventBus) Publish(event Event) int {
 	sent, drops := b.fanOut(event)
 	b.reportDrops(drops)
 	return sent
+}
+
+// coalesceIntoBuffer merges a PreStartCoalescibleEvent into the buffered event
+// with the same key, keeping one entry per key however many events arrive
+// while the bus buffers. Returns false for events without the interface (or
+// with no buffered predecessor), which then take the append-with-cap path.
+// Must be called with startMu held.
+//
+// The scan is linear because merging keeps at most one entry per key and the
+// buffer is bounded by MaxPreStartBufferSize; buffering is a startup/pause
+// state, not the steady-state publish path.
+func (b *EventBus) coalesceIntoBuffer(event Event) bool {
+	ce, ok := event.(PreStartCoalescibleEvent)
+	if !ok {
+		return false
+	}
+	key := ce.PreStartCoalesceKey()
+	for i, buffered := range b.preStartBuffer {
+		prev, ok := buffered.(PreStartCoalescibleEvent)
+		if !ok || prev.PreStartCoalesceKey() != key {
+			continue
+		}
+		b.preStartBuffer[i] = cloneForSubscriber(ce.CoalesceWith(buffered))
+		return true
+	}
+	return false
 }
 
 func cloneForSubscriber(event Event) Event {
