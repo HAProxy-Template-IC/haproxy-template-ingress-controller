@@ -29,7 +29,8 @@ configchange.ConfigChangeHandler  (issues request, gathers responses)
     ↓ ConfigValidationRequest (scatter via bus.Request)
     ├→ BasicValidator       (structural validation)
     ├→ TemplateValidator    (template syntax)
-    └→ JSONPathValidator    (JSONPath expressions)
+    ├→ JSONPathValidator    (JSONPath expressions)
+    └→ ValidationTestsValidator (embedded validation tests)
         ↓ ConfigValidationResponse (gather)
 configchange.ConfigChangeHandler  (publishes outcome)
     ↓
@@ -38,9 +39,12 @@ ConfigValidatedEvent  or  ConfigInvalidEvent
 
 ## Validators
 
+`BaseValidator` decodes each request and publishes its response. The handler receives the lifecycle context, typed config, and version, and returns a verdict with errors. A panic produces a rejection through the same response path.
+
 - **BasicValidator**: Structural validation (required fields, types)
 - **TemplateValidator**: Template syntax validation. Calls `helpers.ExtractTemplatesFromConfig`, which walks `spec.haproxyConfig`, `spec.templateSnippets`, `spec.maps`, `spec.files`, and `spec.sslCertificates` (there is no flat `spec.templates` field), then compiles them with `templating.NewScriggoWithDeclarations`.
 - **JSONPathValidator**: JSONPath expression validation (evaluates each `indexBy` expression)
+- **ValidationTestsValidator**: Runs the embedded validation tests and rejects incomplete runs.
 
 ## Resources
 

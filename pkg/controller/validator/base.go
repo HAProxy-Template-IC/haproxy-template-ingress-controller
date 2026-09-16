@@ -15,6 +15,7 @@
 package validator
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -28,37 +29,20 @@ import (
 // Low-volume component (~1 validation request per reconciliation).
 const EventBufferSize = busevents.LowVolumeSubscriberBuffer
 
-// ValidationHandler defines the interface for validator-specific validation logic.
-//
-// Each validator (basic, template, jsonpath) implements this interface to provide
-// their specific validation logic while reusing the common event loop infrastructure.
+// ValidationHandler validates a typed config without owning event responses.
 type ValidationHandler interface {
-	// HandleRequest processes a ConfigValidationRequest and publishes a response.
-	// The implementation should validate the config and publish a ConfigValidationResponse
-	// event to the bus.
-	HandleRequest(req *events.ConfigValidationRequest)
+	Validate(ctx context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string)
 }
 
-// BaseValidator wraps component.Base with validator-specific dispatch:
-// it forwards only ConfigValidationRequest events to the handler, and on
-// panic it publishes a failure ConfigValidationResponse so the
-// scatter-gather coordinator does not time out.
+// BaseValidator owns request decoding and response publishing for a ValidationHandler.
+// A panic produces a rejection so the scatter-gather coordinator can finish.
 type BaseValidator struct {
 	*component.Base
 	name    string
 	handler ValidationHandler
 }
 
-// NewBaseValidator creates a new base validator with the given configuration.
-//
-// Parameters:
-//   - eventBus: The EventBus to subscribe to and publish on
-//   - logger: Structured logger for diagnostics
-//   - name: Validator name (for error messages and responses)
-//   - handler: ValidationHandler implementation for validator-specific logic
-//
-// Returns:
-//   - *BaseValidator ready to start
+// NewBaseValidator subscribes the handler to config validation requests.
 func NewBaseValidator(
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
@@ -80,51 +64,36 @@ func NewBaseValidator(
 	return v
 }
 
-// HandleEvent implements component.EventHandler. We subscribed with a type
-// filter so only ConfigValidationRequest events arrive, but the type
-// assertion keeps things defensive in case the filter is widened later.
+// HandleEvent implements component.EventHandler.
 func (v *BaseValidator) HandleEvent(event busevents.Event) {
 	if req, ok := event.(*events.ConfigValidationRequest); ok {
-		v.handler.HandleRequest(req)
+		v.HandleRequest(req)
 	}
 }
 
-// HandlePanic implements component.PanicHandler. Publishing a failure
-// response on panic keeps the scatter-gather coordinator from waiting on a
-// validator that has unwound. The outer recover in component.Base is still
-// responsible for keeping the event loop alive.
+// HandleRequest owns config decoding and the single response for each validation.
+func (v *BaseValidator) HandleRequest(req *events.ConfigValidationRequest) {
+	cfg, ok := req.Config.(*coreconfig.Config)
+	if !ok || cfg == nil {
+		v.Logger().Error("ConfigValidationRequest contains invalid config type",
+			"expected", "non-nil *coreconfig.Config",
+			"got", fmt.Sprintf("%T", req.Config))
+		v.respond(req, false, []string{fmt.Sprintf("invalid config type: %T", req.Config)})
+		return
+	}
+	valid, errors := v.handler.Validate(v.LifecycleContext(), cfg, req.Version)
+	v.respond(req, valid, errors)
+}
+
+// HandlePanic rejects the request so scatter-gather does not wait for a lost response.
 func (v *BaseValidator) HandlePanic(recovered any, event busevents.Event) {
 	req, ok := event.(*events.ConfigValidationRequest)
 	if !ok {
 		return
 	}
-	response := events.NewConfigValidationResponse(
-		req.RequestID(),
-		v.name,
-		false,
-		[]string{fmt.Sprintf("validator panicked: %v", recovered)},
-	)
-	v.EventBus().Publish(response)
+	v.respond(req, false, []string{fmt.Sprintf("validator panicked: %v", recovered)})
 }
 
-// assertConfigType type-asserts req.Config to *coreconfig.Config. On a type
-// mismatch it logs the error and publishes a failure ConfigValidationResponse
-// so the scatter-gather coordinator does not hang waiting on this validator,
-// then returns (nil, false). Callers should early-return on a false result.
-func (v *BaseValidator) assertConfigType(req *events.ConfigValidationRequest) (*coreconfig.Config, bool) {
-	cfg, ok := req.Config.(*coreconfig.Config)
-	if ok {
-		return cfg, true
-	}
-	v.Logger().Error("ConfigValidationRequest contains invalid config type",
-		"expected", "*coreconfig.Config",
-		"got", fmt.Sprintf("%T", req.Config))
-	response := events.NewConfigValidationResponse(
-		req.RequestID(),
-		v.name,
-		false,
-		[]string{fmt.Sprintf("invalid config type: %T", req.Config)},
-	)
-	v.EventBus().Publish(response)
-	return nil, false
+func (v *BaseValidator) respond(req *events.ConfigValidationRequest, valid bool, errors []string) {
+	v.EventBus().Publish(events.NewConfigValidationResponse(req.RequestID(), v.name, valid, errors))
 }
