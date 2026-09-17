@@ -154,7 +154,7 @@ func TestARenderBeforeConfigValidatedPublishesWithTheSeededConfig(t *testing.T) 
 
 	c.handleTemplateRendered(newControllerPublisherTemplateFixture(t).event)
 	require.Len(t, c.publishWork, 1)
-	assert.Equal(t, "haproxy-config", (<-c.publishWork).templateConfig.Name)
+	assert.Equal(t, "haproxy-config", (<-c.publishWork).config.name)
 
 	c.handleLostLeadership(nil)
 	c.preparePublicationTerm()

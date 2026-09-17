@@ -68,7 +68,7 @@ func TestComponent_BuildPublishRequest(t *testing.T) {
 		contentChecksum: "ab12cd34",
 	}
 
-	req := c.buildPublishRequest(tc, entry)
+	req := c.buildPublishRequest(c.publishIdentityFor(tc), entry)
 
 	require.NotNil(t, req)
 
@@ -234,7 +234,7 @@ func TestComponent_BuildPublishRequest_TimestampUnused(t *testing.T) {
 		renderedAt:      now,
 	}
 
-	req := c.buildPublishRequest(tc, entry)
+	req := c.buildPublishRequest(c.publishIdentityFor(tc), entry)
 	assert.Equal(t, "cfg", req.Config,
 		"buildPublishRequest must not be affected by entry.renderedAt — that field is metadata, not request input")
 }

@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
 	crdclientfake "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
 	k8spublisher "gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
@@ -84,10 +83,10 @@ func TestPublishWorker_DrainsDeployedWorkFirst(t *testing.T) {
 
 	item := func(id string, deployDriven bool) *publishWorkItem {
 		return &publishWorkItem{
-			correlationID:  id,
-			templateConfig: &v1alpha1.HAProxyTemplateConfig{},
-			entry:          &renderedConfigEntry{config: published, contentChecksum: published},
-			deployDriven:   deployDriven,
+			correlationID: id,
+			config:        publishConfigIdentity{},
+			entry:         &renderedConfigEntry{config: published, contentChecksum: published},
+			deployDriven:  deployDriven,
 		}
 	}
 
@@ -215,10 +214,10 @@ func TestProcessPublishWork_ThrottledDeployedWorkStaysQueued(t *testing.T) {
 
 	deployed := func(checksum string) *publishWorkItem {
 		return &publishWorkItem{
-			correlationID:  "deployed:" + checksum,
-			templateConfig: &v1alpha1.HAProxyTemplateConfig{},
-			entry:          &renderedConfigEntry{config: checksum, contentChecksum: checksum},
-			deployDriven:   true,
+			correlationID: "deployed:" + checksum,
+			config:        publishConfigIdentity{},
+			entry:         &renderedConfigEntry{config: checksum, contentChecksum: checksum},
+			deployDriven:  true,
 		}
 	}
 

@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 )
 
@@ -88,10 +87,10 @@ func TestFlushPendingPublish_DeployDedupHitSkipsAndDropsCache(t *testing.T) {
 	c.renderedConfigs[corrID] = cachedEntry
 
 	work := &publishWorkItem{
-		correlationID:  corrID,
-		entry:          cachedEntry,
-		templateConfig: &v1alpha1.HAProxyTemplateConfig{},
-		deployDriven:   true,
+		correlationID: corrID,
+		entry:         cachedEntry,
+		config:        publishConfigIdentity{},
+		deployDriven:  true,
 	}
 
 	c.pendingMu.Lock()

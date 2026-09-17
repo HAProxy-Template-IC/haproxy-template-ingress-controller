@@ -816,3 +816,25 @@ func benchmarkPublicationSnapshotRoundTripValue(b *testing.B, value map[string]a
 	incrementalPublicationSnapshotBenchmarkBytes = encoded
 	incrementalPublicationSnapshotBenchmarkValue = decoded
 }
+
+func TestIncrementalPublicationSnapshotLiveSourceCount(t *testing.T) {
+	assert.False(t, (*incrementalPublicationSnapshotGeneration)(nil).hasLiveSources())
+
+	generation, _ := newIncrementalPublicationSnapshotGeneration()
+	assert.False(t, generation.hasLiveSources(),
+		"a generation outside an actively publishing render resolves nothing; readers rely on this to skip the winner walk")
+
+	detached, err := templating.NewIncrementalDetachedValue(map[string]any{"value": "a"})
+	require.NoError(t, err)
+	owner := incrementalGroupInstanceID{component: "publisher", source: "routes", name: "route-live"}
+	_, _, err = generation.capture("backends", owner, 0, "cell", "key", "", detached)
+	require.NoError(t, err)
+	assert.True(t, generation.hasLiveSources())
+
+	// Re-capturing the same location keeps the count consistent with the map.
+	detached, err = templating.NewIncrementalDetachedValue(map[string]any{"value": "a"})
+	require.NoError(t, err)
+	_, _, err = generation.capture("backends", owner, 0, "cell", "key", "", detached)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), generation.liveSources.Load())
+}

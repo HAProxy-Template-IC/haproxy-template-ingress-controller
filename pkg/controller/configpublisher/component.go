@@ -67,13 +67,13 @@ type renderedConfigEntry struct {
 
 // publishWorkItem represents a config publish task for the async worker.
 type publishWorkItem struct {
-	correlationID  string
-	templateConfig *v1alpha1.HAProxyTemplateConfig
-	entry          *renderedConfigEntry
-	request        *configpublisher.PublishRequest
-	generation     uint64
-	term           uint64
-	superseded     <-chan struct{}
+	correlationID string
+	config        publishConfigIdentity
+	entry         *renderedConfigEntry
+	request       *configpublisher.PublishRequest
+	generation    uint64
+	term          uint64
+	superseded    <-chan struct{}
 	// deployDriven marks an item that carries the bytes the deployer just
 	// applied (from a DeployedConfigPublishRequest), as opposed to the
 	// validation-driven publish. Deploy-driven items use their own pending slot
@@ -85,7 +85,7 @@ type publishWorkItem struct {
 // validationFailedWorkItem represents a failed config publish task for the async worker.
 type validationFailedWorkItem struct {
 	correlationID   string
-	templateConfig  *v1alpha1.HAProxyTemplateConfig
+	config          publishConfigIdentity
 	entry           *renderedConfigEntry
 	request         *configpublisher.PublishRequest
 	validationError string

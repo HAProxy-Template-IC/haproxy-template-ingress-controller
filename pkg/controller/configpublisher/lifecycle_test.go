@@ -70,10 +70,8 @@ func TestComponentStartWaitsForWorkers(t *testing.T) {
 	}
 	c.publishWork <- &publishWorkItem{
 		correlationID: "blocked-publish",
-		templateConfig: &v1alpha1.HAProxyTemplateConfig{ObjectMeta: metav1.ObjectMeta{
-			Name: "test", Namespace: "default", UID: types.UID("test-uid"),
-		}},
-		entry: &renderedConfigEntry{config: "global\n", contentChecksum: "checksum"},
+		config:        publishConfigIdentity{name: "test", namespace: "default", uid: types.UID("test-uid")},
+		entry:         &renderedConfigEntry{config: "global\n", contentChecksum: "checksum"},
 	}
 	select {
 	case <-entered:
@@ -109,10 +107,8 @@ func TestComponentShutdownDoesNotFlushPendingWrites(t *testing.T) {
 	c.statusThrottle.MarkFired()
 	c.pendingPublish = &publishWorkItem{
 		correlationID: "pending-at-shutdown",
-		templateConfig: &v1alpha1.HAProxyTemplateConfig{ObjectMeta: metav1.ObjectMeta{
-			Name: "test", Namespace: "default", UID: types.UID("test-uid"),
-		}},
-		entry: &renderedConfigEntry{config: "global\n", contentChecksum: "checksum"},
+		config:        publishConfigIdentity{name: "test", namespace: "default", uid: types.UID("test-uid")},
+		entry:         &renderedConfigEntry{config: "global\n", contentChecksum: "checksum"},
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())

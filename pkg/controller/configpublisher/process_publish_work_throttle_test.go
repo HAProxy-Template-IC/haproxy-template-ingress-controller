@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
 )
@@ -83,9 +82,9 @@ func throttleWork(c *Component, correlationID, checksum string) *publishWorkItem
 	entry := &renderedConfigEntry{contentChecksum: checksum, config: "rendered-" + correlationID}
 	c.renderedConfigs[correlationID] = entry
 	return &publishWorkItem{
-		correlationID:  correlationID,
-		entry:          entry,
-		templateConfig: &v1alpha1.HAProxyTemplateConfig{},
+		correlationID: correlationID,
+		entry:         entry,
+		config:        publishConfigIdentity{},
 	}
 }
 
@@ -196,9 +195,9 @@ func TestProcessPublishWork_NoDeadlockWithLostLeadership(t *testing.T) {
 		c.renderedConfigs[id] = &renderedConfigEntry{config: "cfg", contentChecksum: id}
 		c.mu.Unlock()
 		return &publishWorkItem{
-			correlationID:  id,
-			templateConfig: &v1alpha1.HAProxyTemplateConfig{},
-			entry:          &renderedConfigEntry{config: "cfg", contentChecksum: id},
+			correlationID: id,
+			config:        publishConfigIdentity{},
+			entry:         &renderedConfigEntry{config: "cfg", contentChecksum: id},
 		}
 	}
 
