@@ -40,6 +40,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/textlogger"
 	streamhttp "k8s.io/streaming/pkg/httpstream"
@@ -411,13 +413,35 @@ func (f *gatewayMTLSFixture) assertBind(ctx context.Context, t *testing.T, pod *
 		container := &current.Status.InitContainerStatuses[index]
 		require.Zero(t, container.RestartCount, "%s/%s", pod.Name, container.Name)
 	}
-	// A moved pod port reaches the Service at once but the bind only after the
-	// deployer's interval and a reload, so the config may trail the Service.
+	// Disk config can lead the running worker during a paced reload.
 	pattern := regexp.MustCompile(fmt.Sprintf(`(?m)^\s+bind \*:%d ssl crt-list \S+`, f.ports[listener]))
 	require.Eventually(t, func() bool {
 		config, err := readFileFromHAProxyPod(ctx, pod.Name, "/etc/haproxy/haproxy.cfg")
-		return err == nil && config != "" && pattern.MatchString(config) == present
+		if err != nil || config == "" || pattern.MatchString(config) != present {
+			return false
+		}
+		listening, err := f.listenerActive(ctx, pod.Name, f.ports[listener])
+		return err == nil && listening == present
 	}, 90*time.Second, 2*time.Second, "%s listener=%s port=%d present=%v", pod.Name, listener, f.ports[listener], present)
+}
+
+func (f *gatewayMTLSFixture) listenerActive(ctx context.Context, pod string, port int) (bool, error) {
+	listening := false
+	for _, path := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		table, err := readFileFromHAProxyPod(ctx, pod, path)
+		if err != nil {
+			return false, err
+		}
+		if table == "" && path == "/proc/net/tcp6" {
+			continue
+		}
+		active, err := e2ecluster.HasTCPListener(table, port)
+		if err != nil {
+			return false, err
+		}
+		listening = listening || active
+	}
+	return listening, nil
 }
 
 func (f *gatewayMTLSFixture) assertOK(ctx context.Context, t *testing.T, pod, listener string, certificate *tls.Certificate) {

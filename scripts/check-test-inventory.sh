@@ -80,7 +80,7 @@ while IFS= read -r f; do
     echo "UNWIRED: $f (tag: '${tag:-none}') — files under this directory must carry '//go:build $want' or the '$want' runner silently skips them"
     fail=1
   fi
-done < <(git ls-files '*_test.go')
+done < <(git ls-files --cached --others --exclude-standard '*_test.go')
 
 if [ "$fail" -ne 0 ]; then
   echo ""

@@ -276,8 +276,16 @@ func (g *incrementalColdSourceFrameGeneration) revoke() {
 	g.revoked = true
 	if g.authority != nil {
 		g.authority.seal = nil
+		g.authority.session = nil
 	}
 	g.seal = nil
+	g.session = nil
+	for _, slot := range g.slotList {
+		slot.value = nil
+		slot.err = nil
+	}
+	g.slots = nil
+	g.slotList = nil
 }
 
 func (g *incrementalColdSourceFrameGeneration) validForPlanning() bool {
@@ -555,6 +563,7 @@ func buildIncrementalColdCertifiedSourceInput(
 				certified.value,
 			)
 		}
+		value.encoded = certified.encoded
 		value.value = object
 		value.certificate = certified.certificate
 	}

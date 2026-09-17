@@ -34,8 +34,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/e2e-framework/klient"
 
+	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
 // TestHapticHMAC verifies HMAC request-signature verification (64-gateway-
@@ -158,7 +158,9 @@ func TestHapticHMACBodyIntegrity(t *testing.T) {
 func expectIncompleteHMACBodyRejected(t *testing.T, host string) {
 	t.Helper()
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	address := net.JoinHostPort(kindutil.GetNodePortHost(), strconv.Itoa(HTTPHostPort))
+	endpoint, err := e2ecluster.ResolveTrafficEndpoint()
+	require.NoError(t, err)
+	address := net.JoinHostPort(endpoint.Host, strconv.Itoa(endpoint.HTTPPort))
 	connection, err := dialer.DialContext(t.Context(), "tcp4", address)
 	require.NoError(t, err)
 	defer connection.Close()

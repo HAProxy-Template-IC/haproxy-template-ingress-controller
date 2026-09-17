@@ -10,7 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `haptic_render_warnings{reason}` reports current template warnings, including unresolved backends, and clears them after recovery.
+
 ### Fixed
+
+- Retired cold-render frames release cached inputs and session references; certified inputs share their cached encoded representation.
 
 - Retry orphan cleanup after concurrent resource updates while preserving ownership and deletion preconditions.
 - Agent map verification reads runtime and file state under the apply lock, preventing false divergence during concurrent updates.

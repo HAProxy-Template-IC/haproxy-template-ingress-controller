@@ -289,6 +289,7 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 
 test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
 	@echo "Running tests..."
+	bash scripts/tests/test_check_test_inventory.sh
 	python3 -m unittest \
 		scripts/tests/test_prepare_gateway_api_canary.py \
 		scripts/tests/test_check_image_pins.py \

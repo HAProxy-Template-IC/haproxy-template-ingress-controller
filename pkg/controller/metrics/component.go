@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
@@ -23,6 +24,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // ComponentName is the unique identifier for the metrics component.
@@ -47,6 +49,7 @@ type Component struct {
 
 	// Queue wait tracking: correlationID → when ReconciliationTriggeredEvent was received
 	triggeredAt map[string]time.Time
+	lastEvents  *templating.RenderedEventSnapshot
 }
 
 // New creates a new metrics component that listens to events.
@@ -147,8 +150,7 @@ func (c *Component) handleEvent(event busevents.Event) {
 	case *events.ReconciliationStartedEvent:
 		c.handleReconciliationStarted(e)
 	case *events.ReconciliationCompletedEvent:
-		c.metrics.RecordReconciliation(msToSeconds(e.DurationMs), true)
-		c.metrics.SetRenderProfiles(e.ProfileCount)
+		c.handleReconciliationCompleted(e)
 	case *events.ReconciliationFailedEvent:
 		delete(c.triggeredAt, e.CorrelationID()) // cleanup to prevent map growth
 		c.metrics.RecordReconciliation(0, false)
@@ -231,6 +233,49 @@ func (c *Component) handleLostLeadership(e *events.LostLeadershipEvent) {
 	// converged < fleet_size becomes 0 < 0 (no false alert) and staleness stops
 	// growing.
 	c.metrics.ResetFleetConvergence()
+	c.metrics.SetRenderWarnings(nil)
+	c.lastEvents = nil
+}
+
+func (c *Component) handleReconciliationCompleted(event *events.ReconciliationCompletedEvent) {
+	c.metrics.RecordReconciliation(msToSeconds(event.DurationMs), true)
+	c.metrics.SetRenderProfiles(event.ProfileCount)
+	if c.becameLeaderAt.IsZero() {
+		return
+	}
+	if err := c.updateRenderWarnings(event); err != nil {
+		slog.Error("Cannot update render warning metrics", "error", err, "correlation_id", event.CorrelationID())
+	}
+}
+
+func (c *Component) updateRenderWarnings(event *events.ReconciliationCompletedEvent) error {
+	cycle, _, err := event.AuthenticatedRenderIdentity()
+	if err != nil {
+		return err
+	}
+	snapshot, err := cycle.RenderedEventSnapshot()
+	if err != nil {
+		return err
+	}
+	if c.lastEvents != nil {
+		same, err := snapshot.SameRoot(c.lastEvents)
+		if err != nil || same {
+			return err
+		}
+	}
+	rendered, err := snapshot.Events()
+	if err != nil {
+		return err
+	}
+	counts := make(map[string]int)
+	for _, event := range rendered {
+		if event.Type == templating.EventTypeWarning {
+			counts[event.Reason]++
+		}
+	}
+	c.metrics.SetRenderWarnings(counts)
+	c.lastEvents = snapshot
+	return nil
 }
 
 // msToSeconds converts a duration in milliseconds to seconds.
