@@ -228,6 +228,7 @@ The runner accepts these environment variables:
 |---|---|---|
 | `BENCH_REF` | `e81292ed876472804e0a2245876a7c445ab80881` | Exact `gateway-api-bench` commit to check out and record |
 | `BENCH_GATEWAY_API_VERSION` | `v1.4.0` | Gateway API release whose experimental CRD bundle is installed and verified |
+| `BENCH_KIND_NODE_IMAGE` | Kind's bundled default | Node image for a new cluster; use a digest-pinned image to control the Kubernetes version |
 | `BENCH_GATEWAY_API_CHANNEL` | `experimental` | Gateway API release channel (`experimental` or `standard`) |
 | `BENCH_SCENARIOS` | `probe,scale,routechange` | Comma-separated scenario subset and execution order |
 | `BENCH_OUTPUT_DIR` | `artifacts/gateway-api-bench/<YYYYMMDDtHHMMSSz>-<runner PID>` | Per-run result directory |

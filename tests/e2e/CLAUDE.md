@@ -96,6 +96,8 @@ HTTP and gRPC clients use the isolated cluster's node address and service NodePo
 they reject requests until that endpoint is configured during setup.
 `HAPTIC_E2E_GWAPI_CHANNEL=experimental` installs the experimental CRDs and
 enables the chart's matching experimental-field validation tests.
+`KIND_NODE_IMAGE` selects the node image when creating a cluster; it does not
+replace an existing cluster. Omit it to use Kind's bundled default.
 
 ## CI
 

@@ -56,6 +56,7 @@ BENCH_SCALE_DURATION="${BENCH_SCALE_DURATION:-${DEFAULT_SCALE_DURATION}}"
 BENCH_SCALE_STARTUP_TIMEOUT="${BENCH_SCALE_STARTUP_TIMEOUT:-20m}"
 BENCH_DEPLOY_INTERVAL="${BENCH_DEPLOY_INTERVAL:-}"
 BENCH_WATCH_DEBOUNCE="${BENCH_WATCH_DEBOUNCE:-}"
+BENCH_KIND_NODE_IMAGE="${BENCH_KIND_NODE_IMAGE:-}"
 BENCH_KEEP_CLUSTER="${BENCH_KEEP_CLUSTER:-false}"
 BENCH_ALLOW_DIRTY="${BENCH_ALLOW_DIRTY:-false}"
 BENCH_ALLOW_COSCHEDULED_CLUSTERS="${BENCH_ALLOW_COSCHEDULED_CLUSTERS:-false}"
@@ -173,11 +174,21 @@ capture_kind_cluster_inventory() {
     local errors="${BENCH_OUTPUT_DIR}/cluster/kind-clusters-${label}.stderr.txt"
     local inventory="${BENCH_OUTPUT_DIR}/cluster/kind-clusters-${label}.json"
     local coscheduled="${BENCH_OUTPUT_DIR}/cluster/kind-clusters-${label}-coscheduled.json"
+    local nodes="${BENCH_OUTPUT_DIR}/cluster/kind-nodes-${label}.json"
     if ! kind get clusters > "$raw" 2> "$errors"; then
         die "kind get clusters failed; see ${errors}"
     fi
     awk 'NF' "$raw" | jq -R . | jq -s . > "$inventory"
-    jq --arg target "$CLUSTER_NAME" '[.[] | select(. != $target)]' "$inventory" > "$coscheduled"
+    capture_kind_node_states "$nodes"
+    jq -e --slurpfile nodes "$nodes" 'all(.[]; . as $cluster |
+        any($nodes[0][]; .cluster == $cluster))' "$inventory" >/dev/null || \
+        die "cannot determine every Kind cluster's Docker state"
+    jq --arg target "$CLUSTER_NAME" --slurpfile nodes "$nodes" '
+        [.[] | select(. != $target) | . as $cluster |
+            select(any($nodes[0][]; .cluster == $cluster and
+                (.state.Running != false or .state.Paused != false or .state.Restarting != false or
+                    (.state.Status != "exited" and .state.Status != "created"))))]
+    ' "$inventory" > "$coscheduled"
     if jq -e --arg target "$CLUSTER_NAME" 'index($target) != null' "$inventory" >/dev/null; then
         kind_target_state=present
     else
@@ -201,6 +212,21 @@ capture_kind_cluster_inventory() {
         jq -r '.[]' "$coscheduled" >&2
         die "other Kind clusters are active; stop them or use BENCH_ALLOW_COSCHEDULED_CLUSTERS=true for a non-comparable smoke run"
     fi
+}
+
+capture_kind_node_states() {
+    local output="$1" ids
+    ids="$(docker ps -aq --filter label=io.x-k8s.kind.cluster)" || \
+        die "could not list Kind Docker containers"
+    if [[ -z "$ids" ]]; then
+        printf '[]\n' > "$output"
+        return
+    fi
+    local -a containers
+    mapfile -t containers <<< "$ids"
+    docker inspect --format '{"id":{{json .Id}},"cluster":{{json (index .Config.Labels "io.x-k8s.kind.cluster")}},"state":{{json .State}}}' \
+        "${containers[@]}" | jq -s . > "$output" || \
+        die "could not inspect Kind Docker container states"
 }
 
 verify_network_ownership() {
@@ -1171,6 +1197,7 @@ write_initial_metadata() {
         --arg allow_coscheduled_clusters "$BENCH_ALLOW_COSCHEDULED_CLUSTERS" \
         --arg cluster_name "$CLUSTER_NAME" \
         --arg cluster_context "$CLUSTER_CONTEXT" \
+        --arg kind_node_image "$BENCH_KIND_NODE_IMAGE" \
         --arg kubeconfig "$KUBECONFIG_PATH" \
         --arg docker_network "$DOCKER_NETWORK_NAME" \
         --arg cluster_token "$CLUSTER_OWNERSHIP_TOKEN" \
@@ -1255,6 +1282,7 @@ write_initial_metadata() {
             dirty_evidence: "tracked binary patch plus untracked path and content hashes; untracked contents are never copied"
           },
           cluster: {name: $cluster_name, context: $cluster_context, kubeconfig: $kubeconfig,
+                    requested_node_image: (if $kind_node_image == "" then null else $kind_node_image end),
                     docker_network: $docker_network, ownership_token: $cluster_token,
                     reuse_requested: ($reuse_cluster == "true"), keep_created: ($keep_cluster == "true"),
                     coscheduled_clusters_allowed: ($allow_coscheduled_clusters == "true"),
@@ -1484,7 +1512,7 @@ bootstrap_cluster() {
                 -u SKIP_DOCKER_BUILD -u SKIP_CLUSTER_CREATE -u IMAGE_NAME -u IMAGE_TAG -u REGISTRY \
                 -u HAPTIC_E2E_PROFILE -u TEST_RUN_PATTERN -u KEEP_CLUSTER -u KEEP_NAMESPACE \
                 -u HAPTIC_E2E_CLUSTER_NAME -u HAPTIC_E2E_KUBECONFIG_PATH \
-                -u HAPTIC_E2E_EXPOSE_HOST_PORTS -u KIND_EXPERIMENTAL_DOCKER_NETWORK \
+                -u HAPTIC_E2E_EXPOSE_HOST_PORTS -u KIND_EXPERIMENTAL_DOCKER_NETWORK -u KIND_NODE_IMAGE \
                 -u HAPTIC_EXPECTED_CONTROLLER_ROLLOUT_ID -u HAPTIC_EXPECTED_CONTROLLER_BINARY_SHA256 \
                 -u HAPTIC_EXPECTED_SOURCE_HASH -u HAPTIC_HAPROXY_VERSION -u HAPTIC_E2E_GWAPI_VERSION \
                 -u HAPTIC_E2E_GWAPI_CHANNEL \
@@ -1496,6 +1524,7 @@ bootstrap_cluster() {
                 HAPTIC_E2E_KUBECONFIG_PATH="$KUBECONFIG_PATH" \
                 HAPTIC_E2E_EXPOSE_HOST_PORTS=false \
                 KIND_EXPERIMENTAL_DOCKER_NETWORK="$DOCKER_NETWORK_NAME" \
+                KIND_NODE_IMAGE="$BENCH_KIND_NODE_IMAGE" \
                 HAPTIC_E2E_GWAPI_VERSION="$BENCH_GATEWAY_API_VERSION" \
                 HAPTIC_E2E_GWAPI_CHANNEL="$BENCH_GATEWAY_API_CHANNEL" \
                 TEST_RUN_PATTERN='^$' KEEP_CLUSTER=true make -C "$PROJECT_ROOT" test-e2e || bootstrap_rc=$?
