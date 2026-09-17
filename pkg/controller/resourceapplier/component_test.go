@@ -562,7 +562,7 @@ func TestPruneOrphans_ProtectsRecreatedAndOwnershipLostResources(t *testing.T) {
 	}
 }
 
-func TestPruneOrphans_ConflictRetainsUpdatedLineageForRetry(t *testing.T) {
+func TestPruneOrphans_ConflictRetriesWithUpdatedLineage(t *testing.T) {
 	comp, _, _ := newTestComp(t, false)
 	meta := appliedKeyMeta{
 		GVR: serviceGVR, Namespace: "haptic", Name: "svc-a",
@@ -587,19 +587,104 @@ func TestPruneOrphans_ConflictRetainsUpdatedLineageForRetry(t *testing.T) {
 	deleted, failed := comp.pruneOrphans(
 		context.Background(), map[string]appliedKeyMeta{}, map[string]struct{}{},
 	)
-	assert.Zero(t, deleted)
-	require.Equal(t, 1, failed)
-	require.Equal(t, "8", comp.lastAppliedKeys[key].ResourceVersion)
-
-	deleted, failed = comp.pruneOrphans(
-		context.Background(), map[string]appliedKeyMeta{}, map[string]struct{}{},
-	)
 	assert.Equal(t, 1, deleted)
 	assert.Zero(t, failed)
 	require.NotNil(t, secondDelete.Preconditions)
 	require.NotNil(t, secondDelete.Preconditions.ResourceVersion)
 	assert.Equal(t, "8", *secondDelete.Preconditions.ResourceVersion)
+	require.NotNil(t, secondDelete.Preconditions.UID)
+	assert.Equal(t, meta.UID, *secondDelete.Preconditions.UID)
+	assert.EqualValues(t, 2, deleteAttempts.Load())
 	assert.Empty(t, comp.lastAppliedKeys)
+}
+
+func TestPruneOrphans_ConflictFailuresRemainTracked(t *testing.T) {
+	tests := []struct {
+		name         string
+		inspect      func(*appliedKeyMeta) (runtime.Object, error)
+		wantAttempts int32
+		wantVersion  string
+	}{
+		{
+			name: "continuous updates", wantAttempts: 3, wantVersion: "8",
+			inspect: func(meta *appliedKeyMeta) (runtime.Object, error) {
+				return ownedObject(meta, "8"), nil
+			},
+		},
+		{
+			name: "inspection forbidden", wantAttempts: 1, wantVersion: "7",
+			inspect: func(meta *appliedKeyMeta) (runtime.Object, error) {
+				return nil, apierrors.NewForbidden(serviceGVR.GroupResource(), meta.Name, errors.New("denied"))
+			},
+		},
+		{
+			name: "missing version", wantAttempts: 1, wantVersion: "7",
+			inspect: func(meta *appliedKeyMeta) (runtime.Object, error) {
+				return ownedObject(meta, ""), nil
+			},
+		},
+		{
+			name: "wrong identity", wantAttempts: 1, wantVersion: "7",
+			inspect: func(meta *appliedKeyMeta) (runtime.Object, error) {
+				object := ownedObject(meta, "8")
+				object.SetNamespace("foreign")
+				return object, nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			comp, _, _ := newTestComp(t, false)
+			setLeader(comp)
+			meta := appliedKeyMeta{
+				GVR: serviceGVR, Namespace: "haptic", Name: "svc-a",
+				UID: "uid-original", ResourceVersion: "7",
+			}
+			key := "haptic/svc-a/" + serviceGVR.String()
+			comp.lastAppliedKeys[key] = meta
+			client := comp.dynamicClient.(*dynamicfake.FakeDynamicClient)
+			var attempts atomic.Int32
+			client.PrependReactor("delete", "services", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				options := action.(k8stesting.DeleteAction).GetDeleteOptions()
+				require.NotNil(t, options.Preconditions)
+				require.NotNil(t, options.Preconditions.UID)
+				assert.Equal(t, meta.UID, *options.Preconditions.UID)
+				attempts.Add(1)
+				return true, nil, apierrors.NewConflict(serviceGVR.GroupResource(), meta.Name, errors.New("changed"))
+			})
+			client.PrependReactor("get", "services", func(k8stesting.Action) (bool, runtime.Object, error) {
+				object, err := tt.inspect(&meta)
+				return true, object, err
+			})
+			err := comp.applyAndPrune(context.Background(), nil)
+			require.Error(t, err, "incomplete cleanup must preserve the convergence barrier")
+			assert.Equal(t, tt.wantAttempts, attempts.Load())
+			assert.Equal(t, tt.wantVersion, comp.lastAppliedKeys[key].ResourceVersion)
+		})
+	}
+}
+
+func TestPruneOrphans_CancellationStopsRetry(t *testing.T) {
+	comp, _, _ := newTestComp(t, false)
+	meta := appliedKeyMeta{GVR: serviceGVR, Namespace: "haptic", Name: "svc-a", UID: "uid-original", ResourceVersion: "7"}
+	comp.lastAppliedKeys["orphan"] = meta
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := comp.dynamicClient.(*dynamicfake.FakeDynamicClient)
+	var attempts atomic.Int32
+	client.PrependReactor("delete", "services", func(k8stesting.Action) (bool, runtime.Object, error) {
+		attempts.Add(1)
+		return true, nil, apierrors.NewConflict(serviceGVR.GroupResource(), meta.Name, errors.New("changed"))
+	})
+	client.PrependReactor("get", "services", func(k8stesting.Action) (bool, runtime.Object, error) {
+		cancel()
+		return true, ownedObject(&meta, "8"), nil
+	})
+	deleted, failed := comp.pruneOrphans(ctx, map[string]appliedKeyMeta{}, map[string]struct{}{})
+	assert.Zero(t, deleted)
+	assert.Equal(t, 1, failed)
+	assert.EqualValues(t, 1, attempts.Load())
+	assert.Equal(t, "8", comp.lastAppliedKeys["orphan"].ResourceVersion)
 }
 
 func ownedObject(meta *appliedKeyMeta, resourceVersion string) *unstructured.Unstructured {

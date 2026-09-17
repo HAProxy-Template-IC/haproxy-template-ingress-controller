@@ -1107,32 +1107,18 @@ func (c *Component) pruneOrphans(
 			failed++
 			continue
 		}
-		uid, resourceVersion := meta.UID, meta.ResourceVersion
-		err := c.dynamicClient.Resource(meta.GVR).Namespace(meta.Namespace).Delete(
-			ctx, meta.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{
-				UID: &uid, ResourceVersion: &resourceVersion,
-			}},
-		)
-		if apierrors.IsConflict(err) {
-			next, retain, retry := c.resolvePruneConflict(ctx, &meta)
-			if retain {
-				stillApplied[key] = next
-			}
-			if retry {
-				failed++
-			}
-			continue
-		}
-		if err != nil && !apierrors.IsNotFound(err) {
+		removed, err := c.deleteOrphan(ctx, &meta)
+		if err != nil {
 			c.Logger().Error("Failed to delete orphan resource",
 				"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String(),
 				"error", err)
-			// Keep it in the cache so we'll try again next reconciliation.
 			stillApplied[key] = meta
 			failed++
 			continue
 		}
-		deleted++
+		if removed {
+			deleted++
+		}
 	}
 
 	c.mu.Lock()
@@ -1141,45 +1127,62 @@ func (c *Component) pruneOrphans(
 	return deleted, failed
 }
 
-func (c *Component) resolvePruneConflict(
-	ctx context.Context,
-	meta *appliedKeyMeta,
-) (next appliedKeyMeta, retain, retry bool) {
+func (c *Component) deleteOrphan(ctx context.Context, meta *appliedKeyMeta) (bool, error) {
+	const maxAttempts = 3
+	var err error
+	for range maxAttempts {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		uid, resourceVersion := meta.UID, meta.ResourceVersion
+		err = c.dynamicClient.Resource(meta.GVR).Namespace(meta.Namespace).Delete(
+			ctx, meta.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{
+				UID: &uid, ResourceVersion: &resourceVersion,
+			}},
+		)
+		if !apierrors.IsConflict(err) {
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			return err == nil, err
+		}
+		owned, inspectErr := c.refreshOrphanLineage(ctx, meta)
+		if inspectErr != nil || !owned {
+			return false, inspectErr
+		}
+	}
+	return false, err
+}
+
+func (c *Component) refreshOrphanLineage(ctx context.Context, meta *appliedKeyMeta) (bool, error) {
 	object, err := c.dynamicClient.Resource(meta.GVR).Namespace(meta.Namespace).Get(
 		ctx, meta.Name, metav1.GetOptions{},
 	)
 	if apierrors.IsNotFound(err) {
-		return appliedKeyMeta{}, false, false
+		return false, nil
 	}
 	if err != nil {
-		c.Logger().Error("Failed to inspect conflicting orphan resource",
-			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String(), "error", err)
-		return *meta, true, true
+		return false, fmt.Errorf("inspect conflicting orphan: %w", err)
 	}
 	if object == nil || object.GetName() != meta.Name || object.GetNamespace() != meta.Namespace {
-		c.Logger().Error("Conflicting orphan response has invalid identity",
-			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String())
-		return *meta, true, true
+		return false, errors.New("conflicting orphan response has invalid identity")
 	}
 	if object.GetUID() != meta.UID {
 		c.Logger().Warn("Orphan name now belongs to a different resource; leaving it untouched",
 			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String())
-		return appliedKeyMeta{}, false, false
+		return false, nil
 	}
 	if !c.ownsAppliedResource(object) {
 		c.Logger().Warn("Orphan resource ownership changed; leaving it untouched",
 			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String())
-		return appliedKeyMeta{}, false, false
+		return false, nil
 	}
 	resourceVersion := object.GetResourceVersion()
 	if resourceVersion == "" {
-		c.Logger().Error("Conflicting orphan response lacks resourceVersion",
-			"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String())
-		return *meta, true, true
+		return false, errors.New("conflicting orphan response lacks resourceVersion")
 	}
-	next = *meta
-	next.ResourceVersion = resourceVersion
-	return next, true, true
+	meta.ResourceVersion = resourceVersion
+	return true, nil
 }
 
 func (c *Component) ownsAppliedResource(object *unstructured.Unstructured) bool {
