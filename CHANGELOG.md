@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An unchanged republish of the output CRDs (HAProxyCfg, map/general/crt-list files, Secrets) is skipped for one drift-prevention interval per key, and the resource applier skips the SSA pass for a cycle whose rendered resources are identical to the last applied one for the same interval. The interval-expiry write remains the periodic authoritative self-heal; on a churn-heavy cluster this removes the constant per-reconcile GET/LIST/PATCH sweep against the apiserver (measured ~110 reads/s at idle on a 1500-Ingress fleet).
 - Configuration assembly reuses unchanged document subtrees when fragments are added or removed, reducing allocations.
 - The rendered-output rejection log names whether the mismatching plan file and artifact were inherited from the previous render or produced by the rejected one (#213).
 

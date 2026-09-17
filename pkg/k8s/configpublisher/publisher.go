@@ -23,6 +23,9 @@ import (
 	"hash"
 	"log/slog"
 	"path"
+	"slices"
+	"sync"
+	"time"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -56,6 +59,121 @@ type Publisher struct {
 	// auxStamps elides per-pod status re-stamps on auxiliary-file CRs whose
 	// value is unchanged (see aux_stamp_cache.go). Zero value is ready to use.
 	auxStamps auxStampCache
+
+	// publishedMu guards published, the last successful publication per
+	// (namespace, template, suffix) key. With republishInterval > 0 an
+	// unchanged republish inside the interval returns the recorded result
+	// without any API call — the same elision contract as auxStampCache one
+	// level up: only a write of provably identical content is skipped, and
+	// the interval-expiry republish stays the authoritative self-heal for
+	// out-of-band child deletions. Zero interval disables skipping, so every
+	// constructor that does not opt in keeps the old behavior.
+	publishedMu       sync.Mutex
+	published         map[publishedKey]publishedState
+	republishInterval time.Duration
+}
+
+// publishedKey identifies one publication target.
+type publishedKey struct {
+	namespace  string
+	name       string
+	nameSuffix string
+}
+
+// publishedState is what the last successful PublishConfig wrote for a key.
+// A request matches iff every content-bearing field is equal; the owner UID is
+// content here because it lands in every child's ownerReferences.
+type publishedState struct {
+	ownerUID             string
+	setID                string
+	checksum             string
+	config               string
+	configPath           string
+	validationError      string
+	compressionThreshold int64
+	at                   time.Time
+	result               PublishResult
+}
+
+// SetRepublishInterval enables unchanged-republish skipping for at most d per
+// key. Pass the drift-prevention interval so the publish self-heal cadence
+// matches the deployment one; zero disables skipping.
+func (p *Publisher) SetRepublishInterval(d time.Duration) {
+	p.publishedMu.Lock()
+	defer p.publishedMu.Unlock()
+	p.republishInterval = d
+}
+
+// clonePublishResult deep-copies the slices so a consumer mutating a returned
+// result cannot poison the cached one (and vice versa).
+func clonePublishResult(r *PublishResult) PublishResult {
+	out := *r
+	out.MapFileNames = slices.Clone(r.MapFileNames)
+	out.SecretNames = slices.Clone(r.SecretNames)
+	out.SSLCaFileNames = slices.Clone(r.SSLCaFileNames)
+	out.GeneralFileNames = slices.Clone(r.GeneralFileNames)
+	out.CRTListFileNames = slices.Clone(r.CRTListFileNames)
+	return out
+}
+
+// skippableResult returns the recorded result when the canonicalized request
+// matches the last successful publication for its key inside the republish
+// interval. Must be called with the CANONICAL request (auxiliarySetID set).
+func (p *Publisher) skippableResult(req *PublishRequest) (*PublishResult, bool) {
+	p.publishedMu.Lock()
+	defer p.publishedMu.Unlock()
+	if p.republishInterval <= 0 || req.Force {
+		return nil, false
+	}
+	key := publishedKey{namespace: req.TemplateConfigNamespace, name: req.TemplateConfigName, nameSuffix: req.NameSuffix}
+	state, ok := p.published[key]
+	if !ok || time.Since(state.at) >= p.republishInterval {
+		return nil, false
+	}
+	if state.ownerUID != string(req.TemplateConfigUID) ||
+		state.setID != req.auxiliarySetID ||
+		state.checksum != req.Checksum ||
+		state.config != req.Config ||
+		state.configPath != req.ConfigPath ||
+		state.validationError != req.ValidationError ||
+		state.compressionThreshold != req.CompressionThreshold {
+		return nil, false
+	}
+	result := clonePublishResult(&state.result)
+	return &result, true
+}
+
+// recordPublished stores a successful publication for skippableResult.
+func (p *Publisher) recordPublished(req *PublishRequest, result *PublishResult) {
+	p.publishedMu.Lock()
+	defer p.publishedMu.Unlock()
+	if p.republishInterval <= 0 {
+		return
+	}
+	if p.published == nil {
+		p.published = make(map[publishedKey]publishedState)
+	}
+	key := publishedKey{namespace: req.TemplateConfigNamespace, name: req.TemplateConfigName, nameSuffix: req.NameSuffix}
+	p.published[key] = publishedState{
+		ownerUID:             string(req.TemplateConfigUID),
+		setID:                req.auxiliarySetID,
+		checksum:             req.Checksum,
+		config:               req.Config,
+		configPath:           req.ConfigPath,
+		validationError:      req.ValidationError,
+		compressionThreshold: req.CompressionThreshold,
+		at:                   time.Now(),
+		result:               clonePublishResult(result),
+	}
+}
+
+// forgetPublished voids a key's state after a failed publish: the failure may
+// have landed a partial write (e.g. the HAProxyCfg spec), so the recorded
+// claim about what is live no longer holds.
+func (p *Publisher) forgetPublished(req *PublishRequest) {
+	p.publishedMu.Lock()
+	defer p.publishedMu.Unlock()
+	delete(p.published, publishedKey{namespace: req.TemplateConfigNamespace, name: req.TemplateConfigName, nameSuffix: req.NameSuffix})
 }
 
 // ResetAuxiliaryStampCache drops every remembered auxiliary-file status stamp.
@@ -117,8 +235,16 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		)
 	}
 	req = canonicalRequest
+	if cached, ok := p.skippableResult(req); ok {
+		p.logger.Debug("Skipping unchanged republish",
+			"runtime_config", cached.RuntimeConfigName,
+			"auxiliary_set_id", req.auxiliarySetID,
+		)
+		return cached, nil
+	}
 	runtimeConfig, err := p.createOrUpdateRuntimeConfig(ctx, req)
 	if err != nil {
+		p.forgetPublished(req)
 		return nil, incompletePublicationError(
 			PublicationStageRuntimeConfig,
 			req.TemplateConfigNamespace,
@@ -141,11 +267,13 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 
 	if req.AuxiliaryFiles != nil {
 		if err := p.publishAuxiliaryFiles(ctx, req, runtimeConfig, result); err != nil {
+			p.forgetPublished(req)
 			return result, err
 		}
 	}
 
 	if err := p.updateRuntimeConfigStatus(ctx, runtimeConfig, result); err != nil {
+		p.forgetPublished(req)
 		return result, incompletePublicationError(
 			PublicationStageReferences,
 			runtimeConfig.Namespace,
@@ -156,8 +284,11 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		)
 	}
 	if err := p.pruneAuxiliaryFiles(ctx, runtimeConfig, result); err != nil {
+		p.forgetPublished(req)
 		return result, err
 	}
+
+	p.recordPublished(req, result)
 
 	p.logger.Debug("Published runtime config",
 		"runtime_config", runtimeConfig.Name,
