@@ -158,6 +158,13 @@ type DeploymentScheduler struct {
 	deployFailureRetries int
 	lastFailedRetry      *rendercycle.Occurrence
 
+	// lastPendingReloadLog dedupes the pending-reload follow-up log: renders
+	// keep dispatching while a reload is pending, and every completion re-arms
+	// the follow-up timer — on a churn-heavy fleet that is dozens of identical
+	// lines per second. Protected by schedulerMutex; cleared on a fully
+	// deployed completion so the next pending window logs at Info again.
+	lastPendingReloadLog pendingReloadLogKey
+
 	// lastPodSetHash is the endpoint authority set the last dispatch targeted.
 	// A change to it retires any in-flight deploy: its pods are not the fleet
 	// any more. Protected by schedulerMutex.

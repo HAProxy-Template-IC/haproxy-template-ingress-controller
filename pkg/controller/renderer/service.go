@@ -338,7 +338,9 @@ type RenderService struct {
 
 	planAuthority              *renderplan.Authority
 	planDigestFallbacks        atomic.Uint64
-	assemblyFallbackReason     atomic.Pointer[string]
+	assemblyReuseMu            sync.Mutex
+	assemblyLastReason         *string
+	assemblySeenReasons        map[string]bool
 	artifactAuthority          *renderartifact.Authority
 	outputAuthority            *renderoutput.Authority
 	cycleAuthority             *rendercycle.Authority
@@ -1375,17 +1377,42 @@ func (s *RenderService) reportAssemblyReuse(reuse rendercontext.AssemblyReuse) {
 	}
 	s.logger.Debug("Assembled configuration reuse",
 		"reused", reuse.Reused, "rebuilt", reuse.Rebuilt, "fallback", reuse.FallbackReason)
-	previous := s.assemblyFallbackReason.Swap(&reuse.FallbackReason)
-	if previous != nil && *previous == reuse.FallbackReason {
+	changed, firstSight := s.assemblyReuseTransition(reuse.FallbackReason)
+	if !changed {
 		return
 	}
+	level := slog.LevelInfo
+	if !firstSight {
+		// A non-identity post-process chain makes engaged↔fallback flip on
+		// every content change; the oscillation is Debug, each state's first
+		// sight keeps the Info visibility the fallback needs.
+		level = slog.LevelDebug
+	}
 	if reuse.FallbackReason == "" {
-		s.logger.Info("Incremental configuration assembly is engaged",
+		s.logger.Log(context.Background(), level, "Incremental configuration assembly is engaged",
 			"reused", reuse.Reused, "rebuilt", reuse.Rebuilt)
 		return
 	}
-	s.logger.Info("Incremental configuration assembly is unavailable",
+	s.logger.Log(context.Background(), level, "Incremental configuration assembly is unavailable",
 		"reason", reuse.FallbackReason)
+}
+
+// assemblyReuseTransition reports whether the fallback state changed since the
+// last render and whether this state appears for the first time.
+func (s *RenderService) assemblyReuseTransition(reason string) (changed, firstSight bool) {
+	s.assemblyReuseMu.Lock()
+	defer s.assemblyReuseMu.Unlock()
+	if s.assemblyLastReason != nil && *s.assemblyLastReason == reason {
+		return false, false
+	}
+	current := reason
+	s.assemblyLastReason = &current
+	if s.assemblySeenReasons == nil {
+		s.assemblySeenReasons = make(map[string]bool)
+	}
+	firstSight = !s.assemblySeenReasons[reason]
+	s.assemblySeenReasons[reason] = true
+	return true, firstSight
 }
 
 func outputSnapshotIdentity(snapshot *renderoutput.Snapshot) (contentChecksum, planID string, err error) {

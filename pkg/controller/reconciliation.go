@@ -245,11 +245,11 @@ func createReconciliationComponents(
 			CommitValidator: proposalValidation,
 			Logger:          logger,
 		}),
-		StoreProvider: storeProvider,
-		CurrentFiles:  currentFiles.publishedSnapshot,
-		GraphWarm:     renderService.IncrementalGraphWarm,
-		Metrics:       setup.MetricsComponent.Metrics(),
-		Logger:        logger,
+		StoreProvider:      storeProvider,
+		CurrentFilesSource: currentFiles.PublishedExactSource,
+		GraphWarm:          renderService.IncrementalGraphWarm,
+		Metrics:            setup.MetricsComponent.Metrics(),
+		Logger:             logger,
 	})
 
 	// The event adapter validates HTTP-store content promotion.

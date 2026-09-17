@@ -16,6 +16,7 @@ package deployer
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -595,6 +596,9 @@ func (s *DeploymentScheduler) cacheDeploymentCompletion(
 		return
 	}
 	fullyDeployed := event.Failed == 0 && event.PendingReloads == 0
+	if fullyDeployed {
+		s.clearPendingReloadLogState()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -604,6 +608,18 @@ func (s *DeploymentScheduler) cacheDeploymentCompletion(
 		s.lastDeployedPodSetHash = event.PodSetHash
 		s.lastDeployedTime = time.Now()
 	}
+}
+
+// pendingReloadLogKey is one pending-reload wait state; a repeat logs at Debug.
+type pendingReloadLogKey struct {
+	checksum    string
+	pendingPods int
+}
+
+func (s *DeploymentScheduler) clearPendingReloadLogState() {
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	s.lastPendingReloadLog = pendingReloadLogKey{}
 }
 
 // pendingReloadFollowUpMargin is added to the agent's scheduled_at so the
@@ -651,10 +667,19 @@ func (s *DeploymentScheduler) schedulePendingReloadFollowUp(event *events.Deploy
 		s.runRetry(generation, workRevision, "pending_reload_follow_up")
 	})
 
-	s.logger.Info("Reloads pending on the fleet; following up when they fire",
+	// Renders keep dispatching while a reload is pending, and every completion
+	// re-arms this timer — dozens of identical lines per second on a
+	// churn-heavy fleet. One Info per distinct wait state, repeats at Debug.
+	logKey := pendingReloadLogKey{checksum: completedContentChecksum(event), pendingPods: event.PendingReloads}
+	level := slog.LevelInfo
+	if logKey == s.lastPendingReloadLog {
+		level = slog.LevelDebug
+	}
+	s.lastPendingReloadLog = logKey
+	s.logger.Log(context.Background(), level, "Reloads pending on the fleet; following up when they fire",
 		"pending_pods", event.PendingReloads,
 		"wait_ms", wait.Milliseconds(),
-		"checksum", completedContentChecksum(event))
+		"checksum", logKey.checksum)
 }
 
 // scheduleFailureRetry arms (or re-arms) the single fast-retry timer after a
