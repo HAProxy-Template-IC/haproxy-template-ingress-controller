@@ -15,6 +15,8 @@
 package configpublisher
 
 import (
+	"k8s.io/apimachinery/pkg/types"
+
 	"fmt"
 	"slices"
 
@@ -48,24 +50,43 @@ func cloneAuxiliaryFiles(files *dataplane.AuxiliaryFiles) *dataplane.AuxiliaryFi
 	return &clone
 }
 
+// publishConfigIdentity is the slice of the HAProxyTemplateConfig a publish
+// work item consumes. Snapshotting only it spares the full spec deep copy —
+// dominated by the bundled validationTests — on every queued publish.
+type publishConfigIdentity struct {
+	name                 string
+	namespace            string
+	uid                  types.UID
+	compressionThreshold int64
+}
+
+func (c *Component) publishIdentityFor(templateConfig *v1alpha1.HAProxyTemplateConfig) publishConfigIdentity {
+	return publishConfigIdentity{
+		name:                 templateConfig.Name,
+		namespace:            templateConfig.Namespace,
+		uid:                  templateConfig.UID,
+		compressionThreshold: c.getCompressionThreshold(templateConfig),
+	}
+}
+
 func (c *Component) makePublishWorkItem(
 	correlationID string,
 	templateConfig *v1alpha1.HAProxyTemplateConfig,
 	entry *renderedConfigEntry,
 	deployDriven bool,
 ) *publishWorkItem {
-	templateSnapshot := templateConfig.DeepCopy()
+	identity := c.publishIdentityFor(templateConfig)
 	entrySnapshot := cloneRenderedConfigEntry(entry)
 	generation, term, superseded := c.assignPublishAuthority(deployDriven)
 	return &publishWorkItem{
-		correlationID:  correlationID,
-		templateConfig: templateSnapshot,
-		entry:          entrySnapshot,
-		request:        c.buildPublishRequest(templateSnapshot, entrySnapshot),
-		deployDriven:   deployDriven,
-		generation:     generation,
-		term:           term,
-		superseded:     superseded,
+		correlationID: correlationID,
+		config:        identity,
+		entry:         entrySnapshot,
+		request:       c.buildPublishRequest(identity, entrySnapshot),
+		deployDriven:  deployDriven,
+		generation:    generation,
+		term:          term,
+		superseded:    superseded,
 	}
 }
 
@@ -83,15 +104,15 @@ func (c *Component) makeValidationFailedWorkItem(
 		}
 	}
 
-	templateSnapshot := templateConfig.DeepCopy()
+	identity := c.publishIdentityFor(templateConfig)
 	entrySnapshot := cloneRenderedConfigEntry(entry)
-	request := c.buildPublishRequest(templateSnapshot, entrySnapshot)
+	request := c.buildPublishRequest(identity, entrySnapshot)
 	request.NameSuffix = "-invalid"
 	request.ValidationError = validationError
 	generation, term, superseded := c.assignInvalidGeneration()
 	return &validationFailedWorkItem{
 		correlationID:   correlationID,
-		templateConfig:  templateSnapshot,
+		config:          identity,
 		entry:           entrySnapshot,
 		request:         request,
 		validationError: validationError,

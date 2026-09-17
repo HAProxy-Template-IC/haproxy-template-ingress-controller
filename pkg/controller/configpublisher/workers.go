@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
@@ -33,13 +32,13 @@ const haproxyConfigPath = "/etc/haproxy/haproxy.cfg"
 // buildPublishRequest assembles the PublishRequest fields shared by both the
 // happy-path publish and the validation-failed publish. Callers layer the
 // extra fields (NameSuffix, ValidationError) on top.
-func (c *Component) buildPublishRequest(templateConfig *v1alpha1.HAProxyTemplateConfig, entry *renderedConfigEntry) *configpublisher.PublishRequest {
+func (c *Component) buildPublishRequest(identity publishConfigIdentity, entry *renderedConfigEntry) *configpublisher.PublishRequest {
 	request := &configpublisher.PublishRequest{
-		TemplateConfigName:      templateConfig.Name,
-		TemplateConfigNamespace: templateConfig.Namespace,
-		TemplateConfigUID:       templateConfig.UID,
+		TemplateConfigName:      identity.name,
+		TemplateConfigNamespace: identity.namespace,
+		TemplateConfigUID:       identity.uid,
 		ConfigPath:              haproxyConfigPath,
-		CompressionThreshold:    c.getCompressionThreshold(templateConfig),
+		CompressionThreshold:    identity.compressionThreshold,
 	}
 	if entry.outputSnapshot != nil {
 		request.OutputSnapshot = entry.outputSnapshot
@@ -135,8 +134,8 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 	}
 
 	c.logger.Debug("Processing publish work",
-		"config_name", work.templateConfig.Name,
-		"config_namespace", work.templateConfig.Namespace,
+		"config_name", work.config.name,
+		"config_namespace", work.config.namespace,
 		"config_bytes", len(work.entry.config),
 		"correlation_id", work.correlationID,
 	)
@@ -266,7 +265,7 @@ func (c *Component) skipIfAlreadyPublished(work *publishWorkItem, msg string) bo
 func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 	request := work.request
 	if request == nil {
-		request = c.buildPublishRequest(work.templateConfig, work.entry)
+		request = c.buildPublishRequest(work.config, work.entry)
 		work.request = request
 	}
 
@@ -350,14 +349,14 @@ func (c *Component) processValidationFailedWork(ctx context.Context, work *valid
 	}
 
 	c.logger.Debug("Processing validation failed work",
-		"config_name", work.templateConfig.Name,
-		"config_namespace", work.templateConfig.Namespace,
+		"config_name", work.config.name,
+		"config_namespace", work.config.namespace,
 		"correlation_id", work.correlationID,
 	)
 
 	request := work.request
 	if request == nil {
-		request = c.buildPublishRequest(work.templateConfig, work.entry)
+		request = c.buildPublishRequest(work.config, work.entry)
 		request.NameSuffix = "-invalid"
 		request.ValidationError = work.validationError
 		work.request = request

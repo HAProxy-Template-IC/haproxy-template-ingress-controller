@@ -52,10 +52,7 @@ func TestRenderedConfigEntryFromOutputSnapshot(t *testing.T) {
 	assert.Nil(t, entry.auxFiles)
 
 	component := &Component{}
-	templateConfig := &v1alpha1.HAProxyTemplateConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-	}
-	request := component.buildPublishRequest(templateConfig, entry)
+	request := component.buildPublishRequest(publishConfigIdentity{name: "test", namespace: "default"}, entry)
 	assert.Same(t, snapshot, request.OutputSnapshot)
 	assert.Empty(t, request.Config)
 	assert.Nil(t, request.AuxiliaryFiles)
@@ -84,7 +81,7 @@ func TestRenderedConfigEntryFromDeployedOutputSnapshot(t *testing.T) {
 	assert.Nil(t, entry.auxFiles)
 
 	request := (&Component{}).buildPublishRequest(
-		&v1alpha1.HAProxyTemplateConfig{ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"}},
+		publishConfigIdentity{name: "test", namespace: "default"},
 		entry,
 	)
 	assert.Same(t, snapshot, request.OutputSnapshot)

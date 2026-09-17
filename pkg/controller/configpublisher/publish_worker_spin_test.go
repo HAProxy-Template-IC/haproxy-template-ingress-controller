@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
 )
 
@@ -50,10 +49,10 @@ func TestPublishWorker_DoesNotSpinWhileThrottleGateIsClosed(t *testing.T) {
 	require.False(t, c.publishThrottle.Available(), "gate must be closed for this test to mean anything")
 
 	c.enqueueDeployed(&publishWorkItem{
-		correlationID:  "deployed:abc",
-		templateConfig: &v1alpha1.HAProxyTemplateConfig{},
-		entry:          &renderedConfigEntry{contentChecksum: "abc"},
-		deployDriven:   true,
+		correlationID: "deployed:abc",
+		config:        publishConfigIdentity{},
+		entry:         &renderedConfigEntry{contentChecksum: "abc"},
+		deployDriven:  true,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -114,10 +113,10 @@ func TestPublishWorker_QueuedDeployWorkStillFlushesWhenGateReopens(t *testing.T)
 	require.False(t, c.publishThrottle.Available())
 
 	c.enqueueDeployed(&publishWorkItem{
-		correlationID:  "deployed:abc",
-		templateConfig: &v1alpha1.HAProxyTemplateConfig{},
-		entry:          &renderedConfigEntry{config: published, contentChecksum: published},
-		deployDriven:   true,
+		correlationID: "deployed:abc",
+		config:        publishConfigIdentity{},
+		entry:         &renderedConfigEntry{config: published, contentChecksum: published},
+		deployDriven:  true,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())

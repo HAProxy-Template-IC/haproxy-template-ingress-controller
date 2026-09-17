@@ -23,6 +23,7 @@ import (
 	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
@@ -38,9 +39,18 @@ type incrementalPublicationSnapshotGeneration struct {
 	seal      *incrementalPublicationSnapshotGeneration
 	authority *incrementalPublicationSnapshotAuthority
 
+	// liveSources counts captured source snapshots. A generation with none —
+	// every query outside an actively publishing render — resolves nothing,
+	// so readers skip the per-winner source walk entirely.
+	liveSources atomic.Int64
+
 	mu     sync.RWMutex
 	active bool
 	shards *incrementalPublicationSnapshotShards
+}
+
+func (g *incrementalPublicationSnapshotGeneration) hasLiveSources() bool {
+	return g != nil && g.liveSources.Load() > 0
 }
 
 const incrementalPublicationSnapshotShardCount = 64
@@ -270,6 +280,7 @@ func (g *incrementalPublicationSnapshotGeneration) capture(
 		return encoded, existing, nil
 	}
 	shard.values[location] = candidate
+	g.liveSources.Add(1)
 	return encoded, candidate, nil
 }
 
@@ -363,11 +374,6 @@ func (g *incrementalPublicationSnapshotGeneration) resolveSource(
 		return nil, false, nil
 	}
 	location := string(winner.location)
-	binding := incrementalPublicationSnapshotBindingFromInput(
-		incrementalPublicationSnapshotSourceInput(
-			group, location, winner.value.Cell, winner.value.Key, winner.value.Rank, winner.value.Value,
-		),
-	)
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	if !g.validLocked() {
@@ -383,6 +389,14 @@ func (g *incrementalPublicationSnapshotGeneration) resolveSource(
 	if !exists {
 		return nil, false, nil
 	}
+	// The binding is only the authentication input, so a miss — every winner
+	// on a query outside an actively publishing render — never pays for
+	// encoding the winner's value into one.
+	binding := incrementalPublicationSnapshotBindingFromInput(
+		incrementalPublicationSnapshotSourceInput(
+			group, location, winner.value.Cell, winner.value.Key, winner.value.Rank, winner.value.Value,
+		),
+	)
 	if err := snapshot.authenticateLocked(g, binding); err != nil {
 		return nil, false, err
 	}
@@ -821,17 +835,21 @@ func (r *incrementalRenderSession) certifiedPublicationValues(
 			return nil, nil, err
 		}
 	}
+	// Without live sources the generation resolves nothing: derived entries
+	// are only stored on live hits, so the whole winner walk is a guaranteed
+	// miss and the memoized index values are the answer.
+	if !r.publicationGeneration.hasLiveSources() {
+		return index.certifiedPublishedValues(cell)
+	}
 	input, winners, err := incrementalSelectorValuesInputWithWinners(index, group, cell)
 	if err != nil {
 		return nil, nil, err
 	}
-	if r.publicationGeneration != nil {
-		values, certificate, resolved, err := r.publicationGeneration.resolveSelectorValues(
-			index, group, input, winners,
-		)
-		if err != nil || resolved {
-			return values, certificate, err
-		}
+	values, certificate, resolved, err := r.publicationGeneration.resolveSelectorValues(
+		index, group, input, winners,
+	)
+	if err != nil || resolved {
+		return values, certificate, err
 	}
 	return index.certifiedPublishedValues(cell)
 }
@@ -845,17 +863,21 @@ func (r *coldIncrementalRenderer) certifiedPublicationValues(
 			return nil, nil, err
 		}
 	}
+	// Without live sources the generation resolves nothing: derived entries
+	// are only stored on live hits, so the whole winner walk is a guaranteed
+	// miss and the memoized index values are the answer.
+	if !r.publicationGeneration.hasLiveSources() {
+		return index.certifiedPublishedValues(cell)
+	}
 	input, winners, err := incrementalSelectorValuesInputWithWinners(index, group, cell)
 	if err != nil {
 		return nil, nil, err
 	}
-	if r.publicationGeneration != nil {
-		values, certificate, resolved, err := r.publicationGeneration.resolveSelectorValues(
-			index, group, input, winners,
-		)
-		if err != nil || resolved {
-			return values, certificate, err
-		}
+	values, certificate, resolved, err := r.publicationGeneration.resolveSelectorValues(
+		index, group, input, winners,
+	)
+	if err != nil || resolved {
+		return values, certificate, err
 	}
 	return index.certifiedPublishedValues(cell)
 }
