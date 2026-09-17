@@ -55,7 +55,7 @@ templateSnippets:
               continue
             }
             var resolved = split(ResolveServicePort(namespace, candidate,
-              dig(path, "backend", "service", "port")), " ")
+              dig(path, "backend", "service", "port"), ingress), " ")
             serviceName = candidate
             servicePort = toint(resolved[0])
             servicePortName = resolved[1]

@@ -58,8 +58,15 @@ templateSnippets:
 
         Failure modes (call fail() and abort the render):
           - portRef is nil or has neither number nor name
-          - portRef.name is set but the Service EXISTS and has no port with
-            that name (a typo — fail loudly, see below)
+          - owner is nil and portRef.name is set but the Service EXISTS and
+            has no port with that name (a typo — fail loudly, see below).
+            With a non-nil owner the typo degrades like a missing Service
+            instead: admission still rejects it (WebhookRejectOrWarn), but a
+            reconcile records a ServicePortNotFound Warning Event on the
+            owner and renders the empty backend — one watched resource's
+            typo must not abort the whole render, which on a first render
+            has no last-known-good to fall back to and on a running fleet
+            wedges every subsequent config change.
           - Resolved port is <= 0 while the Service exists (defensive: e.g.
             Service port entry has port: 0)
 
@@ -88,18 +95,20 @@ templateSnippets:
           configs (server lines pointing at ports nothing was listening on) that
           looked syntactically valid; a real-world ingress for a unifi controller
           served 503 with <NOSRV>/SC-- for 73 days before the issue was noticed.
-          fail() aborts the render, surfaces in controller logs and Ingress/
-          Gateway `deployFailed` status, and leaves the last-known-good config
-          serving — so a single misconfigured ingress doesn't break the cluster.
+          The typo stays loud either way: with owner=nil it fail()s (config-level
+          references have no resource to warn on), and with an owner it is
+          rejected at admission and reported as a Warning Event on the owner
+          while only that route degrades to 503.
 
         Example:
-          {%- var resolved = split(ResolveServicePort(tostring(ns), tostring(svcName), svc | dig("port")), " ") -%}
+          {%- var resolved = split(ResolveServicePort(tostring(ns), tostring(svcName), svc | dig("port"), ingress), " ") -%}
           {%- var port = toint(resolved[0]) -%}
           {%- var portName = resolved[1] -%}
           # Now: port is the Service port number; portName is "" if the Service port is unnamed.
           # Pass both to BackendServers(svcName, 0, port, nil, portName, backendKey, ns).
       #}
-      {% macro ResolveServicePort(namespace string, serviceName string, portRef any) string %}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {% macro ResolveServicePort(namespace string, serviceName string, portRef any, owner any) string %}
         {%%
           // Accept either a {number?, name?} dict (Ingress's ServiceBackendPort shape)
           // or a bare numeric port (Gateway API's BackendObjectReference.port is a
@@ -121,7 +130,7 @@ templateSnippets:
 
           var resolvedPort = 0
           var resolvedName = ""
-          var serviceMissing = false
+          var unresolved = false  // missing Service or (owner-tolerated) unknown port name: empty backend, 503
 
           if portNumber > 0 {
             // Number given: trust it. Try to backfill name from the Service for the
@@ -155,7 +164,7 @@ templateSnippets:
               // for this route) and converges once the Service arrives. A Service that
               // EXISTS but lacks the named port still fails below — that is a
               // real config error (typo), not a propagation race.
-              serviceMissing = true
+              unresolved = true
               resolvedName = portName
             } else {
               var found = false
@@ -175,9 +184,19 @@ templateSnippets:
                   available = append(available, sp.Name +
                     "(" + tostring(toint(sp.Port)) + ")")
                 }
-                fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
+                var msg = "ResolveServicePort: Service " + namespace + "/" + serviceName +
                   " has no port named '" + portName + "' (available: [" +
-                  join(toStringSlice(available), ", ") + "])")
+                  join(toStringSlice(available), ", ") + "])"
+                if owner == nil {
+                  fail(msg)
+                }
+                // Admission rejects the typo; a reconcile degrades this one
+                // route to the missing-Service shape (empty backend, 503)
+                // instead of aborting the whole render.
+                show WebhookRejectOrWarn(owner, "ServicePortNotFound",
+                  msg + ". The route serves 503 until the reference matches a Service port.")
+                unresolved = true
+                resolvedName = portName
               }
             }
           } else {
@@ -190,7 +209,7 @@ templateSnippets:
               portRefStr + ")")
           }
 
-          if resolvedPort <= 0 && !serviceMissing {
+          if resolvedPort <= 0 && !unresolved {
             fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
               " port resolution yielded 0 (portRef=" + tostring(portRef) + ")")
           }
@@ -404,7 +423,7 @@ templateSnippets:
           dig_string(item, "", "metadata", "labels", "kubernetes.io/service-name") == name -%}
       {%- end -%}
       {%- if matches -%}
-        {%- var resolvedParts = split(ResolveServicePort(namespace, name, backend | dig("port")), " ") -%}
+        {%- var resolvedParts = split(ResolveServicePort(namespace, name, backend | dig("port"), nil), " ") -%}
         {%- var port = toint(resolvedParts[0]) -%}
         {%- var portName = resolvedParts[1] -%}
         {%- var serverResult = BackendServersResult(name, 0, port, nil, portName, "default_backend", namespace) -%}
