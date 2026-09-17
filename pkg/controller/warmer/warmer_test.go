@@ -79,7 +79,7 @@ type harness struct {
 	pipeline  *recordingPipeline
 	metrics   *metrics.Metrics
 	published <-chan busevents.Event
-	files     func() (map[string]string, error)
+	files     func() (rendercontext.CurrentAuxFilesSource, error)
 	graphWarm atomic.Bool
 	component *Component
 }
@@ -91,7 +91,7 @@ func newHarness(t *testing.T, p *recordingPipeline) *harness {
 		bus:      bus,
 		pipeline: p,
 		metrics:  metrics.NewMetrics(prometheus.NewRegistry()),
-		files:    func() (map[string]string, error) { return map[string]string{"maps/a.map": "x"}, nil },
+		files:    func() (rendercontext.CurrentAuxFilesSource, error) { return newTestCurrentFilesSource(), nil },
 	}
 	h.published = bus.SubscribeTypes("test", 100,
 		events.EventTypeReconciliationStarted,
@@ -100,13 +100,13 @@ func newHarness(t *testing.T, p *recordingPipeline) *harness {
 		events.EventTypeReconciliationFailed,
 	)
 	component := New(&Config{
-		EventBus:      bus,
-		Pipeline:      p,
-		StoreProvider: stores.NewRealStoreProvider(nil),
-		CurrentFiles:  func() (map[string]string, error) { return h.files() },
-		GraphWarm:     h.graphWarm.Load,
-		Metrics:       h.metrics,
-		Logger:        logger,
+		EventBus:           bus,
+		Pipeline:           p,
+		StoreProvider:      stores.NewRealStoreProvider(nil),
+		CurrentFilesSource: func() (rendercontext.CurrentAuxFilesSource, error) { return h.files() },
+		GraphWarm:          h.graphWarm.Load,
+		Metrics:            h.metrics,
+		Logger:             logger,
 	})
 	h.component = component
 	h.graphWarm.Store(true)
@@ -196,7 +196,9 @@ func TestWarmerStandsDownWhileLeader(t *testing.T) {
 func TestWarmerSkipsWhenCurrentFilesAreUnavailable(t *testing.T) {
 	p := &recordingPipeline{result: warmResult(), ran: make(chan struct{}, 8)}
 	h := newHarness(t, p)
-	h.files = func() (map[string]string, error) { return nil, errors.New("published set is ambiguous") }
+	h.files = func() (rendercontext.CurrentAuxFilesSource, error) {
+		return nil, errors.New("published set is ambiguous")
+	}
 
 	h.bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
 	h.assertNoRender(t)
@@ -269,4 +271,20 @@ func TestWarmerReportsWarmOnlyOnceARenderLeftAGraph(t *testing.T) {
 	case <-time.After(testutil.EventTimeout):
 		t.Fatal("the graph was not reported warm after a render left a cache")
 	}
+}
+
+// testCurrentFilesSource is a minimal root-tracked source for the harness.
+type testCurrentFilesSource struct{}
+
+func newTestCurrentFilesSource() rendercontext.CurrentAuxFilesSource { return testCurrentFilesSource{} }
+
+func (testCurrentFilesSource) ValidateAuthentication() error { return nil }
+
+func (testCurrentFilesSource) SameRoot(other rendercontext.CurrentAuxFilesSource) (bool, error) {
+	_, ok := other.(testCurrentFilesSource)
+	return ok, nil
+}
+
+func (testCurrentFilesSource) MaterializeCurrentAuxFiles() (map[string]string, error) {
+	return map[string]string{"maps/a.map": "x"}, nil
 }

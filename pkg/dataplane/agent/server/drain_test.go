@@ -46,7 +46,10 @@ func TestDrainEndsAfterTheQuietPeriod(t *testing.T) {
 
 func TestDrainRestartsTheQuietPeriodOnEveryNewConnection(t *testing.T) {
 	var connections atomic.Uint64
-	s := drainTestServer(40*time.Millisecond, 400*time.Millisecond, func(map[string]bool) (uint64, error) {
+	// The bound only backstops a wedged drain here — its own behavior has its
+	// own test below. It must exceed the 100ms traffic window by enough that a
+	// stalled CI runner cannot turn a quiet drain into a bound one.
+	s := drainTestServer(40*time.Millisecond, 10*time.Second, func(map[string]bool) (uint64, error) {
 		return connections.Load(), nil
 	})
 	stop := make(chan struct{})

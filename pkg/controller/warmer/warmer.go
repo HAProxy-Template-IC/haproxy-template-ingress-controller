@@ -55,9 +55,13 @@ type Config struct {
 	EventBus      *busevents.EventBus
 	Pipeline      PipelineExecutor
 	StoreProvider stores.StoreProvider
-	// CurrentFiles returns the auxiliary files the fleet runs, the same set a
-	// new leader's first render reads.
-	CurrentFiles func() (map[string]string, error)
+	// CurrentFilesSource returns a root-tracked view of the auxiliary files
+	// the fleet runs, the same set a new leader's first render reads. A
+	// root-tracked source — rather than a map snapshot — lets consecutive
+	// renders prove the currentFiles input unchanged, which the exact-cycle
+	// replay requires; a follower rendering from plain maps misses the replay
+	// on every render and pays a full render each time.
+	CurrentFilesSource func() (rendercontext.CurrentAuxFilesSource, error)
 	// GraphWarm reports whether the render service holds a committed graph;
 	// Warmed closes after the first render that leaves one. Nil means every
 	// completed render counts.
@@ -78,7 +82,7 @@ type Component struct {
 
 	pipeline      PipelineExecutor
 	storeProvider stores.StoreProvider
-	currentFiles  func() (map[string]string, error)
+	currentFiles  func() (rendercontext.CurrentAuxFilesSource, error)
 	graphWarm     func() bool
 	metrics       *metrics.Metrics
 	leader        bool
@@ -99,7 +103,7 @@ func New(cfg *Config) *Component {
 	c := &Component{
 		pipeline:      cfg.Pipeline,
 		storeProvider: cfg.StoreProvider,
-		currentFiles:  cfg.CurrentFiles,
+		currentFiles:  cfg.CurrentFilesSource,
 		graphWarm:     cfg.GraphWarm,
 		metrics:       cfg.Metrics,
 		warmed:        make(chan struct{}),
@@ -147,13 +151,13 @@ func (c *Component) HandleEvent(event busevents.Event) {
 
 func (c *Component) render() {
 	ctx := c.LifecycleContext()
-	files, err := c.currentFiles()
+	source, err := c.currentFiles()
 	if err != nil {
 		c.Logger().Debug("Follower render skipped", "reason", err)
 		return
 	}
 	result, err := c.pipeline.Execute(
-		ctx, c.storeProvider, rendercontext.RenderModeReconcile, rendercontext.WithCurrentAuxFiles(files),
+		ctx, c.storeProvider, rendercontext.RenderModeReconcile, rendercontext.WithCurrentAuxFilesSource(source),
 	)
 	if err != nil {
 		if context.Cause(ctx) == nil {

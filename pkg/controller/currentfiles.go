@@ -124,6 +124,19 @@ func (a *currentFilesAuthority) ExactSource(
 	return source, nil
 }
 
+// publishedCurrentFilesGeneration marks a source served outside any leader
+// term. BeginTerm counts up from zero, so no term ever reaches it.
+const publishedCurrentFilesGeneration = ^uint64(0)
+
+// PublishedExactSource is the follower-side ExactSource: a root-tracked
+// currentFiles source anchored on the published auxiliary output. The root is
+// retained while the published set is unchanged, so consecutive renders can
+// prove their currentFiles input equal — a plain map snapshot cannot, and a
+// follower rendering from one misses the exact-cycle replay on every render.
+func (a *currentFilesAuthority) PublishedExactSource() (rendercontext.CurrentAuxFilesSource, error) {
+	return a.ExactSource(publishedCurrentFilesGeneration)
+}
+
 func (s *currentAuxFilesSource) ValidateAuthentication() error {
 	if s == nil || s.seal != s || s.authority == nil || s.generation == 0 {
 		return errors.New("currentFiles source has invalid provenance")
