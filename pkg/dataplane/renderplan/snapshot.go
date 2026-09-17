@@ -685,30 +685,30 @@ func (s *Snapshot) deferredID() (string, error) {
 	return plan.ID, nil
 }
 
-// WriteJSON streams what encoding/json would produce for LegacyCopy, out of
-// the fragments the snapshot already carries, so a plan of thousands of
-// backends is not re-encoded per consumer. It rebuilds the plan only when the
-// fragment stream cannot prove its own order; ID, computed first, has already
-// counted that snapshot as a digest fallback, so this path counts nothing.
-func (s *Snapshot) WriteJSON(target io.Writer) error {
+// MarshalJSON preserves the canonical fragments and falls back when their order is unproven.
+func (s *Snapshot) MarshalJSON() ([]byte, error) {
 	id, err := s.ID()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var buffer bytes.Buffer
 	err = writePlanJSON(s.root, id, &buffer)
 	if err == nil {
-		_, err = target.Write(buffer.Bytes())
-		return err
+		return buffer.Bytes(), nil
 	}
 	if !errors.Is(err, errCanonicalOrderUnproven) {
-		return err
+		return nil, err
 	}
 	plan, err := s.LegacyCopy()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	encoded, err := json.Marshal(plan)
+	return json.Marshal(plan)
+}
+
+// WriteJSON writes the complete encoding only after authentication and canonicalization succeed.
+func (s *Snapshot) WriteJSON(target io.Writer) error {
+	encoded, err := s.MarshalJSON()
 	if err != nil {
 		return err
 	}

@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Plan compression reuses the serialized snapshot buffer, reducing allocation during deployments.
 - An unchanged republish of the output CRDs (HAProxyCfg, map/general/crt-list files, Secrets) is skipped for one drift-prevention interval per key, and the resource applier skips the SSA pass for a cycle whose rendered resources are identical to the last applied one for the same interval. The interval-expiry write remains the periodic authoritative self-heal; on a churn-heavy cluster this removes the constant per-reconcile GET/LIST/PATCH sweep against the apiserver (measured ~110 reads/s at idle on a 1500-Ingress fleet).
 - A render-gate verdict identical to the last one written is skipped for the same drift-prevention interval, eliding the read-modify-write's GET on the HAProxyCfg that every render re-triggered (measured ~20 GETs/s at idle on the same fleet).
 - Configuration assembly reuses unchanged document subtrees when fragments are added or removed, reducing allocations.

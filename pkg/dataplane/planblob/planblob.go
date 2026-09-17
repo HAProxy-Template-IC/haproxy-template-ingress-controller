@@ -22,7 +22,6 @@
 package planblob
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -76,11 +75,11 @@ func EncodeSnapshot(snapshot *renderplan.Snapshot) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encoding plan: %w", err)
 	}
-	var encoded bytes.Buffer
-	if err := snapshot.WriteJSON(&encoded); err != nil {
+	encoded, err := snapshot.MarshalJSON()
+	if err != nil {
 		return nil, fmt.Errorf("encoding plan %s: %w", id, err)
 	}
-	return compress(id, encoded.Bytes())
+	return compress(id, encoded)
 }
 
 func compress(id string, encoded []byte) ([]byte, error) {
