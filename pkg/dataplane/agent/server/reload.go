@@ -184,6 +184,11 @@ func (s *Server) readBack(run *applyRun) {
 	if run.result.Mode != api.ResultRuntime || !run.result.OK || s.stopped.Load() {
 		return
 	}
+	s.apply.Lock()
+	defer s.apply.Unlock()
+	if s.stopped.Load() {
+		return
+	}
 	diverged := false
 	for _, backend := range dedupe(run.touchedBackends) {
 		if slices.Contains(run.retiringBackends, backend) {
@@ -203,8 +208,6 @@ func (s *Server) readBack(run *applyRun) {
 		return
 	}
 	s.metrics.divergence.Inc()
-	s.apply.Lock()
-	defer s.apply.Unlock()
 	due, open := s.pacingWindow()
 	if open {
 		state := s.snapshot()
