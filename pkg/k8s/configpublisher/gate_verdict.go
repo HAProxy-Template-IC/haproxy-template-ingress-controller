@@ -17,6 +17,7 @@ package configpublisher
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -77,15 +78,21 @@ type GateVerdict struct {
 // deployment report, so a 409 is ordinary — and losing to one would drop
 // HAProxy's own message, which is the operator's only pointer at what to fix.
 func (p *Publisher) ApplyGateVerdict(ctx context.Context, verdict *GateVerdict) error {
+	if p.skippableVerdict(verdict) {
+		return nil
+	}
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(verdict.Namespace)
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	targetFound := true
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current, err := client.Get(ctx, verdict.Name, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
+				targetFound = false
 				return nil
 			}
 			return fmt.Errorf("getting runtime config for the gate verdict: %w", err)
 		}
+		targetFound = true
 
 		updated := current.DeepCopy()
 		meta.SetStatusCondition(&updated.Status.Conditions, validatedCondition(verdict))
@@ -100,6 +107,66 @@ func (p *Publisher) ApplyGateVerdict(ctx context.Context, verdict *GateVerdict) 
 		}
 		return nil
 	})
+	if err != nil {
+		p.forgetVerdict(verdict)
+		return err
+	}
+	// A missing target is not recorded: the first publish creates it, and the
+	// next (possibly identical) verdict must land on it rather than be skipped.
+	if targetFound {
+		p.recordVerdict(verdict)
+	}
+	return nil
+}
+
+// verdictKey identifies the HAProxyCfg a gate verdict lands on.
+type verdictKey struct {
+	namespace string
+	name      string
+}
+
+// appliedVerdict is the last verdict ApplyGateVerdict wrote for a key. The
+// render gate re-emits its verdict on every render, so at a steady state the
+// same verdict arrives once per render; skipping the identical re-apply elides
+// the read-modify-write's GET the same way skippableResult elides the publish
+// sweep, with the interval expiry as the authoritative self-heal.
+type appliedVerdict struct {
+	verdict GateVerdict
+	at      time.Time
+}
+
+func (p *Publisher) skippableVerdict(verdict *GateVerdict) bool {
+	p.publishedMu.Lock()
+	defer p.publishedMu.Unlock()
+	if p.republishInterval <= 0 {
+		return false
+	}
+	state, ok := p.appliedVerdicts[verdictKey{namespace: verdict.Namespace, name: verdict.Name}]
+	return ok && time.Since(state.at) < p.republishInterval && state.verdict == *verdict
+}
+
+func (p *Publisher) recordVerdict(verdict *GateVerdict) {
+	p.publishedMu.Lock()
+	defer p.publishedMu.Unlock()
+	if p.republishInterval <= 0 {
+		return
+	}
+	if p.appliedVerdicts == nil {
+		p.appliedVerdicts = make(map[verdictKey]appliedVerdict)
+	}
+	p.appliedVerdicts[verdictKey{namespace: verdict.Namespace, name: verdict.Name}] = appliedVerdict{
+		verdict: *verdict,
+		at:      time.Now(),
+	}
+}
+
+// forgetVerdict voids a key's state after a failed write: the failure may have
+// landed partially, so the recorded claim about the live conditions no longer
+// holds.
+func (p *Publisher) forgetVerdict(verdict *GateVerdict) {
+	p.publishedMu.Lock()
+	defer p.publishedMu.Unlock()
+	delete(p.appliedVerdicts, verdictKey{namespace: verdict.Namespace, name: verdict.Name})
 }
 
 func validatedCondition(verdict *GateVerdict) metav1.Condition {
