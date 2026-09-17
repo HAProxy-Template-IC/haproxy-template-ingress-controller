@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retry orphan cleanup after concurrent resource updates while preserving ownership and deletion preconditions.
+
 - Index-update events merge per watched kind while the event bus is buffering (startup and leadership transitions), so a large or busy cluster can no longer overflow the pre-start buffer and restart the controller iteration in a loop; the merged event carries the summed change counts.
 - Backend deletion verifies the target is absent on the same HAProxy worker, preventing false cleanup failures when HAProxy omits its acknowledgement.
 - Empty auxiliary files publish with an explicit `empty: true` declaration; missing or contradictory content remains invalid.
