@@ -609,6 +609,7 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run
 		echo "Note: This creates kind cluster '$$cluster_name', helm-installs the chart, deploys fixtures."
 	@echo "Environment variables:"
 	@echo "  HAPTIC_E2E_CLUSTER_NAME - Kind cluster name (default: haptic-e2e)"
+	@echo "  KIND_NODE_IMAGE     - Kind node image (default: bundled Kind image)"
 	@echo "  KEEP_CLUSTER        - Keep cluster after tests (default: true; set false to destroy)"
 	@echo "  KEEP_NAMESPACE      - Keep test namespaces after failure for debugging (default: false)"
 	@echo "  SKIP_CLUSTER_CREATE - CI mode: assume cluster already exists; skip kind create"

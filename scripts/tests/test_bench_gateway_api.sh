@@ -51,6 +51,36 @@ chmod 0755 "$tmp/bin/kind"
 assert_eq present "$(PATH="$tmp/bin:$PATH" bash -c 'source "$1"; kind_cluster_state haptic-gwbench-test' bash "$runner")"
 assert_eq absent "$(PATH="$tmp/bin:$PATH" bash -c 'source "$1"; kind_cluster_state missing' bash "$runner")"
 
+mkdir -p "$tmp/inventory/cluster"
+inventory_check() {
+    PATH="$tmp/bin:$PATH" bash -c '
+        source "$1"
+        trap - EXIT INT TERM
+        BENCH_OUTPUT_DIR="$2"
+        CLUSTER_NAME=haptic-gwbench-test
+        BENCH_ALLOW_COSCHEDULED_CLUSTERS=false
+        node_state="$3"
+        capture_kind_node_states() {
+            jq -n --arg state "$node_state" '\''[
+                {cluster: "haptic-gwbench-test", state: {Status: "running", Running: true}},
+                {cluster: "haptic-dev", state: {
+                    Status: $state, Running: ($state == "running"),
+                    Paused: ($state == "paused"), Restarting: ($state == "restarting")
+                }}
+            ]'\'' > "$1"
+        }
+        capture_kind_cluster_inventory check present
+    ' bash "$runner" "$tmp/inventory" "$1"
+}
+inventory_check exited
+assert_eq '[]' "$(jq -c . "$tmp/inventory/cluster/kind-clusters-check-coscheduled.json")"
+for state in running paused restarting unknown; do
+    if inventory_check "$state" > "$tmp/inventory/$state.log" 2>&1; then
+        echo "cluster inventory accepted a $state Kind node" >&2
+        exit 1
+    fi
+done
+
 cat > "$tmp/values.json" <<'EOF'
 {"credentials":{"dataplane":{"password":"secret"}},"controller":{"webhook":{"caBundle":"certificate"}},"kept":"value"}
 EOF

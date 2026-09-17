@@ -368,6 +368,9 @@ func createE2ECluster(provider *kindcluster.Provider) error {
 		kindcluster.CreateWithWaitForReady(DefaultClusterCreateTimeout),
 		kindcluster.CreateWithRawConfig([]byte(e2eCluster.KindConfig())),
 	}
+	if nodeImage := os.Getenv("KIND_NODE_IMAGE"); nodeImage != "" {
+		opts = append(opts, kindcluster.CreateWithNodeImage(nodeImage))
+	}
 	var stagingDir string
 	if e2eCluster.RequireNew {
 		var err error
