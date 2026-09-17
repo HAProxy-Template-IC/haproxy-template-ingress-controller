@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Native helper calls to template closures no longer keep completed render sessions and their cached resource inputs alive.
+
 - Retired cold-render frames release cached inputs and session references; certified inputs share their cached encoded representation.
 
 - Retry orphan cleanup after concurrent resource updates while preserving ownership and deletion preconditions.
