@@ -144,6 +144,56 @@ func TestAuxFilesFromStore_EntriesField(t *testing.T) {
 	assert.Equal(t, "example.com be_x\n", got["mf-host"].content)
 }
 
+func TestPublishedAuxFilesEmptyContent(t *testing.T) {
+	for _, kind := range publishedAuxCRDList() {
+		if kind.contentField == "" {
+			continue
+		}
+		t.Run(kind.kind, func(t *testing.T) {
+			for _, tc := range []struct {
+				name  string
+				spec  map[string]any
+				valid bool
+			}{
+				{"explicit empty", map[string]any{"empty": true}, true},
+				{"missing content", map[string]any{}, false},
+				{"false empty marker", map[string]any{"empty": false}, false},
+				{"invalid empty marker", map[string]any{"empty": "true"}, false},
+				{"contradictory content", map[string]any{"empty": true, kind.contentField: "entry"}, false},
+				{"compressed empty", map[string]any{"empty": true, "compressed": true}, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					tc.spec["path"] = "maps/empty.map"
+					obj := &unstructured.Unstructured{Object: map[string]any{
+						"apiVersion": "haproxy-haptic.org/v1alpha1", "kind": kind.kind,
+						"metadata": map[string]any{"name": "empty", "namespace": "haptic"},
+						"spec":     tc.spec,
+					}}
+					obj.SetAnnotations(map[string]string{"haproxy-haptic.org/auxiliary-set-id": "sha256:set-empty"})
+					s := store.NewMemoryStore(1)
+					require.NoError(t, s.Add(obj, []string{"empty"}))
+					files, err := publishedAuxFilesFromStore(s, &kind)
+					if !tc.valid {
+						require.Error(t, err)
+						return
+					}
+					require.NoError(t, err)
+					published := newPublishedAuxFiles("haptic")
+					published.setForGVR(kind.gvr.String(), files)
+					published.setCommit(&publishedAuxCommit{
+						setID: "sha256:set-empty",
+						refs: map[string][]publishedAuxRef{
+							kind.referenceFields[0]: {{name: "empty", namespace: "haptic"}},
+						},
+					})
+					require.NoError(t, published.readinessError())
+					require.Equal(t, map[string]string{"empty.map": ""}, publishedSnapshot(t, published))
+				})
+			}
+		})
+	}
+}
+
 func TestPublishedSecretStoreReadsMetadataOnly(t *testing.T) {
 	s := store.NewMemoryStore(1)
 	secret := &unstructured.Unstructured{Object: map[string]any{

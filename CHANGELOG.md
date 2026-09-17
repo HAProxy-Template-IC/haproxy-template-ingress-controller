@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Followers accept published zero-byte auxiliary files when refreshing their current configuration.
+
 - Native helper calls to template closures no longer keep completed render sessions and their cached resource inputs alive.
 
 - Retired cold-render frames release cached inputs and session references; certified inputs share their cached encoded representation.

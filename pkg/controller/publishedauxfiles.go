@@ -521,28 +521,46 @@ func publishedAuxFileFromObject(obj map[string]any, kind *publishedAuxCRD) (name
 	if filePath == "" {
 		return "", publishedAuxFile{}, false, nil
 	}
-	content, found, err := unstructured.NestedString(obj, "spec", kind.contentField)
+	content, err := publishedAuxContent(obj, kind.contentField)
 	if err != nil {
-		return "", publishedAuxFile{}, false, fmt.Errorf("reading %s content field %s: %w", name, kind.contentField, err)
-	}
-	if !found {
-		return "", publishedAuxFile{}, false, fmt.Errorf("%s has no content field %s", name, kind.contentField)
-	}
-	compressed, _, err := unstructured.NestedBool(obj, "spec", "compressed")
-	if err != nil {
-		return "", publishedAuxFile{}, false, fmt.Errorf("reading %s compression flag: %w", name, err)
-	}
-	if compressed {
-		content, err = compression.Decompress(content)
-		if err != nil {
-			return "", publishedAuxFile{}, false, fmt.Errorf("decompressing %s: %w", filePath, err)
-		}
+		return "", publishedAuxFile{}, false, fmt.Errorf("reading %s content: %w", name, err)
 	}
 	caFile, _, err := unstructured.NestedBool(obj, "spec", "caFile")
 	if err != nil {
 		return "", publishedAuxFile{}, false, fmt.Errorf("reading %s CA file flag: %w", name, err)
 	}
 	return name, publishedAuxFile{path: filePath, content: content, setID: setID, caFile: caFile}, true, nil
+}
+
+func publishedAuxContent(obj map[string]any, contentField string) (string, error) {
+	content, found, err := unstructured.NestedString(obj, "spec", contentField)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", contentField, err)
+	}
+	empty, _, err := unstructured.NestedBool(obj, "spec", "empty")
+	if err != nil {
+		return "", fmt.Errorf("reading empty flag: %w", err)
+	}
+	if !found && !empty {
+		return "", fmt.Errorf("missing %s or empty declaration", contentField)
+	}
+	if found && empty {
+		return "", fmt.Errorf("both %s and empty content declared", contentField)
+	}
+	compressed, _, err := unstructured.NestedBool(obj, "spec", "compressed")
+	if err != nil {
+		return "", fmt.Errorf("reading compression flag: %w", err)
+	}
+	if compressed && empty {
+		return "", fmt.Errorf("empty content cannot be compressed")
+	}
+	if compressed {
+		content, err = compression.Decompress(content)
+		if err != nil {
+			return "", fmt.Errorf("decompressing content: %w", err)
+		}
+	}
+	return content, nil
 }
 
 func publishedAuxCommitFromStore(s types.Store, runtimeConfigName string) (*publishedAuxCommit, bool, error) {
