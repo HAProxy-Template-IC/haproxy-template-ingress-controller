@@ -446,7 +446,7 @@ func loadIngressBackendChartSnippets(t *testing.T) map[string]config.TemplateSni
 		"haptic-annotations/40-features.yaml",
 	}
 	wanted := map[string]bool{
-		"util-service-port-resolution": true, "util-backend": true,
+		"util-service-port-resolution": true, "util-webhook-reject-or-warn": true, "util-backend": true,
 		"util-backend-servers-helpers": true, "util-backend-servers-result": true,
 		"util-backend-name-ingress": true, "util-generate-backends-ingress": true,
 		"util-generate-annotation-default-backend": true, "util-ingress-backend-bindings": true,

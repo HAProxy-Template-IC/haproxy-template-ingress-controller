@@ -45,7 +45,7 @@ const defaultBackendPublicationRoot = `{%- import "util-service-port-resolution"
 var backend = extraContext["defaultBackendService"].(map[string]any)
 var namespace = tostring(backend["namespace"])
 var name = tostring(backend["name"])
-var resolved = split(ResolveServicePort(namespace, name, backend["port"]), " ")
+var resolved = split(ResolveServicePort(namespace, name, backend["port"], nil), " ")
 var port = toint(resolved[0])
 var portName = resolved[1]
 var legacyResult = BackendServersResult(name, 0, port, nil, portName, "default_backend", namespace)
@@ -395,9 +395,9 @@ func loadKubernetesBackendPublicationSnippets(
 	chartRoot := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "charts", "haptic", "charts")
 	wanted := map[string]bool{
 		"util-backend-servers-helpers": true,
-		"util-service-port-resolution": true,
-		"util-backend-servers-result":  true,
-		component:                      true,
+		"util-service-port-resolution": true, "util-webhook-reject-or-warn": true,
+		"util-backend-servers-result": true,
+		component:                     true,
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))
 	for _, relativePath := range []string{

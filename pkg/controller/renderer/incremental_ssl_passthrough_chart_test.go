@@ -427,6 +427,7 @@ func loadSSLPassthroughChartSnippets(t *testing.T) map[string]config.TemplateSni
 	wanted := map[string]bool{
 		"util-log-format-tcp":                       true,
 		"util-service-port-resolution":              true,
+		"util-webhook-reject-or-warn":               true,
 		"util-backend":                              true,
 		"util-backend-servers-helpers":              true,
 		"util-backend-servers-result":               true,
