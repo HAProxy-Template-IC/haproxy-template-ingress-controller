@@ -252,10 +252,7 @@ templateSnippets:
           defaultServer = append(defaultServer, kw)
         }
 
-        // Rule-level retry (GEP-1731). `retries`/`retry-on` are not conditional
-        // directives, so they can't be scoped per gw_rule_id: with several rules
-        // sharing this deduplicated backend, the first one carrying a retry block
-        // wins. retry.backoff has no HAProxy equivalent and is dropped.
+        // A shared backend uses the first referencing rule's retry policy.
         if protoFlag == "" {
           var retryFound = false
           for _, rl := range toSlice(dig(route, "spec", "rules")) {
@@ -272,12 +269,13 @@ templateSnippets:
             if !rlReferencesBackend {
               continue
             }
-            // dig(): `retry` is Experimental-channel only, so `rl.Retry`
-            // doesn't compile against the Standard-channel CRD.
             var rt = dig(rl, "retry")
-            var attempts = toint(dig(rt, "attempts"))
-            if attempts <= 0 {
+            if rt == nil {
               continue
+            }
+            var attempts = 3
+            if configured := dig(rt, "attempts"); configured != nil {
+              attempts = toint(configured)
             }
             retryFound = true
             var codeParts = []any{}
@@ -288,7 +286,8 @@ templateSnippets:
             if len(codeParts) > 0 {
               retryCodes = join(codeParts, " ")
             }
-            profile = append(profile, "retries " + tostring(attempts), "retry-on " + retryCodes)
+            profile = append(profile, "retries " + tostring(attempts),
+              "retry-on conn-failure empty-response response-timeout " + retryCodes)
           }
         }
 

@@ -338,6 +338,52 @@ func TestDynamicBackendLifecycle(t *testing.T) {
 	assert.Empty(t, state.PendingDeletes.Backends)
 }
 
+func TestBackendDeletionWithSaturatedHAProxyMessages(t *testing.T) {
+	if !haproxyAtLeast("3.4") {
+		t.Skipf("dynamic backends require HAProxy 3.4; this bracket runs %s", haproxyVersion())
+	}
+	e := newEnv(t)
+	s := newSession(e)
+	s.set(configPath, strings.Replace(renderedConfig, "global\n", "global\n    nbthread 1\n", 1))
+	require.True(t, s.apply(s.next(api.ModeReload), s.allParts()).OK)
+	worker := e.workerPID()
+	added := s.next(api.ModeAuto)
+	added.Ops = []api.Op{{Kind: api.OpBackendAdd, Backend: "retiring", Profile: defaultsProfile, Mode: "http"}}
+	var deletes []api.Op
+	// 65 server deletion notices fill HAProxy 3.4's 1024-byte thread-local message buffer.
+	for i := range 65 {
+		name := fmt.Sprintf("srv%d", i)
+		added.Ops = append(added.Ops, api.Op{
+			Kind: api.OpServerAdd, Backend: "retiring", Server: name, Address: "127.0.0.1", Port: upstreamPort,
+		})
+		deletes = append(deletes, api.Op{Kind: api.OpServerDel, Backend: "retiring", Server: name})
+	}
+	require.True(t, s.apply(added, nil).OK)
+	removed := s.next(api.ModeAuto)
+	removed.Ops = append(deletes, api.Op{Kind: api.OpBackendDel, Backend: "retiring"})
+	require.True(t, s.apply(removed, nil).OK)
+	waitFor(t, "confirmed backend deletion", convergeBudget, func() error {
+		state, err := e.client.State(t.Context(), api.StateRead{})
+		if err != nil {
+			return err
+		}
+		if len(state.PendingDeletes.Servers)+len(state.PendingDeletes.Backends) != 0 {
+			return errors.New("deletions are still pending")
+		}
+		return nil
+	})
+	assert.Equal(t, worker, e.workerPID())
+	assert.NotContains(t, e.worker("show backend"), "retiring")
+	metricsURL := fmt.Sprintf("http://%s:%d/metrics", connectHost(), publishedPort(t, e.agent, metricsPort))
+	status, metrics, err := e.get(metricsURL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	assert.Contains(t, metrics, "haptic_agent_deferred_deletes_total{kind=\"server\",outcome=\"done\"} 65\n")
+	assert.Contains(t, metrics, "haptic_agent_deferred_deletes_total{kind=\"backend\",outcome=\"done\"} 1\n")
+	assert.Contains(t, metrics, "haptic_agent_deferred_deletes_total{kind=\"backend\",outcome=\"abandoned\"} 0\n")
+	assert.NotContains(t, metrics, "haptic_agent_deferred_deletes_total{kind=\"backend\",outcome=\"deferred\"}")
+}
+
 // TestDynamicBackendRenameKeepsTraffic pins the A4 fixed ordering: a single
 // apply that both creates a backend and retires another — what a backend rename
 // composes — publishes and re-points the map at the new backend before it

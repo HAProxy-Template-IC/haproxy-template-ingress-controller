@@ -362,31 +362,63 @@ func (d *Deferrals) deleteBackend(ctx context.Context, a attempt[string]) error 
 		return err
 	}
 	defer session.close()
-	err = d.run(session, a.Generation, fmt.Sprintf("wait %d be-removable %s", deferredWaitMs, a.Target), expectDone)
-	if err == nil {
-		err = d.run(session, a.Generation, "del backend "+a.Target, "Backend deleted")
+	return d.deleteBackendOnWorker(session, a)
+}
+
+func (d *Deferrals) deleteBackendOnWorker(session *workerSession, a attempt[string]) error {
+	const absent = "[3]: Failed. No such backend."
+	waitCommand := fmt.Sprintf("wait %d be-removable %s", deferredWaitMs, a.Target)
+	raw, err := d.execute(session, a.Generation, waitCommand)
+	if err != nil {
+		return err
 	}
-	return err
+	if raw == absent {
+		return nil
+	}
+	if err := deferredCommandResult(raw, waitCommand, expectDone); err != nil {
+		return err
+	}
+	err = d.run(session, a.Generation, "del backend "+a.Target, "Backend deleted")
+	if err != nil && !errors.Is(err, ErrUnreadableResponse) {
+		return err
+	}
+	// The HAProxy 3.4 acknowledgement workaround is documented in docs/site/docs/development/agent.md.
+	raw, err = d.execute(session, a.Generation, "wait 1 be-removable "+a.Target)
+	if err != nil {
+		return err
+	}
+	if raw != absent {
+		return fmt.Errorf("backend %q deletion is unconfirmed: %s", a.Target, raw)
+	}
+	return nil
 }
 
 // run executes one deferred command and applies the same verdict rules as the
 // apply path.
 func (d *Deferrals) run(session *workerSession, generation uint64, command, expect string) error {
-	d.mu.Lock()
-	current := generation == d.generation
-	d.mu.Unlock()
-	if !current {
-		return ErrWorkerGone
-	}
-	raw, err := session.execute(command)
+	raw, err := d.execute(session, generation, command)
 	if err != nil {
 		return err
 	}
+	return deferredCommandResult(raw, command, expect)
+}
+
+func deferredCommandResult(raw, command, expect string) error {
 	result := matchBatch(raw, []Command{{Text: command, Expect: expect}})[0]
 	if result.Err != nil {
 		return fmt.Errorf("%w: %s", result.Err, result.Output)
 	}
 	return nil
+}
+
+func (d *Deferrals) execute(session *workerSession, generation uint64, command string) (string, error) {
+	d.mu.Lock()
+	current := generation == d.generation
+	d.mu.Unlock()
+	if !current {
+		return "", ErrWorkerGone
+	}
+	return session.execute(command)
 }
 
 func (d *Deferrals) requeueServer(a attempt[ServerRef], cause error) {

@@ -279,12 +279,23 @@ Framing rules the agent enforces, all measured on HAProxy 3.0 and 3.4:
   certificate until the next reload.
 
 Success is matched per command. `set severity-output number` makes HAProxy tag
-its own messages, so a response tagged `[0]` to `[4]` is a failure; where the
+its own messages, so a response tagged `[0]` to `[3]` is a failure; warning-level
+`[4]` replies require checking the message. Where the
 success message is known (`New backend registered`, `New server registered.`,
 `Backend published.`, `Server deleted.`, `Backend deleted.`, `Done.`) it must be
 present. `name is already used by other proxy` and `Wait delay expired` become
 typed outcomes: the first stops the apply and reloads, because nothing at
 runtime reveals what shape the existing backend has.
+
+Backend deletion also verifies absence with `wait 1 be-removable` on the same
+worker connection. HAProxy 3.4.4's `del backend` uses a 1024-byte thread-local
+message buffer without clearing earlier notices. When those notices fill the
+buffer, deletion succeeds but its acknowledgement is omitted. The agent accepts
+that ambiguous reply only after a successful pre-deletion wait and an exact
+post-deletion `Failed. No such backend.` reply. Explicit command rejections,
+incomplete replies, and unconfirmed absence remain failures. A retry succeeds
+if its initial wait confirms the backend is already absent. See `proxy.c` and
+`errors.c` in the [HAProxy 3.4.4 source](https://www.haproxy.org/download/3.4/src/haproxy-3.4.4.tar.gz).
 
 Within one batched line, a failure is attributed to the earliest command that
 could have produced it. That's a reporting limit, not a safety one: the answer

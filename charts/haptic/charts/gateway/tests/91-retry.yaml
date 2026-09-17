@@ -11,14 +11,10 @@ validationTests:
   test-httproute-retry-attempts-and-codes:
     requires: [httproutes]
     requiresFields: [httproutes.spec.rules.retry]
-    # spec.rules[].retry is an experimental-channel HTTPRoute field; skip when
-    # that channel is absent (the snippet correctly emits no retry directive,
-    # so the assertion can't pass). test-httproute-no-retry-no-directive below
-    # stays ungated — it asserts ABSENCE and passes on both channels.
     _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
-    description: "HTTPRoute spec.rules[].retry (experimental) maps to backend `retries <attempts>` plus `retry-on <conditions>`. attempts -> retries N; codes -> retry-on <code list> (HAProxy supports per-status retry-on tokens). Exponential backoff is NOT expressible and is deferred."
+    description: "Custom retry codes retain transport failure retries."
     extraContext: {controllerName: "haproxy-haptic.org/controller"}
-    fixtures:
+    fixtures: &retryFixtures
       services:
         - apiVersion: v1
           kind: Service
@@ -41,7 +37,7 @@ validationTests:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
           metadata: {name: retry-route, namespace: default, generation: 1}
-          spec:
+          spec: &retryRouteSpec
             parentRefs:
               - {name: gateway, namespace: default}
             hostnames:
@@ -59,13 +55,13 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retries 4$'}
-      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retry-on 503 500$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retry-on conn-failure empty-response response-timeout 503 500$'}
 
   test-httproute-retry-attempts-only-default-codes:
     requires: [httproutes]
     requiresFields: [httproutes.spec.rules.retry]
     _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
-    description: "retry.attempts set but no codes -> emit `retries N` and a `retry-on` covering the spec-mandated retriable 5xx defaults (500 502 503 504)."
+    description: "Retry attempts preserve transport and default HTTP error conditions."
     extraContext: {controllerName: "haproxy-haptic.org/controller"}
     fixtures:
       services:
@@ -103,7 +99,52 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retries 2$'}
-      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retry-on 500 502 503 504$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retry-on conn-failure empty-response response-timeout 500 502 503 504$'}
+
+  test-httproute-retry-zero-disables-retries:
+    requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.retry]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "An explicit zero retry budget overrides inherited retries."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      <<: *retryFixtures
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: retry-route, namespace: default, generation: 1}
+          spec:
+            <<: *retryRouteSpec
+            rules:
+              - matches: *matchesPathprefixRoot
+                retry: {attempts: 0}
+                backendRefs: [{name: retry-svc, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retries 0$'}
+
+  test-httproute-retry-codes-with-default-attempts:
+    requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.retry]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "A codes-only retry policy uses the default retry budget."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      <<: *retryFixtures
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: retry-route, namespace: default, generation: 1}
+          spec:
+            <<: *retryRouteSpec
+            rules:
+              - matches: *matchesPathprefixRoot
+                retry: {codes: [503]}
+                backendRefs: [{name: retry-svc, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retries 3$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retry-on conn-failure empty-response response-timeout 503$'}
 
   test-httproute-no-retry-no-directive:
     requires: [httproutes]
