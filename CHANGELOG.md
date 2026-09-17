@@ -87,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+- A route referencing a Service port name the Service does not expose is rejected at admission and, on reconcile, degrades to an empty backend (503) with a `ServicePortNotFound` Warning Event naming the available ports — instead of aborting the whole render, which blocked every route behind one typo.
 - The vector and SPOA-hub bootstrap-copy init containers declare resources, so a ResourceQuota'd namespace no longer rejects the HAProxy pod.
 - Ingress templates compile when Gateway API and the SPOA hub are disabled.
 - Helm rejects disabling the shared Ingress annotation library while an annotation library still needs it.

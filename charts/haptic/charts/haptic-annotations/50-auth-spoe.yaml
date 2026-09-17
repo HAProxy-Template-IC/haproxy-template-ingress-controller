@@ -989,7 +989,7 @@ templateSnippets:
           {%- var emitted = false -%}
           {%- for _, path := range ingress.Spec.Rules[*].Http.Paths -%}
             {%- if !emitted && path.Path == prefix && path.Backend.Service.Name != "" -%}
-              {%- var parts = split(ResolveServicePort(ns, path.Backend.Service.Name, path.Backend.Service.Port), " ") -%}
+              {%- var parts = split(ResolveServicePort(ns, path.Backend.Service.Name, path.Backend.Service.Port, ingress), " ") -%}
       {{ "\n" }}{{ ns }}/{{ name }} http://{{ path.Backend.Service.Name }}.{{ ns }}.svc:{{ parts[0] }}{{ prefix }}/auth
               {%- emitted = true -%}
             {%- end -%}
