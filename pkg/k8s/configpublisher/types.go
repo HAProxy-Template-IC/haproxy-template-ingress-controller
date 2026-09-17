@@ -86,6 +86,10 @@ type PublishRequest struct {
 	// +optional
 	NameSuffix string
 
+	// Force republishes even when the content matches the last successful
+	// publication — the drift-prevention path's authoritative re-write.
+	Force bool
+
 	// ValidationError contains the error message if this configuration failed validation.
 	// When set, this indicates the configuration is invalid and should not be deployed.
 	// +optional

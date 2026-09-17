@@ -22,6 +22,7 @@ package resourceapplier
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -117,6 +118,14 @@ type Component struct {
 	gvrResolver     GVRResolver
 	healthTracker   *lifecycle.HealthTracker
 
+	// reapplyInterval elides identical-cycle SSA passes (Config.ReapplyInterval).
+	// lastAppliedHash/lastAppliedAt record the last SUCCESSFUL pass and are
+	// c.mu-guarded; a failed pass voids them so the next cycle verifies live
+	// state again.
+	reapplyInterval time.Duration
+	lastAppliedHash string
+	lastAppliedAt   time.Time
+
 	// ctx is the event-loop context captured by Start. Handlers run only
 	// on the loop goroutine and use it for Kubernetes API calls so SSA
 	// applies and orphan deletes abort on shutdown.
@@ -181,7 +190,14 @@ type Config struct {
 	DiscoveryClient discovery.DiscoveryInterface
 
 	GVRResolver GVRResolver
-	Logger      *slog.Logger
+
+	// ReapplyInterval skips the SSA pass for a cycle whose rendered resources
+	// are byte-identical to the last successfully applied cycle, for at most
+	// this long. The expiry re-apply is the periodic authoritative live-state
+	// verification (wire the drift-prevention interval); zero keeps the
+	// verify-every-cycle behavior.
+	ReapplyInterval time.Duration
+	Logger          *slog.Logger
 
 	// OwnNamespace is the namespace the controller pod runs in. Required
 	// when RestrictToOwnNamespace is true.
@@ -243,6 +259,7 @@ func New(cfg *Config) *Component {
 		restrictToOwnNamespace: cfg.RestrictToOwnNamespace,
 		managedByValue:         managedBy,
 		ownerRef:               cfg.OwnerRef,
+		reapplyInterval:        cfg.ReapplyInterval,
 		lastAppliedKeys:        make(map[string]appliedKeyMeta),
 	}
 	// Typed subscription (EventTypes, not a catch-all) — the bus prefilters
@@ -745,8 +762,40 @@ func (c *Component) resetCycleStateLocked() {
 
 // applyAndPrune applies the new desired set and deletes any
 // previously-applied resources that are no longer in it.
+// hashRenderedResources fingerprints one cycle's rendered resources.
+// Renders are deterministic (the test runner enforces it), so identical
+// content hashes identically; map keys marshal sorted, so the JSON is stable.
+func hashRenderedResources(resources []templating.RenderedResource) string {
+	h := sha256.New()
+	for i := range resources {
+		r := &resources[i]
+		_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00", r.APIVersion, r.Kind, r.Namespace, r.Name)
+		if encoded, err := json.Marshal(r.Object); err == nil {
+			_, _ = h.Write(encoded)
+		} else {
+			_, _ = fmt.Fprintf(h, "unmarshalable:%v", err)
+		}
+		_, _ = h.Write([]byte{0})
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
 func (c *Component) applyAndPrune(ctx context.Context, resources []templating.RenderedResource) error {
 	startTime := time.Now()
+	cycleHash := hashRenderedResources(resources)
+	c.mu.Lock()
+	skip := c.reapplyInterval > 0 && cycleHash == c.lastAppliedHash &&
+		time.Since(c.lastAppliedAt) < c.reapplyInterval
+	if !skip {
+		// Void the record up front: a failed pass below leaves the live state
+		// unknown, so the next identical cycle must verify it again.
+		c.lastAppliedHash = ""
+	}
+	c.mu.Unlock()
+	if skip {
+		c.Logger().Debug("Skipping identical resource cycle inside the reapply interval")
+		return nil
+	}
 	desiredKeys := make(map[string]appliedKeyMeta, len(resources))
 	presentKeys := make(map[string]struct{}, len(resources))
 	var keysMu sync.Mutex
@@ -794,6 +843,11 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 	if deleteFailures > 0 {
 		return fmt.Errorf("%d orphaned resources could not be deleted; retry occurs on the next reconciliation", deleteFailures)
 	}
+
+	c.mu.Lock()
+	c.lastAppliedHash = cycleHash
+	c.lastAppliedAt = time.Now()
+	c.mu.Unlock()
 
 	appliedN, refusedN := int(applied.Load()), int(refused.Load())
 	if appliedN+deleted+refusedN > 0 {

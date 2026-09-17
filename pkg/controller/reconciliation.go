@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -295,7 +296,8 @@ func createReconciliationComponents(
 	}
 
 	// Create publisher with informer-backed listers for cached reads
-	purePublisher, stopPublisherInformers, err := createConfigPublisher(setup.IterCtx, crdClientset, k8sClient, logger)
+	purePublisher, stopPublisherInformers, err := createConfigPublisher(
+		setup.IterCtx, crdClientset, k8sClient, cfg.Dataplane.GetDriftPreventionInterval(), logger)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +329,7 @@ func createReconciliationComponents(
 		SelfWrites:    setup.SelfWrites,
 	})
 
-	resourceApplierComponent := newResourceApplier(crd, k8sClient, gvrMapper, setup.Bus, logger)
+	resourceApplierComponent := newResourceApplier(crd, cfg, k8sClient, gvrMapper, setup.Bus, logger)
 
 	// EventEmitter forwards template-recorded Kubernetes Events (recordEvent, e.g.
 	// a RouteConflict Warning on an Ingress) to the API server. All-replica:
@@ -439,7 +441,7 @@ func newProposalValidator(
 // namespace SSA is allowed at the controller boundary; the security gate is
 // the chart's RBAC (a misbehaving template still gets Forbidden when the
 // granted Role/ClusterRole doesn't cover the target namespace).
-func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, k8sClient *client.Client, gvrMapper meta.RESTMapper, bus *busevents.EventBus, logger *slog.Logger) *resourceapplier.Component {
+func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, cfg *coreconfig.Config, k8sClient *client.Client, gvrMapper meta.RESTMapper, bus *busevents.EventBus, logger *slog.Logger) *resourceapplier.Component {
 	ownNamespace := os.Getenv("POD_NAMESPACE")
 	if ownNamespace == "" {
 		ownNamespace = k8sClient.Namespace()
@@ -463,12 +465,18 @@ func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, k8sClient *client.C
 		OwnNamespace:           ownNamespace,
 		RestrictToOwnNamespace: false,
 		OwnerRef:               ownerRef,
+		// Identical cycles skip the SSA pass for one drift interval; the
+		// expiry re-apply is the periodic authoritative live-state check.
+		ReapplyInterval: cfg.Dataplane.GetDriftPreventionInterval(),
 	})
 }
 
 // createConfigPublisher creates a config publisher with informer-backed listers for cached reads.
 // This significantly reduces API calls by checking cached state before doing status updates.
-func createConfigPublisher(ctx context.Context, crdClientset versioned.Interface, k8sClient *client.Client, logger *slog.Logger) (*configpublisher.Publisher, func(), error) {
+// republishInterval bounds how long an unchanged republish is skipped; the
+// expiry republish is the periodic authoritative self-heal, matching the
+// deployment drift cadence.
+func createConfigPublisher(ctx context.Context, crdClientset versioned.Interface, k8sClient *client.Client, republishInterval time.Duration, logger *slog.Logger) (*configpublisher.Publisher, func(), error) {
 	// Create shared informer factory for HAProxy CRDs
 	// The informers provide cached reads for status updates, significantly reducing API calls.
 	// We use a 30-second resync period to keep the cache reasonably fresh while minimizing overhead.
@@ -508,5 +516,7 @@ func createConfigPublisher(ctx context.Context, crdClientset versioned.Interface
 	logger.Debug("HAProxy CRD informer caches synced")
 
 	// Create publisher with listers for cached reads
-	return configpublisher.NewWithListers(k8sClient.Clientset(), crdClientset, listers, logger), stopInformers, nil
+	publisher := configpublisher.NewWithListers(k8sClient.Clientset(), crdClientset, listers, logger)
+	publisher.SetRepublishInterval(republishInterval)
+	return publisher, stopInformers, nil
 }
