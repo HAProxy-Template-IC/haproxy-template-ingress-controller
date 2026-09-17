@@ -15,12 +15,17 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -176,6 +181,84 @@ func TestDeferredBackendDeleteDoesNotCrossReload(t *testing.T) {
 	assert.Equal(t, 1, observer.superseded["backend"])
 	assert.Empty(t, observer.abandoned)
 }
+
+func TestBackendDeletionRequiresConfirmedAbsence(t *testing.T) {
+	const absent = "[3]: Failed. No such backend."
+	for _, tc := range []struct {
+		name, deleted, verified string
+		removable               string
+		fails                   bool
+	}{
+		{name: "already absent", removable: absent},
+		{name: "absence with extra text", removable: absent + "\nUnexpected data.", fails: true},
+		{name: "wait rejected", removable: "[3]: Permission denied.", fails: true},
+		{name: "acknowledged and absent", deleted: "[6]: Backend deleted.", verified: absent},
+		{name: "acknowledgement crowded out", deleted: "[6]: Health check passed.\nServer deleted.", verified: absent},
+		{name: "empty acknowledgement", verified: absent},
+		{name: "backend remains", deleted: "[6]: Health check passed.", verified: "[6]: Done.", fails: true},
+		{name: "stale success message", deleted: "[6]: Backend deleted.", verified: "[6]: Done.", fails: true},
+		{name: "missing readback", deleted: "[6]: Backend deleted.", fails: true},
+		{name: "other refusal", deleted: "[6]: Backend deleted.", verified: "[3]: Permission denied.", fails: true},
+		{name: "extra readback text", deleted: "[6]: Backend deleted.", verified: absent + "\nUnexpected data.", fails: true},
+		{name: "delete rejected", deleted: "[3]: Backend is still published.", fails: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commands := []string{"wait 2000 be-removable be"}
+			removable := tc.removable
+			if removable == "" {
+				removable = "[6]: Done."
+			}
+			replies := []string{removable}
+			if tc.removable == "" {
+				commands = append(commands, "del backend be")
+				replies = append(replies, tc.deleted)
+				if tc.name != "delete rejected" {
+					commands = append(commands, "wait 1 be-removable be")
+					replies = append(replies, tc.verified)
+				}
+			}
+			session, done := scriptedWorkerSession(t, commands, replies)
+			d := NewDeferrals(nil, slog.New(slog.DiscardHandler), nil)
+			err := d.deleteBackendOnWorker(session, attempt[string]{Target: "be"})
+			if tc.fails {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.NoError(t, <-done)
+		})
+	}
+}
+
+func scriptedWorkerSession(t *testing.T, commands, replies []string) (session *workerSession, completion <-chan error) {
+	t.Helper()
+	conn, peer := net.Pipe()
+	t.Cleanup(func() { _ = conn.Close(); _ = peer.Close() })
+	require.NoError(t, peer.SetDeadline(time.Now().Add(5*time.Second)))
+	done := make(chan error, 1)
+	go func() {
+		defer peer.Close()
+		reader := bufio.NewReader(peer)
+		for i, command := range commands {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				done <- err
+				return
+			}
+			if line != command+"\n" {
+				done <- fmt.Errorf("expected %q, got %q", command, line)
+				return
+			}
+			if _, err := io.WriteString(peer, replies[i]+"\n\n> "); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	return &workerSession{ctx: t.Context(), conn: conn, reader: bufio.NewReader(conn)}, done
+}
+
 func (o *countingObserver) DeferredDeleteDone(kind string)       { o.done[kind]++ }
 func (o *countingObserver) DeferredDeleteDeferred(kind string)   { o.deferred[kind]++ }
 func (o *countingObserver) DeferredDeleteAbandoned(kind string)  { o.abandoned[kind]++ }

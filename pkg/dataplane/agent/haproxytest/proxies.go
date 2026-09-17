@@ -234,7 +234,11 @@ func (h *HAProxy) wait(rest, _ string) reply {
 		}
 		return message("Done.")
 	case "be-removable":
-		if be, exists := h.m.Backends[fields[2]]; exists && (be.Published || len(be.Servers) > 0) {
+		be, exists := h.m.Backends[fields[2]]
+		if !exists {
+			return failure("Failed. No such backend.")
+		}
+		if be.Published || len(be.Servers) > 0 {
 			return message("Wait delay expired. The backend is still referenced.")
 		}
 		return message("Done.")
