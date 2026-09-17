@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Plan compression reuses the serialized snapshot buffer, reducing allocation during deployments.
+- Queued deployments defer plan materialization until dispatch, avoiding background work for superseded renders.
 - An unchanged republish of the output CRDs (HAProxyCfg, map/general/crt-list files, Secrets) is skipped for one drift-prevention interval per key, and the resource applier skips the SSA pass for a cycle whose rendered resources are identical to the last applied one for the same interval. The interval-expiry write remains the periodic authoritative self-heal; on a churn-heavy cluster this removes the constant per-reconcile GET/LIST/PATCH sweep against the apiserver (measured ~110 reads/s at idle on a 1500-Ingress fleet).
 - A render-gate verdict identical to the last one written is skipped for the same drift-prevention interval, eliding the read-modify-write's GET on the HAProxyCfg that every render re-triggered (measured ~20 GETs/s at idle on the same fleet).
 - A follower's warm-up renders read `currentFiles` through a root-tracked source instead of a map snapshot, so an unchanged published set lets them take the exact-cycle replay like the leader's renders do; before, every follower render was a full warm render (measured 4× the leader's CPU on the same fleet).
@@ -95,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+- TCP access-log records no longer produce HTTP request metrics with status zero; feature counters also recognize compact JSON logs.
 - A route referencing a Service port name the Service does not expose is rejected at admission and, on reconcile, degrades to an empty backend (503) with a `ServicePortNotFound` Warning Event naming the available ports — instead of aborting the whole render, which blocked every route behind one typo.
 - The vector and SPOA-hub bootstrap-copy init containers declare resources, so a ResourceQuota'd namespace no longer rejects the HAProxy pod.
 - Gateway API retry policies retain connection-failure retries and honor an explicit zero retry budget.

@@ -2071,9 +2071,12 @@ test-vector-spans:
         - charts/haptic/templates/_vector.tpl
         - charts/haptic/templates/haproxy-deployment.yaml
         - scripts/test-vector-spans.sh
+        - scripts/test-vector-metrics.sh
+        - scripts/tests/vector_metrics.py
         - .gitlab-ci.yml
   script:
     - make test-vector-spans
+    - make test-vector-metrics
 
 # Upgrade guard: installs the last RELEASED chart, upgrades it to this commit,
 # and asserts the upgrade is accepted, that a rejected one changes nothing, and

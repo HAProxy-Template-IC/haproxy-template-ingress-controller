@@ -55,10 +55,12 @@ package conformance
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -70,6 +72,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	controllerruntimelog "sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/gateway-api/apis/v1alpha2"
 	"sigs.k8s.io/gateway-api/apis/v1alpha3"
@@ -101,6 +104,8 @@ var metalLBPoolGVR = schema.GroupVersionResource{
 const gatewayClassName = "haptic"
 
 func TestGatewayAPIConformance(t *testing.T) {
+	controllerruntimelog.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
+
 	// KUBECONFIG must be provided by the caller. When run as a sibling
 	// container via `make test-conformance`, the kubeconfig is mounted
 	// at /etc/kubeconfig and the env var is set on the docker run command.

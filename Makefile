@@ -645,6 +645,9 @@ test-vector-spans: ## Execute the span-building VRL under vector and assert the 
 	@# plausible-looking spans, which nothing offline can see.
 	bash scripts/test-vector-spans.sh
 
+test-vector-metrics: build ## Verify rendered Vector metrics and log preservation with real records
+	bash scripts/test-vector-metrics.sh
+
 test-install-without-gateway-api: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Assert a default install converges on a cluster with no Gateway API CRDs
 	@# Every other suite installs Gateway API first. This one must not, which is
 	@# why it owns its own cluster rather than joining the e2e one.

@@ -284,7 +284,7 @@ files:
             if err != null {
               abort
             }
-            caps, cerr = parse_regex(m, r'"{{ field }}": "(?P<v>{{ pattern }})"')
+            caps, cerr = parse_regex(m, r'"{{ field }}"\s*:\s*"(?P<v>{{ pattern }})"')
             if cerr != null {
               abort
             }
@@ -450,6 +450,7 @@ templateSnippets:
             o = object(r) ?? {}
             # HTTP-record discriminator: a TCP record has no status, and HAProxy's
             # process lines are not JSON. Doubles as the numeric check.
+            if is_null(o.status) { abort }
             st = to_int(o.status) ?? -1
             if st < 0 { abort }
             .rm_status = to_string(st)
@@ -1174,7 +1175,7 @@ validationTests:
       # enum: a regex bounded to the declared values, and a tagged counter.
       - type: contains
         target: file:vector.yaml
-        pattern: 'parse_regex\(m, r''"cache": "\(\?P<v>HIT\|MISS\|STALE\)"''\)'
+        pattern: 'parse_regex\(m, r''"cache"\\s\*:\\s\*"\(\?P<v>HIT\|MISS\|STALE\)"''\)'
       - {type: contains, target: file:vector.yaml, pattern: 'name: cache_status_total'}
       # vector's own {{...}} interpolation must survive Scriggo, which shares the
       # delimiters — an evaluated tag renders empty and silently collapses every
@@ -1185,7 +1186,7 @@ validationTests:
       - {type: contains, target: file:vector.yaml, pattern: 'increment_by_value: true'}
       - type: contains
         target: file:vector.yaml
-        pattern: 'parse_regex\(m, r''"cache_age": "\(\?P<v>\[0-9\]\+\)"''\)'
+        pattern: 'parse_regex\(m, r''"cache_age"\\s\*:\\s\*"\(\?P<v>\[0-9\]\+\)"''\)'
       # Both reach the scrape endpoint, not just exist.
       - {type: contains, target: file:vector.yaml, pattern: '- cacheStatus_metric'}
       - {type: contains, target: file:vector.yaml, pattern: '- cacheAge_metric'}

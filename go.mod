@@ -7,6 +7,7 @@ require (
 	github.com/KimMachineGun/automemlimit v1.0.0
 	github.com/arch-go/arch-go/v2 v2.1.2
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/go-logr/logr v1.4.3
 	github.com/golangci/golangci-lint/v2 v2.13.2
 	github.com/haproxytech/client-native/v6 v6.4.2
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
@@ -119,7 +120,6 @@ require (
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/ghostiam/protogetter v0.3.21 // indirect
 	github.com/go-critic/go-critic v0.14.4 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-openapi/analysis v0.26.2 // indirect
 	github.com/go-openapi/errors v0.22.8 // indirect
