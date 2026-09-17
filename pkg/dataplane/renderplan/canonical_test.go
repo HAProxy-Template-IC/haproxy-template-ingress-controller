@@ -151,6 +151,7 @@ func TestCanonicalStreamFallsBackWhenOrderIsUnproven(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, Digest(source.Canonical()), id, "the fallback must still be exact")
 	assert.Equal(t, uint64(1), authority.DigestFallbacks())
+	requireSnapshotJSONMatchesLegacy(t, snapshot)
 }
 
 func TestCanonicalStreamRefusesCorruptKeys(t *testing.T) {

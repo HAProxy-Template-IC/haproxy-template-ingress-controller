@@ -32,6 +32,9 @@ func requireSnapshotJSONMatchesLegacy(t *testing.T, snapshot *Snapshot) {
 	var got bytes.Buffer
 	require.NoError(t, snapshot.WriteJSON(&got))
 	require.Equal(t, string(want), got.String())
+	encoded, err := snapshot.MarshalJSON()
+	require.NoError(t, err)
+	require.Equal(t, want, encoded)
 }
 
 // TestSnapshotJSONMatchesEncodingJSON pins WriteJSON to encoding/json over a
@@ -77,5 +80,16 @@ func TestSnapshotJSONMatchesEncodingJSON(t *testing.T) {
 		require.NoError(t, err)
 		requireSnapshotJSONMatchesLegacy(t, next)
 		current = next
+	}
+}
+
+func TestSnapshotJSONRejectsUnauthenticatedSnapshot(t *testing.T) {
+	for _, snapshot := range []*Snapshot{nil, {}} {
+		encoded, err := snapshot.MarshalJSON()
+		require.Error(t, err)
+		require.Nil(t, encoded)
+		var output bytes.Buffer
+		require.Error(t, snapshot.WriteJSON(&output))
+		require.Empty(t, output.Bytes())
 	}
 }
