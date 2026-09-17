@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -38,6 +39,10 @@ type connGenKey struct{}
 // opened at generation 0 answer 404 forever; connections opened after the
 // simulated deploy answer 200. The poll converges only if retries re-dial.
 func TestPollRetriesOnFreshConnection(t *testing.T) {
+	t.Setenv("HAPTIC_E2E_CLUSTER_NAME", "isolated-httpclient-test")
+	t.Setenv("HAPTIC_E2E_KUBECONFIG_PATH", filepath.Join(t.TempDir(), "kubeconfig"))
+	t.Setenv("HAPTIC_E2E_EXPOSE_HOST_PORTS", "false")
+	t.Setenv("KIND_EXPERIMENTAL_DOCKER_NETWORK", "isolated-httpclient-test")
 	var gen atomic.Int64      // bumped once = "the route deployed / HAProxy reloaded"
 	var conns atomic.Int64    // distinct TCP connections the server accepted
 	var requests atomic.Int64 // total requests served

@@ -121,6 +121,10 @@ func New(t *testing.T) *Client {
 	}
 	t.Logf("httpclient: NodePort host = %s, HTTP = %d, HTTPS = %d", endpoint.Host, endpoint.HTTPPort, endpoint.HTTPSPort)
 
+	return newClient(endpoint)
+}
+
+func newClient(endpoint e2ecluster.TrafficEndpoint) *Client {
 	return &Client{
 		nodeIP:    endpoint.Host,
 		httpPort:  endpoint.HTTPPort,
@@ -153,16 +157,11 @@ func New(t *testing.T) *Client {
 // New().
 func ForForwarded(t *testing.T, httpPort, httpsPort int) *Client {
 	t.Helper()
-	c := New(t)
-	c.nodeIP = "127.0.0.1"
-	if httpPort > 0 {
-		c.httpPort = httpPort
-	}
-	if httpsPort > 0 {
-		c.httpsPort = httpsPort
-	}
-	c.transport = newSharedTransport(c.nodeIP, c.httpsPort)
-	return c
+	return newClient(e2ecluster.TrafficEndpoint{
+		Host:      "127.0.0.1",
+		HTTPPort:  httpPort,
+		HTTPSPort: httpsPort,
+	})
 }
 
 // CloseIdleConnections drops the shared transport's pooled keepalive

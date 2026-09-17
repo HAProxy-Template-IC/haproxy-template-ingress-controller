@@ -16,6 +16,7 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | Metric | Type | Labels | What it tracks |
 |--------|------|--------|----------------|
 | `haptic_reconciliation_total` | counter | — | Reconciliation cycles triggered |
+| `haptic_render_warnings` | Gauge | `reason` | Current template warnings from the last successful reconciliation; resolved reasons and follower series are removed |
 | `haptic_reconciliation_errors_total` | counter | — | Reconciliations that failed |
 | `haptic_reconciliation_duration_seconds` | histogram | — | End-to-end reconciliation wall-clock |
 | `haptic_reconciliation_queue_wait_seconds` | histogram | — | Time between `ReconciliationTriggeredEvent` and the pipeline actually picking it up (debounce + queue depth) |

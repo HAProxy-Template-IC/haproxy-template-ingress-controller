@@ -19,10 +19,12 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
 	"unsafe"
+	"weak"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -844,4 +846,62 @@ func coldSourceFrameInputs(
 			)),
 		},
 	}
+}
+
+func TestIncrementalColdSourceFramesReleaseRevokedOwnership(t *testing.T) {
+	refs, slot, sessionRef, valueRef := func() (
+		*incrementalColdSourceFrameRefs, *incrementalColdSourceInputSlot,
+		weak.Pointer[incrementalRenderSession], weak.Pointer[incrementalColdCertifiedSourceInput],
+	) {
+		session := &incrementalRenderSession{}
+		component := &incrementalComponent{name: "component"}
+		query := componentQueryKey(component, "routes", "default", "route")
+		generation, err := newIncrementalColdSourceFrameGeneration(session, 0, 1)
+		require.NoError(t, err)
+		require.NoError(t, generation.bind(0, query, component, "routes", "default", "route"))
+		require.NoError(t, generation.sealGeneration())
+		refs, err := generation.refsFor(0, query, component, "routes", "default", "route")
+		require.NoError(t, err)
+		view := requireColdSourceFrameView(t, refs, query, component)
+		reader := &coldSourceFrameInputReader{inputs: coldSourceFrameInputs(component.name, "route")}
+		value, err := view.item.load(t.Context(), reader, generation)
+		require.NoError(t, err)
+		sessionRef, valueRef := weak.Make(session), weak.Make(value)
+		generation.revoke()
+		generation.revoke()
+		_, err = view.item.load(t.Context(), reader, generation)
+		require.ErrorContains(t, err, "invalid provenance")
+		_, err = refs.authenticateDetached(query, component, "routes", "default", "route")
+		require.ErrorContains(t, err, "invalid provenance")
+		return refs, view.item, sessionRef, valueRef
+	}()
+	runtime.GC()
+	require.True(t, sessionRef.Value() == nil, "revoked handles must not retain the render session")
+	require.True(t, valueRef.Value() == nil, "revoked slots must not retain certified inputs")
+	runtime.KeepAlive(refs)
+	runtime.KeepAlive(slot)
+}
+
+func TestIncrementalColdSourceFramesShareCachedRepresentations(t *testing.T) {
+	session := &incrementalRenderSession{}
+	component := &incrementalComponent{name: "component"}
+	query := componentQueryKey(component, "routes", "default", "route")
+	inputs := coldSourceFrameInputs(component.name, "route")
+	generation, err := newIncrementalColdSourceFrameGeneration(session, 0, 1)
+	require.NoError(t, err)
+	require.NoError(t, generation.bind(0, query, component, "routes", "default", "route"))
+	require.NoError(t, generation.sealGeneration())
+	defer generation.revoke()
+	refs, err := generation.refsFor(0, query, component, "routes", "default", "route")
+	require.NoError(t, err)
+	view := requireColdSourceFrameView(t, refs, query, component)
+	encoded := inputs[view.item.key].Value
+	cached, err := session.certifyDecodedValue(encoded, nil)
+	require.NoError(t, err)
+	value, err := view.item.load(t.Context(), &coldSourceFrameInputReader{inputs: inputs}, generation)
+	require.NoError(t, err)
+	require.Same(t, cached.certificate, value.certificate)
+	require.Equal(t, cached.encoded, value.encoded)
+	require.True(t, unsafe.StringData(cached.encoded) == unsafe.StringData(value.encoded), "cache hits must share the encoded backing storage")
+	require.True(t, cached.certificate.Guards(value.value))
 }

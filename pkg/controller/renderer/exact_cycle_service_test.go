@@ -851,3 +851,34 @@ func TestRenderServiceExactCycleHTTPCommitRebasesOnlyOnPublication(t *testing.T)
 	require.Error(t, relevant.InputTransaction.Commit(t.Context()))
 	require.Same(t, beforeConflict, fixture.service.exactCycleCandidate)
 }
+
+func TestExactCycleMatchingEvaluatesInheritedIndexes(t *testing.T) {
+	fixture := newExactCycleServiceFixture(t)
+	first, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.NoError(t, first.InputTransaction.Commit(t.Context()))
+	waitForIncrementalCache(t, fixture.service)
+	observations := fixture.service.exactCycleCandidate.incremental
+	require.NoError(t, fixture.routes.Add(
+		incrementalTestResource("default", "second", nil), []string{"default", "second"},
+	))
+	session, err := fixture.service.incremental.begin(
+		t.Context(), fixture.provider, nil, rendercontext.RenderModeReconcile,
+		map[string]any{}, rendercontext.NewResourceErrorCollector(),
+		incrementalLoggerContext{logger: slog.Default()},
+	)
+	require.NoError(t, err)
+	defer session.abort()
+	require.False(t, session.cold)
+	require.NotEmpty(t, session.newQueries)
+	count := 0
+	observations.entries.Root().Walk(func(_ []byte, observation exactCycleIncrementalObservation) bool {
+		require.Same(t, observation.root.effects, session.groupIndexes[observation.group])
+		count++
+		return false
+	})
+	require.Positive(t, count)
+	matched, err := observations.matches(t.Context(), session)
+	require.NoError(t, err)
+	require.False(t, matched, "inherited index identity does not prove pending inputs were evaluated")
+}

@@ -22,6 +22,8 @@ import (
 	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
 )
 
+const reasonLabel = "reason"
+
 // Metrics holds all controller-specific Prometheus metrics.
 //
 // IMPORTANT: Create one instance per application iteration.
@@ -163,6 +165,9 @@ type Metrics struct {
 	// independently of the raw backend count.
 	RenderProfiles prometheus.Gauge
 
+	// RenderWarnings counts current template warnings by reason.
+	RenderWarnings *prometheus.GaugeVec
+
 	// RenderTotal counts reconcile renders by the cache state they ran from.
 	// Every replica renders: the leader to deploy, a follower to keep its
 	// incremental graph warm for the next leadership change.
@@ -286,7 +291,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_runtime_backend_fallback_total",
 			"Runtime backend batches a pod reloaded instead of running, by reason. `name_collision` is a fresh backend whose name a not-yet-deleted one still holds; the apply reloads because HAProxy cannot reveal a backend's shape.",
-			[]string{"reason"},
+			[]string{reasonLabel},
 		),
 
 		RuntimeMapDivergence: pkgmetrics.NewCounterVec(
@@ -399,7 +404,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_haproxy_pods_rejected_total",
 			"Total number of HAProxy pods refused admission by the discovery component, labelled by reason. Persistent non-zero growth indicates the controller cannot talk to the deployed HAProxy pods (e.g., bundled HAProxy major.minor differs from the chart's haproxyVersion).",
-			[]string{"reason"},
+			[]string{reasonLabel},
 		),
 
 		ConfigRejectedTotal: pkgmetrics.NewCounterVec(
@@ -425,6 +430,13 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_render_profiles",
 			"Distinct backend profiles (defaults haptic-be-*) in the most recent reconcile render. Profile cardinality is what backends collapse onto, tracking the config's structural size (leader-only; 0 on followers).",
+		),
+
+		RenderWarnings: pkgmetrics.NewGaugeVec(
+			registry,
+			"haptic_render_warnings",
+			"Current template-recorded warnings by reason in the last successful reconciliation (leader-only).",
+			[]string{reasonLabel},
 		),
 
 		RenderTotal: pkgmetrics.NewCounterVec(
@@ -641,6 +653,14 @@ func (m *Metrics) RecordConfigRejected(validator string) {
 // reconcile render emitted.
 func (m *Metrics) SetRenderProfiles(count int) {
 	m.RenderProfiles.Set(float64(count))
+}
+
+// SetRenderWarnings replaces the warning counts, removing resolved reasons.
+func (m *Metrics) SetRenderWarnings(counts map[string]int) {
+	m.RenderWarnings.Reset()
+	for reason, count := range counts {
+		m.RenderWarnings.WithLabelValues(reason).Set(float64(count))
+	}
 }
 
 // RecordRender records one reconcile render by the cache state it ran from.
