@@ -70,6 +70,7 @@ type Publisher struct {
 	// constructor that does not opt in keeps the old behavior.
 	publishedMu       sync.Mutex
 	published         map[publishedKey]publishedState
+	appliedVerdicts   map[verdictKey]appliedVerdict
 	republishInterval time.Duration
 }
 
@@ -95,9 +96,10 @@ type publishedState struct {
 	result               PublishResult
 }
 
-// SetRepublishInterval enables unchanged-republish skipping for at most d per
-// key. Pass the drift-prevention interval so the publish self-heal cadence
-// matches the deployment one; zero disables skipping.
+// SetRepublishInterval enables unchanged-republish skipping (PublishConfig)
+// and unchanged-verdict skipping (ApplyGateVerdict) for at most d per key.
+// Pass the drift-prevention interval so the publish self-heal cadence matches
+// the deployment one; zero disables skipping.
 func (p *Publisher) SetRepublishInterval(d time.Duration) {
 	p.publishedMu.Lock()
 	defer p.publishedMu.Unlock()
