@@ -275,6 +275,7 @@ func TestStartLeaderOnlyRestartsStoppedComponentsNextTerm(t *testing.T) {
 	registry.Register(component, true)
 
 	term1, endTerm1 := context.WithCancel(context.Background())
+	t.Cleanup(endTerm1)
 	run1, err := registry.StartLeaderOnly(term1)
 	require.NoError(t, err)
 	endTerm1()
@@ -282,11 +283,12 @@ func TestStartLeaderOnlyRestartsStoppedComponentsNextTerm(t *testing.T) {
 	require.Equal(t, int32(1), starts.Load())
 
 	term2, endTerm2 := context.WithCancel(context.Background())
+	t.Cleanup(endTerm2)
 	run2, err := registry.StartLeaderOnly(term2)
 	require.NoError(t, err)
-	require.Equal(t, int32(2), starts.Load(), "a Stopped component restarts on the next term")
 	endTerm2()
 	require.NoError(t, run2.Wait())
+	require.Equal(t, int32(2), starts.Load(), "a Stopped component restarts on the next term")
 }
 
 func TestStartLeaderOnlyLeavesFailedComponentsTerminal(t *testing.T) {

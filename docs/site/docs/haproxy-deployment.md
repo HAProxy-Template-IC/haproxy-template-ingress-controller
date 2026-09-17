@@ -405,7 +405,7 @@ busy node.
 **Loss is exact and observable.** HAProxy counts every discarded record:
 
 ```
-haproxy_process_dropped_logs_total    # Prometheus, via the vector sidecar's endpoint
+haproxy_process_dropped_logs_total    # HAProxy's Prometheus endpoint
 DroppedLogs                           # `show info` on the stats socket
 ```
 
