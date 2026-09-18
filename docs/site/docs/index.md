@@ -162,6 +162,9 @@ Set `example.com/request-id-header: "X-Request-ID"` on an Ingress to enable the 
 
 ## Reading the docs as an AI agent
 
+Install the [HAPTIC agent skill](agent-skill.md) for Scriggo customization,
+resource access, and validation workflows, with runnable examples.
+
 Every page is also served as raw Markdown: append `index.md` to any page URL (for example this page's Markdown is at [`index.md`](index.md)). Two site-wide maps help agents crawl the whole site:
 
 - `llms.txt` — a link index of every page's Markdown endpoint, following the [llmstxt.org](https://llmstxt.org/) convention

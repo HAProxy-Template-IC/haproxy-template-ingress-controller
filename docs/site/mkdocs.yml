@@ -82,6 +82,7 @@ nav:
   - Migrating: migrating.md
   - Using HAPTIC:
     - Templating: templating.md
+    - Customize with an AI agent: agent-skill.md
     - Template Reference: template-reference.md
     - Watching Resources: watching-resources.md
     - CRD Reference: crd-reference.md
@@ -147,6 +148,7 @@ nav:
 hooks:
   - hooks/changelog.py
   - hooks/adrs.py
+  - hooks/agent_skills.py
   - hooks/llms.py
   - hooks/redirects.py
 

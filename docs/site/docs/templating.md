@@ -10,6 +10,9 @@ The controller renders after initial synchronization and relevant resource chang
 and periodically checks for drift. The examples below introduce the language,
 resource access, and extension points.
 
+If you use a coding agent, install the [HAPTIC skill](agent-skill.md) to give it
+the customization workflow, examples, and validation commands.
+
 <div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.backends-500-ingress" data-tab="haproxy.cfg" data-title="See a template render — live" data-controls="tabs,provenance" data-height="480">
 </div>
 

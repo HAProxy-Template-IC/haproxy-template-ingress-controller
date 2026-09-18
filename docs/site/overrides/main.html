@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 
+{% block extrahead %}
+  {{ super() }}
+  <link rel="alternate" type="text/markdown" href="{{ (page.url ~ 'index.md') | url }}">
+  <link rel="describedby" href="{{ 'llms.txt' | url }}">
+{% endblock %}
+
 {% block content %}
   {{ super() }}
   <div class="hx-feedback">

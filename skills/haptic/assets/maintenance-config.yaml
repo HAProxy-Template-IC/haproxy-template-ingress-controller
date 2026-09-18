@@ -1,0 +1,89 @@
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: maintenance-example
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: loadbalancer
+  watchedResources:
+    maintenancepolicies:
+      apiVersion: platform.example.com/v1
+      resources: maintenancepolicies
+      indexBy:
+        - metadata.namespace
+        - metadata.name
+  haproxyConfig:
+    template: |
+      global
+        maxconn 100
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend public
+        bind :8080
+        {{ render "maintenance" }}
+        default_backend application
+      backend application
+        server app 127.0.0.1:8081
+  templateSnippets:
+    maintenance:
+      template: |
+        {%- var policy = resources.maintenancepolicies.GetSingle("apps", "public") %}
+        {%- if policy != nil && policy.spec.enabled %}
+        http-request return status 503 content-type text/plain string "Maintenance"
+        {%- end %}
+  validationTests:
+    skill-maintenance-enabled:
+      fixtures:
+        maintenancepolicies:
+          - apiVersion: platform.example.com/v1
+            kind: MaintenancePolicy
+            metadata:
+              namespace: apps
+              name: public
+            spec:
+              enabled: true
+      assertions:
+        - type: haproxy_valid
+        - type: contains
+          target: haproxy.cfg
+          pattern: 'http-request return status 503'
+    skill-maintenance-disabled:
+      fixtures:
+        maintenancepolicies:
+          - apiVersion: platform.example.com/v1
+            kind: MaintenancePolicy
+            metadata:
+              namespace: apps
+              name: public
+            spec:
+              enabled: false
+      assertions:
+        - type: haproxy_valid
+        - type: not_contains
+          target: haproxy.cfg
+          pattern: 'http-request return status 503'
+    skill-maintenance-absent:
+      assertions:
+        - type: haproxy_valid
+        - type: not_contains
+          target: haproxy.cfg
+          pattern: 'http-request return status 503'
+    skill-maintenance-other-namespace:
+      fixtures:
+        maintenancepolicies:
+          - apiVersion: platform.example.com/v1
+            kind: MaintenancePolicy
+            metadata:
+              namespace: other
+              name: public
+            spec:
+              enabled: true
+      assertions:
+        - type: haproxy_valid
+        - type: not_contains
+          target: haproxy.cfg
+          pattern: 'http-request return status 503'
