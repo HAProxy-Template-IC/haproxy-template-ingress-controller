@@ -1,6 +1,7 @@
 # Security
 
-This page covers HAPTIC's permissions, credentials, pod settings, and network exposure.
+Configure permissions, credentials, pod security, and network access for your
+HAPTIC installation. Review the defaults below before exposing production traffic.
 
 ## What the controller needs
 
@@ -116,11 +117,14 @@ The controller pod exposes three HTTP ports (all chart defaults):
 
 Outbound, the controller talks to the Kubernetes API server and to the agent on each HAProxy pod (default port `5555`). That traffic is plain HTTP over the pod network — the agent has no TLS server configuration. Rely on pod-network protection (NetworkPolicy, service mesh, Container Network Interface (CNI) encryption) to protect that hop.
 
-An apply carries the rendered configuration and every auxiliary file, which includes SSL private keys. That's the same content the pod already holds on disk, but it's one more reason the hop deserves network-level protection.
+Deployment requests carry rendered configuration and auxiliary files, including
+TLS private keys. Protect controller-to-agent traffic at the network layer.
 
 The agent is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release `fullname`, which collapses to `<release>-credentials` only when the release name already contains `haptic`). Password generation and the GitOps caveat are covered in the warning box above.
 
-**The chart already ships default-on `NetworkPolicy` resources** for the controller (`controller.networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods. Enabling the managed Varnish or Valkey tiers adds release-scoped default-on policies controlled by `cache.varnish.networkPolicy.enabled` and `rateLimit.shared.managedStore.networkPolicy.enabled`. Know what the defaults actually allow before relying on them:
+NetworkPolicies are enabled by default for the controller and HAProxy pods.
+Managed Varnish and Valkey tiers also receive release-scoped policies when
+enabled. Review their allowed traffic:
 
 - The controller policy restricts ingress to the exposed ports (metrics ingress only opens when `controller.networkPolicy.ingress.monitoring.enabled: true` — it's off by default, so enable it for Prometheus). Egress covers DNS, the Kubernetes API server, and the HAProxy agent/stats ports, **plus a default `controller.networkPolicy.egress.additionalRules` entry allowing every in-cluster pod** (so template helpers like `http.Fetch()` work) — set it to `[]` to lock egress down (see [Networking](./networking.md#production-hardening)).
 - The HAProxy policy defaults to `allowExternal: true`, which renders a permissive all-port ingress rule — deliberate, because Gateway listeners bind dynamic ports.

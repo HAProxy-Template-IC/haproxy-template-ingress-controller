@@ -4,17 +4,18 @@
 
 Validation tests render templates against fixture resources and check the output. Define them in `HAProxyTemplateConfig` or its libraries, run them locally with `haptic validate`, and let the controller repeat them when loading configuration. A passing suite covers its fixtures; it doesn't prove every possible live resource state.
 
-Beyond running the controller (`haptic run`), the controller binary provides `validate` (this page) and `benchmark` (template render timing). To audit another controller's Ingresses before switching to HAPTIC, use the migration report in the [playground](/playground/) — see [Migrating: Step 0](migrating.md#step-0-check-what-changes).
+!!! note "Automatic validation"
+    The controller runs these tests when loading configuration at startup and after
+    configuration changes. A failed live change leaves the last working configuration
+    in place and increments `haptic_config_rejected_total{validator="validationtests"}`.
+    A failed startup load prevents the pod from becoming ready and sets the
+    `Validated` condition's reason to `LoadGateFailed`.
 
-!!! note "Tests also run automatically before deployment"
-    The same suite runs at two gates besides the CLI, so a config whose tests fail never reaches HAProxy:
-
-    - **Live config change** — the controller re-runs the suite whenever a config changes. A change whose tests fail is refused, `haptic_config_rejected_total{validator="validationtests"}` increments, and the last-good config keeps serving. The budget scales with suite size (a 25s floor plus ~100 ms per test), so a large suite isn't cut off mid-run.
-    - **Startup load gate** — the suite also runs on every fresh or upgraded controller pod, with a much larger budget since there is no scatter-gather deadline. A failing initial config crash-loops the pod rather than serving untested config, and the reason is stamped on `status.conditions[Validated]` with reason `LoadGateFailed`.
-
-    There is **no** admission webhook for `HAProxyTemplateConfig` — a configuration is a set (the config plus its `libraryRefs` libraries), and admission sees one object at a time, so a per-object webhook would deny change sets whose end state is correct. To gate a config *before* it reaches the cluster, run [`haptic preflight`](operations/validate-before-deploy.md) in your pipeline.
-
-    The `validate` CLI, `preflight`, and both in-cluster gates run the identical suite through the same runner, but HAProxy versions, external validators, and runtime inputs must also match to reproduce a result.
+    To check the complete configuration and library set before applying it, run
+    [`haptic preflight`](operations/validate-before-deploy.md). The admission webhook
+    doesn't validate individual `HAProxyTemplateConfig` objects. All these checks
+    use the same test runner; reproduce HAProxy versions, validators, and inputs
+    when comparing results.
 
 ## Quick start
 
@@ -66,11 +67,9 @@ haptic config view --input --namespace haptic > /tmp/haptic-config.yaml
 haptic validate -f /tmp/haptic-config.yaml
 ```
 
-A Helm install spreads the configuration across one object per enabled template
-library, so dumping a single object would only give you part of it — `config view
---input` merges the set the same way the controller does. Each library's tests
-ship in that library's object and all of them run together as one suite against
-the merged config, exactly as before.
+`config view --input` merges the configuration and its referenced libraries.
+All library tests run against that merged configuration. Exporting only the
+`HAProxyTemplateConfig` would omit the libraries.
 
 Or run tests right here — this is a complete config with a `validationTests` block. Press **Run live**, then open the **tests** tab to see each assertion pass or fail:
 
@@ -215,7 +214,9 @@ Templates calling `http.Fetch()` for unmocked URLs fail with an error. Define sh
 
 ### Current servers
 
-`currentServers` gives the render a previous deployment to reason about, keyed by backend name and then by server name (the pod name, ADR-0011). Templates read it as `currentConfig.ServerIndex`, so it's what you use to test that a rolling deployment keeps existing pods on their named server lines:
+Use `currentServers` to simulate a previous deployment. Key entries by backend
+name, then server name. Templates read this data through `currentConfig.ServerIndex`.
+For example, test that existing pods retain their server names during a rollout:
 
 ```yaml
 currentServers:
@@ -226,7 +227,9 @@ currentServers:
 
 Without `currentServers`, `currentConfig` is nil — the first-deployment case.
 
-The older `currentConfig` field takes a raw `haproxy.cfg` instead and parses it down to the same server index. It's deprecated: the parse reads far more of the file than templates can see, and a later release removes it. Setting both fields fails the test.
+The deprecated `currentConfig` fixture field accepts a raw `haproxy.cfg` and
+extracts its server index. Use `currentServers` for new tests. Setting both fields
+fails the test.
 
 ### Fixture keys
 
@@ -234,7 +237,10 @@ Fixture keys name `watchedResources` entries, with one reserved exception: `hapr
 
 ### The reserved `_global` entry
 
-A test named `_global` is a shared baseline rather than a test. Its `fixtures`, `httpResources` and `extraContext` feed **every** test in the suite, and its own assertions are never executed — so it's the one place to put a fixture set several tests need. It's also the one test name that more than one object of a merged set may each contribute to; every other name must be unique across the merged set.
+Put shared `fixtures`, `httpResources`, and `extraContext` in an entry named
+`_global`. They apply to every test; assertions on `_global` don't run. Multiple
+libraries can contribute to this entry. All other test names must be unique
+across the merged configuration.
 
 ### Conditional Tests (`requires` and `requiresFields`)
 
@@ -406,7 +412,10 @@ haptic validate -f config.yaml --schema-dir tests/schemas
 # Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic validate ...
 ```
 
-The `haptic validate` command shells out to the `haproxy` binary on your `PATH` — both to detect the HAProxy version during setup (`haproxy -v`) and for the `haproxy_valid` assertions (`haproxy -c`). Install HAProxy locally (for example via your package manager) and ensure it's on `PATH`; if no `haproxy` is found, `validate` fails fast with a clear error (it doesn't silently fall back to a syntax-only check). To validate against a specific HAProxy version, run the matching per-version controller image, which bundles that version.
+Install `haproxy` on your `PATH` before running `haptic validate`. The command
+uses it to detect the version and run `haproxy_valid` assertions; validation fails
+if the binary is missing. To test a specific HAProxy version, use the matching
+controller image, which includes both binaries.
 
 Templates that use typed watched-resource access need `--schema-dir` (or `HAPTIC_SCHEMA_DIR`); without it they fail at engine compile time with a "no schema for X" error, while untyped `dig()`-based templates validate fine — see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for where schemas come from and what the repo's bundled `tests/schemas/` directory covers.
 
@@ -414,7 +423,9 @@ Exit code 0 means all tests passed.
 
 ### Run in CI
 
-Run `validate` as a pipeline step to block a broken config before it merges. The job fails when `validate` exits non-zero, so a template error or a failing test stops the pipeline. Use the per-version controller image: it bundles both the `haptic` binary and the matching `haproxy` binary, so `haproxy_valid` assertions run with no extra setup. Pick the tag whose HAProxy version matches your deployment (see [HAProxy Versions](operations/haproxy-versions.md)).
+Add `haptic validate` to your pipeline and let a nonzero exit status fail the job.
+Use the [controller image](operations/haproxy-versions.md) whose HAProxy version
+matches your deployment.
 
 GitLab CI (`.gitlab-ci.yml`) — override the image entrypoint so the job's `script` shell runs:
 
@@ -526,7 +537,9 @@ haptic validate -f config.yaml --debug-filters
 haptic validate -f config.yaml --verbose --dump-rendered --trace-templates --profile-includes
 ```
 
-**Workflow**: start with `--verbose` to see *what* failed, add `--dump-rendered` to see the *full content* you produced, add `--trace-templates` (and optionally `--profile-includes`) to see *where* time is spent, and reach for `--debug-filters` only when sort behaviour itself is suspect.
+Start with `--verbose` to identify a failed assertion. Add `--dump-rendered` to
+inspect its input, `--trace-templates` and `--profile-includes` to investigate
+render time, or `--debug-filters` to investigate sorting.
 
 ## Testing strategies
 

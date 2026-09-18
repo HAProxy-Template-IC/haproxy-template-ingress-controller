@@ -1,6 +1,9 @@
 # GatewayClass
 
-HAPTIC creates a GatewayClass resource automatically when the gateway library is enabled, `gatewayClass.enabled` is true, and the cluster serves the `gatewayclasses` CRD. The **controller** emits it at runtime through the gateway library's `k8sResources`, not the Helm chart — so it appears (or disappears) as the CRDs come and go, without a `helm upgrade`.
+A GatewayClass selects the controller that manages a Gateway. HAPTIC creates the
+`haptic` class when the Gateway library and class creation are enabled and the
+Gateway API CRDs are installed. The controller manages this resource at runtime,
+so installing the CRDs later doesn't require a Helm upgrade.
 
 ## Prerequisites
 
@@ -18,7 +21,9 @@ If the CRDs are absent, nothing is emitted and the rest of the install proceeds 
 
 ## Expose a Service through a Gateway
 
-This quickstart routes a test hostname to a sample app through a Gateway and an HTTPRoute — the Gateway API counterpart to the [Ingress walkthrough](./getting-started.md#create-an-ingress). It assumes HAPTIC is installed (see [Getting started — Install with Helm](./getting-started.md#install-with-helm)) and the Gateway API CRDs are installed (see [Prerequisites](#prerequisites) above), which together create the `haptic` GatewayClass.
+Route `echo.example.local` to a sample app with a Gateway and an HTTPRoute.
+Before you start, [install HAPTIC](./getting-started.md#install-with-helm) and the
+[Gateway API CRDs](#prerequisites). The example uses the default `haptic` class.
 
 ### Step 1: Deploy a sample application
 
@@ -172,15 +177,12 @@ If the API is absent, nothing is emitted and the rest of the install proceeds no
 
 ## `parametersRef` - controller configuration link
 
-The GatewayClass automatically references the HAProxyTemplateConfig created by this chart via `parametersRef`. The reference records which HAProxyTemplateConfig drives Gateways of this class — useful when you run several classes with different configs.
+The generated GatewayClass uses `spec.parametersRef` to identify the release's
+`HAProxyTemplateConfig`. This reference documents the association; changing it
+doesn't make a running controller load a different configuration. Each controller
+loads the configuration selected at startup.
 
-**How it works:**
-
-1. GatewayClass points to HAProxyTemplateConfig via `spec.parametersRef`
-2. Controller reads HAProxyTemplateConfig for template snippets, maps, watched resources, and HAProxy configuration
-3. Gateway API consumers get the same routing capabilities as Ingress consumers
-
-**Default behavior:**
+Defaults:
 
 - `parametersRef.name` defaults to `controller.configName` (typically `haptic-config`)
 - `parametersRef.namespace` defaults to chart's release namespace
@@ -193,67 +195,22 @@ kubectl get gatewayclass haptic -o yaml
 
 ## Multi-controller environments
 
-When running multiple Gateway API controllers:
-
-**Ensure unique identification:**
-
-```yaml
-# Controller 1 (haptic)
-gatewayClass:
-  name: haptic
-  controllerName: haproxy-haptic.org/controller
-
-# Controller 2 (nginx-gateway-fabric)
-gatewayClass:
-  name: nginx
-  controllerName: gateway.nginx.org/nginx-gateway-controller
-```
-
-**Only one should be default:**
-
-```yaml
-# Set default on one controller only
-gatewayClass:
-  default: true  # Only on ONE controller
-```
+Give each controller a distinct GatewayClass name and controller identifier.
+For multiple HAPTIC installations, follow [Running multiple HAPTIC instances](deploying-with-helm.md#running-multiple-haptic-instances-in-one-cluster).
+Gateways must set `spec.gatewayClassName`. The `gatewayClass.default` value only
+emits the `gateway.networking.k8s.io/is-default-class` annotation; HAPTIC
+doesn't use it to choose a class.
 
 ## Advanced: Multiple GatewayClasses
 
-You can create multiple GatewayClasses pointing to different HAProxyTemplateConfig resources for different routing scenarios (for example internet-facing vs internal):
+To separate internal and internet-facing traffic, install a HAPTIC release for
+each fleet, with its own classes, configuration, and HAProxy Service. Use the
+[separate-release example](deploying-with-helm.md#running-multiple-haptic-instances-in-one-cluster)
+and configure each release's [HAProxy Service](haproxy-deployment.md#haproxy-service)
+through its Helm values.
 
-```bash
-# Install chart with default config
-helm install haproxy-internet oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.3
-
-# Create separate HAProxyTemplateConfig for internal traffic with different templates
-kubectl apply -f - <<EOF
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: haproxy-internal-config
-  namespace: default
-spec:
-  podSelector:
-    matchLabels:
-      app: haproxy-internal
-  # ... different template configuration ...
-EOF
-
-# Create additional GatewayClass pointing to the internal config
-kubectl apply -f - <<EOF
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: haproxy-internal
-spec:
-  controllerName: haproxy-haptic.org/controller
-  parametersRef:
-    group: haproxy-haptic.org
-    kind: HAProxyTemplateConfig
-    name: haproxy-internal-config
-    namespace: default
-EOF
-```
+Creating another GatewayClass and setting `parametersRef` alone doesn't create
+another controller or HAProxy fleet.
 
 ## Using GatewayClass
 

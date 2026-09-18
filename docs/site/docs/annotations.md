@@ -2,7 +2,9 @@
 
 ## Overview
 
-HAPTIC supports annotations on Ingress resources through template libraries. Start with HAPTIC's own native vocabulary; three vendor libraries additionally provide drop-in compatibility with the annotation prefixes of specific upstream ingress controllers, for migrations:
+Use Ingress annotations to configure route behavior without writing templates.
+The native `haproxy-haptic.org/*` library is enabled by default. For migrations,
+three optional libraries support annotations from other ingress controllers:
 
 | Library | Annotation prefix | Library docs |
 |---------|-------------------|--------------|
@@ -11,7 +13,13 @@ HAPTIC supports annotations on Ingress resources through template libraries. Sta
 | [jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) (community ingress controller) | `haproxy-ingress.github.io/` | [haproxy-ingress library →](./libraries/haproxy-ingress.md) |
 | [kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) (nginx ingress controller) | `nginx.ingress.kubernetes.io/` | [nginx-ingress library →](./libraries/nginx-ingress.md) |
 
-All libraries work independently and coexist — you can mix prefixes on the same Ingress, as long as each *feature* is configured through a single family. Configuring one feature from two enabled families on the same Ingress is rejected by the admission webhook, and warned about on a live render. **For new configuration, use the native `haproxy-haptic.org/*` vocabulary**: one clean annotation per capability, covering everything the vendor libraries do. Only the native library is **enabled by default**; the three vendor libraries are **opt-in** migration aids. If you're coming from one of those controllers, enable the matching vendor library (`controller.templateLibraries.<name>.enabled: true`) to keep using its annotation prefix — then either stay on it, migrate to `haproxy-haptic.org/*` at your own pace, or run a mix of both.
+For new configuration, use the native annotations. To retain existing annotations
+during a migration, enable the matching vendor library. Check its supported
+annotations and limits before switching traffic.
+
+You can mix prefixes on one Ingress, but configure each feature through one
+annotation family. Configuring the same feature through two enabled families
+causes admission rejection and a warning during live rendering.
 
 See [Template Libraries](./template-libraries.md) for how to enable or disable individual libraries.
 
@@ -23,7 +31,8 @@ See the nginx-ingress compatibility verdict render live:
 
 ## Supported features
 
-The three vendor libraries cover the following HAProxy feature areas. The native `haproxy-haptic.org/*` library implements a **superset** of every row — see the [haptic-annotations reference](./libraries/haptic-annotations.md) for its canonical annotation per capability.
+Compare the vendor libraries below. For native annotations and additional
+capabilities, see the [HAPTIC annotation reference](./libraries/haptic-annotations.md).
 
 | Feature | `haproxy.org/` | `haproxy-ingress.github.io/` | `nginx.ingress.kubernetes.io/` |
 |---------|----------------|-------------------------------|--------------------------------|
@@ -98,6 +107,7 @@ kubectl create secret generic my-auth-secret \
   --from-literal=admin="$HASH"
 ```
 
-`kubectl` base64-encodes `--from-literal` values into the Secret's `data` for you, and the library decodes them once — so pass the raw hash, not a pre-`base64`'d copy (double-encoding makes the hash unparseable and auth silently fails).
+Pass the raw password hash to `--from-literal`. `kubectl` encodes it for the Secret;
+encoding it yourself first makes the stored hash unusable for authentication.
 
 See [haproxytech library — Basic Authentication](./libraries/haproxytech.md#authentication) for the full reference including secret format, cross-namespace secrets, and generated HAProxy config.

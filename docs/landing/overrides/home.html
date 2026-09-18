@@ -18,19 +18,16 @@
   <section class="hero">
     <div class="hero-copy">
       <h1 class="hero-title">
-        HAProxy config,<br>
-        rendered from <span class="hl">your templates</span>.
+        Control HAProxy routing<br>
+        with <span class="hl">your own templates</span>.
       </h1>
       <p class="hero-sub">
-        <strong>HAPTIC</strong> — the <span class="acr">HAP</span>roxy
-        <span class="acr">T</span>emplate <span class="acr">I</span>ngress
-        <span class="acr">C</span>ontroller — is an open-source Kubernetes
-        controller that builds your <a href="https://www.haproxy.org/">HAProxy</a>
-        config from templates <em>you</em> control. Watch
-        <a href="https://kubernetes.io/docs/concepts/services-networking/ingress/">Ingress</a>,
-        the <a href="https://gateway-api.sigs.k8s.io/">Gateway API</a>, or any
-        <a href="https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/">custom
-        resource</a>, and generate configuration from their fields.
+        <strong>HAPTIC</strong> is an open-source
+        <a href="https://www.haproxy.org/">HAProxy</a> ingress controller for Kubernetes.
+        Start with <a href="./docs/latest/libraries/ingress/">Ingress</a> and
+        <a href="./docs/latest/libraries/gateway/">Gateway API</a> support.
+        Use templates to add your own annotations, routing rules, or
+        <a href="./docs/latest/watching-resources/">custom resource types</a>.
       </p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="./docs/latest/getting-started/">
@@ -41,18 +38,15 @@
             <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"></path>
             <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"></path>
           </svg>
-          Deploy HAPTIC
+          Install HAPTIC
         </a>
-        <a class="btn btn-ghost" href="https://gitlab.com/haproxy-haptic/haptic">
+        <a class="btn btn-ghost" href="./playground/?preset=ingress">
           <svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <line x1="7" y1="6" x2="7" y2="18"></line>
-            <circle cx="7" cy="4" r="2"></circle>
-            <circle cx="7" cy="20" r="2"></circle>
-            <circle cx="17" cy="7" r="2"></circle>
-            <path d="M17 9v1a4 4 0 0 1-4 4H9"></path>
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="m10 8 6 4-6 4z"></path>
           </svg>
-          View on GitLab
+          Try a template
         </a>
       </div>
     </div>
@@ -67,7 +61,7 @@
           </span>
           <span class="term-title">haproxy.cfg.tmpl</span>
           <a class="term-run" href="./playground/?preset=ingress" target="_blank" rel="noopener">
-            <span aria-hidden="true">▶</span> Run live
+            <span aria-hidden="true">▶</span> Try in browser
           </a>
         </div>
         <div class="term-body">
@@ -105,71 +99,8 @@
   </section>
 
   <section class="features">
-    <h2 class="section-head"><span class="prompt">$</span> haptic <span class="flag">--features</span></h2>
+    <h2 class="section-head">Routing you can <span class="flag">extend</span></h2>
     <div class="feature-grid">
-
-      <article class="feat">
-        <span class="feat-ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="5" width="18" height="16" rx="2"></rect>
-            <path d="M3 10h18"></path>
-            <path d="M8 3v3"></path>
-            <path d="M16 3v3"></path>
-            <path d="M10 15l4 4"></path>
-            <path d="M14 15l-4 4"></path>
-          </svg>
-        </span>
-        <h3>Extend with typed templates</h3>
-        <p>Read typed resource fields, use collection pipelines, and share
-           <a href="./docs/latest/template-libraries/">template libraries</a>.
-           Generate HAProxy configuration, auxiliary files, and Kubernetes objects.</p>
-      </article>
-
-      <article class="feat">
-        <span class="feat-ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M8 7l-4 5 4 5"></path>
-            <path d="M16 7l4 5-4 5"></path>
-            <path d="M13.5 5l-3 14"></path>
-          </svg>
-        </span>
-        <h3>Apply runtime updates</h3>
-        <p>The <a href="./docs/latest/supported-configuration/">HAPTIC agent</a>
-           applies eligible map, certificate, and server updates without reloading. HAProxy 3.4
-           also supports eligible backend additions and removals; new listeners
-           and backend profiles still reload.</p>
-      </article>
-
-      <article class="feat">
-        <span class="feat-ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z"></path>
-            <circle cx="12" cy="12" r="2.6"></circle>
-          </svg>
-        </span>
-        <h3>Watch any resource</h3>
-        <p>Discover <a href="./docs/latest/watching-resources/">API versions and
-           schemas</a> at runtime, including your own resource types. Incremental rendering
-           reuses unchanged work, and follower replicas keep their render state warm.</p>
-      </article>
-
-      <article class="feat">
-        <span class="feat-ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"></path>
-            <path d="M9 12l2 2 4-4"></path>
-          </svg>
-        </span>
-        <h3>Validate changes</h3>
-        <p><a href="./docs/latest/operations/validate-before-deploy/"><code>haptic
-           preflight</code> and Helm hooks</a> check configuration before rollout.
-           Embedded tests run on configuration changes; admission validates
-           routing changes with HAProxy and configured output validators.</p>
-      </article>
 
       <article class="feat">
         <span class="feat-ico">
@@ -191,10 +122,76 @@
             <path d="M12 3l8 4v5c0 4-3 7-8 9-5-2-8-5-8-9V7l8-4Z"></path><path d="M8 12l3 3 5-6"></path>
           </svg>
         </span>
-        <h3>Configure application policies</h3>
-        <p><a href="./docs/latest/libraries/haptic-annotations/">Native annotations</a>
-           provide API-key, JWT, and HMAC authentication, shared rate limits,
-           Varnish caching, JSON request validation, and reusable WAF policies.</p>
+        <h3>Authenticate, limit, and inspect requests</h3>
+        <p>Use <a href="./docs/latest/libraries/haptic-annotations/">native annotations</a>
+           for API-key, JWT, and HMAC authentication. Add shared rate limits,
+           Varnish caching, JSON request validation, and reusable web application
+           firewall (WAF) policies.</p>
+      </article>
+
+      <article class="feat">
+        <span class="feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="16" rx="2"></rect>
+            <path d="M3 10h18"></path>
+            <path d="M8 3v3"></path>
+            <path d="M16 3v3"></path>
+            <path d="M10 15l4 4"></path>
+            <path d="M14 15l-4 4"></path>
+          </svg>
+        </span>
+        <h3>Add your own routing behavior</h3>
+        <p>Read Kubernetes resource fields in typed templates. Add custom annotations,
+           filter collections, and share the result as a
+           <a href="./docs/latest/template-libraries/">template library</a>.
+           Templates can generate HAProxy configuration, auxiliary files, and Kubernetes objects.</p>
+      </article>
+
+      <article class="feat">
+        <span class="feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z"></path>
+            <circle cx="12" cy="12" r="2.6"></circle>
+          </svg>
+        </span>
+        <h3>Use your platform's resources</h3>
+        <p>Watch built-in Kubernetes resources or your own custom types. HAPTIC discovers
+           their <a href="./docs/latest/watching-resources/">API versions and schemas</a>
+           at runtime. Incremental rendering reuses unchanged results, including on
+           follower replicas before they take over.</p>
+      </article>
+
+      <article class="feat">
+        <span class="feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M8 7l-4 5 4 5"></path>
+            <path d="M16 7l4 5-4 5"></path>
+            <path d="M13.5 5l-3 14"></path>
+          </svg>
+        </span>
+        <h3>Reload only when needed</h3>
+        <p>The <a href="./docs/latest/supported-configuration/">HAPTIC agent</a>
+           updates supported maps, certificates, and servers while HAProxy keeps running.
+           HAProxy 3.4 also supports eligible backend additions and removals.
+           New listeners and backend profiles still require a reload.</p>
+      </article>
+
+      <article class="feat">
+        <span class="feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"></path>
+            <path d="M9 12l2 2 4-4"></path>
+          </svg>
+        </span>
+        <h3>Check changes before rollout</h3>
+        <p>Run <a href="./docs/latest/operations/validate-before-deploy/"><code>haptic
+           preflight</code></a> on candidate values; Helm runs the check during installation
+           and upgrades. Embedded tests check configuration changes, and admission
+           validates proposed routes with HAProxy and your output validators.</p>
       </article>
 
       <article class="feat">
@@ -204,10 +201,10 @@
             <path d="M5 4h14v17H5zM9 2h6v4H9zM8 10h8M8 14h8M8 18h5"></path>
           </svg>
         </span>
-        <h3>Set platform guardrails</h3>
-        <p>Apply <a href="./docs/latest/operations/governance/">governance rules</a>
-           to any watched resource. Supply defaults, audit policy violations,
-           or reject noncompliant changes at admission.</p>
+        <h3>Enforce platform policies</h3>
+        <p>Define <a href="./docs/latest/operations/governance/">governance rules</a>
+           for the resources your teams deploy. Set defaults, report policy violations,
+           or reject changes at admission. Rules can target any watched resource type.</p>
       </article>
 
       <article class="feat">
@@ -217,11 +214,10 @@
             <path d="M3 3v18h18M6 15l4-5 4 3 6-8"></path>
           </svg>
         </span>
-        <h3>Observe each route</h3>
-        <p><a href="./docs/latest/operations/monitoring/">JSON access logs and
-           request metrics</a> identify routes, backends, and policy outcomes.
-           Optional distributed tracing exports request and upstream spans
-           through Vector.</p>
+        <h3>Trace requests to their routes</h3>
+        <p>Find the route, backend, and policy outcome in
+           <a href="./docs/latest/operations/monitoring/">JSON access logs and request metrics</a>.
+           Enable distributed tracing to export request and upstream spans through Vector.</p>
       </article>
 
     </div>
@@ -229,7 +225,7 @@
 
   <section class="tradeoff" aria-label="Bundled routing libraries">
     <p class="tradeoff-q"><span class="tradeoff-tag" aria-hidden="true">//</span>
-       Start with the bundled routing libraries.</p>
+       Start with the routing rules you already use.</p>
     <p class="tradeoff-a">
        <a href="./docs/latest/template-libraries/">Bundled libraries</a> support
        Ingress, Gateway API, and HAPTIC annotations by default. When migrating,
@@ -241,7 +237,7 @@
   </section>
 
   <section class="extend">
-    <h2 class="section-head"><span class="prompt">$</span> haptic <span class="flag">--extend</span></h2>
+    <h2 class="section-head">Add a <span class="flag">custom annotation</span></h2>
     <p class="extend-lead">Let each Ingress choose a request-ID header for its
        own backends. Add this snippet under
        <code>controller.config.templateSnippets</code> in your Helm values:</p>
@@ -252,7 +248,7 @@
         </span>
         <span class="term-title">values.yaml</span>
         <a class="term-run" href="./playground/?preset=extend" target="_blank" rel="noopener">
-          <span aria-hidden="true">▶</span> Run live
+          <span aria-hidden="true">▶</span> Try in browser
         </a>
       </div>
       <div class="term-body">
@@ -279,7 +275,7 @@
   </section>
 
   <section class="quickstart">
-    <h2 class="section-head"><span class="prompt">$</span> haptic <span class="flag">--install</span></h2>
+    <h2 class="section-head">Install with <span class="flag">Helm</span></h2>
     <p class="extend-lead">Requires Kubernetes 1.33 or newer. The chart installs
        the controller, HAProxy, and the bundled routing libraries. Review the
        <a href="./docs/latest/changelog/">release notes</a> before upgrading.</p>
@@ -311,7 +307,7 @@
   </section>
 
   <section class="docs">
-    <h2 class="section-head"><span class="prompt">$</span> haptic <span class="flag">--docs</span></h2>
+    <h2 class="section-head">Documentation and <span class="flag">playground</span></h2>
     <div class="doc-cards">
 
       <div class="doc-card">
@@ -323,9 +319,9 @@
         </div>
         <div class="doc-body">
           <h2><a href="./docs/latest/">Documentation</a></h2>
-          <p>From your first Helm install to writing your own templates —
-             deploying with Helm, watching resources, template rendering,
-             config validation, and operating HAProxy in production.</p>
+          <p>Install HAPTIC, configure routes and policies, or write your first
+             template. Find deployment procedures, configuration references,
+             and troubleshooting steps for your version.</p>
           <div class="versions">
             <h3>Available versions</h3>
             <div id="docs-versions" class="version-list">Loading…</div>
@@ -342,9 +338,9 @@
         </div>
         <div class="doc-body">
           <h2><a href="./playground/">Playground</a></h2>
-          <p>Edit a config and watch HAProxy render in your browser — the same
-             engine the controller runs, no install. Tweak a resource, flip a
-             version, share a link to exactly what you see.</p>
+          <p>Try the controller's template engine in your browser without a cluster.
+             Edit a resource, inspect the generated HAProxy configuration,
+             and share your example with a link.</p>
           <div class="versions">
             <a class="btn btn-primary" href="./playground/" target="_blank" rel="noopener">
               <span aria-hidden="true">▶</span> Launch playground
@@ -357,10 +353,6 @@
   </section>
 
   <section class="landing-foot">
-    <p class="foot-line">
-      <span class="foot-tag">//</span>
-      Built for operators who'd rather write a template than file a feature request.
-    </p>
     <p class="foot-meta">
       <a href="https://gitlab.com/haproxy-haptic/haptic/-/blob/main/LICENSE">Apache-2.0</a> · <a href="./playground/">Playground</a> · <a href="https://gitlab.com/haproxy-haptic/haptic">Source on GitLab</a>
     </p>
@@ -384,7 +376,7 @@
         return `<a href="./${prefix}/${v.version}/" class="version-badge${isAlias ? ' alias' : ''}">${label}</a>`;
       }).join('');
     } catch (e) {
-      document.getElementById(elementId).innerHTML = '<span style="color:#888">No versions published yet</span>';
+      document.getElementById(elementId).innerHTML = '<span style="color:#888">Could not load versions</span>';
     }
   }
   async function updateQuickStartVersion() {

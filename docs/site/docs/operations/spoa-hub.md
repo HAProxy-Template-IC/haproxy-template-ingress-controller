@@ -2,16 +2,28 @@
 
 ## Overview
 
-HAPTIC ships a `spoa-hub` container image that bundles the [haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) plus a curated set of plugin shared libraries. Deployed as a sidecar to each HAProxy pod, the hub is a Stream Processing Offload Agent (SPOA): it speaks the [Stream Processing Offload Protocol (SPOP) wire protocol](https://docs.haproxy.org/spoe.html) over a shared Unix domain socket and delegates per-request work to plugins: Web Application Firewall (WAF) inspection, geoip, JA3/JA4 fingerprinting, OpenID Connect (OIDC) / Security Assertion Markup Language (SAML) auth, request mirroring, nginx-style external auth, and shared request-rate limiting.
+The SPOA hub runs beside HAProxy and handles request processing through plugins:
+Web Application Firewall (WAF) inspection, authentication, rate limits, mirroring, geolocation, and TLS
+fingerprinting. HAPTIC's `spoa-hub` image includes
+[haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) and the plugin
+libraries listed below.
 
-This page documents the exact components bundled with the version of HAPTIC you are reading docs for, how to verify them end-to-end, and how to tune the HAProxy-side Stream Processing Offload Engine (SPOE) wiring the chart emits when the sidecar is enabled.
+SPOA means Stream Processing Offload Agent. HAProxy sends work to the hub over a
+shared Unix socket using the [Stream Processing Offload Protocol](https://docs.haproxy.org/spoe.html) (SPOP).
+HAProxy's side of that connection is the Stream Processing Offload Engine (SPOE).
+
+Use this reference to enable plugins, inspect their versions and health, and
+configure HAProxy's connection to the hub.
 
 ## Enabling the hub
 
-The sidecar renders whenever at least one plugin is enabled: with the default `spoaHub.enabled: null`, the chart derives the master switch from the per-plugin `spoaHub.plugins.<name>.enabled` values. To enable a plugin directly:
+The sidecar renders whenever at least one plugin is enabled: with the default `spoaHub.enabled: null`, the chart derives the master switch from the per-plugin `spoaHub.plugins.<name>.enabled` values. To enable fingerprinting, add this to your Helm values:
 
-```bash
---set spoaHub.plugins.fingerprinting.enabled=true
+```yaml
+spoaHub:
+  plugins:
+    fingerprinting:
+      enabled: true
 ```
 
 Some plugins auto-enable with the template library that consumes them — each per-plugin `enabled` default is a chart-evaluated template string:
@@ -75,7 +87,7 @@ HAProxy pods when the bundled `spoa-hub` image changes.
 - **maxmind** — performs in-memory MaxMind MMDB lookups against operator-provided database files: City, Country, Autonomous System Number (ASN), and so on.
 - **mirror** — mirrors HTTP requests to a secondary backend for traffic shadowing; used by the gateway library to implement the Gateway API `HTTPRouteFilter` of type `RequestMirror`.
 - **rate-limit** — enforces shared request-rate budgets for native `haproxy-haptic.org/rate-limit-*` annotations. By default, `rateLimit.shared.managedStore.enabled=true` deploys a chart-managed HA Valkey store: three StatefulSet pods, one writable primary, replicas, Sentinel failover, a PodDisruptionBudget, and a store NetworkPolicy. You can instead configure one bring-your-own HA Redis/Valkey/Sentinel/Cluster endpoint through `rateLimit.shared.externalStore.urls`. Shared mode requires a store; HAPTIC fails the render rather than silently using a per-pod budget during normal operation. When Valkey can't answer, both algorithms use an independent, bounded limiter in each sidecar and mark the request `rate_limit_degraded`. Each emergency bucket starts with its configured burst and refills at the configured rate; lease mode can also spend tokens it obtained before the outage. If the hub/plugin itself can't answer, HAProxy allows and records the request. Set `rateLimit.shared.failClosed=true` to deny either failure instead; an existing lease remains usable until it drains. The managed store is HA but intentionally fixed-size; use bring-your-own infrastructure for horizontal Valkey scaling.
-- **sso-auth** — handles OIDC and SAML2 single sign-on flows with encrypted session cookies.
+- **sso-auth** — handles OpenID Connect (OIDC) and Security Assertion Markup Language (SAML) 2.0 single sign-on flows with encrypted session cookies.
 
 When several plugins are enabled, cheap source-IP shared rate limiting runs first (`025`) so rejected floods don't consume WAF CPU. Coraza follows (`050`), then external auth (`100`), then JSON request validation (`200`). Authenticated-consumer rate limits run in the selected backend after native authentication establishes the consumer identity.
 

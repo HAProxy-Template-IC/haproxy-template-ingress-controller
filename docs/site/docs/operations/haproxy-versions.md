@@ -2,7 +2,8 @@
 
 ## Overview
 
-HAPTIC supports multiple HAProxy major.minor series simultaneously. The `haproxyVersion` value selects the series and controls two things:
+Set `haproxyVersion` to select the HAProxy series for your installation. The chart
+uses it for both images:
 
 - The **controller image** tag suffix (for example `-haproxy3.2`) — must match a version built by CI
 - The **HAProxy pod image** tag — defaults to the latest tested patch for that series
@@ -22,13 +23,9 @@ The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.x`) 
 HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of support; odd-numbered series (3.1, 3.3) get a shorter maintenance window. This chart defaults to 3.4. HAProxy 3.1 remains in HAPTIC's build matrix but no longer receives upstream maintenance; check [HAProxy's maintenance table](https://www.haproxy.org/) when choosing a series.
 
 !!! note "One version, both images"
-    The series above is the **HAProxy binary** version, and it's the only version
-    that matters: `haproxyVersion` picks the HAProxy image and the matching
-    controller image together, and the agent runs the controller's binary inside
-    the HAProxy pod. Which runtime commands a pod accepts follows that pod's own
-    HAProxy release, which the agent reports. Config syntax is validated against
-    the matching HAProxy binary via `haproxy -c`, which is why a per-series
-    controller image exists.
+    `haproxyVersion` selects matching HAProxy and controller images so
+    `haproxy -c` validates against the deployed series. Each agent reports the
+    runtime commands its own HAProxy release supports.
 
     During a rolling upgrade the fleet can briefly run two series. HAPTIC renders
     for the lowest version it sees, and a pod whose agent it cannot compose ops

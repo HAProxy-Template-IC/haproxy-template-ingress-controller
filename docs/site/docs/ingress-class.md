@@ -1,6 +1,8 @@
 # IngressClass
 
-The [HAPTIC Helm chart](deploying-with-helm.md) automatically creates an IngressClass resource when the ingress library is enabled and the cluster exposes `networking.k8s.io/v1/IngressClass` (available since Kubernetes 1.19, below the chart's 1.33 minimum).
+Use an IngressClass to select which Ingresses HAPTIC manages. The [Helm chart](deploying-with-helm.md)
+creates the `haptic` class by default and configures the controller to watch
+Ingresses that name it.
 
 ## Configuration
 
@@ -12,7 +14,9 @@ ingressClass:
   controllerName: haproxy-haptic.org/controller
 ```
 
-The default name is `haptic` (not `haproxy`) so the chart can be installed alongside other HAProxy-based ingress controllers without colliding on IngressClass. When replacing an existing controller, override `ingressClass.name` to match your incumbent's class (often `haproxy`) and your existing Ingress manifests keep working.
+The default class name is `haptic`. During a migration, you can retain existing
+Ingress class references by setting `ingressClass.name` to match them. Follow the
+[migration procedure](migrating.md) to transfer traffic and class ownership.
 
 ## Ingress class filtering
 
@@ -20,12 +24,8 @@ By default, the controller watches only Ingress resources with `spec.ingressClas
 
 ### Changing the class name
 
-`ingressClass.name` is the single knob. The chart uses one value for two things at once:
-
-- It names the created IngressClass resource (`metadata.name`).
-- It derives the watch filter, injecting `spec.ingressClassName=<name>` as the `watchedResources.ingresses.fieldSelector` the controller applies.
-
-So setting `ingressClass.name` keeps the IngressClass name and the watch filter in sync — you don't edit the field selector by hand. Install or upgrade with the class you want:
+Set `ingressClass.name` to change both the IngressClass name and the controller's
+watch filter. Install or upgrade with the class you want:
 
 ```bash
 helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
@@ -72,7 +72,8 @@ IngressClass is created only when both of the following are true:
 1. `ingressClass.enabled: true` (default)
 2. `controller.templateLibraries.ingress.enabled: true` (default)
 
-A third, internal condition — the chart checks that the `networking.k8s.io/v1/IngressClass` API exists — always holds on a supported (1.33+) cluster, since IngressClass reached v1 in Kubernetes 1.19.
+The chart also checks that the IngressClass API exists. Supported Kubernetes
+versions provide it.
 
 ## Multi-controller environments
 

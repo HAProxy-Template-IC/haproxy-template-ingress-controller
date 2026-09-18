@@ -2,13 +2,17 @@
 
 The `haptic-annotations` library provides HAPTIC's native annotations under `haproxy-haptic.org/*`. It's enabled by default. For existing vendor annotations, enable the matching compatibility library: [`haproxytech`](./haproxytech.md), [`haproxy-ingress`](./haproxy-ingress.md), or [`nginx-ingress`](./nginx-ingress.md).
 
-Where the vendor libraries exist to ease migration *from* an upstream ingress controller, this is the vocabulary to reach for when writing HAPTIC configuration from scratch. It's enabled by default.
+Use this library for new HAPTIC configuration. Keep a vendor library enabled
+while you migrate existing annotations; different prefixes can coexist when
+they configure different features.
 
-Highlights it pulls together: haproxytech's pod-aware `pod-maxconn` and request capture; haproxy-ingress's agent checks, OAuth2-proxy flow, path-type control, and four config-section injection points; and nginx-ingress's canary routing, request mirroring, and bandwidth throttling — alongside the timeouts, load balancing, TLS, CORS, redirects, HSTS, session affinity, access control, and authentication all three share.
+The reference below covers routing, authentication, TLS, rate limits, caching,
+request validation, and WAF policies. Each annotation lists its support status
+and any behavior you need to account for.
 
 ## Overview
 
-This library is enabled by default. See `haproxy-haptic.org/*` annotations render to HAProxy config live:
+Edit the example to see how native annotations change HAProxy configuration:
 
 <div class="pg-embed" markdown data-scenario="haptic-annotations" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="haproxy-haptic.org/* annotations rendered" data-height="440">
 
@@ -52,7 +56,9 @@ The reason strings on the Events are stable and machine-readable, so you can ale
 
 ## Annotation reference
 
-Every annotation below works, except one marked **❌ Removed**. Most are **✅ Supported**; a few are marked **⚠️ Caveat** — they work too, but with the behavioural limitation described alongside. Nothing is silently ignored: a removed annotation emits a Warning Event, it's never dropped quietly.
+**Supported** annotations implement the behavior listed. **Caveat** marks a
+limitation to review before use. **Removed** annotations have no effect and emit
+a Warning Event; remove them from your manifests.
 
 ### Path and host matching
 
@@ -243,7 +249,14 @@ allows only same-release HAProxy requests and egress to DNS and that origin.
 HAProxy strips client-supplied `X-Haptic-Cache-*` headers before routing. Internal
 cache-miss requests bypass limiters, so one external request consumes one budget.
 
-Caching authenticated content requires `consumer` specifically. A request carrying `Authorization` or a `Cookie` is normally never served from cache, and HAPTIC only overrides that when the key is `consumer`, whose value is the authenticated identity — so one caller can never be served a response belonging to someone else. `api-key-secret`, `jwt-secret`, `hmac-secret` and `consumer-groups-secret` are enforced on the client leg of every route, before a cache is consulted, so combining any of them with `cache-enable` is supported: a caller presenting no credential is denied rather than served the cached authenticated response. Keying on `header:`, `cookie:`, `query:` or `src` doesn't lift the restriction: those may or may not correlate with the caller, so authenticated requests on such a route go to the origin every time while unauthenticated ones still cache under the key you chose.
+To cache authenticated responses, use the `consumer` key. HAPTIC authenticates
+the request before consulting the cache and includes the authenticated identity
+in the cache key. API-key, JWT, HMAC, and consumer-group checks still apply on a
+cache hit.
+
+With other keys (`header:`, `cookie:`, `query:`, or `src`), requests carrying
+`Authorization` or `Cookie` bypass the cache. Those values alone don't establish
+an authenticated identity.
 
 Rate and bandwidth limits follow the same client-leg rule (see [Rate and bandwidth limiting](#rate-and-bandwidth-limiting)): the per-pod caps, bandwidth throttles, and the shared limiter all run before the cache is consulted, so a cache hit counts against the budget and is throttled like any other response.
 
@@ -253,7 +266,9 @@ This downstream cache contract applies to every response from the cache-enabled 
 
 `consumer` and `src` can't be declared this way, because a downstream cache never receives the value HAPTIC keyed on — declaring it would make every caller look identical and collapse them onto one shared response. Routes keyed on either are marked `Cache-Control: private` instead, which keeps shared caches out while still letting a browser cache its own copy. `Vary` is added to whatever the origin already sent, and an origin's own `Vary` is honoured as usual — every producer in the chart appends rather than replaces, including the CORS rule. A `public` directive on an identity-keyed route is rewritten to `private` rather than left beside it, since a response carrying both leaves each cache to decide which wins.
 
-The cache is memory-only and doesn't survive a restart. Of the storage engines this build ships, `malloc` holds objects in memory and `file` maps an unlinked file, so neither outlives the process, and the persistent engines aren't compiled in. A pod restart therefore empties that pod's share of the cache. The tier runs as a StatefulSet, whose rolling update replaces one pod at a time, so an upgrade leaves the other shards warm and only the keys hashed to the restarting pod miss. Raise `cache.varnish.replicas` to shrink the share any one restart affects.
+Cached objects don't survive a Varnish process restart. The StatefulSet replaces
+one pod at a time during an upgrade, leaving other shards warm. Increasing
+`cache.varnish.replicas` reduces the share of keys affected by one pod's restart.
 
 Varnish's working directory uses a memory-backed `emptyDir` for compiled configuration, shared logs, and statistics. Its memory counts toward `cache.varnish.resources.limits.memory`; budget the shared-log buffer (80 MiB with the default image), compiled configuration, and process/object overhead in addition to `cache.varnish.malloc`. The mount must allow execution because Varnish loads compiled configuration from it.
 
@@ -263,7 +278,11 @@ The chart keeps the stock non-root image and adds no capabilities. If Varnish re
 
 The two staleness annotations are independent, and setting one doesn't imply the other. `cache-stale-while-revalidate` trades freshness for latency: within its window nobody waits for the origin. `cache-stale-if-error` trades nothing until something breaks: an ordinary expiry still fetches and waits, and the stale copy is reached only when that fetch fails. Set both when you want fast expiry *and* an outage cushion — for example `cache-stale-while-revalidate: "30"` with `cache-stale-if-error: "600"`.
 
-Every cached response carries an `X-Cache` header: `HIT` when it was served fresh from cache, `MISS` when it came from the origin, and `STALE` when it was served past its lifetime under either annotation. The access log records the same value in its `cache` field, so you can tell a route that's serving stale from one that's genuinely fresh. Two more cache fields ride along: `cache_age`, how many seconds old the served object was, and `cache_uncacheable_reason`, which says why a response wasn't stored (`content_type_excluded`, `too_large`, `set_cookie`, `status_not_cacheable`, `origin_refused_sharing`) — otherwise a route that silently never caches looks identical to one that's always missing.
+Read `X-Cache` or the access log's `cache` field to identify a `HIT`, `MISS`, or
+`STALE` response. `cache_age` reports the object's age in seconds.
+`cache_uncacheable_reason` explains why a response wasn't stored:
+`content_type_excluded`, `too_large`, `set_cookie`, `status_not_cacheable`, or
+`origin_refused_sharing`.
 
 The Vector sidecar projects these into Prometheus counters on the metrics port it already serves — `haptic_cache_status_total{status}`, `haptic_cache_age_seconds_total`, `haptic_cache_uncacheable_total{reason}`, and `haptic_degraded_cache_total` — because Varnish serves no metrics endpoint of its own. They're declared in `vector.logMetrics`, so you can switch one off or add your own from any log field. Counters are tagged by status or reason only; use the log when you need it per route.
 
@@ -423,7 +442,14 @@ Reusable policies separate three responsibilities cleanly:
 - A security team can maintain policy contents in a ConfigMap in a dedicated namespace.
 - An Ingress author normally adds only `haproxy-haptic.org/waf-policy: <name>`.
 
-There are no route-selectable built-in profiles and no policy-definition annotation. A name is resolved exactly and case-sensitively against `extraContext.waf.policies.inline` plus the exact `namespace`/`name`/`key` triples in `configMapRefs`. A same-named ConfigMap in an application namespace is ignored — unless the administrator enables [self-service authoring](#self-service-namespaced-policies), which honors exactly one well-known ConfigMap per namespace, for that namespace's own Ingresses only. Duplicate names, missing sources, unknown fields, invalid SecLang, and unknown selections are rejected by the admission webhook; on a live render an unknown or broken selection fails that route closed with `503` and a Warning Event instead of aborting the whole render.
+Policy names are case-sensitive. HAPTIC resolves them from
+`extraContext.waf.policies.inline` and the exact ConfigMap references in
+`configMapRefs`. Application ConfigMaps contribute policies only when
+[self-service authoring](#self-service-namespaced-policies) is enabled.
+
+Admission rejects invalid policy definitions and selections. During live
+rendering, an unknown or broken selection returns `503` for that route and emits
+a Warning Event; other routes continue rendering.
 
 `controller.config.templatingSettings.extraContext.waf.dispatch.mode` controls the global activation model. The default `opt-in` mode sends only annotated routes to Coraza. `default-on` inspects all routes and uses `dispatch.defaultEnforcement` where no selected policy or authorized route override supplies an enforcement mode. This stays in `extraContext` because request dispatch is template-library behaviour and must also be configurable in a raw `HAProxyTemplateConfig`. Coraza's chart-wide directives and low-level plugin parameters remain under `spoaHub.plugins.coraza`.
 
@@ -617,17 +643,11 @@ API-management controls expressed as pure HAProxy config plus low-latency SPOA p
 
 JWT and API-key auth both set a shared `txn.haptic_consumer` identity (JWT from the `sub` claim, API key from its map), which consumer-group authorization and the consumer-keyed shared rate limit build on.
 
-Every check in this section is one rule block per HTTP frontend that reads the
-route's settings from a map (`haptic-api-key-routes.map`, `haptic-jwt-routes.map`,
-`haptic-hmac-routes.map`, `haptic-consumer-group-*.map`), so annotating,
-changing or removing a route is a map operation: the route's backend stays
-dynamic and nothing reloads. What HAProxy takes only as a literal is spelled
-out once per distinct value in use and reloads when a new one appears: an
-API-key header or query parameter name, a JWT key file (a new `jwt-secret`), an
-HMAC algorithm or signature header, a JWT claim to require or forward. Each
-block exists only while a route uses its feature: the first route to adopt one
-reloads once, and so does removing the last, so a fleet without JWT evaluates
-none of the JWT rules.
+Authentication rules read route settings from shared maps. Changing an existing
+map value can avoid a reload. A new literal used by a rule—such as an API-key
+header, JWT key file, HMAC algorithm, signature header, or required JWT claim—adds
+configuration and requires a reload. Enabling a feature on its first route or
+removing its last route also adds or removes the shared rules.
 
 JSON request-body validation is opt-in via `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true`. Schemas are resolved from ConfigMaps or Secrets and compiled when the bundled plugin initializes/reloads. HAProxy rejects bodies above the route cap before SPOE, waits up to `requestBody.waitTimeout` only on matching POST/PUT/PATCH routes, and then validates against an in-memory compiled schema. The process-global `tune.bufsize` comes from `extraContext.requestBodyInspection.haproxyBuffer.sizeBytes`; `reservedBytes` (default `8192`) protects request headers and rewrite space. Any validator or policy body cap above the remaining capacity fails. Requests without `Content-Length` return `411`, duplicate lengths return `400`, and incomplete buffering returns `413` instead of validating truncated input. Request-body transformation isn't supported.
 

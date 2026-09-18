@@ -1,15 +1,12 @@
 # Reload-free route propagation
 
-HAPTIC renders your watched resources into an HAProxy configuration and applies
-it to the fleet. Some changes need an HAProxy reload; many don't. This page is
-the author contract: write your templates so that the common changes — adding a
-route, changing a header or a timeout, scaling a Service — become map or runtime
-updates instead of a new config section, and HAProxy keeps serving without a
-reload.
+Use the base library's macros to describe backends and map entries that HAPTIC
+can update through the HAProxy Runtime API. This guide shows how to keep changing
+route values separate from the configuration rules that use them, so eligible
+changes don't require a reload.
 
-The contract is resource-agnostic. The same base macros work for a
-custom CRD, an Ingress, or a Gateway API route, so the examples below build the
-same backend three times from three different inputs.
+The same macros accept data from an Ingress, a Gateway route, or your own custom
+resource. The examples below build the same backend from three input types.
 
 ## The macros
 

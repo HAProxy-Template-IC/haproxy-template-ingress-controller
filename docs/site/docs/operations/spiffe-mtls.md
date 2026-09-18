@@ -6,12 +6,13 @@ Use [SPIFFE/SPIRE](https://spiffe.io/) to give HAProxy automatic mutual TLS (mTL
 
 [SPIFFE](https://spiffe.io/docs/latest/spiffe-about/overview/) (Secure Production Identity Framework for Everyone) is a set of standards for securely identifying workloads in dynamic environments. [SPIRE](https://spiffe.io/docs/latest/spire-about/spire-concepts/) is the reference implementation that issues and manages SPIFFE Verifiable Identity Documents (SVIDs) — short-lived X.509 certificates that serve as workload identity.
 
-When integrated with HAPTIC, SPIRE enables zero-trust mTLS to backends without managing certificates manually:
+This integration delivers certificates to HAProxy without storing them in
+Kubernetes Secrets:
 
 - **Automatic identity** — SPIRE attests HAProxy pods and issues X.509-SVIDs based on Kubernetes service account identity
 - **Short-lived certificates** — each SPIFFE Verifiable Identity Document (SVID) is automatically rotated at half of its TTL (for example every 12 hours with a `24h` TTL), reducing the impact of credential compromise
-- **No secrets in cluster** — Private keys are generated in-memory by the SPIRE agent and never stored as Kubernetes Secrets
-- **Zero-reload rotation** — Certificate updates are pushed to HAProxy via the Runtime API (`set ssl cert`/`set ssl ca-file`), avoiding process restarts entirely
+- **Pod-local files** — spiffe-helper writes the certificate, private key, and trust bundle to the HAProxy pod's shared volume
+- **Runtime rotation** — the cert-reloader sidecar updates loaded certificates through `set ssl cert` and `set ssl ca-file`
 
 ## Prerequisites
 
@@ -20,7 +21,7 @@ Before following this guide, ensure:
 - **SPIRE server and agents** are deployed in your cluster
 - **SPIRE Container Storage Interface (CSI) driver** (`csi.spiffe.io`) is installed for exposing the Workload API socket to pods
 - **Workload registration** exists for the HAProxy pod's service account and namespace
-- **HAPTIC Helm chart** version with `podAnnotations` and `sidecars` support
+- A HAPTIC installation you can update through [Helm values](../deploying-with-helm.md)
 
 ## Architecture
 

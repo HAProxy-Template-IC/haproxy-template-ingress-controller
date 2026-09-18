@@ -2,7 +2,10 @@
 
 ## Overview
 
-You declare one or more validator sidecars in `spec.validators`, each pointing at a Unix domain socket inside the controller pod and listing file glob patterns. Before publication or deployment, the controller sends each rendered file to every validator whose globs match. An error blocks publication and deployment. For admission requests, line-numbered diagnostic logs also appear in the admission response, so `kubectl apply` identifies the offending row.
+Use validator sidecars to check auxiliary files before publication or deployment.
+Declare each validator's socket and file patterns in `spec.validators`. The
+controller sends matching files to it and blocks new output if validation fails.
+Admission errors include diagnostics with line numbers to help locate the problem.
 
 HAProxy doesn't interpret every auxiliary file. For example, the SPOA hub
 validator checks its TOML configuration and embedded WAF directives. The
@@ -143,7 +146,8 @@ transport, not validation results.
 
 ### Connection pooling and parallelism
 
-The controller maintains a per-validator connection pool of persistent keep-alive connections. The pool starts small (no open connections) and **adapts to load**: it dials a new connection when an in-flight call finds the pool empty and there's headroom; it closes connections that sit idle for ~30 seconds. The cap is `spec.validators[i].maxConnections` (default 4).
+Each validator has a connection pool capped by `spec.validators[i].maxConnections`
+(default `4`). Connections open on demand and close after about 30 seconds idle.
 
 `(validator, file)` pairs run **in parallel** — independent validators on different sockets validating independent files. Top-level concurrency is capped at 16 in-flight tasks; each validator's individual pool further throttles within-validator concurrency.
 
@@ -161,7 +165,8 @@ For a typical webhook call with one validator and a handful of matched files, th
 | Validator panics mid-validation | The sidecar returns a synthetic error diagnostic and continues serving subsequent requests. The current render fails. |
 | Idle-closed connection on first reuse | Transparently reconnected and retried once. The operator sees no failure. |
 
-In all error cases the current HAProxy data plane keeps its last-good output. **Fail-closed by design**: a broken configured validator blocks new output instead of silently disabling its validation surface.
+A validator error blocks new output. HAProxy continues serving its last working
+configuration until validation succeeds.
 
 ## Custom validators
 

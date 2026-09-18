@@ -1,6 +1,7 @@
 # Template reference
 
-Lookup tables for everything available inside a HAPTIC template: the context variables, every function and filter, `pathResolver`, and the status-patch functions. For a guided introduction with runnable examples, see the [Templating Guide](./templating.md).
+Look up template context variables, HAPTIC functions, file paths, and status-patch
+helpers. For syntax and runnable examples, start with the [templating guide](./templating.md).
 
 ## Context variables
 
@@ -101,11 +102,14 @@ Type-preserving stages, chained with `|`. Each keeps its input's element type, s
 
 Unlike the Scriggo builtins they replace, the attribute-path form of `unique_by` and `group_by` splits a dotted path into separate `dig` keys, so `"spec.hostname"` navigates two levels instead of looking for one key literally named `spec.hostname`.
 
-Each stage re-enters the template VM once per element. Chains of `map`/`filter`/`reject`/`flat_map` are lowered to loops at compile time and cost what the hand-written loop costs; the other stages don't lower, so over many thousands of elements a `{% for %}` loop still wins.
+The compiler converts chains of `map`, `filter`, `reject`, and `flat_map` into
+loops. Other stages call back into the template engine for each element; compare
+them with an explicit loop when processing large collections.
 
 ### Governance helpers
 
-Resource-agnostic read/write access to any watched resource by JSONPath — the primitives the chart's [governance guardrails](./operations/governance.md) are built from.
+Read or derive fields on watched resources by JSONPath. The chart's
+[governance rules](./operations/governance.md) use these helpers.
 
 | Function | Purpose | Example |
 |----------|---------|---------|
@@ -276,7 +280,9 @@ For resources with nested condition arrays (for example, Gateway API Route `pare
 
 ### `recordEvent()`
 
-Records a Kubernetes `Warning` Event against a resource. The controller emits it via an EventRecorder on the leader, so it shows up under `kubectl describe <kind> <name>` and `kubectl get events`. Like `statusPatch()`, it's resource-agnostic — you pass the resource object itself, and its `namespace`/`name`/`apiVersion`/`kind` are read off it, so it works for any watched resource or custom resource.
+Records a Kubernetes `Warning` Event for a watched resource. Pass the resource
+object and inspect the resulting Event with `kubectl describe <kind> <name>` or
+`kubectl get events`. Only the leader emits Events.
 
 **Parameters:**
 
@@ -298,7 +304,9 @@ The Event is a side-effect only — the call renders nothing. Identical `(resour
 !!! note "Background"
     This section documents how typed field names are generated — background for chart authors and contributors. Day-to-day usage, including the field-name table and the typed-vs-untyped decision rule, lives in [Templating — Typed Resource Access](./templating.md#typed-resource-access).
 
-The field-name rule lives in `pkg/k8s/typegen/converter.go::GoFieldName`: Go-PascalCase of the JSON tag, with no acronym dictionary. The no-acronym-dictionary choice is deliberate — there is no translation table to keep in sync, so `apiVersion` becomes `ApiVersion` (not the upstream-Go-style `APIVersion`), and only rune 0 of a tag is ever changed.
+`GoFieldName` in `pkg/k8s/typegen/converter.go` capitalizes the first rune of the
+JSON field name and leaves the rest unchanged. For example, `apiVersion` becomes
+`ApiVersion`, not `APIVersion`.
 
 **Worked example and regression canary.** `charts/haptic/charts/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example — it emits one HAProxy comment per Gateway using `gw.Metadata.Namespace` / `gw.Metadata.Name`. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end (engine declarations + runtime bindings + actual render output) and acts as a regression canary for typed access generally.
 

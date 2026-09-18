@@ -1,6 +1,8 @@
 # haproxytech library
 
-The haproxytech library implements `haproxy.org/*` annotations compatible with [haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress), the official HAProxy ingress controller by HAProxy Technologies.
+Use this library when migrating Ingresses with `haproxy.org/*` annotations from
+[HAProxy Technologies' Kubernetes Ingress Controller](https://github.com/haproxytech/kubernetes-ingress).
+Review the supported annotations and caveats before switching traffic.
 
 ## Overview
 

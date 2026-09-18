@@ -4,21 +4,15 @@ Run multiple controller replicas so configuration delivery can recover after a l
 
 ## Overview
 
-The controller supports running multiple replicas for high availability using leader election based on Kubernetes Leases. Only the elected leader deploys; all replicas keep their Kubernetes-resource caches and their incremental render graph warm and serve admission webhook requests to reduce the work needed after election.
+Leader election uses a Kubernetes Lease to choose the replica that deploys
+configuration. Every replica watches resources, renders changes, and serves
+admission requests. Followers keep their caches and render state ready for takeover.
 
-**Benefits of HA deployment:**
-
-- Standby replicas remain available during controller rolling updates
-- Automatic election after a leader failure; voluntary handoffs release the lease without waiting for expiry
-- Warm resource caches and render graphs on standby replicas
-- Replicas spread across nodes and zones via anti-affinity (see [Anti-Affinity](#anti-affinity))
-
-**How it works:**
-
-1. All replicas watch Kubernetes resources, run the admission webhook, discover HAProxy pods, and render every change to keep their incremental render graph warm. Only the elected leader deploys. Admission and new HTTP inputs are validated on the replica handling them. See [Leader Election](../development/design/leader-election.md) for the full all-replica vs leader-only component split.
-2. Leader election determines which replica drives the pipeline and applies configs to the fleet.
-3. When the leader fails, followers automatically elect a new one. Cached state from all-replica components (validated config, discovered HAProxy pods) is replayed on `BecameLeaderEvent` so the new leader starts with current state; the reconciler also fires immediately so the new leader produces a fresh render, from the graph it kept warm as a follower.
-4. Leadership transitions are logged and tracked via Prometheus metrics.
+If the leader fails, a follower acquires the lease and renders the current state
+before deploying. A voluntary handoff releases the lease without waiting for it
+to expire. HAProxy continues serving its existing configuration during election.
+Spread replicas across nodes or zones to tolerate a node failure; see
+[anti-affinity](#anti-affinity).
 
 ## Configuration
 
@@ -195,9 +189,9 @@ rate(haptic_leader_election_transitions_total[1h])
 
 ## Troubleshooting
 
-Check these areas in order of likelihood:
+Check these dependencies when leader election fails:
 
-1. **RBAC permissions** (most common) -- service account missing lease permissions
+1. **RBAC permissions** -- service account missing lease permissions
 2. **Environment variables** -- `POD_NAME` / `POD_NAMESPACE` not injected
 3. **API server connectivity** -- network policies or firewall blocking access
 4. **Clock skew** -- NTP not configured or excessive drift between nodes
@@ -357,7 +351,9 @@ kubectl logs -n haptic <leader-pod> | grep -i "deployer starting\|deployment sch
 
 ### Resource allocation
 
-The leader does the heavy lifting (render + validate + deploy + status writes), but every replica still has the full Kubernetes-resource cache loaded in memory. CPU usage is markedly higher on the leader; memory is similar across leader and followers. Size them all the same so a freshly elected follower handles peak load without resizing — the chart defaults already do this:
+Every replica renders changes and holds resource and render caches. The leader
+also deploys configuration and writes status. Give all replicas enough CPU and
+memory to handle peak load after election:
 
 ```yaml
 # chart default — sized for the typical 50–200 Ingress range

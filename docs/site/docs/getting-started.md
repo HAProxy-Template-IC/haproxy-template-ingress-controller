@@ -8,12 +8,9 @@ hide:
 
 ## Overview
 
-This guide installs HAPTIC and shows it turning an Ingress into a live HAProxy configuration. You'll:
-
-- Install the controller and HAProxy with Helm
-- Point an Ingress at HAPTIC and inspect the config it generates
-
-The sample-app walkthrough is optional.
+Install HAPTIC with Helm, then route traffic through an Ingress. The optional
+sample app lets you inspect the generated HAProxy configuration and test a request
+from your terminal.
 
 Try the bundled Ingress configuration in your browser. Click **Run live**, then
 edit the sample Ingress resources to see the generated backends and routing maps.
@@ -24,9 +21,9 @@ edit the sample Ingress resources to see the generated backends and routing maps
 
 ## Prerequisites
 
-- Kubernetes 1.33+ cluster, as required by the Helm chart
-- kubectl configured to access your cluster
-- Helm 3.8+ (the `oci://` chart reference below needs OCI registry support, generally available since Helm 3.8)
+- A Kubernetes 1.33 or newer cluster
+- `kubectl` configured to access the cluster
+- Helm 3.8 or newer
 
 !!! note "Webhook validation"
     The admission webhook is enabled by default. It rejects Ingress, HTTPRoute, and GRPCRoute changes that fail validation. The chart issues its certificate; cert-manager is optional. For rotation and certificate alternatives, see [Webhook certificates](./ssl-certificates.md#webhook-certificates).
@@ -46,10 +43,12 @@ The Helm chart deploys:
 
 - **Controller**: Watches Kubernetes resources and generates HAProxy configurations
 - **HAProxy pods**: Load balancers, each with the HAPTIC agent alongside (2 replicas by default)
-- **RBAC**: Permissions for watching Ingress, Service, and EndpointSlice resources
-- **HAProxyTemplateConfig + HAProxyTemplateLibrary**: the CRD resource with the default template configuration, plus one `HAProxyTemplateLibrary` per enabled [template library](template-libraries.md) (Ingress and Gateway API out of the box), linked from the config's `spec.libraryRefs`
+- **Resource permissions**: Access to the Kubernetes resources HAPTIC watches
+- **Configuration and libraries**: An `HAProxyTemplateConfig` and its referenced [template libraries](template-libraries.md), with Ingress and Gateway API support enabled
 
-The chart provisions a default HTTPS certificate out of the box — a self-signed one, or a cert-manager-issued, auto-rotated one when cert-manager is present. For production domains, GitOps caveats, and alternatives, see [SSL Certificates](./ssl-certificates.md).
+The chart creates a default HTTPS certificate. It uses cert-manager for issuance
+and renewal when available; otherwise, it creates a self-signed certificate.
+For your own domains, configure [SSL certificates](./ssl-certificates.md).
 
 Verify both components are running:
 
@@ -70,7 +69,7 @@ You should see two controller pods (the chart defaults to two replicas with lead
 
 The bundled libraries handle Ingress and Gateway API routing without custom templates:
 
-- **Ingress** — any Ingress with `ingressClassName: haptic` is picked up automatically. HAPTIC's native [`haproxy-haptic.org/*` annotation library](./libraries/haptic-annotations.md) is on by default — covering timeouts, TLS, authentication, CORS, rate-limiting, redirects, canary routing, and more. The vendor annotation libraries ([HAProxy Technologies](./libraries/haproxytech.md), [haproxy-ingress](./libraries/haproxy-ingress.md), [ingress-nginx](./libraries/nginx-ingress.md)) are opt-in aids for migrating from those controllers. See the [Ingress library](./libraries/ingress.md).
+- **Ingress** — set `ingressClassName: haptic`. Use [native annotations](./libraries/haptic-annotations.md) for authentication, rate limits, redirects, and other route policies. When [migrating](./migrating.md), enable the library for your existing annotation prefix.
 - **Gateway API** — create a `Gateway` with `gatewayClassName: haptic` and attach `HTTPRoute` resources; see the [Gateway library](./libraries/gateway.md) and [GatewayClass setup](./gateway-class.md).
 
 Select HAPTIC's class on your routing resources and ensure their backend Services have ready endpoints. Install the Gateway API CRDs before creating Gateways or routes; see [GatewayClass setup](./gateway-class.md).
@@ -161,7 +160,7 @@ kubectl apply -f echo-ingress.yaml
 The controller detects the Ingress, renders the HAProxy configuration, and deploys it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
 
 !!! tip "TLS for a host"
-    This Ingress is already served over both HTTP and HTTPS. HTTPS uses the chart's [default certificate](./ssl-certificates.md) — a self-signed cert out of the box — which HAPTIC binds on the https port for every Ingress, no `spec.tls` required. To present a host-specific certificate instead of the default, add a `spec.tls` entry backed by a `kubernetes.io/tls` Secret; to serve plain HTTP only, turn off the default HTTPS bind. See [Ingress library — TLS configuration](./libraries/ingress.md#tls-configuration) for both.
+    This Ingress serves HTTP and HTTPS. Without `spec.tls`, HTTPS uses the chart's [default certificate](./ssl-certificates.md). To use a certificate for your hostname, add a `spec.tls` entry referencing a `kubernetes.io/tls` Secret. See [TLS configuration](./libraries/ingress.md#tls-configuration) for certificate setup or HTTP-only routing.
 
 ### Verify the configuration
 
@@ -216,7 +215,8 @@ In another terminal:
 curl -H "Host: echo.example.local" http://localhost:8080/
 ```
 
-The echo server echoes back the request it saw. Repeat the request a few times to watch HAProxy balance across the echo pods — the `HOSTNAME` field (the serving pod's name) changes between responses.
+The response includes the request headers and the serving pod's `HOSTNAME`.
+Repeat the request to check that HAProxy distributes traffic across the echo pods.
 
 ## What's happening behind the scenes
 
@@ -226,10 +226,10 @@ The admission webhook validates the proposed Ingress before Kubernetes stores it
 
 ### Route with Ingress or Gateway API
 
-The default [template libraries](template-libraries.md) already handle path-based routing, TLS termination, and annotation-driven configuration — no templating needed. Point your resources at HAPTIC and read the reference for what each supports:
-
-- **Ingress** — the [Ingress library](./libraries/ingress.md), with HAPTIC's native [`haproxy-haptic.org/*` annotations](./libraries/haptic-annotations.md) on by default and the vendor compatibility libraries ([HAProxy Technologies](./libraries/haproxytech.md), [haproxy-ingress](./libraries/haproxy-ingress.md), [ingress-nginx](./libraries/nginx-ingress.md)) available opt-in for migration.
-- **Gateway API** — the [Gateway library](./libraries/gateway.md) and [GatewayClass setup](./gateway-class.md).
+Use the [Ingress reference](./libraries/ingress.md) for path matching, TLS, and
+annotations. For Gateway API, follow [GatewayClass setup](./gateway-class.md),
+then consult the [Gateway reference](./libraries/gateway.md) for route types and
+listener options.
 
 ### Replacing another Ingress controller?
 
@@ -246,7 +246,8 @@ Add watches for ConfigMaps or your own CRDs — see [Watching Resources](./watch
 
 ### Extend with templates (advanced)
 
-When the default libraries don't cover a case — a [custom annotation](./templating.md#reading-a-custom-annotation), domain-specific logic, or an HAProxy feature they don't emit — the [Templating Guide](./templating.md) covers the template language and the resource context your templates see.
+Use the [templating guide](./templating.md) to add a custom annotation, read your
+own resource types, or emit an HAProxy directive the bundled libraries don't cover.
 
 ### Run in production
 
@@ -254,7 +255,7 @@ For 3+ replicas, PodDisruptionBudgets, and leader election, see [High Availabili
 
 ## Troubleshooting
 
-If you run into issues during setup, check these common areas:
+Check the symptom that matches your setup:
 
 - **Controller not starting** -- check logs for missing HAProxyTemplateConfig, RBAC errors, or API connectivity issues
 - **HAProxy pods not updating** -- verify the agent container is running and credentials match

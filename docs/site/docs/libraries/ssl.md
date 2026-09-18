@@ -23,7 +23,10 @@ Explore the decoded certificates the SSL library assembles into the crt-list, li
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-The annotation registers `shop.example.com` as an SSL-passthrough backend, so the shared `sslPassthroughBackends` list becomes non-empty. That flips `gf["bindHTTPSDefault"]` on (`features-140-ssl-passthrough-binds`), which lets `frontends-500-ssl-tcp` emit a `mode tcp` frontend bound to the HTTPS port. That frontend reads the SNI without decrypting and routes it with `use_backend ssl-passthrough-storefront-shop if { req_ssl_sni -m str shop.example.com }`; the matching `backend ssl-passthrough-storefront-shop` (also `mode tcp`) forwards the still-encrypted stream straight to the shop pods. The **certs** tab is unchanged — passthrough never terminates TLS, so no certificate is loaded for it.
+The annotation adds a TCP backend for `shop.example.com`. The shared passthrough
+frontend reads the connection's SNI and forwards the encrypted stream to that
+backend. The **certs** tab doesn't change because HAProxy doesn't terminate TLS
+for this route.
 
 </details>
 

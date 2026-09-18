@@ -1,12 +1,15 @@
 # `nginx-ingress` library
 
-The Nginx Ingress library provides compatibility with the [nginx-ingress controller](https://kubernetes.github.io/ingress-nginx/) annotations for Kubernetes Ingress resources.
+Use this library when migrating Ingresses with `nginx.ingress.kubernetes.io/*`
+annotations from [ingress-nginx](https://kubernetes.github.io/ingress-nginx/).
+It's disabled by default.
 
 ## Overview
 
-This library enables `nginx.ingress.kubernetes.io/*` annotations on Ingress resources, providing a migration path for users coming from the nginx-ingress controller. It supports backend configuration, session affinity, rate limiting, URL rewriting, redirects, Cross-Origin Resource Sharing (CORS), access control, canary deployments, authentication, SSL passthrough, and mTLS certificate passthrough.
-
-This library is disabled by default.
+The library translates supported annotations into HAProxy configuration,
+including backend settings, session affinity, rate limits, rewrites, redirects,
+Cross-Origin Resource Sharing (CORS), authentication, and canary routing.
+Review the compatibility report and the limits below before cutover.
 
 Because the preset mixes annotations that HAPTIC supports, maps differently, and drops, the migration report is the clearest live view:
 
@@ -419,8 +422,11 @@ backend ing_rl_tbl_req_1s
     stick-table type string len 340 size 102400 expire 1s store http_req_rate(1s) peers localinstance
 ```
 
-The route's counter, window, threshold, and deny status come from `ing-rl-routes.map` (`<namespace>/<name>` → `req 1s 100 429`), so the rules above are the same for every rate-limited route and adding or removing one is a map operation. The counters live in a shared table proxy keyed `<namespace>/<name>|<source address>`, which keeps the budget per route and per client while leaving the route's own backend plain and therefore dynamic. The `peers localinstance` reference carries the counters across HAProxy reloads, so accumulated rates survive config churn.
-Whitelisted sources are exempted through two map lookups rather than a `src` list in the deny rule: `ing-rl-allow-partitions.map` maps the client address to the one block of the disjoint cover of every whitelist, and `ing-rl-allow-members.map` says whether this route exempts that block. Editing a whitelist is therefore also a map operation.
+Rate-limit settings and source-IP exemptions are stored in shared maps. Updating
+an existing route's settings changes those maps without changing its backend.
+Counters are keyed by route and client address, so each route has a separate
+per-client budget. The `peers localinstance` section preserves counters across
+HAProxy reloads.
 
 ---
 
@@ -461,7 +467,10 @@ frontend https
     http-request set-bandwidth-limit ing_bw_out_1048576 limit var(txn.ibw_rate) if { var(txn.ibw_min) -m str 1048576 }
 ```
 
-The rate reaches the rule as an expression, so it lives in `ing-bw-routes.map` (`<namespace>/<name>` → `<rate bytes> <min-size bytes or _>`) and a route's throttle is changed with a map operation. A filter's `min-size` is part of its declaration and can't come from a map, so the lane emits one filter per distinct `limit-rate-after`, plus the plain one for routes that don't set it. Routes sharing a `limit-rate-after` share a filter whatever their rates, and both values are stored as bytes, so `1m` and `1048576` are the same filter. A new `limit-rate-after` size reloads once; the route's own backend stays plain, and therefore dynamic.
+Bandwidth rates are stored in `ing-bw-routes.map`, so changing a rate can use a
+map update. HAProxy requires `limit-rate-after` in the filter declaration:
+introducing a new size requires a reload, while routes using an existing size
+share its filter. Values normalize to bytes, so `1m` and `1048576` share a filter.
 
 The filter is declared after the compression filter, so a download cap meters the compressed bytes that go on the wire. The per-backend filter it replaces ran after the frontend filters too, so this ordering is unchanged.
 
@@ -1367,7 +1376,10 @@ frontend https
     use_backend %[var(txn.canary_backend)] if { var(txn.canary_backend) -m found }
 ```
 
-The canary's backend, header value and weight are map rows keyed by host (`app.example.com|X-Canary` → the backend and `always`, `app.example.com` → `20`), so adding a canary or stepping its weight is a map operation. The rules above are the same for every canary; only a header or cookie name the frontend hasn't seen yet adds a rule, which reloads once. A `canary-by-header-pattern` is a regex, which HAProxy can't read from a map, so a pattern canary still emits its own `use_backend` line and reloads when it changes. When two canaries on one host set the same kind of rule, the one first by namespace/name wins.
+Canary backends, header values, and weights are stored in maps. Introducing a
+new header or cookie name adds a processing rule and requires a reload. A
+`canary-by-header-pattern` also requires a reload when it changes. If two
+canaries for one host define the same rule type, the first by namespace/name wins.
 
 !!! note "Canary and rate limiting compose per backend"
     Canary selection happens in the frontend (`use_backend %[var(txn.canary_backend)]`) before backend selection, and [rate limits](#rate-limiting) count against a key built from the matched route. The main and canary Ingresses are separate routes, so each enforces the rate limit set on its own Ingress. A `limit-rps` on the main Ingress alone does *not* limit canary traffic — the split-off portion is attributed to the canary route, which has no limit of its own. To bound both, set the rate-limit annotation on the canary Ingress too. Gateway API weighted splitting has no rate-limit annotation, so there's nothing to combine there.

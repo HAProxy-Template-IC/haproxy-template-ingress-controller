@@ -1,6 +1,10 @@
 # Governance guardrails
 
-Enforce org-wide policy across the resources HAPTIC watches — require an annotation, inject a safe default, or validate a value — without hand-editing a single Ingress. The engine is on by default because the annotation library ships one rule (see [The rule the chart ships](#the-rule-the-chart-ships)); you add your own as a map of named rules under `controller.config.templatingSettings.extraContext.governance`. Rules are keyed by a name you choose, so your rules merge with — rather than replace — any a template library ships, and you switch a single one off with `enabled: false`.
+Use governance rules to require annotations, supply defaults, or constrain values
+on watched resources. Define named rules under
+`controller.config.templatingSettings.extraContext.governance` in your Helm values.
+Your rules merge with those supplied by libraries; disable one by setting its
+`enabled` field to `false`.
 
 This guide shows how to roll a guardrail out safely. For every rule field and its exact meaning, see [Policy guardrails (governance)](../reference.md#policy-guardrails-governance) in the Chart Values Reference.
 
@@ -23,7 +27,8 @@ Enforcement is scoped to the offending resource's own admission, so one pre-exis
 
 ## Require a WAF policy on every Ingress
 
-This is the common case: every Ingress must select a Web Application Firewall (WAF) policy. Roll it out in three moves — audit, fix, enforce.
+This example requires every Ingress to select a Web Application Firewall (WAF)
+policy. Start in audit mode, fix reported violations, then enable rejection.
 
 ### 1. Turn the rule on in audit mode
 
@@ -150,7 +155,8 @@ controller:
               default: baseline-detect
 ```
 
-Detect mode inspects and logs but blocks nothing, so it's safe to inject on live traffic. Use the WAF metrics and audit log (see [Security](security.md)) to decide which routes are ready for a deny-mode policy.
+Detect mode records WAF matches without denying requests for those matches.
+Review WAF metrics and audit logs before selecting deny mode; see [Security](security.md).
 
 ## Require every Ingress to terminate TLS
 
@@ -239,9 +245,8 @@ An Ingress that sets the annotation itself keeps its own value, `"true"` or
 
 ## Switch off a single rule
 
-Rules are keyed, so setting one entry's `enabled` to `false` leaves the rest
-alone. This is how you disable a rule a template library ships without
-restating — or accidentally dropping — every other rule:
+Set `enabled: false` on a named rule to disable it while preserving the other
+rules, including those supplied by template libraries:
 
 ```yaml
 controller:
