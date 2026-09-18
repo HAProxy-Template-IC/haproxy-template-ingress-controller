@@ -6,7 +6,10 @@ hide:
 
 # HAPTIC
 
-**HAPTIC** (HAProxy Template Ingress Controller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and applies them to your HAProxy fleet — reloading only when the change needs one.
+**HAPTIC** (HAProxy Template Ingress Controller) routes Kubernetes traffic through
+[HAProxy](https://www.haproxy.org/). Use the bundled Ingress and Gateway API
+libraries, or write [Scriggo templates](templating.md) for your own annotations,
+routing rules, and resource types.
 
 <div class="hx-pipeline" role="img" aria-label="How HAPTIC works: cluster resources feed your templates, and the HAPTIC agent applies the resulting configuration to HAProxy">
   <div class="hx-group">
@@ -42,18 +45,19 @@ hide:
 
 ## What's HAPTIC?
 
-HAPTIC is an event-driven Kubernetes controller that:
+The controller watches the resources you select, renders their fields into
+configuration, and sends updates to an agent in each HAProxy pod. Routing behavior
+lives in templates, so you can change it without modifying the controller's Go code.
 
-- **Watches any Kubernetes resource** - Ingresses, Services, Secrets, Gateway API resources, or any custom resource type you configure
-- **Renders Scriggo templates** - A Go-native template engine
-- **Checks configurations** - Admission and config loading run `haproxy -c` synchronously. Reconciliation checks HAProxy configuration alongside deployment and runs configured auxiliary-file validators before dispatch; see [validation behavior](operations/debugging.md#haproxy-refused-the-config-the-fleet-was-given-configvalidatedfalse).
-- **Applies configurations** to HAProxy pods through the HAPTIC agent, which runs map, certificate and server changes on the live worker instead of reloading
+Choose a starting point:
 
-Unlike traditional ingress controllers with hardcoded configuration logic, HAPTIC uses a template-driven approach that gives you full control over the generated HAProxy configuration. This means you can:
-
-- **Define custom annotations** that your platform users can use, implemented with just a few lines of template code
-- **Support new standards** like Gateway API without waiting for controller updates
-- **Watch domain-specific CRDs** and generate HAProxy configuration from any Kubernetes resource type
+| Your task | Start here |
+| --- | --- |
+| Install HAPTIC and route a sample app | [Getting started](getting-started.md) |
+| Replace an existing ingress controller | [Migration guide](migrating.md) |
+| Upgrade an existing HAPTIC installation | [Upgrade to 0.2](upgrading-to-0.2.md) |
+| Add routing behavior or custom annotations | [Templating guide](templating.md) |
+| Try a template before installing | [Browser playground](https://haproxy-haptic.org/playground/) |
 
 ## Key features
 
@@ -80,8 +84,8 @@ at runtime and adapts when watched CRDs change.
 
 Share snippets through [`HAProxyTemplateLibrary`](crd-reference.md#haproxytemplatelibrary)
 resources. Use [`k8sResources`](crd-reference.md#k8sresources) to manage related
-Kubernetes objects, including fields whose initial value belongs to the template
-but whose running value follows an operator or autoscaling controller.
+Kubernetes objects. Mark a field as create-only to set its initial value while
+preserving later changes by an operator or autoscaling controller.
 
 Try templates and their validation fixtures in the browser [playground](https://haproxy-haptic.org/playground/)
 or edit the live examples throughout these docs.
@@ -97,43 +101,14 @@ or edit the live examples throughout these docs.
 !!! warning "Project maturity"
     HAPTIC uses pre-1.0 versioning, and its custom resources use API version `v1alpha1`. Minor releases can change APIs and configuration. Pin an exact chart version (`--version 0.2.0-alpha.3`) and read the [changelog](changelog.md) before you upgrade.
 
-!!! note "Ready to use out of the box"
-    The [Helm chart](deploying-with-helm.md) enables Ingress, Gateway API, and [HAPTIC annotations](libraries/haptic-annotations.md) by default. Enable a vendor annotation library when [migrating](migrating.md) from another controller. Write custom templates only for behavior the bundled libraries don't cover.
-
 ## Architecture
 
-Resource changes trigger rendering and per-pod deployment. Admission checks proposed changes; reconciliation runs auxiliary-file validation before dispatch and HAProxy checks alongside deployment.
-
-<div class="hx-pipeline hx-arch" role="img" aria-label="Runtime architecture: the controller watches the Kubernetes API, renders configuration, and sends each pod its changes through the HAPTIC agent">
-  <div class="hx-group">
-    <span class="hx-cap">Kubernetes API</span>
-    <span class="hx-chip">🗂️ Any resource</span>
-    <small>Ingress · Gateway · CRDs</small>
-  </div>
-  <div class="hx-link" aria-hidden="true"><i></i></div>
-  <div class="hx-group hx-pod">
-    <span class="hx-cap">Controller pod</span>
-    <span class="hx-chip">👀 Watcher</span>
-    <span class="hx-vlink" aria-hidden="true"></span>
-    <span class="hx-chip">📝 Template engine</span>
-    <span class="hx-vlink" aria-hidden="true"></span>
-    <span class="hx-chip">📤 Deployer</span>
-  </div>
-  <div class="hx-link" aria-hidden="true"><i></i></div>
-  <div class="hx-group hx-pod">
-    <span class="hx-cap">HAProxy pod</span>
-    <span class="hx-chip">🔌 HAPTIC agent</span>
-    <span class="hx-vlink" aria-hidden="true"></span>
-    <span class="hx-chip">⚡ HAProxy</span>
-  </div>
-</div>
-
-Key components:
-
-- **Watcher** - Subscribes to Kubernetes API for configured resource types
-- **Template Engine** - Renders Scriggo templates with resource data as context
-- **Validator** - Checks admission requests and rendered output; the agent rejects configurations its HAProxy binary can't load
-- **Deployer** - Decides per pod whether a change can run on the live worker or needs a reload, and sends it to that pod's agent
+The controller renders configuration; the agent in each HAProxy pod applies it.
+Admission and configuration loading run `haproxy -c` before accepting a change.
+During reconciliation, auxiliary-file checks run before dispatch, while HAProxy
+checks run alongside deployment. Each agent rejects configuration that its own
+HAProxy binary can't load. See [validation behavior](operations/debugging.md#haproxy-refused-the-config-the-fleet-was-given-configvalidatedfalse)
+and the [architecture overview](development/design/architecture-overview.md).
 
 ## Quick start
 
@@ -144,7 +119,9 @@ Use Kubernetes 1.33 or newer. For existing installations, follow the
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.3 --namespace haptic --create-namespace
 ```
 
-This installs both the controller and a 2-replica HAProxy Deployment, plus the default template libraries that cover Ingress and Gateway API out of the box. For the full walkthrough — including a sample app, end-to-end verification, and inspecting the rendered config the controller publishes as a `HAProxyCfg` resource — see [Getting Started](getting-started.md).
+This installs the controller, two HAProxy replicas, and the default routing
+libraries. Follow [Getting started](getting-started.md) to deploy a sample app,
+inspect the generated configuration, and test a route.
 
 ## What makes HAPTIC different
 
@@ -152,7 +129,7 @@ Add a custom annotation with a template snippet. This example lets each Ingress 
 
 <div class="pg-embed" markdown data-scenario="extend" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="A custom annotation, implemented as one snippet" data-height="440">
 
-<p class="pg-task" markdown>The `backend-directives-300-request-id` snippet adds the header to the annotated Ingress's backends. In the **Resources** panel, change the `shop` Ingress's `example.com/request-id-header` value to `X-Trace-ID` — or remove the annotation — and watch the `http-request set-header` line in `haproxy.cfg` follow.</p>
+<p class="pg-task" markdown>In the **Resources** panel, change the `shop` Ingress's `example.com/request-id-header` value to `X-Trace-ID`. Check the `http-request set-header` line in `haproxy.cfg`, then remove the annotation to remove the line.</p>
 
 ```yaml
 controller:
@@ -177,12 +154,11 @@ Set `example.com/request-id-header: "X-Request-ID"` on an Ingress to enable the 
 
 ## Where to go next
 
-- **Essential**: [Getting Started](getting-started.md) → [Templating](templating.md) → [CRD Reference](crd-reference.md)
-- **Replacing ingress-nginx or haproxy-ingress?** [Migrating](migrating.md)
-- **Custom resources beyond Ingress**: [Watching Resources](watching-resources.md)
-- **Template tests for CI/CD**: [Validation Tests](validation-tests.md)
-- **Reference**: [Supported Configuration](supported-configuration.md), [Troubleshooting](troubleshooting.md)
-- **Helm chart configuration**: [Deploying with Helm](deploying-with-helm.md)
+- [Watch additional resources](watching-resources.md), including your own custom types.
+- [Test your templates](validation-tests.md) with resource fixtures and output assertions.
+- [Configure the Helm chart](deploying-with-helm.md) for your cluster.
+- [Check supported HAProxy changes](supported-configuration.md) and reload requirements.
+- [Diagnose a problem](troubleshooting.md) with routing, configuration, or deployment.
 
 ## Reading the docs as an AI agent
 
@@ -195,7 +171,8 @@ Fetch them from the documentation version root, for example `https://haproxy-hap
 
 ## Contributing to the docs
 
-For a quick fix — a typo or a clearer sentence — click the pencil icon above any page title. It opens that page's Markdown in GitLab's web editor and turns your change into a merge request.
+To edit a page, select the pencil icon above its title. GitLab opens the Markdown
+source, where you can propose a change through a merge request.
 
 For larger changes, edit the sources under `docs/site/docs/` in the [repository](https://gitlab.com/haproxy-haptic/haptic) and preview them locally:
 

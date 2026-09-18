@@ -1,10 +1,13 @@
 # Debugging
 
-The controller serves a debug HTTP server that exposes internal state, recent events, and Go profiling. Use it when logs aren't enough — you can see exactly what config is loaded, what it rendered to, and what's happened in the last ~1000 events without having to correlate timestamps.
+Inspect the controller's loaded configuration, rendered output, recent events,
+and profiles through its debug HTTP server. Use these endpoints to investigate
+a specific reconciliation or compare desired and deployed state.
 
 ## Accessing the server
 
-The Helm chart enables the debug server on port `8080` (same port as `/healthz`, same mux). Port-forward to reach it:
+The chart serves diagnostics and health checks on port `8080`. Use port forwarding
+to reach the debug endpoints:
 
 ```bash
 kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
@@ -116,11 +119,9 @@ Analyse with `go tool pprof -http=:8081 cpu.pprof`.
 
 **Does this change reload HAProxy?**
 
-`haptic diff` compares two configurations and prints what a pod has to do to
-reach the second one. It runs the decision the controller makes per pod, so the
-verdict is what a deployment would do. The first line is that verdict —
-`runtime`, `file_only` or `reload` — and the lines under it name every change
-that couldn't run at runtime, then the runtime commands it composed.
+`haptic diff` compares two configurations using the controller's deployment
+planner. It prints `runtime`, `file_only`, or `reload`, followed by the reasons
+for reloads and the planned runtime commands.
 
 ```bash
 # Against the first HAProxy pod the cluster reports
@@ -144,10 +145,9 @@ comparison succeeded: the verdict is the answer, not a failure.
 
 **What does one HAProxy pod hold and run?**
 
-`haptic agent state` prints the agent's own view of its pod: the plans it
-applied, runs and can fall back to, what its worker has loaded, what it still
-has to delete, and how the last apply went. Run it in the `agent` container,
-where the credentials it authenticates with are already in the environment:
+`haptic agent state` reports the pod's applied, running, and fallback plans,
+loaded files, pending deletions, and last apply result. Run it in the `agent`
+container, which already has the required credentials:
 
 ```bash
 POD=$(kubectl get pod -n haptic -l app.kubernetes.io/component=loadbalancer -o name | head -1)

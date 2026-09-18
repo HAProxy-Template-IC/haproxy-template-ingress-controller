@@ -2,14 +2,17 @@
 
 ## Overview
 
-One `HAProxyTemplateConfig` resource defines everything HAPTIC does: what it watches, what it renders, and the tests that gate deployment. It provides schema validation, status conditions, and embedded testing capabilities. Bulky template content can live in separate [`HAProxyTemplateLibrary`](#haproxytemplatelibrary) objects that the config pulls in through [`libraryRefs`](#libraryrefs) — the chart does this for every template library it ships.
+An `HAProxyTemplateConfig` defines the watched resources, templates, deployment
+settings, and validation tests for one controller. Reference reusable content
+through [`libraryRefs`](#libraryrefs) to [`HAProxyTemplateLibrary`](#haproxytemplatelibrary)
+objects. The Helm chart uses one library object per enabled template library.
 
 **API Group**: `haproxy-haptic.org`
 **API Version**: `v1alpha1`
 **Kind**: `HAProxyTemplateConfig`
 **Short Names**: `htplcfg`, `haptpl`
 
-The schema is deliberately resource-agnostic — you template whatever you watch, so it works on a bespoke CRD exactly as it does on Ingress.
+Templates can read any configured resource type, including your own custom resources.
 
 ▶ [Open the custom-CRD example in the playground](/playground/?preset=crd){target=_blank} — HAPTIC templating any resource, not just Ingress.
 
@@ -552,7 +555,14 @@ Templates that emit Kubernetes resources for the controller to apply via Server-
 | `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
 | `createOnlyFields` | `[]string` | No | Dotted field paths whose initial values come from the template; subsequent applies preserve the live values |
 
-The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every full-ownership applied resource, so cascade-delete (for example `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the Server-Side Apply (SSA) payload omits the `managed-by` label **and** the `OwnerReference`, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly owned objects on which HAPTIC only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
+By default, HAPTIC owns rendered resources: it adds a controller `OwnerReference`
+to the `HAProxyTemplateConfig`, prunes resources removed from the rendered set,
+and lets Kubernetes garbage-collect them when the configuration is deleted.
+
+For a jointly managed resource, add `haproxy-haptic.org/ownership: partial` to its
+rendered annotations. HAPTIC omits the owner reference and `managed-by` label,
+excludes the resource from orphan cleanup, and removes the ownership annotation
+before applying it. Server-Side Apply tracks the fields HAPTIC contributes.
 
 Templates have full access to the same engine context as `haproxyConfig` — `resources`, filters, `templateSnippets`, `fileRegistry`, `extraContext`, and the per-render `shared` cache — so a `k8sResources` template can render extension points (`render_glob` patterns) and read shared state populated by the main config template.
 
@@ -1031,7 +1041,7 @@ The CRD includes OpenAPI schema validation that checks:
 
 Additional validation occurs when:
 
-1. **Pre-rollout Helm hook** - the chart's `pre-install`/`pre-upgrade` Job runs `haptic preflight`, which renders the chart from your values and runs the embedded tests before any object is applied
+1. **Pre-rollout Helm hook** - the chart's `pre-install`/`pre-upgrade` Job runs `haptic preflight`, which renders the chart from your values and runs the embedded tests before Helm applies the release workloads and configuration
 2. **Controller startup** - the load gate runs the embedded tests before the controller serves; a failure crash-loops the new pod instead of replacing a working one
 3. **Live config change** - the same suite re-runs on every config change; a failure is refused and the last-good config keeps serving
 4. **CLI command** - `haptic validate` runs tests locally

@@ -4,9 +4,9 @@ Every Helm value the chart accepts, with its type and default.
 
 ## Value ownership and upgrade migration
 
-Each runtime setting has one authoritative value. The chart rejects obsolete
-duplicates instead of silently choosing one and allowing the process, Service,
-or generated HAProxy configuration to drift.
+Use the current value paths below when upgrading. The chart rejects obsolete
+paths to keep process settings, Services, and generated configuration consistent.
+See the [0.2 upgrade guide](upgrading-to-0.2.md) for the full procedure.
 
 | Previous value | Authoritative value |
 |----------------|---------------------|
@@ -221,12 +221,11 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 
 ## Policy guardrails (governance)
 
-Org-wide baselines that namespace teams can't omit. Configured entirely under
-`extraContext` (it creates no Kubernetes resources). The engine is on by default because the annotation library ships one rule (`haptic-compress-enable`, which makes response compression on-by-default); with that rule disabled and no rules of your own, it does nothing. You
-declare a map of generic, JSONPath-driven `rules`, keyed by a name you choose;
-each rule targets a watched resource by name and, per matching resource, either
-**injects** a default when a value is absent or **validates** the value when
-present. Rules apply in sorted key order.
+Define named rules under `extraContext.governance` to supply defaults or constrain
+fields on watched resources. Rules run in sorted key order and don't modify the
+stored Kubernetes objects. The bundled `haptic-compress-enable` rule enables
+response compression by default. With that rule disabled and no custom rules,
+governance makes no changes.
 
 For a step-by-step rollout — audit, fix, then enforce — see the
 [Governance guardrails how-to](operations/governance.md). This section is the
@@ -472,7 +471,7 @@ The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-s
 |-----------|------|---------|-------------|
 | `gatewayClass.enabled` | bool | `true` | Create GatewayClass resource |
 | `gatewayClass.name` | string | `haptic` | GatewayClass name; default matches `ingressClass.name` |
-| `gatewayClass.default` | bool | `false` | Mark as default GatewayClass |
+| `gatewayClass.default` | bool | `false` | Emit the `gateway.networking.k8s.io/is-default-class` annotation; Gateways still require `spec.gatewayClassName` |
 | `gatewayClass.controllerName` | string | `haproxy-haptic.org/controller` | Controller identifier |
 | `gatewayClass.parametersRef.group` | string | `haproxy-haptic.org` | HAProxyTemplateConfig API group |
 | `gatewayClass.parametersRef.kind` | string | `HAProxyTemplateConfig` | HAProxyTemplateConfig kind |

@@ -5,11 +5,12 @@ Enable or disable them through Helm values.
 
 ## Overview
 
-The chart renders each enabled library as its own `HAProxyTemplateLibrary`, plus
-a single `HAProxyTemplateConfig` for your own `controller.config` that lists them
-in merge order via `spec.libraryRefs`. The controller merges the set at startup,
-later libraries winning over earlier ones for the same key and your config
-winning over all of them. To see the merged result:
+Each enabled library becomes an `HAProxyTemplateLibrary` resource. The chart's
+`HAProxyTemplateConfig` references these libraries in merge order and contains
+your `controller.config` overrides. For a repeated key, later libraries take
+precedence; your configuration takes precedence over every library.
+
+Inspect the merged configuration:
 
 ```bash
 haptic config view --input --namespace haptic
@@ -27,7 +28,9 @@ See the full library stack compose into one HAProxy config live:
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-The Ingress library's `map-host-500-ingress` snippet emits one `host host` line per Ingress rule host, so `host.map` grows a `blog.example.com blog.example.com` entry for the `blog` Ingress. Rename the host and that line becomes `news.example.com news.example.com` — the whole stack re-renders from the edited resource, and only this library owns the host-to-group mapping.
+The `host.map` entry changes from `blog.example.com blog.example.com` to
+`news.example.com news.example.com`. The Ingress library generates this mapping
+from the Ingress's host field.
 
 </details>
 
@@ -116,7 +119,8 @@ Your custom configuration in `controller.config` always takes precedence.
 
 ## Extension points
 
-Extension points are **hook points** the base library defines, where other libraries — or your own configuration — inject content.
+An extension point includes snippets whose names match a pattern. Use it to add
+directives or routing entries without replacing the surrounding template.
 
 ### How extension points work
 
@@ -204,15 +208,12 @@ controller:
 
 ### Library Configuration via `extraContext`
 
-`extraContext` is a parameter bag exposed to every snippet (read with
-`extraContext | dig("key") | fallback("default")`). It carries chart-computed
-values (ports, the HAProxy service name, …) plus anything you set under
+`extraContext` supplies settings to every snippet. It contains values computed by
+the chart, such as ports and Service names, plus your settings under
 `controller.config.templatingSettings.extraContext`.
 
-Bundled libraries ship sensible **defaults** for their tunables, which you can
-override here. For example, the nginx-ingress library's HTTP→HTTPS redirect
-status code — HAPTIC's equivalent of ingress-nginx's global `http-redirect-code`
-(default `308`):
+Use it to override library defaults. For example, set the nginx-ingress library's
+HTTP-to-HTTPS redirect status code (default `308`):
 
 ```yaml
 controller:
@@ -280,7 +281,9 @@ To override a built-in snippet, use the **same key name**; values-file entries t
 
 ## Custom libraries
 
-You can create custom libraries by watching any Kubernetes resource and implementing extension point patterns against it. Because HAPTIC is resource-agnostic, a plain ConfigMap becomes HAProxy config the same way an Ingress does — watch it, then emit into `backends-*` and `map-host-*` from a template snippet.
+To route from your own resources, add a watch and write snippets for the relevant
+extension points. This example reads ConfigMaps and generates backends and host
+routing entries through `backends-*` and `map-host-*`.
 
 <div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="ConfigMaps → backends and host.map" data-height="480">
 
@@ -367,7 +370,9 @@ items:
 
 </div>
 
-In your own values.yaml, drop the same `watchedResources` and `templateSnippets` under `controller.config` — the bundled base library already provides the `render_glob` invocations, so you only supply the snippets.
+To use this example in a Helm release, put its `watchedResources` and
+`templateSnippets` under `controller.config` in your values file. The bundled base
+library already calls these extension points.
 
 ## Library Architecture
 

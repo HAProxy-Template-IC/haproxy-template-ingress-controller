@@ -1,14 +1,20 @@
 # Watching Resources
 
-`spec.watchedResources` tells the controller which Kubernetes resources to subscribe to and how to make them available inside templates. This page explains the mental model. For field types, defaults, and validation rules see [CRD Reference](./crd-reference.md#watchedresources).
+Use `spec.watchedResources` to select the Kubernetes resources your templates can
+read. Each entry defines a resource type, filters, indexes, and storage mode. For
+field types and defaults, see the [CRD reference](./crd-reference.md#watchedresources).
 
-Watch it end-to-end — a watched Ingress feeding the render:
+Edit an Ingress below to see how a watched resource changes the generated configuration:
 
 <div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.watchedResources" data-tab="haproxy.cfg" data-controls="tabs" data-title="A watched Ingress rendered to haproxy.cfg" data-height="440">
 
 </div>
 
-When a schema is loaded — the norm in production, where the controller fetches it live from the kube-apiserver — watched resources arrive as strongly typed values you navigate with dotted field access (`ing.spec.rules`), covered in [Typed access in templates](#typed-access-in-templates) below. For the cases where you're working with untyped data — an inline `map[string]any` literal, a schema-less custom resource, or a genuinely optional field that may be absent — navigate with `dig(...)` and supply a default with `fallback(...)` so a missing field never breaks the render. The [Templating Guide](./templating.md#safe-iteration) teaches both patterns with runnable challenges.
+With a schema, read resource fields directly, such as `ing.spec.rules`. The
+controller loads schemas from the Kubernetes API server; offline tools use a
+schema directory. For untyped maps or resources without a schema, use `dig()` and
+supply missing-value defaults with `fallback()`. See [typed access](#typed-access-in-templates)
+and [safe iteration](./templating.md#safe-iteration) for examples.
 
 ## Anatomy of an entry
 
@@ -29,7 +35,9 @@ watchedResources:
 
 `labelSelector` accepts an equality-based selector string, such as `"app=shop"`; it doesn't accept a `matchLabels`/`matchExpressions` object. `fieldSelector` uses JSONPath equality syntax. See [Narrowing the watch](#narrowing-the-watch).
 
-`watchedResources` is an unbounded map — there's no maximum number of watched kinds. Each entry costs one informer and one apiserver watch stream, and a `store: full` entry holds its objects resident in memory, so the ceiling is apiserver watch capacity and controller memory, not a fixed count. See [Resource watching optimization](./operations/performance.md#resource-watching-optimization).
+There is no fixed limit on watched resource types. Each entry consumes an API
+watch stream, and `store: full` keeps its objects in memory. Size the controller
+and narrow watches to the resources your templates need; see [watch optimization](./operations/performance.md#resource-watching-optimization).
 
 ## Two store types
 
@@ -61,7 +69,9 @@ Both surfaces share the same typed pointer; iterating either way yields `*resour
 
 The typed shape comes from the resource's OpenAPI v3 schema — fetched live from the kube-apiserver in production, or from `--schema-dir` when running offline; see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for the full schema-source story and the repo's bundled `tests/schemas/` directory.
 
-A misspelled field name in a template fails when the controller boots (or when `validate` runs against a schema-dir), not at the next reconcile. The `<key>.T` type expression also works in macro signatures, type-switch case clauses (`case *resources.<key>.T`), and slice types for sharded rendering.
+The template compiler rejects misspelled fields when loading configuration or
+running `validate` with a schema directory. Use `<key>.T` in macro signatures,
+type switches, and slice declarations when you need the resource's type.
 
 See [Typed Resource Access](./templating.md#typed-resource-access) for the field-name convention, type-switch dispatch pattern, when to prefer typed vs untyped access, and the worked-example snippet.
 
@@ -364,7 +374,9 @@ watchedResources:
     debounceInterval: "30s"     # absorb endpoint churn on large clusters
 ```
 
-Empty / invalid strings fall back to the `100ms` default silently — the validating webhook doesn't reject unparseable values, so a typo just leaves you with the default. Format is any Go duration string (`"500ms"`, `"10s"`, `"1m30s"`, …); `"0"` disables debouncing so every change fires immediately.
+Use a Go duration such as `"500ms"`, `"10s"`, or `"1m30s"`. Set `"0"` to disable
+watcher debouncing. Empty or invalid values use the `100ms` default without a
+validation error, so check the spelling if the observed delay differs from your setting.
 
 ## Troubleshooting
 

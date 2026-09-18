@@ -5,34 +5,31 @@ hide:
 
 # Migrating to HAPTIC
 
-How to move an existing cluster from **ingress-nginx**, **haproxy-ingress**, or
-**haproxytech/kubernetes-ingress** to HAPTIC with zero downtime — run both
-controllers side by side, cut over one Ingress at a time, and flip DNS only when
-you're ready.
+Move Ingresses from **ingress-nginx**, **haproxy-ingress**, or
+**haproxytech/kubernetes-ingress** to HAPTIC. Check annotation compatibility,
+install HAPTIC alongside the existing controller, and test routes before
+transferring production traffic.
 
-HAPTIC is built to coexist with your current controller: it ships a distinct
-IngressClass (`haptic`, **not** cluster-default) and its own HAProxy Service, so
-it adopts *only* the Ingresses you explicitly point at it. Nothing you have today
-moves until you move it, and every step is a `kubectl patch` away from rollback.
+With default values, HAPTIC uses the `haptic` IngressClass and its own HAProxy
+Service. It watches Ingresses that select that class. Review class names and
+watch filters if you've customized an existing HAPTIC installation.
 
-Work through the cutover below in order. If something doesn't route as expected,
-the [Troubleshooting](#troubleshooting) section at the end covers the handful of
-defaults that most often trip up a migration.
+Keep the old controller available until routing and DNS changes are verified.
+See [troubleshooting](#troubleshooting) for differences that commonly affect a migration.
 
 ## Before you start
 
 - Your incumbent controller (ingress-nginx / haproxy-ingress / haproxytech kubernetes-ingress) is still running and serving traffic. **Leave it running** until cutover is complete.
-- You have Helm and cluster access. Step 1 below installs HAPTIC with the migration-specific flags. If HAPTIC is *already* installed, that's fine — it adopts nothing until you point Ingresses at its class; just apply the same flags with `helm upgrade` instead.
+- You have Helm and cluster access. Step 1 includes commands for a new installation and for an existing HAPTIC release.
 - You can edit Ingress manifests (to change `ingressClassName`) or you accept renaming HAPTIC's class to match — see below.
 
 <a id="step-0-check-what-will-change"></a>
 
 ## Step 0: Check what changes
 
-See how your current setup fares under HAPTIC before you change anything. The
-migration report classifies every source-controller annotation you use as
-supported, different, or dropped, and renders your Ingress through HAPTIC's real
-template pipeline — so you find the surprises now, not mid-cutover.
+Run the migration report before changing routes. It classifies source-controller
+annotations as supported, different, or dropped, and renders the Ingress through
+HAPTIC's template engine.
 
 It runs in your browser, on your own manifests. Paste the Ingresses you want to
 audit into the **Resources** panel — `kubectl get ingress -A -o yaml` output
@@ -48,7 +45,9 @@ The same report runs live below on a preset ingress-nginx setup:
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-The report gains a red `dropped` badge for `server-snippet` — "nginx server-level directives have no HAProxy equivalent" — and the dropped count rises by one. That's the kind of pre-cutover surprise to find before you switch a class.
+The report marks `server-snippet` as **dropped** because nginx server-level
+directives have no HAProxy equivalent. Replace that behavior before migrating
+a route that depends on it.
 
 </details>
 
@@ -67,12 +66,20 @@ config — open the [playground](/playground/).
 
 ## The cutover, step by step
 
+!!! warning "Plan the traffic transition"
+    Changing `ingressClassName` removes the route from the old controller before
+    DNS changes take effect. This procedure can interrupt traffic. Use a test
+    Ingress first and schedule production changes for an acceptable interruption
+    window. For continuous service, keep a separate route on the old controller
+    until clients have moved to HAPTIC.
+
 1. **Install HAPTIC alongside** your existing controller. Give HAProxy a real
    external address — the default `haproxy.service.type` is **`NodePort`**; set
    it to `LoadBalancer` so status/DNS get a routable address:
 
     ```bash
     helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      --version 0.2.0-alpha.3 \
       --namespace haptic --create-namespace \
       --set haproxy.service.type=LoadBalancer \
       --set controller.config.templatingSettings.extraContext.statusPatches.enabled=false   # no DNS writes yet
@@ -82,6 +89,7 @@ config — open the [playground](/playground/).
 
     ```bash
     helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      --version 0.2.0-alpha.3 \
       --namespace haptic --reuse-values \
       --set haproxy.service.type=LoadBalancer \
       --set controller.config.templatingSettings.extraContext.statusPatches.enabled=false   # no DNS writes yet
@@ -111,6 +119,7 @@ config — open the [playground](/playground/).
 
     ```bash
     helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      --version 0.2.0-alpha.3 \
       --namespace haptic --reuse-values \
       --set controller.config.templatingSettings.extraContext.statusPatches.enabled=true
     ```
@@ -122,8 +131,9 @@ config — open the [playground](/playground/).
    and traffic is stable.
 
 !!! tip "Rolling back"
-    Until DNS is flipped, rollback is just `kubectl patch` the
-    `ingressClassName` back. Keep the old controller installed until step 6.
+    Restore the original `ingressClassName` to return route ownership to the old
+    controller. If DNS has changed, restore its previous address too and account
+    for cached records. Keep the old controller installed until step 6.
 
 ## Key settings that affect migration
 

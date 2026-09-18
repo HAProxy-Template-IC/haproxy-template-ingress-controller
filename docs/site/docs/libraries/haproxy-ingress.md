@@ -1,10 +1,15 @@
 # `haproxy-ingress` library
 
-The haproxy-ingress library implements `haproxy-ingress.github.io/*` annotations compatible with [jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/), a community HAProxy ingress controller. It supports path matching, backend configuration, session affinity, SSL features, access control, HTTP Strict Transport Security (HSTS) and Cross-Origin Resource Sharing (CORS) headers, and more.
+Use this library when migrating Ingresses with `haproxy-ingress.github.io/*`
+annotations from [haproxy-ingress](https://haproxy-ingress.github.io/). It covers
+path matching, backend settings, session affinity, TLS, access control, HTTP
+Strict Transport Security (HSTS), and Cross-Origin Resource Sharing (CORS).
 
 ## Overview
 
-This library is **opt-in** — disabled by default. Enable it to keep your existing `haproxy-ingress.github.io/*` annotations working when migrating from jcmoraisjr/haproxy-ingress. For new configuration, the enabled-by-default [`haproxy-haptic.org/*`](haptic-annotations.md) native library covers the same capabilities (and more); the two coexist, so you can migrate at your own pace.
+The library is disabled by default. Enable it to retain supported annotations,
+and review the caveats below before switching traffic. For new configuration,
+use [native HAPTIC annotations](haptic-annotations.md).
 
 See the `haproxy-ingress.github.io/*` annotations render to HAProxy config live:
 
@@ -476,8 +481,11 @@ backend ing_rl_tbl_req_1s
     stick-table type string len 340 size 102400 expire 1s store http_req_rate(1s) peers localinstance
 ```
 
-The route's counter, window, threshold, and deny status come from `ing-rl-routes.map` (`<namespace>/<name>` → `req 1s 10 429`), so the rules above are the same for every rate-limited route and adding or removing one is a map operation. The counters live in a shared table proxy keyed `<namespace>/<name>|<source address>`, which keeps the budget per route and per client while leaving the route's own backend plain and therefore dynamic. The `peers localinstance` reference carries the counters across HAProxy reloads, so accumulated rates survive config churn.
-Whitelisted sources are exempted through two map lookups rather than a `src` list in the deny rule: `ing-rl-allow-partitions.map` maps the client address to the one block of the disjoint cover of every whitelist, and `ing-rl-allow-members.map` says whether this route exempts that block. Editing a whitelist is therefore also a map operation.
+Rate-limit settings and source-IP exemptions are stored in shared maps. Updating
+an existing route's settings changes those maps without changing its backend.
+Counters are keyed by route and client address, so each route has a separate
+per-client budget. The `peers localinstance` section preserves counters across
+HAProxy reloads.
 
 ---
 

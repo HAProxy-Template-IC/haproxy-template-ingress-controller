@@ -10,16 +10,16 @@ and Vector processes inside their sidecar containers: a child exit or repeated
 failed health check leaves HAProxy running while the supervisor restarts only
 that child, with a backoff capped at 30 seconds.
 
-HAProxy's `/ready` endpoint on the stats port is the pod's readiness probe: it
-answers 503 under the bootstrap config and 200 once a rendered config is
-running. The agent, the SPOA hub and Vector are native sidecars (init containers
-with `restartPolicy: Always`): the kubelet starts them before HAProxy and stops
-them only after HAProxy has exited, so they outlive its drain and soft stop. The
-agent's only probe is a liveness probe on `/healthz`. Its `/readyz` means "the
-agent can accept applies" and stays true after an apply the agent rejected,
-because a pod that can't be applied to is exactly the pod the next apply has to
-reach. Kubernetes still marks the pod NotReady while a container isn't running,
-and probes on user-supplied sidecars still apply.
+HAProxy's `/ready` endpoint controls pod readiness. It returns `503` while the
+bootstrap configuration is active and `200` once a rendered configuration runs.
+The agent, SPOA hub, and Vector run as native sidecars: Kubernetes starts them
+before HAProxy and stops them after HAProxy exits, preserving dependencies during
+connection draining.
+
+The agent's `/readyz` endpoint reports whether it can accept configuration updates;
+a rejected update doesn't make it unready. Kubernetes uses the agent's `/healthz`
+for liveness. A stopped container or a failing probe on a custom sidecar can
+still make the pod unready.
 
 The watchdog uses `/usr/bin/bash` and `timeout`, which the default images provide.
 With a custom sidecar image missing either command, the supervisor logs a warning
@@ -94,11 +94,9 @@ haproxy:
 
 ### PROXY protocol
 
-Behind a layer-4 load balancer — an edge HAProxy, a cloud network load balancer,
-a firewall that port-forwards and rewrites the source address — HAProxy sees the
-load balancer as the client. Every request then logs the same `client_ip`,
-IP-keyed rate limiting shares one bucket across the internet, and the WAF and any
-IP-based access control list see a single client.
+If an upstream load balancer replaces the client address, HAProxy sees that
+balancer as the source. Access logs, source-IP rate limits, and IP-based policies
+then use the address of the balancer.
 
 The load balancer fixes this by adding a PROXY protocol header that carries the
 original address. Enable the matching listeners:
@@ -441,13 +439,17 @@ unavailable and flush when it reconnects. Measured with the collector stopped,
 records arrived once it came back. A plain `<host>:<port>` target is UDP and
 drops them instead.
 
-Ring fields: `name`, `address` (`<host>:<port>` or `[<ipv6>]:<port>` — HAProxy
-3.4 rejects a Unix socket as a ring server, so send to a Unix-socket collector
-with a plain-path `address` target instead), `size` (buffer bytes, default 65536 — it must exceed `maxLineBytes` by at least 256, or HAProxy caps the ring's record length to the buffer minus its header and truncates every longer record into invalid JSON, warning but not failing),
-`logProto` (`legacy` for newline-delimited RFC 6587, or `octet-count`),
-`connectTimeout`, `serverTimeout`, and `serverOptions` — appended verbatim to the
-ring's `server` line, which is how you reach TLS or any other server keyword
-without the chart modelling each one.
+Configure each ring with these fields:
+
+- `name` and `address`: a host and port, such as `collector:514` or `[::1]:514`.
+  HAProxy 3.4 doesn't accept a Unix socket as a ring server; use a plain-path
+  logging target for a Unix-socket collector.
+- `size`: buffer bytes, default `65536`. Keep it at least 256 bytes larger than
+  `maxLineBytes` to avoid truncating records into invalid JSON.
+- `logProto`: `legacy` for newline-delimited RFC 6587, or `octet-count`.
+- `connectTimeout` and `serverTimeout`: connection and server timeouts.
+- `serverOptions`: additional HAProxy server keywords, inserted verbatim, such
+  as TLS settings.
 
 A collector reads this as ordinary syslog carrying a JSON payload. In Vector, a
 `syslog` source parses the envelope and one `remap` recovers the record:

@@ -2,9 +2,13 @@
 
 ## Overview
 
-HAPTIC uses [Scriggo](https://scriggo.com/), a Go template engine, to generate HAProxy configurations from Kubernetes resources. The Helm chart ships with ready-to-use [template libraries](template-libraries.md) that cover standard Ingress and Gateway API use cases — you only need to write templates when you want to extend or replace that default behavior. Templates access watched Kubernetes resources, and the controller renders them whenever resources change, validates the output, and deploys it to HAProxy instances.
+Write templates to add routing behavior the bundled [libraries](template-libraries.md)
+don't cover. HAPTIC uses [Scriggo](https://scriggo.com/), a Go template engine, to
+read Kubernetes resources and generate HAProxy configuration and related files.
 
-Templates are rendered automatically when any watched resource changes, during initial synchronization, or periodically for drift detection.
+The controller renders after initial synchronization and relevant resource changes,
+and periodically checks for drift. The examples below introduce the language,
+resource access, and extension points.
 
 <div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.backends-500-ingress" data-tab="haproxy.cfg" data-title="See a template render — live" data-controls="tabs,provenance" data-height="480">
 </div>
@@ -170,7 +174,7 @@ spec:
 </div>
 
 !!! note "Named and multiple `defaults` sections"
-    The `haproxyConfig` template's rendered text *is* the HAProxy configuration — HAPTIC parses, validates, and deploys it as written, so any construct your HAProxy version accepts is available. That includes multiple named `defaults` sections: a `defaults <name>` block that later `frontend`, `backend`, or `listen` sections opt into with `from <name>`. HAPTIC's config comparator tracks each `defaults` section by name and creates, updates, or deletes them independently. The bundled `base` library ships a single unnamed `defaults` section; add named ones in your own template or snippets when a subset of sections needs different defaults.
+    Templates can emit multiple named `defaults` sections. A `frontend`, `backend`, or `listen` section selects one with `from <name>`. The bundled base library uses named profiles, including `haptic-base`; see [reload-free routing](libraries/reload-free.md) before changing profiles used by dynamic backends.
 
 ### Map files
 
@@ -296,7 +300,9 @@ spec:
 
 </div>
 
-Changing a general file reloads HAProxy, because the running worker holds the old content. That's wrong for a file HAProxy never reads — a config for a sidecar that watches the file itself. Set `reloadOnPush: false` on the entry and the controller writes the new content without the reload:
+General-file changes trigger a reload by default. For a file consumed only by a
+sidecar that reloads its own configuration, set `reloadOnPush: false` to update
+the file without reloading HAProxy:
 
 ```yaml
 spec:
@@ -663,7 +669,9 @@ Templates access watched resources through the `resources` variable. Each store 
 
 When a schema is loaded for a watched resource (live in production, or via `--schema-dir` offline), both the `resources.<name>` store wrapper **and** a top-level global named `<name>` return typed pointers instead of `map[string]any`. Field access goes through the strongly typed struct, so a misspelled field is a compile-time error rather than a silently-`nil` `dig()`.
 
-A typed field resolves by **either** its Go-PascalCase name **or** its lowercase JSON tag: `gw.metadata.name` and `gw.Metadata.Name` reach the same field, because the engine falls back to the JSON tag when the Go field name doesn't match. That's why the lowercase `ingress.spec.rules` / `ingress.metadata.name` examples elsewhere on this page are typed access too — not untyped `dig()`. The code blocks below use the PascalCase form to make the struct mapping explicit, but either spelling compiles.
+Both `gw.metadata.name` and `gw.Metadata.Name` access the same typed field.
+The engine accepts the JSON field name or its generated Go name. Examples below
+use both forms.
 
 ```go
 {# Typed access — fields resolve at engine compile time #}
@@ -759,7 +767,8 @@ An arrow works anywhere a function is expected, not only in a pipeline — inclu
 {%- var ready = Where(pods, p => p.Status.Phase == "Running") %}
 ```
 
-Predicates are closures, not strings. That's deliberate: `dig`-style string paths return nothing when a field name is wrong, and nothing errors. `unique_by` and `group_by` additionally accept an attribute path (`unique_by("host")`) for data that reaches you as `any`.
+Closure predicates let the compiler check field names. For untyped data,
+`unique_by` and `group_by` also accept an attribute path such as `unique_by("host")`.
 
 **Macros compose with chains from either end, but not in the middle.** A macro returns text, so it can consume a chain (`… | map(p => p.Name) | Render()`) or act as a stage closure (`… | map(Label)`) — it can't pass a collection onward. A shared helper that returns a *collection* is an exported `var` holding a function; it imports exactly like a macro and its return type is unrestricted:
 
@@ -797,9 +806,12 @@ Use `not` / `and` / `or` rather than `!` / `&&` / `||` when an operand is a stru
 
 Prefer this to a `dig()` probe like `dig(ingress, "spec", "defaultBackend") != nil`: same answer, and the field path is checked when the config loads.
 
-Absence and emptiness deliberately give the same answer, because that's the only distinction the typed shape carries: an optional object that the source omitted and one it supplied empty both arrive as the zero value.
+An omitted optional object and an explicitly empty object both arrive as the
+zero value of the struct. Typed access doesn't distinguish them.
 
-**Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation. This matters because chart authors are used to upstream Go-style names (`APIVersion`, `IPBlock`) — those don't apply here. (Where the JSON tag already has an uppercase acronym, like `loadBalancerIP`, the typed field keeps it — `LoadBalancerIP` — which happens to match upstream; only rune 0 is ever changed.)
+**Field name convention:** The generated Go name capitalizes the first rune of
+the JSON field name and leaves the rest unchanged. Use `ApiVersion` for
+`apiVersion` and `LoadBalancerIP` for `loadBalancerIP`.
 
 | JSON tag (source YAML)   | Typed field          |
 |--------------------------|----------------------|
@@ -815,11 +827,17 @@ Absence and emptiness deliberately give the same answer, because that's the only
 
 Templates write `gw.ApiVersion`, not `gw.APIVersion`. Why the convention works this way — and the regression canary that pins it — is covered in [Typed Access Internals](./template-reference.md#typed-access-internals).
 
-**Inside a typed scope** (typed for-range, typed macro parameter, type-switch case branch) use direct field access — no `dig()`, no `tostring()`, no `fallback()` on already-typed primitives. Reach for `dig()` only at genuine polymorphic boundaries (a `routeInfo["route"]` switch entry, an `any` macro parameter, a `shared.Get(...)` return, a ConfigMap with no schema bundled, a `listenerOwner` that may be a Gateway or a ListenerSet, etc.). Mixed-shape chart code — some snippets typed, some not — is the expected adoption pattern, and `dig()` navigates typed structs by JSON tag, so a snippet ported one at a time keeps working without churning its callers.
+**Use direct field access in a typed scope**, such as a typed loop or macro
+parameter. Use `dig()` for untyped maps, values passed as `any`, or resources
+without a schema. It also accepts typed structs by JSON field name, so typed and
+untyped snippets can share helpers.
 
 **Iterate an optional typed slice directly.** An absent (nil) optional typed slice ranges zero times, so `for _, r := range ingress.spec.rules` is panic-free with no guard. Don't wrap a typed slice in `fallback(x, []any{})`: `fallback` returns `any`, which erases the element type and makes the following typed field access (such as `r.host`) fail to compile. When you need to branch on emptiness, test `len(x.field) > 0` (as in the map-file example earlier on this page), not a `dig(...) | toSlice()` guard.
 
-**Optional fields normalise to nil through `dig()`.** A typegen-produced struct field whose schema entry is *not* in the OpenAPI `required` list carries a `json:"…,omitempty"` tag; `dig()` returns nil when such a field's value is the type's zero value (`""`, `0`, `false`, empty slice). The universal `dig(obj, "field") | fallback(default)` chart pattern therefore behaves identically across typed and untyped shapes — without the normalisation, an unpopulated optional string would return `""`, `fallback()` would skip, and downstream key composition would silently produce malformed strings. Required fields keep their zero values intact.
+**`dig()` returns nil for empty optional fields.** For fields omitted from the
+`required` list in the schema, `dig()` converts zero values such as `""`, `0`, `false`,
+and empty slices to nil. This lets `fallback()` supply a default. Required fields
+retain their zero values.
 
 **Schema source.** Typed shapes are generated from each resource's OpenAPI v3 schema:
 
@@ -1294,7 +1312,9 @@ server {{ env }}.svc:80
 
 Templates can register status patches for Kubernetes resources using the `statusPatch()` function. The controller applies these patches to the `/status` subresource via Server-Side Apply (SSA) after each reconciliation phase.
 
-This allows templates to report processing results back to resources (for example, setting `Accepted` and `Programmed` conditions on Gateways, or propagating LoadBalancer addresses to Ingress status) without the controller needing to understand any specific resource's status schema.
+Use status patches to report results on the original resource, such as a
+Gateway's `Accepted` condition or an Ingress's load balancer address. Templates
+define the status shape for each resource type.
 
 ### `statusPatch()`
 

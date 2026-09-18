@@ -1,12 +1,18 @@
 # SSL certificates
 
-By default, the [HAPTIC Helm chart](deploying-with-helm.md) provisions a default SSL certificate for HTTPS traffic — via cert-manager when it's installed, otherwise as a chart-generated self-signed Secret — and the controller watches and deploys it to HAProxy. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
+The [Helm chart](deploying-with-helm.md) creates a default certificate for HTTPS.
+It uses cert-manager when available, or generates a self-signed Secret otherwise.
+Use the options below to supply your own certificate, manage renewal, or
+[disable HTTPS](#disabling-https).
 
 !!! tip "The default certificate and per-host TLS"
     This page covers the chart's **default** certificate. HAPTIC serves it for every Ingress over HTTPS by default, and as the fallback when a Server Name Indication (SNI) match isn't found. To serve a specific certificate for one host, add a `spec.tls` entry and a `kubernetes.io/tls` Secret to the Ingress itself. See [Ingress library — TLS configuration](libraries/ingress.md#tls-configuration) for per-host certificates and the `ingressDefaultHTTPS` toggle.
 
 !!! note "Exact hostnames win over wildcards"
-    When a wildcard certificate (`*.example.com`) and an exact-hostname certificate (`app.example.com`) both match the same SNI — registered through separate `spec.tls` entries — HAProxy presents the most specific match: `app.example.com` gets the exact certificate, other subdomains fall to the wildcard. HAPTIC emits both into `certificate-list.txt`; HAProxy's SNI lookup performs this specificity selection regardless of the order the certificates appear in the list. Order only sets the default first-line certificate served for unmatched SNIs and clients that send no SNI.
+    If both `app.example.com` and `*.example.com` match a client's Server Name
+    Indication (SNI), HAProxy presents the exact-hostname certificate. Certificate
+    order doesn't affect that selection. The first certificate in the list is
+    the default for unmatched hostnames and clients that send no SNI.
 
 ## Default SSL certificate
 
@@ -343,7 +349,9 @@ For a **single-algorithm** default, leave `ecdsaSecretName` empty (the default) 
 
 TLS session resumption lets a returning client skip the full handshake and reconnect with an abbreviated one — one fewer round trip and no repeated asymmetric crypto. HAProxy does this with *session tickets*: it encrypts the session state into a ticket the client presents on its next connection.
 
-A ticket only helps if the pod that receives it can decrypt it. HAPTIC runs an active-active HAProxy fleet, and a client's reconnect can land on any pod, so if each pod used its own random ticket key, resumption would fail whenever a client hit a different pod than the one that issued its ticket. HAPTIC instead gives every pod the same session-ticket encryption key (STEK), so a ticket issued by one pod resumes on any other. This covers both TLS 1.2 (RFC 5077 tickets) and TLS 1.3 (RFC 8446 pre-shared keys).
+All HAProxy pods share a session-ticket encryption key, so a client can resume a
+session after reconnecting to a different pod. This supports TLS 1.2 tickets and
+TLS 1.3 pre-shared keys.
 
 Session resumption is off by default. Enable it under the same `extraContext.tls` block as the cipher policy and HSTS:
 
@@ -359,7 +367,11 @@ controller:
 
 ### Key rotation
 
-A long-lived ticket key weakens forward secrecy: an attacker who later obtains it can decrypt every past session it protected. HAPTIC rotates the key daily and keeps a sliding window of three keys — the newest encrypts new tickets, the older two still decrypt tickets they issued, so tickets stay resumable for about two days after issue. Rotation is automatic and needs no external component: the controller renders the key file, reads back its own previous output on the next render to tell whether a day has passed, and slides the window forward with one hitless HAProxy reload. Keys are full-entropy random values generated in the cluster — nothing derives them from a static secret.
+HAPTIC rotates ticket keys daily and keeps three keys: the newest encrypts new
+tickets, and the two older keys can decrypt tickets they issued. Tickets remain
+resumable for about two days after issue. The controller generates random keys,
+uses its previous output to track rotation, and applies each rotation with an
+HAProxy reload.
 
 You don't manage, rotate, or back up the keys; the toggle is the only configuration.
 

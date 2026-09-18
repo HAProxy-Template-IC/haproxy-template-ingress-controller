@@ -2,11 +2,10 @@
 
 ## Overview
 
-Tune HAPTIC in three areas:
-
-- **Controller performance** - Template rendering, reconciliation cycles
-- **HAProxy performance** - Load balancer throughput and latency
-- **Kubernetes integration** - Resource watching and event handling
+Size the controller for its watched resources, templates, and validation workload.
+Size HAProxy separately for traffic volume and connection lifetime. Use the
+measurements below as workload examples, then measure your own configuration
+before changing resource limits or timeouts.
 
 ## Measured render cost by object count
 

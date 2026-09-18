@@ -1,25 +1,19 @@
 # Validate a configuration before you deploy it
 
-HAPTIC checks a configuration before it serves traffic with it, and refuses to
-start on one that fails. That's deliberate — a controller that quietly served a
-broken configuration would be worse — but a bad configuration surfaces as a
-**crash-looping controller** rather than as a failed deploy.
-
-Run the same checks in your delivery pipeline and the failure lands where you
-want it: on the pipeline, before anything reaches the cluster.
+Run `haptic preflight` to check your chart values before deployment. Helm runs it
+by default during installation and upgrades. Adding it to your delivery pipeline
+finds the same errors before you apply the release.
 
 ## Why the chart's own tests aren't enough
 
-The chart ships `validationTests` and they run in HAPTIC's CI — against the
-chart's **default** values. Your `values.yaml` enables features the defaults
-don't, and some checks only fail once a feature is on. Nothing outside your
-pipeline has ever seen your values.
+Your values can enable different features, templates, and sidecars from the chart's
+defaults. Validate that combination with the version you plan to deploy.
 
-Three things make this worth an explicit step:
-
-- The controller's load gate is **fail-closed**. A configuration that fails it stops the controller from starting at all.
-- Nothing rejects a bad configuration at apply time. The admission webhook validates *watched resources* (Ingress, HTTPRoute, …), not the `HAProxyTemplateConfig` itself — so `kubectl apply` on a broken config succeeds and the failure only surfaces when the controller tries to load it.
-- Sidecar configuration fails **quietly**. A rejected Vector config leaves log and metric export unavailable while HAProxy stays Ready, so traffic keeps flowing without surfacing the configuration error to callers.
+The controller refuses to start with configuration that fails its load checks.
+The admission webhook validates routing resources, not the complete
+`HAProxyTemplateConfig` and library set. Preflight checks that set together and
+can also validate Vector and Varnish configuration, whose failures may leave
+traffic serving while logging or caching is unavailable.
 
 ## Run the check
 
@@ -88,22 +82,16 @@ fails the check.
 
 ### Schemas
 
-Templates that use typed resource access need the Kubernetes API schemas.
-Without them the render falls back to untyped access and validates a
-*different* configuration than the controller loads, so `preflight` always
-reads schemas from somewhere and refuses rather than passing on a weaker
-check.
+Preflight requires schemas to resolve typed fields and determine which optional
+resources and features are available. It fails if it can't load a schema source.
 
-By default it reads them from the cluster you're deploying to — the same
-credentials the deploy step uses. That's the most faithful source: it reflects
-that cluster's actual API surface, including which optional custom resource
-definitions (CRDs) are installed, so a Gateway API feature is validated when
-Gateway API is there and stripped when it isn't.
+By default, it reads schemas from the target cluster using your Kubernetes
+credentials. This includes the custom resource definitions (CRDs) and schema
+versions installed there.
 
-To run without cluster access, point `--schema-dir` at a directory of CRD
-manifests or OpenAPI v3 schemas. A directory only describes what somebody put
-in it, so it can't tell you what your cluster actually serves — use it when
-the pipeline has no credentials, not as the default.
+For offline validation, pass `--schema-dir` with CRD manifests or OpenAPI v3
+schemas. Keep this directory aligned with the target cluster; preflight can't
+verify that alignment without cluster access.
 
 ```bash
 # Offline: schemas from a directory, no cluster contacted.

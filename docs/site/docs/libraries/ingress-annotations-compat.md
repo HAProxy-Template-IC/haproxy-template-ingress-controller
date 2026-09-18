@@ -4,11 +4,13 @@ This library provides shared macros for [haptic-annotations](haptic-annotations.
 
 ## Overview
 
-`ingress-annotations-compat.yaml` is a scaffold library at hierarchy level 2.5 that holds parameterized macros consumed by the three **Ingress** vendor annotation libraries. The scaffold either walks `resources.ingresses.List()` itself (for example, `BuildAnnotationSSLPassthrough`) or takes a typed `*resources.ingresses.T` parameter (for example, `EmitAnnotationAccessControl`) — that's correct, because all three vendor libraries process the same resource and differ only by annotation namespace.
+The shared helpers read Ingress resources and generate configuration for the
+annotation libraries. Each caller supplies its annotation prefix and feature
+settings; the helpers provide the common output behavior.
 
-The scaffold exists to concentrate behaviour that would otherwise be duplicated three times. Each vendor library still owns its annotation extraction (the keys differ per vendor: `haproxy.org/*`, `haproxy-ingress.github.io/*`, `nginx.ingress.kubernetes.io/*`); the shared output emission lives in this library.
-
-**Scope: Ingress only.** A vendor library operating on a non-Ingress CRD (HTTPRoute, GRPCRoute, custom CRDs) **doesn't** use these macros — it writes its own equivalents.
+Use these macros when extending an Ingress annotation library. Resource-specific
+libraries for other kinds, such as HTTPRoute or a custom resource, define their
+own helpers.
 
 ## Configuration
 

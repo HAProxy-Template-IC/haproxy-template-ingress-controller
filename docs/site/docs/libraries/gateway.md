@@ -984,7 +984,13 @@ spec:
 
 ## TLSRoute support
 
-TLSRoute routes TLS connections by SNI. Depending on the listener's TLS mode, HAProxy either forwards the still-encrypted stream to the backend (`tls.mode: Passthrough`) or terminates TLS and forwards the decrypted stream (`tls.mode: Terminate`). With a `Terminate` listener, a BackendTLSPolicy on the backend Service re-encrypts that stream toward the backend with the policy's CA, SNI, and hostname verification; with `Passthrough`, the client's TLS session reaches the backend unchanged, so the policy doesn't apply. A rule attached to both modes gets separate backends: the terminating leg can re-encrypt, while the passthrough leg forwards the original TLS stream.
+TLSRoute selects backends by Server Name Indication (SNI). A `Passthrough`
+listener forwards the client's encrypted stream unchanged. A `Terminate` listener
+decrypts it; a BackendTLSPolicy can then require TLS and certificate verification
+on the connection to the backend.
+
+A rule attached to both modes gets separate backends. BackendTLSPolicy applies to
+the terminating connection, while passthrough preserves the original TLS session.
 
 ### Example: passthrough Gateway and TLSRoute
 
@@ -1131,7 +1137,7 @@ HAPTIC renders `frontend gateway-tcp-port-5432` (`mode tcp`, `bind *:5432`, `def
 ### Forwarding behavior
 
 - **One frontend per claimed port**: `frontend gateway-tcp-port-<port>` with `mode tcp`, `bind *:<port>`, and a `default_backend` — no ACLs.
-- **Backends**: `mode tcp` blocks named `gtw_tcp_<namespace>_<route>_<ruleIndex>`. A single `backendRef` gets the standard reserved-slot server pool; multiple `backendRefs` get `balance roundrobin` with each Service in its own slot range carrying its `weight` (default 1; a `weight: 0` ref stays in the config but takes no traffic).
+- **Backends**: `mode tcp` blocks named `gtw_tcp_<namespace>_<route>_<ruleIndex>`. A single `backendRef` resolves to that Service's endpoint servers; multiple `backendRefs` use `balance roundrobin` with each Service's servers carrying its `weight` (default 1; a `weight: 0` ref stays in the config but takes no traffic).
 - A route without `sectionName` attaches to every TCP listener on the Gateway: each port gets its own frontend, all sharing one backend.
 - TCP listeners whose port equals the chart-static `httpPort` or `httpsPort` are dropped to avoid a duplicate bind.
 
@@ -1261,7 +1267,9 @@ Two Gateway-API features cause the gateway library to emit additional Kubernetes
 
 Both templates draw their data from the per-Gateway computation that already runs during `haproxy.cfg` rendering (the `status-patches-200-gateway` block in `70-status-gateway.yaml`). That block stashes the per-Gateway Service spec into the per-render `shared` cache (`shared.Get("gatewayStaticAddressServices")` / `gatewayInfrastructureServices`) keyed by `<namespace>/<name>`; the `k8sResources` templates read the same map back during their post-`haproxyConfig` render pass and emit one Service per entry. Multi-doc YAML (`---`-separated) is used because a single template emits zero, one, or many Services depending on cluster state.
 
-These templates replace the previous in-template `renderResource()` calls. The semantics on the cluster are unchanged: same Service name, same selector, same ownership story. The wire-up is now declarative — anyone reading the rendered `HAProxyTemplateConfig` sees the templates explicitly under `spec.k8sResources`, and the controller's overlay-store dry-run path can validate them like any other rendered output.
+The rendered `HAProxyTemplateConfig` lists these templates under `spec.k8sResources`.
+The controller renders and applies the resulting Kubernetes objects, including
+validation against the proposed resource state during admission.
 
 ### Request a static IP for a Gateway
 
@@ -1328,7 +1336,10 @@ Once MetalLB (or your cloud load balancer) allocates the IP, it appears in the G
 
 ## Status reporting
 
-The Gateway API library automatically updates the `.status` of GatewayClass, Gateway, ListenerSet, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and BackendTLSPolicy resources to reflect their processing state. Status is applied via Server-Side Apply with field manager `haptic`. TLSRoute and TCPRoute conditions are listed in their sections above; this section covers the rest.
+The Gateway library reports processing results in the status of GatewayClass,
+Gateway, ListenerSet, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and BackendTLSPolicy
+resources. It applies status with phase-specific Server-Side Apply field managers.
+TLSRoute and TCPRoute conditions are described in their sections above.
 
 ### Gateway status
 

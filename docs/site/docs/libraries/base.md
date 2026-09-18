@@ -22,7 +22,9 @@ The Ingress preset uses base to assemble its configuration:
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-Base's `global-settings` snippet is just `render_glob "global-settings-*"` rendered inside the `global` section, so any snippet whose name starts with `global-settings-` is emitted there in alphabetical order. Add this under `spec.templateSnippets`:
+Add a `global-settings-*` snippet to insert directives in HAProxy's `global`
+section. Matching snippets render alphabetically. For example, add this under
+`spec.templateSnippets`:
 
 ```yaml
 global-settings-500-tuning:
@@ -253,9 +255,12 @@ http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_
 
 The defaults section is tuned for a Kubernetes ingress workload, where backends are pod IPs from EndpointSlices reached directly over the cluster's Container Network Interface (CNI) fabric.
 
-**`timeout connect` defaults to `100ms`** (most controllers ship HAProxy's `5s`). Same-node connects are sub-millisecond, cross-node overlay networking (flannel/calico/cilium) is typically under `30ms`, and even AWS cross-AZ stays under ~`10ms` p99 — so `100ms` is already several times the normal case. The case it deliberately fails fast on is a TCP `SYN` to a pod IP whose pod just terminated: during the brief window between an EndpointSlice update and HAPTIC's runtime update landing, a server can still point at a dying pod. A request already dispatched into HAProxy is committed to that server and must wait out `timeout connect` before `option redispatch` retries it elsewhere. At `5s` that surfaces as a client-visible 504; at `100ms` the full failover (original attempt + retry) completes within ~`200ms`.
+**`timeout connect` defaults to `100ms`.** A short connection timeout limits how
+long a request waits on an unreachable pod before HAProxy can retry another
+server. Increase it if healthy backends in your network take longer to connect;
+the default isn't a bound on total request or failover time.
 
-Override it for genuinely slow networks (multi-region, satellite, constrained CPU):
+Set a longer timeout in milliseconds:
 
 ```yaml
 controller:
@@ -265,17 +270,30 @@ controller:
         timeout_connect: "5000"   # ms; also timeout_client / timeout_server / timeout_http_request / timeout_http_keep_alive
 ```
 
-**`option redispatch`** lets a failed TCP connect be retried against a *different* server in the backend rather than the same dead one. Combined with HAProxy's default `retries 3`, the retry lands on a healthy server instead of hanging on the dead IP until the client times out. See HAProxy's [retries documentation](https://www.haproxy.com/documentation/hapee/latest/service-reliability/retries/retries/).
+**`option redispatch`** allows a failed connection attempt to retry another
+server. The default retry count is `3`. See HAProxy's
+[retry documentation](https://www.haproxy.com/documentation/hapee/latest/service-reliability/retries/retries/).
 
-**`retry-on conn-failure empty-response response-timeout`** covers the rest of the pod-termination race. A connect failure is only half of it: a terminating pod usually still has its listening socket bound after the application has stopped, so the kernel completes the handshake and the application then resets the connection. HAProxy logs that as a 502 with termination state `SH--`, `t_connect 0` and `retries 0` — the default `retry-on conn-failure` doesn't match it, because the connection *succeeded*. `empty-response` is the condition that does, which is what makes `option redispatch` and `retries 3` engage. Override the condition list with `extraContext.retryOn`.
+**`retry-on conn-failure empty-response response-timeout`** covers failed
+connections, connections closed before a response, and response timeouts. The
+latter two also cover a backend that accepts a connection while shutting down
+but doesn't complete the response. Override the list with `extraContext.retryOn`.
 
-Retries that replay the request are limited to idempotent methods. An L7 retry re-sends a request the server has already received, so retrying a `POST` or `PATCH` can submit it twice; GET, HEAD, PUT, DELETE, OPTIONS and TRACE are idempotent per [RFC 9110 §9.2.2](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.2) and are retried. This matches nginx-ingress, which excludes non-idempotent requests from `proxy_next_upstream` unless you add `non_idempotent`. `conn-failure` is an L4 retry and is unaffected, so a failed connect is still sent to another server for every method. Set `extraContext.retryNonIdempotent: true` to retry every method — only when every backend behind the controller is safe to replay.
+Retries that replay a request are limited to idempotent methods: GET, HEAD, PUT,
+DELETE, OPTIONS, and TRACE. Replaying POST or PATCH can submit an operation twice.
+Connection failures can still retry for any method because no request reached
+the server. Set `extraContext.retryNonIdempotent: true` only when your backends
+can safely process replayed requests.
 
 ### `h2c` cleartext detection
 
 The plaintext HTTP entry point is an outer `mode tcp` frontend that inspects the first wire bytes and routes to one of two unix-socket-bound inner `mode http` frontends, preserving the original client IP via PROXY-protocol v2 across the hop. Both inner frontends share the same routing logic, so any HTTP-level snippet lands in both protocol paths.
 
-HAProxy can't auto-detect HTTP/2 cleartext (h2c) on a plaintext bind, and it can't parse an `Upgrade: h2c` handshake in `mode tcp`. The only available signal is the HTTP/2 *prior-knowledge* connection preface — the 24 bytes `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` — which the outer frontend matches byte-exactly with an `acl ... req.payload(0,24) -m bin <hex>`. gRPC-Go's insecure dial uses prior-knowledge by default, and the Gateway API conformance suite dials every GRPCRoute test with `insecure.NewCredentials()`, so this path is exercised by all gRPC conformance tests. The connection is classified as soon as 24 bytes arrive (with a `WAIT_END` fallback for shorter HTTP/1.1 sends); the ~10µs unix-socket round-trip is invisible against backend latency.
+The outer TCP frontend distinguishes cleartext HTTP/2 (h2c) by its 24-byte
+prior-knowledge connection preface, then forwards it to the HTTP/2 frontend.
+HTTP/1.1 uses the other frontend. This path supports clients that send the HTTP/2
+preface directly, such as gRPC clients; it doesn't implement an `Upgrade: h2c`
+handshake in the outer TCP frontend.
 
 ### gRPC request handling
 
@@ -305,7 +323,9 @@ HAProxy releases the request as soon as *either* the body is complete or `tune.b
 
 Only requests that declare a `Content-Length` are held. Nothing that streams can know its length in advance, so this single condition excludes every streaming protocol without naming any of them.
 
-That exclusion is load-bearing rather than cosmetic. Buffering a bidirectional stream deadlocks it: the client sends its first message and waits for a response, but HAProxy hasn't forwarded the request headers yet, so the backend never sees the call and never answers. Neither side can make progress until the wait expires and the client receives a `408` that the backend never produced.
+Buffering a bidirectional stream can prevent progress: the client waits for a
+response while HAProxy waits for more request data. Excluding requests without
+`Content-Length` lets HAProxy forward them without waiting for a complete body.
 
 gRPC sends neither `Content-Length` nor `Transfer-Encoding` — for unary and streaming calls alike — so no gRPC request is ever buffered. Chunked HTTP/1.1 uploads are excluded on the same rule, which also covers long-poll and command-channel patterns where the server answers before the request body ends.
 
@@ -339,8 +359,13 @@ Built-in function that escapes regex metacharacters so a user-supplied literal (
 
 </div>
 
-!!! warning "Config output isn't auto-escaped"
-    The rendered HAProxy config is plain text — template output is never escaped for it (Scriggo only context-escapes the `html`/`css`/`js` format types, and the `haproxyConfig` template uses none of them). A user-supplied value (annotation, header, host, cookie) that carries a newline can split a config line and smuggle a second directive that still passes `haproxy -c`. When you interpolate an unchecked value onto a config line in your own snippet, guard it: use `sanitize_regex` for a `map_reg()`/regex context (it escapes the value, neutralizing metacharacters), and the `ValidateConfigValue` / `ValidateCidrList` macros from the Ingress annotations-compat library for single-token fields (SNI, cipher, cookie domain/path, header values) and `src` CIDR lists (both `fail()` the whole render on a control-character or out-of-charset breakout). The bundled vendor libraries already route their annotation values through these guards.
+!!! warning "Validate values before inserting them into configuration"
+    HAProxy templates emit plain text. A newline in an unchecked annotation can
+    introduce another directive that still passes syntax validation. Use
+    `ValidateConfigValue` for single-token values and `ValidateCidrList` for CIDR
+    lists from the [annotation helpers](ingress-annotations-compat.md).
+    Use `sanitize_regex` when a literal value must be escaped inside a regex.
+    The bundled annotation libraries apply these checks to their inputs.
 
 ### Utility macros
 

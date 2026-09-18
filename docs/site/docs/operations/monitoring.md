@@ -1,6 +1,7 @@
 # Monitoring
 
-Monitor HAPTIC with Prometheus metrics: setup, the metrics reference, alerting rules, and dashboards.
+Use Prometheus to monitor configuration delivery and traffic. This guide covers
+scrape setup, metric meanings, alerts, and dashboards.
 
 ## Overview
 
@@ -13,7 +14,7 @@ The controller's `haptic_*` metrics cover:
 - Leader election for HA deployments
 
 !!! note "Controller and data-plane metrics"
-    Most of this guide is about the **controller's** metrics — the `haptic_*` family on port `9090`, which describe reconciliation, deployment, and leader-election health. HAProxy itself exposes a *separate* Prometheus endpoint on port `8404` carrying live traffic, backend health, and response-code data — see [HAProxy Data-Plane Metrics](#haproxy-data-plane-metrics). The controller's bundled `ServiceMonitor`/`PodMonitor` scrape the controller only; the HAProxy pod has its own (`haproxy.monitoring.podMonitor`).
+    Controller metrics on port `9090` describe reconciliation, deployment, and leadership. HAProxy metrics on port `8404` describe traffic and backend health. Configure scraping for both: the controller monitors don't scrape HAProxy pods. See [HAProxy metrics](#haproxy-data-plane-metrics) for `haproxy.monitoring.podMonitor`.
 
 ## Enabling metrics
 
