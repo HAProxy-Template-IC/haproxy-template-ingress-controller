@@ -163,14 +163,48 @@ func (c *Component) Start(ctx context.Context) error {
 		return nil
 	}
 
+	factory, informer, err := c.newInformer()
+	if err != nil {
+		return err
+	}
+
+	informerCtx, stopInformer := context.WithCancel(ctx)
+	factory.Start(informerCtx.Done())
+	defer func() {
+		stopInformer()
+		factory.Shutdown()
+	}()
+
+	if !c.waitForCacheSync(informerCtx.Done(), informer.HasSynced) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return errors.New("CRD informer cache sync failed")
+	}
+	c.synced.Store(true)
+	c.logger.Debug("CRD watch synced", "groups", len(c.groups))
+	// Check discovery after sync to cover changes between controller iterations.
+	select {
+	case c.pending <- struct{}{}:
+	default:
+	}
+
+	c.runDebounceLoop(ctx)
+	return nil
+}
+
+func (c *Component) newInformer() (dynamicinformer.DynamicSharedInformerFactory, cache.SharedIndexInformer, error) {
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		c.k8sClient.DynamicClient(), 0, metav1.NamespaceAll, nil)
 	informer := factory.ForResource(crdGVR).Informer()
+	if err := informer.SetTransform(projectDefinition); err != nil {
+		return nil, nil, fmt.Errorf("setting CRD watch transform: %w", err)
+	}
 
 	if err := informer.SetWatchErrorHandler(func(_ *cache.Reflector, err error) {
 		c.logger.Warn("CRD watch error (Reflector will retry)", "error", err)
 	}); err != nil {
-		return fmt.Errorf("setting CRD watch error handler: %w", err)
+		return nil, nil, fmt.Errorf("setting CRD watch error handler: %w", err)
 	}
 
 	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -203,33 +237,9 @@ func (c *Component) Start(ctx context.Context) error {
 			}
 		},
 	}); err != nil {
-		return fmt.Errorf("adding CRD event handler: %w", err)
+		return nil, nil, fmt.Errorf("adding CRD event handler: %w", err)
 	}
-
-	informerCtx, stopInformer := context.WithCancel(ctx)
-	factory.Start(informerCtx.Done())
-	defer func() {
-		stopInformer()
-		factory.Shutdown()
-	}()
-
-	if !c.waitForCacheSync(informerCtx.Done(), informer.HasSynced) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return errors.New("CRD informer cache sync failed")
-	}
-	c.synced.Store(true)
-	c.logger.Debug("CRD watch synced", "groups", len(c.groups))
-	// A CRD can change after the previous iteration stops but before this
-	// informer's baseline sync. Compare discovery once so that gap is visible.
-	select {
-	case c.pending <- struct{}{}:
-	default:
-	}
-
-	c.runDebounceLoop(ctx)
-	return nil
+	return factory, informer, nil
 }
 
 // noteChange queues a debounced reload decision for a relevant post-sync change.
