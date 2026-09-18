@@ -993,11 +993,8 @@ controller:
               families:
                 - haproxy_backend_agg_server_check_status
 
-            # -3,300 series (3.9%). OFF by default because response compression is
-            # ON by default (the haptic-compress-enable governance rule), so these
-            # carry real traffic — dropping them would make compression
-            # unobservable rather than save a constant zero. Set enabled: true to
-            # reclaim the series if you turn compression off fleet-wide.
+            # Keep compression metrics for routes that opt in; enable exclusion
+            # only if no route uses compression.
             backendHttpCompression:
               enabled: false
               families:

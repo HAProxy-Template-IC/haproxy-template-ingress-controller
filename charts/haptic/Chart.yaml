@@ -104,7 +104,7 @@ annotations:
     - kind: added
       description: Pre-rollout validation checks the complete configuration before applying release objects
     - kind: added
-      description: Native annotations provide shared rate limiting, Varnish caching, request-schema validation and reusable WAF policies
+      description: Native annotations provide shared rate limiting, Varnish caching, opt-in response compression, request-schema validation and reusable WAF policies
     - kind: added
       description: Vector supplies structured access logs, request metrics and optional distributed tracing
     - kind: changed

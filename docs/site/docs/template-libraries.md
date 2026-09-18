@@ -1,40 +1,9 @@
 # Template libraries
 
-Template libraries provide routing rules, helper snippets, and validation tests.
+A template library is a set of text templates that turns Kubernetes resource
+fields into HAProxy configuration. The bundled libraries handle Ingress, Gateway
+API, annotations, and TLS, and include validation tests for their output.
 Enable or disable them through Helm values.
-
-## Overview
-
-Each enabled library becomes an `HAProxyTemplateLibrary` resource. The chart's
-`HAProxyTemplateConfig` references these libraries in merge order and contains
-your `controller.config` overrides. For a repeated key, later libraries take
-precedence; your configuration takes precedence over every library.
-
-Inspect the merged configuration:
-
-```bash
-haptic config view --input --namespace haptic
-```
-
-Separate library objects reduce the size of each custom resource. The complete
-Helm release still has a size limit; enabling libraries adds to that total.
-
-See the full library stack compose into one HAProxy config live:
-
-<div class="pg-embed" markdown data-scenario="all" data-facade="spec.templateSnippets.map-host-500-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Full library stack → HAProxy config" data-height="440">
-
-<p class="pg-task" markdown>In the **Resources** panel, change the `blog` Ingress's host from `blog.example.com` to `news.example.com`, then open the `maps` tab and watch the `host.map` entry follow.</p>
-
-<details class="pg-hint" markdown>
-<summary>What to expect</summary>
-
-The `host.map` entry changes from `blog.example.com blog.example.com` to
-`news.example.com news.example.com`. The Ingress library generates this mapping
-from the Ingress's host field.
-
-</details>
-
-</div>
 
 ## Available libraries
 
@@ -45,8 +14,8 @@ from the Ingress's host field.
 | [SSL](libraries/ssl.md) | Enabled | TLS certificate management, HTTPS frontend |
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTP, gRPC, TLS and TCP routes) support |
-| [ingress-annotations-compat](libraries/ingress-annotations-compat.md) | Enabled | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
-| [governance](operations/governance.md) | Enabled | Declarative constraints over any watched resource. Inert until you define `controller.config.templatingSettings.extraContext.governance.rules` |
+| [ingress-annotations-compat](libraries/ingress-annotations-compat.md) | Enabled | Shared helpers for native and vendor Ingress annotation libraries |
+| [governance](operations/governance.md) | Enabled | Defaults and constraints on watched resource fields; add rules under `controller.config.templatingSettings.extraContext.governance.rules` |
 | [haptic-annotations](libraries/haptic-annotations.md) | Enabled | `haproxy-haptic.org/*` — HAPTIC's native vocabulary; the only annotation library enabled by default |
 | [haproxytech](libraries/haproxytech.md) | Disabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) — opt-in migration aid |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Disabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) — opt-in migration aid |
@@ -83,6 +52,39 @@ controller:
         routing:
           regexMatchOrder: default  # "default" or "last" — see Path Matching Order below
 ```
+
+## Overview
+
+Each enabled library becomes an `HAProxyTemplateLibrary` resource. The chart's
+`HAProxyTemplateConfig` references these libraries in merge order and contains
+your `controller.config` overrides. For a repeated key, later libraries take
+precedence; your configuration takes precedence over every library.
+
+Inspect the merged configuration:
+
+```bash
+haptic config view --input --namespace haptic
+```
+
+Separate library objects reduce the size of each custom resource. The complete
+Helm release still has a size limit; enabling libraries adds to that total.
+
+See the full library stack compose into one HAProxy config live:
+
+<div class="pg-embed" markdown data-scenario="all" data-facade="spec.templateSnippets.map-host-500-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Full library stack → HAProxy config" data-height="440">
+
+<p class="pg-task" markdown>In the **Resources** panel, change the `blog` Ingress's host from `blog.example.com` to `news.example.com`, then open the `maps` tab and watch the `host.map` entry follow.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+The `host.map` entry changes from `blog.example.com blog.example.com` to
+`news.example.com news.example.com`. The Ingress library generates this mapping
+from the Ingress's host field.
+
+</details>
+
+</div>
 
 ## Path matching order
 

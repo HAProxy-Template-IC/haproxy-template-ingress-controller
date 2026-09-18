@@ -22,18 +22,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
 
-// TestHapticCompression verifies response compression (72-compression.yaml):
-// with compression enabled and a matching Content-Type, HAProxy gzips the
-// response when the client advertises Accept-Encoding: gzip.
-//
-// The client sets Accept-Encoding manually so Go's transport does not
-// transparently decompress (it only does that for the header it adds itself),
-// leaving Content-Encoding: gzip visible on the response.
-//
-// TestHapticCompressionDefault covers the governance default (no annotation),
-// TestHapticCompressionOptOut the opt-out: no compression, and the origin still
-// sees the client's Accept-Encoding because the gate is the backend's profile,
-// not a request rewrite.
+// An explicit Accept-Encoding prevents the Go client from decompressing the response.
 func TestHapticCompression(t *testing.T) {
 	t.Parallel()
 	RunSimpleIngressTest(t, &SimpleIngressTest{
@@ -61,16 +50,19 @@ func TestHapticCompression(t *testing.T) {
 func TestHapticCompressionDefault(t *testing.T) {
 	t.Parallel()
 	RunSimpleIngressTest(t, &SimpleIngressTest{
-		Description: "Ingress: response compression is on without any annotation",
+		Description: "Ingress: response compression is off without an annotation",
 		Host:        "ingress-haptic-compression-default.localdev.me",
 		Assess: []SimpleIngressAssertion{
 			{
-				Name: "the governance default gzips a JSON response",
+				Name: "unannotated responses stay uncompressed",
 				Check: func(t *testing.T, host string) {
 					t.Helper()
 					httpclient.New(t).GET(host, "/").
 						WithHeader("Accept-Encoding", "gzip").
-						ExpectHeader(t, "Content-Encoding", "gzip")
+						ExpectMatching(t, "uncompressed response with Accept-Encoding forwarded", func(resp *httpclient.Response) bool {
+							return resp.Status == 200 && resp.Header.Get("Content-Encoding") == "" &&
+								resp.Echo != nil && resp.Echo.Headers["accept-encoding"] == "gzip"
+						})
 				},
 			},
 		},

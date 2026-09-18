@@ -8,7 +8,7 @@ hide:
 
 **HAPTIC** (HAProxy Template Ingress Controller) routes Kubernetes traffic through
 [HAProxy](https://www.haproxy.org/). Use the bundled Ingress and Gateway API
-libraries, or write [Scriggo templates](templating.md) for your own annotations,
+template libraries, or write [Scriggo templates](templating.md) for your own annotations,
 routing rules, and resource types.
 
 <div class="hx-pipeline" role="img" aria-label="How HAPTIC works: cluster resources feed your templates, and the HAPTIC agent applies the resulting configuration to HAProxy">
@@ -67,7 +67,7 @@ The bundled libraries provide these capabilities without custom templates:
 
 | Capability | What you configure |
 | --- | --- |
-| [Ingress and Gateway API](libraries/gateway.md) | HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, ListenerSet, weighted routing, mirroring, backend TLS, and frontend client-certificate authentication. |
+| [Ingress](libraries/ingress.md) and [Gateway API](libraries/gateway.md) | HTTP and gRPC routing, TLS, and backend health checks. Gateway API also provides TCPRoute, TLSRoute, ListenerSet, weighted routing, and mirroring. |
 | [Native annotations](libraries/haptic-annotations.md) | API-key, JSON Web Token (JWT), and HMAC authentication, consumer groups, redirects, CORS, compression, and bandwidth limits. |
 | [Shared rate limits](libraries/haptic-annotations.md#rate-and-bandwidth-limiting) and [response caching](libraries/haptic-annotations.md#shared-response-cache) | Fleet-wide request budgets with Valkey and a shared Varnish cache, both opt-in. |
 | [Request validation](libraries/haptic-annotations.md#api-gateway) and [WAF policies](libraries/haptic-annotations.md#reusable-waf-policies) | JSON Schema request validation and reusable Coraza Web Application Firewall (WAF) policies, including namespace-scoped policies. |
@@ -77,9 +77,9 @@ The bundled libraries provide these capabilities without custom templates:
 
 ### Templates and resource APIs
 
-[Scriggo templates](templating.md) can read typed fields and use collection
-pipelines, fetch external data, and generate HAProxy configuration, certificates,
-and auxiliary files. The controller discovers [resource versions and schemas](watching-resources.md)
+[Scriggo templates](templating.md) read resource fields such as
+`service.metadata.name`, filter and group resources, and fetch external data.
+Use them to generate HAProxy configuration, certificates, and auxiliary files. The controller discovers [resource versions and schemas](watching-resources.md)
 at runtime and adapts when watched CRDs change.
 
 Share snippets through [`HAProxyTemplateLibrary`](crd-reference.md#haproxytemplatelibrary)
@@ -92,11 +92,11 @@ or edit the live examples throughout these docs.
 
 ### Deployment and operations
 
-- **Runtime updates:** The [HAPTIC agent](supported-configuration.md) applies eligible map, certificate, and server changes without reloading. HAProxy 3.4 also supports eligible backend additions and removals; new listeners, backend profiles, and inline rules still require a reload.
+- **Runtime updates:** Scale pods, rotate certificates, and change routing-map entries without reloading HAProxy. HAProxy 3.4 can also add or remove backends that reuse existing settings; new listeners and rules require a reload. See [how HAPTIC chooses runtime updates](libraries/reload-free.md).
 - **Incremental rendering:** Unchanged template results are reused, and [follower replicas](operations/high-availability.md) keep their render state warm. See [performance and sizing](operations/performance.md) for resource requirements.
 - **Validation:** [`haptic preflight`](operations/validate-before-deploy.md) and Helm hooks check a candidate before rollout. Configuration loading enforces embedded tests; admission validates proposed routing changes, including [pluggable output validators](operations/pluggable-validators.md).
 - **Deployment inspection:** [`haptic diff`](development/design/deployment.md) predicts reloads, and [`haptic agent state`](development/agent.md) reports a pod's applied configuration and recovery state.
-- **Observability:** [JSON access logs and per-route metrics](operations/monitoring.md) identify the route, backend, and policy outcomes. Optional [distributed tracing](reference.md#logging-and-templating) exports request and upstream spans through Vector.
+- **Observability:** [JSON access logs and per-route metrics](operations/monitoring.md) identify the route, backend, and policy outcomes. Optional [distributed tracing](reference.md#logging-and-templating) exports request and upstream spans through [Vector](https://vector.dev/).
 
 !!! warning "Project maturity"
     HAPTIC uses pre-1.0 versioning, and its custom resources use API version `v1alpha1`. Minor releases can change APIs and configuration. Pin an exact chart version (`--version 0.2.0-alpha.3`) and read the [changelog](changelog.md) before you upgrade.
@@ -138,13 +138,13 @@ controller:
       backend-directives-300-request-id:
         template: |
           {%- if ingress != nil %}
-          {%- var header = ingress.metadata.annotations["example.com/request-id-header"] %}
-          {%- if header != "" %}
-          {%- if !regex_search(header, "^[A-Za-z0-9-]+$") %}
-          {{ fail("example.com/request-id-header must contain only letters, digits, or hyphens.") }}
-          {%- end %}
-          http-request set-header {{ header }} %[uuid()]
-          {%- end %}
+            {%- var header = ingress.metadata.annotations["example.com/request-id-header"] %}
+            {%- if header != "" %}
+              {%- if !regex_search(header, "^[A-Za-z0-9-]+$") %}
+                {{ fail("example.com/request-id-header must contain only letters, digits, or hyphens.") }}
+              {%- end %}
+              http-request set-header {{ header }} %[uuid()]
+            {%- end %}
           {%- end %}
 ```
 

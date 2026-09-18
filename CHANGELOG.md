@@ -46,7 +46,7 @@ still rejects mismatched output before publication.
 #### Added
 
 - Gateway API TLSRoute, TCPRoute, ListenerSet, backend TLS, frontend client-certificate authentication, and request mirroring.
-- Native `haproxy-haptic.org/*` annotations for API-key, JWT, and HMAC authentication, shared rate limiting, Varnish caching, request-schema validation, and reusable WAF policies.
+- Native `haproxy-haptic.org/*` annotations for API-key, JWT, and HMAC authentication, shared rate limiting, Varnish caching, opt-in response compression, request-schema validation, and reusable WAF policies.
 - NGINX Ingress annotation compatibility and expanded HAProxy Ingress annotation support, including external authentication and rate limiting.
 - Governance rules for enforcing administrator-defined policies on watched resources.
 - Vector request metrics and optional distributed tracing, with route and backend identity in access logs and spans.
@@ -58,7 +58,7 @@ still rejects mismatched output before publication.
 - **BREAKING:** Controller workload and pod settings move under `controller.*` and `*.podSpec.*`; agent settings replace `haproxy.dataplane.*`, and certificates move to `defaultSSLCertificate`. See the upgrade guide for removed values and replacements.
 - **BREAKING:** IngressClass and GatewayClass names default to `haptic` instead of `haproxy`; vendor annotation libraries require explicit enablement.
 - **BREAKING:** Access logs use JSON, and rendered manifests contain separate template-library resources.
-- HAProxy defaults to 3.4, HTTP/HTTPS pod ports to 80/443, and backend connection timeout to 100 ms. Ingress HTTPS and response compression are enabled by default; request replay defaults to idempotent methods.
+- HAProxy defaults to 3.4, HTTP/HTTPS pod ports to 80/443, and backend connection timeout to 100 ms. Ingress HTTPS is enabled by default; request replay defaults to idempotent methods.
 - Route policies use shared rules and maps, and servers use pod names instead of reserved slots, allowing eligible changes without reloads. Hash-based balancing defaults to consistent hashing.
 - Controller memory requests and limits increase to 1 GiB; pre-rollout validation also has a 1 GiB limit.
 

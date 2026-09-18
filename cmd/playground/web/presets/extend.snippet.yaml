@@ -2,11 +2,11 @@
 backend-directives-300-request-id:
   template: |
     {%- if ingress != nil %}
-    {%- var header = ingress.metadata.annotations["example.com/request-id-header"] %}
-    {%- if header != "" %}
-    {%- if !regex_search(header, "^[A-Za-z0-9-]+$") %}
-    {{ fail("example.com/request-id-header must contain only letters, digits, or hyphens.") }}
-    {%- end %}
-    http-request set-header {{ header }} %[uuid()]
-    {%- end %}
+      {%- var header = ingress.metadata.annotations["example.com/request-id-header"] %}
+      {%- if header != "" %}
+        {%- if !regex_search(header, "^[A-Za-z0-9-]+$") %}
+          {{ fail("example.com/request-id-header must contain only letters, digits, or hyphens.") }}
+        {%- end %}
+        http-request set-header {{ header }} %[uuid()]
+      {%- end %}
     {%- end %}

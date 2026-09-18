@@ -23,8 +23,7 @@ tests:
       - equal:
           path: spec.templatingSettings.extraContext.prometheusExporter.excludeMetrics.requestTimingAverages.requires
           value: vector.requestMetrics.enabled
-      # backendHttpCompression ships DISABLED: response compression is on by
-      # default, so these series carry real traffic.
+      # Keep compression metrics for routes that opt in.
       - equal:
           path: spec.templatingSettings.extraContext.prometheusExporter.excludeMetrics.backendHttpCompression.enabled
           value: false

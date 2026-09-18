@@ -50,9 +50,39 @@ validationTests:
       # profile's settings, so nothing here keeps the backend structural.
       - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^[ \t]+filter compression$\n(?:[ \t]+[^\n]*\n)*?[ \t]+compression algo'}
 
+  test-haptic-compression-default-off:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: An unannotated Ingress stays uncompressed with the shipped default.
+    extraContext:
+      <<: *extracontextReconcile
+      governance:
+        enabled: true
+        rules:
+          haptic-compress-enable:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/compress-enable']
+            default: "false"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: gz-default, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: gzdefault.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: haproxy.cfg, pattern: 'backend default_gz-default_svc_echo_80' }
+      - { type: not_contains, target: haproxy.cfg, pattern: '# haptic/compression \(default/gz-default\)' }
+      - { type: contains, target: haproxy.cfg, pattern: 'filter compression' }
+      - { type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_gz-default_svc_echo_80 from haptic-be-\w+$\n[ \t]+guid [^\n]+\n(?:[ \t]+#[^\n]*\n)*[ \t]+server ' }
+
   test-haptic-compression-governance-default:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
-    description: The bundled rule injects compress-enable on an Ingress that sets no annotations.
+    description: An administrator can enable compression for unannotated Ingresses.
     extraContext: *extracontextReconcile
     fixtures:
       ingresses:
