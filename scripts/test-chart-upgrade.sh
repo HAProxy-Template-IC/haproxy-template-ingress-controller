@@ -1,28 +1,6 @@
 #!/usr/bin/env bash
-# Prove that `helm upgrade` from the last released chart to this working tree is
-# ACCEPTED, and that a rejected upgrade leaves the live configuration exactly as
-# it was.
-#
-# Scope, deliberately narrow: the risks this covers are (1) the pre-rollout
-# preflight hook aborting a broken release BEFORE any manifest object is
-# applied (ADR-0016 — the successor of the per-object config webhook, which
-# could not judge a multi-object config change), (2) the apply-crds hook
-# stripping the legacy config-webhook entries during the same upgrade that
-# removes their server, and (3) helm/helmfile completing — including `helm
-# diff` on a CRD its own pre-upgrade hook has not installed yet, which broke
-# once before.
-#
-# It does NOT wait for the fleet to converge. Demanding convergence only drags
-# in every runtime dependency (a default-ssl-cert Secret, Gateway API CRDs, …),
-# and each prop makes the cluster less like the one an operator has.
-# Convergence is what tests/e2e is for.
-#
-# This suite owns its own kind cluster. It cannot share the e2e cluster: it
-# installs a *released* chart first, whose pre-upgrade hook applies that
-# release's CRDs, and CRDs are cluster-scoped — doing that under the e2e suite
-# would downgrade the schemas out from under it.
-#
-# Usage: scripts/test-chart-upgrade.sh [--keep]
+# Verify released-chart upgrades, live routes, rejection, and recovery.
+# Each baseline owns a fresh cluster because its CRDs are cluster-scoped.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,30 +11,17 @@ NS="${UPGRADE_NAMESPACE:-haptic}"
 RELEASE="${UPGRADE_RELEASE_NAME:-haptic}"
 OCI="oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic"
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.16.2}"
+FIXTURES="$REPO/scripts/testdata/chart-upgrade"
+TARGET_VALUES="$FIXTURES/values.yaml"
+IMAGE_REPOSITORY="${UPGRADE_IMAGE_REPOSITORY:-haptic}"
+IMAGE_TAG="${UPGRADE_IMAGE_TAG:-test}"
 WORK="$(mktemp -d)"
 KEEP=false
 [ "${1:-}" = "--keep" ] && KEEP=true
 
-# The baseline is the newest STABLE chart in the registry — the version an
-# operator can actually be running — discovered rather than hand-maintained, so
-# a release that forgets this file cannot leave the suite testing an ever-older
-# upgrade.
-#
-# From the registry, NOT from git tags: 0.1.0 is published but was never tagged
-# `v0.1.0` (only its alphas were), so a tag-derived baseline silently tested a
-# pre-release-to-pre-release upgrade and never the one operators perform.
-# Pre-releases are excluded for the same reason.
+# Discover stable charts from the registry; 0.1.0 has no v0.1.0 git tag.
 CHART_REPO_PATH="haproxy-haptic/haptic/charts/haptic"
 
-# EVERY published stable release, oldest first — not just the newest.
-#
-# An operator upgrades from whatever they are running, which is not necessarily
-# the previous release. Testing only the newest one also lets a version-specific
-# migration quietly stop being exercised the moment a new release lands: the
-# cert-manager Secret adoption below exists for 0.1.0, and pinning the baseline
-# to "newest" would have retired its only test on the day 0.2.0 shipped, leaving
-# a special case in the product that nothing runs. See the no-can-kicking rule
-# in charts/CLAUDE.md.
 discover_baselines() {
   local token
   token=$(curl -sf "https://gitlab.com/jwt/auth?service=container_registry&scope=repository:${CHART_REPO_PATH}:pull" 2>/dev/null \
@@ -68,8 +33,14 @@ discover_baselines() {
 import json, re, sys
 tags = json.load(sys.stdin).get("tags", [])
 stable = [t for t in tags if re.match(r"^\d+\.\d+\.\d+$", t)]
+if not stable:
+    sys.exit("No published stable chart versions found")
 stable.sort(key=lambda v: tuple(int(x) for x in v.split(".")))
-print("\n".join(stable))'
+required = ["0.2.0-alpha.3"]
+missing = set(required) - set(tags)
+if missing:
+    sys.exit(f"Missing required upgrade baselines: {sorted(missing)}")
+print("\n".join(stable + required))'
 }
 
 # One baseline per invocation. With none pinned, re-exec once per discovered
@@ -79,7 +50,7 @@ print("\n".join(stable))'
 if [ -z "${BASELINE_CHART_VERSION:-}" ]; then
   ALL="$(discover_baselines)"
   [ -n "$ALL" ] || { echo "FAIL: could not discover any published stable chart version to upgrade FROM. Set BASELINE_CHART_VERSION to override." >&2; exit 1; }
-  echo "==> testing upgrades from every published stable release: $(echo "$ALL" | tr '\n' ' ')"
+  echo "==> testing published stable releases and retained compatibility baselines: $(echo "$ALL" | tr '\n' ' ')"
   rc=0
   for v in $ALL; do
     echo "==> ================ baseline $v ================"
@@ -88,15 +59,26 @@ if [ -z "${BASELINE_CHART_VERSION:-}" ]; then
   exit $rc
 fi
 BASELINE="$BASELINE_CHART_VERSION"
+ARTIFACTS="${UPGRADE_ARTIFACT_DIR:-$REPO/debug-logs/upgrade}/$BASELINE"
+mkdir -p "$ARTIFACTS"
+BASELINE_VALUES="$TARGET_VALUES"
+if [ "$BASELINE" = "0.1.0" ]; then
+  BASELINE_VALUES="$FIXTURES/values-0.1.0.yaml"
+fi
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
 
 # shellcheck source=scripts/lib/cluster.sh
 . "$REPO/scripts/lib/cluster.sh"
+. "$REPO/scripts/lib/upgrade-traffic.sh"
 
 cleanup() {
   local rc=$?
+  if [ "$rc" -ne 0 ]; then
+    dump_pod_diagnostics > "$ARTIFACTS/failure.log" 2>&1 || true
+    cp "$WORK"/*.log "$ARTIFACTS/" 2>/dev/null || true
+  fi
   rm -rf "$WORK"
   if [ "$KEEP" = false ]; then
     kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
@@ -193,47 +175,25 @@ info "cluster $CLUSTER"
 kind_create_cluster "$CLUSTER" || fail "could not create the kind cluster"
 kubectl --context "$CTX" wait --for=condition=Ready node --all --timeout=180s >/dev/null
 
-info "loading haptic:test"
-docker image inspect haptic:test >/dev/null 2>&1 \
-  || fail "haptic:test not found — run 'make docker-build-test' first"
+info "loading $IMAGE_REPOSITORY:$IMAGE_TAG"
+docker image inspect "$IMAGE_REPOSITORY:$IMAGE_TAG" >/dev/null 2>&1 \
+  || fail "$IMAGE_REPOSITORY:$IMAGE_TAG not found — run 'make docker-build-test' first"
 HAPROXY_VERSION="$(yq -r '.haproxyVersion' "$CHART/values.yaml")"
 [ -n "$HAPROXY_VERSION" ] || fail "cannot determine haproxyVersion"
-docker tag haptic:test "haptic:test-haproxy${HAPROXY_VERSION}" >/dev/null
-kind load docker-image "haptic:test-haproxy${HAPROXY_VERSION}" --name "$CLUSTER" >/dev/null
-kind load docker-image haptic:test --name "$CLUSTER" >/dev/null
+docker tag "$IMAGE_REPOSITORY:$IMAGE_TAG" "$IMAGE_REPOSITORY:$IMAGE_TAG-haproxy${HAPROXY_VERSION}" >/dev/null
+kind load docker-image "$IMAGE_REPOSITORY:$IMAGE_TAG-haproxy${HAPROXY_VERSION}" --name "$CLUSTER" >/dev/null
+kind load docker-image "$IMAGE_REPOSITORY:$IMAGE_TAG" --name "$CLUSTER" >/dev/null
 
 # ------------------------------------------------- phase 1: released baseline
 
-# 0.1.0 provisions its webhook certificate through cert-manager and renders the
-# Certificate only when that API is present; without it the Secret never exists
-# and its controller waits on the volume forever. That is a prerequisite of the
-# version being upgraded FROM — an operator running it has cert-manager — not a
-# prop to get past a failure, and the upgrade therefore also crosses a change of
-# webhook-cert provider (the current chart self-signs its own Secret).
-#
-# Conditional on the baseline actually asking for it, so this retires itself
-# once the newest stable release stops needing cert-manager.
-# Ask the precise question: rendered for a BARE cluster, does the baseline
-# produce its webhook-cert Secret itself? 0.1.0 does not (it leaves that to
-# cert-manager); 0.2.0-alpha.1 does. Testing for a Certificate under
-# --api-versions instead would over-trigger, since both charts prefer
-# cert-manager when it happens to be available.
-baseline_needs_cert_manager() {
-  ! helm template "$RELEASE" "$OCI" --version "$BASELINE" --namespace "$NS" 2>/dev/null \
-    | yq 'select(.kind == "Secret" and (.metadata.name | test("webhook-cert"))) | .metadata.name' 2>/dev/null \
-    | grep -q .
-}
-
-if baseline_needs_cert_manager; then
-  info "installing cert-manager $CERT_MANAGER_VERSION (chart $BASELINE requires it for its webhook cert)"
-  kubectl --context "$CTX" apply -f \
-    "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml" \
-    >/dev/null 2>&1 || fail "could not install cert-manager"
-  for d in cert-manager cert-manager-webhook cert-manager-cainjector; do
-    kubectl --context "$CTX" -n cert-manager rollout status "deploy/$d" --timeout=5m >/dev/null \
-      || fail "cert-manager deployment $d never became ready"
-  done
-fi
+info "installing cert-manager $CERT_MANAGER_VERSION for the baseline webhook and traffic certificate"
+kubectl --context "$CTX" apply -f \
+  "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml" \
+  >/dev/null 2>&1 || fail "could not install cert-manager"
+for d in cert-manager cert-manager-webhook cert-manager-cainjector; do
+  kubectl --context "$CTX" -n cert-manager rollout status "deploy/$d" --timeout=5m >/dev/null \
+    || fail "cert-manager deployment $d never became ready"
+done
 
 info "installing baseline chart $BASELINE (the version operators upgrade FROM)"
 # No --wait: HAProxy's readiness probe only passes once the controller has
@@ -242,10 +202,14 @@ info "installing baseline chart $BASELINE (the version operators upgrade FROM)"
 # is polled below instead, which is also what makes the assertion meaningful.
 helm install "$RELEASE" "$OCI" --version "$BASELINE" \
   --kube-context "$CTX" --namespace "$NS" --create-namespace \
+  -f "$BASELINE_VALUES" \
   --timeout 15m >/dev/null || fail "baseline install failed"
 
 wait_controller_ready 420 || fail "baseline controller never became ready"
 BASELINE_FP="$(config_fingerprint)"
+k apply -f "$FIXTURES/routes.yaml" >/dev/null
+k rollout status deployment/upgrade-backend --timeout=180s >/dev/null
+wait_upgrade_traffic baseline || { dump_pod_diagnostics; fail "baseline $BASELINE did not serve both routes"; }
 info "baseline healthy, config fingerprint ${BASELINE_FP:0:12}"
 
 # ------------------------------------------------- phase 2: the real upgrade
@@ -293,8 +257,9 @@ if have_diff_plugin; then
   info "diffing the upgrade (the path helmfile takes, before any hook has run)"
   if ! helm diff upgrade "$RELEASE" "$CHART" \
         --kube-context "$CTX" --namespace "$NS" \
-        --set controller.image.repository=haptic \
-        --set controller.image.tag=test \
+        -f "$TARGET_VALUES" \
+        --set "controller.image.repository=$IMAGE_REPOSITORY" \
+        --set "controller.image.tag=$IMAGE_TAG" \
         --set "haproxyVersion=$HAPROXY_VERSION" \
         --dry-run=server > "$WORK/diff.log" 2>&1; then
     echo "--- helm diff output ---"; tail -20 "$WORK/diff.log"
@@ -314,8 +279,9 @@ info "upgrading to the working tree chart"
 # than --wait and what this suite actually claims to check.
 if ! helm upgrade "$RELEASE" "$CHART" \
       --kube-context "$CTX" --namespace "$NS" \
-      --set controller.image.repository=haptic \
-      --set controller.image.tag=test \
+      -f "$TARGET_VALUES" \
+      --set "controller.image.repository=$IMAGE_REPOSITORY" \
+      --set "controller.image.tag=$IMAGE_TAG" \
       --set "haproxyVersion=$HAPROXY_VERSION" \
       --timeout 20m > "$WORK/upgrade.log" 2>&1; then
   echo "--- helm output ---"; cat "$WORK/upgrade.log"
@@ -349,7 +315,8 @@ restarts=$(k get pods -l app.kubernetes.io/component=controller \
   -o jsonpath='{range .items[*]}{.status.containerStatuses[*].restartCount}{"\n"}{end}' | tr -s ' \n' '+' | sed 's/+$//')
 [ "$(( ${restarts:-0} ))" -eq 0 ] || fail "controller restarted ${restarts} times after upgrade (crash-loop?)"
 
-info "upgrade OK: release deployed, controller ready, config validated, no restarts"
+wait_upgrade_traffic upgraded || { dump_pod_diagnostics; fail "upgraded fleet did not serve both routes"; }
+info "upgrade OK: release deployed, controller ready, config validated, routes serving, no restarts"
 
 # The baseline's ValidatingWebhookConfiguration carried per-object
 # haproxytemplateconfig entries; the apply-crds hook must have deleted them
@@ -418,19 +385,21 @@ p.write_text(s[:m.end()] + m.group(1) + "  {%- var x = %}\n" + s[m.end():])
 PY
 
 info "building the matching broken image (a real release bug ships in chart AND image)"
-docker build -t "haptic:test-broken-haproxy${HAPROXY_VERSION}" \
+docker build --build-arg "BASE_IMAGE=$IMAGE_REPOSITORY:$IMAGE_TAG" -t "$IMAGE_REPOSITORY:$IMAGE_TAG-broken-haproxy${HAPROXY_VERSION}" \
     -f - "$(dirname "$BROKEN_LIB")" > "$WORK/broken-image.log" 2>&1 <<'EOF' \
   || { cat "$WORK/broken-image.log"; fail "could not build the broken image"; }
-FROM haptic:test
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
 COPY library.yaml /usr/share/haptic/chart/charts/base/library.yaml
 EOF
-kind load docker-image "haptic:test-broken-haproxy${HAPROXY_VERSION}" --name "$CLUSTER" >/dev/null
+kind load docker-image "$IMAGE_REPOSITORY:$IMAGE_TAG-broken-haproxy${HAPROXY_VERSION}" --name "$CLUSTER" >/dev/null
 
 PRE_FP="$(config_fingerprint)"
 if helm upgrade "$RELEASE" "$WORK/broken-chart" \
       --kube-context "$CTX" --namespace "$NS" \
-      --set controller.image.repository=haptic \
-      --set controller.image.tag=test-broken \
+      -f "$TARGET_VALUES" \
+      --set "controller.image.repository=$IMAGE_REPOSITORY" \
+      --set "controller.image.tag=$IMAGE_TAG-broken" \
       --set "haproxyVersion=$HAPROXY_VERSION" \
       --timeout 5m > "$WORK/broken.log" 2>&1; then
   echo "--- helm output (the upgrade that should have been aborted) ---"; cat "$WORK/broken.log"
@@ -497,6 +466,7 @@ for pod in json.load(sys.stdin).get("items", []):
 fi
 
 wait_controller_ready 180 || fail "controller unhealthy after the rejected upgrade"
+wait_upgrade_traffic rejected || fail "rejected upgrade interrupted existing routes"
 
 # ------------------------------ phase 4: recovery from a broken live deployment
 
@@ -541,8 +511,9 @@ fi
 # reproduced in CI and not locally, purely on timing.
 if ! helm upgrade "$RELEASE" "$WORK/broken-chart" \
       --kube-context "$CTX" --namespace "$NS" \
-      --set controller.image.repository=haptic \
-      --set controller.image.tag=test \
+      -f "$TARGET_VALUES" \
+      --set "controller.image.repository=$IMAGE_REPOSITORY" \
+      --set "controller.image.tag=$IMAGE_TAG" \
       --set controller.replicaCount=0 \
       --set "haproxyVersion=$HAPROXY_VERSION" \
       --timeout 10m > "$WORK/break.log" 2>&1; then
@@ -575,8 +546,9 @@ info "deployment is broken as intended (controller cannot become ready)"
 info "recovering with a plain helm upgrade — no manual intervention allowed"
 if ! helm upgrade "$RELEASE" "$CHART" \
       --kube-context "$CTX" --namespace "$NS" \
-      --set controller.image.repository=haptic \
-      --set controller.image.tag=test \
+      -f "$TARGET_VALUES" \
+      --set "controller.image.repository=$IMAGE_REPOSITORY" \
+      --set "controller.image.tag=$IMAGE_TAG" \
       --set "haproxyVersion=$HAPROXY_VERSION" \
       --timeout 20m > "$WORK/recover.log" 2>&1; then
   echo "--- helm output ---"; cat "$WORK/recover.log"
@@ -591,6 +563,7 @@ k rollout status "deploy/$DEPLOY" --timeout=7m >/dev/null \
 
 validated=$(wait_config_validated 180) || fail "config Validated=$validated after recovery"
 
+wait_upgrade_traffic recovered || { dump_pod_diagnostics; fail "recovered fleet did not serve both routes"; }
 info "recovery OK: a broken fleet was restored by an ordinary helm upgrade"
 
 info "ALL CHECKS PASSED"

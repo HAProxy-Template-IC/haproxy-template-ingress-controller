@@ -73,7 +73,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 - **Observability** - Per-route request metrics (rate, errors, latency by phase) derived from the access log, JSON structured logging, and debug endpoints
 
 !!! warning "Project maturity"
-    This release is a pre-1.0 alpha, and the custom resources are served at API version `v1alpha1` — their schemas can still change before 1.0. Pin an exact chart version (`--version 0.2.0-alpha.3`) and read the [changelog](changelog.md) before you upgrade.
+    HAPTIC uses pre-1.0 versioning, and its custom resources use API version `v1alpha1`. Minor releases can change APIs and configuration. Pin an exact chart version (`--version 0.2.0-alpha.3`) and read the [changelog](changelog.md) before you upgrade.
 
 !!! note "Ready to use out of the box"
     The [Helm chart](deploying-with-helm.md) enables Ingress, Gateway API, and [HAPTIC annotations](libraries/haptic-annotations.md) by default. Enable a vendor annotation library when [migrating](migrating.md) from another controller. Write custom templates only for behavior the bundled libraries don't cover.

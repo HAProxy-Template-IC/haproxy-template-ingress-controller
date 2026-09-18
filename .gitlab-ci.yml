@@ -2121,6 +2121,8 @@ test-chart-upgrade:
         - pkg/webhook/**/*
         - pkg/controller/webhook/**/*
         - scripts/test-chart-upgrade.sh
+        - scripts/lib/upgrade-traffic.sh
+        - scripts/testdata/chart-upgrade/**/*
         - .gitlab-ci.yml
   before_script:
     - |
@@ -2131,6 +2133,11 @@ test-chart-upgrade:
     - !reference [.stamp-source-chart, script]
   script:
     - make test-chart-upgrade
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - debug-logs/upgrade/
 
 # Install-side twin of test-chart-upgrade: a default install on a cluster with
 # NO Gateway API CRDs. Every other suite installs them first, which is how
@@ -2685,6 +2692,14 @@ nightly-gateway-churn:
     # is readable through /debug/vars/rendered.
     HAPTIC_E2E_CHURN: "1"
     TEST_RUN_PATTERN: TestGatewayChurn
+  script:
+    - make test-e2e
+    - KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - debug-logs/
 
 # Scale/performance tier: the project bar is judging config-apply against
 # 10k+ line configs, and per issue #58's budget doctrine every performance
@@ -2730,6 +2745,7 @@ nightly-scale:
     TEST_RUN_PATTERN: TestScale
   script:
     - make test-e2e
+    - KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output
     - |
       # Trend check vs the previous nightly-scale run on main. A missing
       # previous artifact (first run, expired 30d retention, or artifact
@@ -2792,8 +2808,7 @@ nightly-scale:
   artifacts:
     # `when: always` (unlike the base's on_failure): the metrics JSON is
     # the artifact the NEXT run's trend check fetches — it must survive
-    # green runs. debug-logs/ only exists on failure; a missing path is a
-    # warning, not an error.
+    # green runs, together with the controller output-consistency evidence.
     when: always
     expire_in: 30 days
     paths:
@@ -2812,9 +2827,11 @@ nightly-gwapi-canary:
   variables:
     HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: conformance
+    HAPTIC_E2E_GWAPI_CHANNEL: experimental
   script:
     - HAPTIC_E2E_GWAPI_VERSION="$(bash scripts/prepare-gateway-api-canary.sh resolve)"
     - export HAPTIC_E2E_GWAPI_VERSION
+    - echo "Gateway API canary revision $HAPTIC_E2E_GWAPI_VERSION"
     # Boot the conformance-profile cluster only (TEST_RUN_PATTERN=^$ short-
     # circuits the e2e tests, mirroring test-gateway-conformance's setup).
     - TEST_RUN_PATTERN="^$" make test-e2e
@@ -3879,6 +3896,6 @@ report-pipeline-failure:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: on_failure
+      when: always
   script:
     - ./scripts/ci-report-failure.sh

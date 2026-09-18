@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upgrade-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upgrade-backend
+  template:
+    metadata:
+      labels:
+        app: upgrade-backend
+    spec:
+      containers:
+        - name: echo
+          image: ealen/echo-server@sha256:ec8a6e95890df937a1eb5fafca033a32172d4f43c1fea1f302931d5f230a137f
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upgrade-backend
+spec:
+  selector:
+    app: upgrade-backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: upgrade-http
+spec:
+  ingressClassName: upgrade
+  rules:
+    - host: http.upgrade.test
+      http:
+        paths:
+          - path: /upgrade-check
+            pathType: Prefix
+            backend:
+              service:
+                name: upgrade-backend
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: upgrade-https
+spec:
+  ingressClassName: upgrade
+  tls:
+    - hosts:
+        - tls.upgrade.test
+      secretName: upgrade-default-tls
+  rules:
+    - host: tls.upgrade.test
+      http:
+        paths:
+          - path: /upgrade-check
+            pathType: Prefix
+            backend:
+              service:
+                name: upgrade-backend
+                port:
+                  number: 80

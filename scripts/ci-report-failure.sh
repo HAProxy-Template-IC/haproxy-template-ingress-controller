@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ci-report-failure.sh — turn a failed main/nightly pipeline into a tracked issue.
 #
-# Runs in the .post stage (when: on_failure) of default-branch and scheduled
+# Runs in the .post stage (including allowed failures) of default-branch and scheduled
 # pipelines. Failed jobs are fingerprinted by their sorted base names; an open
 # issue carrying the same fingerprint gets a comment (occurrence count grows,
 # artifacts stay linked), otherwise a new `needs-triage` + `ci-failure` issue

@@ -4,7 +4,7 @@
         build check-source-hash docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check test-spoa-reload \
         tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
-        release test-release goreleaser-snapshot \
+        release test-release check-controller-output goreleaser-snapshot \
         pgo-profile pgo-merge \
         extract-schemas
 
@@ -292,6 +292,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	bash scripts/tests/test_check_test_inventory.sh
 	python3 -m unittest \
 		scripts/tests/test_prepare_gateway_api_canary.py \
+		scripts/tests/test_check_controller_output.py \
 		scripts/tests/test_check_image_pins.py \
 		scripts/tests/test_analyze_gateway_api_bench.py \
 		scripts/tests/test_analyze_gateway_api_children.py \
@@ -640,6 +641,9 @@ test-helm-defaults: $(if $(HELM_DEFAULTS_IMAGE),,docker-build-test) ## Install t
 	fi
 	bash scripts/test-helm-defaults.sh --image "$(or $(HELM_DEFAULTS_IMAGE),haptic:test-haproxy$(HAPROXY_VERSION))"
 
+check-controller-output: ## Capture controller logs and reject inconsistent rendered output
+	bash scripts/check-controller-output.sh
+
 test-vector-spans: ## Execute the span-building VRL under vector and assert the span geometry
 	@# No cluster and no build: it renders the chart, extracts the transform and
 	@# runs it against fixtures. Catches derived-arithmetic errors that emit
@@ -654,7 +658,7 @@ test-install-without-gateway-api: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) 
 	@# why it owns its own cluster rather than joining the e2e one.
 	bash scripts/test-install-without-gateway-api.sh $(if $(KEEP_CLUSTER),--keep,)
 
-test-chart-upgrade: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Upgrade the last released chart to this worktree and assert nothing breaks
+test-chart-upgrade: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Verify released-chart upgrades, traffic, rejection, and recovery
 	@# Owns its own kind cluster: it installs a released chart whose pre-upgrade
 	@# hook applies that release's cluster-scoped CRDs, which would downgrade the
 	@# schemas under any suite sharing the cluster.
