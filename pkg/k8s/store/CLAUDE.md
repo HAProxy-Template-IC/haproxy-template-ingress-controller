@@ -128,6 +128,12 @@ on every call and sorts the aggregated result. The optimization is
 "authenticated pinned reads borrow pre-sorted buckets", not "the whole list is
 memoized". Public reads detach resource graphs.
 
+Memory-backed informer transforms seal resources with `NewImmutableResource`.
+The constructor detaches the input; `MemoryStore.Add` and `Update` recognize the
+sealed value and share its private graph with pinned snapshots. Ordinary inputs
+still require a copy. Never expose the sealed graph through a public getter or
+callback; index and selector queries use concrete, read-only indexer methods.
+
 ### CachedStore Design
 
 **Data structures:**

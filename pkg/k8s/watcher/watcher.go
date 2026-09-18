@@ -219,19 +219,6 @@ func (w *Watcher) createInformer() error {
 	// Get informer for resource
 	w.informer = w.informerFactory.ForResource(w.config.GVR).Informer()
 
-	// Every store type gets a transform, but they differ, and the difference is
-	// load-bearing. Both run before the informer caches the object and before
-	// any handler sees it, which is what keeps handlers from mutating objects
-	// client-go still owns.
-	//
-	//   on-demand (CachedStore) → project, then normalise. The render reads the
-	//     full body via a live API GET, so the informer only needs the indexBy /
-	//     fieldSelector / identity fields. See ADR-0012.
-	//   full (MemoryStore) → normalise only. The stored body IS what templates
-	//     read, so projecting here would serve them a husk.
-	//
-	// No default branch: New rejects unknown store types, and a silently
-	// untransformed store would put raw float64 bodies back into templates.
 	var transform cache.TransformFunc
 	switch w.config.StoreType {
 	case types.StoreTypeCached:

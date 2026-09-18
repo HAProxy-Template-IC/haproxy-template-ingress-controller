@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Full-memory watches use less memory by sharing immutable resource bodies between the informer and indexed store.
+
 - Followers accept published zero-byte auxiliary files when refreshing their current configuration.
 
 - Native helper calls to template closures no longer keep completed render sessions and their cached resource inputs alive.

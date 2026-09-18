@@ -3,14 +3,12 @@ package watcher
 import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/cache"
 )
 
 // handleAdd handles resource addition events.
 func (w *Watcher) handleAdd(obj any) {
-	resource := w.convertToUnstructured(obj)
+	resource := watchResource(obj)
 	if resource == nil {
 		return
 	}
@@ -26,8 +24,8 @@ func (w *Watcher) handleAdd(obj any) {
 
 // handleUpdate handles resource update events.
 func (w *Watcher) handleUpdate(oldObj, newObj any) {
-	oldResource := w.convertToUnstructured(oldObj)
-	resource := w.convertToUnstructured(newObj)
+	oldResource := watchResource(oldObj)
+	resource := watchResource(newObj)
 	if resource == nil {
 		return
 	}
@@ -63,11 +61,11 @@ func (w *Watcher) handleUpdate(oldObj, newObj any) {
 
 // handleDelete handles resource deletion events.
 func (w *Watcher) handleDelete(obj any) {
-	resource := w.convertToUnstructured(obj)
+	resource := watchResource(obj)
 	if resource == nil {
 		// Handle DeletedFinalStateUnknown
 		if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
-			resource = w.convertToUnstructured(tombstone.Obj)
+			resource = watchResource(tombstone.Obj)
 		}
 		if resource == nil {
 			return
@@ -89,7 +87,7 @@ func (w *Watcher) handleDelete(obj any) {
 // filtered out by the configured field selector. All field-selector skip
 // sites use the same gvr/name/namespace/field_selector tuple; only the
 // human-readable message differs.
-func (w *Watcher) logFieldSelectorSkip(msg string, resource *unstructured.Unstructured) {
+func (w *Watcher) logFieldSelectorSkip(msg string, resource watchedResource) {
 	w.logger.Debug(msg,
 		"gvr", w.config.GVR.String(),
 		"name", resource.GetName(),
@@ -101,8 +99,8 @@ func (w *Watcher) logFieldSelectorSkip(msg string, resource *unstructured.Unstru
 //
 // The resource arrives already filtered and float-converted by the informer's
 // transform, so this only reads index keys off it.
-func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
-	keys, err := w.indexer.ExtractKeys(resource)
+func (w *Watcher) processAdd(resource watchedResource) {
+	keys, err := w.extractResourceKeys(resource)
 	if err != nil {
 		w.logger.Error("Failed to extract keys from resource for indexing",
 			"gvr", w.config.GVR.String(),
@@ -117,7 +115,7 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 		resource.GetNamespace(),
 		resource.GetName(),
 	)
-	if err := w.store.Add(resource.Object, keys); err != nil {
+	if err := w.store.Add(storedResourceValue(resource), keys); err != nil {
 		w.logger.Error("Failed to add resource to store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
@@ -158,9 +156,9 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 // processUpdate updates a resource in the store and records the change.
 //
 // Old/new indexability decides whether the store sees an update, delete, or add.
-func (w *Watcher) processUpdate(oldResource, resource *unstructured.Unstructured) {
-	_, oldKeysErr := w.indexer.ExtractKeys(oldResource)
-	keys, err := w.indexer.ExtractKeys(resource)
+func (w *Watcher) processUpdate(oldResource, resource watchedResource) {
+	_, oldKeysErr := w.extractResourceKeys(oldResource)
+	keys, err := w.extractResourceKeys(resource)
 	if err != nil {
 		w.logger.Error("Failed to extract keys from resource for indexing",
 			"gvr", w.config.GVR.String(),
@@ -182,7 +180,7 @@ func (w *Watcher) processUpdate(oldResource, resource *unstructured.Unstructured
 		resource.GetNamespace(),
 		resource.GetName(),
 	)
-	if err := w.store.Update(resource.Object, keys); err != nil {
+	if err := w.store.Update(storedResourceValue(resource), keys); err != nil {
 		w.logger.Error("Failed to update resource in store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
@@ -240,8 +238,8 @@ func identityRevision(resourceStore any, namespace, name string) (stores.Revisio
 }
 
 // processDelete removes a resource from the store and records the change.
-func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
-	keys, err := w.indexer.ExtractKeys(resource)
+func (w *Watcher) processDelete(resource watchedResource) {
+	keys, err := w.extractResourceKeys(resource)
 	if err != nil {
 		w.logger.Error("Failed to extract keys from resource for deletion",
 			"gvr", w.config.GVR.String(),
@@ -294,8 +292,8 @@ func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
 
 // shouldSkipUpdate checks if an update event should be skipped.
 // Returns true for resync events (resourceVersion unchanged).
-func (w *Watcher) shouldSkipUpdate(oldResource, newResource *unstructured.Unstructured) bool {
-	if oldResource == nil {
+func (w *Watcher) shouldSkipUpdate(oldResource, newResource watchedResource) bool {
+	if watchResource(oldResource) == nil {
 		return false
 	}
 
@@ -328,12 +326,12 @@ func (w *Watcher) shouldSkipUpdate(oldResource, newResource *unstructured.Unstru
 // Returns true if:
 // - No field selector is configured (matches everything)
 // - The resource matches the field selector expression.
-func (w *Watcher) matchesFieldSelector(resource *unstructured.Unstructured) bool {
+func (w *Watcher) matchesFieldSelector(resource watchedResource) bool {
 	if w.fieldSelectorMatcher == nil {
 		return true
 	}
 
-	matches, err := w.fieldSelectorMatcher.Matches(resource.Object)
+	matches, err := w.resourceMatchesSelector(resource)
 	if err != nil {
 		// Log unexpected errors, but treat as non-match
 		w.logger.Warn("Field selector evaluation error",
@@ -345,19 +343,4 @@ func (w *Watcher) matchesFieldSelector(resource *unstructured.Unstructured) bool
 	}
 
 	return matches
-}
-
-// convertToUnstructured converts a resource to *unstructured.Unstructured.
-func (w *Watcher) convertToUnstructured(obj any) *unstructured.Unstructured {
-	switch v := obj.(type) {
-	case *unstructured.Unstructured:
-		return v
-	case runtime.Object:
-		// Try to convert
-		u, ok := v.(*unstructured.Unstructured)
-		if ok {
-			return u
-		}
-	}
-	return nil
 }

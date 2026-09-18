@@ -37,8 +37,8 @@ Implementation highlights (see `pkg/k8s/store/memory.go`):
 
 - Backing data is `map[string][]any` keyed by the opaque encoded index components. Multiple resources can share a key; `Get` returns them all.
 - A reverse map from `(namespace, name)` to the encoded key makes `Add`, `Update`, and `Delete` identity-owned. An update moves that identity between buckets under one write lock.
-- `Get` with the full key count is an O(1) map lookup that returns the per-bucket slice as-is (zero-copy — see "Immutability Contract"). Per-bucket slices are kept sorted at insert time so reads are deterministic without runtime sorting; partial-prefix scans aggregate matching buckets and sort the result.
-- `List` rebuilds and sorts the full slice on every call — there's no memoised result. The optimisation is "buckets are pre-sorted, so per-bucket reads are zero-copy", not "the whole list is cached". A consumer that needs a memoised `List` should cache at its own layer, not inside the store.
+- `Get` with the full key count finds its pre-sorted bucket in O(1), then detaches its resources. Partial-prefix reads aggregate and sort matching buckets before detaching them.
+- `List` aggregates, sorts, and detaches all resources on every call.
 - An `RWMutex` protects the data map; concurrent readers don't contend.
 
 ## CachedStore
@@ -83,16 +83,16 @@ Common `.Cause` values: `errors.New("at least one key required")`, key-count mis
 
 ## Immutability Contract
 
-**Returned slices and resources must not be mutated.** Both stores return their internal data directly for performance; a caller mutating the returned value corrupts the store for every subsequent reader. Clone before modifying:
+Public reads return detached resource graphs. Mutating a returned map or slice
+doesn't change the store or a pinned snapshot. Ordinary `MemoryStore.Add` and
+`Update` inputs are detached too.
 
-```go
-for _, obj := range resources {
-    copy := runtime.DeepCopyObject(obj.(runtime.Object))
-    // mutate `copy` freely
-}
-```
-
-This is enforced by convention, not by type — the `Store` interface returns `any`, so the compiler can't help. Watchers and `pkg/stores/overlay.go` both rely on this contract.
+Memory-backed watchers construct an `ImmutableResource` after field filtering
+and numeric normalization. Its constructor detaches and validates the resource;
+its API exposes only identity, detached metadata, and configured index/selector
+queries. The informer, `MemoryStore`, and pinned snapshots share its private
+graph. Templates continue to receive complete resource bodies through the
+existing detached reads and authenticated projections.
 
 ## Non-Unique Keys
 
