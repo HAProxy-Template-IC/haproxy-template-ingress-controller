@@ -38,6 +38,47 @@ func MarshalImmutableJSON(value any) ([]byte, error) {
 	return json.Marshal(value)
 }
 
+// CloneImmutableJSON detaches normalized JSON without changing numeric types.
+func CloneImmutableJSON(value any) (any, error) {
+	if err := validateImmutableJSON(value, make(map[immutableJSONVisit]struct{}), 0); err != nil {
+		return nil, err
+	}
+	return cloneValidatedJSON(value), nil
+}
+
+func cloneValidatedJSON(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneValidatedJSONMap(typed)
+	case []any:
+		return cloneValidatedJSONList(typed)
+	default:
+		return value
+	}
+}
+
+func cloneValidatedJSONMap(value map[string]any) map[string]any {
+	if value == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(value))
+	for key, item := range value {
+		cloned[key] = cloneValidatedJSON(item)
+	}
+	return cloned
+}
+
+func cloneValidatedJSONList(value []any) []any {
+	if value == nil {
+		return nil
+	}
+	cloned := make([]any, len(value))
+	for index, item := range value {
+		cloned[index] = cloneValidatedJSON(item)
+	}
+	return cloned
+}
+
 func validateImmutableJSON(value any, active map[immutableJSONVisit]struct{}, depth int) error {
 	if depth > immutableJSONMaxDepth {
 		return errors.New("resource value exceeds the maximum depth")

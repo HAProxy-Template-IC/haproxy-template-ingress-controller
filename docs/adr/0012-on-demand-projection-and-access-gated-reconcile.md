@@ -166,13 +166,43 @@ be read that way:
 | `StoreType` | Transform | Why |
 |---|---|---|
 | `Cached` (on-demand) | project to the index roots, then normalise | the render reads the full body via a live GET, so the informer need not hold it |
-| `Memory` (full) | normalise only — filter `IgnoreFields`, convert floats | **the stored body IS what templates read** |
+| `Memory` (full) | normalise and seal the complete resource | informer and indexed store share one immutable body |
 
-The reasoning at "Why this fails for MemoryStore" above and blocker **B1**
-("key-projection that discards the body for MemoryStore kinds: breaks
-templates") are unchanged and still binding. `TestNew_MemoryStore_Informer
-TransformKeepsFullBody` is the regression guard: it fails if the projection
-transform is ever wired onto a memory store.
+The full body remains available for every memory-backed resource. The
+`TestNew_MemoryStore_InformerTransformKeepsFullBody` regression checks that fields
+outside the index roots reach store reads.
+
+### Amendment: immutable ownership for full-memory watches (2026-09-18)
+
+Public store reads and pinned projections isolate mutations by detaching mutable
+values. Copying informer inputs again at `MemoryStore.Add` left the informer and
+store retaining separate full resource trees.
+
+The memory transform now constructs a sealed `store.ImmutableResource`. Its
+constructor validates the plain JSON value surface and clones the input once.
+The informer caches that sealed value; `MemoryStore.Add` and `Update` share its
+private graph. Index-key and field-selector queries run through concrete,
+read-only indexer methods. Client-go receives detached metadata for its identity,
+namespace, and version checks. No public method or callback exposes the owned
+resource tree.
+
+Ordinary store writes still detach their input, and public reads still return
+copies. Updates replace the immutable body; old pinned snapshots keep their
+original version. This changes ownership, not the watched fields, validation,
+resource ordering, or snapshot revision contract. On-demand projection remains
+unchanged.
+
+Version-only updates keep the store revision and its previous resource version.
+Their sealed informer value atomically switches to the same unchanged body,
+with a separate shallow metadata map when the watch version differs. The value
+seen through the informer remains identical; only its backing storage changes.
+This also handles updates queued before the preceding event reaches the store.
+
+The transform reuses equal values through a weak reference keyed by namespace
+and name. This keeps sharing intact when client-go replaces an informer entry
+during a relist without notifying the store handler. Weak references allow
+discarded watch events and deleted resources to be collected; runtime cleanups
+remove their registry entries without removing a newer replacement.
 
 ## Mechanism 2 — access-gated reconcile (DEFER)
 

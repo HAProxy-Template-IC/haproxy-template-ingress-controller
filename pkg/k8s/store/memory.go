@@ -143,6 +143,7 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
 	if err := validateKeyCount("add", keys, s.numKeys); err != nil {
 		return err
 	}
+	immutable, _ := resource.(*ImmutableResource)
 	owned, err := ownMemorySnapshotResource(resource)
 	if err != nil {
 		return &StoreError{Operation: "add", Keys: keys, Cause: err}
@@ -161,7 +162,7 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
 	var oldKeys []string
 	if identified {
 		identities = append(identities, identity)
-		if s.identityUnchangedLocked(identity, keyStr, resource) {
+		if s.reuseUnchangedResourceLocked(identity, keyStr, resource, immutable) {
 			return nil
 		}
 		oldKeys = cloneStrings(s.revisions.identityKeys[identity])
@@ -204,6 +205,7 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 	if err := validateKeyCount("update", keys, s.numKeys); err != nil {
 		return err
 	}
+	immutable, _ := resource.(*ImmutableResource)
 	owned, err := ownMemorySnapshotResource(resource)
 	if err != nil {
 		return &StoreError{Operation: "update", Keys: keys, Cause: err}
@@ -222,7 +224,7 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 	var oldKeys []string
 	if identified {
 		identities = append(identities, identity)
-		if s.identityUnchangedLocked(identity, keyStr, resource) {
+		if s.reuseUnchangedResourceLocked(identity, keyStr, resource, immutable) {
 			return nil
 		}
 		oldKeys = cloneStrings(s.revisions.identityKeys[identity])
@@ -284,7 +286,7 @@ func (s *MemoryStore) removeIdentityLocked(identity resourceIdentity) {
 	delete(s.locations, identity)
 }
 
-func (s *MemoryStore) identityUnchangedLocked(identity resourceIdentity, key string, resource any) bool {
+func (s *MemoryStore) reuseUnchangedResourceLocked(identity resourceIdentity, key string, resource any, immutable *ImmutableResource) bool {
 	currentKey, exists := s.locations[identity]
 	if !exists || currentKey != key {
 		return false
@@ -292,6 +294,9 @@ func (s *MemoryStore) identityUnchangedLocked(identity resourceIdentity, key str
 	for _, current := range s.data[currentKey] {
 		currentNamespace, currentName := extractNamespaceName(current)
 		if currentNamespace == identity.namespace && currentName == identity.name {
+			if immutable != nil {
+				return immutable.shareUnchanged(current)
+			}
 			return equalIgnoringResourceVersion(current, resource)
 		}
 	}

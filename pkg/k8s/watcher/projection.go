@@ -114,26 +114,7 @@ func normalizeInPlace(u *unstructured.Unstructured, idx *indexer.Indexer) {
 	indexer.ConvertResource(u)
 }
 
-// newNormalizeTransform returns a client-go TransformFunc for memory-backed
-// watchers: it normalises the object in place and hands back the SAME pointer,
-// dropping nothing beyond the configured IgnoreFields.
-//
-// It deliberately does NOT project. For a memory store the stored body IS what
-// templates read, so stripping it to the index roots would render every field
-// outside metadata as missing — see ADR-0012, which rejects key-projection for
-// MemoryStore kinds as blocker B1.
-//
-// Doing this here rather than in the event handler is what keeps the informer's
-// contract: client-go requires handlers not to modify the objects they receive,
-// and the transform is the sanctioned mutation point — it runs before the
-// object is inserted into the cache and before any listener sees it.
+// newNormalizeTransform seals the normalized body for shared informer/store ownership.
 func newNormalizeTransform(idx *indexer.Indexer) cache.TransformFunc {
-	return func(obj any) (any, error) {
-		u, ok := obj.(*unstructured.Unstructured)
-		if !ok {
-			return obj, nil
-		}
-		normalizeInPlace(u, idx)
-		return u, nil
-	}
+	return newImmutableResources(idx).transform
 }

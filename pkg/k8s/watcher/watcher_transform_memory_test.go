@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
@@ -34,14 +35,6 @@ func newNormalizeTestIndexer(t *testing.T, ignoreFields []string) *indexer.Index
 	return idx
 }
 
-// A MemoryStore (full) watcher must install the NORMALISING transform, not the
-// body-stripping projection: for a memory store the stored body is what
-// templates read, so a projection here would serve them a husk and every field
-// outside metadata would render as missing. ADR-0012 records this as blocker B1.
-//
-// This has to drive a real informer — the transform runs inside DeltaFIFO, so a
-// test that calls handleAdd directly bypasses it entirely and cannot detect a
-// projection wrongly installed on a memory store.
 func TestNew_MemoryStore_InformerTransformKeepsFullBody(t *testing.T) {
 	cm := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",
@@ -64,23 +57,18 @@ func TestNew_MemoryStore_InformerTransformKeepsFullBody(t *testing.T) {
 	_, err = w.WaitForSync(ctx)
 	require.NoError(t, err)
 
-	// The informer's cache keeps the full body — this is the assertion that
-	// fails loudly if someone wires the projection transform onto a memory store.
 	items := w.informer.GetStore().List()
 	require.Len(t, items, 1)
-	stored, ok := items[0].(*unstructured.Unstructured)
-	require.True(t, ok, "informer cache item should be *unstructured.Unstructured")
-	blob, found, _ := unstructured.NestedString(stored.Object, "data", "blob")
-	assert.True(t, found, "a memory-store watcher must NOT body-strip: the stored body is what templates read")
-	assert.Equal(t, "HEAVYVALUE", blob)
+	stored, ok := items[0].(*store.ImmutableResource)
+	require.True(t, ok)
+	assert.Equal(t, "big-cm", stored.GetName())
 
-	// And the store serves that same full body to the render.
 	results, err := w.Store().Get("default", "big-cm")
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	gotMap, ok := results[0].(map[string]any)
 	require.True(t, ok, "store holds the resource body as map[string]any")
-	blob, found, _ = unstructured.NestedString(gotMap, "data", "blob")
+	blob, found, _ := unstructured.NestedString(gotMap, "data", "blob")
 	assert.True(t, found, "store read must serve the full body")
 	assert.Equal(t, "HEAVYVALUE", blob)
 }
@@ -146,11 +134,7 @@ func TestNormalizeTransform_IsIdempotent(t *testing.T) {
 	assert.Equal(t, once, twice, "applying the transform twice must equal applying it once")
 }
 
-// The transform hands back the SAME pointer rather than a copy. The store
-// aliases that memory deliberately — it is what keeps one body in RAM instead
-// of two — and the aliasing is only safe because all mutation happens here,
-// before the cache or any handler sees the object.
-func TestNormalizeTransform_ReturnsSamePointerAndFiltersIgnoredFields(t *testing.T) {
+func TestNormalizeTransform_SealsAndFiltersIgnoredFields(t *testing.T) {
 	idx := newNormalizeTestIndexer(t, []string{"metadata.managedFields"})
 	transform := newNormalizeTransform(idx)
 
@@ -167,12 +151,20 @@ func TestNormalizeTransform_ReturnsSamePointerAndFiltersIgnoredFields(t *testing
 
 	got, err := transform(obj)
 	require.NoError(t, err)
-	assert.Same(t, obj, got, "transform must return the same pointer, not a copy")
+	sealed, ok := got.(*store.ImmutableResource)
+	require.True(t, ok)
+	resourceStore := store.NewMemoryStore(2)
+	require.NoError(t, resourceStore.Add(sealed, []string{"default", "cm"}))
+	obj.Object["data"].(map[string]any)["blob"] = "caller mutation"
+	items, err := resourceStore.List()
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	owned := items[0].(map[string]any)
 
-	_, hasManagedFields, _ := unstructured.NestedFieldNoCopy(obj.Object, "metadata", "managedFields")
+	_, hasManagedFields, _ := unstructured.NestedFieldNoCopy(owned, "metadata", "managedFields")
 	assert.False(t, hasManagedFields, "IgnoreFields must be stripped by the transform")
 
-	blob, found, _ := unstructured.NestedString(obj.Object, "data", "blob")
+	blob, found, _ := unstructured.NestedString(owned, "data", "blob")
 	assert.True(t, found, "the body must survive — normalise never projects")
 	assert.Equal(t, "keep-me", blob)
 }

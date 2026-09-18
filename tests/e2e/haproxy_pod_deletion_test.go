@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -45,8 +46,11 @@ func TestHAProxyPodDeletionZeroDowntime(t *testing.T) {
 			httpclient.New(t).GET(host, "/").ExpectOK(t)
 
 			pods := listHAProxyPods(t)
-			require.NotEmpty(t, pods)
+			require.GreaterOrEqual(t, len(pods), 2)
 			victim := pods[0]
+			victimPod, err := clientset.CoreV1().Pods(ControllerNamespace).Get(ctx, victim, metav1.GetOptions{})
+			require.NoError(t, err)
+			require.NotEmpty(t, victimPod.Status.PodIP)
 
 			proberCtx, stopProber := context.WithCancel(ctx)
 			results := &probeRecorder{snapshotter: newProberSnapshotter(t, namespace)}
@@ -64,7 +68,7 @@ func TestHAProxyPodDeletionZeroDowntime(t *testing.T) {
 			t.Cleanup(finish)
 
 			time.Sleep(2 * time.Second)
-			inFlight := holdRequestOnPod(ctx, victim, host)
+			inFlight := holdRequestOnPod(ctx, pods[1], victimPod.Status.PodIP, host)
 			deleted := time.Now()
 			require.NoError(t, clientset.CoreV1().Pods(ControllerNamespace).Delete(ctx, victim, metav1.DeleteOptions{}))
 			served := servedAfterDeletion(ctx, victim, deleted)
@@ -103,17 +107,14 @@ type heldRequest struct {
 	err    error
 }
 
-// holdRequestOnPod opens a request on the pod's own listener whose backend
-// answers 8 s later, after the drain has ended, so the response arrives only
-// if the soft stop keeps the established connection alive. Established before
-// the deletion is issued.
-func holdRequestOnPod(ctx context.Context, pod, host string) <-chan heldRequest {
+// Run the client in a surviving pod so container shutdown cannot kill it.
+func holdRequestOnPod(ctx context.Context, clientPod, destinationIP, host string) <-chan heldRequest {
 	done := make(chan heldRequest, 1)
 	go func() {
-		out, err := execInHAProxyPod(ctx, pod, "haproxy", "curl",
+		out, err := execInHAProxyPod(ctx, clientPod, "haproxy", "curl",
 			"-sS", "--connect-timeout", "2", "--max-time", "30",
 			"-o", "/dev/null", "-w", "%{http_code}",
-			"-H", "Host: "+host, "http://127.0.0.1/?echo_time=8000")
+			"-H", "Host: "+host, "http://"+net.JoinHostPort(destinationIP, "80")+"/?echo_time=8000")
 		done <- heldRequest{status: strings.TrimSpace(out), err: err}
 	}()
 	time.Sleep(time.Second)

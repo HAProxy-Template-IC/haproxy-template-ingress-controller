@@ -408,6 +408,12 @@ func detachMemoryStoreReadValue(value any) (any, error) {
 }
 
 func ownMemorySnapshotResource(resource any) (any, error) {
+	if immutable, ok := resource.(*ImmutableResource); ok {
+		if immutable == nil || immutable.resource().Object == nil {
+			return nil, fmt.Errorf("immutable resource is nil: %w", stores.ErrSnapshotUnsupported)
+		}
+		return immutable.resource().Object, nil
+	}
 	return cloneMemorySnapshotValue(resource)
 }
 

@@ -519,27 +519,27 @@ func TestWatcher_HandleAdd(t *testing.T) {
 	assert.True(t, watcher.IsSynced())
 }
 
-func TestWatcher_ConvertToUnstructured_Nil(t *testing.T) {
+func TestWatchResource_Nil(t *testing.T) {
 	k8sClient := newTestClient(t)
 	cfg := validWatcherConfig()
 
-	watcher, err := New(cfg, k8sClient, slog.Default())
+	_, err := New(cfg, k8sClient, slog.Default())
 	require.NoError(t, err)
 
 	// Test with nil
-	result := watcher.convertToUnstructured(nil)
+	result := watchResource(nil)
 	assert.Nil(t, result)
 
 	// Test with invalid type
-	result = watcher.convertToUnstructured("invalid")
+	result = watchResource("invalid")
 	assert.Nil(t, result)
 }
 
-func TestWatcher_ConvertToUnstructured_Unstructured(t *testing.T) {
+func TestWatchResource_Unstructured(t *testing.T) {
 	k8sClient := newTestClient(t)
 	cfg := validWatcherConfig()
 
-	watcher, err := New(cfg, k8sClient, slog.Default())
+	_, err := New(cfg, k8sClient, slog.Default())
 	require.NoError(t, err)
 
 	obj := &unstructured.Unstructured{
@@ -553,7 +553,7 @@ func TestWatcher_ConvertToUnstructured_Unstructured(t *testing.T) {
 		},
 	}
 
-	result := watcher.convertToUnstructured(obj)
+	result := watchResource(obj)
 	assert.NotNil(t, result)
 	assert.Equal(t, "test", result.GetName())
 }
