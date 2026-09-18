@@ -439,6 +439,10 @@ curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 - Use cached store for large resources
 - Optimize templates: cache values with `{% var %}`, reduce nested loops
 
+### Frequent renders without configuration changes
+
+Compare successive versions of the watched resources. Annotation or status updates can trigger reconciliation even when the rendered HAProxy configuration stays identical. Add changing fields that your templates don't read to that watch's `ignoreFields`; see [Database operator annotations](./watching-resources.md#database-operator-annotations) for a Patroni example.
+
 ### High memory usage
 
 **Symptoms**: OOMKilled events, gradual memory growth

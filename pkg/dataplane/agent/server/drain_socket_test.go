@@ -47,11 +47,16 @@ func drainOverSocket(t *testing.T, socket string) server.DrainResult {
 	return result
 }
 
+func drainSocketPath(model *haproxytest.HAProxy) string {
+	// The model owns a short directory that fits Unix socket path limits.
+	return filepath.Join(filepath.Dir(model.WorkerSocket()), "drain.sock")
+}
+
 // The preStop hook's path: the counter of the probe frontend keeps moving
 // while the traffic frontend is quiet, and the drain ends on the quiet period.
 func TestDrainSocketEndsWhenOnlyProbesArrive(t *testing.T) {
 	model := haproxytest.Start(t)
-	socket := filepath.Join(t.TempDir(), "drain.sock")
+	socket := drainSocketPath(model)
 	h := newHarness(t, withModel(model), withDrain(socket, 150*time.Millisecond, 2*time.Second))
 	_ = h
 	stop := make(chan struct{})
@@ -79,7 +84,7 @@ func TestDrainSocketEndsWhenOnlyProbesArrive(t *testing.T) {
 // not turn the drain into a cut-short 200: the drain finishes on its own terms.
 func TestDrainSocketFinishesADrainInFlightWhenTheAgentStops(t *testing.T) {
 	model := haproxytest.Start(t)
-	socket := filepath.Join(t.TempDir(), "drain.sock")
+	socket := drainSocketPath(model)
 	h := newHarness(t, withModel(model), withDrain(socket, 300*time.Millisecond, 2*time.Second))
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -93,7 +98,7 @@ func TestDrainSocketFinishesADrainInFlightWhenTheAgentStops(t *testing.T) {
 
 func TestDrainSocketWaitsWhileTrafficStillArrives(t *testing.T) {
 	model := haproxytest.Start(t)
-	socket := filepath.Join(t.TempDir(), "drain.sock")
+	socket := drainSocketPath(model)
 	_ = newHarness(t, withModel(model), withDrain(socket, 100*time.Millisecond, 300*time.Millisecond))
 	stop := make(chan struct{})
 	go func() {
