@@ -1,0 +1,13 @@
+ingressClass:
+  name: upgrade
+controller:
+  replicaCount: 2
+defaultSSLCertificate:
+  secretName: upgrade-default-tls
+  certManager:
+    dnsNames:
+      - tls.upgrade.test
+haproxy:
+  replicaCount: 2
+  service:
+    type: ClusterIP

@@ -89,6 +89,7 @@ nav:
     - Supported Configuration: supported-configuration.md
   - Deploying with Helm:
     - Overview: deploying-with-helm.md
+    - Upgrading to 0.2: upgrading-to-0.2.md
     - IngressClass: ingress-class.md
     - GatewayClass: gateway-class.md
     - SSL Certificates: ssl-certificates.md

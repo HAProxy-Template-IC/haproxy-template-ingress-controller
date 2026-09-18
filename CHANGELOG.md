@@ -10,136 +10,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The 0.2.0 release consolidates the 0.2.0 alpha series. If you're upgrading from
+0.1.0, follow the [upgrade guide](./docs/site/docs/upgrading-to-0.2.md) before
+applying your existing values.
+
 ### Added
 
-- `haptic_render_warnings{reason}` reports current template warnings, including unresolved backends, and clears them after recovery.
-
-### Fixed
-
-- CRD change watches retain only reload metadata, reducing memory on clusters with large CRD schemas.
-
-- Full-memory watches use less memory by sharing immutable resource bodies between the informer and indexed store.
-
-- Followers accept published zero-byte auxiliary files when refreshing their current configuration.
-
-- Native helper calls to template closures no longer keep completed render sessions and their cached resource inputs alive.
-
-- Retired cold-render frames release cached inputs and session references; certified inputs share their cached encoded representation.
-
-- Retry orphan cleanup after concurrent resource updates while preserving ownership and deletion preconditions.
-- Agent map verification reads runtime and file state under the apply lock, preventing false divergence during concurrent updates.
-
-- Index-update events merge per watched kind while the event bus is buffering (startup and leadership transitions), so a large or busy cluster can no longer overflow the pre-start buffer and restart the controller iteration in a loop; the merged event carries the summed change counts.
-- Backend deletion verifies the target is absent on the same HAProxy worker, preventing false cleanup failures when HAProxy omits its acknowledgement.
-- Empty auxiliary files publish with an explicit `empty: true` declaration; missing or contradictory content remains invalid.
-- Playground presets contain complete configuration resources; the custom request-ID example validates header names and applies only to the annotated Ingress.
-- Agent state reads wait for startup recovery before publishing the deployment baseline.
-- Component name, health, and error callbacks can access the lifecycle registry without deadlocking it.
-- Diagnostic providers can publish variables while serving the full variable list without deadlocking.
-- Diagnostic JSON encoding failures return HTTP 500 instead of an empty success response.
-- `rate-limit-allowlist` also exempts clients from the shared limiter (`rate-limit-requests`); it only reached the per-pod limiter before. An allowlist on a route with no rate limit is refused at admission and reported as a `RateLimitAllowlistIgnored` Warning Event on reconcile instead of being ignored silently (#232).
-- An incremental render no longer fails with "incremental ranked text transitions collide" when a component's ranked publications change position within one result; the reorder was mistaken for a collision between identities and denied unrelated admissions while the batch was in flight.
-- Admission warnings report only the template-recorded events on the resource being admitted; events on other resources, such as governance audit violations elsewhere in the cluster, stay in their own Kubernetes Events.
-- Runtime and file-only updates are re-diffed if a paced HAProxy reload changes their worker baseline, preventing missed routing-map updates.
-- "Discovered HAProxy pods" logs at Info only when the admitted count changes or no pod is admitted; a steady fleet logs it at Debug instead of repeating it on every drift-prevention tick.
-
-- Incremental template batches retain optimized dispatch with large entrypoint sets instead of exceeding compiler register or function limits.
-
-- Templates can append nil values and nil spreads without compiler or runtime panics.
-- Incremental cache publication no longer reports false revision conflicts for unconsumed resource inputs.
+- The HAPTIC agent applies runtime map, certificate, CA, crt-list, and server changes, verifies the result, and restores the last working files after a rejected reload.
+- HAProxy 3.4 support, including runtime addition and removal of eligible backends without a reload.
+- Incremental rendering reuses unchanged resource and template results; follower replicas keep their render state warm for leadership changes.
+- Runtime schema discovery adapts watched resources to installed API versions and reloads configuration when watched CRDs change.
+- Typed resource access, declarative Kubernetes resource output, pluggable validators, and reusable `HAProxyTemplateLibrary` resources.
+- `haptic preflight`, `haptic diff`, and `haptic agent state` check configuration before deployment and inspect each pod's deployed state.
+- `haptic_render_warnings{reason}` reports active template warnings, including unresolved backends, and clears after recovery.
 
 ### Changed
 
-- Plan compression reuses the serialized snapshot buffer, reducing allocation during deployments.
-- Queued deployments defer plan materialization until dispatch, avoiding background work for superseded renders.
-- An unchanged republish of the output CRDs (HAProxyCfg, map/general/crt-list files, Secrets) is skipped for one drift-prevention interval per key, and the resource applier skips the SSA pass for a cycle whose rendered resources are identical to the last applied one for the same interval. The interval-expiry write remains the periodic authoritative self-heal; on a churn-heavy cluster this removes the constant per-reconcile GET/LIST/PATCH sweep against the apiserver (measured ~110 reads/s at idle on a 1500-Ingress fleet).
-- A render-gate verdict identical to the last one written is skipped for the same drift-prevention interval, eliding the read-modify-write's GET on the HAProxyCfg that every render re-triggered (measured ~20 GETs/s at idle on the same fleet).
-- A follower's warm-up renders read `currentFiles` through a root-tracked source instead of a map snapshot, so an unchanged published set lets them take the exact-cycle replay like the leader's renders do; before, every follower render was a full warm render (measured 4× the leader's CPU on the same fleet).
-- The "Reloads pending on the fleet" and incremental-assembly engaged/unavailable log lines repeat at Debug: one Info per distinct wait state or fallback reason, instead of one per completion or per engaged↔fallback flip (dozens per second, respectively ~200/h, on a churn-heavy fleet).
-- Configuration assembly reuses unchanged document subtrees when fragments are added or removed, reducing allocations.
-- The rendered-output rejection log names whether the mismatching plan file and artifact were inherited from the previous render or produced by the rejected one (#213).
+- **BREAKING:** The `haptic` binary and HAPTIC agent replace `haptic-controller` and the HAProxy Data Plane API; update direct binary invocations and integrations.
+- **BREAKING:** Custom templates access previous servers through `currentConfig.ServerIndex`; validation fixtures use `currentServers` instead of `currentConfig`.
+- **BREAKING:** Implicit string conversion accepts scalar values only; use field access or `toJSON` for composite values.
+- Controller metrics now describe agent operations; update dashboards using the [metric migration table](./docs/site/docs/operations/monitoring.md#where-the-old-metrics-went).
+- Resource watches, render caches, document assembly, and deployment serialization retain less memory and avoid repeated work for unchanged inputs.
+- Configuration and schema changes prepare the replacement controller iteration before handing over leadership.
+- Resource publication and status updates avoid unchanged writes while retaining periodic drift repair.
+
+### Fixed
+
+- Buffered index updates coalesce by resource type instead of overflowing during startup or leadership transitions.
+- Incremental rendering handles large entrypoint sets, ranked-output reordering, nil appends, and unconsumed resource revisions without false conflicts or compiler failures.
+- Empty auxiliary files publish explicitly and can be restored by follower replicas; missing or contradictory content remains invalid.
+- Agent state reads wait for recovery, and runtime/file verification shares the apply lock to avoid false divergence during concurrent updates.
+- Runtime updates re-diff after paced reloads, and deferred backend deletion stays bound to the originating HAProxy worker.
+- Orphan cleanup retries concurrent updates while preserving ownership and deletion preconditions.
+- Admission warnings identify the admitted resource without including unrelated resources' warnings.
+- Lifecycle and diagnostic callbacks no longer deadlock their registries; diagnostic encoding failures return HTTP 500.
+- Playground presets contain complete resources, and custom request-ID examples validate and respect their annotation scope.
 
 ### Security
 
-- HTTP fetches reject unknown authentication types before sending a request or replacing cached content.
-- Archive extraction validates gzip trailers and bounds decompression of skipped entries and metadata.
-- Compressed auxiliary files reject expansion beyond 64 MiB per file.
-- Admission webhooks reject oversized or malformed request envelopes and return only the admission response.
-- Agent applies reject oversized manifest parts before changing files or rollback state.
-- Debug endpoints enforce loopback access for custom routes with method or host patterns.
-- HTTP source logs and errors redact URL user information, query strings, and fragments.
-- Watcher logs retain resource identities and versions without recording resource contents or index values.
-- SPOA plugin signature verification now requires the exact pinned release tag, not any tag from the upstream project.
+- Admission and agent endpoints reject malformed or oversized inputs before changing deployment state.
+- Native and vendor annotation libraries validate and escape routing, authentication, and TLS values to prevent configuration injection.
+- Compressed auxiliary files reject expansion beyond 64 MiB; archive extraction checks gzip trailers and bounds skipped content.
+- HTTP sources reject unknown authentication types and redact credentials, queries, and fragments from diagnostics.
+- Watcher logs exclude resource bodies and index values; custom debug routes retain loopback access restrictions.
+- SPOA plugin signatures must match the exact pinned upstream release tag.
+
+### Known issues
+
+- An intermittent incremental artifact/plan mismatch reported in [#213](https://gitlab.com/haproxy-haptic/haptic/-/issues/213) has no confirmed root cause. The issue was closed as not reproducible, not as fixed. The consistency gate still rejects mismatched output before publication; capture the correlation ID, source version, and complete mismatch diagnostic if it recurs.
 
 ### Helm chart
 
-#### Security
-
-- JWT issuer and audience checks remain enforced when the required value is `_`.
-- API-key consumer forwarding replaces client-supplied identity headers when the configured header name is `_`.
-- HMAC options without `hmac-secret` are rejected at admission and fail closed with 503 during reconciliation.
-- HMAC body verification requires `Content-Length` and the complete buffered body; unknown-length requests return 411 and bodies exceeding the buffer return 413.
-
 #### Added
 
-- `RequestRedirect` and `URLRewrite` filters on HTTPRoute `backendRefs` apply per backend; a rule-level filter of the same type takes precedence.
+- Pre-rollout validation checks the complete configuration before Helm applies release objects; CRD upgrades run automatically through a hook.
+- Native annotations provide shared rate limiting, Varnish caching, request-schema validation, and reusable WAF policies.
+- Vector derives request metrics and optional distributed traces from structured access logs.
+- Gateway API backend-level redirects and URL rewrites, frontend client-certificate authentication, backend TLS, and request mirroring.
 
 #### Changed
 
-- The API-key, JWT, HMAC, consumer-group, per-pod rate-limit, rate-limit-allowlist and backend-TLS deny blocks are emitted on the HTTP frontends only while a route uses the feature; the first route to adopt one reloads once, as does removing the last. A frontend with none in use evaluates about 70 fewer rules per request.
-- The HAProxy pod's agent, SPOA hub and Vector run as native sidecars (`initContainers` with `restartPolicy: Always`): they start before HAProxy and are stopped only after it exited, so the drain socket, SPOE verdicts and log shipping outlive HAProxy's drain and soft stop. The agent's `/readyz` startup probe is gone (kubelet would wait for it before starting HAProxy) and the controller's pod discovery reads sidecar container statuses. The chart now requires Kubernetes 1.33.
-- Gateway per-listener work (frontend client-certificate policies, HTTP binds, extra listener-port binds, Service ports, bind flags, and pod-port map lines) is computed once per Gateway and replayed for unrelated changes instead of being recomputed for every Gateway on every render.
-- The Gateway API redirect, URL-rewrite, mirror, route-id and misdirected-request blocks are emitted on the HTTP frontends only while a route or Gateway uses them; the first one reloads once, as does removing the last. An Ingress-only fleet evaluates about 50 fewer rules per request.
-- The SPOA hub's WAF and external-auth dispatch blocks are emitted on the HTTP frontends only while a route has a WAF or `auth-url` map entry (or WAF dispatch is `default-on`); the first such route reloads once, as does removing the last. A frontend using neither evaluates about 50 fewer rules per request.
-- Backends with a client certificate (`haproxy-haptic.org/backend-crt-secret`, `haproxy-ingress.github.io/secure-crt-secret`, `nginx.ingress.kubernetes.io/proxy-ssl-secret`, `haproxy.org/server-crt`, a BackendTLSPolicy client certificate) are dynamic: the server line's `crt` is resolved under `crt-base` the way HAProxy does, so adding or removing such a route and its pod churn are runtime operations on HAProxy 3.4 instead of reloads.
-- `haproxy-haptic.org/path-rewrite` and `haproxy.org/path-rewrite` with a bare value, or a prefix strip (`^<prefix>(.*)` to `<new prefix>\1`), is applied from per-route maps on the HTTP frontends with no regex, so such a route is added and removed at runtime; any other pattern keeps its backend `replace-path` rule.
-- Source-IP allow and deny lists (`haproxy-haptic.org/allowlist-source-range` and `denylist-source-range`, and the nginx-ingress, haproxy-ingress and haproxytech equivalents) are one rule block per HTTP frontend fed by shared maps, so such a route is added and removed at runtime; a list with an IPv6 entry keeps its per-route ACL and reloads.
-- CORS (`haproxy-haptic.org/cors-*`, `nginx.ingress.kubernetes.io/enable-cors`, `haproxy-ingress.github.io/cors-*`, `haproxy.org/cors-*`) is one rule block per HTTP frontend fed by shared per-route maps, so such a route is added and removed at runtime; the origin allow-list, the headers and the preflight answer are unchanged.
-- The HAPTIC-native request-gating annotations (`allowed-methods`, `require-content-type`, `require-headers`, `fixed-response`, `mock-response`) are one rule block per HTTP frontend fed by per-route maps, so such a route is added and removed at runtime; a new required header name or a new fixed/mock status and content-type pair reloads once.
-- `forwardfor` (HAPTIC-native and haproxy-ingress), `src-ip-header` (HAPTIC-native and haproxytech) and the HAPTIC-native `request-id` are one rule block per HTTP frontend fed by per-route maps, so such a route is added and removed at runtime; a new source-IP header or request-id header name reloads once.
-- The client-certificate forwarding headers (`haproxy-haptic.org/auth-tls-cert-header`, `nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream`) are one rule block per HTTP frontend fed by a per-route map, and request captures (`haproxy-haptic.org/request-capture`, `haproxy.org/request-capture`) are emitted once per header and length pair, so such a route is added and removed at runtime; a new capture pair reloads once.
-- Upstream `Set-Cookie` domain/path and `Location`/`Refresh` rewriting (`haproxy-haptic.org/response-cookie-*` and `response-location-rewrite-*`, `nginx.ingress.kubernetes.io/proxy-cookie-*` and `proxy-redirect-*`) is one rule per distinct from/to pair on the HTTP frontends, gated by per-route maps, so such a route is added and removed at runtime and the nginx-ingress backend stays plain; a new pair reloads once, and a `|` in a pair is refused.
-- The vendor per-source rate limits (`nginx.ingress.kubernetes.io/limit-rps`, `-rpm`, `-connections`, `haproxy-ingress.github.io/limit-rps`, `-rpm`, `haproxy.org/rate-limit-requests` with its period, size, status and whitelist) are one rule block per HTTP frontend reading the route's counter, window, threshold and status from a map, and the counters live in shared tables keyed per route and per client, so such a route is added, changed or removed at runtime and its backend stays dynamic; a new window, a larger table or a new status reloads once. The whitelists are two map lookups over the disjoint cover of every list, an ignored cap is a `RateLimitCapIgnored` Event instead of a config comment, and the limiter runs on the client leg, so a cache hit consumes the same budget as a miss.
-- `haproxy-haptic.org/cache-exclude-paths` is one `map_beg` lookup per HTTP frontend over `<route>|<path>` keys instead of two rules per route, so adding, changing or removing an exclusion is a map operation once one route uses exclusions (the first adds the rules and reloads once, as removing the last does), and each request evaluates two exclusion rules however many routes exclude paths. A `|` in an excluded path is refused.
-- `nginx.ingress.kubernetes.io/limit-rate` and `-after` throttle from one rule block per HTTP frontend that reads the rate from a per-route map, instead of a bandwidth filter in each route's backend, so such a route is added, changed and removed at runtime and its backend stays dynamic. One filter per distinct `limit-rate-after` (a filter's `min-size` can't come from a map), so a new size reloads once; both values are stored as bytes, so `1m` and `1048576` share a filter. A zero rate is now refused instead of installing a filter that throttles to nothing.
-- Canary routing (`haproxy-haptic.org/canary-*`, `nginx.ingress.kubernetes.io/canary-*`) and request mirroring (`mirror-target` in both) run from host-keyed maps behind one rule block per HTTP frontend, instead of per-Ingress `use_backend` and `set-var` lines, so adding a canary, stepping its weight or adding a mirror target no longer reloads HAProxy. A new canary header or cookie name reloads once, and a `canary-by-header-pattern` still emits its own line. When two canaries on one host set the same kind of rule, the first Ingress by namespace/name wins. A non-integer nginx `canary-weight` is refused at admission and skipped with a Warning Event on reconcile, instead of failing the whole render. A canary header or cookie name may contain only letters, digits, `_`, `.` and `-`.
-- `satisfy: any` (`haproxy-haptic.org/satisfy`, `nginx.ingress.kubernetes.io/satisfy`) combines the address allowlist and basic auth in one rule per distinct userlist-and-realm pair on the HTTP frontends, gated by per-route maps, so such a route is added and removed at runtime instead of carrying a backend rule; a new pair reloads once. An allowlist with an IPv6 entry, or a realm that needs escaping, keeps the backend gate.
-- The nginx-ingress, haproxy-ingress and haproxytech basic-auth annotations challenge from a per-route frontend map like the HAPTIC-native one, so a route on an existing credentials Secret is added and removed at runtime; a realm that needs escaping keeps its backend rule.
-- The basic-auth challenge (`haproxy-haptic.org/auth-type: basic`) is one rule block per HTTP frontend fed by a per-route map, so a route on an existing credentials Secret is added and removed at runtime; the first route with a new Secret or realm reloads once, as does removing the last. Routes with `satisfy: any` keep their backend gate. The realm is trimmed and may not contain `\` or `$`.
-- Backend directives that HAProxy accepts in a `defaults` section (timeouts, `fullconn`, `retries`/`retry-on`, `option httpchk`/`http-check`, cookie affinity, compression) are carried by the backend's content-addressed profile instead of its section, and comment lines never count as body, so routes sharing those settings share a profile and their backends stay dynamic; the first route with a new combination still reloads once to add the profile.
+- **BREAKING:** Kubernetes 1.33 or newer is required; agent, SPOA hub, and Vector use native sidecars that remain available through HAProxy shutdown.
+- **BREAKING:** Controller workload values move under `controller.*`, `haproxy.dataplane.*` moves to `haproxy.agent.*`, and default certificate settings move to `defaultSSLCertificate`.
+- **BREAKING:** Pod scheduling and metadata settings move under `controller.podSpec.*` and `haproxy.podSpec.*`; the default IngressClass and GatewayClass names change from `haproxy` to `haptic`.
+- **BREAKING:** Vendor annotation libraries are disabled by default; enable `haproxytech`, `haproxyIngress`, or `nginxIngress` explicitly when your routes use them.
+- **BREAKING:** The chart emits a configuration plus separate template-library resources; update manifest processors that expect a single configuration object.
+- **BREAKING:** Access logs use JSON; adapt custom parsers or override the log-format snippets.
+- Route headers, authentication, rate limits, CORS, rewrites, canaries, mirroring, and compression use shared frontend rules and maps; changes that reuse existing rules and backend profiles avoid reloads on HAProxy 3.4.
+- Backend servers use pod names instead of reserved slots, and hash-based balancing defaults to consistent hashing.
+- HAProxy pods drain new connections before soft stop; helper sidecars remain available until HAProxy exits.
+- Controller memory requests and limits default to 1 GiB, and pre-rollout validation has a 1 GiB limit to accommodate configuration-load validation.
+- Ingress uses the default TLS certificate for HTTPS, response compression is enabled by default, and request replay is limited to idempotent methods unless explicitly configured otherwise.
+- HAProxy's default HTTP/HTTPS pod ports are 80/443, and the backend connection timeout defaults to 100 ms; retain previous settings explicitly when required.
+
+#### Removed
+
+- Data Plane API-only values, server-slot settings, and `spoaHub.plugins.otel`; use the agent and Vector configuration described in the upgrade guide.
 
 #### Fixed
 
-- TCP access-log records no longer produce HTTP request metrics with status zero; feature counters also recognize compact JSON logs.
-- A route referencing a Service port name the Service does not expose is rejected at admission and, on reconcile, degrades to an empty backend (503) with a `ServicePortNotFound` Warning Event naming the available ports — instead of aborting the whole render, which blocked every route behind one typo.
-- The vector and SPOA-hub bootstrap-copy init containers declare resources, so a ResourceQuota'd namespace no longer rejects the HAProxy pod.
-- Gateway API retry policies retain connection-failure retries and honor an explicit zero retry budget.
-- Ingress templates compile when Gateway API and the SPOA hub are disabled.
-- Helm rejects disabling the shared Ingress annotation library while an annotation library still needs it.
-- The controller waits for its external validator to start before reconciling; generated self-signed certificates have a non-empty subject.
-- Byte sizes with a `k`/`m`/`g` suffix no longer overflow: a value such as `17179869185g` wrapped to exactly 1 GiB and shipped that as the limit. `rate-limit-size` (HAPTIC and haproxytech) and the bandwidth limits now refuse it. `proxy-body-size` (nginx-ingress, haproxy-ingress) and `max-request-body-size` also no longer drop the limit silently on a malformed value like `10x`, which used to convert to 0: such a value is refused at admission and reported as a Warning Event on reconcile, where the body stays unlimited as before. `0` still means unlimited.
-- The frontend filter chain renders through one macro instead of expanding its glob in each HTTP frontend. A `render_glob` expands into the function table of the compiled function holding it, and that table is capped at 256 entries, so expanding the chain in the main template left almost no room for a library to add snippets.
-- Response compression no longer makes every Ingress backend structural: the compression filter is declared on the frontends and a route's algorithm and types are inherited from its profile, so adding or removing a route with the default compression is reload-free on HAProxy 3.4 (#230). A route that opts out keeps its request and response untouched.
-- API-key, JWT, HMAC, consumer-group, per-pod rate-limit, bandwidth-limit and consumer-keyed shared rate-limit routes no longer carry rules in their backend: each feature is one rule block per HTTP frontend that reads the route's settings from a map, so such a route is added, changed or removed without a reload and its backend stays dynamic. Consequences: all of them now run on the client leg of every route (a cached route no longer needs `api-key-secret` for consumer groups or consumer-keyed limits, JWT identity is available there too), the per-pod limiter and shared bandwidth scopes meter into shared per-route-per-client tables so a shared scope coexists with a per-source cap, the HMAC key travels in a map instead of the config, missing-Secret and ignored-cap conditions are Kubernetes Events instead of config comments, and a `rate-limit-allowlist` is two map lookups over the disjoint cover of every list (`cidr_partition`), so it never reloads either. The `rate_limit_consumer_unavailable` deny reason is removed from `vector.logMetrics.deniedBy.values`: a cached route with a consumer-keyed shared limit and no API key is no longer refused.
-- `api-key-header`, `api-key-query` and `api-key-consumer-header` without `api-key-secret` fail closed (`503`) and are refused at admission; they were silently inert.
-- The Secret references in `api-key-secret`, `jwt-secret`, `hmac-secret` and `consumer-groups-secret` are validated as Secret names before they reach a map line.
-- JWT public-key files are named `haptic-jwt-<namespace>_<name>.pem`; the `-` separator let two Secrets share one file.
-- `rate-limit-status-code` accepts only a status HAProxy can deny with; an unsupported code used to break the whole config at load.
-- `rate-limit-size` (`haproxy-haptic.org` and `haproxy.org`) rejects a zero magnitude such as `0` or `0k`; it passed the format check and reached the stick-table as `size 0`, which HAProxy refuses only at config parse, far from the annotation that caused it.
-- The bandwidth-limit filters and table are emitted only while a route carries a bandwidth annotation.
-- A Gateway HTTPS listener whose certificateRef is not permitted by a ReferenceGrant no longer binds or emits a crt-list; the data plane now follows the listener's own ResolvedRefs verdict instead of a cluster-wide certificate index.
-- HAProxy pods drain before their soft stop: the agent's preStop hook (`haproxy.drain`) holds termination until no new connection has reached the pod for `quietPeriodSeconds` (bounded by `maxWaitSeconds`), so a pod deletion or rolling update no longer refuses the connections kube-proxy still routes to it; HAProxy's own SIGUSR1 soft stop then finishes the established ones.
-- Gateway names longer than 63 bytes no longer stall status publication for every Gateway: the per-Gateway Service label and the derived certificate file names are hash-bounded to their limits.
-- BackendTLSPolicy status lists the Gateways of consuming GRPCRoutes and TLSRoutes, not only HTTPRoutes, and matches consumers by the backendRef namespace.
-- BackendTLSPolicy applies to GRPCRoute backends targeted by port name and re-encrypts Terminate-listener TLSRoute backends; TLS h2 backends negotiate `alpn h2`.
-- The fail-closed 503 for a BackendTLSPolicy without a resolvable CA is emitted after the backend's other request rules, removing HAProxy's dead-rule warning.
-- TLSRoute rules attached to both a Terminate and a Passthrough listener get one backend per mode, so both legs are served and only the Terminate leg re-encrypts; a rule attached to several listeners on different ports is dispatched on each of them.
-- Gateway listeners retain same-namespace TLS certificates when the ReferenceGrant API is absent; cross-namespace certificates still require a grant.
-- Gateway frontend mTLS resolves CAs only from their referenced namespace with a matching cross-namespace grant; local validation remains active when the ReferenceGrant API is absent.
-- Gateway frontend mTLS status matches Secret CA data handling and reports invalid references even when another CA remains usable.
-- Gateway frontend mTLS honors per-port overrides even when their CA is unresolved or their TLS configuration is intentionally empty.
-- Routes without plaintext listeners no longer generate an unbound HTTP TCP frontend; internal HTTP routing and validation remain enabled.
-- Varnish uses a writable memory-backed workdir for shared logs, statistics, and compiled VCL without adding container capabilities.
+- Invalid Service port references degrade only the affected backend and produce a warning instead of aborting the complete render.
+- Gateway TLS and frontend mTLS enforce certificate namespaces and ReferenceGrants, and status reflects unusable references and per-port overrides.
+- TLSRoutes attached to both terminating and passthrough listeners use separate backends for each mode.
+- Gateway retry policies preserve connection-failure retries and honor a zero retry budget; routes without plaintext listeners avoid unbound frontends.
+- HTTPRoute and GRPCRoute session persistence accepts both the earlier `sessionName` and newer `cookie.name` fields.
+- Ingress renders without Gateway API or SPOA; Helm rejects disabling annotation dependencies that enabled libraries still require.
+- The shared rate limiter respects `rate-limit-allowlist`; unused allowlists and malformed or overflowing size values are rejected instead of silently ignored.
+- Authentication checks preserve literal underscore values, and client-supplied identity headers cannot bypass API-key consumer forwarding.
+- HMAC body verification requires a complete body with `Content-Length`; unknown-length and oversized bodies return 411 and 413.
+- Startup waits for external validators, generated certificates have a subject, and bootstrap-copy containers declare resources.
+- Varnish uses a writable memory-backed work directory; TCP access logs no longer emit HTTP status-zero metrics.
 
 ## [0.2.0-alpha.3] - 2026-09-11
 

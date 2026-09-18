@@ -100,6 +100,8 @@ Ingress and Gateway authors then select this release with `ingressClassName: hap
 
 ## Upgrading
 
+For an upgrade from 0.1.0 or a 0.2.0 alpha, read the [0.2 upgrade guide](upgrading-to-0.2.md) before applying your values.
+
 If you installed with a values file, re-pass it so your custom values survive the upgrade:
 
 ```bash

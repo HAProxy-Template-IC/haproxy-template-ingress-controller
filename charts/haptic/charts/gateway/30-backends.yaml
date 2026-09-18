@@ -314,7 +314,7 @@ templateSnippets:
           if !refsThis {
             continue
           }
-          var cookieName = tostring(dig(sp, "sessionName") | fallback(""))
+          var cookieName = tostring(dig(sp, "cookie", "name") | fallback(dig(sp, "sessionName")) | fallback(""))
           if cookieName == "" { cookieName = "SESSION" }
           var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback(""))
           var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback(""))
@@ -570,7 +570,7 @@ templateSnippets:
           if !refsThis {
             continue
           }
-          var cookieName = tostring(dig(sp, "sessionName") | fallback(""))
+          var cookieName = tostring(dig(sp, "cookie", "name") | fallback(dig(sp, "sessionName")) | fallback(""))
           if cookieName == "" { cookieName = "SESSION" }
           var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback(""))
           var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback(""))
