@@ -176,7 +176,6 @@ The main HAProxy configuration template. **Required.**
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
 | `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
-| `createOnlyFields` | `[]string` | No | — |
 
 ```yaml
 haproxyConfig:
@@ -551,6 +550,7 @@ Templates that emit Kubernetes resources for the controller to apply via Server-
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
 | `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
+| `createOnlyFields` | `[]string` | No | Dotted field paths whose initial values come from the template; subsequent applies preserve the live values |
 
 The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every full-ownership applied resource, so cascade-delete (for example `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the Server-Side Apply (SSA) payload omits the `managed-by` label **and** the `OwnerReference`, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly owned objects on which HAPTIC only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
 

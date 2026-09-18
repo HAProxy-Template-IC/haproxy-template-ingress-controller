@@ -117,14 +117,10 @@ annotations:
       description: "BREAKING: vendor annotation libraries require explicit enablement and access logs use JSON"
     - kind: changed
       description: "BREAKING: the haptic binary and agent replace haptic-controller and the Data Plane API; configuration libraries are separate resources"
-    - kind: fixed
-      description: Empty auxiliary files, concurrent agent verification and paced reloads preserve deployment consistency
-    - kind: fixed
-      description: Gateway certificate references, frontend mTLS and mixed TLSRoute listener modes enforce their declared security policy
-    - kind: fixed
-      description: HTTPRoute and GRPCRoute session persistence accepts both sessionName and cookie.name fields
+    - kind: added
+      description: Gateway API adds TLSRoute, TCPRoute, ListenerSet, backend TLS, frontend client authentication and request mirroring
     - kind: security
-      description: Admission, agent, archive and HTTP-source boundaries reject malformed input and protect diagnostic data
+      description: Route and annotation validation prevents configuration injection, and management ports have restricted network access
 
   # Links
   artifacthub.io/links: |

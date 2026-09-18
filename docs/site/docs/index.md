@@ -57,20 +57,42 @@ Unlike traditional ingress controllers with hardcoded configuration logic, HAPTI
 
 ## Key features
 
-### Template-driven flexibility
+### Routing and application policies
 
-Traditional ingress controllers embed configuration logic in code. HAPTIC inverts this:
+The bundled libraries provide these capabilities without custom templates:
 
-- **Full HAProxy access** - If HAProxy supports it, your templates can emit it — every section, every directive in the [configuration manual](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)
-- **Add features without code changes** - New directives are template updates, not controller releases
-- **Rich template context** - Access any Kubernetes resource, fetch external data via HTTP, and use controller state in your templates
-- **Everything is templatable** - Generate not just `haproxy.cfg` but also map files, SSL certificates, CRT-lists, and custom auxiliary files
+| Capability | What you configure |
+| --- | --- |
+| [Ingress and Gateway API](libraries/gateway.md) | HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, ListenerSet, weighted routing, mirroring, backend TLS, and frontend client-certificate authentication. |
+| [Native annotations](libraries/haptic-annotations.md) | API-key, JSON Web Token (JWT), and HMAC authentication, consumer groups, redirects, CORS, compression, and bandwidth limits. |
+| [Shared rate limits](libraries/haptic-annotations.md#rate-and-bandwidth-limiting) and [response caching](libraries/haptic-annotations.md#shared-response-cache) | Fleet-wide request budgets with Valkey and a shared Varnish cache, both opt-in. |
+| [Request validation](libraries/haptic-annotations.md#api-gateway) and [WAF policies](libraries/haptic-annotations.md#reusable-waf-policies) | JSON Schema request validation and reusable Coraza Web Application Firewall (WAF) policies, including namespace-scoped policies. |
+| [Governance](operations/governance.md) | Administrator-defined defaults and constraints on any watched resource, with audit or admission rejection. |
+| [TLS configuration](ssl-certificates.md) | Certificate rotation, dual RSA/ECDSA certificates, shared session-ticket keys, and cipher/protocol policy. |
+| [Migration libraries](migrating.md) | Opt-in compatibility with ingress-nginx, haproxy-ingress, and HAProxy Technologies annotations. |
 
-### Validation and operations
+### Templates and resource APIs
 
-- **High availability** - Leader election with automatic failover
-- **Layered validation** - Admission webhook, template validation, and tests you can run in CI before anything reaches a cluster
-- **Observability** - Per-route request metrics (rate, errors, latency by phase) derived from the access log, JSON structured logging, and debug endpoints
+[Scriggo templates](templating.md) can read typed fields and use collection
+pipelines, fetch external data, and generate HAProxy configuration, certificates,
+and auxiliary files. The controller discovers [resource versions and schemas](watching-resources.md)
+at runtime and adapts when watched CRDs change.
+
+Share snippets through [`HAProxyTemplateLibrary`](crd-reference.md#haproxytemplatelibrary)
+resources. Use [`k8sResources`](crd-reference.md#k8sresources) to manage related
+Kubernetes objects, including fields whose initial value belongs to the template
+but whose running value follows an operator or autoscaling controller.
+
+Try templates and their validation fixtures in the browser [playground](https://haproxy-haptic.org/playground/)
+or edit the live examples throughout these docs.
+
+### Deployment and operations
+
+- **Runtime updates:** The [HAPTIC agent](supported-configuration.md) applies eligible map, certificate, and server changes without reloading. HAProxy 3.4 also supports eligible backend additions and removals; new listeners, backend profiles, and inline rules still require a reload.
+- **Incremental rendering:** Unchanged template results are reused, and [follower replicas](operations/high-availability.md) keep their render state warm. See [performance and sizing](operations/performance.md) for resource requirements.
+- **Validation:** [`haptic preflight`](operations/validate-before-deploy.md) and Helm hooks check a candidate before rollout. Configuration loading enforces embedded tests; admission validates proposed routing changes, including [pluggable output validators](operations/pluggable-validators.md).
+- **Deployment inspection:** [`haptic diff`](development/design/deployment.md) predicts reloads, and [`haptic agent state`](development/agent.md) reports a pod's applied configuration and recovery state.
+- **Observability:** [JSON access logs and per-route metrics](operations/monitoring.md) identify the route, backend, and policy outcomes. Optional [distributed tracing](reference.md#logging-and-templating) exports request and upstream spans through Vector.
 
 !!! warning "Project maturity"
     HAPTIC uses pre-1.0 versioning, and its custom resources use API version `v1alpha1`. Minor releases can change APIs and configuration. Pin an exact chart version (`--version 0.2.0-alpha.3`) and read the [changelog](changelog.md) before you upgrade.
@@ -114,6 +136,9 @@ Key components:
 - **Deployer** - Decides per pod whether a change can run on the live worker or needs a reload, and sends it to that pod's agent
 
 ## Quick start
+
+Use Kubernetes 1.33 or newer. For existing installations, follow the
+[0.2 upgrade guide](upgrading-to-0.2.md) before reusing your values.
 
 ```bash
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.3 --namespace haptic --create-namespace
