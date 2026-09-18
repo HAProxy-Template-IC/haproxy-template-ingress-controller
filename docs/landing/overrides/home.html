@@ -274,6 +274,38 @@
        this backend directive require a reload.</p>
   </section>
 
+  <section class="extend" aria-labelledby="agent-skill-heading">
+    <h2 class="section-head" id="agent-skill-heading">Customize with <span class="flag">your AI agent</span></h2>
+    <p class="extend-lead">Give your agent HAPTIC's Scriggo workflow, resource-access
+       rules, and tested examples. Install the skill in your configuration project,
+       then ask it to add a custom annotation or watch your own resource type.</p>
+    <div class="terminal terminal-shell">
+      <div class="term-bar">
+        <span class="dots" aria-hidden="true">
+          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+        </span>
+        <span class="term-title">bash — install skill</span>
+        <button class="term-copy" type="button" aria-label="Copy skill install command to clipboard"
+          onclick="copyInstall(this)">
+          <svg class="copy-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+            <path d="M5 15V5a2 2 0 0 1 2-2h10"></path>
+          </svg>
+          <span class="lbl lbl-copy">Copy</span>
+          <span class="lbl lbl-done">Copied!</span>
+        </button>
+        <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
+      </div>
+      <div class="term-body">
+        <pre class="code shell" tabindex="0"><code><span class="t-prompt">$</span> <span class="t-kw">npx</span> skills add https://haproxy-haptic.org --skill haptic</code></pre>
+      </div>
+    </div>
+    <p class="extend-foot">Use with Codex, Claude Code, GitHub Copilot in VS Code,
+       or another Agent Skills client. Requires Node.js.
+       <a href="./docs/dev/agent-skill/">Installation guide, ZIP download, and example prompts</a>.</p>
+  </section>
+
   <section class="quickstart">
     <h2 class="section-head">Install with <span class="flag">Helm</span></h2>
     <p class="extend-lead">Requires Kubernetes 1.33 or newer. The chart installs

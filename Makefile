@@ -774,6 +774,20 @@ validate-helm-libraries: build ## Render the chart and run `controller validate`
 	@# per-version matrix renders with the matching haproxyVersion
 	@# value.
 	@HAPROXY_VERSION=$(HAPROXY_VERSION) bash scripts/test-templates.sh
+	@$(MAKE) test-agent-skill
+
+.PHONY: test-agent-skill test-agent-skill-package
+test-agent-skill: build ## Validate the portable agent skill's examples with native HAProxy
+	bin/haptic validate --file skills/haptic/assets/maintenance-config.yaml --schema-dir skills/haptic/assets/schemas
+	@set -eu; candidate=$$(mktemp); trap 'rm -f "$$candidate"' EXIT; \
+		helm template haptic charts/haptic --namespace haptic \
+			--api-versions gateway.networking.k8s.io/v1/GatewayClass \
+			--set haproxyVersion=$(HAPROXY_VERSION) \
+			--values skills/haptic/assets/header-values.yaml > "$$candidate"; \
+		bin/haptic validate --file "$$candidate" --schema-dir tests/schemas
+
+test-agent-skill-package: ## Check skill downloads (requires mkdocs on PATH)
+	python3 -m unittest discover -s docs/site/tests -v
 
 ## Build targets
 

@@ -22,6 +22,7 @@ installations and custom templates.
 - Pluggable output validators and enforcement of embedded validation tests whenever configuration loads or changes.
 - `haptic preflight` validates chart values before deployment, `haptic diff` predicts reloads, and `haptic agent state` inspects a pod's deployed configuration.
 - A browser playground and editable documentation examples for trying templates without a cluster.
+- A portable agent skill for Scriggo customization, resource watches, and validation, with installation instructions and versioned downloads.
 
 ### Changed
 

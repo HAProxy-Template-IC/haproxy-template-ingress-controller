@@ -52,3 +52,9 @@ nav:
 
 plugins:
   - search: false
+
+hooks:
+  - ../site/hooks/agent_skills.py
+
+extra:
+  agent_skill_discovery: true
