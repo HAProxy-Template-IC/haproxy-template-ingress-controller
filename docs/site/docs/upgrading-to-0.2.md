@@ -131,10 +131,10 @@ Review these behavior changes before upgrading:
 - Ingress serves HTTPS using the default certificate. Set
   `controller.config.templatingSettings.extraContext.ingressDefaultHTTPS: false`
   if you require plaintext-only Ingress without an explicit TLS declaration.
-- Responses use compression by default. Disable the
-  `haproxy-haptic.org/compress-enable` annotation on routes whose responses
-  combine secrets with attacker-controlled input; see
-  [native annotations](annotations.md).
+- HAProxy response compression is opt-in. If you used an alpha version's automatic
+  compression, set `haproxy-haptic.org/compress-enable: "true"` on appropriate
+  routes. Avoid compressing responses that combine secrets with attacker-controlled
+  input; see [compression settings](libraries/haptic-annotations.md#compression).
 - Hash-based balancing uses consistent hashing. Existing key distribution can
   change during the upgrade.
 - Request retries that replay a request apply to idempotent methods by default.

@@ -1088,4 +1088,26 @@ if [[ $FULL_RC -eq 0 && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]] && ! single_test_request
         echo -e "${GREEN}Degraded profile ${REL}: zero failures, stripped set matches allowlist${NC}" >&2
     done
 fi
+# Exercise the whole load gate with administrator-enabled fleet compression.
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
+    COMPRESSION_CONFIG=$(mktemp /tmp/haptic-compression-config-XXXXXX.yaml)
+    echo -e "${YELLOW}Rendering fleet compression profile...${NC}" >&2
+    if ! helm template "$CHART_DIR" \
+        --namespace default \
+        $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.haproxyIngress.enabled=true \
+        --set controller.templateLibraries.nginxIngress.enabled=true \
+        --set-string controller.config.templatingSettings.extraContext.governance.rules.haptic-compress-enable.default=true \
+        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
+        > "$COMPRESSION_CONFIG"; then
+        rm -f "$COMPRESSION_CONFIG"
+        echo -e "${RED}Failed to render fleet compression profile${NC}" >&2
+        exit 1
+    fi
+    echo -e "${YELLOW}Fleet compression profile: full validation pass...${NC}" >&2
+    if ! "$CONTROLLER_BIN" validate --file "$COMPRESSION_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@"; then
+        FULL_RC=1
+    fi
+    rm -f "$COMPRESSION_CONFIG"
+fi
 exit $FULL_RC

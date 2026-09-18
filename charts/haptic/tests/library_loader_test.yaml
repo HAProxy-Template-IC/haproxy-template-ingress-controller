@@ -536,3 +536,23 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: controller.config.migrationCoverage was removed because migration coverage is no longer a CRD field. Remove the value.
+
+  - it: leaves response compression off unless explicitly enabled
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-haptic-annotations
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.governance.rules.haptic-compress-enable.default
+          value: "false"
+
+  - it: preserves an administrator compression default override
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      controller.config.templatingSettings.extraContext.governance.rules.haptic-compress-enable.default: "true"
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.governance.rules.haptic-compress-enable.default
+          value: "true"

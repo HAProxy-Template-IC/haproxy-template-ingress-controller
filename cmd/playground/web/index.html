@@ -640,7 +640,7 @@
 
   <footer class="privacy">
     <span class="lock" aria-hidden="true"></span>
-    <span><strong>Runs entirely in your browser.</strong> Nothing is uploaded — no server ever sees your input, so you can paste real secrets and any Kubernetes resources safely.</span>
+    <span><strong>Rendering runs in your browser.</strong> Your templates and resources are not uploaded. Shared links include your inputs; downloaded files can contain rendered secrets.</span>
   </footer>
 
   <div id="tryout-modal" class="modal" hidden>
@@ -697,7 +697,7 @@
         <dl class="modal-ref">
           <dt>Ingress</dt><dd>plain, or with your controller's annotations — <em>Ingress · NGINX-Ingress</em>, <em>· HAProxy-Ingress</em>, or <em>· HAProxyTech</em></dd>
           <dt>Gateway API</dt><dd>GatewayClass, Gateway, HTTPRoute, …</dd>
-          <dt>Custom CRD</dt><dd>any resource, via an untyped example</dd>
+          <dt>Custom CRD</dt><dd>your own resource type and templates</dd>
         </dl>
         <p>The <strong>resources</strong> tab then shows what each object bucketed into (and why anything
            was dropped); the <strong>migration</strong> tab shows how each annotation maps to HAProxy.</p>
@@ -710,13 +710,12 @@
       <pre>kubectl get gatewayclass,gateway,httproute,service,endpointslices,secrets -A -o yaml</pre>
       <p class="help-note">Match the kinds to your <code>watchedResources</code> — add
          <code>grpcroutes</code>, <code>tcproutes</code>, <code>tlsroutes</code>, or your own CRD if you
-         use them. Everything stays in your browser; nothing is uploaded, so real secrets and cluster
-         data are safe to paste.</p>
+         use them. Rendering does not upload your input. Shared links include the resources
+         you paste, and downloaded files can contain rendered secrets. Review both before sharing.</p>
 
-      <h4 class="help-export-h">Run it yourself (nothing leaves your browser)</h4>
-      <p>Once this page has loaded, the playground makes no further network requests — it renders
-         in WebAssembly on your machine. Confirm it: open your browser's developer tools, watch the
-         <strong>Network</strong> tab, and edit a config — nothing is sent.</p>
+      <h4 class="help-export-h">Run the playground locally</h4>
+      <p>The playground renders with WebAssembly on your machine. It downloads static assets,
+         schemas, and examples from this site; rendering does not send your inputs to a server.</p>
       <p>To host the whole thing yourself, build the self-contained static bundle from source
          (needs Go, Helm, and yq) and serve the folder:</p>
       <pre>git clone https://gitlab.com/haproxy-haptic/haptic

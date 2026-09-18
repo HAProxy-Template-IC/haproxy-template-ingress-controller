@@ -1,66 +1,14 @@
-# HAPTIC-native annotation library — response compression.
-#
-# Enables HAProxy-side response compression per Ingress. Only the community-build
-# algorithms are allowed (gzip, deflate, raw-deflate — all zlib); brotli/zstd
-# need a non-community HAProxy build and fail the render loudly rather than
-# silently doing nothing.
-#
-# On by default: the governance rule `haptic-compress-enable` in _index.yaml
-# injects compress-enable when an Ingress does not set it.
-#
-# Layout (#230): the `filter compression` line lives once per HTTP frontend
-# (frontend-filters-110). The per-route `compression algo` / `compression type`
-# settings are backend directives that base sorts into the backend's shared
-# profile (`defaults haptic-be-<hash>`), which HAProxy consults ahead of the
-# frontend's own settings. So a compress-enabled backend carries no body line
-# for compression and stays dynamic: on HAProxy 3.4 a route is added or removed
-# with `add backend` / `del backend`, no reload. A route that opts out has no
-# compression settings at all, so the filter leaves its request and response
-# untouched and its origin may still compress.
+# Keep the filter on the frontend so compressed backends can be created at runtime (#230).
 templateSnippets:
 
   frontend-filters-110-haptic-compression-filter:
     template: |
-      {#
-        One compression filter per HTTP frontend. It compresses only through a
-        backend whose profile carries compression settings (backend-directives-872).
-
-        Band 110: after the SPOE filters (frontend-filters-100-spoa-hub), so a WAF
-        inspects plain bodies, and before the client-leg bandwidth limits
-        (frontend-filters-864), so a download cap meters the compressed bytes that
-        go on the wire. HAProxy applies filters in declaration order.
-
-        Must be `filter compression`, not `comp-req`/`comp-res`: client-native's
-        config-parser only accepts `compression`, so the alternatives would fail
-        HAPTIC's own parse before HAProxy ever saw them.
-      #}
+      {# Run after SPOE inspection and before bandwidth limits so limits count compressed bytes. #}
       {{ "\n" }}filter compression
 
   backend-directives-872-haptic-compression:
     template: |
-      {#
-        HAPTIC response compression.
-
-        Annotations:
-          - haproxy-haptic.org/compress-enable: "true" (enables compression)
-          - haproxy-haptic.org/compress-algorithm: gzip (default) | deflate | raw-deflate
-            (brotli/zstd are unavailable in the community HAProxy build → fail-loud)
-          - haproxy-haptic.org/compress-types: comma-separated MIME types to compress
-            (default: a standard text/JSON/XML/SVG set)
-
-        Generated HAProxy config (sorted into the backend's profile by base):
-          compression algo <algorithm>
-          compression type <t1> <t2> ...
-
-        The `filter compression` line these need is on the frontend
-        (frontend-filters-110). A backend that also declares another filter gets
-        its own explicit `filter compression` from base, ahead of that filter.
-
-        No `compression offload`: it strips Accept-Encoding from the request so
-        the backend cannot compress, which is the opposite of what this does.
-        HAProxy skips a response that is already encoded, so leaving offload off
-        is what makes "compress only uncompressed responses" true.
-      #}
+      {# Omit compression offload so upstream applications retain Accept-Encoding. #}
       {%- if ingress != nil %}
         {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
         {%- if ingress.Metadata.Annotations["haproxy-haptic.org/compress-enable"] == "true" %}

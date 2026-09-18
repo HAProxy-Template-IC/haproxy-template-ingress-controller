@@ -114,6 +114,8 @@ nav:
     - Monitoring: operations/monitoring.md
     - Security: operations/security.md
     - Governance guardrails: operations/governance.md
+    - Response caching: operations/response-cache.md
+    - WAF policies: operations/waf-policies.md
     - Networking: operations/networking.md
     - Performance: operations/performance.md
     - Validate before deploying: operations/validate-before-deploy.md

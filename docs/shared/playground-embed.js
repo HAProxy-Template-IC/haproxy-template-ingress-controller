@@ -319,8 +319,7 @@
       // instead of leaving it blank.
       var ph = document.createElement('div');
       ph.className = 'pg-embed-placeholder';
-      ph.textContent = 'press ▶ Run live — renders the bundled '
-        + el.dataset.scenario.replace(/-/g, ' ') + ' example in your browser, nothing uploaded';
+      ph.textContent = 'Press ▶ Run live to explore this example.';
       el.appendChild(ph);
       if (el.dataset.facade) autoFacade(el, ph);
     }

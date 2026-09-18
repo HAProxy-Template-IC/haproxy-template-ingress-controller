@@ -1,124 +1,71 @@
-# `haptic-annotations` library
+# Native Ingress annotations
 
-The `haptic-annotations` library provides HAPTIC's native annotations under `haproxy-haptic.org/*`. It's enabled by default. For existing vendor annotations, enable the matching compatibility library: [`haproxytech`](./haproxytech.md), [`haproxy-ingress`](./haproxy-ingress.md), or [`nginx-ingress`](./nginx-ingress.md).
+<a id="haptic-annotations-library"></a>
 
-Use this library for new HAPTIC configuration. Keep a vendor library enabled
-while you migrate existing annotations; different prefixes can coexist when
-they configure different features.
-
-The reference below covers routing, authentication, TLS, rate limits, caching,
-request validation, and WAF policies. Each annotation lists its support status
-and any behavior you need to account for.
-
-## Overview
-
-Edit the example to see how native annotations change HAProxy configuration:
-
-<div class="pg-embed" markdown data-scenario="haptic-annotations" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="haproxy-haptic.org/* annotations rendered" data-height="440">
-
-<p class="pg-task" markdown>In the **Resources** panel, change the `shop` Ingress's `haproxy-haptic.org/load-balance` from `leastconn` to `roundrobin`, then watch the `backend` section's `balance` line update in the `haproxy.cfg` tab.</p>
-
-</div>
-
-!!! tip "Coming from another ingress controller?"
-    Keep your existing annotations working by enabling the matching vendor library instead — see [Migrating to HAPTIC](../migrating.md). Vendor and `haproxy-haptic.org/*` annotations coexist on the same Ingress as long as each feature is configured through a single family — see [Don't mix families for one feature](#dont-mix-annotation-families-for-one-feature).
-
-## Configuration
-
-```yaml
-controller:
-  templateLibraries:
-    hapticAnnotations:
-      enabled: true  # Enabled by default
-```
-
-### Don't mix annotation families for one feature
-
-You may combine `haproxy-haptic.org/*` and vendor annotations on the same Ingress, but each feature must come from a single family. Configuring one feature through two families — for example `haproxy-haptic.org/waf-policy` and `haproxy-ingress.github.io/waf`, or `haproxy-haptic.org/cors-enable` and `nginx.ingress.kubernetes.io/enable-cors` — is a conflict, even when the two values agree, because the result would otherwise depend on which library renders last.
-
-HAPTIC handles the conflict in two ways, depending on when it's caught:
-
-- **When you apply or edit the Ingress**, the admission webhook rejects the change with a message naming the feature, the families, and the colliding annotations. This stops new conflicts from ever reaching the cluster.
-- **For an Ingress that already carries a conflict** (applied before the check existed, or through a bypassed webhook), the controller keeps serving traffic and records a `Warning` Event with reason `AnnotationFamilyConflict` on the Ingress instead of failing — one bad Ingress must not block config updates for the whole fleet. Find it with `kubectl describe ingress <name>` or `kubectl get events --field-selector reason=AnnotationFamilyConflict`, then remove the duplicate annotation.
-
-Different features from different families are fine (WAF from one family, CORS from another), and so are genuinely different parameters of the same category — for example a connect timeout from one family and a server timeout from another. Only enabled families count: a vendor annotation whose library is disabled is inert and never collides.
-
-### How HAPTIC handles a misconfigured annotation
-
-The same two-stage handling applies to any invalid annotation value (a bad redirect code, a malformed rewrite, an out-of-range port), not just family conflicts. It also applies to every annotation library, not only this one.
-
-- **When you apply or edit the Ingress**, the admission webhook rejects the change and names the offending annotation, so a typo never reaches the cluster.
-- **For an Ingress that's already in the cluster** (applied before a check existed, or through a bypassed webhook), the behavior depends on the *kind* of feature:
-    - **Routing and presentation features** (redirects, CORS, cookie/header/location rewrites, canary, compression, traffic mirroring, host rewrites, fixed/mock responses) — the controller records a `Warning` Event on the Ingress, skips *that one feature for that one Ingress*, and keeps serving the rest of the fleet. One bad Ingress can't block config updates for everyone. Find these with `kubectl get events --field-selector reason=InvalidAnnotationValue` (or `reason=InvalidAnnotation` for malformed values), or `kubectl describe ingress <name>`.
-    - **Security features** (authentication, client-certificate/mTLS, WAF, rate limiting, request-body validation) — the render **still hard-fails**. HAPTIC never silently disables a security control, because a skipped auth or WAF check would let traffic through unprotected (fail-open). Fix the annotation to restore reconciliation.
-
-The reason strings on the Events are stable and machine-readable, so you can alert on them.
+Set routing, authentication, and response behavior with `haproxy-haptic.org/*`
+annotations on your Ingresses. These bundled templates are enabled by default.
+For annotations from another controller, use its [compatibility library](../annotations.md).
 
 ## Annotation reference
 
-**Supported** annotations implement the behavior listed. **Caveat** marks a
-limitation to review before use. **Removed** annotations have no effect and emit
-a Warning Event; remove them from your manifests.
-
 ### Path and host matching
 
-Route which requests reach a backend and alias extra hostnames onto an existing host.
+Match request paths and add hostnames to an existing route.
 
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/path-type` | ✅ Supported | Overrides how the path matches when the Ingress `pathType` is `ImplementationSpecific`: `regex`, `exact`, `prefix` (trailing slash normalized), or `begin`. |
-| `haproxy-haptic.org/host-alias` | ✅ Supported | Adds extra exact hostnames (comma- or space-separated) that route to the same backends as the Ingress's primary host. Each hostname becomes a host-map entry pointing at the primary host's normalized routing key, so no backends or path-map entries are duplicated. Each hostname is injection-guarded (control characters and spaces rejected). |
-| `haproxy-haptic.org/host-alias-regex` | ✅ Supported | Adds a regular-expression hostname pattern that routes every matching hostname to the same backends as the Ingress's primary host. The pattern becomes a regex host-map entry pointing at the primary host's normalized routing key, consulted after an exact host-map miss. The pattern is injection-guarded (control characters and spaces rejected). |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/path-type` | Overrides how the path matches when the Ingress `pathType` is `ImplementationSpecific`: `regex`, `exact`, `prefix` (trailing slash normalized), or `begin`. |
+| `haproxy-haptic.org/host-alias` | Adds extra exact hostnames (comma- or space-separated) that route to the same backends as the Ingress's primary host. Each hostname becomes a host-map entry pointing at the primary host's normalized routing key, so no backends or path-map entries are duplicated. Each hostname is injection-guarded (control characters and spaces rejected). |
+| `haproxy-haptic.org/host-alias-regex` | Adds a regular-expression hostname pattern that routes every matching hostname to the same backends as the Ingress's primary host. The pattern becomes a regex host-map entry pointing at the primary host's normalized routing key, consulted after an exact host-map miss. The pattern is injection-guarded (control characters and spaces rejected). |
 
 ### Backend tuning
 
-Per-backend timeouts, load balancing, connection limits, health/agent checks, and a raw-directive escape hatch.
+Set backend timeouts, load balancing, connection limits, and health checks.
 
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/agent-check-addr` | ✅ Supported | Sets the agent-check address via `agent-addr`; requires `agent-check-port`. |
-| `haproxy-haptic.org/agent-check-interval` | ✅ Supported | Sets the agent-check interval via `agent-inter`; requires `agent-check-port`. |
-| `haproxy-haptic.org/agent-check-port` | ✅ Supported | Enables the agent check on the given port (1-65535) via `agent-check` and `agent-port`; required by the other `agent-check-*` keys. |
-| `haproxy-haptic.org/agent-check-send` | ✅ Supported | Sets the string sent to the agent check via `agent-send`; requires `agent-check-port`. |
-| `haproxy-haptic.org/check` | ✅ Supported | Toggles server health checks; `off` emits `no-check` so servers aren't health-checked. |
-| `haproxy-haptic.org/config-backend` | ✅ Supported | Injects raw, operator-authored HAProxy directives verbatim into the `backend` section. Intended for trusted configuration, not request data. |
-| `haproxy-haptic.org/fullconn` | ✅ Supported | Emits `fullconn <n>` on the backend. HAProxy uses this threshold to scale each server's `minconn`/`maxconn` range as backend load rises. For a hard per-server cap, use `maxconn-server`. |
-| `haproxy-haptic.org/health-check-fall` | ✅ Supported | Sets the failed-check count before a server is marked down via `fall`. |
-| `haproxy-haptic.org/health-check-interval` | ✅ Supported | Sets the health-check interval via `inter`; ignored when `check` is `off`. |
-| `haproxy-haptic.org/health-check-port` | ✅ Supported | Sets the health-check port (1-65535) via `port`. |
-| `haproxy-haptic.org/health-check-rise` | ✅ Supported | Sets the successful-check count before a server is marked up via `rise`. |
-| `haproxy-haptic.org/health-check-uri` | ✅ Supported | Enables HTTP health checks via `option httpchk`; a bare path becomes `GET <path>`, and a value containing a space is used verbatim. |
-| `haproxy-haptic.org/initial-weight` | ✅ Supported | Sets the initial server weight (0-256) via `weight`. |
-| `haproxy-haptic.org/load-balance` | ✅ Supported | Sets the backend `balance` algorithm: `roundrobin`, `static-rr`, `leastconn`, `first`, `source`, `random`, or a parameterized `uri`, `url_param(<name>)`, `hdr(<name>)`, or `rdp-cookie(<name>)`; an invalid value fails the render. |
-| `haproxy-haptic.org/maxconn-server` | ✅ Supported | Sets the per-server maximum concurrent connections via `maxconn`. |
-| `haproxy-haptic.org/maxqueue-server` | ✅ Supported | Sets the per-server maximum queued connections via `maxqueue`. |
-| `haproxy-haptic.org/pod-maxconn` | ✅ Supported | Sets a cluster-wide connection budget, divided across the ready HAProxy pods and rounded up to a power of two, then applied as each server's `maxconn`. |
-| `haproxy-haptic.org/proxy-protocol` | ✅ Supported | Sends the PROXY protocol header to servers: `proxy`/`proxy-v1` emit `send-proxy`, and `proxy-v2`, `proxy-v2-ssl`, `proxy-v2-ssl-cn` emit the matching `send-proxy-v2` variant; any other value fails the render. |
-| `haproxy-haptic.org/scale-server-slots` | ❌ Removed | No longer has any effect. Servers are named after their pods (ADR-0011) and scale with no reserved slots and no reload, so there is nothing to size. Setting it emits a Warning Event; remove the annotation. |
-| `haproxy-haptic.org/timeout-check` | ✅ Supported | Sets the check timeout via `timeout check`. |
-| `haproxy-haptic.org/timeout-connect` | ✅ Supported | Sets the connect timeout via `timeout connect`. |
-| `haproxy-haptic.org/timeout-http-request` | ✅ Supported | Sets the request timeout via `timeout http-request`. |
-| `haproxy-haptic.org/timeout-keep-alive` | ✅ Supported | Sets the keep-alive timeout via `timeout http-keep-alive`. |
-| `haproxy-haptic.org/timeout-queue` | ✅ Supported | Sets the queue timeout via `timeout queue`. |
-| `haproxy-haptic.org/timeout-server` | ✅ Supported | Sets the server timeout. Reload-free: the value moves into `backend-timeouts.map` (keyed on the backend), read by a uniform `http-request set-timeout server` line every backend carries. |
-| `haproxy-haptic.org/timeout-tunnel` | ✅ Supported | Sets the tunnel timeout. Reload-free: the value moves into `backend-timeouts.map` (keyed on the backend), read by a uniform `http-request set-timeout tunnel` line every backend carries. |
-| `haproxy-haptic.org/consistent-hash-by` | ✅ Supported | Configures consistent hashing on the backend, emitting a `balance` directive plus `hash-type consistent`. Accepts a hash key: `uri`, `source`, `$http_<name>`, `$arg_<name>`, or `$cookie_<name>`; any other value is used verbatim as a HAProxy fetch expression via `balance hash <value>`. |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/agent-check-addr` | Sets the agent-check address via `agent-addr`; requires `agent-check-port`. |
+| `haproxy-haptic.org/agent-check-interval` | Sets the agent-check interval via `agent-inter`; requires `agent-check-port`. |
+| `haproxy-haptic.org/agent-check-port` | Enables the agent check on the given port (1-65535) via `agent-check` and `agent-port`; required by the other `agent-check-*` keys. |
+| `haproxy-haptic.org/agent-check-send` | Sets the string sent to the agent check via `agent-send`; requires `agent-check-port`. |
+| `haproxy-haptic.org/check` | Toggles server health checks; `off` emits `no-check` so servers aren't health-checked. |
+| `haproxy-haptic.org/config-backend` | Injects raw, operator-authored HAProxy directives verbatim into the `backend` section. Intended for trusted configuration, not request data. |
+| `haproxy-haptic.org/fullconn` | Emits `fullconn <n>` on the backend. HAProxy uses this threshold to scale each server's `minconn`/`maxconn` range as backend load rises. For a hard per-server cap, use `maxconn-server`. |
+| `haproxy-haptic.org/health-check-fall` | Sets the failed-check count before a server is marked down via `fall`. |
+| `haproxy-haptic.org/health-check-interval` | Sets the health-check interval via `inter`; ignored when `check` is `off`. |
+| `haproxy-haptic.org/health-check-port` | Sets the health-check port (1-65535) via `port`. |
+| `haproxy-haptic.org/health-check-rise` | Sets the successful-check count before a server is marked up via `rise`. |
+| `haproxy-haptic.org/health-check-uri` | Enables HTTP health checks via `option httpchk`; a bare path becomes `GET <path>`, and a value containing a space is used verbatim. |
+| `haproxy-haptic.org/initial-weight` | Sets the initial server weight (0-256) via `weight`. |
+| `haproxy-haptic.org/load-balance` | Sets the backend `balance` algorithm: `roundrobin`, `static-rr`, `leastconn`, `first`, `source`, `random`, or a parameterized `uri`, `url_param(<name>)`, `hdr(<name>)`, or `rdp-cookie(<name>)`; an invalid value fails the render. |
+| `haproxy-haptic.org/maxconn-server` | Sets the per-server maximum concurrent connections via `maxconn`. |
+| `haproxy-haptic.org/maxqueue-server` | Sets the per-server maximum queued connections via `maxqueue`. |
+| `haproxy-haptic.org/pod-maxconn` | Sets a cluster-wide connection budget, divided across the ready HAProxy pods and rounded up to a power of two, then applied as each server's `maxconn`. |
+| `haproxy-haptic.org/proxy-protocol` | Sends the PROXY protocol header to servers: `proxy`/`proxy-v1` emit `send-proxy`, and `proxy-v2`, `proxy-v2-ssl`, `proxy-v2-ssl-cn` emit the matching `send-proxy-v2` variant; any other value fails the render. |
+| `haproxy-haptic.org/timeout-check` | Sets the check timeout via `timeout check`. |
+| `haproxy-haptic.org/timeout-connect` | Sets the connect timeout via `timeout connect`. |
+| `haproxy-haptic.org/timeout-http-request` | Sets the request timeout via `timeout http-request`. |
+| `haproxy-haptic.org/timeout-keep-alive` | Sets the keep-alive timeout via `timeout http-keep-alive`. |
+| `haproxy-haptic.org/timeout-queue` | Sets the queue timeout via `timeout queue`. |
+| `haproxy-haptic.org/timeout-server` | Sets the server timeout. Reload-free: the value moves into `backend-timeouts.map` (keyed on the backend), read by a uniform `http-request set-timeout server` line every backend carries. |
+| `haproxy-haptic.org/timeout-tunnel` | Sets the tunnel timeout. Reload-free: the value moves into `backend-timeouts.map` (keyed on the backend), read by a uniform `http-request set-timeout tunnel` line every backend carries. |
+| `haproxy-haptic.org/consistent-hash-by` | Configures consistent hashing on the backend, emitting a `balance` directive plus `hash-type consistent`. Accepts a hash key: `uri`, `source`, `$http_<name>`, `$arg_<name>`, or `$cookie_<name>`; any other value is used verbatim as a HAProxy fetch expression via `balance hash <value>`. |
 
 ### Backend TLS (to the upstream)
 
 Speak TLS to the backend Service — protocol, verification, client certs, SNI, ciphers.
 
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/backend-ca-secret` | ✅ Supported | Loads the Secret's `ca.crt` as the backend `ca-file` and requires TLS verification; a missing Secret or key is skipped with a warning comment. |
-| `haproxy-haptic.org/backend-ciphers` | ✅ Supported | Sets the cipher list for TLS 1.2 and earlier via `ciphers` on a TLS-enabled backend. |
-| `haproxy-haptic.org/backend-ciphersuites` | ✅ Supported | Sets the cipher suites for TLS 1.3 via `ciphersuites` on a TLS-enabled backend. |
-| `haproxy-haptic.org/backend-crt-secret` | ✅ Supported | Presents the Secret's `tls.crt` and `tls.key` as a client certificate to the upstream via `crt`; a missing Secret is skipped with a warning. |
-| `haproxy-haptic.org/backend-protocol` | ✅ Supported | Selects the upstream protocol from `h1`, `h2`, `h1-ssl`, `h2-ssl`, `http`, `https`, `grpc`, or `grpcs`; the `h2`, `grpc`, `h2-ssl`, and `grpcs` values add `proto h2`, and `h1-ssl`, `https`, `h2-ssl`, and `grpcs` speak TLS to the upstream. |
-| `haproxy-haptic.org/backend-sni` | ✅ Supported | Sets the SNI sent to the upstream: `host` or `sni` forwards the request Host via `sni req.hdr(host)`, and any other value is sent literally via `sni str(<value>)`. |
-| `haproxy-haptic.org/backend-ssl-protocols` | ⚠️ Caveat | Maps a space-separated TLS version list to `ssl-min-ver` (lowest) and `ssl-max-ver` (highest). HAProxy expresses only a contiguous span, so a gap in the list (for example, skipping `TLSv1.2`) can't be represented. |
-| `haproxy-haptic.org/backend-verify` | ✅ Supported | A truthy value (`on`, `true`, `yes`, `1`) requires upstream certificate verification, and fails closed rather than silently downgrading to `verify none` when no CA is available. |
-| `haproxy-haptic.org/backend-verify-host` | ✅ Supported | Sets the expected upstream certificate hostname via `verifyhost`, independent of the SNI value. |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/backend-ca-secret` | Loads the Secret's `ca.crt` as the backend `ca-file` and requires TLS verification; a missing Secret or key is skipped with a warning comment. |
+| `haproxy-haptic.org/backend-ciphers` | Sets the cipher list for TLS 1.2 and earlier via `ciphers` on a TLS-enabled backend. |
+| `haproxy-haptic.org/backend-ciphersuites` | Sets the cipher suites for TLS 1.3 via `ciphersuites` on a TLS-enabled backend. |
+| `haproxy-haptic.org/backend-crt-secret` | Presents the Secret's `tls.crt` and `tls.key` as a client certificate to the upstream via `crt`; a missing Secret is skipped with a warning. |
+| `haproxy-haptic.org/backend-protocol` | Selects the upstream protocol from `h1`, `h2`, `h1-ssl`, `h2-ssl`, `http`, `https`, `grpc`, or `grpcs`; the `h2`, `grpc`, `h2-ssl`, and `grpcs` values add `proto h2`, and `h1-ssl`, `https`, `h2-ssl`, and `grpcs` speak TLS to the upstream. |
+| `haproxy-haptic.org/backend-sni` | Sets the SNI sent to the upstream: `host` or `sni` forwards the request Host via `sni req.hdr(host)`, and any other value is sent literally via `sni str(<value>)`. |
+| `haproxy-haptic.org/backend-ssl-protocols` | Maps a space-separated TLS version list to `ssl-min-ver` (lowest) and `ssl-max-ver` (highest). HAProxy expresses only a contiguous span, so a gap in the list (for example, skipping `TLSv1.2`) can't be represented. |
+| `haproxy-haptic.org/backend-verify` | A truthy value (`on`, `true`, `yes`, `1`) requires upstream certificate verification, and fails closed rather than silently downgrading to `verify none` when no CA is available. |
+| `haproxy-haptic.org/backend-verify-host` | Sets the expected upstream certificate hostname via `verifyhost`, independent of the SNI value. |
 
 ### Rate and bandwidth limiting
 
@@ -135,196 +82,105 @@ Bandwidth limits have two scopes to consider:
 - **The limit applies per stream, not per connection.** An HTTP/2 or HTTP/3 client that opens ten streams gets ten times the configured rate. Use `bandwidth-limit-scope: client` when you want one budget per client regardless of how many streams it opens.
 - **Only the HTTP payload is metered.** Headers are never counted toward the limit.
 
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/download-bandwidth-limit` | ✅ Supported | Caps the bytes per second sent toward the client, using a `bwlim-out` filter plus `http-request set-bandwidth-limit`. Independent of the request-rate caps; both can apply to the same Ingress. Byte-size values are validated before interpolation. |
-| `haproxy-haptic.org/upload-bandwidth-limit` | ✅ Supported | Caps the bytes per second received from the client, using a `bwlim-in` filter. Can be combined with `download-bandwidth-limit`; each direction gets its own filter. Byte-size values are validated before interpolation. |
-| `haproxy-haptic.org/bandwidth-limit-scope` | ✅ Supported | Who shares the budget: `stream` (default, each stream gets the full limit), `client` (all streams from one source IP share it), or `service` (every stream of this route shares it). Shared scopes meter into one string-keyed table under the route and, for `client`, the source IP; a shared-scope filter is declared per distinct rate, so the first route with a new rate reloads once. `service` scopes to one Ingress route to a service, not to a Kubernetes Service shared by several Ingresses. |
-| `haproxy-haptic.org/rate-limit-algorithm` | ✅ Supported | Shared limiter algorithm: `token-bucket` (default, low-latency lease mode) or `gcra` (exact mode, one synchronous store check per request). `gcra` is for low-volume contractual limits; use the default token-bucket mode for public-edge DoS protection. During a store failure, both modes follow `rateLimit.shared.failClosed`. Requires `rate-limit-requests`, `rateLimit.shared.enabled=true`, and an effective Redis/Valkey store endpoint. |
-| `haproxy-haptic.org/rate-limit-burst` | ✅ Supported | Shared limiter burst allowance; defaults to `rate-limit-requests`. Must be a positive integer. |
-| `haproxy-haptic.org/rate-limit-connections` | ✅ Supported | Caps concurrent connections per source IP; ignored when `rate-limit-rps` or `rate-limit-rpm` is set. |
-| `haproxy-haptic.org/rate-limit-key` | ✅ Supported | Shared limiter key dimension: `ip` (default) or `consumer`. Source-IP limits run in the frontend before Coraza and request-schema validation, making them the correct DoS guard. Consumer limits run on the same frontend after the API-key/JWT rules have established the identity, falling back to source IP when no identity is present; use them for authenticated quotas, not as the sole public-edge flood control. |
-| `haproxy-haptic.org/rate-limit-period` | ✅ Supported | Overrides the rate window. For the per-pod stick-table limiter, when unset the window derives from the active cap: 1 second for requests per second, 60 seconds for requests per minute, and a 30-second table TTL for connection caps. For the shared limiter it defaults to `1s` and accepts `ms`/`s`/`m`/`h`/`d`; zero or malformed values fail the render. The shared rule's full refill horizon (`burst × period / requests`) must not exceed 3600 seconds, the bundled plugin's maximum safe state TTL. |
-| `haproxy-haptic.org/rate-limit-requests` | ✅ Supported | Enables one fleet-wide budget through the rate-limit SPOA plugin. It requires `rateLimit.shared.enabled=true` plus the chart-managed HA Valkey/Sentinel store or one bring-your-own HA endpoint; HAPTIC fails the render rather than silently using per-pod budgets during normal operation. On a Valkey failure, the default policy uses a bounded limiter in each sidecar. Each emergency bucket starts with its configured burst and refills at the configured rate; lease mode can also spend outstanding lease tokens. If local state or the hub/plugin can't answer, HAProxy allows the request. These paths set `rate_limit_degraded`; plugin metrics distinguish fallback allows and limits. Set `rateLimit.shared.failClosed=true` to deny instead. Source-IP rules execute before Coraza to keep rejected floods from consuming WAF CPU. The managed store is a fixed-size HA topology with Sentinel failover, a PodDisruptionBudget, NetworkPolicy, and `noeviction`; configure external stores without eviction. Multiple external URLs fail validation because the bundled plugin shares one circuit breaker across its shards. |
-| `haproxy-haptic.org/rate-limit-rpm` | ✅ Supported | Caps requests per minute per source IP (a 60-second `http_req_rate` window); ignored when `rate-limit-rps` is also set. |
-| `haproxy-haptic.org/rate-limit-rps` | ✅ Supported | Caps requests per second per source IP via an `http_req_rate` stick-table; requests over the cap are rejected with the deny status (default `429`), with no burst allowance. |
-| `haproxy-haptic.org/rate-limit-size` | ✅ Supported | Sets the stick-table size (default `100k`); routes sharing a rate window share one table, sized to the largest value any of them asks for. |
-| `haproxy-haptic.org/rate-limit-status-code` | ✅ Supported | Sets the HTTP status returned to rejected requests (default 429). Only a status HAProxy has a built-in error page for is accepted (200, 400, 401, 403, 404, 405, 407, 408, 410, 413, 414, 425, 429, 431, 500 to 504); it becomes the `http-request deny deny_status` code. |
-| `haproxy-haptic.org/rate-limit-allowlist` | ✅ Supported | Exempts comma-separated CIDRs (IPv4 or IPv6) from the route's rate limit, per-pod or shared; invalid CIDRs fail the render, and an allowlist on a route with no rate limit is refused at admission (a Warning Event on reconcile). Applied through two runtime maps, so adding, editing, or removing a list never reloads. |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/download-bandwidth-limit` | Caps the bytes per second sent toward the client, using a `bwlim-out` filter plus `http-request set-bandwidth-limit`. Independent of the request-rate caps; both can apply to the same Ingress. Byte-size values are validated before interpolation. |
+| `haproxy-haptic.org/upload-bandwidth-limit` | Caps the bytes per second received from the client, using a `bwlim-in` filter. Can be combined with `download-bandwidth-limit`; each direction gets its own filter. Byte-size values are validated before interpolation. |
+| `haproxy-haptic.org/bandwidth-limit-scope` | Who shares the budget: `stream` (default, each stream gets the full limit), `client` (all streams from one source IP share it), or `service` (every stream of this route shares it). Shared scopes meter into one string-keyed table under the route and, for `client`, the source IP; a shared-scope filter is declared per distinct rate, so the first route with a new rate reloads once. `service` scopes to one Ingress route to a service, not to a Kubernetes Service shared by several Ingresses. |
+| `haproxy-haptic.org/rate-limit-algorithm` | Shared limiter algorithm: `token-bucket` (default, low-latency lease mode) or `gcra` (exact mode, one synchronous store check per request). `gcra` is for low-volume contractual limits; use the default token-bucket mode for public-edge DoS protection. During a store failure, both modes follow `rateLimit.shared.failClosed`. Requires `rate-limit-requests`, `rateLimit.shared.enabled=true`, and an effective Redis/Valkey store endpoint. |
+| `haproxy-haptic.org/rate-limit-burst` | Shared limiter burst allowance; defaults to `rate-limit-requests`. Must be a positive integer. |
+| `haproxy-haptic.org/rate-limit-connections` | Caps concurrent connections per source IP; ignored when `rate-limit-rps` or `rate-limit-rpm` is set. |
+| `haproxy-haptic.org/rate-limit-key` | Shared limiter key dimension: `ip` (default) or `consumer`. Source-IP limits run in the frontend before Coraza and request-schema validation, making them the correct DoS guard. Consumer limits run on the same frontend after the API-key/JWT rules have established the identity, falling back to source IP when no identity is present; use them for authenticated quotas, not as the sole public-edge flood control. |
+| `haproxy-haptic.org/rate-limit-period` | Overrides the rate window. For the per-pod stick-table limiter, when unset the window derives from the active cap: 1 second for requests per second, 60 seconds for requests per minute, and a 30-second table TTL for connection caps. For the shared limiter it defaults to `1s` and accepts `ms`/`s`/`m`/`h`/`d`; zero or malformed values fail the render. The shared rule's full refill horizon (`burst × period / requests`) must not exceed 3600 seconds, the bundled plugin's maximum safe state TTL. |
+| `haproxy-haptic.org/rate-limit-requests` | Enables one fleet-wide budget through the rate-limit SPOA plugin. It requires `rateLimit.shared.enabled=true` plus the chart-managed HA Valkey/Sentinel store or one bring-your-own HA endpoint; HAPTIC fails the render rather than silently using per-pod budgets during normal operation. On a Valkey failure, the default policy uses a bounded limiter in each sidecar. Each emergency bucket starts with its configured burst and refills at the configured rate; lease mode can also spend outstanding lease tokens. If local state or the hub/plugin can't answer, HAProxy allows the request. These paths set `rate_limit_degraded`; plugin metrics distinguish fallback allows and limits. Set `rateLimit.shared.failClosed=true` to deny instead. Source-IP rules execute before Coraza to keep rejected floods from consuming WAF CPU. The managed store is a fixed-size HA topology with Sentinel failover, a PodDisruptionBudget, NetworkPolicy, and `noeviction`; configure external stores without eviction. Multiple external URLs fail validation because the bundled plugin shares one circuit breaker across its shards. |
+| `haproxy-haptic.org/rate-limit-rpm` | Caps requests per minute per source IP (a 60-second `http_req_rate` window); ignored when `rate-limit-rps` is also set. |
+| `haproxy-haptic.org/rate-limit-rps` | Caps requests per second per source IP via an `http_req_rate` stick-table; requests over the cap are rejected with the deny status (default `429`), with no burst allowance. |
+| `haproxy-haptic.org/rate-limit-size` | Sets the stick-table size (default `100k`); routes sharing a rate window share one table, sized to the largest value any of them asks for. |
+| `haproxy-haptic.org/rate-limit-status-code` | Sets the HTTP status returned to rejected requests (default 429). Only a status HAProxy has a built-in error page for is accepted (200, 400, 401, 403, 404, 405, 407, 408, 410, 413, 414, 425, 429, 431, 500 to 504); it becomes the `http-request deny deny_status` code. |
+| `haproxy-haptic.org/rate-limit-allowlist` | Exempts comma-separated CIDRs (IPv4 or IPv6) from the route's rate limit, per-pod or shared; invalid CIDRs fail the render, and an allowlist on a route with no rate limit is refused at admission (a Warning Event on reconcile). Applied through two runtime maps, so adding, editing, or removing a list never reloads. |
 
 ### Compression
 
-HAProxy-side response compression, per Ingress. **On by default**: a bundled
-governance rule sets `compress-enable` on any Ingress that doesn't set it
-itself, so you get compression without annotating anything, and an Ingress that
-does set the annotation always keeps its own value.
-
-HAProxy compresses only responses the backend left uncompressed. It skips a
-response that already carries `Content-Encoding`, one whose `Cache-Control` says
-`no-transform`, a `multipart/*` body, a status other than 200/201/202/203, and
-anything the client didn't advertise support for in `Accept-Encoding`. It adds
-`Vary: Accept-Encoding` itself, so a shared cache in front stays correct.
-
-The compression filter is declared once per HTTP frontend; a route's algorithm
-and type list are inherited by its backend from the shared `defaults` profile,
-which HAProxy consults ahead of any setting on the frontend. So compression adds
-no line to the backend section, and on HAProxy 3.4 a route with compression on
-is added and removed over the runtime API without a reload, like a route without
-it (see [Reload-free route changes](../operations/performance.md#reload-free-route-changes)).
-An Ingress that opts out has no compression settings at all: HAProxy leaves its
-request and response untouched, so its origin still receives the client's
-`Accept-Encoding` and may compress on its own.
-
-Compression runs before the bandwidth limiter, so a `download-bandwidth-limit` on a compressed route meters the compressed bytes that go on the wire, not the larger uncompressed response.
-
-!!! warning "Compressing HTTPS responses re-opens BREACH"
-
-    Compression is on by default, so read this before assuming it's safe for
-    every route you serve.
-
-    [BREACH](https://www.breachattack.com/) recovers a secret from an HTTPS
-    response by watching how its *compressed length* changes. It needs one page
-    to do three things at once: be served over TLS, contain a secret (a CSRF
-    token, a session identifier, an API key), and reflect attacker-controlled
-    input into the same response body. Given that, an attacker who can make the
-    victim's browser issue requests reads the secret out byte by byte, without
-    breaking TLS.
-
-    Compression is what makes the length vary, so turning it on is what exposes
-    the page. Most routes don't meet all three conditions — a JSON API that
-    reflects nothing, static assets, and anything unauthenticated are unaffected
-    — which is why on-by-default is the same choice nginx-ingress, Cloudflare and
-    most CDNs make.
-
-    For a route that *does* meet them, opt out:
-
-    ```yaml
-    metadata:
-      annotations:
-        haproxy-haptic.org/compress-enable: "false"
-    ```
-
-    Narrowing `compress-types` to exclude `text/html` also helps if the reflected
-    secret only ever appears in HTML. The durable fixes are application-side:
-    per-request CSRF tokens, or masking the token so its compressed length
-    doesn't correlate with its value.
-
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/compress-algorithm` | ✅ Supported | Compression algorithm (default `gzip`; `deflate`/`raw-deflate`). `brotli`/`zstd` fail the render — unavailable in the community HAProxy build. |
-| `haproxy-haptic.org/compress-enable` | ✅ Supported | `true` compresses this backend's responses, `false` turns it off for this Ingress. Injected as `true` when unset — set it to `false` to opt out. |
-| `haproxy-haptic.org/compress-types` | ✅ Supported | Comma-separated MIME types to compress (default a standard text/JSON/XML/SVG set). |
-
-To turn compression off for the whole fleet rather than one Ingress, disable the
-rule that injects it:
+Response compression is opt-in. Enable it for an Ingress whose responses are
+suitable for compression, such as a public static-asset service:
 
 ```yaml
-controller:
-  config:
-    templatingSettings:
-      extraContext:
-        governance:
-          rules:
-            haptic-compress-enable:
-              enabled: false
+metadata:
+  annotations:
+    haproxy-haptic.org/compress-enable: "true"
+    haproxy-haptic.org/compress-types: "text/css,application/javascript,image/svg+xml"
 ```
 
-CPU cost and the two global limits that bound it are covered in
-[Response compression](../operations/performance.md#response-compression).
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/compress-enable` | `true` enables HAProxy response compression for this Ingress; unset or `false` leaves it off. |
+| `haproxy-haptic.org/compress-algorithm` | Algorithm: `gzip` (default), `deflate`, or `raw-deflate`. The community HAProxy build doesn't provide `brotli` or `zstd`; selecting either fails rendering. |
+| `haproxy-haptic.org/compress-types` | Comma-separated MIME types. Defaults to text, JSON, XML, and SVG types when compression is enabled. |
+
+!!! note "Choose routes that can be compressed safely"
+    A response containing both a secret and attacker-controlled input can leak
+    that secret through its compressed size, even over HTTPS ([BREACH](https://www.breachattack.com/)).
+    Keep compression off for those routes unless the application mitigates this
+    attack. Disabling it in HAPTIC doesn't disable compression in the application
+    or a proxy in front of HAPTIC.
+
+HAProxy leaves already-compressed responses and responses marked
+`Cache-Control: no-transform` unchanged. It compresses only matching content types
+and algorithms accepted by the client, and adds `Vary: Accept-Encoding`.
+Compression runs before download bandwidth limits, which count the compressed bytes.
+
+See [response compression limits](../operations/performance.md#response-compression)
+for CPU controls and [reload behavior](reload-free.md) for configuration changes.
 
 ### Shared response cache
 
-With `cache.varnish.enabled`, eligible GET and HEAD requests use a Varnish cache
-shared across the HAProxy fleet and sharded by consistent hashing. Other methods
-go directly to the application.
+Serve repeated GET and HEAD requests from [Varnish](https://varnish-cache.org/)
+to reduce work on your application servers. First [enable the shared cache](../operations/response-cache.md),
+then set `haproxy-haptic.org/cache-enable: "true"` on the Ingress.
 
-Unhealthy shards are bypassed. Before response headers reach the client, a failed
-or timed-out cache attempt retries against the application; after delivery
-starts, an idle partial response is terminated. Set
-`cache.haproxy.responseTimeoutMs` above the application's normal time to first
-byte to avoid duplicate fetches on cache misses.
+For authenticated responses, use `cache-key: consumer` so each identity has a
+separate cache entry. Other keys don't enable caching for requests with
+`Authorization` or `Cookie` headers. See [cache keys and authentication](../operations/response-cache.md#cache-keys-and-authentication).
 
-Health checks verify Varnish's path to the origin. Its default NetworkPolicy
-allows only same-release HAProxy requests and egress to DNS and that origin.
-HAProxy strips client-supplied `X-Haptic-Cache-*` headers before routing. Internal
-cache-miss requests bypass limiters, so one external request consumes one budget.
-
-To cache authenticated responses, use the `consumer` key. HAPTIC authenticates
-the request before consulting the cache and includes the authenticated identity
-in the cache key. API-key, JWT, HMAC, and consumer-group checks still apply on a
-cache hit.
-
-With other keys (`header:`, `cookie:`, `query:`, or `src`), requests carrying
-`Authorization` or `Cookie` bypass the cache. Those values alone don't establish
-an authenticated identity.
-
-Rate and bandwidth limits follow the same client-leg rule (see [Rate and bandwidth limiting](#rate-and-bandwidth-limiting)): the per-pod caps, bandwidth throttles, and the shared limiter all run before the cache is consulted, so a cache hit counts against the budget and is throttled like any other response.
-
-A `cache-key` also changes what HAPTIC tells caches *downstream* of it — a content delivery network or proxy in front of the cluster. Components the client itself sends are declared as `Vary`, so a downstream cache keys on the same dimension HAPTIC does: `header:<h>` becomes `Vary: <h>`, and `cookie:<c>` becomes `Vary: Cookie`. A `query:<q>` component needs nothing, because the query string is already part of the URL every cache keys on.
-
-This downstream cache contract applies to every response from the cache-enabled route, including methods and paths that bypass Varnish. A proxy in front of HAPTIC can still cache those responses, so limiting the contract to Varnish traffic would let it collapse distinct callers or variants during a direct fallback.
-
-`consumer` and `src` can't be declared this way, because a downstream cache never receives the value HAPTIC keyed on — declaring it would make every caller look identical and collapse them onto one shared response. Routes keyed on either are marked `Cache-Control: private` instead, which keeps shared caches out while still letting a browser cache its own copy. `Vary` is added to whatever the origin already sent, and an origin's own `Vary` is honoured as usual — every producer in the chart appends rather than replaces, including the CORS rule. A `public` directive on an identity-keyed route is rewritten to `private` rather than left beside it, since a response carrying both leaves each cache to decide which wins.
-
-Cached objects don't survive a Varnish process restart. The StatefulSet replaces
-one pod at a time during an upgrade, leaving other shards warm. Increasing
-`cache.varnish.replicas` reduces the share of keys affected by one pod's restart.
-
-Varnish's working directory uses a memory-backed `emptyDir` for compiled configuration, shared logs, and statistics. Its memory counts toward `cache.varnish.resources.limits.memory`; budget the shared-log buffer (80 MiB with the default image), compiled configuration, and process/object overhead in addition to `cache.varnish.malloc`. The mount must allow execution because Varnish loads compiled configuration from it.
-
-Shared memory must remain resident. Use nodes that prevent paging of the working directory, or configure the container runtime memory-lock limit high enough for Varnish to lock it. A verified `noswap` mount, a container with swap disabled, or a node without swap prevents paging; an ordinary `tmpfs` mount alone doesn't. Kubernetes uses `noswap` for memory-backed volumes on supported kernels and defaults to `NoSwap` for containers. Verify the deployed mount or container policy, not just the node's configured intent. See [Kubernetes swap behavior](https://kubernetes.io/docs/concepts/cluster-administration/swap-memory-management/#swap-behaviors) and [memory-backed volumes](https://kubernetes.io/docs/concepts/cluster-administration/swap-memory-management/#memory-backed-volumes).
-
-The chart keeps the stock non-root image and adds no capabilities. If Varnish reports `mlock() of VSM failed`, [upstream permits the warning](https://www.varnish.org/docs/reference/vsm/#warning-mlock-of-vsm-failed) only when the environment prevents paging. Otherwise, raise the runtime memory-lock limit or disable swapping for these containers. The chart doesn't modify host limits or suppress the warning. Its shared log remains a circular diagnostic buffer, not a persistent access log; use the HAProxy access log for routine collection.
-
-The two staleness annotations are independent, and setting one doesn't imply the other. `cache-stale-while-revalidate` trades freshness for latency: within its window nobody waits for the origin. `cache-stale-if-error` trades nothing until something breaks: an ordinary expiry still fetches and waits, and the stale copy is reached only when that fetch fails. Set both when you want fast expiry *and* an outage cushion — for example `cache-stale-while-revalidate: "30"` with `cache-stale-if-error: "600"`.
-
-Read `X-Cache` or the access log's `cache` field to identify a `HIT`, `MISS`, or
-`STALE` response. `cache_age` reports the object's age in seconds.
-`cache_uncacheable_reason` explains why a response wasn't stored:
-`content_type_excluded`, `too_large`, `set_cookie`, `status_not_cacheable`, or
-`origin_refused_sharing`.
-
-The Vector sidecar projects these into Prometheus counters on the metrics port it already serves — `haptic_cache_status_total{status}`, `haptic_cache_age_seconds_total`, `haptic_cache_uncacheable_total{reason}`, and `haptic_degraded_cache_total` — because Varnish serves no metrics endpoint of its own. They're declared in `vector.logMetrics`, so you can switch one off or add your own from any log field. Counters are tagged by status or reason only; use the log when you need it per route.
-
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/cache-enable` | ✅ Supported | The value `true` routes GET/HEAD requests through healthy Varnish shards. Other methods and all-shards-unhealthy periods use the application backend directly. |
-| `haproxy-haptic.org/cache-exclude-content-types` | ✅ Supported | Comma-separated response media types never cached even if otherwise eligible (for example `text/html`); matched after stripping the `; charset=…` suffix. |
-| `haproxy-haptic.org/cache-exclude-paths` | ✅ Supported | Comma-separated request path prefixes that bypass the cache and go straight to the app. Each prefix is a row in `haptic-cache-exclude.map`, so adding, changing or removing one is a map operation. A `\|` in a path is refused. |
-| `haproxy-haptic.org/cache-key` | ✅ Supported | Adds a vary component to the cache key: `consumer`, `src`, `header:<h>`, `cookie:<c>`, `query:<q>`, or a comma-separated composite. Only `consumer` lets a route cache responses to **authenticated** requests, because only it identifies the caller; see below. The same variance is declared to caches downstream of HAPTIC. |
-| `haproxy-haptic.org/cache-negative-ttl` | ✅ Supported | Seconds to cache a `404` or `410`, so repeated requests for something that isn't there stop reaching the origin. Independent of `cache-ttl`, and on its own clock: a cached `404` during a bad deploy keeps being served for its lifetime, so keep it short. Only `404` and `410` — an error response is never cached. Without this annotation, a route that sets `cache-ttl` never caches a `404`, while one that leaves lifetimes to the origin inherits the cache's own default of two minutes. |
-| `haproxy-haptic.org/cache-max-object-size` | ✅ Supported | Maximum cacheable response size in bytes; a larger response (by `Content-Length`) stays uncacheable. |
-| `haproxy-haptic.org/cache-revalidate` | ✅ Supported | Seconds past expiry the object is kept so the refresh can be a conditional request the origin answers with `304 Not Modified` instead of a full body. Costs cache memory; defaults to `0`, which keeps nothing. |
-| `haproxy-haptic.org/cache-stale-if-error` | ✅ Supported | Seconds past expiry a stale response may still be served, but **only** when the refresh fails. On its own it doesn't change what an ordinary expiry does: that still fetches from the origin and waits. An origin error never replaces a good cached response. |
-| `haproxy-haptic.org/cache-stale-while-revalidate` | ✅ Supported | Seconds past expiry a stale response is served immediately while the cache refreshes it in the background. Without it, a route gets the cache's 10-second default. |
-| `haproxy-haptic.org/cache-strip-set-cookie` | ✅ Supported | The value `true` drops `Set-Cookie` from the response before the cache decides whether it can be stored, so a public asset behind an analytics cookie stays cacheable. Never set it where `Set-Cookie` carries a session. |
-| `haproxy-haptic.org/cache-ttl` | ✅ Supported | Cache lifetime in seconds for the route. A response stays uncacheable when it's non-2xx, carries `Set-Cookie`, or declares `Cache-Control: no-cache`/`no-store`/`private` or `Vary: *` — an origin's refusal to be shared is always honoured. The value `auto` follows the origin's `Cache-Control` and `Expires` instead of forcing a fixed lifetime. |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/cache-enable` | The value `true` routes GET/HEAD requests through healthy Varnish shards. Other methods and all-shards-unhealthy periods use the application backend directly. |
+| `haproxy-haptic.org/cache-exclude-content-types` | Comma-separated response media types never cached (for example `text/html`); matched after stripping the `; charset=…` suffix. |
+| `haproxy-haptic.org/cache-exclude-paths` | Comma-separated request path prefixes that bypass the cache and go straight to the app. Each prefix is a row in `haptic-cache-exclude.map`, so adding, changing or removing one is a map operation. A `\|` in a path is refused. |
+| `haproxy-haptic.org/cache-key` | Adds a vary component to the cache key: `consumer`, `src`, `header:<h>`, `cookie:<c>`, `query:<q>`, or a comma-separated composite. Only `consumer` lets a route cache responses to **authenticated** requests, because it identifies the caller; see [cache keys](../operations/response-cache.md#cache-keys-and-authentication). The same variance is declared to caches downstream of HAPTIC. |
+| `haproxy-haptic.org/cache-negative-ttl` | Seconds to cache `404` and `410` responses independently of `cache-ttl`. Keep it short: a cached failure remains visible until expiry. When unset, routes with `cache-ttl` (including `auto`) don't cache these statuses. With both TTL annotations unset, Varnish follows origin headers and its built-in defaults. |
+| `haproxy-haptic.org/cache-max-object-size` | Maximum cacheable response size in bytes; a larger response (by `Content-Length`) stays uncacheable. |
+| `haproxy-haptic.org/cache-revalidate` | Seconds past expiry the object is kept so the refresh can be a conditional request the origin answers with `304 Not Modified` instead of a full body. Costs cache memory; defaults to `0`, which keeps nothing. |
+| `haproxy-haptic.org/cache-stale-if-error` | Seconds past expiry a stale response may still be served, but **only** when the refresh fails. On its own it doesn't change what an ordinary expiry does: that still fetches from the origin and waits. An origin error never replaces a good cached response. |
+| `haproxy-haptic.org/cache-stale-while-revalidate` | Seconds past expiry a stale response is served immediately while the cache refreshes it in the background. Without it, a route gets the cache's 10-second default. |
+| `haproxy-haptic.org/cache-strip-set-cookie` | The value `true` drops `Set-Cookie` from the response before the cache decides whether it can be stored, so a public asset behind an analytics cookie stays cacheable. Never set it where `Set-Cookie` carries a session. |
+| `haproxy-haptic.org/cache-ttl` | Cache lifetime in seconds for `200` responses; `auto` follows the origin's `Cache-Control` and `Expires`. Responses with `Set-Cookie`, `Cache-Control: no-cache`/`no-store`/`private`, or `Vary: *` aren't stored. Use `cache-negative-ttl` for `404` and `410`. |
 
 ### Rewriting, retries, and session affinity
 
 Path/target rewriting, body-size limits, upstream retries, Host/header overrides, and cookie-based stickiness.
 
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/affinity` | ✅ Supported | The value `cookie` enables cookie-based session affinity via the backend `cookie` directive. |
-| `haproxy-haptic.org/backend-connection-header` | ✅ Supported | Overrides the `Connection` header sent to the backend server. |
-| `haproxy-haptic.org/path-rewrite` | ✅ Supported | Rewrites the request path: a `<from> <to>` pair replaces the whole path with `<to>` wherever `<from>` matches (`\1`..`\9` carry captured groups), and a bare value replaces it unconditionally. A bare value, or a prefix strip (`^<prefix>(.*)` with `<new prefix>\1` or a plain `<new path>` as `<to>`, `<prefix>` without regex metacharacters), is applied from a per-route map and keeps the route reload-free; any other pattern is a `replace-path` rule in the backend. |
-| `haproxy-haptic.org/max-request-body-size` | ✅ Supported | Limits the request body size (accepts `k`, `m`, or `g` suffixes), returning `413` when exceeded; `0` means unlimited. |
-| `haproxy-haptic.org/request-buffering` | ✅ Supported | `on` or `off`, overriding the fleet-wide `requestBuffering.enabled` default for this route. See [Request buffering](#request-buffering). |
-| `haproxy-haptic.org/retry-on` | ✅ Supported | Sets the conditions under which HAProxy retries a failed request against the next server, emitting `retry-on`. Conditions cover connection failures, response timeouts, malformed responses, and per-status-code retries (`http_<code>`); a disable value emits `retries 0`. `option redispatch` in defaults sends the retry to a different server. |
-| `haproxy-haptic.org/retries` | ✅ Supported | Sets the number of retry attempts against backend servers via HAProxy `retries`; `0` keeps the default. |
-| `haproxy-haptic.org/session-cookie-domain` | ✅ Supported | Sets the session cookie's `Domain` via the `domain` cookie keyword. |
-| `haproxy-haptic.org/session-cookie-dynamic` | ✅ Supported | Enables dynamically generated cookie values via the `dynamic` cookie keyword (default on). |
-| `haproxy-haptic.org/session-cookie-keywords` | ✅ Supported | Appends extra keywords to the `cookie` directive verbatim (for example, `httponly`). |
-| `haproxy-haptic.org/session-cookie-max-age` | ✅ Supported | Sets the browser cookie lifetime in seconds via `attr Max-Age`; this is the cookie's `Max-Age`, not HAProxy's server-affinity lifetime. |
-| `haproxy-haptic.org/session-cookie-name` | ✅ Supported | Sets the session cookie name (default `INGRESSCOOKIE`). |
-| `haproxy-haptic.org/session-cookie-path` | ✅ Supported | Sets the session cookie's `Path` via `attr Path`. |
-| `haproxy-haptic.org/session-cookie-preserve` | ✅ Supported | The value `true` adds the `preserve` keyword to the `cookie` directive. |
-| `haproxy-haptic.org/session-cookie-samesite` | ✅ Supported | Sets the cookie `SameSite` attribute (`None`, `Lax`, or `Strict`) via `attr SameSite`. |
-| `haproxy-haptic.org/session-cookie-secure` | ✅ Supported | The value `true` sets the cookie `Secure` attribute via `attr Secure`. |
-| `haproxy-haptic.org/session-cookie-strategy` | ✅ Supported | Selects the cookie mode: `insert` (default), `rewrite`, or `prefix`; `insert` and `prefix` add `indirect nocache`. |
-| `haproxy-haptic.org/set-host` | ✅ Supported | Overrides the `Host` header sent to the upstream. |
-| `haproxy-haptic.org/x-forwarded-prefix` | ✅ Supported | Sets the `X-Forwarded-Prefix` header sent to the upstream. |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/affinity` | The value `cookie` enables cookie-based session affinity via the backend `cookie` directive. |
+| `haproxy-haptic.org/backend-connection-header` | Overrides the `Connection` header sent to the backend server. |
+| `haproxy-haptic.org/path-rewrite` | Rewrites the request path: a `<from> <to>` pair replaces the whole path with `<to>` wherever `<from>` matches (`\1`..`\9` carry captured groups), and a bare value replaces it unconditionally. A bare value, or a prefix strip (`^<prefix>(.*)` with `<new prefix>\1` or a plain `<new path>` as `<to>`, `<prefix>` without regex metacharacters), is applied from a per-route map and keeps the route reload-free; any other pattern is a `replace-path` rule in the backend. |
+| `haproxy-haptic.org/max-request-body-size` | Limits the request body size (accepts `k`, `m`, or `g` suffixes), returning `413` when exceeded; `0` means unlimited. |
+| `haproxy-haptic.org/request-buffering` | `on` or `off`, overriding the fleet-wide `requestBuffering.enabled` default for this route. See [Request buffering](#request-buffering). |
+| `haproxy-haptic.org/retry-on` | Sets the conditions under which HAProxy retries a failed request against the next server, emitting `retry-on`. Conditions cover connection failures, response timeouts, malformed responses, and per-status-code retries (`http_<code>`); a disable value emits `retries 0`. `option redispatch` in defaults sends the retry to a different server. |
+| `haproxy-haptic.org/retries` | Sets the number of retry attempts against backend servers via HAProxy `retries`; `0` keeps the default. |
+| `haproxy-haptic.org/session-cookie-domain` | Sets the session cookie's `Domain` via the `domain` cookie keyword. |
+| `haproxy-haptic.org/session-cookie-dynamic` | Enables dynamically generated cookie values via the `dynamic` cookie keyword (default on). |
+| `haproxy-haptic.org/session-cookie-keywords` | Appends extra keywords to the `cookie` directive verbatim (for example, `httponly`). |
+| `haproxy-haptic.org/session-cookie-max-age` | Sets the browser cookie lifetime in seconds via `attr Max-Age`; this is the cookie's `Max-Age`, not HAProxy's server-affinity lifetime. |
+| `haproxy-haptic.org/session-cookie-name` | Sets the session cookie name (default `INGRESSCOOKIE`). |
+| `haproxy-haptic.org/session-cookie-path` | Sets the session cookie's `Path` via `attr Path`. |
+| `haproxy-haptic.org/session-cookie-preserve` | The value `true` adds the `preserve` keyword to the `cookie` directive. |
+| `haproxy-haptic.org/session-cookie-samesite` | Sets the cookie `SameSite` attribute (`None`, `Lax`, or `Strict`) via `attr SameSite`. |
+| `haproxy-haptic.org/session-cookie-secure` | The value `true` sets the cookie `Secure` attribute via `attr Secure`. |
+| `haproxy-haptic.org/session-cookie-strategy` | Selects the cookie mode: `insert` (default), `rewrite`, or `prefix`; `insert` and `prefix` add `indirect nocache`. |
+| `haproxy-haptic.org/set-host` | Overrides the `Host` header sent to the upstream. |
+| `haproxy-haptic.org/x-forwarded-prefix` | Sets the `X-Forwarded-Prefix` header sent to the upstream. |
 
 #### Request buffering
 
@@ -344,168 +200,99 @@ Only requests that declare a `Content-Length` are ever buffered, so `on` can't b
 
 Request/response header manipulation, capture, CORS, source-IP allow/deny, and upstream cookie/redirect rewriting.
 
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/allowlist-source-range` | ✅ Supported | Allows only the listed CIDRs and denies all other source IPs for the host. |
-| `haproxy-haptic.org/cors-allow-credentials` | ✅ Supported | Sets `Access-Control-Allow-Credentials: true` when enabled. |
-| `haproxy-haptic.org/cors-allow-headers` | ✅ Supported | Sets the `Access-Control-Allow-Headers` response header. |
-| `haproxy-haptic.org/cors-allow-methods` | ✅ Supported | Sets the `Access-Control-Allow-Methods` response header. |
-| `haproxy-haptic.org/cors-allow-origin` | ✅ Supported | Sets the allowed origins (comma-separated, with a single-level `*.` wildcard); the matching request `Origin` is echoed back (default `*`). |
-| `haproxy-haptic.org/cors-enable` | ✅ Supported | Enables CORS response headers and answers `OPTIONS` requests with `204`; the headers come from per-route maps, so the route stays reload-free. |
-| `haproxy-haptic.org/cors-expose-headers` | ✅ Supported | Sets the `Access-Control-Expose-Headers` response header. |
-| `haproxy-haptic.org/cors-max-age` | ✅ Supported | Sets the `Access-Control-Max-Age` response header (default `86400`). |
-| `haproxy-haptic.org/denylist-source-range` | ✅ Supported | Denies the listed CIDRs and allows all other source IPs for the host. |
-| `haproxy-haptic.org/forwardfor` | ✅ Supported | Controls the `X-Forwarded-For` header: `add`, `update`, `ifmissing`, or `ignore`. Applied from a per-route map. |
-| `haproxy-haptic.org/response-cookie-domain` | ✅ Supported | Rewrites the `Domain` attribute of upstream `Set-Cookie` response headers, given a `<from> <to>` pair, preserving the rest of the cookie string. Host-scoped; a wrong-arity value fails the render. Applied from a per-route map; the first route with a new pair reloads once. |
-| `haproxy-haptic.org/response-cookie-path` | ✅ Supported | Rewrites the `Path` attribute of upstream `Set-Cookie` response headers, given a `<from> <to>` pair, preserving the rest of the cookie string. Host-scoped; a wrong-arity value fails the render. Applied from a per-route map; the first route with a new pair reloads once. |
-| `haproxy-haptic.org/response-location-rewrite-from` | ✅ Supported | Names the literal text to match in the `Location` and `Refresh` response headers; the matched text is regex-escaped and replaced with the value of `response-location-rewrite-to`. Host-scoped. Applied from a per-route map; the first route with a new pair reloads once. |
-| `haproxy-haptic.org/response-location-rewrite-to` | ✅ Supported | Supplies the replacement text for `response-location-rewrite-from`; required whenever a match pattern is set, or the render fails. |
-| `haproxy-haptic.org/request-capture` | ✅ Supported | Captures the named request headers (newline-separated) in the logs via `capture request header`, across the whole frontend; each header and length pair is emitted once, so a route sharing a known pair is reload-free. |
-| `haproxy-haptic.org/request-capture-len` | ✅ Supported | Sets the capture length for `request-capture` (default `128`). |
-| `haproxy-haptic.org/request-set-header` | ✅ Supported | Sets request headers sent to the upstream, one `<name> <value>` per line. Reload-free: values move into `ing-reqhdr.map`, read by one static `http-request set-header` line per header name, keyed on the backend. |
-| `haproxy-haptic.org/response-set-header` | ✅ Supported | Sets response headers, one `<name> <value>` per line. Reload-free: values move into `ing-reshdr.map`, read by one static `http-response set-header` line per header name, keyed on the backend. |
-| `haproxy-haptic.org/src-ip-header` | ✅ Supported | Derives the client source IP from the named request header via `http-request set-src`, from a per-route map; the first route to name a new header reloads once. |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/allowlist-source-range` | Allows only the listed CIDRs and denies all other source IPs for the host. |
+| `haproxy-haptic.org/cors-allow-credentials` | Sets `Access-Control-Allow-Credentials: true` when enabled. |
+| `haproxy-haptic.org/cors-allow-headers` | Sets the `Access-Control-Allow-Headers` response header. |
+| `haproxy-haptic.org/cors-allow-methods` | Sets the `Access-Control-Allow-Methods` response header. |
+| `haproxy-haptic.org/cors-allow-origin` | Sets the allowed origins (comma-separated, with a single-level `*.` wildcard); the matching request `Origin` is echoed back (default `*`). |
+| `haproxy-haptic.org/cors-enable` | Enables CORS response headers and answers `OPTIONS` requests with `204`; the headers come from per-route maps, so the route stays reload-free. |
+| `haproxy-haptic.org/cors-expose-headers` | Sets the `Access-Control-Expose-Headers` response header. |
+| `haproxy-haptic.org/cors-max-age` | Sets the `Access-Control-Max-Age` response header (default `86400`). |
+| `haproxy-haptic.org/denylist-source-range` | Denies the listed CIDRs and allows all other source IPs for the host. |
+| `haproxy-haptic.org/forwardfor` | Controls the `X-Forwarded-For` header: `add`, `update`, `ifmissing`, or `ignore`. Applied from a per-route map. |
+| `haproxy-haptic.org/response-cookie-domain` | Rewrites the `Domain` attribute of upstream `Set-Cookie` response headers, given a `<from> <to>` pair, preserving the rest of the cookie string. Host-scoped; a wrong-arity value fails the render. Applied from a per-route map; the first route with a new pair reloads once. |
+| `haproxy-haptic.org/response-cookie-path` | Rewrites the `Path` attribute of upstream `Set-Cookie` response headers, given a `<from> <to>` pair, preserving the rest of the cookie string. Host-scoped; a wrong-arity value fails the render. Applied from a per-route map; the first route with a new pair reloads once. |
+| `haproxy-haptic.org/response-location-rewrite-from` | Names the literal text to match in the `Location` and `Refresh` response headers; the matched text is regex-escaped and replaced with the value of `response-location-rewrite-to`. Host-scoped. Applied from a per-route map; the first route with a new pair reloads once. |
+| `haproxy-haptic.org/response-location-rewrite-to` | Supplies the replacement text for `response-location-rewrite-from`; required whenever a match pattern is set, or the render fails. |
+| `haproxy-haptic.org/request-capture` | Captures the named request headers (newline-separated) in the logs via `capture request header`, across the whole frontend; each header and length pair is emitted once, so a route sharing a known pair is reload-free. |
+| `haproxy-haptic.org/request-capture-len` | Sets the capture length for `request-capture` (default `128`). |
+| `haproxy-haptic.org/request-set-header` | Sets request headers sent to the upstream, one `<name> <value>` per line. Reload-free: values move into `ing-reqhdr.map`, read by one static `http-request set-header` line per header name, keyed on the backend. |
+| `haproxy-haptic.org/response-set-header` | Sets response headers, one `<name> <value>` per line. Reload-free: values move into `ing-reshdr.map`, read by one static `http-response set-header` line per header name, keyed on the backend. |
+| `haproxy-haptic.org/src-ip-header` | Derives the client source IP from the named request header via `http-request set-src`, from a per-route map; the first route to name a new header reloads once. |
 
 ### Canary and traffic mirroring
 
 Header/cookie/weight-based canary routing and request mirroring via the SPOA hub.
 
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/canary` | ✅ Supported | Marks the Ingress as a canary for a host owned by another Ingress, overlaying a `use_backend` split instead of owning the route. |
-| `haproxy-haptic.org/canary-by-cookie` | ✅ Supported | Routes to the canary backend when the named cookie is present. |
-| `haproxy-haptic.org/canary-by-header` | ✅ Supported | Routes to the canary backend when the named header is present. |
-| `haproxy-haptic.org/canary-by-header-pattern` | ✅ Supported | Routes to the canary backend when the named header matches this regular expression; takes precedence over `canary-by-header-value`. |
-| `haproxy-haptic.org/canary-by-header-value` | ✅ Supported | Routes to the canary backend only when the named header equals this value. |
-| `haproxy-haptic.org/canary-weight` | ✅ Supported | Sends a percentage of traffic (an integer 0-100) to the canary backend via a weighted random split. |
-| `haproxy-haptic.org/mirror-target` | ✅ Supported | Mirrors requests fire-and-forget to a `scheme://host[:port]` target through the SPOA hub's mirror plugin, buffering the request body via `option http-buffer-request`; requires the mirror plugin and a host on the rule. |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/canary` | Marks the Ingress as a canary for a host owned by another Ingress, overlaying a `use_backend` split instead of owning the route. |
+| `haproxy-haptic.org/canary-by-cookie` | Routes to the canary backend when the named cookie is present. |
+| `haproxy-haptic.org/canary-by-header` | Routes to the canary backend when the named header is present. |
+| `haproxy-haptic.org/canary-by-header-pattern` | Routes to the canary backend when the named header matches this regular expression; takes precedence over `canary-by-header-value`. |
+| `haproxy-haptic.org/canary-by-header-value` | Routes to the canary backend only when the named header equals this value. |
+| `haproxy-haptic.org/canary-weight` | Sends a percentage of traffic (an integer 0-100) to the canary backend via a weighted random split. |
+| `haproxy-haptic.org/mirror-target` | Mirrors requests fire-and-forget to a `scheme://host[:port]` target through the SPOA hub's mirror plugin, buffering the request body via `option http-buffer-request`; requires the mirror plugin and a host on the rule. |
 
 ### Redirects, HSTS, passthrough, and config injection
 
 HTTP→HTTPS and host redirects (reload-free maps), HSTS, SSL passthrough, a default backend, and raw section injection.
 
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/root-redirect` | ✅ Supported | Redirects requests for the host root path (`/`) to the given sub-path. |
-| `haproxy-haptic.org/config-defaults` | ✅ Supported | Injects raw operator-authored directives verbatim into the `defaults` section. |
-| `haproxy-haptic.org/config-frontend` | ✅ Supported | Injects raw operator-authored directives into every frontend, before routing. |
-| `haproxy-haptic.org/config-global` | ✅ Supported | Injects raw operator-authored HAProxy directives verbatim into the `global` section. |
-| `haproxy-haptic.org/default-backend` | ⚠️ Caveat | Routes requests that match the host but none of its configured paths to a named Service as a catch-all backend pool, using the Service's first port. Produces no backend, and no error, when the Service or its first port can't be resolved. |
-| `haproxy-haptic.org/default-backend-redirect` | ✅ Supported | Redirects requests that match the host but no path to the given URL. |
-| `haproxy-haptic.org/default-backend-redirect-code` | ✅ Supported | Sets the status code for `default-backend-redirect` (default `302`). |
-| `haproxy-haptic.org/apex-www-redirect` | ✅ Supported | Issues a `301` redirect between the apex domain and its `www` subdomain, in both directions, preserving the request path and scheme. |
-| `haproxy-haptic.org/hsts` | ✅ Supported | Enables HSTS by adding the `Strict-Transport-Security` response header for the host. |
-| `haproxy-haptic.org/hsts-include-subdomains` | ✅ Supported | Appends `includeSubDomains` to the `Strict-Transport-Security` header when set to `true`. |
-| `haproxy-haptic.org/hsts-max-age` | ✅ Supported | Sets the HSTS `max-age` in seconds (default `63072000`). |
-| `haproxy-haptic.org/hsts-preload` | ✅ Supported | Appends `preload` to the `Strict-Transport-Security` header when set to `true`. |
-| `haproxy-haptic.org/permanent-redirect` | ✅ Supported | Redirects the host to the given URL with a permanent status code (default `301`). |
-| `haproxy-haptic.org/permanent-redirect-code` | ✅ Supported | Sets the status code for `permanent-redirect` (default `301`). |
-| `haproxy-haptic.org/ssl-passthrough` | ✅ Supported | Passes TLS through to the backend without terminating it, routed by SNI on a dedicated TCP frontend. |
-| `haproxy-haptic.org/https-redirect` | ✅ Supported | Redirects plain HTTP requests for the host to HTTPS. Hosts that also set `https-redirect-port` are handled there instead, avoiding a double redirect. |
-| `haproxy-haptic.org/https-redirect-code` | ✅ Supported | Sets the HTTP-to-HTTPS redirect status code (`301`, `302`, `303`, `307`, or `308`; default `302`). |
-| `haproxy-haptic.org/https-redirect-port` | ✅ Supported | Redirects plain HTTP requests to HTTPS on an explicit port, preserving the request URI. |
-| `haproxy-haptic.org/temporary-redirect` | ✅ Supported | Redirects the host to the given URL with a temporary status code (default `302`). |
-| `haproxy-haptic.org/temporary-redirect-code` | ✅ Supported | Sets the status code for `temporary-redirect` (default `302`). |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/root-redirect` | Redirects requests for the host root path (`/`) to the given sub-path. |
+| `haproxy-haptic.org/config-defaults` | Injects raw operator-authored directives verbatim into the `defaults` section. |
+| `haproxy-haptic.org/config-frontend` | Injects raw operator-authored directives into every frontend, before routing. |
+| `haproxy-haptic.org/config-global` | Injects raw operator-authored HAProxy directives verbatim into the `global` section. |
+| `haproxy-haptic.org/default-backend` | Routes requests that match the host but none of its configured paths to a named Service as a catch-all backend pool, using the Service's first port. Produces no backend, and no error, when the Service or its first port can't be resolved. |
+| `haproxy-haptic.org/default-backend-redirect` | Redirects requests that match the host but no path to the given URL. |
+| `haproxy-haptic.org/default-backend-redirect-code` | Sets the status code for `default-backend-redirect` (default `302`). |
+| `haproxy-haptic.org/apex-www-redirect` | Issues a `301` redirect between the apex domain and its `www` subdomain, in both directions, preserving the request path and scheme. |
+| `haproxy-haptic.org/hsts` | Enables HSTS by adding the `Strict-Transport-Security` response header for the host. |
+| `haproxy-haptic.org/hsts-include-subdomains` | Appends `includeSubDomains` to the `Strict-Transport-Security` header when set to `true`. |
+| `haproxy-haptic.org/hsts-max-age` | Sets the HSTS `max-age` in seconds (default `63072000`). |
+| `haproxy-haptic.org/hsts-preload` | Appends `preload` to the `Strict-Transport-Security` header when set to `true`. |
+| `haproxy-haptic.org/permanent-redirect` | Redirects the host to the given URL with a permanent status code (default `301`). |
+| `haproxy-haptic.org/permanent-redirect-code` | Sets the status code for `permanent-redirect` (default `301`). |
+| `haproxy-haptic.org/ssl-passthrough` | Passes TLS through to the backend without terminating it, routed by SNI on a dedicated TCP frontend. |
+| `haproxy-haptic.org/https-redirect` | Redirects plain HTTP requests for the host to HTTPS. Hosts that also set `https-redirect-port` are handled there instead, avoiding a double redirect. |
+| `haproxy-haptic.org/https-redirect-code` | Sets the HTTP-to-HTTPS redirect status code (`301`, `302`, `303`, `307`, or `308`; default `302`). |
+| `haproxy-haptic.org/https-redirect-port` | Redirects plain HTTP requests to HTTPS on an explicit port, preserving the request URI. |
+| `haproxy-haptic.org/temporary-redirect` | Redirects the host to the given URL with a temporary status code (default `302`). |
+| `haproxy-haptic.org/temporary-redirect-code` | Sets the status code for `temporary-redirect` (default `302`). |
 
 ### Authentication, mTLS, and WAF
 
 Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy, and the Coraza WAF via the SPOA hub.
 
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/auth-headers-fail` | ✅ Supported | Adds response headers on failed external authentication via `http-after-response set-header`. |
-| `haproxy-haptic.org/auth-headers-request` | ✅ Supported | Lists the request headers forwarded to the external authentication service. |
-| `haproxy-haptic.org/auth-headers-succeed` | ✅ Supported | Adds request headers to the upstream on successful external authentication. |
-| `haproxy-haptic.org/auth-method` | ✅ Supported | Overrides the HTTP method used for the external authentication subrequest. |
-| `haproxy-haptic.org/auth-realm` | ✅ Supported | Sets the basic-auth realm (default `Restricted`). |
-| `haproxy-haptic.org/auth-secret` | ✅ Supported | Names the Secret holding basic-auth credentials, as `name` or `namespace/name`; while the Secret is absent the route answers 503. |
-| `haproxy-haptic.org/auth-secret-type` | ✅ Supported | Selects the credentials Secret format: `auth-file` (htpasswd in the `auth` key) or `auth-map` (one key per user); default `auth-file`. |
-| `haproxy-haptic.org/auth-signin` | ✅ Supported | Sets the sign-in redirect URL for failed external authentication. |
-| `haproxy-haptic.org/auth-tls-cert-header` | ✅ Supported | Forwards the client certificate details (`X-SSL-Client-CN`, `X-SSL-Client-DN`, `X-SSL-Client-Cert`) to the upstream when a client certificate was presented. Applied from a per-route map. |
-| `haproxy-haptic.org/auth-tls-error-page` | ✅ Supported | Redirects to the given URL when client-certificate (mTLS) verification fails. |
-| `haproxy-haptic.org/auth-tls-secret` | ✅ Supported | Enables client-certificate (mTLS) verification for the host using the CA in the named Secret; a host is required. |
-| `haproxy-haptic.org/auth-tls-verify-client` | ⚠️ Caveat | Sets client-certificate verification: `on` requires it, `optional` and `optional_no_ca` both map to `verify optional` (HAProxy has no distinct `optional_no_ca` mode), and `off` disables it. |
-| `haproxy-haptic.org/auth-type` | ✅ Supported | Enables basic authentication; the only accepted value is `basic`. |
-| `haproxy-haptic.org/auth-url` | ✅ Supported | Sets the external authentication service URL; requires the SPOA hub's external-auth plugin. |
-| `haproxy-haptic.org/waf-policy` | ✅ Supported | Selects one exact reusable Coraza policy. Definitions come from `extraContext.waf.policies.inline`, explicitly trusted ConfigMaps, or — with `policies.selfService` enabled — the Ingress's own namespace's well-known `waf-policies` ConfigMap; an Ingress can't define or redirect a source. Configuring any catalog source activates policy governance and Coraza automatically. |
-| `haproxy-haptic.org/oauth` | ✅ Supported | Enables authentication through `oauth2-proxy` (the only supported provider), building on external auth; skipped when `auth-url` is set. |
-| `haproxy-haptic.org/oauth-headers` | ✅ Supported | Lists headers forwarded from the `oauth2-proxy` response on success (default `X-Auth-Request-Email`). |
-| `haproxy-haptic.org/oauth-uri-prefix` | ✅ Supported | Sets the `oauth2-proxy` callback path prefix (default `/oauth2`). |
-| `haproxy-haptic.org/satisfy` | ✅ Supported | The value `any` grants access when either the source-IP allowlist or basic authentication passes, instead of requiring both. The gate is a frontend rule per distinct userlist-and-realm pair, so such a route is added and removed at runtime; an allowlist with an IPv6 entry keeps a backend rule. |
-| `haproxy-haptic.org/waf-mode` | ✅ Supported | Sets `deny` or `detect`, overriding the selected policy's enforcement only when `waf.ingressPermissions.allowEnforcementOverride` permits it. Requires a selected `waf-policy`. |
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/auth-headers-fail` | Adds response headers on failed external authentication via `http-after-response set-header`. |
+| `haproxy-haptic.org/auth-headers-request` | Lists the request headers forwarded to the external authentication service. |
+| `haproxy-haptic.org/auth-headers-succeed` | Adds request headers to the upstream on successful external authentication. |
+| `haproxy-haptic.org/auth-method` | Overrides the HTTP method used for the external authentication subrequest. |
+| `haproxy-haptic.org/auth-realm` | Sets the basic-auth realm (default `Restricted`). |
+| `haproxy-haptic.org/auth-secret` | Names the Secret holding basic-auth credentials, as `name` or `namespace/name`; while the Secret is absent the route answers 503. |
+| `haproxy-haptic.org/auth-secret-type` | Selects the credentials Secret format: `auth-file` (htpasswd in the `auth` key) or `auth-map` (one key per user); default `auth-file`. |
+| `haproxy-haptic.org/auth-signin` | Sets the sign-in redirect URL for failed external authentication. |
+| `haproxy-haptic.org/auth-tls-cert-header` | Forwards the client certificate details (`X-SSL-Client-CN`, `X-SSL-Client-DN`, `X-SSL-Client-Cert`) to the upstream when a client certificate was presented. Applied from a per-route map. |
+| `haproxy-haptic.org/auth-tls-error-page` | Redirects to the given URL when client-certificate (mTLS) verification fails. |
+| `haproxy-haptic.org/auth-tls-secret` | Enables client-certificate (mTLS) verification for the host using the CA in the named Secret; a host is required. |
+| `haproxy-haptic.org/auth-tls-verify-client` | Sets client-certificate verification: `on` requires it, `optional` and `optional_no_ca` both map to `verify optional` (HAProxy has no distinct `optional_no_ca` mode), and `off` disables it. |
+| `haproxy-haptic.org/auth-type` | Enables basic authentication; the only accepted value is `basic`. |
+| `haproxy-haptic.org/auth-url` | Sets the external authentication service URL; requires the SPOA hub's external-auth plugin. |
+| `haproxy-haptic.org/waf-policy` | Selects a case-sensitive policy name from an administrator-approved catalog or an enabled namespace-local catalog. See [WAF policy setup](../operations/waf-policies.md). |
+| `haproxy-haptic.org/oauth` | Enables authentication through `oauth2-proxy` (the only supported provider), building on external auth; skipped when `auth-url` is set. |
+| `haproxy-haptic.org/oauth-headers` | Lists headers forwarded from the `oauth2-proxy` response on success (default `X-Auth-Request-Email`). |
+| `haproxy-haptic.org/oauth-uri-prefix` | Sets the `oauth2-proxy` callback path prefix (default `/oauth2`). |
+| `haproxy-haptic.org/satisfy` | The value `any` grants access when either the source-IP allowlist or basic authentication passes, instead of requiring both. The gate is a frontend rule per distinct userlist-and-realm pair, so such a route is added and removed at runtime; an allowlist with an IPv6 entry keeps a backend rule. |
+| `haproxy-haptic.org/waf-mode` | Sets `deny` or `detect`, overriding the selected policy's enforcement only when `waf.ingressPermissions.allowEnforcementOverride` permits it. Requires a selected `waf-policy`. |
 
 #### Reusable WAF policies
 
-Reusable policies separate three responsibilities cleanly:
-
-- The HAPTIC administrator chooses trusted policy sources and owns all Ingress override permissions; configuring the catalog activates policy governance automatically.
-- A security team can maintain policy contents in a ConfigMap in a dedicated namespace.
-- An Ingress author normally adds only `haproxy-haptic.org/waf-policy: <name>`.
-
-Policy names are case-sensitive. HAPTIC resolves them from
-`extraContext.waf.policies.inline` and the exact ConfigMap references in
-`configMapRefs`. Application ConfigMaps contribute policies only when
-[self-service authoring](#self-service-namespaced-policies) is enabled.
-
-Admission rejects invalid policy definitions and selections. During live
-rendering, an unknown or broken selection returns `503` for that route and emits
-a Warning Event; other routes continue rendering.
-
-`controller.config.templatingSettings.extraContext.waf.dispatch.mode` controls the global activation model. The default `opt-in` mode sends only annotated routes to Coraza. `default-on` inspects all routes and uses `dispatch.defaultEnforcement` where no selected policy or authorized route override supplies an enforcement mode. This stays in `extraContext` because request dispatch is template-library behaviour and must also be configurable in a raw `HAProxyTemplateConfig`. Coraza's chart-wide directives and low-level plugin parameters remain under `spoaHub.plugins.coraza`.
-
-The following example lets a security team own the catalog in the `security` namespace while application teams select approved policies:
-
-```yaml
-controller:
-  config:
-    templatingSettings:
-      extraContext:
-        waf:
-          ingressPermissions:
-            allowPolicySelection: true
-            allowEnforcementOverride: false
-            allowWafDisable: false
-            allowCustomRules: false
-            allowRawHAProxyConfig: false
-          policies:
-            configMapRefs:
-              security:
-                namespace: security
-                name: haptic-waf-policies
-                key: policies.yaml
-```
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  namespace: security
-  name: haptic-waf-policies
-data:
-  policies.yaml: |
-    public-web:
-      description: Public browser applications without request-body inspection
-      requestBody:
-        mode: none
-      enforcement: deny
-      ruleExclusions:
-        - tags: [attack-sqli, attack-xss]
-          excludeTarget: "ARGS:q"
-    json-api:
-      requestBody:
-        mode: json
-        maxBytes: 4096
-      enforcement: deny
-    git-host:
-      description: Git smart-HTTP server — allowlist git's content type, don't disable the rule
-      requestBody:
-        mode: none
-      enforcement: deny
-      crsSettings:
-        allowedRequestContentTypes:
-          - application/x-git-upload-pack-request
-          - application/x-git-receive-pack-request
-```
+Select a policy approved by your platform administrator:
 
 ```yaml
 metadata:
@@ -513,133 +300,63 @@ metadata:
     haproxy-haptic.org/waf-policy: public-web
 ```
 
-Each policy supports `description`, `enforcement`, nested `requestBody.mode`/`maxBytes`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `crsSettings`, `ruleExclusions`, and `secLang`.
+Policies define what Coraza inspects and whether it reports or blocks matches.
+Follow [Configure WAF policies](../operations/waf-policies.md) to create a catalog,
+set a cluster baseline, or grant application teams control over their own policies.
 
-Use `crsSettings` to adjust the Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) inputs before excluding a rule.
-`allowedRequestContentTypes` adds media types to the standard allowlist;
-`maxFileSize`, `maxNumArgs`, and `totalArgLength` set bounded limits. For example,
-allowing `application/x-git-upload-pack-request` keeps rule 920420 active for
-other content types.
+<a id="waf-and-grpc-streaming"></a>
+<a id="self-service-namespaced-policies"></a>
 
-`ruleExclusions` disables a rule by numeric ID, optionally limited by
-`onPathPrefix`, `onPathSuffix`, `onPathExact`, or `onPathContains`. It can also
-exclude an exact variable, such as `ARGS:q`, from a rule or CRS tag. Use exclusions
-when a rule doesn't fit the application. Trusted policy authors can use
-`secLang` for cases these structured fields don't cover.
-
-`requestBody.mode: none` inspects metadata without buffering or limiting uploads. `any` inspects a complete bounded body; `json` additionally requires a JSON media type. Body routes require an unambiguous `Content-Length`; oversized or incomplete bodies are rejected before Coraza. A policy that omits `requestBody.maxBytes` uses `policies.requestBody.defaultMaxBytes`; it may never exceed `policies.requestBody.maxBytes`. Keeping those two settings separate lets an administrator approve one larger policy without silently enlarging every policy that relied on the default. The effective per-policy cap is set both in HAProxy and in that Coraza application, so neither layer silently inspects a different amount. Template body behavior lives under `extraContext.waf.policies.requestBody`; SPOA timeout/concurrency live only under `spoaHub.plugins.coraza`; the process-global HAProxy buffer lives under `extraContext.requestBodyInspection.haproxyBuffer`.
-
-##### WAF and gRPC streaming
-
-Set `requestBody.mode: none` for gRPC routes. Method, path, header, and source-IP
-inspection still runs. Coraza's bundled [body processors](https://www.coraza.io/docs/reference/body-processing/)
-don't decode protobuf or gRPC messages.
-
-Enforced body inspection waits for a complete request before forwarding it.
-A client-streaming or bidirectional call that keeps its body open past
-`policies.requestBody.waitTimeout` receives `408`. Buffering also prevents the
-backend from processing messages as they arrive. Unary calls have finite bodies,
-but still face buffering, size limits, and content-type checks: `json` rejects a
-non-JSON content type when `Content-Length` is present.
-
-Detect mode skips the body-contract rejections and waits only when
-`Content-Length` is present. An unbounded body remains uninspected; a detect
-verdict on that request doesn't establish that enforced body inspection is safe.
-
-Admission rejects an Ingress that combines a body-inspecting policy with
-`haproxy-haptic.org/backend-protocol: grpc`/`grpcs` or nginx-compatible
-`GRPC`/`GRPCS`. This check also applies to detect policies. An existing combination
-records a `WafBodyPolicyOnGRPCRoute` Warning Event and retains its runtime rules,
-including their body rejections. Set the policy's body mode to `none` to remove
-the conflict. Plain `h2`/`h2-ssl` doesn't trigger this check because it also serves
-non-gRPC HTTP/2 applications.
-
-Partial-body inspection leaves the uninspected remainder unchecked. HAPTIC uses
-rejection instead of Coraza's `SecRequestBodyLimitAction ProcessPartial`.
-Use controls that don't require decoding the message body:
-
-| Control | Annotation or setting |
-|---------|-----------------------|
-| Source-IP access | `allowlist-source-range` |
-| Caller identity | `jwt-*`, `api-key-*`, client mTLS |
-| Request rate | `rate-limit-*` |
-
-`allowed-methods` filters HTTP methods, not gRPC method paths.
-`max-request-body-size` limits the HTTP request body, not individual gRPC messages;
-configure per-message limits in the gRPC application.
-
-For an immutable cluster baseline, configure a default and disable selection:
-
-```yaml
-controller:
-  config:
-    templatingSettings:
-      extraContext:
-        waf:
-          ingressPermissions:
-            allowPolicySelection: false
-            allowEnforcementOverride: false
-            allowWafDisable: false
-            allowCustomRules: false
-            allowRawHAProxyConfig: false
-          policies:
-            defaultPolicy: public-web
-```
-
-Removing all WAF annotations doesn't remove this default. HAPTIC also rejects HAPTIC and vendor annotations that select another application, switch to detect mode, disable the WAF, inject SecLang, or inject raw HAProxy configuration. Raw configuration is checked cluster-wide because a frontend, defaults, or global snippet from one Ingress can short-circuit processing for other routes.
-
-The safe defaults are `allowEnforcementOverride: false`, `allowWafDisable: false`, `allowCustomRules: false`, and `allowRawHAProxyConfig: false`. Enforcement-mode overrides and complete WAF opt-outs are deliberately separate permissions: allowing an application team to choose `deny`/`detect` doesn't also let it disable inspection. Turning on `allowCustomRules` grants every Ingress writer arbitrary SecLang capability, including directives that can disable or rewrite policy rules. Turning on `allowRawHAProxyConfig` grants every Ingress writer HAProxy-configuration-administrator capability. Use those switches only where Ingress write access is already trusted at that level. `allowPolicySelection: true` authorizes every Ingress writer to choose any policy in the approved catalog; set it to false with a `defaultPolicy` when that's too broad.
-
-Protect every referenced ConfigMap with Kubernetes RBAC. Anyone who can update one is a WAF policy author. HAPTIC intentionally can't infer the human identity or RBAC path behind a ConfigMap update; the chart establishes the exact source boundary, while Kubernetes authorizes writers to that source.
-
-A policy's directives compile in a deterministic order: chart-wide Coraza/CRS directives, the policy's setup-position tuning (paranoia level, allowed methods, path-scoped rule exclusions) before the CRS include, its config-time rule exclusions after, then HAPTIC's non-overridable body-safety directives. Policies compile once and are shared across every route that selects them. The nginx-compatible custom-rule path (`nginx.ingress.kubernetes.io/modsecurity-snippet`, documented on the nginx-ingress page) creates a private per-Ingress Coraza application and shares `waf.customRules.limits.maxIngresses` and `maxBytesPerIngress`; these DoS bounds apply even when no reusable policy catalog is configured.
-
-#### Self-service namespaced policies
-
-`waf.policies.selfService` lets every namespace author WAF policies for its **own** Ingresses without any per-namespace registration — the admin enables the mode once, and each team owns one well-known ConfigMap (default name `waf-policies`, data key `policies.yaml`) in its namespace:
-
-```yaml
-controller:
-  config:
-    templatingSettings:
-      extraContext:
-        waf:
-          policies:
-            selfService:
-              enabled: true
-```
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  namespace: team-a
-  name: waf-policies
-data:
-  policies.yaml: |
-    app-baseline:
-      requestBody:
-        mode: none
-      enforcement: detect
-      ruleExclusions:
-        - tags: [attack-sqli]
-          excludeTarget: "ARGS:q"
-```
-
-An Ingress in `team-a` then selects `haproxy-haptic.org/waf-policy: app-baseline` — the same annotation as trusted policies. Names resolve against the trusted catalog first, then the Ingress's own namespace; a policy defined in another namespace is invisible, and explicit cross-namespace addressing (`team-a/app-baseline`) is rejected.
-
-Self-service stays safe for the shared data plane by construction:
-
-- **Namespace-scoped identity.** A self-service policy can't collide with, shadow, or hijack another namespace's or the trusted catalog's names. A name that clashes with a trusted policy is never resolved silently in either direction: the clashing namespace's selectors fail closed while other namespaces still get the trusted policy.
-- **Scoped failure.** A broken catalog (invalid YAML) or invalid policy records Warning Events (`WafPolicyCatalogInvalid` / `WafPolicyInvalid`) on the ConfigMap, and only that namespace's *selecting* routes fail closed with `503` — the global render, and every other team, continue untouched. The admission webhook still rejects a change that would introduce the breakage, so the fail-closed path only covers breakage that pre-dates the webhook or raced past it.
-- **Bounded content.** `secLang` is refused unless the administrator sets `selfService.allowSecLang: true` — the structured fields (`enforcement`, `requestBody`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `crsSettings`, `ruleExclusions`) cover false-positive tuning without arbitrary rule code in the shared Coraza process. `requestBody` stays bounded by the administrator's `policies.requestBody.maxBytes` ceiling, and `selfService.limits.maxPoliciesPerNamespace` / `maxTotalPolicies` cap catalog growth (cuts are deterministic: sorted namespaces, sorted names). Note the caps bound size and count, not rule CPU — that's why `allowSecLang` is a separate, off-by-default grant.
-- **The baseline stays admin-owned.** `defaultPolicy` resolves in the trusted catalog only, and under `default-on`/`deny` dispatch a self-service policy whose effective enforcement is `detect` is rejected — a tenant can't weaken the cluster baseline.
-
-Enabling self-service activates WAF governance (the `ingressPermissions` gates), the Coraza plugin, and a dedicated, name-scoped ConfigMap watch (only the well-known catalogs are retained in memory, not every cluster ConfigMap). Use `configMapRefs` instead when a central security team authors policies for other teams, and inline policies for admin-only catalogs; all three sources compose.
+For gRPC, select a policy with `requestBody.mode: none` so inspection doesn't
+buffer a streaming request. See [WAF and gRPC streaming](../operations/waf-policies.md#waf-and-grpc-streaming)
+and [self-service namespaced policies](../operations/waf-policies.md#self-service-namespaced-policies).
 
 ### API gateway
 
-API-management controls expressed as pure HAProxy config plus low-latency SPOA plugins where HAProxy can't do the work natively: token authentication (API key, JWT, HMAC) that establishes a shared consumer identity, consumer-group authorization, stateless request gating (method/content-type/header validation, mocking, termination), JSON request-body validation, and request correlation IDs.
+Authenticate callers, authorize consumer groups, validate requests, or return
+fixed responses with these annotations. API-key and JWT authentication establish
+a shared consumer identity for authorization, rate limits, and caching.
+
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/allowed-consumer-groups` | Comma-separated group set the route permits; a request whose consumer isn't in an allowed group is denied `403`. Requires `consumer-groups-secret` and an authenticated consumer. |
+| `haproxy-haptic.org/allowed-methods` | Restricts the accepted HTTP methods (comma-separated); any other method is denied with `405`. Applied from a per-route map. |
+| `haproxy-haptic.org/api-key-consumer-header` | Forwards the resolved consumer id to the upstream in the named header. |
+| `haproxy-haptic.org/api-key-header` | Header carrying the API key (default `X-API-Key`); mutually exclusive with `api-key-query`. |
+| `haproxy-haptic.org/api-key-query` | Query parameter carrying the API key; mutually exclusive with `api-key-header`. |
+| `haproxy-haptic.org/api-key-secret` | Names the Secret (data key `keys`, one `apikey[:consumer]` per line) that becomes a reload-free key→consumer map; an unknown key is denied with `401`, and a valid key sets the shared `txn.haptic_consumer` identity. Fails closed (`503`) while the Secret is absent. Required by the other `api-key-*` annotations: any of them without it fails closed (`503`) and the Ingress is refused at admission. |
+| `haproxy-haptic.org/consumer-groups-secret` | Names the Secret (data key `groups`, one `<consumer>:<group>` per line) mapping each consumer to a group; combined with `allowed-consumer-groups` to authorize. Requires an authenticated consumer and fails closed (`503`) while the Secret is absent. |
+| `haproxy-haptic.org/hmac-algorithm` | HMAC digest algorithm (default `sha256`; `sha1`/`sha224`/`sha384`/`sha512`). |
+| `haproxy-haptic.org/hmac-header` | Header carrying the client HMAC signature (default `X-Signature`; lowercase hex). |
+| `haproxy-haptic.org/hmac-secret` | Names the Secret (data key `secret`) for HMAC request-signature verification (deny `401` on mismatch). The shared key travels (base64) in `haptic-hmac-routes.map`, visible wherever the map is, and the compare isn't constant-time — prefer JWT. Fails closed (`503`) when the Secret is absent. Required by the other `hmac-*` annotations: admission rejects these options without a secret, and reconciliation returns `503`. |
+| `haproxy-haptic.org/hmac-signed-string` | What the signature covers: `body` (default) or `path`. Body mode requires `Content-Length`, including `0` for an empty body; unknown-length requests return `411`. It waits up to `extraContext.requestBuffering.waitTimeout` and verifies the complete body. Bodies exceeding HAProxy's available request buffer return `413`. |
+| `haproxy-haptic.org/jwt-algorithm` | JWT signature algorithm (default `RS256`); asymmetric only (`RS`/`ES`/`PS` `256`/`384`/`512`) — symmetric `HS*` is rejected so no shared secret is inlined. |
+| `haproxy-haptic.org/jwt-audience` | Required `aud` claim value (exact match); an array `aud` (multiple audiences) isn't matched — scalar only. |
+| `haproxy-haptic.org/jwt-forward-claims` | Comma-separated `<claim>:<header>` pairs forwarded upstream after verification; each header is stripped from the client request first (anti-spoof). |
+| `haproxy-haptic.org/jwt-issuer` | Required `iss` claim value (exact match). |
+| `haproxy-haptic.org/jwt-required-claims` | Comma-separated claim names that must be present in the payload; a missing claim is denied `401`. |
+| `haproxy-haptic.org/jwt-secret` | Names the Secret (data key `pubkey.pem`) for asymmetric JWT verification with an alg-confusion guard, `exp`/`iss`/`aud`/required-claim checks, and the shared consumer identity from `sub`. Fails closed (`503`) when the Secret is absent. A new key Secret reloads once; routes sharing a key are added and removed without one, and key rotation needs a reload. |
+| `haproxy-haptic.org/mock-response` | A non-empty value returns it as a canned response body, short-circuiting the backend (for stubbing an API). The body comes from a per-route map; the first route with a new status and content-type pair reloads once. |
+| `haproxy-haptic.org/mock-response-code` | HTTP status for `mock-response` (default `200`). |
+| `haproxy-haptic.org/mock-response-content-type` | Content-Type for the `mock-response` body (default `application/json`). |
+| `haproxy-haptic.org/request-id` | The value `true` generates a per-request correlation id and forwards it upstream (HAProxy `unique-id`), from a per-route map; the first route with a new header name reloads once. |
+| `haproxy-haptic.org/request-id-accept-inbound` | The value `true` preserves a client-supplied id (used only when the header is absent) instead of always generating a fresh one. |
+| `haproxy-haptic.org/request-id-header` | Header carrying the correlation id (default `X-Request-ID`). |
+| `haproxy-haptic.org/request-schema-configmap` | Enables JSON request-body validation using a ConfigMap schema reference: `[namespace/]name[:key]`, default key `schema.json`. Exactly one schema source is required. Requires `extraContext.apiGateway.requestSchemaValidation.enabled=true`. |
+| `haproxy-haptic.org/request-schema-content-types` | Comma-separated accepted media types for the schema (default `application/json`). The plugin strips `; charset=...` parameters before matching; mismatches return `415`. |
+| `haproxy-haptic.org/request-schema-fail-open` | Per-route policy for missing plugin verdicts/schema ids (`true` or `false`, default from `extraContext.apiGateway.requestSchemaValidation.defaultFailOpen`, chart default `true`). The default allows the request and records `schema_degraded`; `false` returns `422` with `denied_by=schema_unavailable`. |
+| `haproxy-haptic.org/request-schema-max-body-size` | Per-route validator input cap (1..1048576; default `requestSchemaValidation.requestBody.defaultMaxBytes`, chart default `8192`). It must fit within `requestBodyInspection.haproxyBuffer.sizeBytes - reservedBytes`. Oversized requests return `413` before SPOE. This doesn't replace `haproxy-haptic.org/max-request-body-size`, the general backend body-size limit. |
+| `haproxy-haptic.org/request-schema-secret` | Enables JSON request-body validation using a Secret schema reference: `[namespace/]name[:key]`, default key `schema.json`. The Secret data value must be base64-encoded JSON Schema. Exactly one schema source is required. |
+| `haproxy-haptic.org/fixed-response` | The value `true` returns a fixed response for every request on the route via `http-request return` — for maintenance windows or sunset routes. Runs before mocking and the validators. Defaults to status 503 / `text/plain`, and can return a bare status with no body. The body comes from a per-route map; the first route with a new status and content-type pair reloads once. |
+| `haproxy-haptic.org/fixed-response-body` | Optional response body for `fixed-response`. |
+| `haproxy-haptic.org/fixed-response-code` | HTTP status for `fixed-response` (default 503; must be 100-599). |
+| `haproxy-haptic.org/fixed-response-content-type` | Content-Type for the `fixed-response` body (default `text/plain`). |
+| `haproxy-haptic.org/require-content-type` | Requires an allowed `Content-Type` (comma-separated) on body methods (POST/PUT/PATCH); a disallowed type is rejected with `415` (prefix-matched, so charset suffixes still match). Applied from a per-route map. |
+| `haproxy-haptic.org/require-headers` | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. Applied from a per-route map; the first route to require a new header name reloads once. |
+
+#### Request-body validation
+
+JSON request-body validation, and request correlation IDs.
 
 JWT and API-key auth both set a shared `txn.haptic_consumer` identity (JWT from the `sub` claim, API key from its map), which consumer-group authorization and the consumer-keyed shared rate limit build on.
 
@@ -652,45 +369,6 @@ removing its last route also adds or removes the shared rules.
 JSON request-body validation is opt-in via `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true`. Schemas are resolved from ConfigMaps or Secrets and compiled when the bundled plugin initializes/reloads. HAProxy rejects bodies above the route cap before SPOE, waits up to `requestBody.waitTimeout` only on matching POST/PUT/PATCH routes, and then validates against an in-memory compiled schema. The process-global `tune.bufsize` comes from `extraContext.requestBodyInspection.haproxyBuffer.sizeBytes`; `reservedBytes` (default `8192`) protects request headers and rewrite space. Any validator or policy body cap above the remaining capacity fails. Requests without `Content-Length` return `411`, duplicate lengths return `400`, and incomplete buffering returns `413` instead of validating truncated input. Request-body transformation isn't supported.
 
 `haproxy-haptic.org/request-schema-max-body-size` is a validator input cap, not the general upload/body-size policy. Use `haproxy-haptic.org/max-request-body-size` when you want to limit the body size a backend may receive. Use `request-schema-max-body-size` to bound how much body data HAProxy may pass to the API-gateway validator and how much JSON the plugin may parse. If both apply to a validated POST/PUT/PATCH request, either one may return `413`; in practice the stricter applicable limit wins.
-
-| Annotation | Status | Behaviour |
-|------------|--------|-----------|
-| `haproxy-haptic.org/allowed-consumer-groups` | ✅ Supported | Comma-separated group set the route permits; a request whose consumer isn't in an allowed group is denied `403`. Requires `consumer-groups-secret` and an authenticated consumer. |
-| `haproxy-haptic.org/allowed-methods` | ✅ Supported | Restricts the accepted HTTP methods (comma-separated); any other method is denied with `405`. Applied from a per-route map. |
-| `haproxy-haptic.org/api-key-consumer-header` | ✅ Supported | Forwards the resolved consumer id to the upstream in the named header. |
-| `haproxy-haptic.org/api-key-header` | ✅ Supported | Header carrying the API key (default `X-API-Key`); mutually exclusive with `api-key-query`. |
-| `haproxy-haptic.org/api-key-query` | ✅ Supported | Query parameter carrying the API key; mutually exclusive with `api-key-header`. |
-| `haproxy-haptic.org/api-key-secret` | ✅ Supported | Names the Secret (data key `keys`, one `apikey[:consumer]` per line) that becomes a reload-free key→consumer map; an unknown key is denied with `401`, and a valid key sets the shared `txn.haptic_consumer` identity. Fails closed (`503`) while the Secret is absent. Required by the other `api-key-*` annotations: any of them without it fails closed (`503`) and the Ingress is refused at admission. |
-| `haproxy-haptic.org/consumer-groups-secret` | ✅ Supported | Names the Secret (data key `groups`, one `<consumer>:<group>` per line) mapping each consumer to a group; combined with `allowed-consumer-groups` to authorize. Requires an authenticated consumer and fails closed (`503`) while the Secret is absent. |
-| `haproxy-haptic.org/hmac-algorithm` | ✅ Supported | HMAC digest algorithm (default `sha256`; `sha1`/`sha224`/`sha384`/`sha512`). |
-| `haproxy-haptic.org/hmac-header` | ✅ Supported | Header carrying the client HMAC signature (default `X-Signature`; lowercase hex). |
-| `haproxy-haptic.org/hmac-secret` | ⚠️ Caveat | Names the Secret (data key `secret`) for HMAC request-signature verification (deny `401` on mismatch). The shared key travels (base64) in `haptic-hmac-routes.map`, visible wherever the map is, and the compare isn't constant-time — prefer JWT. Fails closed (`503`) when the Secret is absent. Required by the other `hmac-*` annotations: admission rejects these options without a secret, and reconciliation returns `503`. |
-| `haproxy-haptic.org/hmac-signed-string` | ✅ Supported | What the signature covers: `body` (default) or `path`. Body mode requires `Content-Length`, including `0` for an empty body; unknown-length requests return `411`. It waits up to `extraContext.requestBuffering.waitTimeout` and verifies the complete body. Bodies exceeding HAProxy's available request buffer return `413`. |
-| `haproxy-haptic.org/jwt-algorithm` | ✅ Supported | JWT signature algorithm (default `RS256`); asymmetric only (`RS`/`ES`/`PS` `256`/`384`/`512`) — symmetric `HS*` is rejected so no shared secret is inlined. |
-| `haproxy-haptic.org/jwt-audience` | ⚠️ Caveat | Required `aud` claim value (exact match); an array `aud` (multiple audiences) isn't matched — scalar only. |
-| `haproxy-haptic.org/jwt-forward-claims` | ✅ Supported | Comma-separated `<claim>:<header>` pairs forwarded upstream after verification; each header is stripped from the client request first (anti-spoof). |
-| `haproxy-haptic.org/jwt-issuer` | ✅ Supported | Required `iss` claim value (exact match). |
-| `haproxy-haptic.org/jwt-required-claims` | ✅ Supported | Comma-separated claim names that must be present in the payload; a missing claim is denied `401`. |
-| `haproxy-haptic.org/jwt-secret` | ✅ Supported | Names the Secret (data key `pubkey.pem`) for asymmetric JWT verification with an alg-confusion guard, `exp`/`iss`/`aud`/required-claim checks, and the shared consumer identity from `sub`. Fails closed (`503`) when the Secret is absent. A new key Secret reloads once; routes sharing a key are added and removed without one, and key rotation needs a reload. |
-| `haproxy-haptic.org/mock-response` | ✅ Supported | A non-empty value returns it as a canned response body, short-circuiting the backend (for stubbing an API). The body comes from a per-route map; the first route with a new status and content-type pair reloads once. |
-| `haproxy-haptic.org/mock-response-code` | ✅ Supported | HTTP status for `mock-response` (default `200`). |
-| `haproxy-haptic.org/mock-response-content-type` | ✅ Supported | Content-Type for the `mock-response` body (default `application/json`). |
-| `haproxy-haptic.org/request-id` | ✅ Supported | The value `true` generates a per-request correlation id and forwards it upstream (HAProxy `unique-id`), from a per-route map; the first route with a new header name reloads once. |
-| `haproxy-haptic.org/request-id-accept-inbound` | ✅ Supported | The value `true` preserves a client-supplied id (used only when the header is absent) instead of always generating a fresh one. |
-| `haproxy-haptic.org/request-id-header` | ✅ Supported | Header carrying the correlation id (default `X-Request-ID`). |
-| `haproxy-haptic.org/request-schema-configmap` | ✅ Supported | Enables JSON request-body validation using a ConfigMap schema reference: `[namespace/]name[:key]`, default key `schema.json`. Exactly one schema source is required. Requires `extraContext.apiGateway.requestSchemaValidation.enabled=true`. |
-| `haproxy-haptic.org/request-schema-content-types` | ✅ Supported | Comma-separated accepted media types for the schema (default `application/json`). The plugin strips `; charset=...` parameters before matching; mismatches return `415`. |
-| `haproxy-haptic.org/request-schema-fail-open` | ✅ Supported | Per-route policy for missing plugin verdicts/schema ids (`true` or `false`, default from `extraContext.apiGateway.requestSchemaValidation.defaultFailOpen`, chart default `true`). The default allows the request and records `schema_degraded`; `false` returns `422` with `denied_by=schema_unavailable`. |
-| `haproxy-haptic.org/request-schema-max-body-size` | ✅ Supported | Per-route validator input cap (1..1048576; default `requestSchemaValidation.requestBody.defaultMaxBytes`, chart default `8192`). It must fit within `requestBodyInspection.haproxyBuffer.sizeBytes - reservedBytes`. Oversized requests return `413` before SPOE. This doesn't replace `haproxy-haptic.org/max-request-body-size`, the general backend body-size limit. |
-| `haproxy-haptic.org/request-schema-secret` | ✅ Supported | Enables JSON request-body validation using a Secret schema reference: `[namespace/]name[:key]`, default key `schema.json`. The Secret data value must be base64-encoded JSON Schema. Exactly one schema source is required. |
-| `haproxy-haptic.org/fixed-response` | ✅ Supported | The value `true` returns a fixed response for every request on the route via `http-request return` — for maintenance windows or sunset routes. Runs before mocking and the validators. Defaults to status 503 / `text/plain`, and can return a bare status with no body. The body comes from a per-route map; the first route with a new status and content-type pair reloads once. |
-| `haproxy-haptic.org/fixed-response-body` | ✅ Supported | Optional response body for `fixed-response`. |
-| `haproxy-haptic.org/fixed-response-code` | ✅ Supported | HTTP status for `fixed-response` (default 503; must be 100-599). |
-| `haproxy-haptic.org/fixed-response-content-type` | ✅ Supported | Content-Type for the `fixed-response` body (default `text/plain`). |
-| `haproxy-haptic.org/require-content-type` | ✅ Supported | Requires an allowed `Content-Type` (comma-separated) on body methods (POST/PUT/PATCH); a disallowed type is rejected with `415` (prefix-matched, so charset suffixes still match). Applied from a per-route map. |
-| `haproxy-haptic.org/require-headers` | ✅ Supported | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. Applied from a per-route map; the first route to require a new header name reloads once. |
-
-<!-- 181 annotations documented -->
 
 ## Access-log fields
 
@@ -707,3 +385,63 @@ each only when the corresponding annotation or feature is in use:
 
 The presented API key, the computed HMAC signature and the full client
 certificate are deliberately never logged.
+
+<a id="overview"></a>
+
+## Try an annotation
+
+Edit the example to see how native annotations change HAProxy configuration:
+
+<div class="pg-embed" markdown data-scenario="haptic-annotations" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="haproxy-haptic.org/* annotations rendered" data-height="440">
+
+<p class="pg-task" markdown>In the **Resources** panel, change the `shop` Ingress's `haproxy-haptic.org/load-balance` from `leastconn` to `roundrobin`, then watch the `backend` section's `balance` line update in the `haproxy.cfg` tab.</p>
+
+</div>
+
+## Configuration
+
+```yaml
+controller:
+  templateLibraries:
+    hapticAnnotations:
+      enabled: true  # Enabled by default
+```
+
+## Troubleshooting
+
+### Don't mix annotation families for one feature
+
+Use one annotation family for each feature. For example, setting both native
+`cors-enable` and nginx-compatible `enable-cors` is a conflict even when their
+values agree. Different features can use different families, and only enabled
+libraries count. Separate settings such as connect and server timeouts can come
+from different families.
+
+Admission rejects conflicting annotations and names them in the error. An
+existing conflict produces an `AnnotationFamilyConflict` Warning Event during
+rendering. Remove the duplicate annotation from the Ingress.
+
+### How HAPTIC handles a misconfigured annotation
+
+Admission rejects invalid values and identifies the annotation to fix. If an
+invalid value already exists in the cluster, handling depends on the feature:
+
+| Feature | Effect during rendering |
+|---------|-------------------------|
+| Redirect, CORS, or other values reported with `InvalidAnnotationValue` or `InvalidAnnotation` | Skip the invalid feature on that Ingress; the Event names the setting and effect. |
+| A WAF policy that can't be resolved or compiled | Return `503` on selecting routes and emit a policy Warning Event; see [WAF troubleshooting](../operations/waf-policies.md#diagnose-a-rejected-policy). |
+| Values that prevent valid configuration, such as an unsupported compression algorithm | Reject the render and retain the previous configuration. Fix the named annotation to restore updates. |
+
+Inspect Events to find the affected resource and setting:
+
+```bash
+kubectl get events --all-namespaces --field-selector type=Warning
+```
+
+### Removed annotations
+
+Remove these annotations from existing manifests:
+
+| Annotation | Behavior |
+|------------|----------|
+| `haproxy-haptic.org/scale-server-slots` | No longer has any effect. HAPTIC manages server membership without reserved slots. Setting it emits a Warning Event; remove the annotation. |

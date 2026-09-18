@@ -1,12 +1,53 @@
 # Reload-free route propagation
 
-Use the base library's macros to describe backends and map entries that HAPTIC
-can update through the HAProxy Runtime API. This guide shows how to keep changing
-route values separate from the configuration rules that use them, so eligible
-changes don't require a reload.
+HAProxy can change some running state through its Runtime API: map entries,
+server addresses and weights, and certificates. Other changes, such as a new
+listener or request-processing rule, need a reload. A reload starts a worker
+with the new configuration while the old worker drains existing connections.
 
-The same macros accept data from an Ingress, a Gateway route, or your own custom
-resource. The examples below build the same backend from three input types.
+HAPTIC must also know which parts of your template output represent those live
+settings. Use `Backend()` and `RegisterMap()` to provide that information. The
+bundled routing libraries already use them; custom templates can use the same
+helpers with Ingress, Gateway API, or any other resource.
+
+## What changes in HAProxy
+
+Editing `haproxy.cfg` or a map file on disk doesn't update the running worker.
+HAPTIC writes the desired files and either sends Runtime API commands to the
+worker or reloads HAProxy to read the new configuration.
+
+| Change | How it reaches the running worker |
+|--------|-----------------------------------|
+| Entries in an already loaded routing map | Runtime map commands. |
+| An existing server's address, port, weight, or maintenance state | Runtime server commands. |
+| Certificate or CA contents | Runtime certificate commands, when the loaded configuration supports the update. |
+| A new backend using an already loaded settings profile | Runtime backend commands on HAProxy 3.4; a reload on 3.0–3.3. |
+| A listener, request-processing rule, or new settings profile | Reload. |
+
+For example, changing `shop.example.com` to `store.example.com` in an existing
+`host.map` changes map data. The frontend map lookup stays the same, so HAPTIC
+can update the map at runtime. Adding a literal `acl` or `use_backend` rule to
+`haproxy.cfg` changes the frontend rules and requires a reload.
+
+The same distinction applies to headers: changing a value stored in a map can
+happen live. Introducing a header name for which the configuration has no rule
+adds a rule and requires a reload. Later routes can reuse that rule.
+
+## How HAPTIC recognizes a live update
+
+The template helpers produce configuration **and a structured description of
+it**: backend settings, server records, map entries, and configuration sections.
+HAPTIC compares that description with each pod's applied configuration. It checks
+whether the pod's HAProxy version and current state support every required
+runtime operation; otherwise, it schedules a reload.
+
+HAPTIC doesn't reconstruct this information by parsing arbitrary configuration
+text. A hand-written `server` line can describe a change that HAProxy supports
+at runtime, but HAPTIC needs a server record from `Backend()` to identify and
+apply that operation. Likewise, `RegisterMap()` declares the map's entries and
+whether their order matters. HAPTIC updates individual entries where possible
+and replaces a map atomically when needed to preserve order. Merely marking a
+backend dynamic can't make an unsupported HAProxy operation work.
 
 ## The macros
 
@@ -15,24 +56,32 @@ to register map entries. `HeaderModifierRules()` generates rules that read heade
 values from a map. For Service and EndpointSlice resolution, the separate
 `kubernetes-backends` library provides `BackendServers()`.
 
+The following call belongs in a backend-generation snippet. Supply your route's
+backend name, settings, and Service reference:
+
 ```
 {{ Backend(map[string]any{
-     "name":     beName,            # required; the backend section name
-     "mode":     "http",            # http|tcp, default http; carried by the profile
-     "balance":  "roundrobin",      # use consistent hashing with hash-based algorithms
-     "profile":  profileLines,      # []string: directives shared by same-shape backends (timeouts, retries, cookie, http-request rules) → a named defaults
-     "body":     bodyLines,         # []string: directives that must stay in THIS section (stick-table, filter, raw injections) → structural
-     "servers":  BackendServers(serviceName, 0, port, serverOpts, portName, beName, namespace),
+     "name":    beName,
+     "mode":    "http",
+     "balance": "roundrobin",
+     "profile": profileLines,
+     "body":    bodyLines,
+     "servers": BackendServers(serviceName, 0, port, serverOpts, portName, beName, namespace),
    }) }}
-{{ RegisterMap("my-route.map", entries, map[string]any{"ordered": false}) }}
+{%- var _ = RegisterMap("my-route.map", entries, map[string]any{"ordered": false}) -%}
 ```
 
-Every backend inherits a content-addressed named `defaults haptic-be-<hash> from
-haptic-base` (`backend <name> from haptic-be-<hash>`); `mode`, `balance`,
-`hash-type`, `default-server` and the `profile` lines live there, so two
-backends of the same shape share one profile section and a route of an existing
-shape is added at runtime without a reload. The backend section itself is only
-`from`/`guid`/`body`/servers — keep `body` empty for a dynamic-eligible backend.
+Use `ordered: false` for exact, prefix, or IP map lookups. Keep the default,
+`true`, when the first matching entry wins, as with regular-expression maps.
+
+`Backend()` groups shared settings in a named `defaults haptic-be-<hash>`
+section. The hash comes from the settings: backends with the same settings reuse
+one profile. HAProxy 3.4 can add a backend using a profile it has already loaded
+without reloading. Loading a new profile requires a reload first.
+
+Put shared directives in `profile` and pass servers as records in `servers`.
+Keep `body` empty for runtime backend creation; local filters, stick tables, and
+raw directives in `body` make backend creation or deletion require a reload.
 
 `Backend()` is strict: it accepts `name`, `mode`, `balance`, `hashType`,
 `profile`, `body`, `servers`, `defaultServer`, `guid`, `comments`, `shape` and
@@ -71,7 +120,8 @@ keyed on the backend name:
 {{ HeaderModifierRules("request", "var(txn.backend_name)", mapPath, setNames, []string{}, []string{}) }}
 ```
 
-Adding a Route that reuses a header name is now a map entry, not a config line.
+Adding a Route that reuses the loaded backend profile and header rules changes
+map entries and backend records; HAProxy 3.4 can apply both at runtime.
 The value is URL-encoded at the writer (`queryEscape`) and decoded at request
 time (`HeaderModifierRules` appends `url_dec(1)`), so a space, a `;` or a `%` in
 the value can neither split the map line nor read request state. A backend, its
@@ -99,11 +149,12 @@ whichever resource you watch.
 The bundled Ingress library builds every render from the same two macros:
 `Backend()` assembles each `backend` section, and `RegisterMap()` writes the
 host and path maps that route to them. Run this render, then edit a resource and
-watch both follow — reload-free.
+inspect the changed output. The playground predicts reload behavior; it does
+not deploy to HAProxy.
 
 <div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.backends-500-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Backend() and RegisterMap() in one render" data-height="480">
 
-<p class="pg-task" markdown>Press **Run live**. In the **haproxy.cfg** tab, find the `backend storefront_shop_svc_shop_http` section that `Backend()` assembled from the `shop` Ingress, with one pod-named `server` line per endpoint. Switch to the **maps** tab to see the `host.map` and `path-prefix.map` entries that `RegisterMap()` wrote to route to it. Then, in the **Resources** panel, change the `shop` Ingress's host to `store.example.com` and Run again — the map entry follows, with no new `backend` and no reload.</p>
+<p class="pg-task" markdown>Press **Run live**. In the **haproxy.cfg** tab, find the `backend storefront_shop_svc_shop_http` section that `Backend()` assembled from the `shop` Ingress, with one pod-named `server` line per endpoint. Switch to the **maps** tab to see the `host.map` and `path-prefix.map` entries that `RegisterMap()` wrote to route to it. Then, in the **Resources** panel, change the `shop` Ingress's host to `store.example.com` and Run again — the map entry changes while the backend stays the same. HAPTIC can apply that map change without reloading a running HAProxy.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
@@ -116,7 +167,7 @@ watch both follow — reload-free.
 
 ## When a backend is static
 
-A backend is eligible for runtime creation when `Backend()` describes it as
+HAPTIC can create a backend at runtime when `Backend()` describes it as
 `dynamic`, its named defaults profile is already loaded, and the pod runs
 HAProxy 3.4 or later. These changes require a reload:
 
@@ -142,12 +193,12 @@ same apply. See [Supported configuration](../supported-configuration.md).
 
 ## Where to put a directive
 
-The reload behaviour of a directive is decided by which slot of `Backend()` you
-put it in.
+Choose a slot that HAProxy permits for the directive. That placement determines
+which changes HAPTIC can apply at runtime.
 
 | Put it in | For | Change behaviour |
 |---|---|---|
-| `profile` | Value-free or per-value directives shared by every backend of one shape: timeouts, cookies, retries, `http-request`/`http-check` rules, health-check specs | A new profile reloads once; from then on every backend on it becomes dynamic, and changing a profile value reloads that one profile |
+| `profile` | Value-free or per-value directives shared by every backend of one shape: timeouts, cookies, retries, `http-request`/`http-check` rules, health-check specs | Loading or changing a profile requires a reload of HAProxy. Later backends can reuse it at runtime if their remaining settings support runtime creation. |
 | a map + one static line | Per-route/per-backend values read at request time: header modifiers, path rewrites, redirect targets, timeouts (via `map_str_int`) | Adding or editing an entry is a map-only change — no reload |
 | the profile's `default-server` line | Shared server keywords, such as `check`, `maxconn`, `ssl`, and `send-proxy` | HAPTIC passes these keywords to runtime server creation. Changing the defaults profile requires a reload. |
 | `body` | Directives that must stay in this section: `stick-table`, `filter`, `use-server`, raw operator injections | Makes the backend structural — create/delete/body change reload |
@@ -174,30 +225,15 @@ an invalid placement is reported as a validation error.
 
 ## Which per-object changes reload
 
-- **Reload-free now** (map or runtime updates): a header modifier value, a path
-  rewrite, a redirect target, a server/tunnel timeout, a Host/Connection/
-  X-Forwarded-Prefix override, a body-size limit, a per-stream bandwidth
-  throttle, a cache path exclusion, a canary's weight or header value, a mirror
-  target, and any map the libraries already drive; endpoint churn (scaling a
-  Service) as `set server`/`add server`; cert and CA content, and new SNI certs.
-- **Reload-free once one route has paid for it**: a value the frontend must spell
-  out as a literal, because no converter takes it from a variable. The first route
-  introducing one reloads. Every later route reusing that value needs only a map
-  entry. These values are an API-key header name, a JWT key file, an HMAC
-  algorithm, a basic-auth realm, a rate-limit window, a bandwidth filter's
-  `min-size` (`limit-rate-after`), a shared-scope bandwidth rate, and a canary's
-  header or cookie name. A canary header pattern is a regex no map can carry, so
-  it reloads whenever it changes.
-- **A new or deleted route** (its backend section): where the pod's agent can
-  add and remove a backend at runtime — HAProxy 3.4, whose `add backend`/`del
-  backend` the `deployplan` drives — a route with a dynamic-eligible shape avoids
-  a reload; on 3.0–3.3, the
-  backend section is created or removed by a paced reload.
-- **Always a reload**: a change to a `body` directive, a backend-level attribute
-  (`mode`, `balance`, profile), a new profile section, or anything a library
-  emits outside the macros (a `core` blob).
+| Route change | Reload behavior |
+|--------------|-----------------|
+| A value in an existing map: header value, rewrite, redirect, timeout, body-size limit, bandwidth limit, cache exclusion, canary weight, or mirror target | Runtime update while the rules reading that map remain unchanged. |
+| A new literal used by a rule: API-key header name, JWT key file, HMAC algorithm, basic-auth realm, rate-limit window, bandwidth filter `min-size`, shared bandwidth rate, or canary header/cookie name | The first use adds a rule and requires a reload. Later routes can reuse it. |
+| A canary header regex | Reload whenever the pattern changes. |
+| A new or deleted backend | Runtime on HAProxy 3.4 when it reuses a loaded profile and supports runtime creation; otherwise reload. |
+| Backend `body`, mode, balance settings, or profile; configuration outside the helpers | Reload when the configuration changes. |
 
-The runtime apply that turns a dynamic-eligible route into a no-reload change is
-the agent's job, decided per pod by `deployplan` from the pod's reported HAProxy
-version; a pod that can't apply a change at runtime falls back to a paced reload,
-and the old worker keeps serving until the new one is ready.
+HAPTIC decides separately for each pod from its applied state and reported
+HAProxy version. If a runtime operation fails, the agent attempts a reload.
+See [Supported configuration](../supported-configuration.md) for operation-level
+limits and [HAProxy deployment](../haproxy-deployment.md) for reload pacing.

@@ -17,18 +17,6 @@ For new configuration, use the native annotations. To retain existing annotation
 during a migration, enable the matching vendor library. Check its supported
 annotations and limits before switching traffic.
 
-You can mix prefixes on one Ingress, but configure each feature through one
-annotation family. Configuring the same feature through two enabled families
-causes admission rejection and a warning during live rendering.
-
-See [Template Libraries](./template-libraries.md) for how to enable or disable individual libraries.
-
-See the nginx-ingress compatibility verdict render live:
-
-<div class="pg-embed" markdown data-scenario="nginx-ingress" data-facade="resources" data-tab="migration" data-controls="tabs" data-title="nginx-ingress annotation migration report" data-height="440">
-
-</div>
-
 ## Supported features
 
 Compare the vendor libraries below. For native annotations and additional
@@ -73,7 +61,32 @@ For the complete per-annotation reference with examples and generated HAProxy co
 - [haproxy-ingress library →](./libraries/haproxy-ingress.md)
 - [nginx-ingress library →](./libraries/nginx-ingress.md)
 
+You can mix prefixes on one Ingress, but configure each feature through one
+annotation family. Configuring the same feature through two enabled families
+causes admission rejection and a warning during live rendering.
+
+See [Template Libraries](./template-libraries.md) for how to enable or disable individual libraries.
+
+See the nginx-ingress compatibility verdict render live:
+
+<div class="pg-embed" markdown data-scenario="nginx-ingress" data-facade="resources" data-tab="migration" data-controls="tabs" data-title="nginx-ingress annotation migration report" data-height="440">
+
+</div>
+
 ## Quick start: Basic authentication
+
+Create the credentials Secret. OpenSSL prompts for the password:
+
+```bash
+HAPTIC_AUTH_HASH=$(openssl passwd -6)
+kubectl create secret generic my-auth-secret \
+  --from-literal=admin="$HAPTIC_AUTH_HASH"
+```
+
+Pass the raw password hash to `--from-literal`. `kubectl` encodes it for the Secret;
+encoding it yourself first makes the stored hash unusable for authentication.
+
+Create an Ingress that uses the Secret:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -81,9 +94,10 @@ kind: Ingress
 metadata:
   name: protected-app
   annotations:
-    haproxy.org/auth-type: "basic-auth"
-    haproxy.org/auth-secret: "my-auth-secret"
-    haproxy.org/auth-realm: "Protected Application"
+    haproxy-haptic.org/auth-type: "basic"
+    haproxy-haptic.org/auth-secret: "my-auth-secret"
+    haproxy-haptic.org/auth-secret-type: "auth-map"
+    haproxy-haptic.org/auth-realm: "Protected Application"
 spec:
   ingressClassName: haptic
   rules:
@@ -99,15 +113,5 @@ spec:
                   number: 80
 ```
 
-Create the secret with crypt(3) SHA-512 password hashes:
-
-```bash
-HASH=$(openssl passwd -6 mypassword)
-kubectl create secret generic my-auth-secret \
-  --from-literal=admin="$HASH"
-```
-
-Pass the raw password hash to `--from-literal`. `kubectl` encodes it for the Secret;
-encoding it yourself first makes the stored hash unusable for authentication.
-
-See [haproxytech library — Basic Authentication](./libraries/haproxytech.md#authentication) for the full reference including secret format, cross-namespace secrets, and generated HAProxy config.
+See [native authentication annotations](./libraries/haptic-annotations.md#authentication-mtls-and-waf)
+for Secret formats and other authentication settings.

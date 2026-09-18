@@ -115,7 +115,7 @@ func TestIngressRouteAddRemoveIsReloadFree(t *testing.T) {
 
 				applyIngressFilteredRoute(ctx, t, namespace, cycleName, cycleHost, cycleSvc, want)
 				latency := waitForRouteServing(ctx, t, cs, http, cycleHost, "/", respHeader, want)
-				// The runtime-added backend inherits the default compression from
+				// The runtime-added backend inherits explicit compression settings from
 				// its profile: the route is dynamic and still compresses.
 				http.GET(cycleHost, "/").WithHeader("Accept-Encoding", "gzip").
 					ExpectHeader(t, "Content-Encoding", "gzip")
@@ -266,17 +266,13 @@ func waitBackendRuntime(ctx context.Context, t *testing.T, cs kubernetes.Interfa
 		})
 }
 
-// ingressFilterAnnotations are per-route directives that all ride the runtime
-// lane: a response header that lands in a backend-keyed map, a server timeout
-// that lands in the shared profile, the default compression whose settings
-// are inherited from that profile (#230), and a per-source rate limit whose
-// threshold and allowlist come from frontend maps. The backend body stays
-// empty and the cycle proves such a route is dynamic.
+// These annotations exercise maps and profile settings while keeping the backend body empty.
 func ingressFilterAnnotations(respValue string) map[string]string {
 	return map[string]string{
 		"haproxy.org/response-set-header":         reloadFreeRespHeader + " " + respValue,
 		"haproxy.org/timeout-server":              "30s",
 		"haproxy-haptic.org/rate-limit-rps":       "1000",
+		"haproxy-haptic.org/compress-enable":      "true",
 		"haproxy-haptic.org/rate-limit-allowlist": "10.0.0.0/8",
 	}
 }
@@ -297,6 +293,7 @@ metadata:
     haproxy.org/response-set-header: "%s %s"
     haproxy.org/timeout-server: "30s"
     haproxy-haptic.org/rate-limit-rps: "1000"
+    haproxy-haptic.org/compress-enable: "true"
 spec:
   ingressClassName: haptic
   rules:

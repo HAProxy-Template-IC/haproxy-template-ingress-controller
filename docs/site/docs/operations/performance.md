@@ -648,7 +648,7 @@ global
 
 ### Response compression
 
-Responses are gzip-compressed by default. HAProxy compresses only what the backend left uncompressed, and only for the content types in the list — see [Compression](../libraries/haptic-annotations.md#compression) for the annotations that change the algorithm, the type list, or turn it off for one Ingress.
+Enable response compression on selected Ingresses with `haproxy-haptic.org/compress-enable: "true"`. HAProxy uses `gzip` by default and compresses only matching content types that the backend left uncompressed. See [compression settings and response-safety considerations](../libraries/haptic-annotations.md#compression) before enabling it.
 
 Compression costs CPU on the HAProxy pods. Two global limits bound that cost, both reachable through the `haproxy-haptic.org/config-global` annotation:
 

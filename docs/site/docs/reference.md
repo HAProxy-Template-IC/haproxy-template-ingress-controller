@@ -223,9 +223,10 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 
 Define named rules under `extraContext.governance` to supply defaults or constrain
 fields on watched resources. Rules run in sorted key order and don't modify the
-stored Kubernetes objects. The bundled `haptic-compress-enable` rule enables
-response compression by default. With that rule disabled and no custom rules,
-governance makes no changes.
+stored Kubernetes objects. The bundled `haptic-compress-enable` rule defaults
+response compression to `"false"`; explicit Ingress annotations take precedence.
+An administrator can change the rule's `default` to `"true"` after reviewing
+[compression safety](libraries/haptic-annotations.md#compression).
 
 For a step-by-step rollout — audit, fix, then enforce — see the
 [Governance guardrails how-to](operations/governance.md). This section is the

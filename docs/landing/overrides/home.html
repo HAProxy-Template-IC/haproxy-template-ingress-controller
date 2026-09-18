@@ -110,9 +110,10 @@
           </svg>
         </span>
         <h3>Route HTTP, gRPC, and TCP</h3>
-        <p><a href="./docs/latest/libraries/gateway/">Gateway API libraries</a>
-           support HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and ListenerSet,
-           including backend TLS, client-certificate authentication, and mirroring.</p>
+        <p>Use HAProxy to serve web applications, gRPC services, and TCP connections.
+           HAPTIC generates the routing configuration from
+           <a href="./docs/latest/libraries/ingress/">Ingress</a>,
+           <a href="./docs/latest/libraries/gateway/">Gateway API</a>, or your own resources.</p>
       </article>
 
       <article class="feat">
@@ -142,10 +143,10 @@
           </svg>
         </span>
         <h3>Add your own routing behavior</h3>
-        <p>Read Kubernetes resource fields in typed templates. Add custom annotations,
-           filter collections, and share the result as a
-           <a href="./docs/latest/template-libraries/">template library</a>.
-           Templates can generate HAProxy configuration, auxiliary files, and Kubernetes objects.</p>
+        <p>Add an annotation or routing rule by editing a template.
+           Reuse it across services through
+           <a href="./docs/latest/template-libraries/">shared templates</a>,
+           without changing or rebuilding the controller.</p>
       </article>
 
       <article class="feat">
@@ -157,10 +158,9 @@
           </svg>
         </span>
         <h3>Use your platform's resources</h3>
-        <p>Watch built-in Kubernetes resources or your own custom types. HAPTIC discovers
-           their <a href="./docs/latest/watching-resources/">API versions and schemas</a>
-           at runtime. Incremental rendering reuses unchanged results, including on
-           follower replicas before they take over.</p>
+        <p>Already describe your applications with a custom Kubernetes resource?
+           <a href="./docs/latest/watching-resources/">Watch it directly</a> and use its
+           fields in a template. HAPTIC updates HAProxy when those resources change.</p>
       </article>
 
       <article class="feat">
@@ -173,10 +173,10 @@
           </svg>
         </span>
         <h3>Reload only when needed</h3>
-        <p>The <a href="./docs/latest/supported-configuration/">HAPTIC agent</a>
-           updates supported maps, certificates, and servers while HAProxy keeps running.
-           HAProxy 3.4 also supports eligible backend additions and removals.
-           New listeners and backend profiles still require a reload.</p>
+        <p>Pod scaling, certificate rotation, and routing-map updates can change
+           HAProxy's running configuration without replacing its worker process.
+           For changes that need a reload, HAPTIC starts a new worker while the old
+           one drains connections. See <a href="./docs/latest/libraries/reload-free/">what can update live</a>.</p>
       </article>
 
       <article class="feat">
@@ -202,9 +202,10 @@
           </svg>
         </span>
         <h3>Enforce platform policies</h3>
-        <p>Define <a href="./docs/latest/operations/governance/">governance rules</a>
-           for the resources your teams deploy. Set defaults, report policy violations,
-           or reject changes at admission. Rules can target any watched resource type.</p>
+        <p>Require a WAF policy or limit the timeout a team can set on a route.
+           <a href="./docs/latest/operations/governance/">Platform rules</a> apply these
+           checks across your resources, so reviewers don't have to check each
+           manifest by hand. Start by reporting violations, then reject new ones.</p>
       </article>
 
       <article class="feat">
@@ -217,7 +218,8 @@
         <h3>Trace requests to their routes</h3>
         <p>Find the route, backend, and policy outcome in
            <a href="./docs/latest/operations/monitoring/">JSON access logs and request metrics</a>.
-           Enable distributed tracing to export request and upstream spans through Vector.</p>
+           Enable distributed tracing to export request and upstream spans through
+           <a href="https://vector.dev/">Vector</a>.</p>
       </article>
 
     </div>
@@ -227,9 +229,10 @@
     <p class="tradeoff-q"><span class="tradeoff-tag" aria-hidden="true">//</span>
        Start with the routing rules you already use.</p>
     <p class="tradeoff-a">
-       <a href="./docs/latest/template-libraries/">Bundled libraries</a> support
-       Ingress, Gateway API, and HAPTIC annotations by default. When migrating,
-       enable the compatibility library for
+       HAPTIC includes <a href="./docs/latest/template-libraries/">sets of templates</a>
+       that turn Ingress, Gateway API, and annotation settings into HAProxy configuration.
+       You can use them as shipped or extend them. When migrating, enable the
+       matching templates for
        <a href="./docs/latest/libraries/nginx-ingress/">ingress-nginx</a>,
        <a href="./docs/latest/libraries/haproxytech/">HAProxy Technologies</a>, or
        <a href="./docs/latest/libraries/haproxy-ingress/">haproxy-ingress</a>.
@@ -258,13 +261,13 @@
       <span class="t-kw">backend-directives-300-request-id</span>:
         <span class="t-kw">template</span>: |
           <span class="t-d">{%-</span> <span class="t-ctrl">if</span> ingress != nil <span class="t-d">%}</span>
-          <span class="t-d">{%-</span> <span class="t-ctrl">var</span> header = ingress.metadata.annotations[<span class="t-str">"example.com/request-id-header"</span>] <span class="t-d">%}</span>
-          <span class="t-d">{%-</span> <span class="t-ctrl">if</span> header != <span class="t-str">""</span> <span class="t-d">%}</span>
-          <span class="t-d">{%-</span> <span class="t-ctrl">if</span> !regex_search(header, <span class="t-str">"^[A-Za-z0-9-]+$"</span>) <span class="t-d">%}</span>
-          <span class="t-d">{{</span> fail(<span class="t-str">"example.com/request-id-header must contain only letters, digits, or hyphens."</span>) <span class="t-d">}}</span>
-          <span class="t-d">{%-</span> <span class="t-ctrl">end</span> <span class="t-d">%}</span>
-          <span class="t-kw">http-request set-header</span> <span class="t-d">{{</span> header <span class="t-d">}}</span> %[uuid()]
-          <span class="t-d">{%-</span> <span class="t-ctrl">end</span> <span class="t-d">%}</span>
+            <span class="t-d">{%-</span> <span class="t-ctrl">var</span> header = ingress.metadata.annotations[<span class="t-str">"example.com/request-id-header"</span>] <span class="t-d">%}</span>
+            <span class="t-d">{%-</span> <span class="t-ctrl">if</span> header != <span class="t-str">""</span> <span class="t-d">%}</span>
+              <span class="t-d">{%-</span> <span class="t-ctrl">if</span> !regex_search(header, <span class="t-str">"^[A-Za-z0-9-]+$"</span>) <span class="t-d">%}</span>
+                <span class="t-d">{{</span> fail(<span class="t-str">"example.com/request-id-header must contain only letters, digits, or hyphens."</span>) <span class="t-d">}}</span>
+              <span class="t-d">{%-</span> <span class="t-ctrl">end</span> <span class="t-d">%}</span>
+              <span class="t-kw">http-request set-header</span> <span class="t-d">{{</span> header <span class="t-d">}}</span> %[uuid()]
+            <span class="t-d">{%-</span> <span class="t-ctrl">end</span> <span class="t-d">%}</span>
           <span class="t-d">{%-</span> <span class="t-ctrl">end</span> <span class="t-d">%}</span>
 {% endraw %}</code></pre>
       </div>
@@ -276,8 +279,8 @@
 
   <section class="extend" aria-labelledby="agent-skill-heading">
     <h2 class="section-head" id="agent-skill-heading">Customize with <span class="flag">your AI agent</span></h2>
-    <p class="extend-lead">Give your agent HAPTIC's Scriggo workflow, resource-access
-       rules, and tested examples. Install the skill in your configuration project,
+    <p class="extend-lead">Give your agent tested examples and validation steps for
+       writing HAPTIC templates. Install the skill in your configuration project,
        then ask it to add a custom annotation or watch your own resource type.</p>
     <div class="terminal terminal-shell">
       <div class="term-bar">
