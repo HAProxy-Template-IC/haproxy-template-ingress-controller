@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CRD change watches retain only reload metadata, reducing memory on clusters with large CRD schemas.
+
 - Full-memory watches use less memory by sharing immutable resource bodies between the informer and indexed store.
 
 - Followers accept published zero-byte auxiliary files when refreshing their current configuration.
