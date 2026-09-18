@@ -64,6 +64,8 @@ err = sw.WaitForSync(ctx)
 ## Behavioural Notes
 
 - **Debouncing** is *leading-edge with a refractory period* (the first change in a quiet period fires immediately; further changes inside the window are batched). See `pkg/controller/reconciler/CLAUDE.md` for why this matters during rolling deploys.
+- **Unchanged memory-store updates** don't reach the debouncer or `OnChange`, even with a zero debounce interval. The store compares the resource after `IgnoreFields` filtering, disregards `metadata.resourceVersion`, and checks its index keys. A changed retained field still triggers a callback, even if the current templates don't read it.
+- **On-demand updates** retain resource versions to invalidate cached reads. Their informer objects omit most of the body, so equal projected fields alone cannot prove that the full resource is unchanged.
 - **Initial sync** behaviour is controlled by `CallOnChangeDuringSync` (default `false`): with the default, `OnChange` is *suppressed* during the bulk load and the consumer learns the load is finished from the parallel `OnSyncComplete` callback. With `CallOnChangeDuringSync: true`, `OnChange` fires for every change during the initial list — each call's `stats.IsInitialSync` is `true` so consumers can `if stats.IsInitialSync { return }` to skip them when they only care about post-sync deltas.
 - **`SingleWatcher` is not debounced** — its `OnChange` callback (typed as `OnResourceChangeCallback`, distinct from the bulk watcher's `OnChangeCallback`) runs on every event, intentionally, because credential and CRD updates need to take effect immediately.
 

@@ -288,6 +288,7 @@ passthrough
 patch
 Patch
 PATCH
+Patroni
 PDB
 PEM
 pipeable

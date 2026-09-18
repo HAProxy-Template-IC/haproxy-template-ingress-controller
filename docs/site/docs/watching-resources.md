@@ -246,7 +246,11 @@ watchedResourcesIgnoreFields:
 
 Applies uniformly to every watched-resource store. Fields that are referenced by `indexBy` must not be trimmed.
 
-A single resource adds its own list with `ignoreFields`; `[*]` selects every element of an array. An update that changes only ignored fields isn't a change: the stored object keeps its previous content and no render runs. Use it for a field the controller writes itself and never reads, whose write would otherwise echo back and re-render every template that reads the object. The bundled Gateway API library ignores the per-listener `attachedRoutes` counter on Gateways and ListenerSets for that reason:
+A single resource adds its own list with `ignoreFields`; `[*]` selects every element of an array. Ignored fields are unavailable to templates, so only remove fields your templates don't read.
+
+With `store: full`, updates that change only ignored fields and `metadata.resourceVersion` don't trigger reconciliation, even with `debounceInterval: "0"`. Changes to retained fields still trigger reconciliation, even if the rendered HAProxy configuration stays identical. On-demand stores retain resource versions to invalidate cached reads.
+
+The bundled Gateway API library ignores the per-listener `attachedRoutes` counter on Gateways and ListenerSets to prevent its own status writes from triggering reconciliation:
 
 ```yaml
 watchedResources:
@@ -257,6 +261,23 @@ watchedResources:
     ignoreFields:
       - status.listeners[*].attachedRoutes
 ```
+
+### Database operator annotations
+
+Database operators such as Patroni update coordination annotations without changing backend addresses. If your EndpointSlices carry changing `renewTime`, `optime`, or `slots` annotations that your templates don't read, add them to the `endpoints` watch's `ignoreFields` in your Helm values:
+
+```yaml
+controller:
+  config:
+    watchedResources:
+      endpoints:
+        ignoreFields:
+          - metadata.annotations.renewTime
+          - metadata.annotations.optime
+          - metadata.annotations.slots
+```
+
+Keep any existing entries for this watch: Helm replaces lists. These entries add to the global `watchedResourcesIgnoreFields` list and leave endpoint address, port, and readiness changes observable. The chart preserves these annotations by default because custom templates may use them.
 
 ## HTTP Resources
 
