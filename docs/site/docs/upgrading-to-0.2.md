@@ -158,7 +158,9 @@ and update dashboards using the [metric migration table](operations/monitoring.m
 If you maintain custom templates, replace reads of parsed `currentConfig`
 sections with `currentConfig.ServerIndex` for previous servers, and use
 `currentServers` in validation fixtures. Use `toJSON` instead of implicit string
-conversion for maps and slices.
+conversion for maps and slices. Pass the watched resource object to
+[`statusPatch(resource, variants)`](template-reference.md#statuspatch) instead of
+separate namespace, name, API version, and kind arguments.
 
 If you process rendered manifests, accept one `HAProxyTemplateConfig` and its
 referenced `HAProxyTemplateLibrary` objects. `haptic config view --input` merges

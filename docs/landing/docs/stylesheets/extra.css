@@ -323,7 +323,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.term-run {
+.landing .term-run {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -341,8 +341,8 @@
   letter-spacing: 0.02em;
   transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
-.term-run:hover,
-.term-run:focus-visible {
+.landing .term-run:hover,
+.landing .term-run:focus-visible {
   background: rgba(108, 182, 255, 0.22);
   color: #d3e8fb;
   transform: translateY(-1px);
@@ -839,6 +839,7 @@
     text-align: center;
     padding-top: 1rem;
   }
+  .glow { inset-inline: 0; }
   .landing .hero-sub { margin-left: auto; margin-right: auto; }
   .hero-cta { justify-content: center; }
   .landing .hero-title { font-size: 2.2rem; }

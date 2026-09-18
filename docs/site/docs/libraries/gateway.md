@@ -11,7 +11,8 @@ The Gateway API library implements the [Kubernetes Gateway API](https://gateway-
 - Traffic splitting with weighted backends
 - Request/response header modification
 - URL rewrites and redirects
-- TLS termination and SSL passthrough
+- TLS termination, passthrough, backend TLS, and frontend client-certificate authentication
+- ListenerSet delegation, request mirroring, retries, and cookie persistence
 
 This library is **enabled by default**. For a runnable end-to-end walkthrough (a Gateway with an HTTP listener, an HTTPRoute, and a backend Service), see [Expose a Service through a Gateway](../gateway-class.md#expose-a-service-through-a-gateway).
 
@@ -160,15 +161,54 @@ This architecture allows the controller to remain resource-agnostic while the ch
 
 **Status legend:** ✅ Supported · ⚠️ Partial or untested · ❌ Not implemented
 
+## `ListenerSet` delegation
+
+A ListenerSet adds listeners to a Gateway. The parent Gateway must explicitly
+allow it through `spec.allowedListeners.namespaces`: `Same`, `All`, or a namespace
+`Selector`. Without that permission, HAPTIC reports `Accepted=False` and doesn't
+use the ListenerSet.
+
+Set the ListenerSet's `spec.parentRef` to the Gateway and declare its listeners
+under `spec.listeners`. Routes attach with `parentRefs[].kind: ListenerSet`, its
+name, and an optional `sectionName` selecting one listener. The listener's
+`allowedRoutes` controls which route namespaces can attach. HAPTIC publishes
+ListenerSet and parent Gateway status for these attachments.
+
+## Gateway TLS policies
+
+Server certificates for HTTPS and terminating TLS listeners come from
+`listeners[].tls.certificateRefs`; see [Gateway certificates](../ssl-certificates.md#gateway-api).
+Client authentication and upstream verification are separate settings:
+
+| Purpose | Configuration | Behavior |
+| --- | --- | --- |
+| Authenticate clients | Gateway `spec.tls.frontend.default.validation` | `mode: AllowValidOnly` requires a valid client certificate from `caCertificateRefs`; core ConfigMaps and Secrets supply `ca.crt`. |
+| Override client authentication by port | Gateway `spec.tls.frontend.perPort[].tls.validation` | Applies the selected validation policy to listeners on that entry's `port`. |
+| Verify upstream servers | BackendTLSPolicy `spec.targetRefs` and `spec.validation` | Targets a Service, optionally a named port, and checks its certificate against the configured CA and hostname. |
+
+Frontend validation requires a Gateway API schema that serves `spec.tls.frontend`.
+Cross-namespace CA and server-certificate references require a covering
+[ReferenceGrant](#cross-namespace-routes-referencegrant). Invalid references appear
+in status; a listener without usable required client trust doesn't accept traffic.
+
+A BackendTLSPolicy's `validation.hostname` sets upstream SNI and the certificate
+name to verify. If `validation.subjectAltNames` contains Hostname entries, HAPTIC
+verifies the first one instead; URI entries and multiple alternative names aren't
+implemented. Supply trust through `validation.caCertificateRefs` or
+`validation.wellKnownCACertificates: System`. Policies apply to HTTPRoute,
+GRPCRoute, TCPRoute, and terminating TLSRoute backends. A policy with no usable
+CA blocks that backend rather than sending plaintext. Passthrough TLSRoute
+connections retain the client's TLS session.
+
 ## HTTPRoute support
 
 ### spec.parentRefs
 
 | Field | Status | Notes |
 |-------|--------|-------|
-| `parentRefs[].name` | ✅ Supported | Gateway reference |
-| `parentRefs[].namespace` | ⚠️ Partial | Field exists but cross-namespace not tested |
-| `parentRefs[].sectionName` | ⚠️ Partial | Used for listener-level `attachedRoutes` counting in status; routing not listener-specific |
+| `parentRefs[].name` | ✅ Supported | Gateway or ListenerSet reference; set `kind: ListenerSet` for a ListenerSet |
+| `parentRefs[].namespace` | ✅ Supported | Parent namespace; attachment must satisfy the listener's `allowedRoutes` |
+| `parentRefs[].sectionName` | ✅ Supported | Selects a named listener for attachment, routing, and status |
 | `parentRefs[].port` | ✅ Supported | Pins the route to Gateway listeners on the named port (attachment selection per spec); a route only attaches to listeners whose port matches |
 
 ### spec.hostnames
@@ -423,13 +463,11 @@ Under `# Advanced route matching`, the rule's provenance comment changes from `-
 
 ### `spec.rules[].filters`
 
-Every filter below is driven by a map file rather than by per-route directives:
-the rendered configuration holds one static block per filter type, and a route's
-own values live in a map entry keyed by its rule id. Adding, changing, or removing
-a route's filter is then a map update, which the controller applies over the
-HAProxy runtime API without reloading. The exception is a header modifier naming
-a header no other route uses yet — the first route to touch a given header name
-adds one line to the configuration, and every route after it's a map entry.
+Header modifiers, redirects, rewrites, and mirrors store route values in maps.
+Changing those values avoids a reload when the required processing rules already
+exist. A new header name or filter type can add a rule and require a reload;
+CORS and advanced matchers also change configuration text. See
+[reload constraints](#known-limitations).
 
 Map values are URL-encoded and decoded at request time with `url_dec(1)`. That's
 what makes a value carrying a space, a `;`, or a `%` safe: the runtime CLI splits a
@@ -735,7 +773,7 @@ deploy without a reload.
 | Field | Status | Notes |
 |-------|--------|-------|
 | `backendRefs[].name` | ✅ Supported | Service name |
-| `backendRefs[].namespace` | ⚠️ Partial | Not explicitly handled, likely defaults to route namespace |
+| `backendRefs[].namespace` | ✅ Supported | Defaults to the route namespace; cross-namespace Services require a covering [ReferenceGrant](#cross-namespace-routes-referencegrant) |
 | `backendRefs[].port` | ✅ Supported | Service port number |
 | `backendRefs[].weight` | ✅ Supported | Traffic splitting with weighted distribution |
 | `backendRefs[].filters[]` | ⚠️ Partial | `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite` emitted per-backend (keyed by `gw_rule_id` and backend name); `RequestMirror` and `ExtensionRef` not handled at the `backendRef` level |
@@ -800,11 +838,31 @@ Split the demo route's traffic and inspect the generated weight map:
 
 </div>
 
+### Timeouts, retries, and session persistence
+
+These fields require an installed Gateway API schema that serves them. The chart
+uses them when present; `controller.templateLibraries.gateway.experimentalChannel`
+also enables their experimental-channel validation fixtures.
+
+| Field | Behavior |
+| --- | --- |
+| HTTPRoute/GRPCRoute `rules[].timeouts.request` | Sets HAProxy's server timeout for the selected rule; falls back to `backendRequest` when absent or `0s`. This is one server timeout, not two independent deadlines. |
+| HTTPRoute `rules[].retry.attempts` | Sets the retry count for HTTP/1 backends; `0` disables retries. |
+| HTTPRoute `rules[].retry.codes` | Selects HTTP status codes for retries while retaining connection-failure, empty-response, and response-timeout retries. `backoff` isn't implemented. |
+| HTTPRoute/GRPCRoute `rules[].sessionPersistence` | `type: Cookie` enables cookie affinity. `absoluteTimeout` and `idleTimeout` set cookie lifetimes; header-based persistence isn't implemented. |
+
+Cookie names come from `sessionPersistence.cookie.name` when the installed schema
+serves that field, or `sessionPersistence.sessionName` on earlier schemas. The
+default name is `SESSION`. These settings belong to the backend: when several
+rules in one route reference it, the first rule declaring the relevant retry or
+cookie policy wins. Changing that policy changes the backend profile and can
+require a reload.
+
 ### Advanced features
 
 **Backend Deduplication:**
 
-When multiple routes reference the same service and port, the template emits a single shared HAProxy backend.
+Rules within one route reuse the backend for the same Service and port. Separate routes have separate backends, so their backend policies can differ.
 
 **Route Key Generation:**
 
@@ -926,7 +984,7 @@ spec:
 
 ## TLSRoute support
 
-TLSRoute routes TLS connections by SNI. Depending on the listener's TLS mode, HAProxy either forwards the still-encrypted stream to the backend (`tls.mode: Passthrough`) or terminates TLS and forwards the decrypted stream (`tls.mode: Terminate`). With a `Terminate` listener, a BackendTLSPolicy on the backend Service re-encrypts that stream toward the backend with the policy's CA, SNI, and hostname verification; with `Passthrough`, the client's TLS session reaches the backend unchanged, so the policy doesn't apply. A rule attached to listeners of both modes shares one backend and re-encrypts, so its `Passthrough` leg fails instead of the `Terminate` leg sending plaintext.
+TLSRoute routes TLS connections by SNI. Depending on the listener's TLS mode, HAProxy either forwards the still-encrypted stream to the backend (`tls.mode: Passthrough`) or terminates TLS and forwards the decrypted stream (`tls.mode: Terminate`). With a `Terminate` listener, a BackendTLSPolicy on the backend Service re-encrypts that stream toward the backend with the policy's CA, SNI, and hostname verification; with `Passthrough`, the client's TLS session reaches the backend unchanged, so the policy doesn't apply. A rule attached to both modes gets separate backends: the terminating leg can re-encrypt, while the passthrough leg forwards the original TLS stream.
 
 ### Example: passthrough Gateway and TLSRoute
 
@@ -1245,10 +1303,10 @@ Once MetalLB (or your cloud load balancer) allocates the IP, it appears in the G
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| HTTPRoute | Full | All matching types, filters |
-| GRPCRoute | Full | HTTP/2 protocol |
-| TLSRoute | Full | SNI routing on TLS listeners, `Passthrough` and `Terminate`; first `backendRef` takes traffic |
-| TCPRoute | Full | One frontend per claimed TCP listener port; weighted `backendRefs` |
+| HTTPRoute | Supported | Path, method, header, and query matching; filter limits are listed below |
+| GRPCRoute | Supported | HTTP/2 routing, header filters, and cookie persistence |
+| TLSRoute | Supported | SNI routing on TLS listeners, `Passthrough` and `Terminate`; first `backendRef` takes traffic |
+| TCPRoute | Supported | One frontend per claimed TCP listener port; weighted `backendRefs` |
 | Path Matching | Exact, PathPrefix, RegularExpression | |
 | Method Matching | Full | GET, POST, etc. |
 | Header Matching | Exact, RegularExpression | Request headers |
@@ -1257,6 +1315,12 @@ Once MetalLB (or your cloud load balancer) allocates the IP, it appears in the G
 | ResponseHeaderModifier | Full | Add, set, remove headers |
 | RequestRedirect | Full | HTTP redirects |
 | URLRewrite | Full | Path and hostname rewrite |
+| RequestMirror | Rule-level | Multiple targets and percentage/fraction sampling |
+| ListenerSet | Supported | Delegated listeners with namespace and route-attachment controls |
+| BackendTLSPolicy | Supported | Upstream CA and hostname verification |
+| Frontend client authentication | Supported | Gateway defaults and per-port overrides |
+| Session persistence | Cookie | HTTPRoute and GRPCRoute; no header-based persistence |
+| Retry policy | Attempts and codes | HTTPRoute; no configurable backoff |
 | Traffic Splitting | Full | Weighted backends |
 | SSL Passthrough | Full | Via annotation |
 
@@ -1306,7 +1370,6 @@ TLSRoute and TCPRoute status is written on the `deployed` outcome only (see thei
 
 1. **ExtensionRef filter** — the general custom-filter extension mechanism (planned as the Gateway API equivalent of Ingress annotations). One narrow internal use exists: an `ExtensionRef` selecting SSL passthrough is honored.
 2. **Per-backend `RequestMirror`** — `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite` on a `backendRef` **are** honored, keyed by rule id and backend (see `test-httproute-backend-request-header-modifier` and `test-httproute-backend-request-redirect`); a rule-level `RequestRedirect` or `URLRewrite` takes precedence over a backend-level one. `RequestMirror` applies at the rule level only.
-3. **Listener-specific HTTP route isolation** — `sectionName` drives `attachedRoutes` status counting, but HTTP/HTTPS routing itself isn't isolated per listener. (TLSRoute and TCPRoute do route per listener; see their sections.)
 
 **Reloads even though the filter itself is map-driven:**
 

@@ -59,7 +59,7 @@
 
     <div class="hero-visual">
       <div class="glow" aria-hidden="true"></div>
-      <div class="terminal terminal-editor" role="img"
+      <div class="terminal terminal-editor" role="group"
            aria-label="A Scriggo template named haproxy.cfg.tmpl rendering into a generated haproxy.cfg file">
         <div class="term-bar">
           <span class="dots" aria-hidden="true">
@@ -120,9 +120,10 @@
             <path d="M14 15l-4 4"></path>
           </svg>
         </span>
-        <h3>Extend with templates</h3>
-        <p>Add an annotation, a header rewrite, or support for a new API by
-           editing a <a href="./docs/latest/templating/">template</a>.</p>
+        <h3>Extend with typed templates</h3>
+        <p>Read typed resource fields, use collection pipelines, and share
+           <a href="./docs/latest/template-libraries/">template libraries</a>.
+           Generate HAProxy configuration, auxiliary files, and Kubernetes objects.</p>
       </article>
 
       <article class="feat">
@@ -134,9 +135,11 @@
             <path d="M13.5 5l-3 14"></path>
           </svg>
         </span>
-        <h3>Control the configuration</h3>
-        <p><a href="https://scriggo.com/">Scriggo</a> — a Go-native template engine — renders <code>haproxy.cfg</code> and auxiliary files. Override a bundled
-           snippet or supply your own templates.</p>
+        <h3>Apply runtime updates</h3>
+        <p>The <a href="./docs/latest/supported-configuration/">HAPTIC agent</a>
+           applies eligible map, certificate, and server updates without reloading. HAProxy 3.4
+           also supports eligible backend additions and removals; new listeners
+           and backend profiles still reload.</p>
       </article>
 
       <article class="feat">
@@ -148,9 +151,9 @@
           </svg>
         </span>
         <h3>Watch any resource</h3>
-        <p>HAPTIC watches any Kubernetes resource — a built-in kind or a CRD of
-           your own. No resource type is baked into the controller; your
-           templates decide what to read.</p>
+        <p>Discover <a href="./docs/latest/watching-resources/">API versions and
+           schemas</a> at runtime, including your own resource types. Incremental rendering
+           reuses unchanged work, and follower replicas keep their render state warm.</p>
       </article>
 
       <article class="feat">
@@ -162,10 +165,63 @@
           </svg>
         </span>
         <h3>Validate changes</h3>
-        <p>The admission webhook checks routing changes, and
-           <a href="./docs/latest/validation-tests/">template tests</a> check
-           fixture scenarios in CI. Each pod's HAProxy binary must accept a
-           reload before the new worker takes over.</p>
+        <p><a href="./docs/latest/operations/validate-before-deploy/"><code>haptic
+           preflight</code> and Helm hooks</a> check configuration before rollout.
+           Embedded tests run on configuration changes; admission validates
+           routing changes with HAProxy and configured output validators.</p>
+      </article>
+
+      <article class="feat">
+        <span class="feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 6h16M4 12h16M4 18h16"></path><circle cx="8" cy="6" r="2"></circle><circle cx="16" cy="12" r="2"></circle><circle cx="8" cy="18" r="2"></circle>
+          </svg>
+        </span>
+        <h3>Route HTTP, gRPC, and TCP</h3>
+        <p><a href="./docs/latest/libraries/gateway/">Gateway API libraries</a>
+           support HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and ListenerSet,
+           including backend TLS, client-certificate authentication, and mirroring.</p>
+      </article>
+
+      <article class="feat">
+        <span class="feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3l8 4v5c0 4-3 7-8 9-5-2-8-5-8-9V7l8-4Z"></path><path d="M8 12l3 3 5-6"></path>
+          </svg>
+        </span>
+        <h3>Configure application policies</h3>
+        <p><a href="./docs/latest/libraries/haptic-annotations/">Native annotations</a>
+           provide API-key, JWT, and HMAC authentication, shared rate limits,
+           Varnish caching, JSON request validation, and reusable WAF policies.</p>
+      </article>
+
+      <article class="feat">
+        <span class="feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 4h14v17H5zM9 2h6v4H9zM8 10h8M8 14h8M8 18h5"></path>
+          </svg>
+        </span>
+        <h3>Set platform guardrails</h3>
+        <p>Apply <a href="./docs/latest/operations/governance/">governance rules</a>
+           to any watched resource. Supply defaults, audit policy violations,
+           or reject noncompliant changes at admission.</p>
+      </article>
+
+      <article class="feat">
+        <span class="feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 3v18h18M6 15l4-5 4 3 6-8"></path>
+          </svg>
+        </span>
+        <h3>Observe each route</h3>
+        <p><a href="./docs/latest/operations/monitoring/">JSON access logs and
+           request metrics</a> identify routes, backends, and policy outcomes.
+           Optional distributed tracing exports request and upstream spans
+           through Vector.</p>
       </article>
 
     </div>
@@ -224,6 +280,9 @@
 
   <section class="quickstart">
     <h2 class="section-head"><span class="prompt">$</span> haptic <span class="flag">--install</span></h2>
+    <p class="extend-lead">Requires Kubernetes 1.33 or newer. The chart installs
+       the controller, HAProxy, and the bundled routing libraries. Review the
+       <a href="./docs/latest/changelog/">release notes</a> before upgrading.</p>
     <div class="terminal terminal-shell">
       <div class="term-bar">
         <span class="dots" aria-hidden="true">
