@@ -1,6 +1,9 @@
-# High availability with leader election
+# High availability
 
-Run multiple controller replicas so configuration delivery can recover after a leader failure.
+The chart starts two controller replicas and two HAProxy replicas by default.
+Spread each pair across nodes so a node failure leaves a working controller and
+proxy; see [anti-affinity](#anti-affinity). Each controller needs the full
+[controller resource budget](performance.md#controller-resource-sizing).
 
 ## Overview
 
@@ -67,21 +70,13 @@ that delay; `leaseDuration + retryPeriod` isn't a hard upper bound. A voluntary
 handoff releases the lease without waiting for expiry. HAProxy keeps serving its
 current configuration while a new leader is elected.
 
-**Clock-rate tolerance:**
-
-Client-go tolerates differences in clock readings, but not arbitrary differences
-in clock speed. Its approximate clock-rate tolerance is
-`leaseDuration / renewDeadline`: `30s / 20s = 1.5` with these defaults. Increasing
-both durations proportionally leaves that ratio unchanged. See the
-[client-go leader-election documentation](https://pkg.go.dev/k8s.io/client-go/tools/leaderelection).
-
 ## Deployment
 
 <a id="standard-ha-deployment"></a>
 
 ### Standard high-availability Deployment
 
-Deploy with 2-3 replicas (default Helm configuration):
+A new installation uses two controller replicas:
 
 ```bash
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
@@ -91,15 +86,16 @@ helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/hapti
 
 ### Scaling
 
-Scale the deployment dynamically:
+Set the replica count in your Helm values and apply them through your normal
+deployment workflow:
 
-```bash
-# Scale to 3 replicas
-kubectl scale deployment haptic-controller -n haptic --replicas=3
-
-# Scale back to 2
-kubectl scale deployment haptic-controller -n haptic --replicas=2
+```yaml
+controller:
+  replicaCount: 3
 ```
+
+Keep at least two replicas for failover. Adding replicas increases the total
+resource reservation; it doesn't reduce the work each replica performs.
 
 ### Autoscaling
 
@@ -281,7 +277,7 @@ First restrict the metric query to one HAPTIC release; separate releases each ha
     kubectl describe pod <leader-pod> | grep -A10 "Limits\|Requests"
     ```
 
-    **Solution:** Increase CPU/memory limits
+    **Action:** Check CPU throttling and memory pressure. Increase CPU requests or memory requests and limits when the pod lacks resources; see [resource sizing](performance.md).
 
 2. **Network issues** - API server communication delays:
 
@@ -355,22 +351,14 @@ Every replica renders changes and holds resource and render caches. The leader
 also deploys configuration and writes status. Give all replicas enough CPU and
 memory to handle peak load after election:
 
-```yaml
-# chart default — sized for the typical 50–200 Ingress range
-controller:
-  resources:
-    requests:
-      cpu: 100m
-      memory: 1Gi      # memory request = limit (pod stays Burstable — no CPU limit)
-    limits:
-      memory: 1Gi      # CPU limit deliberately omitted to avoid GOMAXPROCS throttling
-```
-
-For larger or smaller workloads see the sizing table in [Performance — Controller Resource Sizing](./performance.md#controller-resource-sizing). Measure startup and steady-state memory for your watched resources and template libraries before lowering the limit.
+Use the [resource sizing guide](./performance.md#controller-resource-sizing) for
+starting requests and limits. Apply the same budget to every replica.
 
 ### Anti-affinity
 
-Distribute replicas across nodes for better availability:
+This preference spreads controllers from the `haptic` release across nodes.
+Change the instance label for another release. Apply an equivalent preference
+under `haproxy.podSpec.affinity` with component `loadbalancer` for the proxy pods:
 
 ```yaml
 controller:
@@ -383,12 +371,15 @@ controller:
               labelSelector:
                 matchLabels:
                   app.kubernetes.io/name: haptic
+                  app.kubernetes.io/instance: haptic
+                  app.kubernetes.io/component: controller
               topologyKey: kubernetes.io/hostname
 ```
 
 ### Monitoring and alerts
 
-The leader-election alerts (no leader, split-brain, frequent transitions) are part of the recommended alert set in [Monitoring — Alerting Rules](./monitoring.md#alerting-rules). Of those three, the chart's built-in `PrometheusRule` ships only the no-leader alert (`HAProxyControllerNoLeader`, toggled by `controller.monitoring.prometheusRule.defaultRules.leaderElectionLost`) — enable it with `controller.monitoring.prometheusRule.enabled`. Copy the split-brain and transition-rate rules from the recommended set if you want them.
+The bundled `PrometheusRule` includes `HAProxyControllerNoLeader`. Enable it
+through the [monitoring setup](./monitoring.md#enable-the-bundled-monitoring).
 
 ## Migration from single-replica
 
@@ -415,20 +406,16 @@ To migrate an existing single-replica deployment to HA:
       -f values.yaml
     ```
 
-4. **Verify leadership:**
+4. **Confirm the controller rollout:**
 
     ```bash
-    kubectl logs -f -n haptic deployment/haptic-controller | grep leader
+    kubectl rollout status deployment/haptic-controller -n haptic
     ```
 
-5. **Confirm one leader:**
+5. **Read the active leader from the Lease:**
 
     ```bash
-    # Query each pod's metrics; exactly one should report is_leader 1
-    for pod in $(kubectl get pods -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -o name); do
-      echo "$pod:"
-      kubectl exec -n haptic $pod -- wget -qO- localhost:9090/metrics | grep is_leader
-    done
+    kubectl get lease haptic -n haptic -o jsonpath='{.spec.holderIdentity}{"\n"}'
     ```
 
 ## See also

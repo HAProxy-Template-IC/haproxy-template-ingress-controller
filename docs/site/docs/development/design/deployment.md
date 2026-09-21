@@ -84,7 +84,7 @@ graph TB
     - Apply tuning (`minDeploymentInterval`, `driftPreventionInterval`, storage paths)
     - Validation tests shipped alongside the templates
 
-6. **Credentials Secret** selected by `--secret-name` / `SECRET_NAME` — holds the agent's username and password. The controller watches it live; the HAProxy pods read it through their environment, so a rotation needs a pod roll on their side.
+6. **Agent identity Secrets** — separate client and server certificates authenticate the default mutual TLS connection. Both peers reload changed certificates. The bootstrap credentials Secret remains required; its username and password are used only by the explicit legacy HTTP transport.
 
 ## Container Architecture
 
@@ -111,7 +111,7 @@ graph TB
 
 ```
 
-**Resource Requirements**: chart defaults, the sizing table, and the GOMAXPROCS/GOMEMLIMIT container-awareness mechanics live in [Performance — Controller Resource Sizing](../../operations/performance.md#controller-resource-sizing). Diagram-relevant specifics: the controller writes transient `haproxy -c` validation files to a `/tmp` emptyDir (root filesystem is read-only), and both HAProxy-pod containers share the config `emptyDir` mounted at `/etc/haproxy`.
+**Resource requirements**: use the [resource sizing guide](../../operations/performance.md#controller-resource-sizing) for chart defaults and planning estimates. The controller writes transient `haproxy -c` validation files to a `/tmp` emptyDir because its root filesystem is read-only. HAProxy and its agent share the config `emptyDir` mounted at `/etc/haproxy`.
 
 ## Network topology
 
@@ -177,7 +177,7 @@ graph LR
 
 1. **Ingress Traffic**: Internet → HAProxy Service → HAProxy Pods → Application Pods (the diagram shows the `haproxy.service.type: LoadBalancer` variant; the chart default is NodePort)
 2. **Control Plane**: Controller → Kubernetes API (resource watching)
-3. **Configuration apply**: Controller → each pod's agent (HTTP)
+3. **Configuration apply**: Controller → each pod's agent (HTTPS with mutual TLS by default)
 4. **Service Discovery**: Controller watches HAProxy pods via Kubernetes API
 5. **Monitoring**: Prometheus → Controller Service (ClusterIP) → Controller Pod (metrics endpoint)
 6. **Health Checks**: Kubernetes → Controller Service → Controller Pod (healthz endpoint)
@@ -186,7 +186,7 @@ graph LR
 
 ## Build optimizations (contributors)
 
-Controller images are built with Go's Profile-Guided Optimization (PGO), which typically provides 2-7% CPU improvement by optimizing frequently called functions. A baseline CPU profile (`cmd/haptic/default.pgo`) is committed to the repository; Go automatically uses it during builds to optimize hot paths.
+Controller images use Go's Profile-Guided Optimization (PGO) to optimize frequently called functions. The benefit depends on how closely the profile matches the workload. A baseline CPU profile (`cmd/haptic/default.pgo`) is committed to the repository; Go automatically uses it during builds to optimize hot paths.
 
 **Updating the profile** from the development environment:
 

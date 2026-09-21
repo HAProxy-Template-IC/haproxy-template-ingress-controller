@@ -37,7 +37,7 @@ The `backend storefront_shop_svc_shop_http` section swaps `balance leastconn` fo
 </div>
 
 !!! note "Migrating from haproxytech/kubernetes-ingress"
-    Enable this library (see [Configuration](#configuration) below), and your existing `haproxy.org/*` annotations work without changes. See [Annotations](../annotations.md) for the full feature comparison between annotation libraries.
+    Enable this library (see [Configuration](#configuration) below), then review the supported annotations and caveats before cutover. See [Annotations](../annotations.md) for the full feature comparison between annotation libraries.
 
 **Important notes:**
 
@@ -53,72 +53,6 @@ controller:
   templateLibraries:
     haproxytech:
       enabled: true  # Set to enable this opt-in library (disabled by default)
-```
-
-## Extension points
-
-The haproxytech library implements these extension points from base.yaml. All snippets follow the `<extension-point>-<NNN>-haproxytech-*` naming convention, where `NNN` is the numeric priority (see [Template Libraries → Snippet Priority](../template-libraries.md#snippet-priority)).
-
-### `features-*` (shared-state initialization)
-
-| Snippet | Purpose |
-|---------|---------|
-| `features-100-haproxytech-ssl-redirect` | Registers SSL-redirect host/code pairs in `gf["sslRedirectHosts"]` |
-| `features-100-haproxytech-ssl-passthrough` | Scans ingresses for `haproxy.org/ssl-passthrough` and registers backends in `gf["sslPassthroughBackends"]` |
-
-### `frontend-filters-*` (HTTP-frontend request/response filters)
-
-| Snippet | Annotations Processed |
-|---------|----------------------|
-| `frontend-filters-100-haproxytech-basic-headers` | `haproxy.org/forwarded-for`, `haproxy.org/src-ip-header` |
-| `frontend-filters-200-haproxytech-access-control` | `haproxy.org/allow-list`, `haproxy.org/deny-list` |
-| `frontend-filters-300-haproxytech-cors` | `haproxy.org/cors-*` |
-| `frontend-filters-500-haproxytech-logging` | `haproxy.org/request-capture`, `haproxy.org/request-capture-len` |
-
-### `backend-directives-*` (per-backend directives)
-
-| Snippet | Annotations Processed |
-|---------|----------------------|
-| `backend-directives-100-haproxytech-pod-maxconn` | `haproxy.org/pod-maxconn` |
-| `backend-directives-100-haproxytech-timeouts` | `haproxy.org/timeout-server`, `/timeout-connect`, `/timeout-queue`, `/timeout-tunnel`, `/timeout-check` |
-| `backend-directives-150-haproxytech-load-balance` | `haproxy.org/load-balance` |
-| `backend-directives-200-haproxytech-health-checks` | `haproxy.org/check` |
-| `backend-directives-210-haproxytech-advanced-health-checks` | `haproxy.org/check-http`, `haproxy.org/check-interval` |
-| `ingress-rate-limit-0250-haproxytech` | `haproxy.org/rate-limit-*` (published into the shared frontend lane) |
-| `backend-directives-300-haproxytech-header-manipulation` | `haproxy.org/request-set-header`, `haproxy.org/response-set-header` |
-| `backend-directives-350-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` (patterns that aren't a prefix strip) |
-| `frontend-filters-995-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` (a bare value or a prefix strip, from per-route maps) |
-| `backend-directives-400-haproxytech-session-persistence` | `haproxy.org/cookie-persistence` |
-| `backend-directives-401-haproxytech-session-persistence-no-dynamic` | `haproxy.org/cookie-persistence-no-dynamic` |
-| `backend-directives-500-haproxytech-ingress-auth` | `haproxy.org/auth-*` (attaches the userlist per backend) |
-| `backend-directives-900-haproxytech-advanced` | `haproxy.org/backend-config-snippet`, `haproxy.org/server-*`, `haproxy.org/send-proxy-protocol`, `haproxy.org/scale-server-slots` |
-
-### Other extension points
-
-| Snippet | Extension Point | Purpose |
-|---------|-----------------|---------|
-| `global-top-500-haproxytech-ingress-auth` | `global-top-*` | Emits a deduplicated `userlist auth_<secretNs>_<secretName>` per unique auth secret |
-| `backends-501-haproxytech-ssl-passthrough` | `backends-*` | TCP-mode backends for hosts annotated with `haproxy.org/ssl-passthrough: "true"` |
-| `features-130-haproxytech-request-redirect` | `features-*` | Registers host→location for `haproxy.org/request-redirect` / `haproxy.org/request-redirect-code` in the shared `redirect-loc-<code>.map` |
-| `map-reqhdr-host-250-haproxytech` | `map-reqhdr-host-*` | Relocates `haproxy.org/set-host` to `reqhdr-host.map` + a shared frontend rule |
-
-### Injecting custom annotations
-
-You can extend annotation processing by adding snippets with the right prefix and priority:
-
-```yaml
-controller:
-  config:
-    templateSnippets:
-      # Runs alongside the built-in frontend filters (before the 200-range access-control)
-      frontend-filters-150-custom-security:
-        template: |
-          {%- for ingress in resources.ingresses.List() %}
-          {%- var security_level = ingress.metadata.annotations["custom.io/security-level"] | fallback("") %}
-          {%- if security_level == "high" %}
-          http-request deny unless { ssl_fc }
-          {%- end %}
-          {%- end %}
 ```
 
 ## Access control & IP filtering
@@ -139,6 +73,7 @@ metadata:
   annotations:
     haproxy.org/allow-list: "192.168.1.0/24, 10.0.0.1"
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -183,6 +118,7 @@ metadata:
   annotations:
     haproxy.org/deny-list: "203.0.113.0/24, 198.51.100.50"
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -252,6 +188,7 @@ metadata:
     haproxy.org/cors-allow-methods: "GET, POST, PUT, DELETE"
     haproxy.org/cors-allow-headers: "Content-Type, Authorization"
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -454,6 +391,7 @@ metadata:
     haproxy.org/rate-limit-size: "100k"
     haproxy.org/rate-limit-status-code: "429"
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -573,6 +511,7 @@ metadata:
     haproxy.org/rate-limit-period: "10s"
     haproxy.org/rate-limit-whitelist: "10.0.0.0/8, 192.168.1.5"
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -631,6 +570,7 @@ metadata:
       X-Forwarded-Proto https
       X-Custom-Header custom-value
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -678,6 +618,7 @@ metadata:
       X-Frame-Options DENY
       X-Content-Type-Options nosniff
 spec:
+  ingressClassName: haptic
   rules:
     - host: example.com
       http:
@@ -777,6 +718,7 @@ metadata:
     haproxy.org/path-rewrite: |
       ^/api/v1/(.*) /\1
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -822,6 +764,7 @@ metadata:
     haproxy.org/request-redirect: "https://new.example.com"
     haproxy.org/request-redirect-code: "301"
 spec:
+  ingressClassName: haptic
   rules:
     - host: old.example.com
       http:
@@ -894,6 +837,7 @@ metadata:
     haproxy.org/ssl-redirect: "true"
     haproxy.org/ssl-redirect-code: "301"
 spec:
+  ingressClassName: haptic
   tls:
     - hosts:
         - example.com
@@ -960,6 +904,7 @@ metadata:
     haproxy.org/ssl-redirect: "true"
     haproxy.org/ssl-redirect-port: "8443"
 spec:
+  ingressClassName: haptic
   rules:
     - host: secure.example.com
       http:
@@ -1011,6 +956,7 @@ metadata:
   annotations:
     haproxy.org/ssl-passthrough: "true"
 spec:
+  ingressClassName: haptic
   tls:
     - hosts:
         - secure.example.com
@@ -1188,6 +1134,7 @@ metadata:
   annotations:
     haproxy.org/check: "false"
 spec:
+  ingressClassName: haptic
   rules:
     - host: internal.example.com
       http:
@@ -1268,6 +1215,7 @@ metadata:
   annotations:
     haproxy.org/check-interval: "10s"
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -1321,7 +1269,7 @@ timeout check 3s
 
 **Status**: ✅ Supported
 
-**Description**: Maximum total concurrent connections for all backend pods combined, automatically divided equally among HAProxy controller replicas with ceiling rounding. Only Running and Ready pods are counted.
+**Description**: Maximum connections to each backend server across the HAProxy replicas. HAPTIC divides the value among ready HAProxy pods, rounding the pod count up to a power of two.
 
 **Usage**:
 
@@ -1333,7 +1281,7 @@ haproxy.org/pod-maxconn: "100"
 
 The annotation value represents the **total** maximum connections across all HAProxy replicas. The controller automatically:
 
-- Counts only **Running and Ready** HAProxy controller pods (Pending, CrashLoopBackOff, SysctlForbidden, and other non-ready pods are excluded)
+- Counts only **Running and Ready** HAProxy pods (Pending, CrashLoopBackOff, SysctlForbidden, and other non-ready pods are excluded)
 - Quantizes the pod count to the **next power of 2** to avoid HAProxy reload cascades when pods scale up or down
 - Divides the total by the quantized count (ceiling rounding)
 - Applies the per-pod value to each server line
@@ -1439,6 +1387,7 @@ metadata:
   annotations:
     haproxy.org/load-balance: "leastconn"
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -1481,6 +1430,7 @@ metadata:
   annotations:
     haproxy.org/cookie-persistence: "SERVERID"
 spec:
+  ingressClassName: haptic
   rules:
     - host: app.example.com
       http:
@@ -1499,12 +1449,14 @@ spec:
 ```haproxy
 backend app-backend
     cookie SERVERID insert indirect nocache dynamic
-    server pod1 10.0.1.5:8080 cookie pod1
 ```
 
 **Dependencies**: None
 
-**Note**: `insert … dynamic` makes HAProxy derive the cookie value by hashing each server's address with a per-process key. No `dynamic-cookie-key` is emitted, so each HAProxy instance uses its own key — affinity holds per instance, not across instances. For affinity that survives across all replicas, pin a fixed key via a custom config snippet.
+**Note**: This annotation emits the cookie directive without a shared
+`dynamic-cookie-key`. For affinity across HAProxy replicas, use the
+[native affinity annotation](haptic-annotations.md#rewriting-retries-and-session-affinity), which also
+configures a consistent key. Remove the vendor cookie annotation when switching.
 
 ---
 
@@ -1512,7 +1464,10 @@ backend app-backend
 
 **Status**: ✅ Supported
 
-**Description**: Enable sticky sessions using static cookies (without dynamic-cookie-key). Use only in single-instance controller deployments.
+**Description**: Emit a static cookie directive. This annotation alone doesn't
+assign cookie values to servers; it requires custom server templates that do so.
+Use [native cookie affinity](haptic-annotations.md#rewriting-retries-and-session-affinity) for the bundled
+server templates.
 
 **Usage**:
 
@@ -1524,6 +1479,7 @@ metadata:
   annotations:
     haproxy.org/cookie-persistence-no-dynamic: "SERVERID"
 spec:
+  ingressClassName: haptic
   rules:
     - host: app.example.com
       http:
@@ -1542,14 +1498,12 @@ spec:
 ```haproxy
 backend app-backend
     cookie SERVERID insert indirect nocache
-    server pod1 10.0.1.5:8080 cookie pod1
 ```
 
 **Dependencies**: None
 
-**Note**: Mutually exclusive with `cookie-persistence`. For multi-instance deployments, use `cookie-persistence` (dynamic mode) instead to ensure consistent cookie values across controller instances.
-
-**Warning**: Static cookies differ across controller instances, breaking session affinity. Only use in single-instance deployments.
+**Note**: Mutually exclusive with `cookie-persistence`. Custom static server cookie
+values must identify the same backend endpoint on every HAProxy replica.
 
 ---
 
@@ -1708,6 +1662,7 @@ metadata:
       method
     haproxy.org/request-capture-len: "256"
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -1808,6 +1763,7 @@ metadata:
       stick store-response res.cook(JSESSIONID)
       http-send-name-header X-Backend-Server
 spec:
+  ingressClassName: haptic
   rules:
     - host: app.example.com
       http:
@@ -1895,6 +1851,7 @@ metadata:
     haproxy.org/auth-secret: auth-credentials
     haproxy.org/auth-realm: "API Access"
 spec:
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -1931,9 +1888,6 @@ http-request auth realm "API-Access" if { var(txn.ht_ba) -m str "ok auth_default
 - Supports cross-namespace secrets: `namespace/secretname`
 - Automatic deduplication: multiple ingresses sharing the same secret generate a single userlist
 - HAProxy parses `$1$` (MD5 crypt), `$5$` (SHA-256), `$6$` (SHA-512), and `$2y$` (bcrypt). It **doesn't** parse `$apr1$` (Apache MD5 — the htpasswd *default* without an explicit algorithm); use `htpasswd -n -B` (bcrypt), `-n -2` (SHA-256), or `-n -5` (SHA-512). See [Performance — Password hash validation](../operations/performance.md#password-hash-performance) for the cost/perf trade-off.
-
-!!! note "Implementation Difference from HAProxy Ingress Controller"
-    This controller uses **per-secret** userlist naming (`auth_{secretNs}_{secretName}`) rather than the official HAProxy Ingress Controller's per-ingress naming (`{namespace}-{ingressName}`). This deduplicates userlists when multiple Ingresses reference the same secret, significantly improving configuration validation performance for expensive password hashes like bcrypt (~85 ms per hash validation).
 
 ---
 
@@ -2018,7 +1972,7 @@ haproxy.org/auth-realm: "API Access"
 
 2. **Deprecated annotations** - `whitelist` and `blacklist` are honoured as deprecated aliases of `allow-list` / `deny-list` (only when the canonical key is absent). `ingress.class` isn't implemented — set `spec.ingressClassName` instead.
 
-3. **RequestMirror equivalent** - No annotation-based traffic mirroring. Consider using Gateway API with an external Stream Processing Offload Engine (SPOE) agent for this feature.
+3. **RequestMirror equivalent** - No annotation-based traffic mirroring. Use the Gateway API `RequestMirror` filter and the bundled [mirror plugin](../operations/spoa-hub.md).
 
 ### Implementation differences from HAProxy Tech
 
@@ -2082,6 +2036,59 @@ The library contributes `captured_headers` (HAProxy's `%hr`) to the
 [structured access log](../haproxy-deployment.md#access-logging) when any Ingress
 sets `haproxy.org/request-capture` — without it, the annotation configures
 captures that nothing reads.
+
+## Extension points
+
+The haproxytech library implements these extension points from base.yaml. All snippets follow the `<extension-point>-<NNN>-haproxytech-*` naming convention, where `NNN` is the numeric priority (see [Template Libraries → Snippet Priority](../template-libraries.md#snippet-priority)).
+
+### `features-*` (shared-state initialization)
+
+| Snippet | Purpose |
+|---------|---------|
+| `features-100-haproxytech-ssl-redirect` | Registers SSL-redirect host/code pairs in `gf["sslRedirectHosts"]` |
+| `features-100-haproxytech-ssl-passthrough` | Scans ingresses for `haproxy.org/ssl-passthrough` and registers backends in `gf["sslPassthroughBackends"]` |
+
+### `frontend-filters-*` (HTTP-frontend request/response filters)
+
+| Snippet | Annotations Processed |
+|---------|----------------------|
+| `frontend-filters-100-haproxytech-basic-headers` | `haproxy.org/forwarded-for`, `haproxy.org/src-ip-header` |
+| `frontend-filters-200-haproxytech-access-control` | `haproxy.org/allow-list`, `haproxy.org/deny-list` |
+| `frontend-filters-300-haproxytech-cors` | `haproxy.org/cors-*` |
+| `frontend-filters-500-haproxytech-logging` | `haproxy.org/request-capture`, `haproxy.org/request-capture-len` |
+
+### `backend-directives-*` (per-backend directives)
+
+| Snippet | Annotations Processed |
+|---------|----------------------|
+| `backend-directives-100-haproxytech-pod-maxconn` | `haproxy.org/pod-maxconn` |
+| `backend-directives-100-haproxytech-timeouts` | `haproxy.org/timeout-server`, `/timeout-connect`, `/timeout-queue`, `/timeout-tunnel`, `/timeout-check` |
+| `backend-directives-150-haproxytech-load-balance` | `haproxy.org/load-balance` |
+| `backend-directives-200-haproxytech-health-checks` | `haproxy.org/check` |
+| `backend-directives-210-haproxytech-advanced-health-checks` | `haproxy.org/check-http`, `haproxy.org/check-interval` |
+| `ingress-rate-limit-0250-haproxytech` | `haproxy.org/rate-limit-*` (published into the shared frontend lane) |
+| `backend-directives-300-haproxytech-header-manipulation` | `haproxy.org/request-set-header`, `haproxy.org/response-set-header` |
+| `backend-directives-350-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` (patterns that aren't a prefix strip) |
+| `frontend-filters-995-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` (a bare value or a prefix strip, from per-route maps) |
+| `backend-directives-400-haproxytech-session-persistence` | `haproxy.org/cookie-persistence` |
+| `backend-directives-401-haproxytech-session-persistence-no-dynamic` | `haproxy.org/cookie-persistence-no-dynamic` |
+| `backend-directives-500-haproxytech-ingress-auth` | `haproxy.org/auth-*` (attaches the userlist per backend) |
+| `backend-directives-900-haproxytech-advanced` | `haproxy.org/backend-config-snippet`, `haproxy.org/server-*`, `haproxy.org/send-proxy-protocol`, `haproxy.org/scale-server-slots` |
+
+### Other extension points
+
+| Snippet | Extension Point | Purpose |
+|---------|-----------------|---------|
+| `global-top-500-haproxytech-ingress-auth` | `global-top-*` | Emits a deduplicated `userlist auth_<secretNs>_<secretName>` per unique auth secret |
+| `backends-501-haproxytech-ssl-passthrough` | `backends-*` | TCP-mode backends for hosts annotated with `haproxy.org/ssl-passthrough: "true"` |
+| `features-130-haproxytech-request-redirect` | `features-*` | Registers host→location for `haproxy.org/request-redirect` / `haproxy.org/request-redirect-code` in the shared `redirect-loc-<code>.map` |
+| `map-reqhdr-host-250-haproxytech` | `map-reqhdr-host-*` | Relocates `haproxy.org/set-host` to `reqhdr-host.map` + a shared frontend rule |
+
+### Injecting custom annotations
+
+See [Custom annotations](../templating.md#reading-a-custom-annotation) for an example
+that applies an annotation to the matching backend. Frontend snippets must scope
+rules to the intended route; an unconditional deny affects every request.
 
 ## See also
 

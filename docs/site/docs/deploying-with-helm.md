@@ -20,32 +20,17 @@ For a first installation with a sample app, follow [Getting started](getting-sta
 ## Installation
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.3
+helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic --create-namespace
 ```
 
 With custom values:
 
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 \
+  --version 0.2.0-alpha.3 --namespace haptic --create-namespace \
   -f my-values.yaml
 ```
-
-## What's in this chart
-
-The chart deploys:
-
-- **Controller Deployment** -- the controller that watches resources and generates configurations
-- **HAProxy Deployment** (optional, on by default) -- the load balancers that serve your traffic, each with the HAPTIC agent alongside
-- **CRDs** -- six resource types for configuration, libraries, and rendered output; see the [CRD reference](./crd-reference.md). Helm preserves these definitions during uninstall.
-- **`HAProxyTemplateConfig` custom resource** -- built from `controller.config`, listing the enabled libraries in merge order via `spec.libraryRefs`
-- **`HAProxyTemplateLibrary` custom resources** -- one per enabled `controller.templateLibraries.*` entry, each carrying that library's snippets, templating settings, maps, files, and tests
-- **IngressClass** and **GatewayClass** -- routing API integration for Ingress and Gateway API resources
-- **RBAC**, **NetworkPolicy**, and **ServiceAccount** -- permissions and network security
-- **Vector sidecar** (on by default) -- processes access logs and exposes request and SPOA hub metrics
-- **Pre-rollout validation hook** and **CRD upgrade hook** (both on by default) -- `pre-install`/`pre-upgrade` Jobs that run `haptic preflight` against your values and server-side apply the bundled CRDs, so a bad configuration or a stale CRD schema fails the release instead of the running fleet
-- Optional **ServiceMonitor** and **PodMonitors** -- Prometheus integration for the controller and the HAProxy pods
-- **Admission webhook** (on by default) -- checks proposed changes to watched resources before Kubernetes accepts them
 
 ## Where to go next
 
@@ -56,12 +41,29 @@ Jump to what you need:
 | Configure or filter the ingress class | [IngressClass](./ingress-class.md) |
 | Set up TLS/HTTPS | [SSL Certificates](./ssl-certificates.md) |
 | Use Ingress annotations (auth, rate limiting, etc.) | [Annotations](./annotations.md) |
-| Tune HAProxy resource limits or service type | [HAProxy Deployment](./haproxy-deployment.md) |
+| Budget CPU and memory | [Resource sizing](./operations/performance.md) |
+| Configure HAProxy replicas or service type | [HAProxy Deployment](./haproxy-deployment.md) |
 | Enable or disable template libraries | [Template Libraries](./template-libraries.md) |
 | Run multiple controller replicas | [High Availability](./operations/high-availability.md) |
 | Set up Prometheus scraping | [Monitoring](./operations/monitoring.md) |
 | Restrict network access with NetworkPolicy | [Networking](./operations/networking.md) |
 | Diagnose problems | [Troubleshooting](./troubleshooting.md) |
+
+## What's in this chart
+
+The chart deploys:
+
+- **Controller Deployment** -- the controller that watches resources and generates configurations
+- **HAProxy Deployment** (optional, on by default) -- the load balancers that serve your traffic, each with the HAPTIC agent alongside
+- **CRDs** -- seven resource types for configuration, libraries, and rendered output; see the [CRD reference](./crd-reference.md). Helm preserves these definitions during uninstall.
+- **`HAProxyTemplateConfig` custom resource** -- built from `controller.config`, listing the enabled libraries in merge order via `spec.libraryRefs`
+- **`HAProxyTemplateLibrary` custom resources** -- one per enabled `controller.templateLibraries.*` entry, each carrying that library's snippets, templating settings, maps, files, and tests
+- **IngressClass** and **GatewayClass** -- routing API integration for Ingress and Gateway API resources
+- **RBAC**, **NetworkPolicy**, and **ServiceAccount** -- permissions and network security
+- **Vector sidecar** (on by default) -- processes access logs and exposes request and SPOA hub metrics
+- **Pre-rollout validation hook** and **CRD upgrade hook** (both on by default) -- `pre-install`/`pre-upgrade` Jobs that run `haptic preflight` against your values and server-side apply the bundled CRDs, so a bad configuration or a stale CRD schema fails the release instead of the running fleet
+- Optional **ServiceMonitor** and **PodMonitors** -- Prometheus integration for the controller and the HAProxy pods
+- **Admission webhook** (on by default) -- checks proposed changes to watched resources before Kubernetes accepts them
 
 ## Running multiple HAPTIC instances in one cluster
 
@@ -109,7 +111,7 @@ If you installed with a values file, re-pass it so your custom values survive th
 
 ```bash
 helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 \
+  --version 0.2.0-alpha.3 --namespace haptic \
   -f my-values.yaml
 ```
 
@@ -117,7 +119,7 @@ Otherwise, upgrade without it:
 
 ```bash
 helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3
+  --version 0.2.0-alpha.3 --namespace haptic
 ```
 
 !!! warning "The chart owns the `HAProxyTemplateConfig`"
@@ -126,10 +128,17 @@ helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
 ## Uninstalling
 
 ```bash
-helm uninstall my-controller
+helm uninstall my-controller --namespace haptic
 ```
 
-Replace `my-controller` with whatever release name you used at install time. `helm uninstall` removes all resources created by the chart; the chart's CRDs are preserved so a reinstall picks up existing custom resources. To remove the CRDs as well, delete the whole `haproxy-haptic.org` API group explicitly:
+Use the release name and namespace from installation. Uninstall removes the
+release workloads and configuration. CRDs, retained default-certificate Secrets,
+and runtime-created agent certificate Secrets remain. Keep the agent issuer and
+identity Secrets together if you plan to reuse them on reinstall.
+
+Delete the CRDs only when no HAPTIC installation still needs them. This deletes
+**every instance of these resources across all namespaces**, including route
+policies and custom configurations:
 
 ```bash
 kubectl delete crd \
@@ -138,5 +147,6 @@ kubectl delete crd \
   haproxycfgs.haproxy-haptic.org \
   haproxygeneralfiles.haproxy-haptic.org \
   haproxycrtlistfiles.haproxy-haptic.org \
-  haproxymapfiles.haproxy-haptic.org
+  haproxymapfiles.haproxy-haptic.org \
+  haproxyroutepolicies.haproxy-haptic.org
 ```

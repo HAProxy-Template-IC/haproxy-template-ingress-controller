@@ -66,7 +66,14 @@ kubectl get pods -n haptic -l app.kubernetes.io/component=controller
 kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer
 ```
 
-You should see two controller pods (the chart defaults to two replicas with leader election) and two HAProxy pods, all in `Running` state with full readiness (`2/2` and `4/4`). The controller pod runs the controller plus its validator sidecar; each HAProxy pod runs `haproxy`, the HAPTIC agent, the SPOA hub, and the Vector log/metrics sidecar.
+With the default values, you should see two controller pods and two HAProxy pods. Wait for both Deployments to become ready:
+
+```bash
+kubectl -n haptic rollout status deployment/haptic-controller --timeout=180s
+kubectl -n haptic rollout status deployment/haptic-haproxy --timeout=180s
+```
+
+The number of containers depends on the sidecars you enable.
 
 !!! note "HAProxy version"
     The chart defaults to HAProxy 3.4. To pin a different series, set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for the full list and support status.
@@ -130,6 +137,7 @@ Save as `echo-app.yaml` and apply:
 
 ```bash
 kubectl apply -f echo-app.yaml
+kubectl -n default rollout status deployment/echo --timeout=180s
 ```
 
 ### Create an Ingress
@@ -168,41 +176,6 @@ The controller detects the Ingress, renders the HAProxy configuration, and deplo
 !!! tip "TLS for a host"
     This Ingress serves HTTP and HTTPS. Without `spec.tls`, HTTPS uses the chart's [default certificate](./ssl-certificates.md). To use a certificate for your hostname, add a `spec.tls` entry referencing a `kubernetes.io/tls` Secret. See [TLS configuration](./libraries/ingress.md#tls-configuration) for certificate setup or HTTP-only routing.
 
-### Verify the configuration
-
-#### Check the controller logs
-
-Watch the controller process the Ingress:
-
-```bash
-kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=50 -f
-```
-
-At the default `info` log level, each change produces a single consolidated `Reconciliation` summary line from the leader replica, for example:
-
-```text
-level=INFO msg=Reconciliation trigger=resource_change instances=2/2 reloads=2 ops=30 render_ms=1 validate_ms=1 deploy_ms=184 total_ms=289 backend_create=2 server_create=20 server_update=8 map_update=6
-```
-
-The summary reports the trigger, updated instances, reloads, runtime operations, and phase timings. For individual stages, [enable debug logging](./troubleshooting.md#enable-debug-logging).
-
-#### Inspect the rendered HAProxy configuration
-
-Inspect the rendered configuration in the controller-managed `HAProxyCfg` resource:
-
-```bash
-kubectl describe haproxycfg -n haptic
-```
-
-You should see:
-
-- A frontend section with routing rules
-- A backend section referencing the echo service
-- Server entries pointing to the echo pod endpoints
-
-!!! note "Output vs input"
-    `HAProxyCfg` is controller output. To change the configuration durably, update `controller.config` in your Helm values and upgrade the release. Editing the output doesn't change the templates. The rendered config alone doesn't confirm that every pod has applied it; check deployment status and test the route.
-
 ### Test the routing
 
 #### Port-forward to HAProxy
@@ -223,6 +196,41 @@ curl -H "Host: echo.example.local" http://localhost:8080/
 
 The response includes the request headers and the serving pod's `HOSTNAME`.
 Repeat the request to check that HAProxy distributes traffic across the echo pods.
+
+## Inspect the configuration (optional)
+
+### Check the controller logs
+
+Watch the controller process the Ingress:
+
+```bash
+kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -c controller --tail=50
+```
+
+At the default `info` log level, each change produces a single consolidated `Reconciliation` summary line from the leader replica, for example:
+
+```text
+level=INFO msg=Reconciliation trigger=resource_change instances=2/2 reloads=2 ops=30 render_ms=1 validate_ms=1 deploy_ms=184 total_ms=289 backend_create=2 server_create=20 server_update=8 map_update=6
+```
+
+The summary reports the trigger, updated instances, reloads, runtime operations, and phase timings. For individual stages, [enable debug logging](./troubleshooting.md#enable-debug-logging).
+
+### Inspect the rendered HAProxy configuration
+
+Inspect the rendered configuration in the controller-managed `HAProxyCfg` resource:
+
+```bash
+kubectl describe haproxycfg -n haptic
+```
+
+You should see:
+
+- A frontend section with routing rules
+- A backend section referencing the echo service
+- Server entries pointing to the echo pod endpoints
+
+!!! note "Output vs input"
+    `HAProxyCfg` is controller output. To change the configuration durably, update `controller.config` in your Helm values and upgrade the release. Editing the output doesn't change the templates. The rendered config alone doesn't confirm that every pod has applied it; check deployment status and test the route.
 
 ## What's happening behind the scenes
 
@@ -257,7 +265,7 @@ own resource types, or emit an HAProxy directive the bundled libraries don't cov
 
 ### Run in production
 
-For 3+ replicas, PodDisruptionBudgets, and leader election, see [High Availability](./operations/high-availability.md). For Prometheus metrics and dashboards, see [Monitoring](./operations/monitoring.md).
+For replica placement, PodDisruptionBudgets, and leader election, see [High Availability](./operations/high-availability.md). For Prometheus metrics and dashboards, see [Monitoring](./operations/monitoring.md).
 
 ## Troubleshooting
 
@@ -301,5 +309,6 @@ kubectl delete crd \
   haproxycfgs.haproxy-haptic.org \
   haproxygeneralfiles.haproxy-haptic.org \
   haproxycrtlistfiles.haproxy-haptic.org \
-  haproxymapfiles.haproxy-haptic.org
+  haproxymapfiles.haproxy-haptic.org \
+  haproxyroutepolicies.haproxy-haptic.org
 ```

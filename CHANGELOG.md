@@ -43,7 +43,6 @@ installations and custom templates.
 
 - Validation worker concurrency accounts for the memory limit, preventing parallel HAProxy checks from exhausting preflight containers on large nodes.
 - Incremental rendering batches dependency updates and reduces map copies, cache-identity allocations, and admission bookkeeping allocations.
-- Preflight, validation, benchmark, diff, and agent processes derive Go's soft memory limit from their container limit, preserving explicit `GOMEMLIMIT` settings.
 - Incremental templates read optional scalar fields consistently, including explicit false and zero values.
 - Optional HTTP fetch failures can publish validated output without poisoning the incremental cache.
 

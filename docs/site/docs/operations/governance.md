@@ -28,7 +28,7 @@ Enforcement is scoped to the offending resource's own admission, so one pre-exis
 ## Require a WAF policy on every Ingress
 
 This example requires every Ingress to select a Web Application Firewall (WAF)
-policy. Start in audit mode, fix reported violations, then enable rejection.
+policy. First [define a WAF policy](waf-policies.md) that your Ingresses can select. Start the guardrail in audit mode, fix reported violations, then enable rejection.
 
 ### 1. Turn the rule on in audit mode
 
@@ -115,7 +115,7 @@ metadata:
   name: governance-check
   namespace: default
 spec:
-  ingressClassName: haproxy
+  ingressClassName: haptic
   rules:
     - host: governance-check.example.com
       http:
@@ -224,10 +224,10 @@ Rules are generic — set `resource` to any name in your `watchedResources`, not
 
 ```yaml
 rules:
-  httproute-waf-policy:
+  httproute-owner:
     enabled: true
     resource: httproutes
-    path: metadata.annotations['haproxy-haptic.org/waf-policy']
+    path: metadata.labels['team']
     required: true
     enforcement: audit
 ```
@@ -235,10 +235,10 @@ rules:
 ## The rule the chart ships
 
 One governance rule is enabled out of the box: `haptic-compress-enable` injects
-`haproxy-haptic.org/compress-enable: "true"` on any Ingress that doesn't set it,
-which is what makes [response compression](../libraries/haptic-annotations.md#compression)
-on-by-default. It's a plain rule with no special status — inspect it with
-`kubectl get haproxytemplateconfig -o yaml`, and switch it off like any other.
+`haproxy-haptic.org/compress-enable: "false"` on an Ingress that doesn't set it.
+[Response compression](../libraries/haptic-annotations.md#compression) is opt-in.
+Change the rule's `default` to `"true"` to enable it across Ingresses that don't
+choose their own value.
 
 An Ingress that sets the annotation itself keeps its own value, `"true"` or
 `"false"` alike, because an injection only fills a path that's absent.

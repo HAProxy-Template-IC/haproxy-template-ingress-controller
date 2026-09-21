@@ -357,22 +357,20 @@ adds no timer, but the coordinator combines triggers that arrive while a render
 is running. The deployer's `minDeploymentInterval` separately paces reloads; see
 the [architecture overview](./development/design/architecture-overview.md).
 
-Set `debounceInterval` per watched resource. The bundled EndpointSlice watch uses
-`"0"` to report pod-IP changes without a debounce delay:
+Set `debounceInterval` per watched resource when delayed updates are acceptable.
+For example, coalesce updates to a custom ConfigMap watch for half a second:
 
 ```yaml
 watchedResources:
-  httproutes:
-    apiVersion: gateway.networking.k8s.io/v1
-    resources: httproutes
+  routingConfig:
+    apiVersion: v1
+    resources: configmaps
     indexBy: ["metadata.namespace", "metadata.name"]
-    debounceInterval: "500ms"   # react fast on canary rollouts
-  endpointslices:
-    apiVersion: discovery.k8s.io/v1
-    resources: endpointslices
-    indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
-    debounceInterval: "30s"     # absorb endpoint churn on large clusters
+    debounceInterval: "500ms"
 ```
+
+Keep the bundled EndpointSlice watch at `"0"`: delaying endpoint updates can
+leave HAProxy sending requests to pods that have stopped serving.
 
 Use a Go duration such as `"500ms"`, `"10s"`, or `"1m30s"`. Set `"0"` to disable
 watcher debouncing. Empty or invalid values use the `100ms` default without a
@@ -384,7 +382,7 @@ validation error, so check the spelling if the observed delay differs from your 
 |---------|--------------|
 | `.List()` returns empty | Controller hasn't finished initial sync — check `haptic_reconciliation_total` or `kubectl logs … \| grep "initial sync"` |
 | `.Fetch(ns, name)` returns empty for a resource that exists | `indexBy` doesn't match what you passed, or `labelSelector` / `fieldSelector` is filtering it out |
-| OOMKilled on controller | Switch large resources (TLS Secrets, big ConfigMaps) to `store: on-demand`; add `watchedResourcesIgnoreFields` entries |
+| OOMKilled on controller | Check [resource sizing](operations/performance.md#controller-resource-sizing) first; then narrow unnecessary watches or use `store: on-demand` for large, rarely read objects |
 | Template rendering slow, many API logs | You're calling `.List()` on an `on-demand` store, or `.Fetch()` consistently missing the cache — profile with `/debug/pprof/profile`, consider `store: full` if the total size is modest |
 | `kubectl apply` rejected with `a HAProxyTemplateConfig needs podSelector, at least one watchedResources entry, and haproxyConfig …` | The CRD's validation rule requires `podSelector`, at least one `watchedResources` entry, and a `haproxyConfig` — inline or from a `spec.libraryRefs` entry; see [CRD Reference](./crd-reference.md) |
 

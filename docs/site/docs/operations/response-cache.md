@@ -6,6 +6,9 @@ it. Cache contents are divided among Varnish pods by a hash of the cache key.
 
 ## Enable caching
 
+The default cache adds two Varnish pods, reserving **200m CPU and 768 MiB of
+memory** in total. Set `cache.varnish.resources` to adjust that budget.
+
 Add this to your Helm values:
 
 ```yaml

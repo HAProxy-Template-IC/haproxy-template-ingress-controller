@@ -281,7 +281,9 @@ go tool pprof -top heap.pprof          # biggest retainers
 curl http://localhost:8080/debug/vars/resources   # any watched type growing unexpectedly?
 ```
 
-High counts on a `full`-store resource type are usually the answer; see [Watching Resources](../watching-resources.md) for switching to `on-demand`.
+Compare the profile's largest retained allocations with watched-resource counts.
+Counts alone don't identify the cause. For a starting memory budget, see
+[resource sizing](performance.md#controller-resource-sizing).
 
 **Why is CPU elevated?**
 
@@ -294,7 +296,9 @@ curl -s http://localhost:8080/debug/vars/events \
   | jq '[.[] | select(.type == "reconciliation.triggered")] | length'
 ```
 
-More than a few reconciliations per second under stable input usually means a watcher's debounce is undersized for the cluster's resource churn — see [Performance — Reconciliation Tuning](./performance.md#reconciliation-tuning) for the levers.
+If renders repeat without routing changes, identify the resource fields changing
+between events. Ignore only fields your templates don't read; see
+[reconciliation tuning](./performance.md#reconciliation-tuning).
 
 **Which snippet produced a given config line?**
 

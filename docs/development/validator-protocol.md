@@ -49,8 +49,8 @@ Connections are persistent. A controller opens connections to a validator on dem
 - **Sequential pipelined per connection.** Within one connection, frames are strictly ordered: client writes request *k*, validator writes response *k*, then the client writes request *k+1*. There is no out-of-order interleaving and no correlation IDs.
 - **Concurrency comes from the pool.** The controller maintains a per-validator connection pool (size capped by `spec.validators[i].maxConnections`, default 4, adaptive: starts small, grows on contention, shrinks when idle). Concurrent webhook calls grab independent connections from the pool and run in parallel against the same validator.
 - **Either side MAY close at inter-frame boundaries.** Validator MAY idle-close after some quiet period (recommended: 60 s) so file descriptors don't accumulate. Controller MAY close on shutdown or when shrinking the pool. Mid-frame close is a protocol violation.
-- **Framing or decode errors poison the connection.** On any partial-read / oversized-frame / malformed-JSON error, the side that detected it closes the connection. Recovery happens by opening a fresh connection — never by trying to recover state on the broken one.
-- **Application-level errors (malformed JSON, validation timeout, protocol-version mismatch) keep the connection open.** The validator writes a synthetic error response and waits for the next frame. Only framing failures close it.
+- **Framing errors and invalid responses poison the connection.** On any partial-read or oversized-frame error, or when the controller cannot decode a response, the detecting side closes the connection. Recovery happens by opening a fresh connection — never by trying to recover state on the broken one.
+- **A validator may report an invalid request without closing the connection.** After reading a complete frame, it can return an error for malformed request JSON or a protocol-version mismatch and wait for the next frame. Timeouts that interrupt a read or write close the connection.
 - **Idle-close handling on the controller side.** If the validator idle-closed a connection between the client's last use and now, the first request on that connection MAY fail to write. Clients MUST tolerate this with a single transparent reconnect-and-retry; the call returns success on the retry's response. Two consecutive failures on a fresh connection is a real transport error.
 
 The validator MUST handle multiple concurrent connections from the same controller. Implementations that only accept one connection at a time degrade the controller's pool to serial behaviour but do not break correctness.
@@ -188,7 +188,7 @@ closed.
 ### Request (single file)
 
 ```text
-00 00 00 D9  # 4-byte length: 217 bytes of JSON below
+00 00 00 C1  # length: 193 bytes
 
 {"protocol_version":1,"files":[{"path":"/etc/haproxy-spoa-hub/config.toml","content":"[hub]\nlisten = \"0.0.0.0:9000\"\n\n[plugins.params.coraza]\ndirectives = \"SecRulRemoveById 942100\"\n"}]}
 ```
@@ -196,7 +196,7 @@ closed.
 ### Response
 
 ```text
-00 00 00 DD  # length: 221 bytes
+00 00 00 D4  # length: 212 bytes
 
 {"protocol_version":1,"result":"error","warnings":[],"errors":[{"path":"/etc/haproxy-spoa-hub/config.toml","line":4,"column":0,"message":"invalid WAF config from string: unknown directive \"secrulremovebyid\""}]}
 ```

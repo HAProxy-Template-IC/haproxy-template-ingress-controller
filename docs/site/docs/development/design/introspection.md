@@ -158,7 +158,7 @@ Tests observe controller state directly — no log parsing, no timing heuristics
 
 Two design constraints matter here; everything operational about them lives elsewhere:
 
-- **Debug variables never expose secret material.** Credential variables return metadata only (`version`, `has_dataplane_creds`) — `pkg/controller/debug/setup.go` enforces this. Access control and NetworkPolicy examples: [Security — Network Exposure](../../operations/security.md#network-exposure).
+- **Credential variables return metadata only** (`version`, `has_dataplane_creds`). Other debug endpoints expose configuration and rendered files that can contain secret material. Access control and NetworkPolicy examples: [Security — Network Exposure](../../operations/security.md#network-exposure).
 - **The server binds `0.0.0.0:<port>` deliberately**, so kubelet health probes can reach `/healthz` on the pod IP — but every `/debug/*` route is wrapped in `requireLoopback` (`pkg/introspection/http.go`) and answers 403 to anything that didn't arrive over loopback. Reach the diagnostics with `kubectl port-forward`, and restrict `pods/portforward` with RBAC. Port configuration and the shared `/healthz` listener: [Debugging — Accessing the Server](../../operations/debugging.md#accessing-the-server).
 
 For detailed implementation and API documentation, see:

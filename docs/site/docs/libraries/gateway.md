@@ -21,7 +21,7 @@ The Gateway API library implements the [Kubernetes Gateway API](https://gateway-
 This library is **enabled by default**. For a runnable end-to-end walkthrough (a Gateway with an HTTP listener, an HTTPRoute, and a backend Service), see [Expose a Service through a Gateway](../gateway-class.md#expose-a-service-through-a-gateway).
 
 !!! note "Gateway API CRDs are resolved at runtime"
-    The library is merged whenever it's enabled — there's no Helm capability gate. Gateway API availability is a runtime question: kinds whose CRD the cluster doesn't serve are dropped from the effective config, and every snippet and `validationTests` entry that `requires` them is stripped with them. Install the CRDs later and the controller picks them up without a redeploy.
+    The library is merged whenever it's enabled. HAPTIC activates features for the CRDs installed in your cluster and detects newly installed CRDs without a controller redeploy.
 
 Watch an HTTPRoute compile down to HAProxy config live:
 
@@ -82,18 +82,10 @@ The Gateway API library hooks into these extension points from base.yaml. Snippe
 
 ### Injecting custom configuration
 
-You can extend Gateway API features by adding snippets with the right prefix and priority:
+Use [HAProxyRoutePolicy](../operations/gateway-policies.md) for authentication,
+rate limits, WAF inspection, and caching.
 
-```yaml
-controller:
-  config:
-    templateSnippets:
-      # Runs before the 500-range gateway matchers so the deny takes effect per route
-      frontend-matchers-advanced-400-custom-auth:
-        template: |
-          # Custom authentication check
-          http-request deny if { var(txn.matched_route) -m found } !{ req.hdr(Authorization) -m found }
-```
+For other behavior, use the [template extension points](../template-libraries.md#extension-points).
 
 ## Watched Resources
 
@@ -494,7 +486,7 @@ log-format string, where a `%` would fetch request state.
 | `URLRewrite` | Extended | ✅ Supported | Path and hostname rewriting |
 | `RequestMirror` | Extended | ✅ Supported | Per-route request mirroring via the bundled spoa-hub `mirror` plugin (enable `spoaHub.plugins.mirror`); supports percent/fraction sampling and multiple mirrors per rule |
 | `CORS` | Extended (GEP-1767) | ✅ Supported | HTTPRoute only, via `frontend-filters-450-gateway-cors`. Honours `allowOrigins` (exact values, a bare `*`, and `*.`-prefixed wildcards compiled to a regex against the request `Origin`), `allowMethods`, `allowHeaders`, `exposeHeaders`, `allowCredentials`, and `maxAge` |
-| `ExtensionRef` | Implementation-specific | ⚠️ Partial | Only `kind: SSLPassthrough` is honored (flags the HTTPRoute for TLS passthrough); other kinds planned as the Gateway API equivalent of Ingress annotations |
+| `ExtensionRef` | Implementation-specific | ⚠️ Partial | Supports `HAProxyRoutePolicy` for route policies and `SSLPassthrough` for TLS passthrough; other kinds are unsupported |
 
 #### `RequestHeaderModifier` filter
 
@@ -522,8 +514,8 @@ spec:
               - name: X-API-Version
                 value: "v2"
             add:
-              - name: X-Request-ID
-                value: "%[rand]"
+              - name: X-Deployment
+                value: "canary"
             remove:
               - Authorization
       backendRefs:
@@ -537,7 +529,7 @@ The values land in `gw-reqhdr.map`, keyed `<rule id>|<operation>|<header name>`:
 
 ```
 default_api-route_0|set|x-api-version v2
-default_api-route_0|add|x-request-id %25%5brand%5d
+default_api-route_0|add|x-deployment canary
 default_api-route_0|del|authorization 1
 ```
 
@@ -546,7 +538,7 @@ the number of routes using it:
 
 ```haproxy
 http-request set-header X-API-Version %[var(txn.gw_rule_id),concat(|set|x-api-version),map(<gw-reqhdr.map>),url_dec(1)] if { var(txn.gw_rule_id),concat(|set|x-api-version),map(<gw-reqhdr.map>) -m found }
-http-request add-header X-Request-ID %[var(txn.gw_rule_id),concat(|add|x-request-id),map(<gw-reqhdr.map>),url_dec(1)] if { var(txn.gw_rule_id),concat(|add|x-request-id),map(<gw-reqhdr.map>) -m found }
+http-request add-header X-Deployment %[var(txn.gw_rule_id),concat(|add|x-deployment),map(<gw-reqhdr.map>),url_dec(1)] if { var(txn.gw_rule_id),concat(|add|x-deployment),map(<gw-reqhdr.map>) -m found }
 http-request del-header Authorization if { var(txn.gw_rule_id),concat(|del|authorization),map(<gw-reqhdr.map>) -m found }
 ```
 
@@ -967,7 +959,7 @@ spec:
 | `RequestRedirect` | Core | N/A | HTTPRoute only - not applicable to gRPC |
 | `URLRewrite` | Extended | N/A | HTTPRoute only - not applicable to gRPC |
 | `RequestMirror` | Extended | ✅ Supported | Per-route request mirroring via the bundled spoa-hub `mirror` plugin (enable `spoaHub.plugins.mirror`); supports percent/fraction sampling and multiple mirrors per rule |
-| `ExtensionRef` | Implementation-specific | ❌ Not Implemented | Planned as Gateway API equivalent of Ingress annotations |
+| `ExtensionRef` | Implementation-specific | ⚠️ Partial | Supports `HAProxyRoutePolicy`; other kinds are unsupported |
 
 ### `spec.rules[].backendRefs`
 
@@ -1046,7 +1038,7 @@ spec:
 EOF
 ```
 
-HAPTIC renders a dedicated `frontend gateway-tls-port-6443` in `mode tcp` that reads the SNI from the buffered ClientHello and dispatches `secure.example.com` to backend `gtw_tls_default_secure-app_0`, forwarding the still-encrypted bytes to `secure-app:8443`. Choose a listener port other than the chart-static HTTPS port (`haproxy.ports.https`, default 443): a TLS listener on that port is dropped to avoid a duplicate bind (see [Forwarding behavior](#forwarding-behavior)). Each rule needs at least one `spec.hostnames` entry, and traffic goes to the rule's first `backendRef` — `weight` isn't honored for TLSRoute.
+HAPTIC renders a dedicated `frontend gateway-tls-port-6443` in `mode tcp` that reads the SNI from the buffered ClientHello and dispatches `secure.example.com` to backend `gtw_tls_default_secure-app_0`, forwarding the still-encrypted bytes to `secure-app:8443`. On the chart's HTTPS port (default 443), passthrough uses the shared SNI frontend; other ports get a dedicated TCP frontend (see [Forwarding behavior](#forwarding-behavior)). Each rule needs at least one `spec.hostnames` entry, and traffic goes to the rule's first `backendRef` — `weight` isn't honored for TLSRoute.
 
 ### Attachment semantics
 
@@ -1069,7 +1061,7 @@ A TLSRoute attaches to a Gateway listener when every check in this table passes:
 - **TLS listeners on other ports**: each port gets a dedicated `mode tcp` frontend (`frontend gateway-tls-port-<port>`). `Terminate` listeners bind with `ssl crt-list` and dispatch on `ssl_fc_sni` (the SNI HAProxy consumed during the handshake); `Passthrough` listeners bind plain and dispatch on `req_ssl_sni` read from the buffered ClientHello. Wildcard SNIs (`*.example.com`) match by suffix.
 - **Reject by default**: an SNI no attached TLSRoute claims is rejected at the TCP level. A rule whose `backendRefs` don't all resolve still claims its SNIs, so connections to them are refused rather than silently passed through — the behavior the upstream `TLSRouteInvalidBackendRef*` conformance tests mandate.
 - **Backends**: one `mode tcp` backend per route rule, named `gtw_tls_<namespace>_<route>_<ruleIndex>`; all SNIs of a rule share it. A rule attached to both a `Terminate` and a `Passthrough` listener gets one backend per mode (`…_terminate`, `…_passthrough`), so only the Terminate leg re-encrypts through a BackendTLSPolicy. Traffic goes to the rule's **first** `backendRef` (default port 443).
-- A Gateway TLS listener on the chart-static HTTPS port is dropped when the chart already binds that port (chart-static HTTPS frontend or Ingress SSL passthrough active). Move the listener to another port or override `httpsPort`.
+- Use a separate port for a `Terminate` TLS listener when the chart already binds its HTTPS port. Passthrough on the shared HTTPS port uses the SNI frontend described above.
 
 ### TLSRoute status
 
@@ -1279,13 +1271,7 @@ Two Gateway-API features cause the gateway library to emit additional Kubernetes
 | Template name | Triggered when | Emits |
 |---------------|----------------|-------|
 | `gateway-static-addresses` | A Gateway's `spec.addresses[]` lists at least one valid `IPAddress` entry — `SupportGatewayStaticAddresses` (Extended). | One `LoadBalancer` Service **per requested IP** in the controller's namespace, named `gw-<gateway-namespace>-<gateway-name>-<ip-with-dashes>` (names over 63 characters are truncated with a hash suffix). Each Service carries its single IP via the `metallb.universe.tf/loadBalancerIPs` annotation and selects the chart's shared HAProxy pods, so the per-Gateway IP routes to the same data plane the rest of the cluster uses. |
-| `gateway-infrastructure-propagation` | A Gateway sets `spec.infrastructure` (labels and / or annotations) but no `spec.addresses[]` — `SupportGatewayInfrastructurePropagation` (Extended). | One headless `ClusterIP` Service per such Gateway, also named `gw-<gateway-namespace>-<gateway-name>`. The Service has a placeholder `marker` port and an empty selector — its only purpose is to surface the propagated `spec.infrastructure` labels and annotations on a discoverable Kubernetes object. |
-
-Both templates draw their data from the per-Gateway computation that already runs during `haproxy.cfg` rendering (the `status-patches-200-gateway` block in `70-status-gateway.yaml`). That block stashes the per-Gateway Service spec into the per-render `shared` cache (`shared.Get("gatewayStaticAddressServices")` / `gatewayInfrastructureServices`) keyed by `<namespace>/<name>`; the `k8sResources` templates read the same map back during their post-`haproxyConfig` render pass and emit one Service per entry. Multi-doc YAML (`---`-separated) is used because a single template emits zero, one, or many Services depending on cluster state.
-
-The rendered `HAProxyTemplateConfig` lists these templates under `spec.k8sResources`.
-The controller renders and applies the resulting Kubernetes objects, including
-validation against the proposed resource state during admission.
+| `gateway-infrastructure-propagation` | A Gateway sets `spec.infrastructure` labels or annotations — `SupportGatewayInfrastructurePropagation` (Extended). | One headless `ClusterIP` Service in the Gateway's namespace, named `gw-<gateway-namespace>-<gateway-name>`. The Service has a placeholder `marker` port and an empty selector — its only purpose is to surface the propagated `spec.infrastructure` labels and annotations on a discoverable Kubernetes object. |
 
 ### Request a static IP for a Gateway
 
@@ -1321,7 +1307,7 @@ kubectl get svc -n haptic -l gateway.networking.k8s.io/gateway-name=edge
 
 A Gateway name longer than 63 bytes doesn't fit a label value, so the label then holds the first 54 bytes of the name, a hyphen, and the first 8 hex characters of the name's SHA-256.
 
-Once MetalLB (or your cloud load balancer) allocates the IP, it appears in the Gateway's `status.addresses`. Listing several `spec.addresses[]` entries emits one Service per IP; an IP that can't be allocated is left out of `status.addresses` while the usable ones still bind.
+Use MetalLB with an address pool containing the requested IPs. Once MetalLB allocates the IP, it appears in the Gateway's `status.addresses`. Listing several `spec.addresses[]` entries emits one Service per IP; an IP that can't be allocated is left out of `status.addresses` while the usable ones still bind.
 
 ## Features summary
 
@@ -1395,8 +1381,8 @@ TLSRoute and TCPRoute status is written on the `deployed` outcome only (see thei
 
 **Not implemented:**
 
-1. **ExtensionRef filter** — the general custom-filter extension mechanism (planned as the Gateway API equivalent of Ingress annotations). One narrow internal use exists: an `ExtensionRef` selecting SSL passthrough is honored.
-2. **Per-backend `RequestMirror`** — `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite` on a `backendRef` **are** honored, keyed by rule id and backend (see `test-httproute-backend-request-header-modifier` and `test-httproute-backend-request-redirect`); a rule-level `RequestRedirect` or `URLRewrite` takes precedence over a backend-level one. `RequestMirror` applies at the rule level only.
+1. **Other ExtensionRef kinds** — use `HAProxyRoutePolicy` for supported route policies or the HTTPRoute `SSLPassthrough` extension. Arbitrary custom filter kinds are unsupported.
+2. **Per-backend `RequestMirror`** — `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite` on a `backendRef` **are** honored, keyed by rule id and backend; a rule-level `RequestRedirect` or `URLRewrite` takes precedence over a backend-level one. `RequestMirror` applies at the rule level only.
 
 **Reloads even though the filter itself is map-driven:**
 
@@ -1414,12 +1400,6 @@ TLSRoute and TCPRoute status is written on the `deployed` outcome only (see thei
 - Advanced matchers (method, header, query parameter, gRPC method), the `CORS` filter,
   and `RegularExpression` path rewrites, which stay structural — see the zero-reload
   table in [Supported configuration](../supported-configuration.md).
-
-**Implemented but not pinned by this library's `validationTests`:**
-
-- Cross-namespace **backend** references (`backendRef.namespace` honored, gated by `ReferenceGrant`) — exercised by the upstream Gateway API conformance suite instead.
-- Cross-namespace **parent** Gateway references.
-- Wildcard hostname patterns (regex host-map support exists).
 
 TLSRoute- and TCPRoute-specific limitations are listed in their sections above. If one of these gaps matters to you, [open an issue](https://gitlab.com/haproxy-haptic/haptic/-/issues).
 

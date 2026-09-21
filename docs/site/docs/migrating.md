@@ -157,22 +157,16 @@ config — open the [playground](/playground/).
 HAPTIC scopes Ingresses with a field selector on
 `spec.ingressClassName=<ingressClass.name>` (a client-side filter — the
 controller fetches the watch and drops non-matching Ingresses before they reach
-its store). Your Ingresses carry `ingressClassName: nginx`, so pick one:
+its store). For a gradual migration, change each selected Ingress to `ingressClassName: haptic`:
 
-=== "Edit Ingress manifests (recommended)"
+```bash
+kubectl patch ingress my-test-app --type merge \
+  -p '{"spec":{"ingressClassName":"haptic"}}'
+```
 
-    Change `ingressClassName: nginx` → `ingressClassName: haptic` per Ingress.
-    This is what enables the one-at-a-time, reversible cutover above.
-
-=== "Rename HAPTIC's class to `nginx`"
-
-    ```bash
-    --set ingressClass.name=nginx
-    ```
-
-    HAPTIC then adopts every `ingressClassName: nginx` Ingress at once. Faster,
-    but **all-or-nothing** and it will collide with ingress-nginx if both run —
-    only do this after ingress-nginx is scaled down.
+Keep HAPTIC's class distinct while both controllers run. Reusing an incumbent's
+class name also requires transferring ownership of the existing IngressClass;
+changing the Helm value alone doesn't perform that transfer.
 
 !!! note
     Marking HAPTIC's IngressClass cluster-default (`ingressClass.default: true`)
@@ -182,7 +176,9 @@ its store). Your Ingresses carry `ingressClassName: nginx`, so pick one:
 ### Enable the annotation library
 
 ```bash
---set controller.templateLibraries.nginxIngress.enabled=true
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic --reuse-values \
+  --set controller.templateLibraries.nginxIngress.enabled=true
 ```
 
 !!! warning "The flag is `camelCase`"
@@ -270,8 +266,8 @@ request mirroring (`mirror-target`), and ModSecurity. Full per-annotation refere
 [nginx-ingress library docs](libraries/nginx-ingress.md).
 
 The table below lists every annotation that **doesn't** carry over unchanged —
-generated from the library's declared migration coverage, so it can't drift from
-the template code. Anything not listed is fully supported.
+generated from the library's declared migration coverage, with a separate [reference](libraries/nginx-ingress.md) for supported annotations.
+An annotation absent from both lists has no documented compatibility guarantee.
 
 <!-- BEGIN generated: migration-coverage ingress-nginx -->
 The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 55 supported, 31 with behaviour differences, 16 not carried over, 0 failing.
@@ -331,14 +327,17 @@ The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 55 suppo
 
 ## From `haproxy-ingress`
 
-The `haproxy-ingress.github.io/*` library is **opt-in** — enable it with
-`--set controller.templateLibraries.haproxyIngress.enabled=true` and your
-jcmoraisjr/haproxy-ingress annotations work unchanged. You still need to
-[match the IngressClass](#match-the-ingressclass) (your Ingresses likely
-use `ingressClassName: haproxy` — either edit them or `--set ingressClass.name=haproxy`)
-and [control the DNS cutover](#control-the-dns-cutover) the same way. Once
-you're on HAPTIC you can migrate to the native `haproxy-haptic.org/*`
-annotations at your own pace, or keep both.
+Enable the compatibility library on your existing HAPTIC release:
+
+```bash
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic --reuse-values \
+  --set controller.templateLibraries.haproxyIngress.enabled=true
+```
+
+Review the annotation differences below, [match the IngressClass](#match-the-ingressclass),
+and [control the DNS cutover](#control-the-dns-cutover). You can then migrate to
+native `haproxy-haptic.org/*` annotations at your own pace.
 
 Most routing, SSL, session-affinity, redirect, HSTS, CORS, access-control,
 basic/external auth, client-mTLS, and WAF annotations are supported. Full
@@ -346,8 +345,9 @@ reference:
 [haproxy-ingress library docs](libraries/haproxy-ingress.md).
 
 The table below lists every annotation that **doesn't** carry over unchanged —
-generated from the library's declared migration coverage. Anything not listed is
-fully supported.
+generated from the library's declared migration coverage. Consult the linked
+reference for supported annotations; absence from this table doesn't establish
+support for an undocumented annotation.
 
 <!-- BEGIN generated: migration-coverage haproxy-ingress -->
 The library classifies 92 `haproxy-ingress.github.io/*` annotations: 62 supported, 28 with behaviour differences, 2 not carried over, 0 failing.
@@ -390,14 +390,16 @@ The library classifies 92 `haproxy-ingress.github.io/*` annotations: 62 supporte
 
 ## From `haproxytech/kubernetes-ingress`
 
-The `haproxy.org/*` library (the official haproxytech/kubernetes-ingress
-annotation set) is **opt-in** — enable it with
-`--set controller.templateLibraries.haproxytech.enabled=true` and those
-annotations work unchanged. You still need to [match the IngressClass](#match-the-ingressclass)
-(your Ingresses likely use `ingressClassName: haproxy`) and
-[control the DNS cutover](#control-the-dns-cutover) the same way. Once you're
-on HAPTIC you can migrate to the native `haproxy-haptic.org/*` annotations at
-your own pace, or keep both.
+Enable the compatibility library on your existing HAPTIC release:
+
+```bash
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic --reuse-values \
+  --set controller.templateLibraries.haproxytech.enabled=true
+```
+
+Review the annotation differences below, [match the IngressClass](#match-the-ingressclass),
+and [control the DNS cutover](#control-the-dns-cutover).
 
 HAPTIC reads these annotations on **Ingress** resources only. haproxytech's
 controller also reads many of them on Service and ConfigMap resources; that
@@ -405,8 +407,9 @@ Service/ConfigMap-level configuration doesn't carry over. Full reference:
 [haproxytech library docs](libraries/haproxytech.md).
 
 The table below lists every annotation that **doesn't** carry over unchanged —
-generated from the library's declared migration coverage. Anything not listed is
-fully supported.
+generated from the library's declared migration coverage. Consult the linked
+reference for supported annotations; absence from this table doesn't establish
+support for an undocumented annotation.
 
 <!-- BEGIN generated: migration-coverage haproxytech -->
 The library classifies 56 `haproxy.org/*` annotations: 37 supported, 14 with behaviour differences, 5 not carried over, 0 failing.

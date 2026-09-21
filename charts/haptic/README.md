@@ -6,12 +6,16 @@ Full documentation: [haproxy-haptic.org/docs](https://haproxy-haptic.org/docs/0.
 
 ## Prerequisites
 
-- Kubernetes **1.21+** (default `PodDisruptionBudget` is `policy/v1`; watches `discovery.k8s.io/v1` EndpointSlices)
+- Kubernetes **1.33+** for native sidecars and graceful HAProxy shutdown
 - Helm **3.8+** — the `oci://` chart reference needs OCI registry support, generally available since Helm 3.8
 - **HAProxy 3.0+** — the chart deploys HAProxy by default and the SSL library requires 3.0+. Pin a specific series via `haproxyVersion`.
 - **cert-manager** (optional but recommended for production) — with its API present, the default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without it, the chart creates a long-lived self-signed development certificate; production users should provide a trusted certificate — see [SSL Certificates](https://haproxy-haptic.org/docs/0.2.0-alpha.3/ssl-certificates/).
 
 ## Installation
+
+Features described on `main` can include unreleased changes. Select your installed
+release in the [versioned documentation](https://haproxy-haptic.org/docs/) before
+following setup instructions.
 
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
@@ -26,7 +30,7 @@ helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
   -f my-values.yaml
 ```
 
-Uninstall removes everything the chart created:
+Uninstall removes the release workloads and configuration. CRDs and the runtime-created agent certificate Secrets remain; retain the Secrets if you plan to reinstall with the same identities:
 
 ```bash
 helm uninstall my-controller
@@ -54,7 +58,7 @@ The full values reference lives in [Chart Values Reference](https://haproxy-hapt
 | `controller.networkPolicy.enabled` | `true` | NetworkPolicy allowing controller ↔ HAProxy ↔ API server |
 | `cache.varnish.networkPolicy.enabled` | `true` | When the Varnish tier is enabled, isolate it to same-release HAProxy cache traffic and loopback origin requests |
 | `ingressClass.name` / `gatewayClass.name` | `haptic` | Class names the controller matches against — deliberately distinct from `haproxy` so HAPTIC can run side-by-side with other HAProxy-based ingress controllers; set to `haproxy` when replacing an incumbent |
-| `credentials.dataplane.username` / `credentials.dataplane.password` | `admin` / generated | Empty `password` generates a random 32-char password, preserved across upgrades by reading the existing Secret. GitOps tools that render without cluster access regenerate it every sync — **set explicitly there and in production**. See [Credentials](https://haproxy-haptic.org/docs/0.2.0-alpha.3/reference/#credentials). |
+| `haproxy.agent.tls.enabled` | `true` | Mutual TLS for controller-to-agent communication, with automatic certificate renewal. No external certificate manager is required. |
 
 ## Template Libraries
 
@@ -68,7 +72,7 @@ The controller merges templates in a fixed priority order (later libraries overr
 | `ingress` | on | Kubernetes `networking.k8s.io/v1` Ingress |
 | `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` / `TLSRoute` (requires Gateway CRDs installed) |
 | `ingressAnnotationsCompat` | on | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
-| `governance` | on | Declarative constraints over any watched resource; inert until you define `controller.config.templatingSettings.extraContext.governance.rules` |
+| `governance` | on | Declarative constraints and defaults over watched resources; configure `controller.config.templatingSettings.extraContext.governance.rules` |
 | `hapticAnnotations` | on | `haproxy-haptic.org/*` — HAPTIC's own annotation vocabulary, and the only annotation library on by default. A superset of the three vendor libraries below |
 | `haproxytech` | off | `haproxy.org/*` annotation compatibility ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress)) |
 | `haproxy-ingress` | off | `haproxy-ingress.github.io/*` annotation compatibility ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/)) |

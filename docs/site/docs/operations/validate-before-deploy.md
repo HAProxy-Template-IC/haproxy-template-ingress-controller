@@ -4,46 +4,42 @@ Run `haptic preflight` to check your chart values before deployment. Helm runs i
 by default during installation and upgrades. Adding it to your delivery pipeline
 finds the same errors before you apply the release.
 
-## Why the chart's own tests aren't enough
+## Prerequisites
 
-Your values can enable different features, templates, and sidecars from the chart's
-defaults. Validate that combination with the version you plan to deploy.
-
-The controller refuses to start with configuration that fails its load checks.
-The admission webhook validates routing resources, not the complete
-`HAProxyTemplateConfig` and library set. Preflight checks that set together and
-can also validate Vector and Varnish configuration, whose failures may leave
-traffic serving while logging or caching is unavailable.
+- Your release's Helm values in `haptic-values.yaml`.
+- The same HAPTIC binary, chart, and HAProxy series you plan to deploy. See
+  [Getting the binary and chart](#getting-the-binary-and-chart).
+- Kubernetes credentials for the target cluster, or an offline [schema directory](#schemas).
+- Docker or `podman` for Vector and Varnish validation. Without a container runtime,
+  those checks are skipped with a warning; the HAPTIC and HAProxy checks still run.
 
 ## Run the check
 
-`haptic preflight` renders the chart with your values and runs the
-same checks the controller runs on startup:
+With `haptic` on your path and the matching chart in `./chart`, run:
 
 ```bash
 haptic preflight \
   --values ./haptic-values.yaml \
+  --chart ./chart \
   --namespace haptic \
   --release haptic
 ```
 
-It exits non-zero if the configuration wouldn't load. Wire it into your
-pipeline before the step that applies the chart — any runner works, these are
-plain commands with no runner-specific syntax:
+A non-zero exit means validation failed or couldn't run. Resolve the reported
+error before deploying. To make this a delivery-pipeline gate, run the check
+before Helm and stop the pipeline if it fails:
 
 ```bash
-haptic preflight --values ./haptic-values.yaml --namespace haptic
-helm upgrade --install haptic <chart> -n haptic -f ./haptic-values.yaml
+set -e
+haptic preflight --values ./haptic-values.yaml --chart ./chart --namespace haptic
+helm upgrade --install haptic ./chart --namespace haptic --create-namespace \
+  --values ./haptic-values.yaml
 ```
 
-The chart is embedded in the controller image, so the check renders the chart
-that image was built with. Pass `--chart` to render a different one.
-
-!!! note "The chart already runs this for you"
-    `preRolloutValidation.enabled` defaults to `true`, so `helm install` and
-    `helm upgrade` run this same `preflight` as a `pre-install`/`pre-upgrade`
-    hook Job against the release's own values. Running it yourself in a pipeline
-    moves the same failure earlier — before anything reaches the cluster.
+!!! note "Helm runs preflight automatically"
+    The chart enables this check during installation and upgrades. Running it
+    separately helps you find errors earlier in a delivery pipeline. Keep
+    `preRolloutValidation.enabled: true` so deployment also checks the final values.
 
 ### What it checks
 
@@ -61,7 +57,7 @@ gate always runs.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--values`, `-f` | *required* | Your values file. The whole point is your values, not the defaults. Repeatable — later files win, as with `helm -f` |
+| `--values`, `-f` | *required* | Your values file. Repeatable — later files win, as with `helm -f` |
 | `--namespace`, `-n` | `haptic` | Release namespace. Use the one you deploy to — chart output depends on it |
 | `--release` | `haptic` | Release name, which resource names are derived from |
 | `--chart` | image-embedded chart | Chart directory, then `$HAPTIC_CHART_DIR`, then the copy inside the controller image |
@@ -95,41 +91,31 @@ verify that alignment without cluster access.
 
 ```bash
 # Offline: schemas from a directory, no cluster contacted.
-haptic preflight --values ./haptic-values.yaml --schema-dir ./schemas
+haptic preflight --values ./haptic-values.yaml --chart ./chart --schema-dir ./schemas
 ```
 
-## Getting the binary
+## Getting the binary and chart
 
-The `haptic` binary ships in the controller image at
-`/usr/local/bin/haptic`, together with the chart. The simplest
-pipeline step runs the image directly:
+The [release downloads](https://gitlab.com/haproxy-haptic/haptic/-/releases) provide
+`haptic` binaries. Install one matching the release you plan to deploy and install
+the matching HAProxy series on the same host. The check runs `haproxy -c` locally.
+
+In a working directory without an existing `chart` directory, download the
+matching chart. For example, for `0.2.0-alpha.3`:
 
 ```bash
-docker run --rm --user "$(id -u):$(id -g)" \
-  -v "$PWD:/w" -w /w \
-  -v ~/.kube/config:/kube/config -e KUBECONFIG=/kube/config \
-  <haptic-image> preflight --values haptic-values.yaml --namespace haptic
+helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --untar --untardir ./chart-download
+mv ./chart-download/haptic ./chart
 ```
 
-`--user` matters: the image runs as its own non-root user, which can't read a
-kubeconfig owned by someone else. Running as the user that owns the file avoids
-a permission error that looks like a missing cluster.
+Use the same release version for the binary and chart; validating one version and
+deploying another leaves the deployed combination unchecked.
 
-That covers the load gate. The Vector and Varnish checks start containers of
-their own, so they're skipped inside a container without access to a runtime —
-run the binary on the pipeline host to get all three:
-
-```bash
-id=$(docker create <haptic-image>)
-docker cp "$id:/usr/local/bin/haptic" ./haptic
-docker cp "$id:/usr/share/haptic/chart" ./chart
-docker rm "$id"
-
-./haptic preflight --values ./haptic-values.yaml --chart ./chart
-```
-
-Match the binary to the version you're about to deploy. Validating with one
-version and deploying another checks the wrong thing.
+The controller image also contains the matching binary at `/usr/local/bin/haptic`
+and chart at `/usr/share/haptic/chart`. CI systems can extract both from the image
+used by their release. Run the binary on the host with HAProxy and a container
+runtime available to include the sidecar checks.
 
 ## What it doesn't cover
 

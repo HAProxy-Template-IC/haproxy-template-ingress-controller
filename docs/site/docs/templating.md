@@ -118,9 +118,9 @@ items:
 
 Now that you've seen a config render, try editing one. This template has no loops — just a static `frontend` — so you can focus on the edit-and-run cycle.
 
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="11" data-title="Your turn: add an HSTS header" data-difficulty="1">
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="11" data-title="Your turn: add a response header" data-difficulty="1">
 
-<p class="pg-task" markdown>Add a line to the `frontend web` section so every response carries a `Strict-Transport-Security` header, then hit **Run live** and watch line&nbsp;11 of the output. (Hint: HAProxy's `http-response set-header`.)</p>
+<p class="pg-task" markdown>Add a line to the `frontend web` section so every response carries an `X-Example` header with the value `hello`, then hit **Run live** and watch line&nbsp;11 of the output. (Hint: HAProxy's `http-response set-header`.)</p>
 
 ```yaml
 apiVersion: haproxy-haptic.org/v1alpha1
@@ -140,7 +140,7 @@ spec:
         timeout server 30s
       frontend web
         bind *:80
-        # TODO(you): add a line so every response carries an HSTS header
+        # TODO(you): add a line so every response carries X-Example: hello
         default_backend app
       backend app
         server s1 127.0.0.1:8080 check
@@ -167,7 +167,7 @@ spec:
         timeout server 30s
       frontend web
         bind *:80
-        http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        http-response set-header X-Example hello
         default_backend app
       backend app
         server s1 127.0.0.1:8080 check
@@ -723,7 +723,7 @@ Without a schema (for example, `haptic validate` without `--schema-dir`), the sa
 {% var shard []*resources.gateways.T = shard_slice(allGateways, i, n) %}
 ```
 
-The type-switch case-clause form is the canonical pattern for chart code that crosses a polymorphic `any` boundary — the chart's `gateway` library uses it inside `60-frontend.yaml` to dispatch on HTTPRoute / GRPCRoute / TLSRoute. `shard_slice` is type-preserving: when its input is a typed slice, the result is the same typed slice (not `[]any`), so the downstream loop variable stays statically typed.
+Use a type switch when a helper receives an `any` value and needs typed access. `shard_slice` is type-preserving: when its input is a typed slice, the result is the same typed slice (not `[]any`), so the downstream loop variable stays statically typed.
 
 Nested shapes have names too, derived from the field path, so you can write the type of a value found *inside* a resource:
 
@@ -777,14 +777,14 @@ Closure predicates let the compiler check field names. For untyped data,
 
 ```scriggo
 {# in a snippet #}
-{% var ReadyAddresses = func(svc string) []string {
-     return resources.endpoints.Fetch(svc) | flat_map(s => s.Endpoints) |
+{% var EndpointAddresses = func(namespace, svc string) []string {
+     return resources.endpoints.Fetch(namespace, svc) | flat_map(s => s.Endpoints) |
        reject(e => e.TargetRef.Name == "") | flat_map(e => e.Addresses)
    } %}
 
 {# in another #}
-{% import "util-endpoints" for ReadyAddresses %}
-{%- for _, addr := range ReadyAddresses("default/api") %}
+{% import "util-endpoints" for EndpointAddresses %}
+{%- for _, addr := range EndpointAddresses("default", "api") %}
 ```
 
 Four rules the compiler enforces:
@@ -828,7 +828,7 @@ the JSON field name and leaves the rest unchanged. Use `ApiVersion` for
 | `loadBalancerIP`         | `LoadBalancerIP`     |
 | `kubernetes.io/foo`      | `Kubernetes_io_foo` (non-letter/digit → `_`) |
 
-Templates write `gw.ApiVersion`, not `gw.APIVersion`. Why the convention works this way — and the regression canary that pins it — is covered in [Typed Access Internals](./template-reference.md#typed-access-internals).
+Templates write `gw.ApiVersion`, not `gw.APIVersion`. The naming rule is covered in [Typed Access Internals](./template-reference.md#typed-access-internals).
 
 **Use direct field access in a typed scope**, such as a typed loop or macro
 parameter. Use `dig()` for untyped maps, values passed as `any`, or resources
@@ -911,12 +911,15 @@ spec:
       {%- for _, ingress := range resources.ingresses.List() %}
       backend {{ ingress.metadata.name }}
         {%- var algo = ingress.metadata.annotations["haptic.example.com/balance"] %}
+        {%- if algo != "" && algo != "roundrobin" && algo != "leastconn" %}
+        {%- fail("haptic.example.com/balance must be roundrobin or leastconn") %}
+        {%- end %}
         {%- if algo != "" %}
         balance {{ algo }}
         {%- else %}
         balance roundrobin
         {%- end %}
-        server app {{ ingress.metadata.name }}.svc:80 check
+        server app 127.0.0.1:8080 check
       {%- end %}
 ```
 
@@ -998,7 +1001,10 @@ maintenance-state changes can use the Runtime API.
 
 ### Cross-Resource Lookups
 
-Use a field from one resource to query another. Each Ingress's backend service name drives a `Fetch()` into the matching EndpointSlices — run it, then edit the Ingress or the endpoints and watch the backend servers change:
+Use an Ingress's namespace and backend Service name to find its EndpointSlices.
+Both keys matter: different namespaces can have Services with the same name.
+This example prints the matching addresses as comments in the output; the
+[Ingress library](libraries/ingress.md) handles production backend generation.
 
 <div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → EndpointSlice lookup" data-height="460">
 
@@ -1016,7 +1022,7 @@ spec:
     endpoints:
       apiVersion: discovery.k8s.io/v1
       resources: endpointslices
-      indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
+      indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
   haproxyConfig:
     template: |
       global
@@ -1030,12 +1036,11 @@ spec:
       {%- for _, rule := range ing.spec.rules %}
       {%- for _, path := range rule.http.paths %}
       {%- var svc = path.backend.service.name %}
-      {%- var port = fallback(path.backend.service.port.number, 80) %}
-      backend ing_{{ ing.metadata.name }}_{{ svc }}
-        {%- for _, es := range resources.endpoints.Fetch(svc) %}
+      # Ingress {{ ing.metadata.namespace }}/{{ ing.metadata.name }}, Service {{ svc }}
+        {%- for _, es := range resources.endpoints.Fetch(ing.metadata.namespace, svc) %}
         {%- for _, ep := range es.endpoints %}
         {%- for _, addr := range ep.addresses %}
-        server {{ fallback(ep.targetRef.name, addr) }} {{ addr }}:{{ port }} check
+        # Endpoint address: {{ addr }}
         {%- end %}
         {%- end %}
         {%- end %}
@@ -1084,7 +1089,9 @@ items:
 
 </div>
 
-The two `indexBy` entries above are what make the lookup work: `ingresses` is indexed by namespace + name, and `endpoints` is indexed by the `kubernetes.io/service-name` label so `Fetch(svc)` returns every EndpointSlice for that service (dots in label keys need escaping — see [Watching Resources — Indexing](./watching-resources.md#indexing-indexby)).
+`Fetch(namespace, serviceName)` returns the EndpointSlices for that Service in
+that namespace. The argument order matches `indexBy`; dots in label keys need
+escaping. See [watch indexing](./watching-resources.md#indexing-indexby).
 
 ### Safe Iteration
 
@@ -1171,7 +1178,7 @@ spec:
 <details class="pg-solution" markdown>
 <summary>Peek at the solution</summary>
 
-Append `check` to the `server` line inside the loop, so HAProxy health-checks each pod and stops sending traffic to unhealthy ones. Pair it with `init-addr last` when a server address is a DNS name, so HAProxy still starts if the name is briefly unresolvable.
+Append `check` to the `server` line inside the loop so HAProxy health-checks each pod and stops sending traffic to unhealthy ones.
 
 ```yaml
 apiVersion: haproxy-haptic.org/v1alpha1
@@ -1382,7 +1389,9 @@ For resources with nested condition arrays (for example, Gateway API Route `pare
 
 In the chart, status patch snippets should use the `status-patches-*` extension point (priority 200). This renders after feature analysis but before complex config generation, ensuring patches are captured even if later rendering fails.
 
-The embed below is a self-contained version that patches an Ingress with typed field access. Run it and open the **status** tab to see the `.status.conditions` HAPTIC would write back:
+The example below registers a Gateway condition. Run it and open the **status**
+tab to inspect the proposed patch. A resource's API schema must support the status
+fields you write; Ingress, for example, has no `status.conditions` field.
 
 <div class="pg-embed" markdown data-tab="status" data-controls="tabs,resources" data-title="Emit a status patch" data-height="440">
 
@@ -1393,9 +1402,9 @@ metadata:
   name: status-patch-demo
 spec:
   watchedResources:
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
+    gateways:
+      apiVersion: gateway.networking.k8s.io/v1
+      resources: gateways
       indexBy: ["metadata.namespace", "metadata.name"]
   haproxyConfig:
     template: |
@@ -1411,15 +1420,14 @@ spec:
         default_backend app
       backend app
         server s1 127.0.0.1:8080 check
-      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- for _, gateway := range resources.gateways.List() %}
       {%%
-        var gen = fallback(ingress.metadata.generation, 0)
-        // Ingress status has no typed conditions field, so reach for it with dig.
-        var existing = dig(ingress, "status", "conditions")
-        statusPatch(ingress, map[string]any{
+        var gen = fallback(gateway.metadata.generation, 0)
+        var existing = dig(gateway, "status", "conditions")
+        statusPatch(gateway, map[string]any{
           "deployed": map[string]any{
             "conditions": []any{
-              condition("Ready", "True", "Deployed", "Ingress programmed into HAProxy", gen, transitionTime(existing, "Ready", "True")),
+              condition("Programmed", "True", "Programmed", "Configuration deployed", gen, transitionTime(existing, "Programmed", "True")),
             },
           },
         })
@@ -1431,24 +1439,18 @@ spec:
 apiVersion: v1
 kind: List
 items:
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
     metadata:
       name: demo
       namespace: shop
       generation: 3
     spec:
-      rules:
-        - host: demo.example.com
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: demo
-                    port:
-                      number: 80
+      gatewayClassName: haptic
+      listeners:
+        - name: http
+          protocol: HTTP
+          port: 80
 ```
 
 </div>
@@ -1457,107 +1459,19 @@ The built-in Ingress and Gateway API libraries already include status patch snip
 
 ## Complete example
 
-Full ingress → service → endpoints chain with servers named after their pods, using typed access throughout. Press **Run live**, open the **maps** tab for the host map, and edit the resources to add or remove endpoints:
+The bundled Ingress library resolves Service ports, selects EndpointSlices in
+the correct namespace, and excludes unready endpoints from traffic. Use it as the
+starting point for a full routing configuration:
 
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → endpoints, pod-named servers" data-height="560">
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Complete Ingress routing configuration" data-height="560">
 
-```yaml
-watchedResources:
-  ingresses:
-    apiVersion: networking.k8s.io/v1
-    resources: ingresses
-    indexBy: ["metadata.namespace", "metadata.name"]
-  endpoints:
-    apiVersion: discovery.k8s.io/v1
-    resources: endpointslices
-    indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
-
-maps:
-  host.map:
-    template: |
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {%- for _, rule := range ingress.spec.rules %}
-      {{ rule.host }} ing_{{ ingress.metadata.name }}
-      {%- end %}
-      {%- end %}
-
-templateSnippets:
-  backend-servers:
-    template: |
-      {%- for _, es := range resources.endpoints.Fetch(service_name) %}
-        {%- for _, ep := range es.endpoints %}
-          {%- for _, addr := range ep.addresses %}
-      server {{ fallback(ep.targetRef.name, addr) }} {{ addr }}:{{ port }} check
-          {%- end %}
-        {%- end %}
-      {%- end %}
-
-haproxyConfig:
-  template: |
-    global
-        daemon
-        maxconn 4096
-
-    defaults
-        mode http
-        timeout connect 5s
-        timeout client 50s
-        timeout server 50s
-
-    frontend http
-        bind *:80
-        use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
-
-    {% for _, ingress := range resources.ingresses.List() %}
-    {% for _, rule := range ingress.spec.rules %}
-    {% for _, path := range rule.http.paths %}
-    {%- var service_name = path.backend.service.name %}
-    {%- var port = fallback(path.backend.service.port.number, 80) %}
-
-    backend ing_{{ ingress.metadata.name }}
-        balance roundrobin
-        {{ render "backend-servers" inherit_context }}
-    {% end %}
-    {% end %}
-    {% end %}
-```
-
-```yaml
-apiVersion: v1
-kind: List
-items:
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata: { name: shop, namespace: storefront }
-    spec:
-      rules:
-        - host: shop.example.com
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: shop-svc
-                    port:
-                      number: 8080
-  - apiVersion: discovery.k8s.io/v1
-    kind: EndpointSlice
-    metadata:
-      name: shop-svc-abc
-      namespace: storefront
-      labels:
-        kubernetes.io/service-name: shop-svc
-    endpoints:
-      - addresses: ["10.244.1.10"]
-        targetRef: {name: shop-pod-1}
-      - addresses: ["10.244.1.11"]
-        targetRef: {name: shop-pod-2}
-    ports:
-      - port: 8080
-```
+<p class="pg-task" markdown>Run the example and open the **maps** tab to see host and path routing. In **Resources**, change a backend endpoint's address and run it again. Find the updated server in **haproxy.cfg**.</p>
 
 </div>
+
+For custom resource libraries, use [`Backend()` and `BackendServers()`](libraries/reload-free.md#the-macros)
+to reuse backend generation. The [custom-CRD example](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd)
+shows how to connect your own routing resource to these helpers.
 
 ## See also
 

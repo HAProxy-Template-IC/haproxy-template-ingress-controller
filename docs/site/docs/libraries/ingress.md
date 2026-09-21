@@ -385,11 +385,11 @@ An Ingress backend references a Service by name only — the Kubernetes API has 
 
 ### WebSocket backends
 
-WebSocket backends work without extra configuration. HAProxy tunnels the `Upgrade` handshake, so an Ingress routing to a WebSocket service needs no special annotation. Long-lived connections are bounded by HAProxy's `timeout tunnel`. Raise it per-backend with `haproxy.org/timeout-tunnel` (or `haproxy-ingress.github.io/timeout-tunnel`) when a connection must stay open longer:
+WebSocket backends work without extra configuration. HAProxy tunnels the `Upgrade` handshake, so an Ingress routing to a WebSocket service needs no special annotation. Long-lived connections are bounded by HAProxy's `timeout tunnel`. Raise it per-backend with `haproxy-haptic.org/timeout-tunnel` when a connection must stay open longer:
 
 ```yaml
 annotations:
-  haproxy.org/timeout-tunnel: "1h"
+  haproxy-haptic.org/timeout-tunnel: "1h"
 ```
 
 ### gRPC backends
@@ -423,11 +423,10 @@ For a TLS backend, use `haproxy-haptic.org/backend-protocol: h2-ssl` (or `grpcs`
 
 ### Backend config snippet
 
-Custom HAProxy backend directives can be injected per-Ingress via the
-`haproxy.org/backend-config-snippet` annotation. Processing of `haproxy.org/*`
-annotations lives in the [haproxytech library](haproxytech.md), so the
-annotation is honoured whenever `haproxytech` is enabled (default). See that
-library's docs for the complete annotation reference.
+Use `haproxy-haptic.org/config-backend` for trusted, operator-authored backend
+directives. See the [native annotation reference](haptic-annotations.md#backend-tuning).
+The equivalent `haproxy.org/backend-config-snippet` requires the opt-in
+[haproxytech library](haproxytech.md).
 
 ## Status reporting
 
@@ -486,30 +485,6 @@ The Ingress library contributes to these map files:
 | path-exact.map | `hostpath BACKEND:backendname` for Exact paths |
 | path-prefix-exact.map | `hostpath BACKEND:backendname` for Prefix paths (exact match) |
 | path-prefix.map | `hostpath/ BACKEND:backendname` for Prefix paths (prefix match) |
-
-## Validation tests
-
-The Ingress library includes these validation tests:
-
-| Test | Description |
-|------|-------------|
-| `test-ingress-duplicate-backend-different-ports` | Multiple paths to same service with different ports (deduplication) |
-| `test-ingress-tls-basic` | `spec.tls` registers TLS certificates into the SSL crt-list |
-| `test-ingress-slot-preservation` | Existing pod slots survive a rolling deployment when `currentServers` is provided |
-| `test-ingress-slot-preservation-lower-ip` | Slot preservation is order-independent (new pod with a lower IP still gets the freed slot) |
-| `test-ingress-status-patches` | LoadBalancer addresses from the controller Service propagate to `status.loadBalancer.ingress` |
-| `test-ingress-endpoint-conditions-filter` | EndpointSlice endpoints with non-Ready conditions are excluded from the backend |
-| `test-ingress-named-port` | Ingress referencing a service port by name resolves to the correct pod port |
-| `test-ingress-named-port-typo-fails` | Ingress referencing a non-existent named port fails cleanly |
-| `test-ingress-default-backend-rules-less` | Default backend on a rule-less Ingress generates a backend |
-| `test-ingress-default-backend-with-rules-per-host` | Default backend coexists with per-host rules |
-| `test-ingress-default-backend-newest-wins-per-host` | When multiple Ingresses supply a default backend for a host, the newest one wins |
-
-Run a specific test with:
-
-```bash
-./scripts/test-templates.sh --test test-ingress-tls-basic
-```
 
 ## See also
 

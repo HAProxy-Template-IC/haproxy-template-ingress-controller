@@ -310,6 +310,4 @@ The Event is a side-effect only — the call renders nothing. Identical `(resour
 JSON field name and leaves the rest unchanged. For example, `apiVersion` becomes
 `ApiVersion`, not `APIVersion`.
 
-**Worked example and regression canary.** `charts/haptic/charts/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example — it emits one HAProxy comment per Gateway using `gw.Metadata.Namespace` / `gw.Metadata.Name`. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end (engine declarations + runtime bindings + actual render output) and acts as a regression canary for typed access generally.
-
 See the architecture decision record [`ADR-0010` — Typed Watched Resources](development/adr/0010-typed-watched-resources.md) for the design rationale and the alternatives considered.

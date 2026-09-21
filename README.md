@@ -33,6 +33,10 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 
 ## Quick Start
 
+Features described on `main` can include unreleased changes. Select your installed
+release in the [versioned documentation](https://haproxy-haptic.org/docs/) before
+following setup instructions.
+
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.3
 ```

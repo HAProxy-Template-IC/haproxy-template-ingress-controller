@@ -270,26 +270,3 @@ release through. Helm rollback doesn't reverse CRD evolution and bypasses these
 pre-upgrade hooks. HAPTIC doesn't claim compatibility for downgrades across its
 configuration API changes; recover with a corrected forward release. See
 [the 0.2 upgrade contract](../upgrading-to-0.2.md).
-
-## Reproduce lifecycle verification
-
-The lifecycle suite uses fresh Kubernetes 1.33 clusters with Argo CD 3.5.3 or Flux
-2.9.5. It tests external certificates with no cert-manager installation and an
-explicit cert-manager 1.21.2 profile. Four synthetic chart versions exercise
-install, upgrade, rejection, and forward recovery against the candidate binary;
-the separate upgrade suite covers published release baselines.
-
-```bash
-make test-gitops-lifecycle GITOPS_PROVIDER=argo
-make test-gitops-lifecycle GITOPS_PROVIDER=flux
-make test-gitops-lifecycle GITOPS_PROVIDER=argo GITOPS_CERTIFICATES=cert-manager
-make test-gitops-lifecycle GITOPS_PROVIDER=flux GITOPS_CERTIFICATES=cert-manager
-```
-
-Each run checks both HTTP and HTTPS on both HAProxy replicas, unchanged Secret
-contents, stable pods after an unchanged sync, and preservation of the live
-configuration after a rejected release. Artifacts include chart and image
-digests, Kubernetes and GitOps versions, hook results, and traffic checks. The
-test uses a private HTTP Helm repository and applies desired-state resources
-directly; it doesn't test a Git provider, OCI registry authentication, or
-cross-version CRD downgrades.

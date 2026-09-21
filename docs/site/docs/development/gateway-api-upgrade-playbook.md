@@ -128,7 +128,9 @@ verification. Work through the sections in order.
     ./scripts/test-templates.sh
     ```
 
-2. Trigger a nightly style pipeline on the MR branch. It runs the full
+2. Estimate the full job matrix's compute cost and agree a CI budget before
+    triggering a nightly style pipeline on the MR branch. Reuse valid results
+    for unchanged sources and retry only failed jobs when their inputs match. It runs the full
     heartbeat stack plus `nightly-gwapi-matrix` and `nightly-gwapi-canary`,
     proving the matrix and canary jobs live on the new release:
 

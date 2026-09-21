@@ -95,20 +95,11 @@ or edit the live examples throughout these docs.
 - **Runtime updates:** Scale pods, rotate certificates, and change routing-map entries without reloading HAProxy. HAProxy 3.4 can also add or remove backends that reuse existing settings; new listeners and rules require a reload. See [how HAPTIC chooses runtime updates](libraries/reload-free.md).
 - **Incremental rendering:** Unchanged template results are reused, and [follower replicas](operations/high-availability.md) keep their render state warm. See [performance and sizing](operations/performance.md) for resource requirements.
 - **Validation:** [`haptic preflight`](operations/validate-before-deploy.md) and Helm hooks check a candidate before rollout. Configuration loading enforces embedded tests; admission validates proposed routing changes, including [pluggable output validators](operations/pluggable-validators.md).
-- **Deployment inspection:** [`haptic diff`](development/design/deployment.md) predicts reloads, and [`haptic agent state`](development/agent.md) reports a pod's applied configuration and recovery state.
+- **Deployment inspection:** [`haptic diff`](operations/debugging.md#common-recipes) predicts reloads, and [`haptic agent state`](operations/debugging.md#common-recipes) reports a pod's applied configuration and recovery state.
 - **Observability:** [JSON access logs and per-route metrics](operations/monitoring.md) identify the route, backend, and policy outcomes. Optional [distributed tracing](reference.md#logging-and-templating) exports request and upstream spans through [Vector](https://vector.dev/).
 
 !!! warning "Project maturity"
     HAPTIC uses pre-1.0 versioning, and its custom resources use API version `v1alpha1`. Minor releases can change APIs and configuration. Pin an exact chart version (`--version 0.2.0-alpha.3`) and read the [changelog](changelog.md) before you upgrade.
-
-## Architecture
-
-The controller renders configuration; the agent in each HAProxy pod applies it.
-Admission and configuration loading run `haproxy -c` before accepting a change.
-During reconciliation, auxiliary-file checks run before dispatch, while HAProxy
-checks run alongside deployment. Each agent rejects configuration that its own
-HAProxy binary can't load. See [validation behavior](operations/debugging.md#haproxy-refused-the-config-the-fleet-was-given-configvalidatedfalse)
-and the [architecture overview](development/design/architecture-overview.md).
 
 ## Quick start
 
@@ -151,6 +142,10 @@ controller:
 </div>
 
 Set `example.com/request-id-header: "X-Request-ID"` on an Ingress to enable the header. This example accepts letters, digits, and hyphens in the header name. The backend hook scopes the rule to that Ingress; changing it requires a reload. See the [Templating Guide](templating.md) for more examples.
+
+<a id="architecture"></a>
+
+For controller and agent internals, see the [architecture overview](development/design/architecture-overview.md).
 
 ## Where to go next
 

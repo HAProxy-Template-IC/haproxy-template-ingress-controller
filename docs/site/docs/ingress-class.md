@@ -65,6 +65,13 @@ ingressClass:
 
 This adds the `ingressclass.kubernetes.io/is-default-class: "true"` annotation to the IngressClass. The Kubernetes API server then stamps the class name (`haptic` by default, or whatever you set as `ingressClass.name`) into `spec.ingressClassName` on any Ingress **created** without a class — at creation time only. Ingresses that already exist without a class aren't rewritten, so the controller keeps ignoring them; set their `spec.ingressClassName` explicitly to adopt them. Mark only one IngressClass as the cluster default.
 
+To adopt an existing class-less Ingress named `my-app` in namespace `default`:
+
+```bash
+kubectl patch ingress my-app -n default --type=merge \
+  -p '{"spec":{"ingressClassName":"haptic"}}'
+```
+
 ## Creation conditions
 
 IngressClass is created only when both of the following are true:
@@ -77,29 +84,12 @@ versions provide it.
 
 ## Multi-controller environments
 
-When running multiple ingress controllers:
+Give each controller its own IngressClass. An Ingress selects one class with
+`spec.ingressClassName`; mark at most one class as the cluster default.
 
-**Ensure unique identification:**
-
-```yaml
-# Controller 1 (haptic)
-ingressClass:
-  name: haptic
-  controllerName: haproxy-haptic.org/controller
-
-# Controller 2 (nginx)
-ingressClass:
-  name: nginx
-  controllerName: k8s.io/ingress-nginx
-```
-
-**Only one should be default:**
-
-```yaml
-# Set default on one controller only
-ingressClass:
-  default: true  # Only on ONE controller
-```
+For two HAPTIC installations, configure distinct class names and controller
+identifiers using [Running multiple HAPTIC instances](deploying-with-helm.md#running-multiple-haptic-instances-in-one-cluster).
+For another controller, use that controller's chart settings to create its class.
 
 ## Using IngressClass
 

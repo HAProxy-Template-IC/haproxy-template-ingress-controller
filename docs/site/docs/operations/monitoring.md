@@ -16,6 +16,58 @@ The controller's `haptic_*` metrics cover:
 !!! note "Controller and data-plane metrics"
     Controller metrics on port `9090` describe reconciliation, deployment, and leadership. HAProxy metrics on port `8404` describe traffic and backend health. Configure scraping for both: the controller monitors don't scrape HAProxy pods. See [HAProxy metrics](#haproxy-data-plane-metrics) for `haproxy.monitoring.podMonitor`.
 
+## Enable the bundled monitoring
+
+The chart includes controller and HAProxy monitors, alerting rules, and a Grafana
+dashboard. If you use Prometheus Operator, enable them together in your Helm
+values. This example assumes Prometheus selects resources labeled
+`release: prometheus` and runs in namespace `monitoring`:
+
+```yaml
+controller:
+  monitoring:
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: prometheus
+    prometheusRule:
+      enabled: true
+      labels:
+        release: prometheus
+    grafanaDashboard:
+      enabled: true
+  networkPolicy:
+    ingress:
+      monitoring:
+        enabled: true
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+        podSelector: {}
+haproxy:
+  monitoring:
+    podMonitor:
+      enabled: true
+      labels:
+        release: prometheus
+```
+
+Apply the values through your [Helm deployment](../deploying-with-helm.md).
+Your Prometheus installation must select these monitor and rule labels and
+watch the HAPTIC namespace. Grafana's dashboard sidecar must also watch that
+namespace and the `grafana_dashboard: "1"` label. See
+[dashboard setup](#dashboard-examples) if you import dashboards manually.
+
+In Prometheus, check that the HAPTIC scrape targets are **UP**. Open the HAPTIC
+dashboard in Grafana. Start with fleet convergence, rejected configurations,
+HAProxy backend health, and request errors; these show whether configuration
+changes and application traffic are working.
+
+The [alert list](#shipped-alerts) explains each supplied alert. The
+[metrics reference](#metrics-reference) below supports custom queries and incident
+investigation. Without Prometheus Operator, use the
+[manual scrape configuration](#prometheus-scrape-configuration).
+
 ## Enabling metrics
 
 Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (default `:9090`), which is separate from the debug port. With the default NetworkPolicy, also enable controller monitoring ingress; see [Networking](./networking.md#allowing-prometheus-scraping).
@@ -104,10 +156,12 @@ If a NetworkPolicy is in effect, also allow Prometheus to reach the metrics port
 ### Manual access
 
 ```bash
-# Port-forward to metrics endpoint
 kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
+```
 
-# Fetch metrics
+In another terminal:
+
+```bash
 curl http://localhost:9090/metrics
 ```
 
@@ -380,7 +434,7 @@ delta(haptic_event_subscribers[5m])
 
 ```promql
 # Current leader count (should be exactly 1)
-sum(haptic_leader_election_is_leader)
+sum by (namespace, job) (haptic_leader_election_is_leader)
 
 # Identify leader pod
 haptic_leader_election_is_leader == 1
@@ -392,6 +446,10 @@ rate(haptic_leader_election_transitions_total[1h])
 haptic_leader_election_time_as_leader_seconds_total /
 haptic_leader_election_transitions_total
 ```
+
+Scope these queries to one Helm release. The bundled ServiceMonitor uses a
+separate Service for each release. If you customize scraping, retain an
+equivalent release label when counting leaders.
 
 ### Webhook metrics
 
@@ -437,13 +495,13 @@ These complement `haptic_events_published_total` / `haptic_event_subscribers` fr
 | `haptic_build_info` | Gauge | `version`, `haproxy_version`, `go_version` | Always `1`; useful for joining build metadata into other queries |
 
 ```promql
-# Pin a query to controller version 0.1.0
-haptic_reconciliation_total * on() group_left(version) haptic_build_info{version="0.1.0"}
+# Attach the version from the same scraped controller
+haptic_reconciliation_total * on(job, instance) group_left(version) haptic_build_info
 ```
 
 ## HAProxy data-plane metrics
 
-Every metric above comes from the **controller** (`haptic_*`, port `9090`) — they describe reconciliation, deployment, and leader-election health, not live traffic. HAProxy itself exposes a separate Prometheus endpoint carrying the data-plane signals operators usually watch most closely: per-frontend request rates, per-backend response-code breakdowns, and session counts.
+Controller and agent metrics describe configuration delivery. They don't measure application traffic. HAProxy itself exposes a separate Prometheus endpoint carrying the data-plane signals operators usually watch most closely: per-frontend request rates, per-backend response-code breakdowns, and session counts.
 
 The bundled config enables HAProxy's built-in [Prometheus exporter](https://github.com/haproxy/haproxy/tree/master/addons/promex) on the status frontend (port `8404`, path `/metrics`) by default — it's served from the always-on `status-extra-100-prometheus-exporter` snippet, so no extra flag is required.
 
@@ -463,9 +521,10 @@ haproxy:
       enabled: true
 ```
 
-It declares one endpoint per metrics port the pod exposes: `stats` (`8404`, `haproxy_*`), and with the sidecar on `vector-metrics` (`9598`, `vector_*`, `spoa_*` and the request counter and duration histograms) plus `vector-sizes` (`9599`, the byte-size histograms, only while a size family is enabled). With the sidecar off and the SPOA hub on it scrapes the hub's `metrics` port directly instead. Every endpoint uses the same `interval`, `scrapeTimeout` and relabeling settings.
+It declares one endpoint per metrics port the pod exposes: `stats` (`8404`, `haproxy_*`), `agent-metrics` (`5557`, `haptic_agent_*`), and with the sidecar on `vector-metrics` (`9598`, `vector_*`, `spoa_*` and the request counter and duration histograms) plus `vector-sizes` (`9599`, the byte-size histograms, only while a size family is enabled). With the sidecar off and the SPOA hub on it scrapes the hub's `metrics` port directly instead. Every endpoint uses the same `interval`, `scrapeTimeout` and relabeling settings.
 
-Without the operator, scrape the same ports yourself — a `ServiceMonitor` against the HAProxy Service's `stats` port:
+If you prefer a ServiceMonitor to the bundled PodMonitor, this example scrapes
+HAProxy traffic metrics only. It also requires Prometheus Operator:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -482,7 +541,8 @@ spec:
       path: /metrics
 ```
 
-or a plain Prometheus job that keeps HAProxy pods and their `8404` container port (add `9598` and `9599` to the regex to collect the sidecar's series too):
+Without Prometheus Operator, use a plain Prometheus job. This collects HAProxy,
+agent, and Vector metrics with the default chart ports:
 
 ```yaml
 scrape_configs:
@@ -493,11 +553,8 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
         regex: loadbalancer
         action: keep
-      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
-        regex: controller
-        action: keep
       - source_labels: [__meta_kubernetes_pod_container_port_number]
-        regex: "8404"
+        regex: "8404|5557|9095|9598|9599"
         action: keep
 ```
 
@@ -625,7 +682,7 @@ A route that receives no requests for over a minute drops out of the exposition 
 
 ## Alerting rules
 
-If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `controller.monitoring.prometheusRule.enabled`) covering the fifteen alerts in [Shipped alerts](#shipped-alerts) below — fourteen on controller and agent `haptic_*` metrics plus one on HAProxy's own access-log drop counter. The [Recommended alerts](#recommended-alerts) further down are a separate, broader example set you copy and adapt for any Prometheus setup — they're **not** what the chart deploys, and most use distinct `HAProxyIC*` names so you can run them alongside the shipped rules (`HAProxyFleetDiverged` is the one alert both sets define).
+If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `controller.monitoring.prometheusRule.enabled`) covering the fifteen alerts in [Shipped alerts](#shipped-alerts) below — fourteen on controller and agent `haptic_*` metrics plus one on HAProxy's own access-log drop counter. Use these rules as the starting point for a new installation.
 
 ### Shipped alerts
 
@@ -637,7 +694,7 @@ The chart's `PrometheusRule` deploys these fifteen alerts when `controller.monit
 | `HAProxyControllerDeploymentFailures` | `deploymentFailures` | `rate(haptic_deployment_errors_total[5m]) > 0` for 2m |
 | `HAProxyFleetDiverged` | `fleetDiverged` | `haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size` for 5m |
 | `HAProxyControllerHighQueueDepth` | `highQueueDepth` | p95 `haptic_reconciliation_queue_wait_seconds` over `5s` for 5m |
-| `HAProxyControllerNoLeader` | `leaderElectionLost` | `sum(haptic_leader_election_is_leader) == 0` for 1m |
+| `HAProxyControllerNoLeader` | `leaderElectionLost` | `sum by (namespace, job) (haptic_leader_election_is_leader) == 0` for 1m |
 | `HAProxyControllerConfigRejected` | `configRejected` | `increase(haptic_config_rejected_total[5m]) > 0` for 1m |
 | `HAProxyControllerConfigPinned` | `configPinned` | `haptic_config_pinned > 0` for 5m |
 | `HAProxyControllerHAProxyPodsRejected` | `haproxyPodsRejected` | `increase(haptic_haproxy_pods_rejected_total[5m]) > 0` for 5m |
@@ -669,211 +726,25 @@ The full names, toggle keys, and default thresholds also appear on the [Chart Va
 
 ### Recommended alerts
 
-```yaml
-groups:
-  - name: haptic
-    rules:
-      # Reconciliation failures
-      - alert: HAProxyICHighReconciliationErrorRate
-        expr: |
-          rate(haptic_reconciliation_errors_total[5m]) /
-          rate(haptic_reconciliation_total[5m]) > 0.1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High reconciliation error rate (>10%)"
-          description: "Controller is failing to reconcile configurations"
-
-      # Deployment latency
-      - alert: HAProxyICHighDeploymentLatency
-        expr: |
-          histogram_quantile(0.95,
-            rate(haptic_deployment_duration_seconds_bucket[5m])
-          ) > 5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "95th percentile deployment latency >5s"
-          description: "Deploying configs to HAProxy is taking too long"
-
-      # Fleet diverged — some HAProxy pods are not at the desired config.
-      # Prefer this over the deploy error counter: transient failures self-heal.
-      - alert: HAProxyFleetDiverged
-        expr: haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "HAProxy fleet is diverged"
-          description: "Some HAProxy pods have not converged on the desired config for 5m"
-
-      # Validation failures
-      - alert: HAProxyICValidationFailures
-        expr: |
-          rate(haptic_validation_errors_total[5m]) > 0
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Configuration validation failing"
-          description: "HAProxy configuration has syntax or validation errors"
-
-      # Component crash
-      - alert: HAProxyICComponentStopped
-        expr: |
-          delta(haptic_event_subscribers[5m]) < 0
-        labels:
-          severity: critical
-        annotations:
-          summary: "Event subscriber count decreased"
-          description: "A controller component may have crashed"
-
-      # No leader elected (HA)
-      - alert: HAProxyICNoLeader
-        expr: sum(haptic_leader_election_is_leader) < 1
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "No HAProxy controller leader elected"
-          description: "No controller replica is elected as leader"
-
-      # Multiple leaders (split-brain)
-      - alert: HAProxyICMultipleLeaders
-        expr: sum(haptic_leader_election_is_leader) > 1
-        labels:
-          severity: critical
-        annotations:
-          summary: "Multiple HAProxy controller leaders detected"
-          description: "Split-brain condition - multiple replicas think they are leader"
-
-      # Frequent leadership changes
-      - alert: HAProxyICFrequentLeadershipChanges
-        expr: rate(haptic_leader_election_transitions_total[1h]) > 5
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Frequent leadership transitions"
-          description: "Controller leadership changing too often, may indicate cluster instability"
-
-      # No HAProxy pods discovered
-      - alert: HAProxyICNoHAProxyPods
-        expr: haptic_resource_count{type="haproxy-pods"} < 1
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "No HAProxy pods discovered"
-          description: "Controller cannot find any HAProxy pods to manage"
-
-      # Critical events dropped (lost reconciliation work)
-      - alert: HAProxyICCriticalEventsDropped
-        expr: increase(haptic_events_dropped_critical_total[5m]) > 0
-        labels:
-          severity: critical
-        annotations:
-          summary: "Critical events dropped from event bus"
-          description: "A critical subscriber's buffer overflowed; the controller restarted its iteration to reconstruct state"
-```
-
-!!! note "Tuning alert thresholds"
-    The thresholds above suit typical production environments. For high-churn environments (frequent deployments, many short-lived resources), increase the `for` duration on reconciliation and deployment alerts to avoid noise. For development clusters, consider relaxing error rate thresholds or disabling non-critical alerts entirely.
+Start with the shipped rules. They cover rejected configurations, a fleet that
+hasn't converged, missing leadership, agent failures, and dropped access logs.
+Add application-specific latency and error-rate alerts from
+[request metrics](#request-metrics), using your service's targets.
 
 ## Dashboard examples
 
-The chart ships a complete built-in Grafana dashboard (29 panels) — enable it with `controller.monitoring.grafanaDashboard.enabled: true` (the default `useBuiltIn: true` renders `dashboards/haptic.json` into a `<release>-grafana-dashboard` ConfigMap that the Grafana sidecar auto-discovers; set a custom one via `grafanaDashboard.customDashboard`). The queries and JSON template below are for building your own dashboard or extending the bundled one.
+Enable `controller.monitoring.grafanaDashboard.enabled` as shown above to install
+the supplied dashboard. If Grafana doesn't use a dashboard-discovery sidecar,
+export the same JSON from the default release and import it in Grafana:
 
-### Grafana dashboard queries
-
-**Reconciliation Overview Panel:**
-
-```promql
-# Success rate (stat panel)
-100 * (1 - (
-  rate(haptic_reconciliation_errors_total[5m]) /
-  rate(haptic_reconciliation_total[5m])
-))
-
-# Rate over time (graph)
-rate(haptic_reconciliation_total[5m])
-rate(haptic_reconciliation_errors_total[5m])
+```bash
+kubectl get configmap haptic-grafana-dashboard -n haptic \
+  -o jsonpath='{.data.haptic\.json}' > haptic-dashboard.json
 ```
 
-**Deployment Latency Panel:**
-
-```promql
-# P50, P95, P99 latencies
-histogram_quantile(0.50, rate(haptic_deployment_duration_seconds_bucket[5m]))
-histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
-histogram_quantile(0.99, rate(haptic_deployment_duration_seconds_bucket[5m]))
-```
-
-**Resource Count Panel:**
-
-```promql
-# All resource types
-haptic_resource_count
-
-# Stacked area chart by type
-haptic_resource_count{type=~"ingresses|services|endpoints"}
-```
-
-**Leader Election Panel:**
-
-```promql
-# Current leader indicator
-haptic_leader_election_is_leader == 1
-
-# Transition count over time
-increase(haptic_leader_election_transitions_total[1h])
-```
-
-### Dashboard JSON template
-
-Example Grafana dashboard structure (use as a starting point):
-
-```json
-{
-  "title": "HAPTIC",
-  "panels": [
-    {
-      "title": "Reconciliation Rate",
-      "targets": [
-        {"expr": "rate(haptic_reconciliation_total[5m])"}
-      ]
-    },
-    {
-      "title": "Reconciliation Success Rate",
-      "targets": [
-        {"expr": "100 * (1 - rate(haptic_reconciliation_errors_total[5m]) / rate(haptic_reconciliation_total[5m]))"}
-      ]
-    },
-    {
-      "title": "Deployment Latency",
-      "targets": [
-        {"expr": "histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))"}
-      ]
-    },
-    {
-      "title": "Resource Counts",
-      "targets": [
-        {"expr": "haptic_resource_count"}
-      ]
-    },
-    {
-      "title": "Leader Status",
-      "targets": [
-        {"expr": "haptic_leader_election_is_leader"}
-      ]
-    }
-  ]
-}
-```
-
-This is a starting point — add panels using the [PromQL queries](#grafana-dashboard-queries) above for more detailed views of deployment latency distribution, resource counts over time, or per-pod leader status.
+Choose **Dashboards → New → Import** and upload `haptic-dashboard.json`.
+Select the Prometheus data source that scrapes HAPTIC. You don't need to build a
+dashboard from the metric catalogue.
 
 ## Operational Insights
 
@@ -883,9 +754,9 @@ This is a starting point — add panels using the [PromQL queries](#grafana-dash
 |-----------|---------------|---------------------|
 | Reconciliation success rate | >99% | Check logs for template/validation errors |
 | Deployment success rate | >99% | Check HAProxy pod connectivity |
-| P95 deployment latency | <`2s` | Check `haptic_agent_apply_total{mode}` — a `reload` share climbing means the render lost the reload-free lane |
+| Deployment latency | Within your configuration-delivery target | Check fleet divergence and rejected applies; compare reload and runtime apply counts |
 | Leader count | Exactly 1 | Check HA configuration and network |
-| Event subscribers | Shouldn't decrease during normal operation | Restart controller if dropping |
+| Critical event drops | No new drops | Inspect controller logs and resource pressure |
 
 ### Capacity planning
 
@@ -919,7 +790,7 @@ sum(increase(haptic_reconciliation_duration_seconds_count[1d]))
 
 **Leader election issues:**
 
-1. Check if `sum(haptic_leader_election_is_leader) != 1`
+1. Check for one leader per installation; the examples group by namespace and scrape job
 2. Review `rate(haptic_leader_election_transitions_total[1h])` for instability
 3. See [High Availability Guide](./high-availability.md) for troubleshooting
 

@@ -64,11 +64,10 @@ helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/ch
 
 ### NetworkPolicy Issues in kind
 
-For kind clusters, ensure:
-
-- Calico or Cilium Container Network Interface (CNI) is installed
-- DNS access is allowed
-- The `controller.networkPolicy.egress.kubernetesApi` CIDRs cover your API server (see [Networking](./operations/networking.md))
+Kind's default network doesn't enforce NetworkPolicy. If you installed a network
+plugin that does, such as Calico or Cilium, check that DNS is allowed and
+`controller.networkPolicy.egress.kubernetesApi` covers the API-server address.
+See [Networking](./operations/networking.md).
 
 Debug NetworkPolicy:
 
@@ -103,7 +102,7 @@ kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.i
 | Cause | Check | Solution |
 |-------|-------|----------|
 | Missing HAProxyTemplateConfig | `kubectl get haproxytemplateconfig,haproxytemplatelibrary -n haptic` — a Helm install creates one `HAProxyTemplateLibrary` per enabled template library plus a single `HAProxyTemplateConfig` (the name in the Deployment's `CRD_NAME`); the controller waits for that config **and every library its `spec.libraryRefs` names, at the revision it names**, before it starts | Reinstall Helm chart |
-| Invalid credentials Secret | `kubectl get secret -n haptic haptic-credentials -o jsonpath='{.data}'` (Helm names it `<release>-credentials`) | Recreate secret with correct keys |
+| Invalid credentials Secret | `kubectl describe secret -n haptic haptic-credentials` shows key names and sizes without values | Recreate secret with correct keys |
 | RBAC permissions | `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:<ns>:<sa>` | Verify ClusterRole/ClusterRoleBinding |
 
 ### Pods stuck not ready
@@ -160,13 +159,21 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 
     ```bash
     kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
+    ```
+
+    In another terminal:
+
+    ```bash
     curl http://localhost:8080/debug/vars/rendered
     ```
 
 3. See [Templating Guide](./templating.md)
 
 !!! note "Live traffic keeps flowing"
-    A render or validation failure never drops requests. The leader refuses to deploy the broken output and HAProxy keeps serving the last good config, so the failure surfaces only in the controller logs and the `haptic_reconciliation_errors_total` metric — nothing changes in the data plane until a render succeeds again.
+    HAPTIC keeps the last valid configuration when rendering or validation fails.
+    New routing and endpoint changes wait until the error is fixed. Existing
+    traffic still depends on the backends in that retained configuration. Check
+    the controller logs and `haptic_reconciliation_errors_total` for failures.
 
 ### Configuration validation failures
 
@@ -212,11 +219,11 @@ rendered config invalid: [ALERT] config: parsing [/etc/haproxy/haproxy.cfg:214]:
 'http-request' expects ...
 ```
 
-Fix the reported line in the template or resource, then re-apply. To reproduce and iterate locally without a cluster, run the same render-and-validate over your `HAProxyTemplateConfig` — it prints the identical line-numbered errors and runs the config's `validationTests`:
-
-```bash
-haptic validate -f config.yaml --verbose
-```
+Fix the template or resource named in the denial, then retry with
+`kubectl apply --dry-run=server -f ingress.yaml` before applying it. Admission
+uses your live resources. Local `haptic validate` runs the fixtures in your
+validation tests, so it only reproduces the problem if those fixtures include
+the triggering resource and its dependencies. See [validation tests](validation-tests.md).
 
 Two different gates sit behind this, depending on what you applied:
 
@@ -249,7 +256,7 @@ errors, check [agent certificate management](./operations/agent-certificates.md)
 | Cause | Check | Solution |
 |-------|-------|----------|
 | Agent not running | `kubectl logs $HAPROXY_POD -c agent` | Verify the container started, check port conflicts |
-| Wrong credentials | `kubectl get secret <release>-haptic-credentials -o yaml` | Update the credentials Secret; the controller's `credentialsloader` picks it up live, and the agent reads the same Secret through its environment — restart the HAProxy pods to pick up a rotation |
+| Certificate rejected or expired | Inspect the controller and agent logs for TLS errors | Check [certificate expiry and renewal Jobs](operations/agent-certificates.md#check-expiry); repaired identities reload automatically |
 | Network policy | `kubectl get networkpolicy` | Update egress rules for controller → HAProxy |
 
 ### Configuration not updating
@@ -310,7 +317,7 @@ haproxy:
     maxObjects: 100000  # default: 50000
 ```
 
-**Sizing formula**: `(number of backends + number of servers) × 1.2 safety margin`. Each object uses ~4KiB of shared memory. For example, 100,000 objects require ~390Mi in `/dev/shm`, which counts against the pod's memory limit.
+**Sizing formula**: `(number of frontends + number of backends + number of servers) × 1.2 safety margin`. Each object uses ~4KiB of shared memory. For example, 100,000 objects require ~390Mi in `/dev/shm`, which counts against the pod's memory limit.
 
 !!! warning
     After changing `maxObjects`, verify that `haproxy.resources.limits.memory` is large enough to accommodate the increased `/dev/shm` usage. The shm volume is memory-backed and counts against the pod's memory limit.
@@ -409,7 +416,7 @@ Verify the certificate and key are valid:
 kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -text -noout
 
 # Verify key
-kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.key}' | base64 -d | openssl rsa -check -noout
+kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.key}' | base64 -d | openssl pkey -check -noout
 ```
 
 **Certificate not being updated:**
@@ -430,6 +437,11 @@ For certificate provisioning and rotation (cert-manager, manual Secrets, the cha
 
 ```bash
 kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
+```
+
+In another terminal:
+
+```bash
 curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 ```
 
@@ -446,28 +458,26 @@ Compare successive versions of the watched resources. Annotation or status updat
 
 ### High memory usage
 
-**Symptoms**: OOMKilled events, gradual memory growth
+For `OOMKilled` restarts, compare `controller.resources` with the
+[resource sizing estimates](operations/performance.md#controller-resource-sizing)
+and check the pod's Events. Startup can need more memory than steady operation.
+Give each replica the same memory request and limit.
 
-**Solutions**:
+If HAPTIC watches resources it doesn't route, narrow the watch. For example, these
+Helm values keep the existing Ingress-class filter and add a label selector:
 
 ```yaml
-# Filter large fields
-watchedResourcesIgnoreFields:
-  - metadata.managedFields
-  - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
-
-# Use cached store for secrets (fetches on-demand; TTL is auto-derived
-# from driftPreventionInterval, not user-configurable)
-watchedResources:
-  secrets:
-    store: on-demand
-
-# Limit watch scope
-watchedResources:
-  ingresses:
-    namespace: production
-    labelSelector: "app=myapp"
+controller:
+  config:
+    watchedResources:
+      ingresses:
+        labelSelector: "app=myapp"
 ```
+
+Only labeled Ingresses contribute routes. Don't apply this selector unless
+it includes every Ingress this installation must serve. See
+[watch selectors](watching-resources.md#narrowing-the-watch) for namespace filters.
+The chart already fetches Secret contents on demand.
 
 ## Getting help
 
@@ -528,7 +538,7 @@ kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 
 The listener is configured by `controller.ports.healthz` and also serves
 `/healthz`, so it's required by the liveness/readiness probes. Restrict access
-via NetworkPolicy instead of disabling it. See the [Debugging Guide](./operations/debugging.md)
+through RBAC permissions for `pods/portforward` and `pods/exec`. See the [Debugging Guide](./operations/debugging.md)
 for the endpoint catalogue and usage.
 
 ## See also

@@ -7,6 +7,11 @@
 {% endblock %}
 
 {% block content %}
+  <aside class="admonition warning" data-development-docs hidden>
+    <p class="admonition-title">Development documentation</p>
+    <p>This version describes the main branch and can include unreleased features.
+      Select your installed release in the version menu before following setup or upgrade instructions.</p>
+  </aside>
   {{ super() }}
   <div class="hx-feedback">
     Found a problem on this page?

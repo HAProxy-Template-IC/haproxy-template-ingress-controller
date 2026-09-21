@@ -66,17 +66,9 @@ The table is generated from `versions-spoa.env` at the repository root. CI fails
 
 ### Reload and upgrade behavior
 
-Plugin configuration and instance state are hot-reloadable. When a reload
-retires a plugin generation, the hub drains its in-flight work and calls its
-`shutdown` and `destroy` hooks. The native plugin library itself remains mapped
-until the hub process exits: a plugin can embed a foreign runtime or retain
-process-global threads, callbacks, statics, and thread-local cleanup routines that a
-generic host can't prove are safe to unload. This prevents reload-time crashes
-when a plugin such as Coraza is removed.
-
-Replacing a plugin `.so` therefore requires a hub process restart, not only a
-configuration reload. HAPTIC chart upgrades do this normally by rolling the
-HAProxy pods when the bundled `spoa-hub` image changes.
+Plugin configuration changes reload in place while in-flight work drains.
+Upgrading the bundled plugin binaries rolls the HAProxy pods. Keep multiple
+HAProxy replicas available during an upgrade.
 
 ## What each plugin does
 
@@ -123,8 +115,8 @@ include of the fetched files — so the rest of the block, including the order o
 
 ### What a refresh costs
 
-Nothing you notice. Adopting or refreshing a ruleset reloads neither HAProxy nor
-the SPOA hub:
+A ruleset refresh doesn't reload HAProxy or the SPOA hub. A changed ruleset
+requires Coraza to compile a new copy before replacing the active one:
 
 1. HAPTIC re-fetches on `waf.crs.refreshInterval` (default `1h`) with a
    conditional request. An unchanged ruleset answers `304` and stops there — no
@@ -184,7 +176,7 @@ the failure rather than dropping to an unarmed WAF.
 
 ## Tune a WAF policy from detect to deny
 
-A new WAF policy starts in `enforcement: detect`: the full ruleset runs and records what it *would* block, but nothing is denied. The workflow below uses the OWASP Core Rule Set (CRS) blocking-evaluation rules as the would-block signal and shows how to confirm a clean baseline from data and then flip the policy to `deny`.
+Start policy tuning with `enforcement: detect`: the full ruleset runs and records what it *would* block, but nothing is denied. The workflow below uses the OWASP Core Rule Set (CRS) blocking-evaluation rules as the would-block signal and shows how to confirm a clean baseline from data and then flip the policy to `deny`.
 
 ### Read the per-rule hit metrics
 
@@ -198,7 +190,10 @@ The hub serves Prometheus metrics on `spoaHub.hub.metricsAddr` (default `127.0.0
 
 The `app` label is the Coraza application: `policy:<name>` for a trusted-catalog policy, `policy:<namespace>/<name>` for a self-service policy, and `<namespace>/<name>` for route-local rules. Rules that declare no severity (the ruleset's administrative and reporting rules) carry `severity="none"`.
 
-The metrics address binds to the pod loopback, so scrape it with a PodMonitor targeting the HAProxy pods, or check it directly. The command execs into the `haproxy` container deliberately: all containers in the pod share one network namespace, so `127.0.0.1:9095` is reachable from any of them — and the `haproxy` container ships `curl`, while the `spoa-hub` image carries no HTTP client at all:
+With the default Vector sidecar, the hub listens on loopback. Vector re-exports
+its metrics on port `9598`; the [bundled PodMonitor](monitoring.md#enable-the-bundled-monitoring)
+scrapes that endpoint. If Vector is disabled, the hub exposes port `9095` for
+direct scraping. To inspect the default loopback endpoint from the pod:
 
 ```console
 kubectl exec -n <namespace> <haproxy-pod> -c haproxy -- \
@@ -372,7 +367,7 @@ the request that caused it can be joined on one key:
 
 ```console
 # the access-log record
-kubectl logs -n <namespace> <haproxy-pod> -c haproxy | jq 'select(.req_id=="019f9e64-e9de-7d1b-88c9-76644f0e9b86")'
+kubectl logs -n <namespace> <haproxy-pod> -c vector | jq 'select(.req_id=="019f9e64-e9de-7d1b-88c9-76644f0e9b86")'
 
 # and anything the hub said about the same request
 kubectl logs -n <namespace> <haproxy-pod> -c spoa-hub | jq 'select(.["span.req_id"]=="019f9e64-e9de-7d1b-88c9-76644f0e9b86")'

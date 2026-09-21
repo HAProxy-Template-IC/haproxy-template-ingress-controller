@@ -23,51 +23,13 @@ Before following this guide, ensure:
 - **Workload registration** exists for the HAProxy pod's service account and namespace
 - A HAPTIC installation you can update through [Helm values](../deploying-with-helm.md)
 
-## Architecture
-
-The integration uses four components working together inside the HAProxy pod:
-
-```
-┌───────────────────────────────────────────────────────────────┐
-│ HAProxy Pod                                                   │
-│                                                               │
-│  ┌──────────┐   ┌───────────────┐   ┌────────────────┐        │
-│  │ init:    │   │  haproxy      │   │ spiffe-helper  │        │
-│  │ create-  │   │               │   │                │        │
-│  │ spiffe-  │──▶│ Reads certs   │◀──│ Fetches SVIDs  │        │
-│  │ dir      │   │ from shared   │   │ from SPIRE     │        │
-│  │          │   │ volume        │   │ agent via CSI  │        │
-│  └──────────┘   │               │   │                │        │
-│                 │ /etc/haproxy/ │   │ Writes certs   │        │
-│                 │   spiffe/     │   │ to shared vol  │        │
-│                 │   ├ svid.pem  │   └────────────────┘        │
-│                 │   ├ svid.pem  │                             │
-│                 │   │   .key    │   ┌────────────────┐        │
-│                 │   └ bundle    │   │ cert-reloader  │        │
-│                 │       .pem    │   │                │        │
-│                 │               │   │ Polls certs,   │        │
-│                 │  master sock  │◀──│ pushes updates │        │
-│                 │  (Runtime API)│   │ via Runtime API│        │
-│                 └───────────────┘   └────────────────┘        │
-│                                                               │
-│  CSI Volume: /spiffe-workload-api/spire-agent.sock            │
-└───────────────────────────────────────────────────────────────┘
-```
-
-**How it works:**
-
-1. An **init container** creates the `/etc/haproxy/spiffe/` directory on the shared `haproxy-runtime` emptyDir volume
-2. The **spiffe-helper** sidecar connects to the SPIRE agent via the CSI-mounted Workload API socket
-3. SPIRE attests the pod's identity and issues an X.509-SVID
-4. spiffe-helper writes the certificate, private key, and trust bundle to the shared volume
-5. The **cert-reloader** sidecar polls for file changes every 5 seconds and pushes updated certificates to HAProxy via the Runtime API (`set ssl cert`, `set ssl ca-file`) — no process restart required
-6. HAProxy uses these certificates for mTLS connections to backend services
-
 ## Configuration
 
 ### HAProxy Pod setup
 
-Add the following to your Helm values to configure the HAProxy pod with spiffe-helper:
+Add the following sections to your existing Helm values. Combine entries under
+the same `controller`, `haproxy`, and `extraDeploy` keys; duplicate YAML keys
+would replace earlier sections. Keep any sidecars or volumes you already use.
 
 ```yaml
 haproxy:
@@ -144,29 +106,42 @@ haproxy:
           KEY=/etc/haproxy/spiffe/svid.pem.key
           BUNDLE=/etc/haproxy/spiffe/bundle.pem
           SOCK=/etc/haproxy/haproxy-master.sock
-          PREV_MTIME=""
+          previous_digest=""
+          runtime_command() {
+            printf '%s\n\n' "$1" | socat -t 5 - "unix-connect:$SOCK"
+          }
+          install_pem() {
+            kind=$1
+            path=$2
+            pem=$3
+            command=$(printf '@1 set ssl %s %s <<\n%s' "$kind" "$path" "$pem")
+            response=$(runtime_command "$command") || return 1
+            if ! printf '%s' "$response" | grep -qi transaction; then
+              runtime_command "@1 abort ssl $kind $path" >/dev/null
+              return 1
+            fi
+            response=$(runtime_command "@1 commit ssl $kind $path") || return 1
+            if ! printf '%s' "$response" | grep -q 'Success!'; then
+              runtime_command "@1 abort ssl $kind $path" >/dev/null
+              return 1
+            fi
+          }
           echo "cert-reloader: polling for cert changes"
           while true; do
             sleep 5
             [ -f "$CERT" ] && [ -f "$KEY" ] && [ -f "$BUNDLE" ] || continue
-            MTIME=$(stat -c %Y "$CERT" "$KEY" "$BUNDLE" 2>/dev/null | tr '\n' ':')
-            [ "$MTIME" = "$PREV_MTIME" ] && continue
-            [ -z "$PREV_MTIME" ] && { PREV_MTIME="$MTIME"; continue; }
-            PREV_MTIME="$MTIME"
-            sleep 1
-            LOADED=$(echo "@1 show ssl cert $CERT" | socat - unix-connect:$SOCK 2>/dev/null | grep -c "^Filename:")
-            if [ "$LOADED" -eq 0 ]; then
-              echo "cert-reloader: cert not loaded in HAProxy, skipping runtime update"
-              continue
+            digest=$(sha256sum "$CERT" "$KEY" "$BUNDLE") || continue
+            [ "$digest" = "$previous_digest" ] && continue
+            cert_pem=$(cat "$CERT" "$KEY") || continue
+            ca_pem=$(cat "$BUNDLE") || continue
+            [ "$digest" = "$(sha256sum "$CERT" "$KEY" "$BUNDLE")" ] || continue
+            if install_pem cert "$CERT" "$cert_pem" &&
+               install_pem ca-file "$BUNDLE" "$ca_pem"; then
+              previous_digest=$digest
+              echo "cert-reloader: certificates updated via runtime API"
+            else
+              echo "cert-reloader: update failed; retrying in 5 seconds" >&2
             fi
-            printf "@1 set ssl cert $CERT <<\n$(cat $CERT)\n$(cat $KEY)\n\n" | socat - unix-connect:$SOCK
-            echo "@1 commit ssl cert $CERT" | socat - unix-connect:$SOCK
-            CA_LOADED=$(echo "@1 show ssl ca-file $BUNDLE" | socat - unix-connect:$SOCK 2>/dev/null | grep -c "^Filename:")
-            if [ "$CA_LOADED" -gt 0 ]; then
-              printf "@1 set ssl ca-file $BUNDLE <<\n$(cat $BUNDLE)\n\n" | socat - unix-connect:$SOCK
-              echo "@1 commit ssl ca-file $BUNDLE" | socat - unix-connect:$SOCK
-            fi
-            echo "cert-reloader: certificates updated via runtime API at $(date -Iseconds)"
           done
       volumeMounts:
         - name: haproxy-runtime
@@ -200,7 +175,7 @@ haproxy:
 !!! note
     The spiffe-helper container image tags do **not** use a `v` prefix — use `0.11.0`, not `v0.11.0`.
 
-The cert-reloader sidecar reuses the `haproxytech/haproxy-debian` image, which includes `socat` and `stat`. Pin its tag to the same version as `haproxyVersion` (the example uses `3.4`, the chart default) so the sidecar shares the image already pulled for the main container and avoids version skew. It uses the `@1` prefix to route Runtime API commands to the current HAProxy worker process via the master socket. If the SPIFFE certificate isn't loaded in HAProxy (for example, no Ingress uses the annotation), it logs a skip message and waits for the next change.
+The cert-reloader sidecar reuses the `haproxytech/haproxy-debian` image, which includes `socat` and `sha256sum`. Use the same image tag as your HAProxy container if you want both containers to share the downloaded image. It uses the `@1` prefix to route Runtime API commands to the current HAProxy worker process via the master socket. It checks HAProxy's responses and retries failed updates, including the first update after startup. Until an Ingress uses the certificate, HAProxy has no certificate store to update and the sidecar reports retries.
 
 ### `spiffe-helper` configuration
 
@@ -308,6 +283,7 @@ metadata:
   annotations:
     example.com/server-mtls-spire: "true"
 spec:
+  ingressClassName: haptic
   rules:
     - host: my-backend.example.com
       http:
@@ -369,7 +345,7 @@ controller:
   extraVolumes:
     - name: spiffe-validation-certs
       configMap:
-        name: '{{ include "haptic.fullname" . }}-spiffe-validation-certs'
+        name: spiffe-validation-certs
 
   extraVolumeMounts:
     - name: spiffe-validation-certs
@@ -377,47 +353,28 @@ controller:
       readOnly: true
 ```
 
-Generate the dummy certificate and add it as a ConfigMap via `extraDeploy`:
+Create the validation ConfigMap before applying those Helm values. These files
+are validation fixtures, never credentials for backend connections; mount them
+only on the controller. The HAProxy pods continue to obtain real credentials
+from SPIRE.
 
 ```bash
-# Generate a self-signed dummy cert (valid 100 years, never used for real TLS)
+HAPTIC_VALIDATION_DIR=$(mktemp -d)
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-  -keyout /dev/stdout -out /dev/stdout -days 36500 -nodes \
-  -subj '/CN=validation-placeholder-NOT-A-REAL-SECRET' 2>/dev/null
+  -keyout "$HAPTIC_VALIDATION_DIR/tls.key" \
+  -out "$HAPTIC_VALIDATION_DIR/tls.crt" -days 3650 -nodes \
+  -subj '/CN=validation-placeholder'
+kubectl create configmap spiffe-validation-certs --namespace haptic \
+  --from-file=svid.pem="$HAPTIC_VALIDATION_DIR/tls.crt" \
+  --from-file=svid.pem.key="$HAPTIC_VALIDATION_DIR/tls.key" \
+  --from-file=bundle.pem="$HAPTIC_VALIDATION_DIR/tls.crt" \
+  --dry-run=client -o yaml | kubectl apply -f -
+rm -r "$HAPTIC_VALIDATION_DIR"
 ```
 
-```yaml
-extraDeploy:
-  # ================================================================
-  # VALIDATION PLACEHOLDERS — NOT REAL SECRETS
-  # ================================================================
-  # These dummy PEM files are mounted ONLY on the controller pod so
-  # that "haproxy -c" config validation passes. They are never
-  # deployed to the HAProxy pods. On the HAProxy pods, spiffe-helper
-  # independently manages the real SPIRE-issued certs.
-  # ================================================================
-  - apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: '{{ include "haptic.fullname" . }}-spiffe-validation-certs'
-      labels:
-        app.kubernetes.io/name: haptic
-        app.kubernetes.io/instance: '{{ .Release.Name }}'
-        app.kubernetes.io/component: validation
-    data:
-      # DUMMY CERT — validation placeholder, not a real secret
-      svid.pem: |
-        <paste generated certificate PEM here>
-      # DUMMY KEY — validation placeholder, not a real secret
-      svid.pem.key: |
-        <paste generated private key PEM here>
-      # DUMMY CA — validation placeholder, not a real secret
-      bundle.pem: |
-        <paste generated certificate PEM here (same as svid.pem)>
-```
-
-!!! note
-    The `extraVolumes` and `extraVolumeMounts` under `controller:` (as in the snippet above) apply to the **controller** pod. The HAProxy pod's volumes are configured under `haproxy.extraVolumes`.
+The controller's `extraVolumes` and `extraVolumeMounts` are separate from
+`haproxy.extraVolumes`. Apply the combined Helm values through your release
+workflow, keeping pre-rollout and admission validation enabled.
 
 ## Verification
 
@@ -425,7 +382,7 @@ After deploying, verify the integration is working:
 
 ```bash
 # Check spiffe-helper received certificates
-kubectl -n haptic logs <haproxy-pod> -c spiffe-helper
+kubectl -n haptic logs deployment/haptic-haproxy -c spiffe-helper
 
 # Expected output:
 # level=info msg="Received update" spiffe_id="spiffe://..." system=spiffe-helper
@@ -434,14 +391,14 @@ kubectl -n haptic logs <haproxy-pod> -c spiffe-helper
 
 ```bash
 # Verify certificate files exist on the HAProxy pod
-kubectl -n haptic exec <haproxy-pod> -c haproxy -- ls -la /etc/haproxy/spiffe/
+kubectl -n haptic exec deployment/haptic-haproxy -c haproxy -- ls -la /etc/haproxy/spiffe/
 
 # Expected: svid.pem, svid.pem.key, bundle.pem owned by UID 99
 ```
 
 ```bash
 # Inspect the SPIFFE ID in the issued certificate
-kubectl -n haptic exec <haproxy-pod> -c haproxy -- \
+kubectl -n haptic exec deployment/haptic-haproxy -c haproxy -- \
   openssl x509 -in /etc/haproxy/spiffe/svid.pem -noout -text \
   | grep -A1 "Subject Alternative Name"
 
@@ -450,20 +407,17 @@ kubectl -n haptic exec <haproxy-pod> -c haproxy -- \
 
 ```bash
 # Verify the backend mTLS annotation is reflected in HAProxy config
-kubectl -n haptic exec <haproxy-pod> -c haproxy -- \
+kubectl -n haptic exec deployment/haptic-haproxy -c haproxy -- \
   cat /etc/haproxy/haproxy.cfg | grep -A2 'default-server.*ssl.*verify'
 ```
 
 ```bash
 # Check cert-reloader is running and updating certificates
-kubectl -n haptic logs <haproxy-pod> -c cert-reloader
+kubectl -n haptic logs deployment/haptic-haproxy -c cert-reloader
 
 # Expected output after a rotation:
 # cert-reloader: polling for cert changes
-# Transaction created for certificate /etc/haproxy/spiffe/svid.pem!
-# Committing /etc/haproxy/spiffe/svid.pem..........
-# Success!
-# cert-reloader: certificates updated via runtime API at <timestamp>
+# cert-reloader: certificates updated via runtime API
 ```
 
 ## Troubleshooting
@@ -479,7 +433,7 @@ Error while watching x509 context: ... dial unix /spiffe-workload-api/agent.sock
 The SPIRE CSI driver creates the socket as `spire-agent.sock`, not `agent.sock`. Verify the correct socket name:
 
 ```bash
-kubectl -n haptic exec <haproxy-pod> -c spiffe-helper -- ls /spiffe-workload-api/
+kubectl -n haptic exec deployment/haptic-haproxy -c spiffe-helper -- ls /spiffe-workload-api/
 ```
 
 Update `agent_address` in your spiffe-helper config to match.

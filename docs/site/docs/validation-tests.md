@@ -19,48 +19,11 @@ Validation tests render templates against fixture resources and check the output
 
 ## Quick start
 
-1. Add a `validationTests` section to your HAProxyTemplateConfig:
+Install the `haptic` binary from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases)
+and a matching HAProxy binary. Use the same HAPTIC and HAProxy versions as your
+installation, with `kubectl` access to that cluster.
 
-    ```yaml
-    apiVersion: haproxy-haptic.org/v1alpha1
-    kind: HAProxyTemplateConfig
-    metadata:
-      name: my-config
-    spec:
-      # ... template configuration ...
-
-      validationTests:
-        test-basic-frontend:
-          description: Frontend should be created with correct settings
-          fixtures:
-            services:
-              - apiVersion: v1
-                kind: Service
-                metadata:
-                  name: my-service
-                  namespace: default
-                spec:
-                  ports:
-                    - port: 80
-          assertions:
-            - type: haproxy_valid
-              description: Configuration must be syntactically valid
-
-            - type: contains
-              target: haproxy.cfg
-              pattern: "frontend.*default"
-              description: Must have default frontend
-    ```
-
-2. Download the `haptic` binary for your platform from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases). The `validate` subcommand is the controller binary running in validation mode.
-
-3. Run the tests:
-
-    ```bash
-    haptic validate -f my-config.yaml
-    ```
-
-To validate the config currently deployed in your cluster instead of a local file:
+Export the installed configuration and run its bundled tests:
 
 ```bash
 haptic config view --input --namespace haptic > /tmp/haptic-config.yaml
@@ -68,8 +31,10 @@ haptic validate -f /tmp/haptic-config.yaml
 ```
 
 `config view --input` merges the configuration and its referenced libraries.
-All library tests run against that merged configuration. Exporting only the
-`HAProxyTemplateConfig` would omit the libraries.
+Exporting only the `HAProxyTemplateConfig` would omit the libraries. Add your own
+tests under `spec.validationTests` in the exported file and run the same command
+again. To keep those tests across upgrades, put them under
+`controller.config.validationTests` in your Helm values.
 
 Or run tests right here — this is a complete config with a `validationTests` block. Press **Run live**, then open the **tests** tab to see each assertion pass or fail:
 
@@ -100,7 +65,7 @@ haproxyConfig:
       default_backend not-found
     {%- for _, svc := range resources.services.List() %}
     backend {{ svc.metadata.namespace }}_{{ svc.metadata.name }}
-      server app {{ svc.metadata.name }}.{{ svc.metadata.namespace }}.svc:80
+      server app 127.0.0.1:8080
     {%- end %}
 
     backend not-found
@@ -302,7 +267,8 @@ Validates HAProxy configuration syntax using the HAProxy binary:
   description: Configuration must be syntactically valid
 ```
 
-Every test should include this assertion.
+Include this assertion when the test expects valid HAProxy output. Tests that
+expect a render error instead assert that error; they can't also assert valid output.
 
 ### `contains`
 
@@ -361,7 +327,7 @@ Asserts that a regex pattern matches an exact number of times in the target. Use
 ```yaml
 - type: match_count
   target: haproxy.cfg
-  pattern: "^backend "
+  pattern: "(?m)^backend "
   expected: "3"          # string — parsed as integer
   description: Exactly 3 backends must be generated
 ```
@@ -412,10 +378,8 @@ haptic validate -f config.yaml --schema-dir tests/schemas
 # Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic validate ...
 ```
 
-Automatic parallelism uses at most one worker per 128 MiB of Go's soft memory
-limit and never exceeds `GOMAXPROCS`. In a container, HAPTIC derives that soft
-limit from the container memory limit unless you set `GOMEMLIMIT` explicitly.
-`--workers` overrides automatic sizing; every selected test still runs.
+HAPTIC chooses validation parallelism from the available CPU and memory.
+`--workers` overrides this choice; every selected test still runs.
 
 Install `haproxy` on your `PATH` before running `haptic validate`. The command
 uses it to detect the version and run `haproxy_valid` assertions; validation fails
