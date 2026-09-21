@@ -129,10 +129,16 @@ variables:
         - .gitlab-ci.yml
         - .golangci.yml
 
+# Skip only known prose paths; arbitrary chart inputs still select validation.
+.rules-chart-inputs:
+  rules:
+    - changes: &chart-inputs
+        regexp: '\Acharts/(?!CLAUDE\.md\z|haptic/(README|CHANGELOG)\.md\z)'
+
 .rules-helm:
   rules:
+    - !reference [.rules-chart-inputs, rules]
     - changes:
-        - charts/**/*
         - .gitlab-ci.yml
         # Re-run chart-test (which runs `make chart-size-check`) when the
         # release-Secret size estimator itself changes, so a broken gate is caught.
@@ -577,12 +583,12 @@ test-coverage-unit:
     # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
+    - !reference [.rules-chart-inputs, rules]
     - changes:
         - "**/*.go"
         - "**/*.pgo"
         - go.mod
         - go.sum
-        - charts/**/*
         - skills/haptic/**/*
         - Makefile
         - .gitlab-ci.yml
@@ -784,7 +790,7 @@ build-snapshot:
   # on !1425's MR pipeline plus 2.2 min post-merge.
   #
   #   dependent                  its trigger                     covered here by
-  #   test-acceptance            .rules-go + charts/haptic/**/*   .rules-go, .rules-helm
+  #   test-acceptance            .rules-go + .rules-chart-inputs   .rules-go, .rules-helm
   #   .test-e2e-base             go/scripts + .rules-spoa-chart   .rules-go, .rules-spoa-chart
   #   test-gateway-conformance   go/scripts + .rules-spoa-chart   .rules-go, .rules-spoa-chart
   #   test-ingress-conformance   + Dockerfile.ingress-conformance-test,
@@ -952,8 +958,9 @@ build-playground-wasm:
         - scripts/build-playground.sh
         - scripts/gen-playground-assets.sh
         - scripts/gen_playground_schema_bundle.go
-        - charts/haptic/**/*
         - tests/schemas/**/*
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: *chart-inputs
   script:
     - |
       # Release tag → immutable /playground/<version>/; main → moving /playground/dev/.
@@ -1679,18 +1686,8 @@ test-acceptance:
     # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
-    # Acceptance helm-installs the WHOLE chart, so it must run on Go changes
-    # AND on any chart change — but not on non-chart docs (`docs/**`, root
-    # `*.md`). Deliberately `charts/haptic/**/*` (all chart files), NOT the
-    # narrow `.rules-spoa-chart` used by test-e2e-base: that lists only
-    # SPOE-wiring files, so it would MISS chart changes acceptance renders
-    # (e.g. `charts/haptic/charts/haproxytech/**`, new templates, crds) and
-    # silently under-test them. The residual — chart CLAUDE.md/CHANGELOG also
-    # matching — is accepted; it's one xlarge job vs. the old `**/*.md`-wide
-    # trigger that fired the whole heavy suite.
+    - changes: *chart-inputs
     - !reference [.rules-go, rules]
-    - changes:
-        - charts/haptic/**/*
   timeout: 30 minutes
   interruptible: true
   needs:
@@ -2249,15 +2246,14 @@ test-gitops-lifecycle:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $SCHEDULE_KIND == "nightly"
+    - changes: *chart-inputs
     - changes:
-        - charts/haptic/**/*
         - cmd/haptic/**/*
         - pkg/controller/webhook/**/*
         - scripts/test-gitops-lifecycle.py
         - scripts/lib/cluster.sh
         - scripts/lib/upgrade-traffic.sh
         - scripts/testdata/chart-upgrade/**/*
-        - docs/site/docs/operations/gitops.md
         - .gitlab-ci.yml
   before_script:
     - |
@@ -3825,11 +3821,15 @@ pages-preview:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: &pages-preview-changes
+        - "**/*.md"
+        - .gitlab-ci.yml
         - docs/**/*
         - skills/haptic/**/*
         - LICENSE
         - Makefile
   script:
+    - mkdocs build --strict --config-file docs/site/mkdocs.yml --site-dir /tmp/docs-check
+    - mkdocs build --strict --config-file docs/landing/mkdocs.yml --site-dir /tmp/landing-check
     - |
       # Clone pages repo to get deployment script
       # Authenticated clone — GitLab.com rate-limits unauthenticated git
@@ -3842,11 +3842,7 @@ pages-preview:
       # merged result. With no published artifact it degrades to this MR's docs
       # alone rather than failing the pipeline.
       #
-      # This job renders a preview; it validates nothing. Docs correctness is
-      # markdownlint + vale in `lint`, which still gates. Failing every docs MR
-      # because the separate pages project has no artifact to diff against
-      # blocks work this job cannot speak to — which is what happened while
-      # pages publishing was broken from 2026-08-07.
+      # Strict builds above validate this checkout independently of the published site.
       echo "Downloading production site from pages artifact..."
       PAGES_PROJECT_ID="haproxy-haptic%2Fhaproxy-haptic.gitlab.io"
       status=$(curl --location --silent --show-error --write-out '%{http_code}' \
