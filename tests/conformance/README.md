@@ -43,7 +43,7 @@ credential-bearing test images and kubeconfigs aren't included.
 ## Submit a release report upstream
 
 1. Download a passing `release-gateway-conformance` job's artifacts and verify
-   them using the [release evidence instructions](../../docs/site/docs/operations/gateway-conformance.md#release-artifacts).
+   them using the [release evidence instructions](../../docs/site/docs/operations/gateway-conformance.md#find-evidence-for-your-release).
 2. Copy the unmodified report into the upstream Gateway API repository under
    `conformance/reports/v1.6/haproxy-haptic-haptic/` for the pinned 1.6 suite.
 3. Name the file `<channel>-<implementation-version>-<mode>-report.yaml`, using
