@@ -20,6 +20,7 @@ coverage.txt
 coverage.xml
 
 # CI-generated report files
+/ci-image.env
 gl-code-quality-report.json
 report*.xml
 chart-test-results.xml

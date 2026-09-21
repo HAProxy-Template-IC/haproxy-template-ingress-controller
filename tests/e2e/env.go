@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 
 	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/podclient"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
@@ -199,7 +200,7 @@ type debugClient struct {
 	port        string
 	// /debug/* is loopback-only, so it is reached by port-forward. The health
 	// endpoints stay on the Service proxy, which the kubelet also uses.
-	loopback *testutil.LoopbackPodClient
+	loopback *podclient.Client
 }
 
 // newDebugClient builds a debugClient with every field set. Construct through
@@ -211,7 +212,7 @@ func newDebugClient(restConfig *rest.Config, cs kubernetes.Interface) *debugClie
 		namespace:   ControllerNamespace,
 		serviceName: DebugServiceNameValue,
 		port:        strconv.Itoa(DebugPort),
-		loopback: testutil.NewLoopbackPodClient(
+		loopback: podclient.New(
 			restConfig, cs, ControllerNamespace, LabelSelectorController, DebugPort,
 		),
 	}

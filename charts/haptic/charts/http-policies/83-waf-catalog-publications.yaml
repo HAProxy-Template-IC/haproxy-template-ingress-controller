@@ -1,0 +1,112 @@
+templateSnippets:
+  haptic-waf-trusted-catalog-publications:
+    requires: [configmaps]
+    incremental:
+      bindingsTemplate: |-
+        {%- var refsAny = extraContext | dig("waf", "policies", "configMapRefs") -%}
+        {%- var refs, refsOK = refsAny.(map[string]any) -%}
+        {%- if refsAny != nil && refsOK && len(refs) > 0 -%}
+          {{- toJSON(map[string]any{"configmaps": map[string]any{
+            "controllerNamespace": extraContext | dig("controllerNamespace") | fallback("") | tostring(),
+            "refs": refs,
+          }}) -}}
+        {%- else -%}
+          {}
+        {%- end -%}
+      group: haptic-waf-trusted-catalogs
+      effects: [publishValue]
+    template: |-
+      {%- var namespace = dig_string(item, "", "metadata", "namespace") -%}
+      {%- var name = dig_string(item, "", "metadata", "name") -%}
+      {%- var cm = resources.configmaps.GetSingle(namespace, name) -%}
+      {%- if cm != nil -%}
+        {%- var refs = props["refs"].(map[string]any) -%}
+        {%- for _, refName := range keys(refs) -%}
+          {%- var ref, refOK = refs[refName].(map[string]any) -%}
+          {%- if !refOK -%}{%- continue -%}{%- end -%}
+          {%- var sourceNamespace = tostring(props["controllerNamespace"]) -%}
+          {%- var sourceName = "" -%}
+          {%- var sourceKey = "policies.yaml" -%}
+          {%- var usable = true -%}
+          {%- if ref["namespace"] != nil -%}
+            {%- var value, valueOK = ref["namespace"].(string) -%}
+            {%- if valueOK -%}{%- sourceNamespace = value -%}{%- else -%}{%- usable = false -%}{%- end -%}
+          {%- end -%}
+          {%- if ref["name"] != nil -%}
+            {%- var value, valueOK = ref["name"].(string) -%}
+            {%- if valueOK -%}{%- sourceName = value -%}{%- else -%}{%- usable = false -%}{%- end -%}
+          {%- end -%}
+          {%- if ref["key"] != nil -%}
+            {%- var value, valueOK = ref["key"].(string) -%}
+            {%- if valueOK -%}{%- sourceKey = value -%}{%- else -%}{%- usable = false -%}{%- end -%}
+          {%- end -%}
+          {%- if usable && sourceNamespace == namespace && sourceName == name -%}
+            {{- shared.Publish("catalogs", refName, map[string]any{
+              "refName": refName,
+              "namespace": namespace,
+              "name": name,
+              "key": sourceKey,
+              "policyYAML": cm.Data[sourceKey],
+              "immutable": dig(cm, "immutable") == true,
+            }) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  haptic-waf-selfservice-catalog-publications:
+    requires: [waf_selfservice_catalogs]
+    incremental:
+      bindingsTemplate: |-
+        {%- import "util-waf-governance" for WafGovernance -%}
+        {%- var gov = map[string]any{} -%}
+        {%- var _ = WafGovernance(gov) -%}
+        {%- if gov["selfServiceEnabled"].(bool) -%}
+          {{- toJSON(map[string]any{"waf_selfservice_catalogs": map[string]any{
+            "configMapName": gov["selfServiceConfigMapName"],
+            "dataKey": gov["selfServiceKey"],
+          }}) -}}
+        {%- else -%}
+          {}
+        {%- end -%}
+      group: haptic-waf-selfservice-catalogs
+      effects: [publishValue]
+    template: |-
+      {%- var namespace = dig_string(item, "", "metadata", "namespace") -%}
+      {%- var name = dig_string(item, "", "metadata", "name") -%}
+      {%- var cm = resources.waf_selfservice_catalogs.GetSingle(namespace, name) -%}
+      {%- if cm != nil && name == tostring(props["configMapName"]) -%}
+        {{- shared.Publish("catalogs", namespace, map[string]any{
+          "namespace": namespace,
+          "name": name,
+          "policyYAML": cm.Data[tostring(props["dataKey"])],
+          "resource": map[string]any{
+            "apiVersion": resources.waf_selfservice_catalogs.APIVersion(),
+            "kind": "ConfigMap",
+            "metadata": map[string]any{"namespace": namespace, "name": name},
+          },
+        }) -}}
+      {%- end -%}
+
+
+  features-000-policy-waf-catalogs:
+    template: |-
+      {{- render "haptic-waf-selfservice-catalog-publications" -}}
+      {{- render "haptic-waf-trusted-catalog-publications" -}}
+
+  features-001-policy-waf-catalog-validation:
+    template: '{{- render "util-policy-waf-catalog-scan" -}}'
+
+  util-policy-waf-catalog-scan:
+    template: |-
+      {%- import "util-policy-waf-catalog" for BuildWafCatalog -%}
+      {%- var _, _ = shared.ComputeIfAbsent("wafCatalog", func() any {
+        var catalog = map[string]any{}
+        BuildWafCatalog(extraContext, incremental_values("haptic-waf-trusted-catalogs", "catalogs"), incremental_values("haptic-waf-selfservice-catalogs", "catalogs"), catalog)
+        if renderMode == "admission" && dig_string(catalog, "", "defaultPolicyError") != "" { fail(tostring(catalog["defaultPolicyError"])) }
+        for _, diagnostic := range toSlice(catalog["diagnostics"]) {
+          var message = dig_string(diagnostic, "", "message")
+          if renderMode == "admission" { fail(message) }
+          recordEvent(dig(diagnostic, "resource"), dig_string(diagnostic, "", "reason"), message)
+        }
+        return catalog
+      }) -%}

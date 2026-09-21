@@ -401,7 +401,7 @@ them:
 ### 6a. Deleting the stripper — what is left
 
 Remove the `regexReplaceAll` calls and pattern variables from
-`templates/_libraries.tpl`. That is the whole change: comment-form correctness,
+`charts/helm-helpers/templates/_libraries.tpl`. That is the whole change: comment-form correctness,
 the statement-block conversions and the anti-regression lint shipped in !1543;
 the RULE #3 rewrite shipped in !1545. The chart already passes 696/696 with the
 stripper removed.

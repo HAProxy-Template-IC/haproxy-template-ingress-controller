@@ -169,7 +169,7 @@ func TestNewDeployStack_WiresTheAckedPlanSink(t *testing.T) {
 	sink := &recordingPlanSink{}
 
 	stack := NewDeployStack(bus, &coreconfig.Config{}, logger,
-		metrics.NewMetrics(prometheus.NewRegistry()), sink, nil)
+		metrics.NewMetrics(prometheus.NewRegistry()), sink, nil, nil)
 
 	assert.Same(t, sink, stack.Deployer.ackedPlans,
 		"without the sink the renderer keeps rendering from its own plans forever")

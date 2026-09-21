@@ -67,7 +67,7 @@ var exactCycleReplayPureFunctions = map[string]struct{}{
 	"make_guid": {}, "map": {}, builtinMapExtract: {}, builtinMarshalJSON: {}, builtinMarshalJSONIndent: {},
 	builtinMarshalYAML: {}, builtinMax: {}, builtinMD5: {}, "merge": {}, builtinMin: {},
 	"namespace": {}, builtinParseDuration: {}, builtinParseFloat: {}, builtinParseInt: {}, builtinParseTime: {},
-	builtinPow: {}, builtinQueryEscape: {}, declRegexp: {}, "regex_search": {}, "reject": {},
+	builtinPow: {}, builtinPublicKeyInfo: {}, builtinParseYAML: {}, builtinQueryEscape: {}, declRegexp: {}, "regex_search": {}, "reject": {},
 	"replace": {}, builtinReplaceAll: {}, builtinRuneCount: {}, "sanitize_regex": {}, "selectattr": {},
 	"semver_gte": {}, "seq": {}, builtinSHA1: {}, builtinSHA256: {}, "shard_slice": {},
 	"sort_by": {}, "sort_ints": {}, "sort_strings": {}, builtinSplit: {}, builtinSplitAfter: {},
@@ -693,6 +693,8 @@ func validExactCycleCallable(callable *scriggo.UsedNativeCallable) bool {
 		return slices.Contains([]string{"FindSubmatch", "Match", memberReplaceAll}, callable.MemberPath)
 	case "unmarshalJSON", "unmarshalYAML":
 		return callable.MemberPath == "Error"
+	case builtinParseYAML:
+		return callable.MemberPath == "[1].Error"
 	case builtinParseDuration:
 		return slices.Contains([]string{
 			"[0].Hours", "[0].Milliseconds", "[0].Minutes", "[0].Nanoseconds", "[0].Seconds", "[0].String",

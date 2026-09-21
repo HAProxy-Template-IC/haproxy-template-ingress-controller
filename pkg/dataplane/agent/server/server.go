@@ -20,6 +20,7 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -36,6 +37,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/cli"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/files"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 )
 
 // Timeouts of the HTTP endpoint. The read timeout has to cover a full config
@@ -62,11 +64,14 @@ type Config struct {
 	ReloadTimeout time.Duration
 	Username      string
 	Password      string
+	TLS           *transportsecurity.Source
 	AgentVersion  string
 	Logger        *slog.Logger
 	Registry      *prometheus.Registry
 	// DrainSocket is the unix socket path of GET /drain; empty disables it.
 	DrainSocket string
+	// AdminSocket exposes read-only state through the pod's filesystem permissions.
+	AdminSocket string
 	// DrainQuietPeriod ends the drain once no traffic frontend accepted a new
 	// connection for this long; DrainMaxWait bounds the whole drain.
 	DrainQuietPeriod time.Duration
@@ -152,11 +157,16 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	if err := validateDrain(cfg); err != nil {
 		return nil, err
 	}
-	// The drain socket lives in the tree the store owns, like the runtime
-	// sockets; reserving it keeps the store from treating it as a stray file.
+	if err := validateLocalSocketPaths(cfg); err != nil {
+		return nil, err
+	}
+	// Local sockets are reserved from file deployment and stray-file cleanup.
 	reserved := []string{cfg.MasterSocket, cfg.WorkerSocket}
 	if cfg.DrainSocket != "" {
 		reserved = append(reserved, cfg.DrainSocket)
+	}
+	if cfg.AdminSocket != "" {
+		reserved = append(reserved, cfg.AdminSocket)
 	}
 	store, err := files.NewStore(cfg.BaseDir, cfg.Logger, reserved...)
 	if err != nil {
@@ -221,6 +231,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.cfg.Listen, err)
 	}
+	if s.cfg.TLS != nil {
+		listener = tls.NewListener(listener, s.cfg.TLS.ServerConfig())
+	}
 	bound := listener.Addr().String()
 	s.addr.Store(&bound)
 
@@ -231,6 +244,9 @@ func (s *Server) Start(ctx context.Context) error {
 	group.Go(func() error { return s.initialise(groupCtx) })
 	if s.cfg.DrainSocket != "" {
 		group.Go(func() error { return s.serveDrain(groupCtx) })
+	}
+	if s.cfg.AdminSocket != "" {
+		group.Go(func() error { return s.serveAdmin(groupCtx) })
 	}
 	group.Go(func() error {
 		if err := s.http.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -375,9 +391,17 @@ func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	writeText(w, http.StatusOK, "ready")
 }
 
-// authenticated wraps a handler in constant-time basic auth.
+// TLS mode requires the controller certificate; plaintext mode uses Basic auth.
 func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.TLS != nil {
+			if err := s.cfg.TLS.VerifyClient(r.TLS); err != nil {
+				writeText(w, http.StatusUnauthorized, "client certificate rejected")
+				return
+			}
+			next(w, r)
+			return
+		}
 		user, password, ok := r.BasicAuth()
 		userOK := subtle.ConstantTimeCompare([]byte(user), []byte(s.cfg.Username)) == 1
 		passOK := subtle.ConstantTimeCompare([]byte(password), []byte(s.cfg.Password)) == 1

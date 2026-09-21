@@ -183,7 +183,7 @@ func TestMigratedChartRootsHaveNoAmbientBackendOrTrustedCatalogReads(t *testing.
 			required:  []string{"endpoints"},
 		},
 		"varnish backend": {
-			path: "haptic-annotations/70-caching.yaml", snippet: "backends-870-haptic-varnish-cache",
+			path: "http-policies/70-caching.yaml", snippet: "backends-870-haptic-varnish-cache",
 			forbidden: []string{"BackendServers("},
 			required:  []string{"endpoints"},
 		},
@@ -196,7 +196,7 @@ func TestMigratedChartRootsHaveNoAmbientBackendOrTrustedCatalogReads(t *testing.
 			required: []string{"endpoints"},
 		},
 		"trusted WAF catalogs": {
-			path: "haptic-annotations/83-waf-policies.yaml", snippet: "util-waf-haptic-coraza-scan",
+			path: "http-policies/83-waf-catalog-publications.yaml", snippet: "util-policy-waf-catalog-scan",
 			forbidden: []string{"resources.configmaps.GetSingle("},
 		},
 	}
@@ -401,7 +401,7 @@ func loadKubernetesBackendPublicationSnippets(
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))
 	for _, relativePath := range []string{
-		"base/library.yaml", "kubernetes-backends/library.yaml", "haptic-annotations/70-caching.yaml",
+		"base/library.yaml", "kubernetes-backends/library.yaml", "http-policies/70-caching.yaml",
 	} {
 		content, err := os.ReadFile(filepath.Join(chartRoot, relativePath))
 		require.NoError(t, err)

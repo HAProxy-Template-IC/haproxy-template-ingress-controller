@@ -29,8 +29,7 @@ import (
 // It's a pure component with no EventBus dependency, designed to be called
 // directly from the CLI or from the DryRunValidator.
 type Runner struct {
-	// engineTemplate is a pre-compiled template engine WITHOUT path filters.
-	// Workers will create their own engines with worker-specific paths.
+	// engineTemplate is shared; paths and filter state belong to each render.
 	engineTemplate  templating.Engine
 	validationPaths *dataplane.ValidationPaths // Base paths (used to create worker-specific paths)
 	config          *config.Config
@@ -75,7 +74,7 @@ type Options struct {
 	Logger *slog.Logger
 
 	// Workers is the number of parallel workers for test execution.
-	// Default (0): runtime.GOMAXPROCS(0), which follows the pod's CPU limit.
+	// Default (0): GOMAXPROCS, capped at one worker per 128 MiB of GOMEMLIMIT.
 	// Set to 1 for sequential execution.
 	Workers int
 

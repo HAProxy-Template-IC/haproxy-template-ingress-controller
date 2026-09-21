@@ -188,21 +188,20 @@ func TestIncrementalGroupAuthorizationIsScopeLocal(t *testing.T) {
 
 	t.Run("incremental", func(t *testing.T) {
 		runtime := &incrementalRenderSession{
-			state:        state,
-			requested:    map[string]bool{"mounts": true},
-			calls:        map[string][]incrementalCall{},
-			scopedCalls:  map[string]map[string][]incrementalCall{},
-			callStatuses: map[string]map[string]incrementalScopeCallStatus{},
+			state:       state,
+			requested:   map[string]bool{"mounts": true},
+			calls:       map[string][]incrementalCall{},
+			scopedCalls: map[incrementalCallScope]incrementalScopeCalls{},
 		}
-		runtime.calls, runtime.scopedCalls, runtime.callStatuses = recordIncrementalCall(runtime.calls, runtime.scopedCalls, runtime.callStatuses,
+		runtime.calls, runtime.scopedCalls = recordIncrementalCall(runtime.calls, runtime.scopedCalls,
 			"mounts", components, incrementalCall{
 				scope: "haproxy.cfg", component: "100-first",
 			})
-		runtime.calls, runtime.scopedCalls, runtime.callStatuses = recordIncrementalCall(runtime.calls, runtime.scopedCalls, runtime.callStatuses,
+		runtime.calls, runtime.scopedCalls = recordIncrementalCall(runtime.calls, runtime.scopedCalls,
 			"mounts", components, incrementalCall{
 				scope: "routes.map", component: "100-first",
 			})
-		runtime.calls, runtime.scopedCalls, runtime.callStatuses = recordIncrementalCall(runtime.calls, runtime.scopedCalls, runtime.callStatuses,
+		runtime.calls, runtime.scopedCalls = recordIncrementalCall(runtime.calls, runtime.scopedCalls,
 			"mounts", components, incrementalCall{
 				scope: "haproxy.cfg", component: "200-second",
 			})
@@ -210,11 +209,11 @@ func TestIncrementalGroupAuthorizationIsScopeLocal(t *testing.T) {
 		require.NoError(t, runtime.requireProducerGroupCall("mounts", "haproxy.cfg"))
 		require.ErrorContains(t, runtime.requireProducerGroupCall("mounts", "routes.map"), "1 trailing calls")
 		require.NoError(t, runtime.requireProducerGroupCall("mounts", "errors.http"))
-		runtime.calls, runtime.scopedCalls, runtime.callStatuses = recordIncrementalCall(runtime.calls, runtime.scopedCalls, runtime.callStatuses,
+		runtime.calls, runtime.scopedCalls = recordIncrementalCall(runtime.calls, runtime.scopedCalls,
 			"mounts", components, incrementalCall{scope: "broken.map", component: "200-second"})
 		require.ErrorContains(t, runtime.requireProducerGroupCall("mounts", "broken.map"), "canonical order")
 
-		runtime.calls, runtime.scopedCalls, runtime.callStatuses = recordIncrementalCall(runtime.calls, runtime.scopedCalls, runtime.callStatuses,
+		runtime.calls, runtime.scopedCalls = recordIncrementalCall(runtime.calls, runtime.scopedCalls,
 			"mounts", components, incrementalCall{
 				scope: "routes.map", component: "200-second",
 			})
@@ -222,34 +221,32 @@ func TestIncrementalGroupAuthorizationIsScopeLocal(t *testing.T) {
 
 		auxOnly := &incrementalRenderSession{
 			state: state, requested: map[string]bool{"mounts": true},
-			calls: map[string][]incrementalCall{}, scopedCalls: map[string]map[string][]incrementalCall{},
-			callStatuses: map[string]map[string]incrementalScopeCallStatus{},
+			calls: map[string][]incrementalCall{}, scopedCalls: map[incrementalCallScope]incrementalScopeCalls{},
 		}
 		require.ErrorContains(t, auxOnly.requireProducerGroupCall("mounts", "consumer.map"), "neither the current root")
-		auxOnly.calls, auxOnly.scopedCalls, auxOnly.callStatuses = recordIncrementalCall(auxOnly.calls, auxOnly.scopedCalls, auxOnly.callStatuses,
+		auxOnly.calls, auxOnly.scopedCalls = recordIncrementalCall(auxOnly.calls, auxOnly.scopedCalls,
 			"mounts", components, incrementalCall{scope: "producer.map", component: "100-first"})
-		auxOnly.calls, auxOnly.scopedCalls, auxOnly.callStatuses = recordIncrementalCall(auxOnly.calls, auxOnly.scopedCalls, auxOnly.callStatuses,
+		auxOnly.calls, auxOnly.scopedCalls = recordIncrementalCall(auxOnly.calls, auxOnly.scopedCalls,
 			"mounts", components, incrementalCall{scope: "producer.map", component: "200-second"})
 		require.ErrorContains(t, auxOnly.requireProducerGroupCall("mounts", "consumer.map"), "neither the current root")
 	})
 
 	t.Run("cold", func(t *testing.T) {
 		renderer := &coldIncrementalRenderer{
-			state:        state,
-			requested:    map[string]bool{"mounts": true},
-			calls:        map[string][]incrementalCall{},
-			scopedCalls:  map[string]map[string][]incrementalCall{},
-			callStatuses: map[string]map[string]incrementalScopeCallStatus{},
+			state:       state,
+			requested:   map[string]bool{"mounts": true},
+			calls:       map[string][]incrementalCall{},
+			scopedCalls: map[incrementalCallScope]incrementalScopeCalls{},
 		}
-		renderer.calls, renderer.scopedCalls, renderer.callStatuses = recordIncrementalCall(renderer.calls, renderer.scopedCalls, renderer.callStatuses,
+		renderer.calls, renderer.scopedCalls = recordIncrementalCall(renderer.calls, renderer.scopedCalls,
 			"mounts", components, incrementalCall{
 				scope: "haproxy.cfg", component: "100-first",
 			})
-		renderer.calls, renderer.scopedCalls, renderer.callStatuses = recordIncrementalCall(renderer.calls, renderer.scopedCalls, renderer.callStatuses,
+		renderer.calls, renderer.scopedCalls = recordIncrementalCall(renderer.calls, renderer.scopedCalls,
 			"mounts", components, incrementalCall{
 				scope: "routes.map", component: "100-first",
 			})
-		renderer.calls, renderer.scopedCalls, renderer.callStatuses = recordIncrementalCall(renderer.calls, renderer.scopedCalls, renderer.callStatuses,
+		renderer.calls, renderer.scopedCalls = recordIncrementalCall(renderer.calls, renderer.scopedCalls,
 			"mounts", components, incrementalCall{
 				scope: "haproxy.cfg", component: "200-second",
 			})
@@ -257,11 +254,11 @@ func TestIncrementalGroupAuthorizationIsScopeLocal(t *testing.T) {
 		require.NoError(t, renderer.requireProducerGroupCall("mounts", "haproxy.cfg"))
 		require.ErrorContains(t, renderer.requireProducerGroupCall("mounts", "routes.map"), "1 trailing calls")
 		require.NoError(t, renderer.requireProducerGroupCall("mounts", "errors.http"))
-		renderer.calls, renderer.scopedCalls, renderer.callStatuses = recordIncrementalCall(renderer.calls, renderer.scopedCalls, renderer.callStatuses,
+		renderer.calls, renderer.scopedCalls = recordIncrementalCall(renderer.calls, renderer.scopedCalls,
 			"mounts", components, incrementalCall{scope: "broken.map", component: "200-second"})
 		require.ErrorContains(t, renderer.requireProducerGroupCall("mounts", "broken.map"), "canonical order")
 
-		renderer.calls, renderer.scopedCalls, renderer.callStatuses = recordIncrementalCall(renderer.calls, renderer.scopedCalls, renderer.callStatuses,
+		renderer.calls, renderer.scopedCalls = recordIncrementalCall(renderer.calls, renderer.scopedCalls,
 			"mounts", components, incrementalCall{
 				scope: "routes.map", component: "200-second",
 			})
@@ -269,13 +266,12 @@ func TestIncrementalGroupAuthorizationIsScopeLocal(t *testing.T) {
 
 		auxOnly := &coldIncrementalRenderer{
 			state: state, requested: map[string]bool{"mounts": true},
-			calls: map[string][]incrementalCall{}, scopedCalls: map[string]map[string][]incrementalCall{},
-			callStatuses: map[string]map[string]incrementalScopeCallStatus{},
+			calls: map[string][]incrementalCall{}, scopedCalls: map[incrementalCallScope]incrementalScopeCalls{},
 		}
 		require.ErrorContains(t, auxOnly.requireProducerGroupCall("mounts", "consumer.map"), "neither the current root")
-		auxOnly.calls, auxOnly.scopedCalls, auxOnly.callStatuses = recordIncrementalCall(auxOnly.calls, auxOnly.scopedCalls, auxOnly.callStatuses,
+		auxOnly.calls, auxOnly.scopedCalls = recordIncrementalCall(auxOnly.calls, auxOnly.scopedCalls,
 			"mounts", components, incrementalCall{scope: "producer.map", component: "100-first"})
-		auxOnly.calls, auxOnly.scopedCalls, auxOnly.callStatuses = recordIncrementalCall(auxOnly.calls, auxOnly.scopedCalls, auxOnly.callStatuses,
+		auxOnly.calls, auxOnly.scopedCalls = recordIncrementalCall(auxOnly.calls, auxOnly.scopedCalls,
 			"mounts", components, incrementalCall{scope: "producer.map", component: "200-second"})
 		require.ErrorContains(t, auxOnly.requireProducerGroupCall("mounts", "consumer.map"), "neither the current root")
 	})

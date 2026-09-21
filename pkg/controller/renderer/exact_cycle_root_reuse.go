@@ -245,11 +245,11 @@ func (r *incrementalRenderSession) saveRootCallBookkeeping(
 		if _, seen := saved.groups[group]; seen {
 			continue
 		}
-		status, known := r.callStatuses[group][scope]
+		entry, known := r.scopedCalls[incrementalCallScope{group: group, scope: scope}]
 		saved.groups[group] = rootGroupBookkeeping{
 			calls:         len(r.calls[group]),
-			scopedCalls:   len(r.scopedCalls[group][scope]),
-			status:        status,
+			scopedCalls:   len(entry.calls),
+			status:        entry.status,
 			statusKnown:   known,
 			valueAccesses: r.valueAccesses[group],
 		}
@@ -262,18 +262,18 @@ func (r *incrementalRenderSession) restoreRootCallBookkeeping(scope string, save
 		if calls := r.calls[group]; len(calls) > state.calls {
 			r.calls[group] = calls[:state.calls]
 		}
-		if byScope := r.scopedCalls[group]; byScope != nil {
-			if calls := byScope[scope]; len(calls) > state.scopedCalls {
-				byScope[scope] = calls[:state.scopedCalls]
+		key := incrementalCallScope{group: group, scope: scope}
+		if state.statusKnown {
+			entry := r.scopedCalls[key]
+			if len(entry.calls) > state.scopedCalls {
+				entry.calls = entry.calls[:state.scopedCalls]
 			}
+			entry.status = state.status
+			r.scopedCalls[key] = entry
+		} else {
+			delete(r.scopedCalls, key)
 		}
-		if statuses := r.callStatuses[group]; statuses != nil {
-			if state.statusKnown {
-				statuses[scope] = state.status
-			} else {
-				delete(statuses, scope)
-			}
-		}
+
 		if state.valueAccesses == 0 {
 			delete(r.valueAccesses, group)
 		} else {

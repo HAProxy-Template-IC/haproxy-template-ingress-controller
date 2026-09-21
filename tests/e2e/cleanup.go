@@ -214,23 +214,9 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 
 	for _, podBytes := range pods {
 		pod := string(podBytes)
-		// curl from inside the agent container against localhost. Auth: the
-		// agent rejects unauthenticated requests on every route, localhost
-		// included. The container has $DATAPLANE_USERNAME /
-		// $DATAPLANE_PASSWORD in its environment (set from the credentials
-		// Secret in the deployment spec); we pass them through curl's -u with
-		// shell expansion. Without the auth this returns 401 and every
-		// artifact is empty (verified on MR !1019 e2e [3.1]).
-		//
-		// /v1/state answers the two questions a post-mortem starts with: which
-		// plan the pod applied and is running, and what the agent last did
-		// with an apply — plus the digest of every file it holds and the
-		// runtime inventory it diffs against.
-		curlAuth := `curl -sS --max-time 5 -u "$DATAPLANE_USERNAME:$DATAPLANE_PASSWORD"`
 		dumpCommand(t, dumpDir, "haproxy-agent-state-"+pod+".json",
 			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
-			"exec", pod, "-c", "agent", "--",
-			"sh", "-c", curlAuth+" http://localhost:5555/v1/state")
+			"exec", pod, "-c", "agent", "--", "haptic", "agent", "state", "-o", "json")
 
 		// The configuration HAProxy is running, read from disk — single shot,
 		// no per-backend iteration needed.

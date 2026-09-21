@@ -20,6 +20,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 )
 
 // clientKey is everything that gives a client authority over one pod: a
@@ -33,6 +34,7 @@ type clientKey struct {
 // agentClients keeps one keep-alive client per pod, so a deployment reuses the
 // connection the previous one opened instead of paying a handshake per apply.
 type agentClients struct {
+	tls          *transportsecurity.Source
 	stateTimeout time.Duration
 	applyTimeout time.Duration
 
@@ -63,6 +65,7 @@ func (a *agentClients) For(endpoint *dataplane.Endpoint) (*agentclient.Client, e
 		Password:           endpoint.Password,
 		Timeout:            a.stateTimeout,
 		PerPodApplyTimeout: a.applyTimeout,
+		TLS:                a.tls,
 	})
 	if err != nil {
 		return nil, err

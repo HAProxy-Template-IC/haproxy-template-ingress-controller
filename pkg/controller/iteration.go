@@ -193,6 +193,7 @@ func startIteration(
 	// gate below, so it's hoisted to a local rather than constructed inline.
 	typeBootstrapper := newIterationTypeBootstrapper(k8sClient, logger)
 	setup := setupComponents(ctx, infra.IntrospectionRegistry, infra.eventDropMetrics, typeBootstrapper, crdName, logger)
+	setup.AgentTLS = infra.AgentTLS
 	reloadAuthority := newIterationReloadAuthority()
 	startIterationReloadObserver(setup, reloadAuthority)
 	defer func() {

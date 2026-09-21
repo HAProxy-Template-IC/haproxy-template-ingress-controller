@@ -1,0 +1,187 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: haproxyroutepolicies.haproxy-haptic.org
+spec:
+  group: haproxy-haptic.org
+  names:
+    kind: HAProxyRoutePolicy
+    listKind: HAProxyRoutePolicyList
+    plural: haproxyroutepolicies
+    singular: haproxyroutepolicy
+    shortNames: [hrpolicy]
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              minProperties: 1
+              description: Enforcement attached to an HTTPRoute or GRPCRoute rule in the same namespace.
+              properties:
+                authentication:
+                  type: object
+                  minProperties: 1
+                  description: Both checks apply when JWT and API-key authentication are configured.
+                  properties:
+                    jwt:
+                      type: object
+                      required: [secretRef]
+                      properties:
+                        secretRef:
+                          type: object
+                          required: [name]
+                          description: Immutable same-namespace Secret containing the public key in pubkey.pem. Rotate by changing the reference.
+                          properties:
+                            name:
+                              type: string
+                              minLength: 1
+                              maxLength: 253
+                              pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'
+                        algorithm:
+                          type: string
+                          default: RS256
+                          enum: [RS256, RS384, RS512, ES256, ES384, ES512, PS256, PS384, PS512]
+                        issuer:
+                          type: string
+                          minLength: 1
+                          maxLength: 2048
+                        audience:
+                          type: string
+                          minLength: 1
+                          maxLength: 2048
+                        requiredClaims:
+                          type: array
+                          maxItems: 32
+                          x-kubernetes-list-type: set
+                          items:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: '^[A-Za-z0-9_-]+$'
+                        forwardClaims:
+                          type: array
+                          maxItems: 32
+                          x-kubernetes-list-type: map
+                          x-kubernetes-list-map-keys: [header]
+                          items:
+                            type: object
+                            required: [claim, header]
+                            properties:
+                              claim:
+                                type: string
+                                maxLength: 128
+                                pattern: '^[A-Za-z0-9_-]+$'
+                              header:
+                                type: string
+                                maxLength: 128
+                                pattern: '^[A-Za-z][A-Za-z0-9-]*$'
+                    apiKey:
+                      type: object
+                      required: [secretRef]
+                      properties:
+                        secretRef:
+                          type: object
+                          required: [name]
+                          description: Immutable same-namespace Secret containing newline-separated key:consumer entries in keys. Rotate by changing the reference.
+                          properties:
+                            name:
+                              type: string
+                              minLength: 1
+                              maxLength: 253
+                              pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'
+                        header:
+                          type: string
+                          default: X-API-Key
+                          maxLength: 128
+                          pattern: '^[A-Za-z][A-Za-z0-9-]*$'
+                        consumerHeader:
+                          type: string
+                          maxLength: 128
+                          pattern: '^[A-Za-z][A-Za-z0-9-]*$'
+                rateLimit:
+                  type: object
+                  required: [requests]
+                  description: A fleet-wide budget shared by every rule that references this policy.
+                  properties:
+                    requests:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                    period:
+                      type: string
+                      default: 1s
+                      maxLength: 16
+                      pattern: '^[0-9]+(ms|s|m|h|d)$'
+                    burst:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: Defaults to requests.
+                    algorithm:
+                      type: string
+                      default: token-bucket
+                      enum: [token-bucket, gcra]
+                    key:
+                      type: string
+                      default: ip
+                      enum: [ip, consumer]
+                waf:
+                  type: object
+                  required: [policy]
+                  properties:
+                    policy:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                      pattern: '^[a-z0-9][a-z0-9._-]{0,62}$'
+                      description: Policy in an immutable referenced catalog, or in the administrator's inline or immutable trusted catalog.
+                    catalogRef:
+                      type: object
+                      required: [name]
+                      description: Immutable ConfigMap in the policy namespace; requires self-service WAF catalogs to be enabled.
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                          pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                        key:
+                          type: string
+                          default: policies.yaml
+                          minLength: 1
+                          maxLength: 253
+                          pattern: '^[-._A-Za-z0-9]+$'
+                cache:
+                  type: object
+                  description: GET and HEAD response caching; unsupported on GRPCRoute.
+                  properties:
+                    ttlSeconds:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      description: Omit to follow the origin's Cache-Control.
+                    maxObjectSizeBytes:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                    varyHeaders:
+                      type: array
+                      maxItems: 32
+                      x-kubernetes-list-type: set
+                      items:
+                        type: string
+                        maxLength: 128
+                        pattern: '^[A-Za-z][A-Za-z0-9-]*$'

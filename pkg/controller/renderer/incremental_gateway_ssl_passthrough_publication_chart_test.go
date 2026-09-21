@@ -216,6 +216,7 @@ func loadGatewaySSLPassthroughPublicationSnippets(t *testing.T) map[string]confi
 		"util-resource-helpers": true, "util-reference-grant-permitted": true,
 		"util-hostname-intersect-gateway": true, "util-publish-gateway-http-ssl-passthrough": true,
 		"util-publish-gateway-tls-ssl-passthrough": true,
+		"util-gateway-http-ssl-passthrough":        true,
 		"gateway-ssl-passthrough-100-http":         true, "gateway-ssl-passthrough-200-tls": true,
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))

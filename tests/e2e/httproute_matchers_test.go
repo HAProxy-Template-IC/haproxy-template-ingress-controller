@@ -33,7 +33,7 @@ import (
 func TestHTTPRoutePaths(t *testing.T) {
 	t.Parallel()
 	host := "httproute-paths.localdev.me"
-	var fwd GatewayForward
+	var fwd ServiceForward
 
 	feature := features.New("HTTPRoute: path matching variants").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -62,14 +62,6 @@ func TestHTTPRoutePaths(t *testing.T) {
 				},
 			})
 
-			// Gate on the controller deploying THIS route to every HAProxy pod
-			// before asserting. The marker is route-gated (issue #71): the bare
-			// namespace already enters spec.Content via the Gateway's
-			// route-independent typed-access-smoke comment (rendered when the
-			// Gateway is created, before this route), so it would pass off a
-			// pre-route render and race the route's own throttled deploy. The
-			// fragment "gtw_<ns>_echo-paths_" appears only once this route's
-			// backends render; <ns> is unique per test.
 			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-paths")
 			return ctx
 		}).
@@ -107,7 +99,7 @@ func TestHTTPRoutePaths(t *testing.T) {
 func TestHTTPRouteMethods(t *testing.T) {
 	t.Parallel()
 	host := "httproute-methods.localdev.me"
-	var fwd GatewayForward
+	var fwd ServiceForward
 
 	feature := features.New("HTTPRoute: method matching").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -137,14 +129,6 @@ func TestHTTPRouteMethods(t *testing.T) {
 				},
 			})
 
-			// Gate on the controller deploying THIS route to every HAProxy pod
-			// before asserting. The marker is route-gated (issue #71): the bare
-			// namespace already enters spec.Content via the Gateway's
-			// route-independent typed-access-smoke comment (rendered when the
-			// Gateway is created, before this route), so it would pass off a
-			// pre-route render and race the route's own throttled deploy. The
-			// fragment "gtw_<ns>_echo-methods_" appears only once this route's
-			// backends render; <ns> is unique per test.
 			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-methods")
 			return ctx
 		}).
@@ -168,7 +152,7 @@ func TestHTTPRouteMethods(t *testing.T) {
 func TestHTTPRouteHeaders(t *testing.T) {
 	t.Parallel()
 	host := "httproute-headers.localdev.me"
-	var fwd GatewayForward
+	var fwd ServiceForward
 
 	feature := features.New("HTTPRoute: header matching").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -197,14 +181,6 @@ func TestHTTPRouteHeaders(t *testing.T) {
 				},
 			})
 
-			// Gate on the controller deploying THIS route to every HAProxy pod
-			// before asserting. The marker is route-gated (issue #71): the bare
-			// namespace already enters spec.Content via the Gateway's
-			// route-independent typed-access-smoke comment (rendered when the
-			// Gateway is created, before this route), so it would pass off a
-			// pre-route render and race the route's own throttled deploy. The
-			// fragment "gtw_<ns>_echo-headers_" appears only once this route's
-			// backends render; <ns> is unique per test.
 			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-headers")
 			return ctx
 		}).
@@ -227,7 +203,7 @@ func TestHTTPRouteHeaders(t *testing.T) {
 func TestHTTPRouteQuery(t *testing.T) {
 	t.Parallel()
 	host := "httproute-query.localdev.me"
-	var fwd GatewayForward
+	var fwd ServiceForward
 
 	feature := features.New("HTTPRoute: query parameter matching").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -256,14 +232,6 @@ func TestHTTPRouteQuery(t *testing.T) {
 				},
 			})
 
-			// Gate on the controller deploying THIS route to every HAProxy pod
-			// before asserting. The marker is route-gated (issue #71): the bare
-			// namespace already enters spec.Content via the Gateway's
-			// route-independent typed-access-smoke comment (rendered when the
-			// Gateway is created, before this route), so it would pass off a
-			// pre-route render and race the route's own throttled deploy. The
-			// fragment "gtw_<ns>_echo-query_" appears only once this route's
-			// backends render; <ns> is unique per test.
 			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-query")
 			return ctx
 		}).

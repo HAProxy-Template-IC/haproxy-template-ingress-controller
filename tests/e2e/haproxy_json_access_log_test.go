@@ -382,7 +382,7 @@ func TestHAProxyJSONAccessLogGatewayResource(t *testing.T) {
 	host := "haproxy-json-access-log-gw.localdev.me"
 
 	var marker, ns string
-	var fwd GatewayForward
+	var fwd ServiceForward
 	since := time.Now().Add(-5 * time.Second)
 
 	feature := features.New("HAProxy access log: Gateway traffic reports the HTTPRoute as its owning resource").
@@ -424,11 +424,11 @@ func TestHAProxyJSONAccessLogGatewayResource(t *testing.T) {
 			want := ns + "/echo-json-log-gw"
 			got := recordString(t, rec, "resource")
 			if got != want {
-				t.Errorf("resource = %q, want %q — a %q-shaped value means the identity cascade fell through to the backend-name split", got, want, "gtw/"+ns)
+				t.Errorf("resource = %q, want %q", got, want)
 			}
-			// gw_route additionally names WHICH rule of the route matched.
-			if got := recordString(t, rec, "gw_route"); !strings.HasPrefix(got, ns+"_echo-json-log-gw") {
-				t.Errorf("gw_route = %q, want a %s_echo-json-log-gw_<ruleIdx> value", got, ns)
+			wantRule := "h_" + ns + "_echo-json-log-gw_0"
+			if got := recordString(t, rec, "gw_route"); got != wantRule {
+				t.Errorf("gw_route = %q, want %q", got, wantRule)
 			}
 			return ctx
 		}).

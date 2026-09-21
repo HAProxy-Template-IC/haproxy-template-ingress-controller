@@ -15,6 +15,7 @@ apiserver
 apiserver's
 Apply's
 arg
+Argo CD
 args
 asdf
 async

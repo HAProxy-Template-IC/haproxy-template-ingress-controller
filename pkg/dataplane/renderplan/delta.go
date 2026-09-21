@@ -694,6 +694,14 @@ func (d *Delta) RequiresFullValidation() (bool, error) {
 	return d.structural, nil
 }
 
+// SectionChanges validates the complete delta and returns detached section changes.
+func (d *Delta) SectionChanges() ([]SequenceChange[Section], error) {
+	if err := d.ValidateAuthentication(); err != nil {
+		return nil, err
+	}
+	return detachSequenceChanges(d.sections, ownSection), nil
+}
+
 // Changes returns detached copies of only the records changed by this delta.
 func (d *Delta) Changes() (Changes, error) {
 	if err := d.ValidateAuthentication(); err != nil {

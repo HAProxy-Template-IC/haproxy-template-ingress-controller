@@ -85,6 +85,8 @@ var incrementalDeclarationNames = [...]string{
 	builtinHmacSHA256,
 	builtinSHA1,
 	builtinSHA256,
+	builtinPublicKeyInfo,
+	builtinParseYAML,
 	builtinBase64,
 	builtinHex,
 	builtinMarshalJSON,
@@ -196,6 +198,8 @@ var incrementalSynchronousDeclarationNames = [...]string{
 	builtinHmacSHA256,
 	builtinSHA1,
 	builtinSHA256,
+	builtinPublicKeyInfo,
+	builtinParseYAML,
 	builtinBase64,
 	builtinHex,
 	builtinMarshalJSON,
@@ -246,6 +250,7 @@ var incrementalSynchronousDeclarationNames = [...]string{
 var incrementalSynchronousDeclarationMembers = map[string][]string{
 	builtinParseDuration: {"[0].Milliseconds"},
 	builtinParseTime:     {"UnixNano"},
+	builtinParseYAML:     {"[1].Error"},
 }
 
 func buildScriggoIncrementalGlobals(

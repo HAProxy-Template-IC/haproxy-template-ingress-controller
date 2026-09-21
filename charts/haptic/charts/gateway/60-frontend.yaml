@@ -1,4 +1,9 @@
 templateSnippets:
+  frontend-routing-owner-500-gateway:
+    template: |-
+      http-request set-var(txn.resource_namespace) var(txn.gw_rule_id),field(2,_) if { var(txn.gw_rule_id) -m found }
+      http-request set-var(txn.resource_name) var(txn.gw_rule_id),field(3,_) if { var(txn.gw_rule_id) -m found }
+
   gateway-listener-hostname-claims-100-gateway:
     requires: [gateways]
     incremental:
@@ -101,7 +106,7 @@ templateSnippets:
   log-fields-500-gateway:
     requires: [gateways]
     template: |-
-      {# txn.gw_rule_id (<ns>_<name>_<ruleIdx>) comes from frontend-matchers-advanced-500-gateway;
+      {# txn.gw_rule_id (<kind>_<ns>_<name>_<ruleIdx>) comes from frontend-matchers-advanced-500-gateway;
           gated on Gateways existing so an Ingress-only install has no permanently-empty log key. #}
       {{- render "util-gateway-listener-hostname-claim-publications" -}}
       {%- if incremental_value_count("gateway-listener-hostname-claims", "present") > 0 %}
@@ -115,7 +120,7 @@ templateSnippets:
     template: |
       {{- render "util-gateway-route-frontend-publications" -}}
       {%- if incremental_value_count("gateway-route-candidates", "presence-http") > 0 || incremental_value_count("gateway-route-candidates", "presence-grpc") > 0 -%}
-      {# txn.path_match qualifier format: GW_ROUTE_ID:<route_type>:<routeIds>, e.g. GW_ROUTE_ID:http:ns1_route1_0__ns2_route2_1 #}
+      {# txn.path_match qualifier format: GW_ROUTE_ID:<route_type>:<routeIds>, e.g. GW_ROUTE_ID:http:h_ns1_route1_0__h_ns2_route2_1 #}
       # gateway/frontend-matchers-advanced-010-route-id-setup
       http-request set-var(req.gw_route_type) var(txn.path_match),field(2,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
       http-request set-var(req.gw_routeId) var(txn.path_match),field(3,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
@@ -142,6 +147,8 @@ templateSnippets:
   util-publish-gateway-route-frontend:
     requires: [grpcroutes, httproutes, referencegrants, services]
     template: |
+      {%- import "util-gateway-route-identity" for GatewayRoutePrefix -%}
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- import "util-config-value-injection" for ConfigValueInjection -%}
@@ -238,7 +245,7 @@ templateSnippets:
             } else {
               var conditions = []string{"!{ var(txn.gw_rule_id) -m found }"}
               if pathOnly {
-                conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + namespace + "_" + name + "_\" }")
+                conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + GatewayRoutePrefix(routeKind, namespace, name) + "_\" }")
                 if pathType == "Exact" {
                   conditions = append(conditions, "{ path \"" + pathValue + "\" }")
                 } else if pathType == "RegularExpression" {
@@ -321,8 +328,7 @@ templateSnippets:
             qualifier = "BACKEND:gw-invalid-backend"
           } else if len(backendRefs) == 1 {
             var backendRef = validRefs[0]
-            qualifier = "BACKEND:gtw_" + namespace + "_" + name + "_" +
-              dig_string(backendRef, "", "name") + "_" + dig_string(backendRef, "", "port")
+            qualifier = "BACKEND:" + BackendNameGateway(route, backendRef)
           } else {
             var totalWeight = 0
             for _, backendRef := range backendRefs {

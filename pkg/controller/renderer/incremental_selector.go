@@ -366,11 +366,11 @@ func (r *incrementalRenderSession) requireProducerGroupCall(group, scope string)
 	if scope == "" {
 		return fmt.Errorf("incremental publication group %q must complete its canonical root call before selection: selection ran outside a root template", group)
 	}
-	status, started := r.callStatuses[group][scope]
-	if started && status.complete(len(components)) {
+	entry, started := r.scopedCalls[incrementalCallScope{group: group, scope: scope}]
+	if started && entry.status.complete(len(components)) {
 		return nil
 	}
-	mainStatus := r.callStatuses[group][names.MainTemplateName]
+	mainStatus := r.scopedCalls[incrementalCallScope{group: group, scope: names.MainTemplateName}].status
 	if !started && mainStatus.complete(len(components)) {
 		return nil
 	}
@@ -409,11 +409,11 @@ func (r *coldIncrementalRenderer) requireProducerGroupCall(group, scope string) 
 	if scope == "" {
 		return fmt.Errorf("incremental publication group %q must complete its canonical root call before selection: selection ran outside a root template", group)
 	}
-	status, started := r.callStatuses[group][scope]
-	if started && status.complete(len(components)) {
+	entry, started := r.scopedCalls[incrementalCallScope{group: group, scope: scope}]
+	if started && entry.status.complete(len(components)) {
 		return nil
 	}
-	mainStatus := r.callStatuses[group][names.MainTemplateName]
+	mainStatus := r.scopedCalls[incrementalCallScope{group: group, scope: names.MainTemplateName}].status
 	if !started && mainStatus.complete(len(components)) {
 		return nil
 	}

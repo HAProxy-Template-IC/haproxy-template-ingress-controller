@@ -722,11 +722,12 @@ func loadHapticAnnotationsWAFPublicationSnippet(t *testing.T) map[string]config.
 	wanted := map[string]bool{
 		"haptic-waf-ingress-publications": true,
 		"util-waf-governance":             true,
+		"util-policy-waf-governance":      true,
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))
 	for _, path := range []string{
 		"haptic-annotations/83-waf-policies.yaml",
-		"ingress-annotations-compat/library.yaml",
+		"http-policies/81-waf-governance.yaml",
 	} {
 		content, err := os.ReadFile(filepath.Join(chartRoot, path))
 		require.NoError(t, err)

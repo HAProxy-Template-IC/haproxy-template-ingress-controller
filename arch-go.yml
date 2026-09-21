@@ -24,6 +24,7 @@ dependenciesRules:
         - "**.pkg.rendercontent.**"  # Rendered-output value types
         - "**.pkg.stores.**"       # Store provider abstractions
         - "**.pkg.templating.**"
+        - "**.pkg.transportsecurity.**"
         - "**.pkg.webhook.**"
         - "**.pkg.apis.**"         # CRD API types
         - "**.pkg.generated.**"    # Generated Kubernetes clients
@@ -334,3 +335,8 @@ dependenciesRules:
         - "**.pkg.stores.**"
         - "**.pkg.templating.**"
         - "**.pkg.webhook.**"
+
+  - package: "**.pkg.transportsecurity.**"
+    shouldOnlyDependsOn:
+      internal:
+        - "**.pkg.transportsecurity.**"

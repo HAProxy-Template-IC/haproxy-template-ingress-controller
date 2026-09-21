@@ -16,6 +16,10 @@ installations and custom templates.
 
 ### Added
 
+- Templates can inspect PEM public keys with `public_key_info` and parse one YAML document with `parse_yaml`.
+
+- `haptic doctor` checks live fleet state and creates diagnostic bundles without Secret values or rendered configuration.
+
 - HAProxy 3.4 support, including runtime addition and removal of eligible backends without a reload.
 - Typed watched-resource access and collection pipelines for custom templates, reusable `HAProxyTemplateLibrary` resources, and template-defined Kubernetes resources.
 - Runtime discovery of watched API versions and schemas, including automatic adaptation when watched CRDs are installed, upgraded, or removed.
@@ -31,8 +35,24 @@ installations and custom templates.
 - Incremental rendering, smaller resource caches, and warm follower replicas reduce repeated work, memory use, and leadership-transition delays.
 - Controller metrics now cover agent operations and fleet convergence; update dashboards using the [metric migration table](./docs/site/docs/operations/monitoring.md#where-the-old-metrics-went).
 
+### Fixed
+
+- Pending reload follow-ups observe already accepted configurations without resending updates that can collide with the reload.
+- Large runtime updates complete all operation batches before map read-back and plan publication, avoiding false divergence and fallback reloads during bulk route removal.
+
+- Validation worker concurrency accounts for the memory limit, preventing parallel HAProxy checks from exhausting preflight containers on large nodes.
+- Incremental rendering batches dependency updates and reduces map copies, cache-identity allocations, and admission bookkeeping allocations.
+- Preflight, validation, benchmark, diff, and agent processes derive Go's soft memory limit from their container limit, preserving explicit `GOMEMLIMIT` settings.
+- Incremental templates read optional scalar fields consistently, including explicit false and zero values.
+- Optional HTTP fetch failures can publish validated output without poisoning the incremental cache.
+
+- Nested template closures retain native variable identity when taking addresses.
+
 ### Security
 
+- Map replacements remain atomic, and pending reloads retain denial entries until their replacement enforcement can run.
+- Missing or invalid WAF catalogs deny affected routes instead of retaining their previous enforcement.
+- Controller-to-agent mutual TLS supports live certificate replacement and bounded CA trust overlap; agent diagnostics use a local read-only socket.
 - Admission requests have payload limits; HTTP redirects and diagnostics no longer expose credentials or auxiliary-file contents.
 
 ### Known issues
@@ -45,6 +65,9 @@ still rejects mismatched output before publication.
 
 #### Added
 
+- `HAProxyRoutePolicy` attaches JWT/API-key authentication, shared rate limits, WAF catalogs, and private HTTP caching to Gateway route rules; credential and catalog rotation use validated references to immutable objects.
+
+- `credentials.existingSecret` uses externally managed credentials without generating random values during GitOps rendering.
 - Gateway API TLSRoute, TCPRoute, ListenerSet, backend TLS, frontend client-certificate authentication, and request mirroring.
 - Native `haproxy-haptic.org/*` annotations for API-key, JWT, and HMAC authentication, shared rate limiting, Varnish caching, opt-in response compression, request-schema validation, and reusable WAF policies.
 - NGINX Ingress annotation compatibility and expanded HAProxy Ingress annotation support, including external authentication and rate limiting.
@@ -64,10 +87,20 @@ still rejects mismatched output before publication.
 
 #### Fixed
 
+- Gateway routes without filters avoid policy-template execution; compact route and backend names retain route-kind and cross-namespace identity.
+- Ingress and Gateway JWT authentication accept the same normalized PEM public keys when sharing a Secret.
+- Admission webhook names support watch keys containing underscores or uppercase letters.
+- Gateway policy credentials use immutable Secrets; rotation validates the replacement through a policy reference update.
+- Gateway policy validation preserves credential errors when a GRPCRoute also requests unsupported caching.
+
+- Gateway rule filters and backends keep route kinds and target namespaces distinct when resource names match.
 - Named Service ports resolve correctly, and exact Ingress paths preserve trailing slashes.
 
 #### Security
 
+- TCPRoute backends enforce BackendTLSPolicy CA and hostname verification.
+- BackendTLSPolicy rejects unsupported certificate identities and blocks affected backends instead of verifying a different hostname.
+- Agent mutual TLS is enabled by default, with automatic CA and identity renewal, optional cert-manager provisioning, or externally supplied Secrets.
 - Route and annotation values are validated to prevent HAProxy configuration injection; the default NetworkPolicy restricts access to management ports.
 
 ## [0.1.0] - 2026-03-09

@@ -466,12 +466,18 @@ func incrementalSourceTransactionTopologyDigest(
 	p *preparedIncrementalSourceTransactionsInput,
 ) [sha256.Size]byte {
 	hasher := sha256.New()
+	var buffer [512]byte
 	writeInt := func(value int) {
-		_ = binary.Write(hasher, binary.LittleEndian, int64(value))
+		_, _ = binary.Encode(buffer[:8], binary.LittleEndian, int64(value))
+		_, _ = hasher.Write(buffer[:8])
 	}
 	writeString := func(value string) {
 		writeInt(len(value))
-		_, _ = hasher.Write([]byte(value))
+		for value != "" {
+			written := copy(buffer[:], value)
+			_, _ = hasher.Write(buffer[:written])
+			value = value[written:]
+		}
 	}
 	writeInts := func(values []int) {
 		writeInt(len(values))

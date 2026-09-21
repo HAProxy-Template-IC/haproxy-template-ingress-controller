@@ -153,6 +153,7 @@ func loadHAProxyIngressSweepSnippets(t *testing.T) (snippets map[string]config.T
 		filepath.Join(chartRoot, "base", "library.yaml"),
 		filepath.Join(chartRoot, "ingress", "library.yaml"),
 		filepath.Join(chartRoot, "ingress-annotations-compat", "library.yaml"),
+		filepath.Join(chartRoot, "http-policies", "81-waf-governance.yaml"),
 		filepath.Join(chartRoot, "kubernetes-backends", "library.yaml"),
 		filepath.Join(chartRoot, "spoa-hub", "10-features.yaml"),
 	}

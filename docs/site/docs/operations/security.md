@@ -49,23 +49,40 @@ consume; they don't narrow the ServiceAccount's RBAC permissions.
 
 ### Credentials
 
-The controller reads the Secret named by `--secret-name` or `SECRET_NAME`; the Helm chart sets this for you. The Secret must contain two keys:
+The chart encrypts controller-to-agent requests with mutual TLS (mTLS). Each end
+checks its peer's certificate authority and distinct DNS subject alternative name.
+Agent control requests require the controller identity; a Basic-auth password
+doesn't grant access in TLS mode. Both peers require TLS 1.3.
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: haproxy-credentials
-type: Opaque
-stringData:
-  dataplane_username: admin
-  dataplane_password: <random>
-```
+A bootstrap Job and hourly CronJob manage the default 365-day CA and identity
+lifetimes, renewing 30 days before expiry. The renewal ServiceAccount can create
+Secrets in the namespace and get or update only the three named certificate
+Secrets; Kubernetes RBAC can't restrict creation by resource name. The issuer
+Secret contains the private CA key and must be backed up securely. It isn't
+mounted in application pods. See [Agent certificates](./agent-certificates.md)
+for cert-manager selection, expiry monitoring, and failed-renewal recovery.
 
-The controller watches the Secret and picks up changes live. The chart passes agent credentials through environment variables, so roll the HAProxy pods when rotating them. Keep both ends on matching credentials.
+Set `haproxy.agent.tls.managed: false` to use externally managed Secrets.
 
-!!! warning "Credentials with offline Helm rendering"
-    With `credentials.dataplane.password` empty, Helm generates a random password and uses `lookup` to preserve the existing Secret on upgrades. Offline rendering tools, such as `helm template` and Argo CD, can't read that Secret. Supply a stable `credentials.dataplane.password` through your deployment's secret management.
+The controller mounts only its client identity; the agent mounts only its server
+identity. The CA private key isn't stored in either Secret. Mounted certificate
+updates take effect without restarting the controller or agent. Old CA trust
+requires an explicit expiry, at most 24 hours away. Removing that trust revokes
+old clients on their next request, including on an existing connection.
+
+The chart still creates the Secret named by `--secret-name` or `SECRET_NAME` for
+controller bootstrap compatibility. Its `dataplane_username` and
+`dataplane_password` authenticate the agent only when
+`haproxy.agent.tls.enabled: false`. That mode uses plain HTTP. The controller
+reloads password changes live; legacy agents read them at startup, so password
+rotation requires a coordinated pod rollout and can interrupt configuration
+updates to a mixed fleet.
+
+!!! warning "Secrets with offline Helm rendering"
+    `helm template` and Argo CD can't preserve generated Secrets through `lookup`.
+    Supply a stable `credentials.dataplane.password` through your deployment's
+    secret management. Agent TLS identities are generated at runtime and remain
+    stable across offline renders.
 
 `/debug/vars/credentials` returns the credential version and `has_dataplane_creds`, without credential values. Other debug endpoints expose configuration and rendered files. See [Debugging](./debugging.md#accessing-the-server) for access controls.
 
@@ -115,12 +132,15 @@ The controller pod exposes three HTTP ports (all chart defaults):
 | `9090` | `/metrics` | `controller.ports.metrics` configures the process, pod, Service, and monitors together; set it to `0` to disable metrics |
 | `9443` | Validating webhook | Required when the webhook is enabled |
 
-Outbound, the controller talks to the Kubernetes API server and to the agent on each HAProxy pod (default port `5555`). That traffic is plain HTTP over the pod network — the agent has no TLS server configuration. Rely on pod-network protection (NetworkPolicy, service mesh, Container Network Interface (CNI) encryption) to protect that hop.
+Outbound, the controller talks to the Kubernetes API server and to the agent on
+each HAProxy pod (default port `5555`). Mutual TLS protects deployment requests,
+including the TLS private keys carried as auxiliary files. Disabling agent TLS
+requires equivalent network encryption, such as an encrypted Container Network
+Interface (CNI) or service mesh.
 
-Deployment requests carry rendered configuration and auxiliary files, including
-TLS private keys. Protect controller-to-agent traffic at the network layer.
-
-The agent is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release `fullname`, which collapses to `<release>-credentials` only when the release name already contains `haptic`). Password generation and the GitOps caveat are covered in the warning box above.
+Agent liveness probes use the local Unix socket, so certificate expiry doesn't restart the agent. The control endpoints
+still require one. `haptic agent state` inside the agent container uses a local
+Unix socket that exposes state without accepting deployments.
 
 NetworkPolicies are enabled by default for the controller and HAProxy pods.
 Managed Varnish and Valkey tiers also receive release-scoped policies when
@@ -235,7 +255,7 @@ Replace `<namespace>`/`<release>` with your Helm release. The SA name is the rel
 
 Before exposing a HAPTIC deployment to production traffic:
 
-- [ ] A managed agent password, with both controller and HAProxy pods updated during rotation.
+- [ ] Mutual TLS for agent traffic, with certificate expiry monitored and CA rotation completed before its overlap deadline.
 - [ ] RBAC that limits `pods/portforward` access to loopback-only `/debug/*` endpoints.
 - [ ] Watched-resource selectors scoped to the namespaces you intend to serve.
 - [ ] Release namespace labelled with `pod-security.kubernetes.io/enforce=restricted`.

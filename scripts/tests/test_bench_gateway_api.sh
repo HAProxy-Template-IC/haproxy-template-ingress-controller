@@ -17,6 +17,19 @@ assert_eq() {
 assert_eq 1 "$(bash -c 'source "$1"; duration_seconds 1s' bash "$runner")"
 assert_eq 120 "$(bash -c 'source "$1"; duration_seconds 2m' bash "$runner")"
 assert_eq 3600 "$(bash -c 'source "$1"; duration_seconds 1h' bash "$runner")"
+
+cat > "$tmp/pods.json" <<'EOF'
+{"items":[{"metadata":{"name":"preflight","annotations":{"private":"secret-marker"}},"spec":{"containers":[{"name":"preflight","env":[{"name":"PASSWORD","value":"secret-marker"}],"resources":{"limits":{"memory":"1Gi"}}}]},"status":{"phase":"Failed","containerStatuses":[{"name":"preflight","restartCount":0,"state":{"terminated":{"reason":"OOMKilled","exitCode":137,"message":"secret-marker"}},"lastState":{"terminated":{"reason":"Error","exitCode":1,"message":"secret-marker"}}}]}}]}
+EOF
+bash -c 'source "$1"; pod_failure_summary' bash "$runner" < "$tmp/pods.json" > "$tmp/pod-summary.json"
+assert_eq OOMKilled "$(jq -r '.[0].containers[0].terminated' "$tmp/pod-summary.json")"
+assert_eq 137 "$(jq -r '.[0].containers[0].exit_code' "$tmp/pod-summary.json")"
+assert_eq Error "$(jq -r '.[0].containers[0].previous_termination' "$tmp/pod-summary.json")"
+assert_eq 1Gi "$(jq -r '.[0].limits[0].memory' "$tmp/pod-summary.json")"
+if rg -q secret-marker "$tmp/pod-summary.json"; then
+    echo "pod_failure_summary exposed pod content" >&2
+    exit 1
+fi
 if bash -c 'source "$1"; duration_seconds 1d' bash "$runner" >/dev/null 2>&1; then
     echo "duration_seconds accepted an invalid suffix" >&2
     exit 1

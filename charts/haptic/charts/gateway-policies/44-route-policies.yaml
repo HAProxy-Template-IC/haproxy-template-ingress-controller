@@ -1,0 +1,249 @@
+templateSnippets:
+  gateway-policy-records-empty:
+    incremental:
+      bindingsTemplate: '{}'
+      group: gateway-policy-records
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  util-gateway-policy-reference:
+    template: |-
+      {%- macro GatewayPolicyReference(route any, rule any, result map[string]any) -%}
+        {%%
+          result["attached"] = false
+          result["name"] = ""
+          result["error"] = ""
+          result["reason"] = "UnsupportedValue"
+          var references = 0
+          for _, filter := range toSlice(dig(rule, "filters")) {
+            if dig_string(filter, "", "type") != "ExtensionRef" { continue }
+            var ref = dig(filter, "extensionRef")
+            var kind = dig_string(ref, "", "kind")
+            var name = dig_string(ref, "", "name")
+            if dig_string(ref, "", "group") == "haproxy-haptic.org" && kind == "HAProxyRoutePolicy" {
+              references++
+              result["attached"] = true
+              result["name"] = name
+              if name == "" || dig_string(ref, "", "namespace") != "" {
+                result["error"] = "HAProxyRoutePolicy requires a name in the route's namespace. Remove namespace and set name."
+              }
+            } else if kind != "SSLPassthrough" && !regex_search(toLower(name), "ssl.*passthrough") {
+              result["attached"] = true
+              result["error"] = "ExtensionRef kind " + kind + " is unsupported. Use haproxy-haptic.org/HAProxyRoutePolicy."
+            }
+          }
+          if references > 1 {
+            result["error"] = "A rule references multiple HAProxyRoutePolicies. Combine the settings in one policy."
+            result["reason"] = "IncompatibleFilters"
+          }
+          for _, backend := range toSlice(dig(rule, "backendRefs")) {
+            for _, filter := range toSlice(dig(backend, "filters")) {
+              var ref = dig(filter, "extensionRef")
+              if dig_string(filter, "", "type") == "ExtensionRef" &&
+                dig_string(ref, "", "group") == "haproxy-haptic.org" &&
+                dig_string(ref, "", "kind") == "HAProxyRoutePolicy" {
+                result["attached"] = true
+                result["error"] = "HAProxyRoutePolicy is attached to a backend. Move the ExtensionRef to the route rule's filters."
+              }
+            }
+          }
+          var policy = false
+          var passthrough = false
+          for _, candidate := range toSlice(dig(route, "spec", "rules")) {
+            for _, filter := range toSlice(dig(candidate, "filters")) {
+              if dig_string(filter, "", "type") != "ExtensionRef" { continue }
+              var ref = dig(filter, "extensionRef")
+              if dig_string(ref, "", "group") == "haproxy-haptic.org" && dig_string(ref, "", "kind") == "HAProxyRoutePolicy" {
+                policy = true
+              } else if dig_string(ref, "", "kind") == "SSLPassthrough" || regex_search(toLower(dig_string(ref, "", "name")), "ssl.*passthrough") {
+                passthrough = true
+              }
+            }
+          }
+          if policy && passthrough {
+            result["attached"] = true
+            result["error"] = "SSL passthrough bypasses HTTP policy enforcement. Remove SSLPassthrough or use a separate route."
+            result["reason"] = "IncompatibleFilters"
+          }
+        %%}
+      {%- end macro -%}
+
+  util-gateway-policy-record:
+    requires: [routepolicies, secrets]
+    template: |-
+      {%- import "util-gateway-policy-reference" for GatewayPolicyReference -%}
+      {%- import "util-gateway-route-identity" for GatewayRuleID -%}
+      {%- import "util-policy-authentication" for PolicyAuthentication -%}
+      {%- import "util-policy-rate-limit" for PolicyRateLimit -%}
+      {%- import "util-policy-cache" for PolicyCache -%}
+      {%- macro GatewayPolicyRecord(route any, kind string, rule any, index int, result map[string]any) -%}
+        {%%
+          GatewayPolicyReference(route, rule, result)
+          var namespace = dig_string(route, "", "metadata", "namespace")
+          var name = dig_string(route, "", "metadata", "name")
+          result["ruleID"] = GatewayRuleID(kind, namespace, name, index)
+          result["id"] = "gateway/" + tostring(result["ruleID"])
+          result["dependencies"] = []any{}
+          if result["attached"] == true && result["error"] == "" {
+            var policyName = tostring(result["name"])
+            result["dependencies"] = []any{map[string]any{"store": "routepolicies", "namespace": namespace, "name": policyName}}
+            var policy = resources.routepolicies.GetSingle(namespace, policyName)
+            result["policyID"] = "routepolicy/" + namespace + "/" + policyName
+            if policy == nil {
+              result["error"] = "HAProxyRoutePolicy " + namespace + "/" + policyName + " is missing. Create it or correct the ExtensionRef."
+              result["resolvedReason"] = "PolicyNotFound"
+            } else {
+              var spec = dig(policy, "spec")
+              var auth = dig(spec, "authentication")
+              var authenticated = dig(auth, "jwt") != nil || dig(auth, "apiKey") != nil
+              if !authenticated && dig(spec, "rateLimit") == nil && dig(spec, "waf") == nil && dig(spec, "cache") == nil {
+                result["error"] = "HAProxyRoutePolicy " + namespace + "/" + policyName + " has no enforcement settings. Configure authentication, rateLimit, waf, or cache."
+              }
+              for _, mode := range []string{"jwt", "apiKey"} {
+                var credential = dig(auth, mode, "secretRef")
+                if credential == nil { continue }
+                var secretName = dig_string(credential, "", "name")
+                var secretNamespace = dig_string(credential, namespace, "namespace")
+                if secretName == "" || secretNamespace != namespace {
+                  result["error"] = "HAProxyRoutePolicy credentials require a Secret name in the policy's namespace. Correct authentication."
+                  result["resolvedReason"] = "RefNotPermitted"
+                }
+                result["dependencies"] = append(result["dependencies"].([]any), map[string]any{
+                  "store": "secrets", "namespace": namespace, "name": secretName,
+                })
+                if result["error"] == "" {
+                  var secret = resources.secrets.GetSingle(namespace, secretName)
+                  if secret != nil && dig(secret, "immutable") != true {
+                    result["error"] = "Secret " + namespace + "/" + secretName + " is mutable and cannot supply policy credentials. Set immutable: true before attaching it."
+                    result["resolvedReason"] = "RefNotPermitted"
+                  }
+                }
+              }
+              if result["error"] == "" && authenticated {
+                var authentication = map[string]any{}
+                PolicyAuthentication(namespace, auth, authentication)
+                result["authentication"] = authentication
+                result["error"] = authentication["error"]
+                result["resolvedReason"] = authentication["resolvedReason"]
+              }
+              if result["error"] == "" && dig(spec, "rateLimit") != nil {
+                var settings = map[string]any{}
+                PolicyRateLimit(dig(spec, "rateLimit"), settings)
+                result["error"] = settings["error"]
+                result["rateLimit"] = settings
+                if tostring(props["sharedRateLimit"]) != "true" || !(toStringSlice(props["messages"]) contains "check-ratelimit") {
+                  result["error"] = "Shared rate limiting is unavailable. Enable rateLimit.shared.enabled and its SPOA plugin."
+                }
+                if settings["consumer"] == true {
+                  result["requireConsumer"] = true
+                  if !authenticated { result["error"] = "Consumer rate limits need an authenticated identity. Configure JWT or API-key authentication." }
+                }
+              }
+              if result["error"] == "" && kind == "GRPCRoute" && dig(spec, "cache") != nil {
+                result["error"] = "GRPCRoute does not support response caching. Remove cache from the attached policy."
+              }
+              if result["error"] == "" && dig(spec, "cache") != nil {
+                var cache = map[string]any{}
+                PolicyCache(dig(spec, "cache"), tostring(result["id"]), authenticated, cache)
+                result["error"] = cache["error"]
+                result["cache"] = cache["record"]
+                if tostring(props["cacheEnabled"]) != "true" {
+                  result["error"] = "Response caching is unavailable. Enable cache.varnish.enabled."
+                }
+                if authenticated { result["requireConsumer"] = true }
+              }
+              if result["error"] == "" && dig(spec, "waf") != nil {
+                var settings, found = shared.Select("gateway-policy-waf-settings", "policies", namespace + "/" + policyName)
+                if !found {
+                  result["error"] = "WAF settings are unavailable. Restore the HAProxyRoutePolicy watch."
+                } else {
+                  var waf = settings.(map[string]any)
+                  result["waf"] = waf
+                  result["error"] = waf["error"]
+                  for _, dependency := range toSlice(waf["dependencies"]) {
+                    result["dependencies"] = append(toSlice(result["dependencies"]), dependency)
+                  }
+                  if kind == "GRPCRoute" && waf["bodyMode"] == "buffered" {
+                    result["error"] = "The WAF policy buffers gRPC streams. Set requestBody.mode to none."
+                  }
+                }
+              }
+            }
+          }
+        %%}
+      {%- end macro -%}
+
+  gateway-policy-records-http:
+    requires: [httproutes, routepolicies, secrets]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      bindingsTemplate: '{{- toJSON(map[string]any{"httproutes": map[string]any{"sharedRateLimit": dig(extraContext, "rateLimit", "shared", "enabled") | fallback(false), "messages": dig(extraContext, "spoaHub", "haproxy", "messages") | fallback([]any{}), "cacheEnabled": dig(extraContext, "cache", "varnish", "enabled") | fallback(false)}}) -}}'
+      consumes: [gateway-policy-waf-settings]
+      group: gateway-policy-records
+      effects: [publishValue]
+    template: |-
+      {%- import "util-gateway-policy-record" for GatewayPolicyRecord -%}
+      {%- for index, rule := range toSlice(dig(item, "spec", "rules")) -%}
+        {%- var result = map[string]any{} -%}
+        {{- GatewayPolicyRecord(item, "HTTPRoute", rule, index, result) -}}
+        {%- if result["attached"] == true -%}
+          {{- shared.Publish("rules", tostring(result["ruleID"]), result) -}}
+        {%- end -%}
+      {%- end -%}
+
+  gateway-policy-records-grpc:
+    requires: [grpcroutes, routepolicies, secrets]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      bindingsTemplate: '{{- toJSON(map[string]any{"grpcroutes": map[string]any{"sharedRateLimit": dig(extraContext, "rateLimit", "shared", "enabled") | fallback(false), "messages": dig(extraContext, "spoaHub", "haproxy", "messages") | fallback([]any{}), "cacheEnabled": dig(extraContext, "cache", "varnish", "enabled") | fallback(false)}}) -}}'
+      consumes: [gateway-policy-waf-settings]
+      group: gateway-policy-records
+      effects: [publishValue]
+    template: |-
+      {%- import "util-gateway-policy-record" for GatewayPolicyRecord -%}
+      {%- for index, rule := range toSlice(dig(item, "spec", "rules")) -%}
+        {%- var result = map[string]any{} -%}
+        {{- GatewayPolicyRecord(item, "GRPCRoute", rule, index, result) -}}
+        {%- if result["attached"] == true -%}
+          {{- shared.Publish("rules", tostring(result["ruleID"]), result) -}}
+        {%- end -%}
+      {%- end -%}
+
+  features-003-gateway-policy-records:
+    template: |-
+      {{- render_glob "gateway-policy-records-*" -}}
+
+  frontend-policy-identity-500-gateway:
+    template: |-
+      http-request set-var(txn.policy_id) str(gateway/),concat(,txn.gw_rule_id) if { var(txn.gw_rule_id) -m found }
+
+  util-gateway-policy-decision:
+    template: |-
+      {%- import "util-gateway-policy-reference" for GatewayPolicyReference -%}
+      {%- import "util-gateway-route-identity" for GatewayRuleID -%}
+      {%- macro GatewayPolicyDecision(route any, kind string, rule any, index int, result map[string]any) -%}
+        {%%
+          GatewayPolicyReference(route, rule, result)
+          var namespace = dig_string(route, "", "metadata", "namespace")
+          var name = dig_string(route, "", "metadata", "name")
+          var ruleID = GatewayRuleID(kind, namespace, name, index)
+          result["ruleID"] = ruleID
+          result["id"] = "gateway/" + ruleID
+          if result["attached"] == true && result["error"] == "" {
+            var value, found = shared.Select("gateway-policy-records", "rules", ruleID)
+            if found {
+              for key, entry := range value.(map[string]any) { result[key] = entry }
+            } else {
+              result["error"] = "HAProxyRoutePolicy is unavailable. Install its CRD and allow the controller to watch it."
+              result["resolvedReason"] = "PolicyNotFound"
+            }
+          }
+        %%}
+      {%- end macro -%}
+
+  frontend-filters-006-gateway-policy-errors:
+    template: |
+      {%- var path, err = pathResolver.GetPath("gw-policy-errors.map", "map") -%}
+      {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
+      {{ "\n" }}http-request set-var(txn.denied_by) str(route_policy_unavailable) if { var(txn.policy_id),map({{ path }}) -m found }
+      http-request deny deny_status 503 if { var(txn.policy_id),map({{ path }}) -m found }

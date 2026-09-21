@@ -116,8 +116,8 @@ func TestDiffChunking(t *testing.T) {
 		verdict deployplan.Verdict
 		chunks  int
 	}{
-		{name: "one apply", servers: 400, verdict: deployplan.VerdictRuntime, chunks: 1},
-		{name: "two applies", servers: 600, verdict: deployplan.VerdictRuntime, chunks: 2},
+		{name: "one execution batch", servers: 400, verdict: deployplan.VerdictRuntime, chunks: 1},
+		{name: "two execution batches", servers: 600, verdict: deployplan.VerdictRuntime, chunks: 2},
 		{name: "beyond the chunk budget", servers: 4500, verdict: deployplan.VerdictReload},
 	}
 

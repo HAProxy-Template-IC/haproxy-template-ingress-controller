@@ -53,8 +53,9 @@ type deployRequest struct {
 	validatedPlanFor func(authority string, state *api.State) planReference
 	// verify makes each pod re-hash its tree before it reports: the drift pass
 	// asks what is on disk, not what the agent last wrote.
-	verify bool
-	diffs  *diffMemo
+	verify        bool
+	observeReload bool
+	diffs         *diffMemo
 }
 
 // performDeployment executes a single deployment.
@@ -153,6 +154,7 @@ func (c *Component) deployToEndpoints(
 		c.reportUndeployable(event, deploymentID, occurrence)
 		return
 	}
+	request.observeReload = event.Reason == pendingReloadFollowUpReason
 	c.recordFleet(event.Endpoints)
 
 	c.EventBus().Publish(events.NewDeploymentStartedEvent(

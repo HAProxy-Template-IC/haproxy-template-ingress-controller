@@ -1,0 +1,35 @@
+templateSnippets:
+  gateway-policy-waf-catalogs-empty:
+    incremental:
+      bindingsTemplate: '{}'
+      group: gateway-policy-waf-catalogs
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  gateway-policy-waf-catalogs-policies:
+    requires: [routepolicies, configmaps]
+    incremental:
+      source: routepolicies
+      group: gateway-policy-waf-catalogs
+      effects: [publishValue]
+    template: |-
+      {%- var ref = dig(item, "spec", "waf", "catalogRef") -%}
+      {%- if ref != nil -%}
+        {%%
+          var namespace = dig_string(item, "", "metadata", "namespace")
+          var name = dig_string(ref, "", "name")
+          var key = dig_string(ref, "policies.yaml", "key")
+          var cm = resources.configmaps.GetSingle(namespace, name)
+          var message = ""
+          if cm == nil {
+            message = "WAF ConfigMap " + namespace + "/" + name + " is missing. Create the referenced immutable catalog."
+          } else if dig(cm, "immutable") != true {
+            message = "WAF ConfigMap " + namespace + "/" + name + " is mutable. Set immutable: true before attaching it."
+          }
+          show shared.Publish("catalogs", namespace + "/" + dig_string(item, "", "metadata", "name"), map[string]any{
+            "namespace": namespace, "name": name, "key": key, "scope": namespace + "/" + name + "/" + key,
+            "policyYAML": dig_string(cm, "", "data", key), "error": message,
+            "resource": map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": namespace, "name": name}},
+          })
+        %%}
+      {%- end -%}

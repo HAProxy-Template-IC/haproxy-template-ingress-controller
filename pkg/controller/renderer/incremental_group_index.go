@@ -1877,12 +1877,15 @@ func incrementalHTTPIdentityKey(id uint64) []byte {
 // separator. It exists so a caller that knows its parts can build the whole key
 // in one buffer instead of materialising each part as a string first.
 func appendIncrementalOrderedTuplePart(dst []byte, part string) []byte {
-	for index := range len(part) {
-		if part[index] == 0 {
-			dst = append(dst, 0, 0xff)
-		} else {
-			dst = append(dst, part[index])
+	for {
+		index := strings.IndexByte(part, 0)
+		if index < 0 {
+			dst = append(dst, part...)
+			break
 		}
+		dst = append(dst, part[:index]...)
+		dst = append(dst, 0, 0xff)
+		part = part[index+1:]
 	}
 	return append(dst, 0, 0)
 }

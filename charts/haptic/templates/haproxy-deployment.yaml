@@ -1,3 +1,4 @@
+{{- include "haptic.agentTLS.validate" . -}}
 {{- $haproxy := .Values.haproxy }}
 {{- if $haproxy.enabled }}
 {{- $haproxyFullname := include "haptic.haproxyFullname" . }}
@@ -417,6 +418,10 @@ spec:
             - --master-socket=haproxy-master.sock
             - --worker-socket=haproxy-worker.sock
             - --listen=:{{ $ports.dataplane }}
+            {{- if $agent.tls.enabled }}
+            - --tls-dir=/etc/haptic/agent-tls/..data
+            - --tls-client-name={{ include "haptic.agentTLS.clientName" . }}
+            {{- end }}
             - --metrics-listen=:{{ $ports.agentMetrics }}
             - --drain-socket={{ if $haproxy.drain.enabled }}haptic-drain.sock{{ end }}
             - --drain-quiet-period={{ int $haproxy.drain.quietPeriodSeconds }}s
@@ -449,19 +454,20 @@ spec:
             - name: agent-metrics
               containerPort: {{ $ports.agentMetrics }}
               protocol: TCP
-          # No startupProbe: kubelet starts HAProxy only once a sidecar's
-          # startup probe passes, and the agent's /readyz waits for HAProxy's
-          # sockets. No readinessProbe: pod readiness belongs to HAProxy's own
-          # /ready, and tying it to the agent would drain traffic off a pod
-          # that is still serving.
+          # HAProxy owns pod readiness; an agent startup gate would wait on HAProxy.
+          # Local liveness survives certificate expiry so renewal can recover it.
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: dataplane
+            exec:
+              command: [haptic, agent, health, {{ printf "--base-dir=%s" (dir $dataplaneConfig.mapsDir) | quote }}]
             periodSeconds: 10
           volumeMounts:
             - name: haproxy-runtime
               mountPath: /etc/haproxy
+            {{- if $agent.tls.enabled }}
+            - name: agent-tls
+              mountPath: /etc/haptic/agent-tls
+              readOnly: true
+            {{- end }}
             # general-storage overlay — same shape as the haproxy container's
             # mount, so files the agent writes under general/ land in the narrow
             # volume the spoa-hub and vector sidecars read.
@@ -604,6 +610,11 @@ spec:
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
       volumes:
+        {{- if $agent.tls.enabled }}
+        - name: agent-tls
+          secret:
+            secretName: {{ include "haptic.agentTLS.serverSecretName" . }}
+        {{- end }}
         - name: config
           configMap:
             name: {{ $haproxyFullname }}-config

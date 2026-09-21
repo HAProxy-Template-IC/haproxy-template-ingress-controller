@@ -77,59 +77,51 @@ func (s incrementalScopeCallStatus) complete(componentCount int) bool {
 	return s.canonical && s.count > 0 && componentCount > 0 && s.count%componentCount == 0
 }
 
+type incrementalCallScope struct {
+	group string
+	scope string
+}
+
+type incrementalScopeCalls struct {
+	calls  []incrementalCall
+	status incrementalScopeCallStatus
+}
+
 func recordIncrementalCall(
 	calls map[string][]incrementalCall,
-	scopedCalls map[string]map[string][]incrementalCall,
-	callStatuses map[string]map[string]incrementalScopeCallStatus,
+	scopedCalls map[incrementalCallScope]incrementalScopeCalls,
 	group string,
 	expected []incrementalComponent,
 	call incrementalCall,
-) (
-	updatedCalls map[string][]incrementalCall,
-	updatedScopedCalls map[string]map[string][]incrementalCall,
-	updatedCallStatuses map[string]map[string]incrementalScopeCallStatus,
-) {
+) (updatedCalls map[string][]incrementalCall, updatedScopedCalls map[incrementalCallScope]incrementalScopeCalls) {
 	if calls == nil {
 		calls = map[string][]incrementalCall{}
 	}
 	calls[group] = append(calls[group], call)
 	if scopedCalls == nil {
-		scopedCalls = map[string]map[string][]incrementalCall{}
+		scopedCalls = map[incrementalCallScope]incrementalScopeCalls{}
 	}
-	byScope := scopedCalls[group]
-	if byScope == nil {
-		byScope = map[string][]incrementalCall{}
-		scopedCalls[group] = byScope
-	}
-	byScope[call.scope] = append(byScope[call.scope], call)
-
-	if callStatuses == nil {
-		callStatuses = map[string]map[string]incrementalScopeCallStatus{}
-	}
-	statuses := callStatuses[group]
-	if statuses == nil {
-		statuses = map[string]incrementalScopeCallStatus{}
-		callStatuses[group] = statuses
-	}
-	status, exists := statuses[call.scope]
+	key := incrementalCallScope{group: group, scope: call.scope}
+	entry, exists := scopedCalls[key]
 	if !exists {
-		status.canonical = true
+		entry.status.canonical = true
 	}
-	if len(expected) == 0 || call.component != expected[status.count%len(expected)].name {
-		status.canonical = false
+	entry.calls = append(entry.calls, call)
+	if len(expected) == 0 || call.component != expected[entry.status.count%len(expected)].name {
+		entry.status.canonical = false
 	}
-	status.count++
-	statuses[call.scope] = status
-	return calls, scopedCalls, callStatuses
+	entry.status.count++
+	scopedCalls[key] = entry
+	return calls, scopedCalls
 }
 
 func incrementalCallsInScope(
-	scopedCalls map[string]map[string][]incrementalCall,
+	scopedCalls map[incrementalCallScope]incrementalScopeCalls,
 	calls map[string][]incrementalCall,
 	group, scope string,
 ) []incrementalCall {
 	if scopedCalls != nil {
-		return scopedCalls[group][scope]
+		return scopedCalls[incrementalCallScope{group: group, scope: scope}].calls
 	}
 	var result []incrementalCall
 	for _, call := range calls[group] {
@@ -177,42 +169,42 @@ type incrementalRenderSession struct {
 	statusPlanBootstrapPending   bool
 	reloadSources                map[string]struct{}
 
-	newQueries                   map[incremental.QueryKey]struct{}
-	activationQueries            map[incremental.QueryKey]struct{}
-	activationValues             map[incremental.QueryKey][]string
-	dirtyQueries                 map[incremental.QueryKey]struct{}
-	removed                      map[incremental.QueryKey]struct{}
-	groupChanged                 map[string]bool
-	inputChanges                 map[incremental.InputKey]incremental.Input
-	httpObserved                 map[incremental.InputKey]incremental.Input
-	httpProofs                   map[incremental.InputKey]httpstore.ObservationToken
-	resourceProofs               map[incremental.InputKey]incremental.Input
-	rootResourceProofs           map[incremental.InputKey]incremental.InputRevision
-	selectorPending              map[incrementalSelectorIdentity]incremental.Input
-	httpExecuted                 map[incremental.QueryKey][]incrementalHTTPEffect
-	freshResults                 map[incremental.QueryKey]*authenticatedFreshComponentResult
-	componentQueries             *queryidentity.Authority[*incrementalRenderSession]
-	rootReuser                   *exactCycleRootReuser
-	batchResourcesMu             sync.Mutex
-	capabilityAuthority          *incrementalCapabilityAuthority
-	batchResources               any
-	batchResourceView            *incrementalBatchResourceView
-	decodedInputs                incrementalDecodedCache[incremental.InputKey, *incrementalDecodedInput]
-	decodedObjects               incrementalDecodedCache[string, *incrementalCertifiedObject]
-	decodedResourceInputs        incrementalDecodedCache[incremental.InputKey, *incrementalDecodedResourceInput]
-	decodedResourceValues        incrementalDecodedCache[incrementalDecodedResourceValueIdentity, *incrementalCertifiedResourceItems]
-	resourceMaterializations     *incrementalResourceMaterializationArena
-	publicationGeneration        *incrementalPublicationSnapshotGeneration
-	publicationAuthority         *incrementalPublicationSnapshotAuthority
-	resourceItemCache            *rendercontext.ResourceItemCache
-	httpKnown                    map[httpInputIdentity]httpInputSpec
-	httpRetained                 map[uint64]struct{}
-	httpRefDeltas                map[uint64]httpRefDelta
-	membershipPins               map[string]incrementalStoreCursor
-	requested                    map[string]bool
-	calls                        map[string][]incrementalCall
-	scopedCalls                  map[string]map[string][]incrementalCall
-	callStatuses                 map[string]map[string]incrementalScopeCallStatus
+	newQueries               map[incremental.QueryKey]struct{}
+	activationQueries        map[incremental.QueryKey]struct{}
+	activationValues         map[incremental.QueryKey][]string
+	dirtyQueries             map[incremental.QueryKey]struct{}
+	removed                  map[incremental.QueryKey]struct{}
+	groupChanged             map[string]bool
+	inputChanges             map[incremental.InputKey]incremental.Input
+	httpObserved             map[incremental.InputKey]incremental.Input
+	httpProofs               map[incremental.InputKey]httpstore.ObservationToken
+	resourceProofs           map[incremental.InputKey]incremental.Input
+	rootResourceProofs       map[incremental.InputKey]incremental.InputRevision
+	selectorPending          map[incrementalSelectorIdentity]incremental.Input
+	httpExecuted             map[incremental.QueryKey][]incrementalHTTPEffect
+	freshResults             map[incremental.QueryKey]*authenticatedFreshComponentResult
+	componentQueries         *queryidentity.Authority[*incrementalRenderSession]
+	rootReuser               *exactCycleRootReuser
+	batchResourcesMu         sync.Mutex
+	capabilityAuthority      *incrementalCapabilityAuthority
+	batchResources           any
+	batchResourceView        *incrementalBatchResourceView
+	decodedInputs            incrementalDecodedCache[incremental.InputKey, *incrementalDecodedInput]
+	decodedObjects           incrementalDecodedCache[string, *incrementalCertifiedObject]
+	decodedResourceInputs    incrementalDecodedCache[incremental.InputKey, *incrementalDecodedResourceInput]
+	decodedResourceValues    incrementalDecodedCache[incrementalDecodedResourceValueIdentity, *incrementalCertifiedResourceItems]
+	resourceMaterializations *incrementalResourceMaterializationArena
+	publicationGeneration    *incrementalPublicationSnapshotGeneration
+	publicationAuthority     *incrementalPublicationSnapshotAuthority
+	resourceItemCache        *rendercontext.ResourceItemCache
+	httpKnown                map[httpInputIdentity]httpInputSpec
+	httpRetained             map[uint64]struct{}
+	httpRefDeltas            map[uint64]httpRefDelta
+	membershipPins           map[string]incrementalStoreCursor
+	requested                map[string]bool
+	calls                    map[string][]incrementalCall
+	scopedCalls              map[incrementalCallScope]incrementalScopeCalls
+
 	valueAccesses                map[string]int
 	exactCycleRootCalls          map[string][]exactCycleIncrementalObservation
 	exactCycleRootAuthority      *exactCycleIncrementalAuthority
@@ -322,47 +314,47 @@ func (s *incrementalRenderState) begin(
 	}
 
 	runtime := &incrementalRenderSession{
-		state:                   s,
-		base:                    s.snapshot,
-		readContext:             ctx,
-		stores:                  snapshots.renderStores,
-		baseStores:              snapshots.baseStores,
-		baseSnapshots:           snapshots.base,
-		renderSnapshots:         snapshots.render,
-		overlayChanges:          snapshots.overlayChanges,
-		httpComponent:           httpComponent,
-		httpWrapper:             httpWrapper,
-		beginHTTPLease:          beginLease,
-		cursors:                 mapsCloneCursors(s.snapshot.cursors),
-		httpCursor:              httpCursor,
-		groupIndexes:            cloneGroupIndexes(s.snapshot.groupIndexes),
-		groupReady:              cloneBools(s.snapshot.groupReady),
-		preparedPlan:            s.snapshot.preparedPlan,
-		statusPlan:              s.snapshot.statusPlan,
-		reloadSources:           map[string]struct{}{},
-		newQueries:              map[incremental.QueryKey]struct{}{},
-		activationQueries:       map[incremental.QueryKey]struct{}{},
-		activationValues:        map[incremental.QueryKey][]string{},
-		dirtyQueries:            map[incremental.QueryKey]struct{}{},
-		removed:                 map[incremental.QueryKey]struct{}{},
-		groupChanged:            map[string]bool{},
-		inputChanges:            map[incremental.InputKey]incremental.Input{},
-		httpObserved:            map[incremental.InputKey]incremental.Input{},
-		httpProofs:              map[incremental.InputKey]httpstore.ObservationToken{},
-		resourceProofs:          map[incremental.InputKey]incremental.Input{},
-		rootResourceProofs:      map[incremental.InputKey]incremental.InputRevision{},
-		selectorPending:         map[incrementalSelectorIdentity]incremental.Input{},
-		httpExecuted:            map[incremental.QueryKey][]incrementalHTTPEffect{},
-		freshResults:            map[incremental.QueryKey]*authenticatedFreshComponentResult{},
-		resourceItemCache:       rendercontext.NewResourceItemCache(),
-		httpKnown:               map[httpInputIdentity]httpInputSpec{},
-		httpRetained:            map[uint64]struct{}{},
-		httpRefDeltas:           map[uint64]httpRefDelta{},
-		membershipPins:          map[string]incrementalStoreCursor{},
-		requested:               map[string]bool{},
-		calls:                   map[string][]incrementalCall{},
-		scopedCalls:             map[string]map[string][]incrementalCall{},
-		callStatuses:            map[string]map[string]incrementalScopeCallStatus{},
+		state:              s,
+		base:               s.snapshot,
+		readContext:        ctx,
+		stores:             snapshots.renderStores,
+		baseStores:         snapshots.baseStores,
+		baseSnapshots:      snapshots.base,
+		renderSnapshots:    snapshots.render,
+		overlayChanges:     snapshots.overlayChanges,
+		httpComponent:      httpComponent,
+		httpWrapper:        httpWrapper,
+		beginHTTPLease:     beginLease,
+		cursors:            mapsCloneCursors(s.snapshot.cursors),
+		httpCursor:         httpCursor,
+		groupIndexes:       cloneGroupIndexes(s.snapshot.groupIndexes),
+		groupReady:         cloneBools(s.snapshot.groupReady),
+		preparedPlan:       s.snapshot.preparedPlan,
+		statusPlan:         s.snapshot.statusPlan,
+		reloadSources:      map[string]struct{}{},
+		newQueries:         map[incremental.QueryKey]struct{}{},
+		activationQueries:  map[incremental.QueryKey]struct{}{},
+		activationValues:   map[incremental.QueryKey][]string{},
+		dirtyQueries:       map[incremental.QueryKey]struct{}{},
+		removed:            map[incremental.QueryKey]struct{}{},
+		groupChanged:       map[string]bool{},
+		inputChanges:       map[incremental.InputKey]incremental.Input{},
+		httpObserved:       map[incremental.InputKey]incremental.Input{},
+		httpProofs:         map[incremental.InputKey]httpstore.ObservationToken{},
+		resourceProofs:     map[incremental.InputKey]incremental.Input{},
+		rootResourceProofs: map[incremental.InputKey]incremental.InputRevision{},
+		selectorPending:    map[incrementalSelectorIdentity]incremental.Input{},
+		httpExecuted:       map[incremental.QueryKey][]incrementalHTTPEffect{},
+		freshResults:       map[incremental.QueryKey]*authenticatedFreshComponentResult{},
+		resourceItemCache:  rendercontext.NewResourceItemCache(),
+		httpKnown:          map[httpInputIdentity]httpInputSpec{},
+		httpRetained:       map[uint64]struct{}{},
+		httpRefDeltas:      map[uint64]httpRefDelta{},
+		membershipPins:     map[string]incrementalStoreCursor{},
+		requested:          map[string]bool{},
+		calls:              map[string][]incrementalCall{},
+		scopedCalls:        map[incrementalCallScope]incrementalScopeCalls{},
+
 		valueAccesses:           map[string]int{},
 		exactCycleRootCalls:     map[string][]exactCycleIncrementalObservation{},
 		exactCycleRootAuthority: newExactCycleIncrementalAuthority(),
@@ -3406,10 +3398,9 @@ func (r *incrementalRenderSession) RenderIncrementalTextFragment(
 	if err := validateIncrementalBackendPlanScope(&component, scope); err != nil {
 		return nil, err
 	}
-	r.calls, r.scopedCalls, r.callStatuses = recordIncrementalCall(
+	r.calls, r.scopedCalls = recordIncrementalCall(
 		r.calls,
 		r.scopedCalls,
-		r.callStatuses,
 		group,
 		r.state.groups[group],
 		incrementalCall{scope: scope, component: name},

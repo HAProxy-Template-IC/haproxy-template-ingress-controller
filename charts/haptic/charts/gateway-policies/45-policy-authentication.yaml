@@ -1,0 +1,341 @@
+maps:
+  gw-policy-errors.map:
+    template: |
+      {{ render_glob "map-gateway-policy-errors-*" -}}
+
+templateSnippets:
+  gateway-policy-errors-empty:
+    incremental:
+      bindingsTemplate: '{}'
+      group: gateway-policy-errors
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  features-004-gateway-policy-errors:
+    template: |-
+      {{- render_glob "gateway-policy-errors-*" -}}
+      {%- for _, value := range incremental_values("gateway-policy-errors", "errors") -%}
+        {%%
+          var record = value.(map[string]any)
+          var message = tostring(record["kind"]) + " " + tostring(record["namespace"]) + "/" + tostring(record["name"]) + ": " + tostring(record["error"]) + " Requests for this rule are denied."
+          var affected = len(admissionSubject) == 0
+          for _, dependency := range toSlice(record["dependencies"]) {
+            var store = dig_string(dependency, "", "store")
+            var matchesStore = dig_string(admissionSubject, "", "store") == store || dig(admissionSubject, "stores", store) == true
+            if matchesStore && dig_string(dependency, "", "namespace") == dig_string(admissionSubject, "", "namespace") &&
+              dig_string(dependency, "", "name") == dig_string(admissionSubject, "", "name") {
+              affected = true
+            }
+          }
+          if renderMode == "admission" && affected { fail(message) }
+          recordEvent(record["resource"], "RoutePolicyInvalid", message)
+        %%}
+      {%- end -%}
+
+  map-gateway-policy-errors-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-gateway-policy-errors" for GatewayPolicyErrorsMap -%}
+      {{- GatewayPolicyErrorsMap(item, "HTTPRoute") -}}
+
+  gateway-policy-errors-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+      group: gateway-policy-errors
+      effects: [publishValue]
+    template: |-
+      {%- import "util-gateway-policy-errors" for PublishGatewayPolicyErrors -%}
+      {{- PublishGatewayPolicyErrors(item, "HTTPRoute") -}}
+
+  map-haptic-jwt-routes-859-gateway-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-haptic-jwt-routes-859-gateway" for GatewayJWTMap -%}
+      {{- GatewayJWTMap(item, "HTTPRoute") -}}
+
+  map-haptic-api-key-routes-861-gateway-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-haptic-api-key-routes-861-gateway" for GatewayAPIKeyRoutesMap -%}
+      {{- GatewayAPIKeyRoutesMap(item, "HTTPRoute") -}}
+
+  map-haptic-apikeys-861-gateway-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-haptic-apikeys-861-gateway" for GatewayAPIKeysMap -%}
+      {{- GatewayAPIKeysMap(item, "HTTPRoute") -}}
+
+  features-854-gateway-jwt-files-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+      group: haptic-jwt-files
+      effects: [publishValue]
+    template: |-
+      {%- import "util-features-854-gateway-jwt-files" for PublishGatewayJWTFiles -%}
+      {{- PublishGatewayJWTFiles(item, "HTTPRoute") -}}
+
+  features-856-gateway-jwt-names-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+      group: haptic-jwt-routes
+      effects: [publishValue]
+    template: |-
+      {%- import "util-features-856-gateway-jwt-names" for PublishGatewayJWTNames -%}
+      {{- PublishGatewayJWTNames(item, "HTTPRoute") -}}
+
+  features-856-gateway-api-key-names-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+      group: haptic-api-key-routes
+      effects: [publishValue]
+    template: |-
+      {%- import "util-features-856-gateway-api-key-names" for PublishGatewayAPIKeyNames -%}
+      {{- PublishGatewayAPIKeyNames(item, "HTTPRoute") -}}
+
+  map-gateway-policy-errors-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-gateway-policy-errors" for GatewayPolicyErrorsMap -%}
+      {{- GatewayPolicyErrorsMap(item, "GRPCRoute") -}}
+
+  gateway-policy-errors-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+      group: gateway-policy-errors
+      effects: [publishValue]
+    template: |-
+      {%- import "util-gateway-policy-errors" for PublishGatewayPolicyErrors -%}
+      {{- PublishGatewayPolicyErrors(item, "GRPCRoute") -}}
+
+  map-haptic-jwt-routes-859-gateway-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-haptic-jwt-routes-859-gateway" for GatewayJWTMap -%}
+      {{- GatewayJWTMap(item, "GRPCRoute") -}}
+
+  map-haptic-api-key-routes-861-gateway-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-haptic-api-key-routes-861-gateway" for GatewayAPIKeyRoutesMap -%}
+      {{- GatewayAPIKeyRoutesMap(item, "GRPCRoute") -}}
+
+  map-haptic-apikeys-861-gateway-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-haptic-apikeys-861-gateway" for GatewayAPIKeysMap -%}
+      {{- GatewayAPIKeysMap(item, "GRPCRoute") -}}
+
+  features-854-gateway-jwt-files-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+      group: haptic-jwt-files
+      effects: [publishValue]
+    template: |-
+      {%- import "util-features-854-gateway-jwt-files" for PublishGatewayJWTFiles -%}
+      {{- PublishGatewayJWTFiles(item, "GRPCRoute") -}}
+
+  features-856-gateway-jwt-names-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+      group: haptic-jwt-routes
+      effects: [publishValue]
+    template: |-
+      {%- import "util-features-856-gateway-jwt-names" for PublishGatewayJWTNames -%}
+      {{- PublishGatewayJWTNames(item, "GRPCRoute") -}}
+
+  features-856-gateway-api-key-names-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+      group: haptic-api-key-routes
+      effects: [publishValue]
+    template: |-
+      {%- import "util-features-856-gateway-api-key-names" for PublishGatewayAPIKeyNames -%}
+      {{- PublishGatewayAPIKeyNames(item, "GRPCRoute") -}}
+
+  util-map-gateway-policy-errors:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro GatewayPolicyErrorsMap(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] != "" -%}
+            {{- "\n" + tostring(record["id"]) + " invalid" -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-gateway-policy-errors:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro PublishGatewayPolicyErrors(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] != "" -%}
+            {%%
+              var namespace = dig_string(route, "", "metadata", "namespace")
+              var name = dig_string(route, "", "metadata", "name")
+              record["kind"] = kind
+              record["namespace"] = namespace
+              record["name"] = name
+              record["resource"] = map[string]any{"apiVersion": dig_string(route, "", "apiVersion"), "kind": kind, "metadata": dig(route, "metadata")}
+              record["dependencies"] = append(toSlice(record["dependencies"]), map[string]any{"store": toLower(kind) + "s", "namespace": namespace, "name": name})
+              show shared.Publish("errors", tostring(record["ruleID"]), record)
+            %%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-map-haptic-jwt-routes-859-gateway:
+    template: |-
+      {%- import "util-jwt-map-value" for JWTMapValue -%}
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro GatewayJWTMap(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "authentication", "jwt") != nil -%}
+            {{- "\n" + tostring(record["id"]) + " " -}}{{- JWTMapValue(dig(record, "authentication", "jwt").(map[string]any)) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-map-haptic-api-key-routes-861-gateway:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro GatewayAPIKeyRoutesMap(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "authentication", "apiKey") != nil -%}
+            {%- var settings = dig(record, "authentication", "apiKey").(map[string]any) -%}
+            {{- "\n" + tostring(record["id"]) + " hdr " + tostring(settings["name"]) + " " + tostring(settings["secretRef"]) + " ok " + tostring(settings["fwd"]) + " " + tostring(settings["fwdSet"]) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-map-haptic-apikeys-861-gateway:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro GatewayAPIKeysMap(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "authentication", "apiKey") != nil -%}
+            {%- var secret = dig_string(record, "", "authentication", "apiKey", "secretRef") -%}
+            {%- for key, consumer := range to_str_map(dig(record, "authentication", "apiKeys")) -%}
+              {{- shared.Unique("map-haptic-apikeys", secret + "|" + key, "\n" + secret + "|" + key + " " + tostring(consumer)) -}}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-features-854-gateway-jwt-files:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro PublishGatewayJWTFiles(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "authentication", "jwt") != nil -%}
+            {%- var key = dig(record, "authentication", "publicKey") -%}
+            {{- shared.Publish("files", dig_string(key, "", "filename"), map[string]any{"filename": dig_string(key, "", "filename"), "content": dig_string(key, "", "content")}) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-features-856-gateway-jwt-names:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro PublishGatewayJWTNames(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "authentication", "jwt") != nil -%}
+            {%- var jwt = dig(record, "authentication", "jwt").(map[string]any) -%}
+            {%- var pair = tostring(jwt["alg"]) + "|" + tostring(jwt["keyFile"]) -%}
+            {{- shared.Publish("any", "any", "any") -}}
+            {{- shared.Publish("keys", pair, pair) -}}
+            {%- for _, claim := range toSlice(jwt["req"]) -%}{{- shared.Publish("req", tostring(claim), claim) -}}{%- end -%}
+            {%- for _, value := range toSlice(jwt["fwd"]) -%}
+              {%- var forward = tostring(value) -%}
+              {%- var header = strings_splitn(forward, ":", 2)[1] -%}
+              {{- shared.Publish("fwd", forward, forward) -}}
+              {{- shared.Publish("fwdhdr", header, header) -}}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-features-856-gateway-api-key-names:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro PublishGatewayAPIKeyNames(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "authentication", "apiKey") != nil -%}
+            {%- var settings = dig(record, "authentication", "apiKey").(map[string]any) -%}
+            {{- shared.Publish("any", "any", "any") -}}
+            {{- shared.Publish("hdr", tostring(settings["name"]), settings["name"]) -}}
+            {%- if settings["fwdSet"] == true -%}{{- shared.Publish("fwd", tostring(settings["fwd"]), settings["fwd"]) -}}{%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}

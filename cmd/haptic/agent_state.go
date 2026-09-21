@@ -15,13 +15,13 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
-	"net"
 	"os"
 	"slices"
 	"strconv"
@@ -31,13 +31,15 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 )
 
 var (
-	agentStateURL    string
-	agentStateVerify bool
-	agentStateOutput string
-	agentStateFiles  bool
+	agentStateURL           string
+	agentStateVerify        bool
+	agentStateOutput        string
+	agentStateFiles         bool
+	agentStateTLSServerName string
 )
 
 var agentStateCmd = &cobra.Command{
@@ -46,8 +48,7 @@ var agentStateCmd = &cobra.Command{
 	Long: `Print the agent's state: the plans it applied, runs and can fall back to, what
 its worker has loaded, what it still has to delete, and how the last apply went.
 
-Run it in the pod, where the credentials the agent authenticates with are
-already in the environment:
+Run it in the pod to query the read-only local socket:
 
   kubectl exec -n <namespace> <pod> -c agent -- haptic agent state
 
@@ -68,7 +69,9 @@ Example usage:
 
 func init() {
 	agentStateCmd.Flags().StringVar(&agentStateURL, "url", "",
-		"Agent base URL (default: http://127.0.0.1:<--listen port>)")
+		"Remote agent base URL (default: the local --admin-socket)")
+	agentStateCmd.Flags().StringVar(&agentStateTLSServerName, "tls-server-name", "",
+		"Required remote agent certificate DNS SAN (env: AGENT_TLS_SERVER_NAME)")
 	agentStateCmd.Flags().BoolVar(&agentStateVerify, "verify", false,
 		"Make the agent re-hash its tree, so the reported digests are observations rather than its last-known set")
 	agentStateCmd.Flags().StringVarP(&agentStateOutput, "output", "o", outputHuman,
@@ -86,42 +89,52 @@ func runAgentState(cmd *cobra.Command, _ []string) error {
 	return printAgentState(os.Stdout, state)
 }
 
-// fetchAgentState reads /v1/state from the agent at url, or from the local one
-// when url is empty. The credentials are the ones the agent itself was given.
 func fetchAgentState(ctx context.Context, url string) (*api.State, error) {
-	username, password := os.Getenv(agentUsernameEnv), os.Getenv(agentPasswordEnv)
-	if username == "" || password == "" {
-		return nil, errors.New("no agent credentials in the environment: " + agentUsernameEnv + " and " +
-			agentPasswordEnv + " are set in the pod's agent container, which is where this command runs")
+	cfg, err := agentStateClientConfig(url)
+	if err != nil {
+		return nil, err
 	}
-	if url == "" {
-		url = localAgentURL(agentListen)
-	}
-	agent, err := agentclient.New(&agentclient.Config{BaseURL: url, Username: username, Password: password})
+	agent, err := agentclient.New(cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer agent.Close()
-
 	state, err := agent.State(ctx, api.StateRead{Verify: agentStateVerify, Plan: true})
 	if err != nil {
-		return nil, fmt.Errorf("reading %s from %s: %w", api.PathState, url, err)
+		return nil, fmt.Errorf("read agent %s: %w", api.PathState, err)
 	}
 	return state, nil
 }
 
-// localAgentURL turns the agent's listen address into a URL for this pod. A
-// wildcard bind is reached on loopback, which is the only interface an exec
-// into the container has.
-func localAgentURL(listen string) string {
-	host, port, err := net.SplitHostPort(listen)
-	if err != nil {
-		return "http://" + listen
+func agentStateClientConfig(url string) (*agentclient.Config, error) {
+	if url == "" {
+		return agentLocalClientConfig()
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
+	cfg := &agentclient.Config{BaseURL: url}
+	directory := cmp.Or(agentTLSDirectory, os.Getenv("AGENT_TLS_DIR"))
+	peerName := cmp.Or(agentStateTLSServerName, os.Getenv("AGENT_TLS_SERVER_NAME"))
+	if directory != "" || peerName != "" {
+		var err error
+		cfg.TLS, err = transportsecurity.NewSource(directory, peerName)
+		if err != nil {
+			return nil, err
+		}
+		return cfg, nil
 	}
-	return "http://" + net.JoinHostPort(host, port)
+	cfg.Username, cfg.Password = os.Getenv(agentUsernameEnv), os.Getenv(agentPasswordEnv)
+	if cfg.Username == "" || cfg.Password == "" {
+		return nil, errors.New("remote agent credentials are missing; provide --tls-dir and --tls-server-name, or set " +
+			agentUsernameEnv + " and " + agentPasswordEnv + " for a legacy HTTP agent")
+	}
+	return cfg, nil
+}
+
+func agentLocalClientConfig() (*agentclient.Config, error) {
+	socket := localSocketPath(agentBaseDir, agentAdminSocket)
+	if socket == "" {
+		return nil, errors.New("local agent socket is disabled; set --admin-socket")
+	}
+	return &agentclient.Config{BaseURL: "http://localhost", UnixSocket: socket}, nil
 }
 
 func printAgentState(w io.Writer, state *api.State) error {

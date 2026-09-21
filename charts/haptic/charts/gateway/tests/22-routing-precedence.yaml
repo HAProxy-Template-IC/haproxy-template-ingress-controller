@@ -37,37 +37,37 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_split-route_app-v1_80"}
+      - {type: contains, target: haproxy.cfg, pattern: "backend gw_h_default_split-route_app-v1_80"}
 
-      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_split-route_app-v2_80"}
+      - {type: contains, target: haproxy.cfg, pattern: "backend gw_h_default_split-route_app-v2_80"}
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "split.example.com/app/ GW_ROUTE_ID:http:default_split-route_0"
+        pattern: "split.example.com/app/ GW_ROUTE_ID:http:h_default_split-route_0"
 
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "0:default_split-route_0 gtw_default_split-route_app-v1_80"
+        pattern: "0:h_default_split-route_0 gw_h_default_split-route_app-v1_80"
 
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "69:default_split-route_0 gtw_default_split-route_app-v1_80"
+        pattern: "69:h_default_split-route_0 gw_h_default_split-route_app-v1_80"
 
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "70:default_split-route_0 gtw_default_split-route_app-v2_80"
+        pattern: "70:h_default_split-route_0 gw_h_default_split-route_app-v2_80"
 
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "99:default_split-route_0 gtw_default_split-route_app-v2_80"
+        pattern: "99:h_default_split-route_0 gw_h_default_split-route_app-v2_80"
 
       - type: not_contains
         target: map:weighted-multi-backend.map
-        pattern: "0:default_split-route_0 gtw_default_split-route_app-v1_801:default_split-route_0"
+        pattern: "0:h_default_split-route_0 gw_h_default_split-route_app-v1_801:h_default_split-route_0"
 
       - type: not_contains
         target: map:weighted-multi-backend.map
-        pattern: "69:default_split-route_0 gtw_default_split-route_app-v1_8070:default_split-route_0"
+        pattern: "69:h_default_split-route_0 gw_h_default_split-route_app-v1_8070:h_default_split-route_0"
 
       # Map Formatting Tests - Ensure comments don't concatenate with entries
       - {type: not_contains, target: map:host.map, pattern: "hosts\\)\\S"}
@@ -82,7 +82,7 @@ validationTests:
 
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "(?m)^\\d+:default_split-route_0 gtw_"
+        pattern: "(?m)^\\d+:h_default_split-route_0 gw_h_"
 
   test-httproute-weight-no-matches:
     requires: [httproutes]
@@ -107,7 +107,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "default.example.com/ GW_ROUTE_ID:http:default_default-path_0"
+        pattern: "default.example.com/ GW_ROUTE_ID:http:h_default_default-path_0"
 
   test-httproute-weight-default:
     requires: [httproutes]
@@ -134,15 +134,15 @@ validationTests:
 
       - type: contains
         target: map:path-exact.map
-        pattern: "weight.example.com/test GW_ROUTE_ID:http:default_default-weight_0"
+        pattern: "weight.example.com/test GW_ROUTE_ID:http:h_default_default-weight_0"
 
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "0:default_default-weight_0 gtw_default_default-weight_app-v1_80"
+        pattern: "0:h_default_default-weight_0 gw_h_default_default-weight_app-v1_80"
 
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "1:default_default-weight_0 gtw_default_default-weight_app-v2_80"
+        pattern: "1:h_default_default-weight_0 gw_h_default_default-weight_app-v2_80"
 
   test-httproute-precedence:
     requires: [httproutes]
@@ -201,9 +201,9 @@ validationTests:
       - type: match_order
         target: map:path-prefix.map
         patterns:
-          - "/api/v1/users/.*default_route1_0"   # Most specific: longest path + method + headers
-          - "/api/v1/ .*default_route1_1"        # Medium: medium path + method
-          - "/api/ .*default_route1_2"           # Least specific: shortest path, no extra matchers
+          - "/api/v1/users/.*h_default_route1_0"   # Most specific: longest path + method + headers
+          - "/api/v1/ .*h_default_route1_1"        # Medium: medium path + method
+          - "/api/ .*h_default_route1_2"           # Least specific: shortest path, no extra matchers
 
   test-httproute-same-path-matcher-precedence:
     requires: [httproutes]
@@ -314,15 +314,15 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_canary-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_canary-route_0\" \\} \\{ method GET \\} \\{ req\\.hdr\\(X-Canary\\) \"true\" \\}"
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(h_default_canary-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"h_default_canary-route_0\" \\} \\{ method GET \\} \\{ req\\.hdr\\(X-Canary\\) \"true\" \\}"
 
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "0:default_canary-route_0 gtw_default_canary-route_canary-v1_80"
+        pattern: "0:h_default_canary-route_0 gw_h_default_canary-route_canary-v1_80"
 
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "90:default_canary-route_0 gtw_default_canary-route_canary-v2_80"
+        pattern: "90:h_default_canary-route_0 gw_h_default_canary-route_canary-v2_80"
 
   test-httproute-same-route-conflicts:
     requires: [httproutes]
@@ -366,15 +366,15 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "api.example.com/api/ GW_ROUTE_ID:http:default_multi-rule_0__default_multi-rule_1"
+        pattern: "api.example.com/api/ GW_ROUTE_ID:http:h_default_multi-rule_0__h_default_multi-rule_1"
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_multi-rule_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_multi-rule_0__default_multi-rule_1\" \\} \\{ req\\.hdr\\(Authorization\\) \"Bearer\" \\}"
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(h_default_multi-rule_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"h_default_multi-rule_0__h_default_multi-rule_1\" \\} \\{ req\\.hdr\\(Authorization\\) \"Bearer\" \\}"
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(txn\\.path_match\\) str\\(BACKEND:gtw_default_multi-rule_public-service_80\\) if \\{ var\\(txn\\.gw_rule_id\\) -m str \"default_multi-rule_1\" \\}"
+        pattern: "http-request set-var\\(txn\\.path_match\\) str\\(BACKEND:gw_h_default_multi-rule_public-service_80\\) if \\{ var\\(txn\\.gw_rule_id\\) -m str \"h_default_multi-rule_1\" \\}"
 
   test-httproute-cross-route-conflicts:
     requires: [httproutes]
@@ -423,7 +423,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "api.example.com/api/ GW_ROUTE_ID:http:default_route-get_0__default_route-post_0"
+        pattern: "api.example.com/api/ GW_ROUTE_ID:http:h_default_route-get_0__h_default_route-post_0"
 
   test-httproute-grpcroute-precedence:
     requires: [grpcroutes, httproutes]
@@ -473,11 +473,11 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "api\\.example\\.com/rest/ GW_ROUTE_ID:http:default_http-route_0"
+        pattern: "api\\.example\\.com/rest/ GW_ROUTE_ID:http:h_default_http-route_0"
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-route_0\" \\} \\{ path \"/com\\.example\\.Service/GetData\" \\}"
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(g_default_grpc-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"g_default_grpc-route_0\" \\} \\{ path \"/com\\.example\\.Service/GetData\" \\}"
   test-gateway-http-listener-isolation:
     requires: [gatewayclasses, gateways, httproutes]
     description: Multi-listener Gateway routes are isolated per-listener (mirrors GatewayHTTPListenerIsolation)
@@ -555,19 +555,19 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^:[0-9]+/empty-hostname/ GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
+        pattern: "(?m)^:[0-9]+/empty-hostname/ GW_ROUTE_ID:http:h_default_attaches-to-empty-hostname_0$"
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^\\.example\\.com/wildcard-example-com/ GW_ROUTE_ID:http:default_attaches-to-wildcard-example-com_0$"
+        pattern: "(?m)^\\.example\\.com/wildcard-example-com/ GW_ROUTE_ID:http:h_default_attaches-to-wildcard-example-com_0$"
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com/ GW_ROUTE_ID:http:default_attaches-to-wildcard-foo-example-com_0$"
+        pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com/ GW_ROUTE_ID:http:h_default_attaches-to-wildcard-foo-example-com_0$"
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com/ GW_ROUTE_ID:http:default_attaches-to-abc-foo-example-com_0$"
+        pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com/ GW_ROUTE_ID:http:h_default_attaches-to-abc-foo-example-com_0$"
 
       # Anchored per line: an unanchored pattern still matched when the first
       # entry fused into the marker comment above it and stopped being an entry.
@@ -595,7 +595,7 @@ validationTests:
       #      the catch-all listener)
       - type: contains
         target: map:path-prefix-exact.map
-        pattern: "(?m)^:[0-9]+/empty-hostname GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
+        pattern: "(?m)^:[0-9]+/empty-hostname GW_ROUTE_ID:http:h_default_attaches-to-empty-hostname_0$"
       # Cases targeting the wildcard-example-com listener
       # (Host=bar.example.com):
       #   5: /empty-hostname            → 404
@@ -603,7 +603,7 @@ validationTests:
       #   7-8: /wildcard-foo-* / /abc-* → 404
       - type: contains
         target: map:path-prefix-exact.map
-        pattern: "(?m)^\\.example\\.com/wildcard-example-com GW_ROUTE_ID:http:default_attaches-to-wildcard-example-com_0$"
+        pattern: "(?m)^\\.example\\.com/wildcard-example-com GW_ROUTE_ID:http:h_default_attaches-to-wildcard-example-com_0$"
       # Cases targeting the wildcard-foo-example-com listener
       # (Host=bar.foo.example.com):
       #   9-10: /empty-hostname / /wildcard-example-com → 404
@@ -611,14 +611,14 @@ validationTests:
       #   12: /abc-foo-example-com      → 404
       - type: contains
         target: map:path-prefix-exact.map
-        pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com GW_ROUTE_ID:http:default_attaches-to-wildcard-foo-example-com_0$"
+        pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com GW_ROUTE_ID:http:h_default_attaches-to-wildcard-foo-example-com_0$"
       # Cases targeting the abc-foo-example-com listener
       # (Host=abc.foo.example.com — exact match in host.map):
       #   13-15: /empty-hostname / /wildcard-* / /wildcard-foo-* → 404
       #   16: /abc-foo-example-com      → 200
       - type: contains
         target: map:path-prefix-exact.map
-        pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com GW_ROUTE_ID:http:default_attaches-to-abc-foo-example-com_0$"
+        pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com GW_ROUTE_ID:http:h_default_attaches-to-abc-foo-example-com_0$"
       # The 12 404-expected cases are pinned implicitly: a 404
       # case (e.g. Case 13: Host=abc.foo.example.com,
       # Path=/empty-hostname) routes to the abc-foo-example-com
@@ -677,15 +677,15 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^bar\\.com:[0-9]+/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        pattern: "(?m)^bar\\.com:[0-9]+/empty/ GW_ROUTE_ID:http:h_default_empty-listener-route_0$"
 
       - type: not_contains
         target: map:path-prefix.map
-        pattern: "(?m)^\\.example\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        pattern: "(?m)^\\.example\\.com/empty/ GW_ROUTE_ID:http:h_default_empty-listener-route_0$"
 
       - type: not_contains
         target: map:path-prefix.map
-        pattern: "(?m)^abc\\.example\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        pattern: "(?m)^abc\\.example\\.com/empty/ GW_ROUTE_ID:http:h_default_empty-listener-route_0$"
 
   # SupportGatewayInfrastructurePropagation (Standard channel) regression
   # tests. The chart's per-Gateway loop in util-generate-gateway-status-patches
@@ -741,10 +741,10 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "gtw_default_weight-zero-excludes_app-v1_80"
+        pattern: "gw_h_default_weight-zero-excludes_app-v1_80"
       - type: contains
         target: map:weighted-multi-backend.map
-        pattern: "gtw_default_weight-zero-excludes_app-v2_80"
+        pattern: "gw_h_default_weight-zero-excludes_app-v2_80"
       - {type: not_contains, target: map:weighted-multi-backend.map, pattern: "app-v3-excluded"}
 
   test-httproute-weight-invalid-ref-share-returns-500:
@@ -769,12 +769,12 @@ validationTests:
                   - {name: app-v1, port: 80, weight: 3}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:route-backend.map, pattern: "default_mixed-route_0 MULTIBACKEND:4:default_mixed-route_0"}
-      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^0:default_mixed-route_0 gw-invalid-backend$"}
-      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^1:default_mixed-route_0 gtw_default_mixed-route_app-v1_80$"}
-      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^3:default_mixed-route_0 gtw_default_mixed-route_app-v1_80$"}
-      - {type: not_contains, target: haproxy.cfg, pattern: "backend gtw_default_mixed-route_does-not-exist_80"}
-      - {type: contains, target: haproxy.cfg, pattern: "backend gtw_default_mixed-route_app-v1_80"}
+      - {type: contains, target: map:route-backend.map, pattern: "h_default_mixed-route_0 MULTIBACKEND:4:h_default_mixed-route_0"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^0:h_default_mixed-route_0 gw-invalid-backend$"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^1:h_default_mixed-route_0 gw_h_default_mixed-route_app-v1_80$"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^3:h_default_mixed-route_0 gw_h_default_mixed-route_app-v1_80$"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend gw_h_default_mixed-route_does-not-exist_80"}
+      - {type: contains, target: haproxy.cfg, pattern: "backend gw_h_default_mixed-route_app-v1_80"}
 
   test-httproute-weight-unpermitted-cross-namespace-ref-share-returns-500:
     requires: [httproutes, referencegrants]
@@ -818,11 +818,11 @@ validationTests:
                   - {name: app-v1, port: 80, weight: 1}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:route-backend.map, pattern: "default_xns-route_0 MULTIBACKEND:2:default_xns-route_0"}
-      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^0:default_xns-route_0 gw-invalid-backend$"}
-      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^1:default_xns-route_0 gtw_default_xns-route_app-v1_80$"}
+      - {type: contains, target: map:route-backend.map, pattern: "h_default_xns-route_0 MULTIBACKEND:2:h_default_xns-route_0"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^0:h_default_xns-route_0 gw-invalid-backend$"}
+      - {type: contains, target: map:weighted-multi-backend.map, pattern: "(?m)^1:h_default_xns-route_0 gw_h_default_xns-route_app-v1_80$"}
       - {type: not_contains, target: haproxy.cfg, pattern: "10\\.9\\.9\\.9"}
-      - {type: not_contains, target: haproxy.cfg, pattern: "backend gtw_default_xns-route_secret-svc_80"}
+      - {type: not_contains, target: haproxy.cfg, pattern: "backend gw_h_default_xns-route_other_secret-svc_80"}
 
   test-gateway-two-gateways-share-host-path:
     requires: [gatewayclasses, gateways, httproutes]
@@ -887,10 +887,10 @@ validationTests:
       # either side breaks the lookup and the request reaches no backend.
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^\\.example\\.com/wildcard-example-com/ GW_ROUTE_ID:http:default_attaches-to-wildcard-example-com_0__default_attaches-to-wildcard-example-com-with-hostname-intersection_0$"
+        pattern: "(?m)^\\.example\\.com/wildcard-example-com/ GW_ROUTE_ID:http:h_default_attaches-to-wildcard-example-com_0__h_default_attaches-to-wildcard-example-com-with-hostname-intersection_0$"
       - type: contains
         target: map:route-winner.map
-        pattern: "(?m)^default_attaches-to-wildcard-example-com_0__default_attaches-to-wildcard-example-com-with-hostname-intersection_0 default_attaches-to-wildcard-example-com_0$"
+        pattern: "(?m)^h_default_attaches-to-wildcard-example-com_0__h_default_attaches-to-wildcard-example-com-with-hostname-intersection_0 h_default_attaches-to-wildcard-example-com_0$"
       - type: contains
         target: map:route-backend.map
-        pattern: "(?m)^default_attaches-to-wildcard-example-com_0 BACKEND:gtw_default_attaches-to-wildcard-example-com_infra-backend-v1_8080$"
+        pattern: "(?m)^h_default_attaches-to-wildcard-example-com_0 BACKEND:gw_h_default_attaches-to-wildcard-example-com_infra-backend-v1_8080$"

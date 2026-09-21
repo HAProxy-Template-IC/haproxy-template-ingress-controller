@@ -171,11 +171,13 @@ func normalizeLegacyManifest(m *api.Manifest) {
 		if m.Mode == api.ModeAuto && m.ExpectedWorkerOpsPlanProof == "" && len(m.InPlaceOps) == 0 {
 			m.Mode = api.ModeReload
 			m.Ops = nil
+			m.OpBatches = nil
 		}
 		return
 	}
 	m.Mode = api.ModeReload
 	m.Ops = nil
+	m.OpBatches = nil
 	m.InPlaceOps = nil
 	m.ExpectedPrevPlanProof = ""
 	m.ExpectedWorkerOpsPlanID = ""
@@ -373,12 +375,13 @@ func (a *Agent) transact(req *applyRequest) outcome {
 		// An unknown baseline reloads regardless of the ops, as the real agent does.
 		return a.reload(req)
 	}
-	if kind := a.firstRejected(m.Ops); kind != "" {
+	ops := m.RuntimeOps()
+	if kind := a.firstRejected(ops); kind != "" {
 		return a.rejectOps(m, kind)
 	}
 	mode := api.ResultNoop
 	switch {
-	case len(m.Ops) > 0:
+	case len(ops) > 0:
 		mode = api.ResultRuntime
 	case changed:
 		mode = api.ResultFileOnly
@@ -387,7 +390,7 @@ func (a *Agent) transact(req *applyRequest) outcome {
 	// Every op ran on the worker, so it holds the applied plan.
 	a.state.WorkerOpsPlanID = m.PlanID
 	a.state.WorkerOpsPlanProof = req.appliedProof
-	return a.ack(m, mode, m.Ops, nil)
+	return a.ack(m, mode, ops, nil)
 }
 
 // scheduled coalesces the apply into the reload already waiting: the files land

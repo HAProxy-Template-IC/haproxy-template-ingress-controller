@@ -1,0 +1,729 @@
+templateSnippets:
+  util-policy-waf-catalog:
+    template: |-
+      {%- import "util-policy-waf-governance" for ResolveWafGovernance -%}
+      {%- macro BuildWafCatalog(context any, trustedRecords []any, selfServiceRecords []any, result map[string]any) -%}
+        {%%
+          var diagnostics = []any{}
+          var dependencies = []any{}
+          var plugins = context | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice()
+          var corazaEnabled = false
+          var corazaBaseDirectives = ""
+          for _, p := range plugins {
+            if p.(map[string]any)["name"].(string) == "coraza" {
+              corazaEnabled = true
+              corazaBaseDirectives = p | dig_string("", "directives")
+            }
+          }
+          var wafAny = context | dig("waf")
+          if wafAny == nil { wafAny = map[string]any{} }
+          var waf, wafOK = wafAny.(map[string]any)
+          if !wafOK { fail("extraContext.waf must be a map.") }
+          var allowedWafSettings = map[string]bool{
+            "dispatch": true, "ingressPermissions": true,
+            "customRules": true, "policies": true, "crs": true,
+            "failClosed": true,
+          }
+          for _, field := range keys(waf) {
+            if !allowedWafSettings[field] {
+              fail("extraContext.waf contains unknown field '" + field + "'.")
+            }
+          }
+          var boundedInteger = func(input any, defaultValue int, field string, minimum int, maximum int) int {
+            if input == nil { return defaultValue }
+            var text = tostring(input)
+            if !regex_search(text, "^[0-9]+$") {
+              fail(field + " must be an integer between " + tostring(minimum) + " and " + tostring(maximum) + ".")
+            }
+            var value = toint(text)
+            if value < minimum || value > maximum {
+              fail(field + " must be between " + tostring(minimum) + " and " + tostring(maximum) + ".")
+            }
+            return value
+          }
+          var dispatchAny = waf | dig("dispatch")
+          if dispatchAny == nil { dispatchAny = map[string]any{} }
+          var dispatch, dispatchOK = dispatchAny.(map[string]any)
+          if !dispatchOK { fail("extraContext.waf.dispatch must be a map.") }
+          for _, field := range keys(dispatch) {
+            if field != "mode" && field != "defaultEnforcement" {
+              fail("extraContext.waf.dispatch contains unknown field '" + field + "'.")
+            }
+          }
+          var dispatchMode = "opt-in"
+          if dispatch["mode"] != nil {
+            var dispatchModeOK = false
+            dispatchMode, dispatchModeOK = dispatch["mode"].(string)
+            if !dispatchModeOK { fail("extraContext.waf.dispatch.mode must be a string.") }
+          }
+          if dispatchMode != "opt-in" && dispatchMode != "default-on" {
+            fail("extraContext.waf.dispatch.mode must be one of: opt-in, default-on.")
+          }
+          var policiesAny = waf | dig("policies")
+          if policiesAny == nil { policiesAny = map[string]any{} }
+          var policies, policiesOK = policiesAny.(map[string]any)
+          if !policiesOK { fail("extraContext.waf.policies must be a map.") }
+          var allowedPolicySettings = map[string]bool{
+            "defaultPolicy": true, "requestBody": true,
+            "limits": true, "inline": true, "configMapRefs": true,
+            "selfService": true,
+          }
+          for _, field := range keys(policies) {
+            if !allowedPolicySettings[field] {
+              fail("extraContext.waf.policies contains unknown field '" + field + "'.")
+            }
+          }
+          var policyRequestBodyAny = policies | dig("requestBody")
+          if policyRequestBodyAny == nil { policyRequestBodyAny = map[string]any{} }
+          var policyRequestBody, policyRequestBodyOK = policyRequestBodyAny.(map[string]any)
+          if !policyRequestBodyOK { fail("extraContext.waf.policies.requestBody must be a map.") }
+          for _, field := range keys(policyRequestBody) {
+            if field != "waitTimeout" && field != "defaultMaxBytes" && field != "maxBytes" {
+              fail("extraContext.waf.policies.requestBody contains unknown field '" + field + "'.")
+            }
+          }
+          var defaultMaxBodyBytesN = boundedInteger(policyRequestBody["defaultMaxBytes"], 8192, "extraContext.waf.policies.requestBody.defaultMaxBytes", 1, 1048576)
+          var maxBodyBytesN = boundedInteger(policyRequestBody["maxBytes"], 8192, "extraContext.waf.policies.requestBody.maxBytes", 1, 1048576)
+          var defaultMaxBodyBytes = tostring(defaultMaxBodyBytesN)
+          var maxBodyBytes = tostring(maxBodyBytesN)
+          if defaultMaxBodyBytesN > maxBodyBytesN {
+            fail("extraContext.waf.policies.requestBody.defaultMaxBytes must not exceed maxBytes.")
+          }
+          var requestBufferSize = boundedInteger(context | dig("requestBodyInspection", "haproxyBuffer", "sizeBytes"), 16384, "extraContext.requestBodyInspection.haproxyBuffer.sizeBytes", 16384, 2097152)
+          var requestBufferReserved = boundedInteger(context | dig("requestBodyInspection", "haproxyBuffer", "reservedBytes"), 8192, "extraContext.requestBodyInspection.haproxyBuffer.reservedBytes", 1, 2097151)
+          if requestBufferReserved >= requestBufferSize {
+            fail("extraContext.requestBodyInspection.haproxyBuffer.reservedBytes must be positive and smaller than sizeBytes.")
+          }
+          if maxBodyBytesN > requestBufferSize-requestBufferReserved {
+            fail("extraContext.waf.policies.requestBody.maxBytes exceeds the shared HAProxy request-body capacity.")
+          }
+          var configuredDefaultPolicy = ""
+          if policies["defaultPolicy"] != nil {
+            var defaultPolicyOK = false
+            configuredDefaultPolicy, defaultPolicyOK = policies["defaultPolicy"].(string)
+            if !defaultPolicyOK { fail("extraContext.waf.policies.defaultPolicy must be a string.") }
+          }
+          var inlinePoliciesAny = policies | dig("inline")
+          if inlinePoliciesAny == nil { inlinePoliciesAny = map[string]any{} }
+          var inlinePolicies, inlinePoliciesOK = inlinePoliciesAny.(map[string]any)
+          if !inlinePoliciesOK { fail("extraContext.waf.policies.inline must be a map of policy names to policy documents.") }
+          var policyConfigMapRefsAny = policies | dig("configMapRefs")
+          if policyConfigMapRefsAny == nil { policyConfigMapRefsAny = map[string]any{} }
+          var policyConfigMapRefs, policyConfigMapRefsOK = policyConfigMapRefsAny.(map[string]any)
+          if !policyConfigMapRefsOK { fail("extraContext.waf.policies.configMapRefs must be a map of catalog name to a source with namespace, name, and key fields.") }
+          var trustedCatalogs = map[string]any{}
+          for _, catalogAny := range trustedRecords {
+            var catalog = catalogAny.(map[string]any)
+            trustedCatalogs[tostring(catalog["refName"])] = catalog
+          }
+          var policyCatalogConfigured = len(inlinePolicies) > 0 || len(policyConfigMapRefs) > 0 || configuredDefaultPolicy != ""
+          var defaultPolicy = configuredDefaultPolicy
+          var gov = map[string]any{}
+          var _ = ResolveWafGovernance(context, gov)
+          var governanceEnabled = gov["governanceEnabled"].(bool)
+          var allowPolicySelection = gov["allowPolicySelection"].(bool)
+          var allowEnforcementOverride = gov["allowEnforcementOverride"].(bool)
+          var allowRawHAProxyConfig = gov["allowRawHAProxyConfig"].(bool)
+          var selfServiceEnabled = gov["selfServiceEnabled"].(bool)
+          var dispatchDefaultEnforcement = dispatch | dig("defaultEnforcement") | fallback("deny") | tostring()
+          var limitsAny = policies | dig("limits")
+          if limitsAny == nil { limitsAny = map[string]any{} }
+          var limits, limitsOK = limitsAny.(map[string]any)
+          if !limitsOK { fail("extraContext.waf.policies.limits must be a map.") }
+          var maxPolicies = boundedInteger(limits["maxCount"], 16, "extraContext.waf.policies.limits.maxCount", 1, 1024)
+          var maxPolicySecLangBytes = boundedInteger(limits["maxSecLangBytes"], 65536, "extraContext.waf.policies.limits.maxSecLangBytes", 1, 1048576)
+          var maxPolicyRuleExclusions = boundedInteger(limits["maxRuleExclusions"], 256, "extraContext.waf.policies.limits.maxRuleExclusions", 1, 4096)
+
+          var noBodySafety = "SecRequestBodyAccess Off\nSecResponseBodyAccess Off\n"
+          var bufferedBodySafety = "SecRequestBodyAccess On\nSecRequestBodyLimitAction Reject\nSecResponseBodyAccess Off\n"
+
+          var policyConfiguration = map[string]string{}
+          var policySafety = map[string]string{}
+          var policyBodyMode = map[string]string{}
+          var policySetupDirectives = map[string]string{}
+          var policyContentMode = map[string]string{}
+          var policyMaxBody = map[string]string{}
+          var policyEnforcement = map[string]string{}
+          var policySource = map[string]string{}
+          var policyMutableSource = map[string]string{}
+          var trustedBrokenPolicy = map[string]string{}
+          var defaultPolicyError = ""
+          var trustedCatalogUnavailable = false
+          var selfServiceBrokenCatalog = map[string]string{}
+          var selfServiceBrokenPolicy = map[string]string{}
+          if policyCatalogConfigured || selfServiceEnabled {
+            var allowedPolicyFields = map[string]bool{
+              "description": true,
+              "requestBody": true,
+              "enforcement": true,
+              "secLang": true,
+              "allowedMethods": true,
+              "paranoiaLevel": true,
+              "anomalyThreshold": true,
+              "crsSettings": true,
+              "ruleExclusions": true,
+            }
+
+            var scalarText = func(value any) string {
+              switch value.(type) {
+              case string, bool, int, int32, int64, uint, uint32, uint64, float32, float64:
+                return tostring(value)
+              default:
+                return "<non-scalar>"
+              }
+            }
+            var registerPolicy = func(storeKey string, policyName string, rawPolicy any, source string) string {
+            if !regex_search(policyName, "^[a-z0-9][a-z0-9._-]{0,62}$") {
+              return "WAF policy name '" + policyName + "' from " + source + " must contain 1-63 lowercase letters, digits, dots, underscores, or hyphens and start with a letter or digit."
+            }
+            if policySource[storeKey] != "" {
+              return "Duplicate WAF policy '" + policyName + "' from " + source + "; it is already defined by " + policySource[storeKey] + ". Policy names must be unique across chart values and ConfigMaps."
+            }
+            var policy, policyOK = rawPolicy.(map[string]any)
+            if !policyOK {
+              return "WAF policy '" + policyName + "' from " + source + " must be a YAML map."
+            }
+            for _, field := range keys(policy) {
+              if !allowedPolicyFields[field] {
+                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, requestBody, secLang, allowedMethods, paranoiaLevel, anomalyThreshold, crsSettings, ruleExclusions."
+              }
+            }
+
+            var description = ""
+            if policy["description"] != nil {
+              var descriptionOK = false
+              description, descriptionOK = policy["description"].(string)
+              if !descriptionOK {
+                return "WAF policy '" + policyName + "' from " + source + " field description must be a string."
+              }
+            }
+            if len(description) > 512 {
+              return "WAF policy '" + policyName + "' from " + source + " has a description longer than 512 bytes."
+            }
+
+            var requestBodyAny = policy | dig("requestBody") | fallback(map[string]any{})
+            var requestBody, requestBodyOK = requestBodyAny.(map[string]any)
+            if !requestBodyOK {
+              return "WAF policy '" + policyName + "' from " + source + " field requestBody must be a map with mode and optional maxBytes fields."
+            }
+            for _, field := range keys(requestBody) {
+              if field != "mode" && field != "maxBytes" {
+                return "WAF policy '" + policyName + "' from " + source + " requestBody contains unknown field '" + field + "'. Valid fields: mode, maxBytes."
+              }
+            }
+            var requestBodyMode = "none"
+            if requestBody["mode"] != nil {
+              requestBodyMode = requestBody["mode"] | scalarText()
+            }
+            if requestBodyMode != "none" && requestBodyMode != "any" && requestBodyMode != "json" {
+              return "WAF policy '" + policyName + "' from " + source + " has invalid requestBody.mode '" + requestBodyMode + "'. Valid values: none, any, json."
+            }
+            if requestBodyMode == "none" && requestBody["maxBytes"] != nil {
+              return "WAF policy '" + policyName + "' from " + source + " sets requestBody.maxBytes while requestBody.mode is none. Set mode to any or json to inspect a bounded body, or remove maxBytes."
+            }
+            var bodyMode = "none"
+            var contentMode = "any"
+            var bodySafety = noBodySafety
+            if requestBodyMode == "any" || requestBodyMode == "json" {
+              bodyMode = "buffered"
+              bodySafety = bufferedBodySafety
+            }
+            if requestBodyMode == "json" {
+              contentMode = "json"
+            }
+
+            var enforcement = "deny"
+            if policy["enforcement"] != nil {
+              enforcement = policy["enforcement"] | scalarText()
+            }
+            if enforcement != "deny" && enforcement != "detect" {
+              return "WAF policy '" + policyName + "' from " + source + " has invalid enforcement '" + enforcement + "'. Valid values: deny, detect."
+            }
+
+            var policyBodyBytes = defaultMaxBodyBytes
+            if requestBody["maxBytes"] != nil {
+              policyBodyBytes = requestBody["maxBytes"] | scalarText()
+            }
+            if !regex_search(policyBodyBytes, "^[0-9]+$") {
+              return "WAF policy '" + policyName + "' from " + source + " field requestBody.maxBytes must be an integer."
+            }
+            var policyBodyInt = toint(policyBodyBytes)
+            if policyBodyInt < 1 || policyBodyInt > maxBodyBytesN {
+              return "WAF policy '" + policyName + "' from " + source + " has requestBody.maxBytes '" + policyBodyBytes + "'; it must be between 1 and the configured policy maximum " + maxBodyBytes + "."
+            }
+
+            var secLang = ""
+            if policy["secLang"] != nil {
+              var secLangOK = false
+              secLang, secLangOK = policy["secLang"].(string)
+              if !secLangOK {
+                return "WAF policy '" + policyName + "' from " + source + " field secLang must be a string."
+              }
+            }
+            if strings_contains(secLang, "\"\"\"") {
+              return "WAF policy '" + policyName + "' from " + source + " contains a TOML triple-quote delimiter in secLang; remove that sequence."
+            }
+            if len(secLang) > maxPolicySecLangBytes {
+              return "WAF policy '" + policyName + "' from " + source + " secLang is " + scalarText(len(secLang)) + " bytes; the configured limit is " + scalarText(maxPolicySecLangBytes) + "."
+            }
+
+            var generatedExclusions = ""
+
+            var setupDirectives = ""
+            var allowedMethodsAny = policy | dig("allowedMethods")
+            if allowedMethodsAny != nil {
+              var methods, methodsOK = allowedMethodsAny.([]any)
+              if !methodsOK || len(methods) == 0 {
+                return "WAF policy '" + policyName + "' from " + source + " field allowedMethods must be a non-empty list of HTTP methods."
+              }
+              var methodList = ""
+              for _, rawMethod := range methods {
+                var method = rawMethod | scalarText()
+                if !regex_search(method, "^[A-Z][A-Z-]{1,15}$") {
+                  return "WAF policy '" + policyName + "' from " + source + " has invalid allowedMethods entry '" + method + "'. Methods must be uppercase HTTP method tokens such as GET or PATCH."
+                }
+                if methodList != "" { methodList += " " }
+                methodList += method
+              }
+              setupDirectives += "SecAction \"id:900200,phase:1,pass,t:none,nolog,setvar:'tx.allowed_methods=" + methodList + "'\"\n"
+            }
+            if policy["paranoiaLevel"] != nil {
+              var paranoiaText = policy["paranoiaLevel"] | scalarText()
+              if !regex_search(paranoiaText, "^[1-4]$") {
+                return "WAF policy '" + policyName + "' from " + source + " field paranoiaLevel must be an integer between 1 and 4."
+              }
+              setupDirectives += "SecAction \"id:900000,phase:1,pass,t:none,nolog,setvar:'tx.blocking_paranoia_level=" + paranoiaText + "'\"\n"
+            }
+            var thresholdAny = policy | dig("anomalyThreshold")
+            if thresholdAny != nil {
+              var threshold, thresholdOK = thresholdAny.(map[string]any)
+              if !thresholdOK {
+                return "WAF policy '" + policyName + "' from " + source + " field anomalyThreshold must be a map with inbound and/or outbound integer fields."
+              }
+              var thresholdVars = ""
+              for _, field := range keys(threshold) {
+                if field != "inbound" && field != "outbound" {
+                  return "WAF policy '" + policyName + "' from " + source + " anomalyThreshold contains unknown field '" + field + "'. Valid fields: inbound, outbound."
+                }
+                var value = threshold[field] | scalarText()
+                if !regex_search(value, "^[1-9][0-9]{0,4}$") {
+                  return "WAF policy '" + policyName + "' from " + source + " anomalyThreshold." + field + " must be a positive integer."
+                }
+                if thresholdVars != "" { thresholdVars += "," }
+                thresholdVars += "setvar:'tx." + field + "_anomaly_score_threshold=" + value + "'"
+              }
+              setupDirectives += "SecAction \"id:900110,phase:1,pass,t:none,nolog," + thresholdVars + "\"\n"
+            }
+            var crsSettingsAny = policy | dig("crsSettings")
+            if crsSettingsAny != nil {
+              var crsSettings, crsSettingsOK = crsSettingsAny.(map[string]any)
+              if !crsSettingsOK {
+                return "WAF policy '" + policyName + "' from " + source + " field crsSettings must be a map of CRS tuning names to values."
+              }
+              var crsRegistry = map[string]any{
+                "allowedRequestContentTypes": map[string]any{"kind": "mergeList", "target": "allowed_request_content_type", "crsDefault": "|application/x-www-form-urlencoded| |multipart/form-data| |text/xml| |application/xml| |application/soap+xml| |application/json|", "wrap": "|", "sep": " ", "charset": "^[A-Za-z0-9][A-Za-z0-9.+/_-]*$", "hint": "a media type such as application/x-git-upload-pack-request"},
+                "maxFileSize":                map[string]any{"kind": "boundedInt", "target": "max_file_size", "minimum": 1, "maximum": 536870912, "hint": "a byte count between 1 and 536870912"},
+                "maxNumArgs":                 map[string]any{"kind": "boundedInt", "target": "max_num_args", "minimum": 1, "maximum": 100000, "hint": "a count between 1 and 100000"},
+                "totalArgLength":             map[string]any{"kind": "boundedInt", "target": "total_arg_length", "minimum": 1, "maximum": 10485760, "hint": "a byte count between 1 and 10485760"},
+              }
+              var crsClauses = []any{}
+              for _, field := range keys(crsSettings) {
+                var specAny = crsRegistry[field]
+                if specAny == nil {
+                  return "WAF policy '" + policyName + "' from " + source + " crsSettings contains unknown field '" + field + "'. Valid fields: " + join(keys(crsRegistry), ", ") + "."
+                }
+                var spec = specAny.(map[string]any)
+                var target = spec["target"].(string)
+                if spec["kind"].(string) == "mergeList" {
+                  var items, itemsOK = crsSettings[field].([]any)
+                  if !itemsOK || len(items) == 0 {
+                    return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " must be a non-empty list (each entry " + spec["hint"].(string) + ")."
+                  }
+                  var charset = spec["charset"].(string)
+                  var wrap = spec["wrap"].(string)
+                  var sep = spec["sep"].(string)
+                  var merged = spec["crsDefault"].(string)
+                  for _, rawItem := range items {
+                    var token = rawItem | scalarText()
+                    if !regex_search(token, charset) {
+                      return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " entry '" + token + "' is invalid; expected " + spec["hint"].(string) + "."
+                    }
+                    var wrapped = wrap + token + wrap
+                    if strings_contains(merged, wrapped) { continue }
+                    merged += sep + wrapped
+                  }
+                  crsClauses = append(crsClauses, "setvar:'tx."+target+"="+merged+"'")
+                } else {
+                  var text = crsSettings[field] | scalarText()
+                  if !regex_search(text, "^[0-9]+$") {
+                    return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " value '" + text + "' must be " + spec["hint"].(string) + "."
+                  }
+                  var value = toint(text)
+                  if value < spec["minimum"].(int) || value > spec["maximum"].(int) {
+                    return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " value '" + text + "' must be " + spec["hint"].(string) + "."
+                  }
+                  crsClauses = append(crsClauses, "setvar:'tx."+target+"="+text+"'")
+                }
+              }
+              if len(crsClauses) > 0 {
+                setupDirectives += "SecAction \"id:1210000,phase:1,pass,t:none,nolog," + join(crsClauses|toStringSlice(), ",") + "\"\n"
+              }
+            }
+            var ruleExclusionsAny = policy | dig("ruleExclusions")
+            if ruleExclusionsAny != nil {
+              var ruleExclusions, ruleExclusionsOK = ruleExclusionsAny.([]any)
+              if !ruleExclusionsOK {
+                return "WAF policy '" + policyName + "' from " + source + " field ruleExclusions must be a list of exclusion entries."
+              }
+              var isDeniedRuleId = func(id int) bool {
+                return (id >= 900000 && id <= 901999) || (id >= 949000 && id <= 949999) || (id >= 959000 && id <= 959999) || (id >= 980000 && id <= 980999) || (id >= 990000 && id <= 999999)
+              }
+              var pathOps = map[string]string{
+                "onPathPrefix": "@beginsWith",
+                "onPathContains": "@contains",
+                "onPathExact": "@streq",
+                "onPathSuffix": "@endsWith",
+              }
+              var exclusionRuleCount = 0
+              var exclusionRuleSeq = 0
+              for _, rawEntry := range ruleExclusions {
+                var entry, entryOK = rawEntry.(map[string]any)
+                if !entryOK {
+                  return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entries must be maps."
+                }
+                for _, field := range keys(entry) {
+                  if field != "rules" && field != "tags" && field != "excludeTarget" && field != "onPathPrefix" && field != "onPathContains" && field != "onPathExact" && field != "onPathSuffix" {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry contains unknown field '" + field + "'. Valid fields: rules, tags, excludeTarget, onPathPrefix, onPathContains, onPathExact, onPathSuffix."
+                  }
+                }
+                var ruleIds = []any{}
+                if entry["rules"] != nil {
+                  var rulesRaw, rulesRawOK = entry["rules"].([]any)
+                  if !rulesRawOK || len(rulesRaw) == 0 {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions 'rules' must be a non-empty list of CRS rule IDs."
+                  }
+                  for _, rawId := range rulesRaw {
+                    var idText = rawId | scalarText()
+                    if !regex_search(idText, "^[0-9]{6}$") {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions rule ID '" + idText + "' must be a 6-digit CRS rule ID."
+                    }
+                    var id = toint(idText)
+                    if id < 900000 || id > 999999 {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions rule ID '" + idText + "' is outside the CRS rule range 900000-999999."
+                    }
+                    if isDeniedRuleId(id) {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions may not target rule '" + idText + "': the CRS setup, anomaly-scoring, and correlation rules (900000-901999, 949xxx, 959xxx, 980xxx, 990xxx+) are reserved so an exclusion can't disable enforcement itself."
+                    }
+                    ruleIds = append(ruleIds, idText)
+                  }
+                }
+                var tagNames = []any{}
+                if entry["tags"] != nil {
+                  var tagsRaw, tagsRawOK = entry["tags"].([]any)
+                  if !tagsRawOK || len(tagsRaw) == 0 {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions 'tags' must be a non-empty list of CRS rule tags."
+                  }
+                  for _, rawTag := range tagsRaw {
+                    var tagText = rawTag | scalarText()
+                    if !regex_search(tagText, "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$") {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions tag '" + tagText + "' is invalid; use a CRS tag such as attack-sqli."
+                    }
+                    tagNames = append(tagNames, tagText)
+                  }
+                }
+                if len(ruleIds) == 0 && len(tagNames) == 0 {
+                  return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry must set 'rules' and/or 'tags'."
+                }
+                exclusionRuleCount += len(ruleIds) + len(tagNames)
+                if exclusionRuleCount > maxPolicyRuleExclusions {
+                  return "WAF policy '" + policyName + "' from " + source + " exceeds the configured rule-exclusion limit " + scalarText(maxPolicyRuleExclusions) + "."
+                }
+                var target = ""
+                if entry["excludeTarget"] != nil {
+                  target = entry["excludeTarget"] | scalarText()
+                  if !regex_search(target, "^[A-Z][A-Z0-9_]*(:[A-Za-z0-9_.-]+)?$") {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions excludeTarget '" + target + "' must be an exact Coraza variable such as ARGS:q (regex collection keys are not allowed)."
+                  }
+                }
+                if len(tagNames) > 0 && target == "" {
+                  return "WAF policy '" + policyName + "' from " + source + " ruleExclusions 'tags' requires 'excludeTarget': a tag can only exclude a variable from its rules, not remove a whole attack class. List specific rule IDs to disable a rule."
+                }
+                var pathOp = ""
+                var pathValue = ""
+                for pathField, op := range pathOps {
+                  if entry[pathField] != nil {
+                    if pathOp != "" {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry sets more than one of onPathPrefix/onPathContains/onPathExact/onPathSuffix; use at most one."
+                    }
+                    pathOp = op
+                    pathValue = entry[pathField] | scalarText()
+                    if !regex_search(pathValue, "^[A-Za-z0-9/_.:%~=&?*+@,-]{1,256}$") {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions " + pathField + " '" + pathValue + "' must be a literal URL path (letters, digits, and /_.:%~=&?*+@,- , max 256 chars)."
+                    }
+                  }
+                }
+                if pathOp == "" {
+                  for _, idAny := range ruleIds {
+                    var idText = idAny | scalarText()
+                    if target == "" {
+                      generatedExclusions += "SecRuleRemoveById " + idText + "\n"
+                    } else {
+                      generatedExclusions += "SecRuleUpdateTargetById " + idText + " \"!" + target + "\"\n"
+                    }
+                  }
+                  for _, tagAny := range tagNames {
+                    generatedExclusions += "SecRuleUpdateTargetByTag \"" + scalarText(tagAny) + "\" \"!" + target + "\"\n"
+                  }
+                } else {
+                  var ctlActions = ""
+                  for _, idAny := range ruleIds {
+                    var idText = idAny | scalarText()
+                    if target == "" {
+                      ctlActions += ",ctl:ruleRemoveById=" + idText
+                    } else {
+                      ctlActions += ",ctl:ruleRemoveTargetById=" + idText + ";" + target
+                    }
+                  }
+                  for _, tagAny := range tagNames {
+                    ctlActions += ",ctl:ruleRemoveTargetByTag=" + scalarText(tagAny) + ";" + target
+                  }
+                  setupDirectives += "SecRule REQUEST_URI \"" + pathOp + " " + pathValue + "\" \"id:" + scalarText(1200000 + exclusionRuleSeq) + ",phase:1,pass,t:none,nolog" + ctlActions + "\"\n"
+                  exclusionRuleSeq++
+                }
+              }
+            }
+            policySetupDirectives[storeKey] = setupDirectives
+            policyConfiguration[storeKey] = generatedExclusions + secLang + "\n"
+            policySafety[storeKey] = bodySafety
+            policyBodyMode[storeKey] = bodyMode
+            policyContentMode[storeKey] = contentMode
+            policyMaxBody[storeKey] = policyBodyBytes
+            policyEnforcement[storeKey] = enforcement
+            policySource[storeKey] = source
+            return ""
+          }
+
+          var trustedPolicyCount = 0
+          for policyName, rawPolicy := range inlinePolicies {
+            var registerError = registerPolicy(policyName, policyName, rawPolicy, "extraContext.waf.policies.inline." + policyName)
+            if registerError != "" { fail(registerError) }
+            trustedPolicyCount++
+            if trustedPolicyCount > maxPolicies {
+              fail("WAF policy catalogs define more than the configured limit " + tostring(maxPolicies) + ".")
+            }
+          }
+
+          for _, refName := range keys(policyConfigMapRefs) {
+            var refWhere = "extraContext.waf.policies.configMapRefs." + refName
+            var policyConfigMap, sourceOK = policyConfigMapRefs[refName].(map[string]any)
+            if !sourceOK {
+              fail(refWhere + " must be a map with namespace, name, and key fields.")
+            }
+            for _, field := range keys(policyConfigMap) {
+              if field != "namespace" && field != "name" && field != "key" {
+                fail(refWhere + " contains unknown field '" + field + "'. Valid fields: namespace, name, key.")
+              }
+            }
+            for _, field := range []string{"namespace", "name", "key"} {
+              if policyConfigMap[field] != nil {
+                var _, fieldOK = policyConfigMap[field].(string)
+                if !fieldOK { fail(refWhere + "." + field + " must be a string.") }
+              }
+            }
+            var sourceNamespace = context | dig("controllerNamespace") | fallback("") | tostring()
+            if policyConfigMap["namespace"] != nil { sourceNamespace = policyConfigMap["namespace"].(string) }
+            var sourceName = ""
+            if policyConfigMap["name"] != nil { sourceName = policyConfigMap["name"].(string) }
+            var sourceKey = "policies.yaml"
+            if policyConfigMap["key"] != nil { sourceKey = policyConfigMap["key"].(string) }
+            if sourceNamespace == "" || sourceName == "" {
+              fail(refWhere + " requires a namespace and name (namespace defaults to the chart release namespace).")
+            }
+            if !regex_search(sourceNamespace, "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$") {
+              fail(refWhere + ".namespace '" + sourceNamespace + "' is not a valid Kubernetes namespace.")
+            }
+            if !regex_search(sourceName, "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$") {
+              fail(refWhere + ".name '" + sourceName + "' is not a valid ConfigMap name.")
+            }
+            if !regex_search(sourceKey, "^[-._A-Za-z0-9]+$") {
+              fail(refWhere + ".key '" + sourceKey + "' is not a valid ConfigMap data key.")
+            }
+            var sourceID = "ConfigMap " + sourceNamespace + "/" + sourceName + " key " + sourceKey
+            dependencies = append(dependencies, map[string]any{"store": "configmaps", "namespace": sourceNamespace, "name": sourceName})
+            var catalogAny = trustedCatalogs[refName]
+            var catalogError = ""
+            var parsedPolicies = map[string]any{}
+            var immutable = false
+            if catalogAny == nil {
+              catalogError = "WAF policy " + sourceID + " was not found."
+            } else {
+              var catalog = catalogAny.(map[string]any)
+              immutable = catalog["immutable"] == true
+              var policyYAML = tostring(catalog["policyYAML"])
+              if strip(policyYAML) == "" {
+                catalogError = "WAF policy " + sourceID + " is empty or missing."
+              } else {
+                var parsed, parseError = parse_yaml(policyYAML)
+                var parsedOK = false
+                parsedPolicies, parsedOK = parsed.(map[string]any)
+                if parseError != nil { catalogError = "WAF policy " + sourceID + " is invalid YAML: " + replace(parseError.Error(), "\n", " ") }
+                if parseError == nil && !parsedOK { catalogError = "WAF policy " + sourceID + " must be a YAML map." }
+              }
+            }
+            if catalogError == "" {
+              for _, policyName := range keys(parsedPolicies) {
+                var registerError = registerPolicy(policyName, policyName, parsedPolicies[policyName], sourceID)
+                if registerError != "" {
+                  trustedBrokenPolicy[policyName] = registerError
+                  catalogError = registerError
+                  break
+                }
+                if !immutable { policyMutableSource[policyName] = sourceID }
+                trustedPolicyCount++
+                if trustedPolicyCount > maxPolicies {
+                  catalogError = "WAF policy catalogs define more than the configured limit " + tostring(maxPolicies) + "."
+                  break
+                }
+              }
+            }
+            if catalogError != "" {
+              trustedCatalogUnavailable = true
+              for _, policyName := range keys(policySource) {
+                if policySource[policyName] != sourceID { continue }
+                trustedBrokenPolicy[policyName] = catalogError
+                delete(policySource, policyName)
+                delete(policyMutableSource, policyName)
+                delete(policyConfiguration, policyName)
+                delete(policySafety, policyName)
+                delete(policyBodyMode, policyName)
+                delete(policySetupDirectives, policyName)
+                delete(policyContentMode, policyName)
+                delete(policyMaxBody, policyName)
+                delete(policyEnforcement, policyName)
+                trustedPolicyCount--
+              }
+              diagnostics = append(diagnostics, map[string]any{
+                "resource": map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": sourceNamespace, "name": sourceName}},
+                "scope": sourceID, "reason": "WafPolicyCatalogInvalid", "message": catalogError,
+              })
+            }
+          }
+            if defaultPolicy != "" && policyConfiguration[defaultPolicy] == "" {
+              var available = keys(policySource)
+              var availableText = "no policies are configured"
+              if len(available) > 0 {
+                availableText = "available policies: " + join(available, ", ")
+              }
+              defaultPolicyError = "extraContext.waf.policies.defaultPolicy references unknown policy '" + defaultPolicy + "'; " + availableText + "."
+              if !trustedCatalogUnavailable { fail(defaultPolicyError) }
+            }
+
+            if selfServiceEnabled {
+              var ssConfigMapName = gov["selfServiceConfigMapName"].(string)
+              var ssDataKey = gov["selfServiceKey"].(string)
+              var ssAllowSecLang = gov["selfServiceAllowSecLang"].(bool)
+              var ssMaxPerNamespace = gov["selfServiceMaxPoliciesPerNamespace"].(int)
+              var ssMaxTotal = gov["selfServiceMaxTotalPolicies"].(int)
+              var ssTotal = 0
+              var namespaceCounts = map[string]int{}
+              var countedPolicies = map[string]bool{}
+              for _, catalogAny := range selfServiceRecords {
+                var catalog = catalogAny.(map[string]any)
+                var ns = tostring(catalog["namespace"])
+                var cm = catalog["resource"]
+                var scope = dig_string(catalog, ns, "scope")
+                var catalogName = dig_string(catalog, ssConfigMapName, "name")
+                var dataKey = dig_string(catalog, ssDataKey, "key")
+                var sourceID = "self-service WAF ConfigMap " + ns + "/" + catalogName + " key " + dataKey
+                var policyYAML = tostring(catalog["policyYAML"])
+                var catalogError = dig_string(catalog, "", "error")
+                var parsedPolicies = map[string]any{}
+                if catalogError == "" {
+                  if strip(policyYAML) == "" {
+                    catalogError = sourceID + " is empty or missing."
+                  } else {
+                    var parsed, parseError = parse_yaml(policyYAML)
+                    var parsedOK = false
+                    parsedPolicies, parsedOK = parsed.(map[string]any)
+                    if parseError == nil && !parsedOK { catalogError = sourceID + " must be a YAML map." }
+                    if parseError != nil {
+                      catalogError = sourceID + " is invalid YAML: " + replace(parseError.Error(), "\n", " ")
+                    }
+                  }
+                }
+                if catalogError != "" {
+                    selfServiceBrokenCatalog[scope] = catalogError
+                  diagnostics = append(diagnostics, map[string]any{"resource": cm, "scope": scope, "reason": "WafPolicyCatalogInvalid", "message": catalogError})
+                  continue
+                }
+                for _, policyName := range keys(parsedPolicies) {
+                  var storeKey = scope + "/" + policyName
+                  var countKey = ns + "/" + catalogName + "/" + dataKey + "/" + policyName
+                  var counted = countedPolicies[countKey]
+                  var policyError = ""
+                  if trustedBrokenPolicy[policyName] != "" {
+                    policyError = trustedBrokenPolicy[policyName]
+                  } else if policySource[policyName] != "" {
+                    policyError = "Self-service WAF policy '" + policyName + "' from " + sourceID + " collides with the trusted-catalog policy of the same name (defined by " + policySource[policyName] + "). Rename the namespace policy; ambiguous names are never resolved silently."
+                  } else if !counted && namespaceCounts[ns] >= ssMaxPerNamespace {
+                    policyError = sourceID + " defines more than the per-namespace self-service limit " + tostring(ssMaxPerNamespace) + "; policy '" + policyName + "' is not loaded."
+                  } else if !counted && ssTotal >= ssMaxTotal {
+                    policyError = "The cluster-wide self-service WAF policy budget " + tostring(ssMaxTotal) + " is exhausted; policy '" + policyName + "' from " + sourceID + " is not loaded."
+                  }
+                  if policyError == "" && !ssAllowSecLang {
+                    var rawPolicyMap, rawPolicyMapOK = parsedPolicies[policyName].(map[string]any)
+                    if rawPolicyMapOK && rawPolicyMap["secLang"] != nil {
+                      policyError = "Self-service WAF policy '" + policyName + "' from " + sourceID + " uses secLang, which is disabled for self-service catalogs (extraContext.waf.policies.selfService.allowSecLang=false). Use the structured fields (enforcement, requestBody, allowedMethods, paranoiaLevel, anomalyThreshold, crsSettings, ruleExclusions), or ask the HAPTIC administrator to move the policy into a trusted catalog."
+                    }
+                  }
+                  if policyError == "" {
+                    policyError = registerPolicy(storeKey, policyName, parsedPolicies[policyName], sourceID)
+                    if policyError == "" {
+                      if !counted {
+                        namespaceCounts[ns]++
+                        ssTotal++
+                        countedPolicies[countKey] = true
+                      }
+                    }
+                  }
+                  if policyError != "" {
+                      selfServiceBrokenPolicy[storeKey] = policyError
+                    diagnostics = append(diagnostics, map[string]any{"resource": cm, "scope": scope, "reason": "WafPolicyInvalid", "message": policyError})
+                  }
+                }
+              }
+            }
+          }
+
+
+          result["corazaEnabled"] = corazaEnabled
+          result["corazaBaseDirectives"] = corazaBaseDirectives
+          result["governanceEnabled"] = governanceEnabled
+          result["allowPolicySelection"] = allowPolicySelection
+          result["allowEnforcementOverride"] = allowEnforcementOverride
+          result["allowRawHAProxyConfig"] = allowRawHAProxyConfig
+          result["selfServiceEnabled"] = selfServiceEnabled
+          result["dispatchDefaultEnforcement"] = dispatchDefaultEnforcement
+          result["dispatchMode"] = dispatchMode
+          result["defaultPolicy"] = defaultPolicy
+          result["policyCatalogConfigured"] = policyCatalogConfigured
+          result["maxBodyBytes"] = maxBodyBytes
+          result["policyConfiguration"] = policyConfiguration
+          result["policySafety"] = policySafety
+          result["policyBodyMode"] = policyBodyMode
+          result["policySetupDirectives"] = policySetupDirectives
+          result["policyContentMode"] = policyContentMode
+          result["policyMaxBody"] = policyMaxBody
+          result["policyEnforcement"] = policyEnforcement
+          result["policySource"] = policySource
+          result["policyMutableSource"] = policyMutableSource
+          result["trustedBrokenPolicy"] = trustedBrokenPolicy
+          result["defaultPolicyError"] = defaultPolicyError
+          result["trustedCatalogUnavailable"] = trustedCatalogUnavailable
+          result["selfServiceBrokenCatalog"] = selfServiceBrokenCatalog
+          result["selfServiceBrokenPolicy"] = selfServiceBrokenPolicy
+          result["diagnostics"] = diagnostics
+          result["dependencies"] = dependencies
+          result["gov"] = gov
+        %%}
+      {%- end macro -%}

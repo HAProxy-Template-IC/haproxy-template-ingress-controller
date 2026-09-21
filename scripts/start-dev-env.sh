@@ -1357,10 +1357,10 @@ port_forward_haproxy() {
         ctrl_deploy="(not available)"
     fi
 
-    echo "Available port forwarding options:"
+    echo "Available diagnostics:"
     echo "  1. HAProxy HTTP (port 8080 -> 80)"
     echo "  2. HAProxy Health (port 8404 -> 8404)"
-    echo "  3. HAPTIC agent (port 5555 -> 5555)"
+    echo "  3. HAPTIC agent state"
 
     if [[ "$ctrl_deploy" != "(not available)" ]]; then
         echo "  4. Controller Health (port 8081 -> 8080)"
@@ -1386,9 +1386,7 @@ port_forward_haproxy() {
             kubectl -n "$CTRL_NAMESPACE" port-forward svc/haproxy-production 8404:8404
             ;;
         3)
-            log INFO "Starting port forwarding: localhost:5555 -> HAPTIC agent"
-            echo "Test with: curl -u admin:adminpass http://localhost:5555/v1/state"
-            kubectl -n "$CTRL_NAMESPACE" port-forward svc/haproxy-production-dataplane 5555:5555
+            kubectl -n "$CTRL_NAMESPACE" exec deployment/haproxy-production -c agent -- haptic agent state
             ;;
         4)
             if [[ "$ctrl_deploy" == "(not available)" ]]; then
@@ -1506,8 +1504,7 @@ post_deploy_tips() {
 	echo "  - Production HAProxy pods: kubectl -n ${CTRL_NAMESPACE} get deploy/haproxy-production"
 	echo "  - HAProxy service: kubectl -n ${CTRL_NAMESPACE} get svc/haproxy-production"
 	echo "  - Agent service: kubectl -n ${CTRL_NAMESPACE} get svc/haproxy-production-dataplane"
-	echo "  - Agent access: kubectl -n ${CTRL_NAMESPACE} port-forward svc/haproxy-production-dataplane 5555:5555"
-	echo "    Test with: curl -u admin:adminpass http://localhost:5555/v1/state"
+	echo "  - Agent state: kubectl -n ${CTRL_NAMESPACE} exec deployment/haproxy-production -c agent -- haptic agent state"
 	echo
 
 	ok "📊 Monitoring:"

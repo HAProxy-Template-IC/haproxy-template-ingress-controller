@@ -14,7 +14,7 @@ tests:
   - it: emits one object per enabled library plus the operator's, in merge order
     asserts:
       - hasDocuments:
-          count: 11
+          count: 13
       - equal:
           path: metadata.name
           value: haptic-config-base
@@ -33,32 +33,40 @@ tests:
         documentIndex: 3
       - equal:
           path: metadata.name
-          value: haptic-config-gateway
+          value: haptic-config-http-policies
         documentIndex: 4
       - equal:
           path: metadata.name
-          value: haptic-config-ingress-annotations-compat
+          value: haptic-config-gateway
         documentIndex: 5
       - equal:
           path: metadata.name
-          value: haptic-config-governance
+          value: haptic-config-gateway-policies
         documentIndex: 6
       - equal:
           path: metadata.name
-          value: haptic-config-haptic-annotations
+          value: haptic-config-ingress-annotations-compat
         documentIndex: 7
       - equal:
           path: metadata.name
-          value: haptic-config-spoa-hub
+          value: haptic-config-governance
         documentIndex: 8
       - equal:
           path: metadata.name
-          value: haptic-config-vector
+          value: haptic-config-haptic-annotations
         documentIndex: 9
       - equal:
           path: metadata.name
-          value: haptic-config
+          value: haptic-config-spoa-hub
         documentIndex: 10
+      - equal:
+          path: metadata.name
+          value: haptic-config-vector
+        documentIndex: 11
+      - equal:
+          path: metadata.name
+          value: haptic-config
+        documentIndex: 12
 
   - it: references every library snippets object, in merge order
     # The ref list is the ONLY place merge order is declared, so nothing can
@@ -69,15 +77,15 @@ tests:
       - equal:
           path: spec.libraryRefs[0].name
           value: haptic-config-base
-        documentIndex: 10
+        documentIndex: 12
       - equal:
-          path: spec.libraryRefs[9].name
+          path: spec.libraryRefs[11].name
           value: haptic-config-vector
-        documentIndex: 10
+        documentIndex: 12
       - matchRegex:
           path: spec.libraryRefs[0].revision
           pattern: "^base-[0-9a-f]{16}$"
-        documentIndex: 10
+        documentIndex: 12
       - matchRegex:
           path: spec.revision
           pattern: "^base-[0-9a-f]{16}$"
@@ -99,14 +107,14 @@ tests:
         documentIndex: 0
       - notExists:
           path: spec.partial
-        documentIndex: 10
+        documentIndex: 12
 
   - it: drops a disabled library's object entirely
     set:
       controller.templateLibraries.governance.enabled: false
     asserts:
       - hasDocuments:
-          count: 10
+          count: 12
 
   - it: emits the shared Kubernetes backend capability and watch union
     documentSelector:
@@ -226,7 +234,7 @@ tests:
       controller.templateLibraries.nginxIngress.enabled: false
     asserts:
       - hasDocuments:
-          count: 9
+          count: 11
 
   - it: allows Kubernetes backends to be disabled with all consumers
     set:
@@ -332,7 +340,7 @@ tests:
       - equal:
           path: metadata.name
           value: edge-config
-        documentIndex: 10
+        documentIndex: 12
 
   - it: should carry template-owned status patch policy in structured extraContext
     documentSelector:
@@ -556,3 +564,64 @@ tests:
       - equal:
           path: spec.templatingSettings.extraContext.governance.rules.haptic-compress-enable.default
           value: "true"
+
+  - it: retains policy engines when all annotation libraries are disabled
+    set:
+      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
+      controller.templateLibraries.hapticAnnotations.enabled: false
+      controller.templateLibraries.haproxytech.enabled: false
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.nginxIngress.enabled: false
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-http-policies
+    asserts:
+      - exists:
+          path: spec.templateSnippets["util-policy-authentication"]
+      - exists:
+          path: spec.templateSnippets["util-policy-waf-catalog"]
+      - exists:
+          path: spec.templateSnippets["util-policy-rate-limit"]
+      - exists:
+          path: spec.templateSnippets["util-policy-cache"]
+
+  - it: validates policy references while watching immutable credential and catalog sources
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    asserts:
+      - equal:
+          path: spec.watchedResources.routepolicies.optional
+          value: true
+      - equal:
+          path: spec.watchedResources.routepolicies.enableValidationWebhook
+          value: true
+      - equal:
+          path: spec.watchedResources.secrets.resources
+          value: secrets
+      - notExists:
+          path: spec.watchedResources.secrets.enableValidationWebhook
+      - notExists:
+          path: spec.watchedResources.configmaps.enableValidationWebhook
+      - notExists:
+          path: spec.watchedResources.waf_selfservice_catalogs.enableValidationWebhook
+
+  - it: keeps Gateway route policies in their own library
+    documentSelector:
+      path: metadata.name
+      value: haptic-config-gateway-policies
+    asserts:
+      - exists:
+          path: spec.templateSnippets["gateway-policy-waf-catalogs-policies"]
+      - exists:
+          path: spec.validationTests["test-gateway-policy-waf-trusted-missing"]
+
+  - it: removes Gateway policy watches when Gateway support is disabled
+    set:
+      controller.templateLibraries.gateway.enabled: false
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    asserts:
+      - notExists:
+          path: spec.watchedResources.routepolicies

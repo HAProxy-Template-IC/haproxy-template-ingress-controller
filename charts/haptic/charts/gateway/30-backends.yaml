@@ -1,9 +1,20 @@
 templateSnippets:
+  util-backend-tls-identity:
+    template: |-
+      {%- var BackendTLSIdentity = func(validation any) (string, string) {
+        var sans = dig(validation, "subjectAltNames") | toSlice()
+        var hostname = dig_string(validation, "", "hostname")
+        if len(sans) == 0 { return hostname, "" }
+        if len(sans) == 1 && dig_string(sans[0], "", "type") == "Hostname" {
+          if hostname != "" && dig_string(sans[0], "", "hostname") == hostname { return hostname, "" }
+        }
+        return "", "subjectAltNames must contain exactly one Hostname entry matching validation.hostname; other identities are unsupported"
+      } -%}
+
   util-resolve-backend-tls:
     template: |-
-      {#- The winning BackendTLSPolicy for a Service port. The caller registers caBundle
-          under caFilename; found with neither a bundle nor systemCA means the policy is
-          unresolvable and the backend must fail closed, never fall back to plaintext. -#}
+      {%- import "util-backend-tls-identity" for BackendTLSIdentity -%}
+      {#- A found policy without a CA makes callers reject traffic, including invalid identities. -#}
       {%- var ResolveBackendTLS = func(backendNs string, backendName string, backendPort int) map[string]any {
         var result = map[string]any{
           "found": false, "hostname": "", "verifyHost": "", "caFilename": "", "caBundle": "", "systemCA": false,
@@ -22,15 +33,8 @@ templateSnippets:
         var validation any = dig(policy, "validation")
         var hostname = dig_string(validation, "", "hostname")
         result["hostname"] = hostname
-        // verifyhost takes the first Hostname SAN if any, else hostname: HAProxy's
-        // verifyhost is single-valued. hostname keeps driving SNI.
-        var verifyHost = hostname
-        for _, san := range dig(validation, "subjectAltNames") | toSlice() {
-          if dig_string(san, "", "type") == "Hostname" && dig_string(san, "", "hostname") != "" {
-            verifyHost = dig_string(san, "", "hostname")
-            break
-          }
-        }
+        var verifyHost, identityError = BackendTLSIdentity(validation)
+        if identityError != "" { return result }
         result["verifyHost"] = verifyHost
         var caBundleParts = []any{}
         for _, ref := range dig(validation, "caCertificateRefs") | toSlice() {
@@ -109,7 +113,7 @@ templateSnippets:
           backendNs, so endpoint resolution below must use it, not routeNs. -#}
       {%- var backendNs = dig_string(backendRef, "", "namespace") -%}
       {%- if backendNs == "" %}{%- backendNs = routeNs %}{%- end -%}
-      {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
+      {%- var backend = map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort} -%}
       {%- var backendKey = backendNs + "_" + routeNs + "_" + routeName + "_" + backendName + "_" + tostring(backendPort) -%}
       {%- if !seenBackends[backendKey] -%}
       {%- seenBackends[backendKey] = true -%}
@@ -342,8 +346,7 @@ templateSnippets:
         // warned-about NOOP.
         if btlsBroken {
           profile = append(profile,
-            "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
-            "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
+            "# Invalid BackendTLSPolicy blocks traffic.",
             "http-request return status 503")
         }
       %%}
@@ -419,7 +422,7 @@ templateSnippets:
           backendNs, so endpoint resolution below must use it, not routeNs. -#}
       {%- var backendNs = backendRef.Namespace -%}
       {%- if backendNs == "" %}{%- backendNs = routeNs %}{%- end -%}
-      {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
+      {%- var backend = map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort} -%}
       {%- var backendKey = backendNs + "_" + routeNs + "_" + routeName + "_" + backendName + "_" + tostring(backendPort) -%}
       {%- if !seenBackends[backendKey] -%}
       {%- seenBackends[backendKey] = true -%}
@@ -595,8 +598,7 @@ templateSnippets:
         // warned-about NOOP.
         if btlsBroken {
           profile = append(profile,
-            "# BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading",
-            "# to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/",
+            "# Invalid BackendTLSPolicy blocks traffic.",
             "http-request return status 503")
         }
       %%}
@@ -632,8 +634,10 @@ templateSnippets:
     incremental:
       source: backendtlspolicies
       group: gateway-backend-tls-policies
-      effects: [publishValue]
+      effects: [publishValue, recordEvent]
     template: |-
+      {%- import "util-backend-tls-identity" for BackendTLSIdentity -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%%
         var policy = item
         var policyNs = dig_string(policy, "", "metadata", "namespace")
@@ -643,6 +647,12 @@ templateSnippets:
         var rank = "1/" + policyKey
         if policyTs != "" { rank = "0/" + policyTs + "/" + policyKey }
         var validation = dig(policy, "spec", "validation")
+        var _, identityError = BackendTLSIdentity(validation)
+        if identityError != "" {
+          show WebhookRejectOrWarn(policy, "UnsupportedBackendTLSIdentity",
+            "BackendTLSPolicy " + policyKey + ": " + identityError +
+            ". Backend traffic is blocked. Use a DNS identity matching validation.hostname.")
+        }
         var publishedValue = map[string]any{"validation": validation}
         if len(dig(validation, "caCertificateRefs") | toSlice()) > 0 {
           publishedValue["name"] = policyName
@@ -779,7 +789,7 @@ templateSnippets:
             if backendPort == 0 { backendPort = 80 }
             var backendNs = tostring(dig(backendRef, "namespace") | fallback(routeNs))
             if backendNs == "" { backendNs = routeNs }
-            var beKey = BackendNameGateway(route, map[string]any{"name": backendName, "port": backendPort})
+            var beKey = BackendNameGateway(route, map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort})
             show shared.Unique("map-backend-service-gw", beKey, "\n" + beKey + " " + backendNs + "/" + backendName)
           }
         }
@@ -806,7 +816,7 @@ templateSnippets:
             if backendPort == 0 { backendPort = 80 }
             var backendNs = tostring(dig(backendRef, "namespace") | fallback(routeNs))
             if backendNs == "" { backendNs = routeNs }
-            var beKey = BackendNameGateway(route, map[string]any{"name": backendName, "port": backendPort})
+            var beKey = BackendNameGateway(route, map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort})
             show shared.Unique("map-backend-service-gw", beKey, "\n" + beKey + " " + backendNs + "/" + backendName)
           }
         }
@@ -835,6 +845,7 @@ templateSnippets:
       consumes: [gateway-ssl-passthrough]
       effects: [publishValue]
     template: |-
+      {%- import "util-gateway-http-ssl-passthrough" for GatewayHTTPSSLPassthrough -%}
       {%- import "util-backend-servers-result" for BackendServersResult -%}
       {%%
         var route = item
@@ -842,19 +853,7 @@ templateSnippets:
         var routeName = dig_string(route, "", "metadata", "name")
         var backendName = ""
         var rank = ""
-        var hasPassthrough = false
-        for _, rule := range toSlice(dig(route, "spec", "rules")) {
-          for _, filter := range toSlice(dig(rule, "filters")) {
-            if dig_string(filter, "", "type") != "ExtensionRef" { continue }
-            var extensionRef = dig(filter, "extensionRef")
-            var kind = dig_string(extensionRef, "", "kind")
-            var name = dig_string(extensionRef, "", "name")
-            if kind == "SSLPassthrough" ||
-              (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
-              hasPassthrough = true
-            }
-          }
-        }
+        var hasPassthrough = GatewayHTTPSSLPassthrough(route) == "true"
         for _, hostname := range toSlice(dig(route, "spec", "hostnames")) {
           var candidateRank = "0/http/" + tostring(hostname)
           var candidate, found = shared.Select(

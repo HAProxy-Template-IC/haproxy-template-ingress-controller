@@ -50,6 +50,9 @@ variables:
   # included above and is itself an input to the CI image tag.
   # renovate: datasource=docker depName=kindest/node
   KIND_NODE_VERSION: "v1.37.0"
+  KIND_NODE_IMAGE: kindest/node:${KIND_NODE_VERSION}
+  # Matches the chart's kubeVersion lower bound; do not advance with Renovate.
+  MINIMUM_KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
   # Container registry
   CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-haptic/haptic
   # Coverage packages (excludes generated code) - keep in sync with Makefile
@@ -467,6 +470,11 @@ chart-test:
       junit: chart-test-results.xml
     expire_in: 1 week
     when: always
+
+chart-test-minimum-kubernetes:
+  extends: chart-test
+  variables:
+    KIND_NODE_VERSION: "v1.33.0"
 
 # =============================================================================
 # Test Stage
@@ -2008,14 +2016,40 @@ test-acceptance:
     when: on_failure
     expire_in: 1 week
 
+.test-e2e-sharded:
+  extends: .test-e2e-base
+  variables:
+    E2E_SHARD_TOTAL: "3"
+  parallel:
+    matrix:
+      - E2E_SHARD_INDEX: ["1", "2", "3"]
+  script:
+    - |
+      set -euo pipefail
+      mkdir -p debug-logs
+      go test -mod=readonly -tags=e2e -list '^Test' ./tests/e2e/... > debug-logs/e2e-test-inventory.txt
+      TEST_RUN_PATTERN="$(python3 scripts/shard-go-tests.py "$E2E_SHARD_INDEX" "$E2E_SHARD_TOTAL" < debug-logs/e2e-test-inventory.txt)"
+      export TEST_RUN_PATTERN
+      printf '%s\n' "$TEST_RUN_PATTERN" > debug-logs/e2e-test-selection.txt
+      make test-e2e
+  artifacts:
+    when: always
+
 test-e2e:
   extends:
-    - .test-e2e-base
+    - .test-e2e-sharded
   # MRs run only the 3.0/3.4 bracket; interior versions run on main + nightly
   # (test-e2e-extra-versions). See test-integration for the full rationale.
   parallel:
     matrix:
       - HAPROXY_VERSION: ["3.0", "3.4"]
+        E2E_SHARD_INDEX: ["1", "2", "3"]
+
+test-e2e-minimum-kubernetes:
+  extends: .test-e2e-sharded
+  variables:
+    HAPROXY_VERSION: "3.4"
+    KIND_NODE_IMAGE: ${MINIMUM_KIND_NODE_IMAGE}
 
 # Interior HAProxy versions (3.1–3.3) for e2e — main + nightly only. Inherits
 # .test-e2e-base but overrides rules to exclude MR/feature-branch pipelines
@@ -2023,10 +2057,11 @@ test-e2e:
 # main-branch (merge-result) and nightly triggers.
 test-e2e-extra-versions:
   extends:
-    - .test-e2e-base
+    - .test-e2e-sharded
   parallel:
     matrix:
       - HAPROXY_VERSION: ["3.1", "3.2", "3.3"]
+        E2E_SHARD_INDEX: ["1", "2", "3"]
   rules:
     - if: $CI_COMMIT_TAG
       when: never
@@ -2185,6 +2220,65 @@ test-install-without-gateway-api:
   script:
     - make test-install-without-gateway-api
 
+test-chart-upgrade-minimum-kubernetes:
+  extends: test-chart-upgrade
+  variables:
+    KIND_NODE_IMAGE: ${MINIMUM_KIND_NODE_IMAGE}
+
+test-gitops-lifecycle:
+  stage: integration
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
+  extends:
+    - .docker-dind
+    - .snapshot-version
+  timeout: 40 minutes
+  interruptible: true
+  needs:
+    - compute-ci-image-tag
+    - build-ci
+    - build-snapshot
+  parallel:
+    matrix:
+      - GITOPS_PROVIDER: [argo, flux]
+        GITOPS_CERTIFICATES: [external, cert-manager]
+  variables:
+    HAPROXY_VERSION: "3.4"
+    KIND_NODE_IMAGE: ${MINIMUM_KIND_NODE_IMAGE}
+    GITOPS_IMAGE: haptic:test
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $SCHEDULE_KIND == "nightly"
+    - changes:
+        - charts/haptic/**/*
+        - cmd/haptic/**/*
+        - pkg/controller/webhook/**/*
+        - scripts/test-gitops-lifecycle.py
+        - scripts/lib/cluster.sh
+        - scripts/lib/upgrade-traffic.sh
+        - scripts/testdata/chart-upgrade/**/*
+        - docs/site/docs/operations/gitops.md
+        - .gitlab-ci.yml
+  before_script:
+    - |
+      TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
+      docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      docker pull ${TEST_IMAGE}
+      docker tag ${TEST_IMAGE} haptic:test
+    - !reference [.stamp-source-chart, script]
+  script:
+    - make test-gitops-lifecycle
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - debug-logs/gitops/
+
+test-install-without-gateway-api-minimum-kubernetes:
+  extends: test-install-without-gateway-api
+  variables:
+    KIND_NODE_IMAGE: ${MINIMUM_KIND_NODE_IMAGE}
+
 # There are no per-vendor e2e shards. test-e2e installs all three vendor
 # annotation libraries at once (e2e-values.yaml), so every vendor test runs in
 # it — measured 103 tests where the sharded core job ran 63 and skipped 46.
@@ -2203,7 +2297,7 @@ test-install-without-gateway-api:
 # tier is version-agnostic, so it runs the current LTS. Loads the stock Varnish image into kind (see
 # loadControllerImage) so the StatefulSet needn't reach Docker Hub.
 test-e2e-cache:
-  extends: .test-e2e-base
+  extends: .test-e2e-sharded
   variables:
     HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: "cache"
@@ -2215,7 +2309,7 @@ test-e2e-cache:
 # version-agnostic, so it runs the current LTS. Loads the stock Valkey image into kind (see
 # loadControllerImage) so the Deployment needn't reach Docker Hub.
 test-e2e-rate-limit:
-  extends: .test-e2e-base
+  extends: .test-e2e-sharded
   variables:
     HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: "rate-limit"
@@ -2227,7 +2321,7 @@ test-e2e-rate-limit:
 # pre-plugin body-size guard. One HAProxy version — the validation path is
 # version-agnostic and the version matrix is covered by test-e2e.
 test-e2e-api-gateway:
-  extends: .test-e2e-base
+  extends: .test-e2e-sharded
   variables:
     HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: "api-gateway"
@@ -2840,76 +2934,102 @@ nightly-gwapi-canary:
     - bash scripts/prepare-gateway-api-canary.sh prepare "$HAPTIC_E2E_GWAPI_VERSION"
     - make test-gateway-conformance
 
-gateway-conformance-report:
-  stage: integration
+.gateway-conformance-report-base:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
-  extends:
-    - .docker-dind
-    # Required by the .stamp-source-chart step this job inherits through
-    # test-gateway-conformance's before_script.
-    - .snapshot-version
-  # Full suite (~108 tests) unsharded plus the kind+helm bootstrap.
+  extends: .docker-dind
   timeout: 60 minutes
-  interruptible: true
   variables:
     CTRL_NAMESPACE: haptic
     RELEASE_NAME: haptic
     SKIP_DOCKER_BUILD: "1"
     HAPROXY_VERSION: "3.4"
-    # Single source of truth for the kept-container name: exported into the
-    # environment, so the Makefile's `CONFORMANCE_CONTAINER ?=` picks it up AND
-    # the docker cp/rm below reference the same value — no drift.
-    CONFORMANCE_CONTAINER: haptic-conformance-run
-  # This job is `when: manual` with no `changes:` rule, so GitLab adds it to
-  # EVERY MR pipeline and validates its `needs:` DAG at creation time. On a
-  # docs-only diff the build jobs are rule-gated out (esp. build-spoa-image-
-  # snapshot via .rules-spoa), so a hard `needs:` would fail pipeline creation
-  # with "job does not exist". All needs are therefore `optional: true`: if a
-  # dep is present the report waits for it, if absent the job simply can't be
-  # triggered — which is fine, it's manual and allow_failure anyway.
+    HAPTIC_E2E_PROFILE: conformance
+  script:
+    - TEST_RUN_PATTERN="^$" make test-e2e
+    - bash scripts/gateway-conformance-report.sh ${CONFORMANCE_RELEASE_EVIDENCE:+--release-evidence}
+  artifacts:
+    name: "gateway-conformance-${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+    when: always
+    paths:
+      - build/gateway-conformance/report.yaml
+      - build/gateway-conformance/provenance.json
+      - build/gateway-conformance/SHA256SUMS
+    expire_in: never
+
+gateway-conformance-report:
+  stage: integration
+  extends:
+    - .gateway-conformance-report-base
+    - .snapshot-version
+  interruptible: true
   needs:
     - job: compute-ci-image-tag
       optional: true
     - job: build-ci
       optional: true
+      artifacts: false
     - job: build-snapshot
       optional: true
+      artifacts: false
     - job: build-spoa-image-snapshot
       optional: true
+      artifacts: false
   rules:
-    # On-demand only: never auto-runs. Failure of the (optional) job must not
-    # block the pipeline — the report artifact is still produced and uploaded.
+    - if: $CI_COMMIT_TAG
+      when: never
     - when: manual
       allow_failure: true
-  # Reuse the snapshot-image pull from the sharded job verbatim.
   before_script:
     - !reference [test-gateway-conformance, before_script]
+    - export CONFORMANCE_CONTROLLER_IMAGE="$TEST_IMAGE"
+    - export CONFORMANCE_IMPL_VERSION="ci-${CI_PIPELINE_ID}"
+
+release-gateway-conformance:
+  stage: deploy
+  extends: .gateway-conformance-report-base
+  interruptible: false
+  variables:
+    CONFORMANCE_RELEASE_EVIDENCE: "1"
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+      artifacts: false
+    - job: release-controller
+      artifacts: false
+    - job: release-chart
+      artifacts: false
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+  before_script:
+    - export CONFORMANCE_IMPL_VERSION="${CI_COMMIT_TAG#v}"
+    - export CONFORMANCE_CONTROLLER_IMAGE="${CI_REGISTRY_IMAGE}:${CONFORMANCE_IMPL_VERSION}-haproxy${HAPROXY_VERSION}"
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker pull "$CONFORMANCE_CONTROLLER_IMAGE"
+    - docker tag "$CONFORMANCE_CONTROLLER_IMAGE" haptic:test
+
+render-benchmark-comparison:
+  stage: test
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
+  tags:
+    - saas-linux-large-amd64
+  timeout: 45 minutes
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
   script:
-    # Bring up the conformance cluster (same as the sharded job).
-    - HAPTIC_E2E_PROFILE=conformance TEST_RUN_PATTERN="^$" make test-e2e
-    - |
-      # Full (unsharded) suite with report output. The container is KEPT (not
-      # --rm) so we can `docker cp` the report it wrote; the report is produced
-      # even when some tests fail (it records the failures), so capture it
-      # regardless of the test exit code, then propagate that code.
-      set +e
-      CONFORMANCE_KEEP_CONTAINER=1 \
-        CONFORMANCE_REPORT_OUTPUT=/conformance-report.yaml \
-        CONFORMANCE_IMPL_VERSION="$(cat VERSION 2>/dev/null || echo main)" \
-        TEST_RUN_PATTERN="" \
-        make test-gateway-conformance
-      rc=$?
-      docker cp "${CONFORMANCE_CONTAINER}:/conformance-report.yaml" ./conformance-report.yaml \
-        || echo "WARN: no conformance report was produced"
-      docker rm -f "${CONFORMANCE_CONTAINER}" >/dev/null 2>&1 || true
-      echo "=== Gateway API ConformanceReport ==="
-      cat ./conformance-report.yaml 2>/dev/null || true
-      exit "$rc"
+    - export BENCH_BASE_REF="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+    - git fetch origin "$BENCH_BASE_REF"
+    - mkdir -p build
+    - make bench-render-comparison
   artifacts:
-    name: "gateway-conformance-report-${CI_COMMIT_SHORT_SHA}"
+    name: "render-comparison-${CI_COMMIT_SHORT_SHA}-${CI_JOB_ID}"
     when: always
     paths:
-      - conformance-report.yaml
+      - build/render-comparison/
     expire_in: 30 days
 
 # This hosted-runner smoke uses reduced/tuned inputs; full defaults can exceed
@@ -3002,12 +3122,15 @@ gateway-api-benchmark-smoke:
            .harness.final_exit_code == $runner_rc and
            (.harness.pass | type) == "boolean" and
            .harness.pass == ($runner_rc == 0) and
-           ([.scenarios[].scenario] == ["probe", "scale", "routechange"]) and
-           all(.scenarios[];
-             .measurement_valid == true and (.pass | type) == "boolean" and
-             .supervised_child_continuity.evidence_valid == true and
-             (.supervised_child_continuity.pass | type) == "boolean") and
-           (.measured_result.pass | type) == "boolean"
+           (([.scenarios[].scenario] == ["probe", "scale", "routechange"] and
+             all(.scenarios[];
+               .measurement_valid == true and (.pass | type) == "boolean" and
+               .supervised_child_continuity.evidence_valid == true and
+               (.supervised_child_continuity.pass | type) == "boolean") and
+             (.measured_result.pass | type) == "boolean") or
+            ($runner_rc != 0 and .schema_version == 1 and
+             .harness.status == "invalid" and .scenarios == [] and
+             .measured_result == null and .public_comparison == "ballpark-only"))
          ' "$BENCH_RAW_OUTPUT/runner-summary.json" >/dev/null &&
          jq -e '
            .schema_version == 1 and .pass == true and .redacted == [] and

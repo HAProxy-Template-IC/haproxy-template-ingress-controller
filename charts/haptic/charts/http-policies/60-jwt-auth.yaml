@@ -1,0 +1,69 @@
+templateSnippets:
+  features-860-haptic-jwt:
+    template: |-
+      {%- for _, file := range incremental_values("haptic-jwt-files", "files") -%}
+        {%- var record = file.(map[string]any) -%}
+        {%- var filename = tostring(record["filename"]) -%}
+        {%- var _, regErr = fileRegistry.Register("file", filename, tostring(record["content"])) -%}
+        {%- if regErr != nil -%}{{ fail("failed to register JWT public key " + filename + ": " + tostring(regErr)) }}{%- end -%}
+      {%- end -%}
+      {{- render "haptic-jwt-file-publications" default "" -}}
+  frontend-filters-858-haptic-jwt:
+    template: |
+      {%- if incremental_value_count("haptic-jwt-routes", "any") > 0 -%}
+      {%- var routes, e1 = pathResolver.GetPath("haptic-jwt-routes.map", "map") -%}
+      {%- if e1 != nil -%}{{ fail(tostring(e1)) }}{%- end -%}
+      {%- var keys = []any{} -%}
+      {%- for _, v := range incremental_values("haptic-jwt-routes", "keys") -%}{%- keys = append(keys, tostring(v)) -%}{%- end -%}
+      {%- var reqs = []any{} -%}
+      {%- for _, v := range incremental_values("haptic-jwt-routes", "req") -%}{%- reqs = append(reqs, tostring(v)) -%}{%- end -%}
+      {%- var fwds = []any{} -%}
+      {%- for _, v := range incremental_values("haptic-jwt-routes", "fwd") -%}{%- fwds = append(fwds, tostring(v)) -%}{%- end -%}
+      {%- var fwdhdrs = []any{} -%}
+      {%- for _, v := range incremental_values("haptic-jwt-routes", "fwdhdr") -%}{%- fwdhdrs = append(fwdhdrs, tostring(v)) -%}{%- end -%}
+      {{ "\n" }}# haptic/jwt
+      http-request set-var(txn.jwt_cfg) var(txn.policy_id),map({{ routes }})
+      http-request set-var(txn.jwt_alg) var(txn.jwt_cfg),field(1,' ') if { var(txn.jwt_cfg) -m found }
+      http-request set-var(txn.jwt_key) var(txn.jwt_cfg),field(2,' ') if { var(txn.jwt_cfg) -m found }
+      http-request set-var(txn.jwt_state) var(txn.jwt_cfg),field(3,' ') if { var(txn.jwt_cfg) -m found }
+      http-request set-var(txn.jwt_iss) var(txn.jwt_cfg),field(4,' ') if { var(txn.jwt_cfg) -m found }
+      http-request set-var(txn.jwt_aud) var(txn.jwt_cfg),field(5,' ') if { var(txn.jwt_cfg) -m found }
+      http-request set-var(txn.jwt_req) var(txn.jwt_cfg),field(6,' ') if { var(txn.jwt_cfg) -m found }
+      http-request set-var(txn.jwt_fwd) var(txn.jwt_cfg),field(7,' ') if { var(txn.jwt_cfg) -m found }
+      http-request set-var(txn.denied_by) str(jwt_unavailable) if { var(txn.jwt_state) -m str nosecret }
+      http-request set-var(txn.denied_by) str(jwt_key_unavailable) if { var(txn.jwt_state) -m str missing }
+      http-request deny deny_status 503 if { var(txn.jwt_state) -m str missing nosecret }
+      {%- for _, fh := range sort_strings(fwdhdrs) %}
+      http-request del-header {{ fh }} if { var(txn.jwt_fwd) -m sub :{{ fh }}, }
+      {%- end %}
+      http-request set-var(txn.haptic_jwt_alg) http_auth_bearer,jwt_header_query('$.alg') if { var(txn.jwt_state) -m str ok }
+      http-request set-var(txn.denied_by) str(jwt_algorithm) if { var(txn.jwt_state) -m str ok } !{ var(txn.haptic_jwt_alg),strcmp(txn.jwt_alg) -m int 0 }
+      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } !{ var(txn.haptic_jwt_alg),strcmp(txn.jwt_alg) -m int 0 }
+      {%- for _, k := range sort_strings(keys) %}
+        {%- var pair = split(tostring(k), "|") %}
+        {%- var pemPath, pe = pathResolver.GetPath(pair[1], "file") %}
+        {%- if pe != nil %}{{ fail(tostring(pe)) }}{% end %}
+      http-request set-var(txn.denied_by) str(jwt_signature) if { var(txn.jwt_state) -m str ok } { var(txn.jwt_alg) -m str {{ pair[0] }} } { var(txn.jwt_key) -m str {{ pair[1] }} } !{ http_auth_bearer,jwt_verify({{ pair[0] }},"{{ pemPath }}") -m int 1 }
+      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.jwt_alg) -m str {{ pair[0] }} } { var(txn.jwt_key) -m str {{ pair[1] }} } !{ http_auth_bearer,jwt_verify({{ pair[0] }},"{{ pemPath }}") -m int 1 }
+      {%- end %}
+      http-request set-var(txn.haptic_jwt_now) date() if { var(txn.jwt_state) -m str ok }
+      http-request set-var(txn.haptic_jwt_exp) http_auth_bearer,jwt_payload_query('$.exp','int') if { var(txn.jwt_state) -m str ok }
+      http-request set-var(txn.denied_by) str(jwt_expired) if { var(txn.jwt_state) -m str ok } { var(txn.haptic_jwt_exp) -m found } { var(txn.haptic_jwt_exp),sub(txn.haptic_jwt_now) -m int lt 0 }
+      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.haptic_jwt_exp) -m found } { var(txn.haptic_jwt_exp),sub(txn.haptic_jwt_now) -m int lt 0 }
+      http-request set-var(txn.haptic_jwt_nbf) http_auth_bearer,jwt_payload_query('$.nbf','int') if { var(txn.jwt_state) -m str ok }
+      http-request set-var(txn.denied_by) str(jwt_not_yet_valid) if { var(txn.jwt_state) -m str ok } { var(txn.haptic_jwt_nbf) -m found } { var(txn.haptic_jwt_nbf),sub(txn.haptic_jwt_now) -m int gt 0 }
+      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.haptic_jwt_nbf) -m found } { var(txn.haptic_jwt_nbf),sub(txn.haptic_jwt_now) -m int gt 0 }
+      http-request set-var(txn.denied_by) str(jwt_issuer) if { var(txn.jwt_state) -m str ok } { var(txn.jwt_cfg),field(8,' ') -m str true } !{ http_auth_bearer,jwt_payload_query('$.iss'),strcmp(txn.jwt_iss) -m int 0 }
+      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.jwt_cfg),field(8,' ') -m str true } !{ http_auth_bearer,jwt_payload_query('$.iss'),strcmp(txn.jwt_iss) -m int 0 }
+      http-request set-var(txn.denied_by) str(jwt_audience) if { var(txn.jwt_state) -m str ok } { var(txn.jwt_cfg),field(9,' ') -m str true } !{ http_auth_bearer,jwt_payload_query('$.aud'),strcmp(txn.jwt_aud) -m int 0 }
+      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.jwt_cfg),field(9,' ') -m str true } !{ http_auth_bearer,jwt_payload_query('$.aud'),strcmp(txn.jwt_aud) -m int 0 }
+      {%- for _, cl := range sort_strings(reqs) %}
+      http-request set-var(txn.denied_by) str(jwt_required_claim) if { var(txn.jwt_state) -m str ok } { var(txn.jwt_req) -m sub ,{{ cl }}, } !{ http_auth_bearer,jwt_payload_query('$.{{ cl }}') -m found }
+      http-request deny deny_status 401 if { var(txn.jwt_state) -m str ok } { var(txn.jwt_req) -m sub ,{{ cl }}, } !{ http_auth_bearer,jwt_payload_query('$.{{ cl }}') -m found }
+      {%- end %}
+      http-request set-var(txn.haptic_consumer) http_auth_bearer,jwt_payload_query('$.sub') if { var(txn.jwt_state) -m str ok } !{ var(txn.haptic_consumer) -m found }
+      {%- for _, f := range sort_strings(fwds) %}
+        {%- var pair = strings_splitn(tostring(f), ":", 2) %}
+      http-request set-header {{ pair[1] }} %[http_auth_bearer,jwt_payload_query('$.{{ pair[0] }}')] if { var(txn.jwt_state) -m str ok } { var(txn.jwt_fwd) -m sub ,{{ pair[0] }}:{{ pair[1] }}, }
+      {%- end %}
+      {%- end %}

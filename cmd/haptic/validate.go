@@ -99,16 +99,16 @@ The validation tests can assert:
 
 Example usage:
   # Run all validation tests
-  controller validate -f config.yaml
+  haptic validate -f config.yaml
 
   # Run a specific test
-  controller validate -f config.yaml --test "test-frontend-routing"
+  haptic validate -f config.yaml --test "test-frontend-routing"
 
   # Output results as JSON
-  controller validate -f config.yaml --output json
+  haptic validate -f config.yaml --output json
 
   # Show include timing statistics
-  controller validate -f config.yaml --profile-includes`,
+  haptic validate -f config.yaml --profile-includes`,
 	RunE: runValidate,
 }
 
@@ -124,7 +124,7 @@ func init() {
 	validateCmd.Flags().BoolVar(&validateTraceTemplates, "trace-templates", false, "Show template execution trace (top-level only; use with --profile-includes for full call tree)")
 	validateCmd.Flags().BoolVar(&validateDebugFilters, "debug-filters", false, "Show filter operation debugging (sort comparisons, etc.)")
 	validateCmd.Flags().BoolVar(&validateProfileIncludes, "profile-includes", false, "Show include timing statistics (top 20 slowest)")
-	validateCmd.Flags().IntVar(&validateWorkers, "workers", 0, "Number of parallel test workers (0=auto-detect CPUs, 1=sequential)")
+	validateCmd.Flags().IntVar(&validateWorkers, "workers", 0, "Number of parallel test workers (0=automatic CPU and memory budget, 1=sequential)")
 	validateCmd.Flags().StringVar(&validateSnapshotDir, "snapshot-dir", "",
 		"Write each test's rendered output to <dir>/<test>/ so two checkouts can be compared with `diff -r`")
 	validateCmd.Flags().BoolVar(&validateDumpMerged, "dump-merged", false,
@@ -151,6 +151,7 @@ func init() {
 
 func runValidate(cmd *cobra.Command, _ []string) error {
 	logger := newValidateLogger()
+	configureMemoryLimit(logger)
 	if validateDumpMerged {
 		return dumpMergedSpec()
 	}

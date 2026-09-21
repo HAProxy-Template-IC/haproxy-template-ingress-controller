@@ -1,0 +1,95 @@
+suite: agent mutual TLS
+release:
+  name: haptic
+  namespace: haptic
+templates:
+  - agent-certificate-renewal.yaml
+  - deployment.yaml
+  - haproxy-deployment.yaml
+tests:
+  - it: should mount only the controller identity in the controller
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "agent-tls")].secret.secretName
+          value: haptic-controller-tls
+      - contains:
+          path: spec.template.spec.containers[?(@.name == "controller")].env
+          content:
+            name: AGENT_TLS_SERVER_NAME
+            value: haptic-agent-tls.haptic.svc
+      - contains:
+          path: spec.template.spec.containers[?(@.name == "controller")].volumeMounts
+          content:
+            name: agent-tls
+            mountPath: /etc/haptic/agent-tls
+            readOnly: true
+  - it: should mount only the agent identity and probe local process health
+    template: haproxy-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "agent-tls")].secret.secretName
+          value: haptic-agent-tls
+      - contains:
+          path: spec.template.spec.initContainers[?(@.name == "agent")].args
+          content: --tls-client-name=haptic-controller-tls.haptic.svc
+      - equal:
+          path: spec.template.spec.initContainers[?(@.name == "agent")].livenessProbe.exec.command
+          value: [haptic, agent, health, --base-dir=/etc/haproxy]
+      - contains:
+          path: spec.template.spec.initContainers[?(@.name == "agent")].volumeMounts
+          content:
+            name: agent-tls
+            mountPath: /etc/haptic/agent-tls
+            readOnly: true
+      - notContains:
+          path: spec.template.spec.containers[?(@.name == "haproxy")].volumeMounts
+          content:
+            name: agent-tls
+          any: true
+  - it: should leave external identities under their existing manager
+    template: agent-certificate-renewal.yaml
+    set:
+      haproxy.agent.tls.managed: false
+      haproxy.agent.tls.serverSecretName: external-agent
+      haproxy.agent.tls.clientSecretName: external-controller
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: should select external identity names and SANs
+    template: deployment.yaml
+    set:
+      haproxy.agent.tls.managed: false
+      haproxy.agent.tls.serverSecretName: external-agent
+      haproxy.agent.tls.clientSecretName: external-controller
+      haproxy.agent.tls.serverName: agent.example.test
+      haproxy.agent.tls.clientName: controller.example.test
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "agent-tls")].secret.secretName
+          value: external-controller
+      - contains:
+          path: spec.template.spec.containers[?(@.name == "controller")].env
+          content:
+            name: AGENT_TLS_SERVER_NAME
+            value: agent.example.test
+  - it: should omit TLS identities when explicitly disabled
+    template: agent-certificate-renewal.yaml
+    set:
+      haproxy.agent.tls.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: should probe local health with TLS disabled
+    template: haproxy-deployment.yaml
+    set:
+      haproxy.agent.tls.enabled: false
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[?(@.name == "agent")].livenessProbe.exec.command
+          value: [haptic, agent, health, --base-dir=/etc/haproxy]
+      - notContains:
+          path: spec.template.spec.initContainers[?(@.name == "agent")].args
+          content: --tls-dir=/etc/haptic/agent-tls/..data
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name == "agent-tls")]

@@ -404,13 +404,18 @@ haptic validate -f config.yaml --test test-basic-routing
 haptic validate -f config.yaml --output json
 haptic validate -f config.yaml --output yaml
 
-# Parallelism (0=auto-detect CPUs, 1=sequential)
+# Explicit parallelism (0=automatic CPU and memory budget, 1=sequential)
 haptic validate -f config.yaml --workers 4
 
 # Typed watched-resource access — point at a directory of schemas
 haptic validate -f config.yaml --schema-dir tests/schemas
 # Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic validate ...
 ```
+
+Automatic parallelism uses at most one worker per 128 MiB of Go's soft memory
+limit and never exceeds `GOMAXPROCS`. In a container, HAPTIC derives that soft
+limit from the container memory limit unless you set `GOMEMLIMIT` explicitly.
+`--workers` overrides automatic sizing; every selected test still runs.
 
 Install `haproxy` on your `PATH` before running `haptic validate`. The command
 uses it to detect the version and run `haproxy_valid` assertions; validation fails

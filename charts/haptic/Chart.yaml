@@ -12,11 +12,13 @@ appVersion: "0.2.0-alpha.3"
 # carries the source of the libraries it enables — disabled subcharts are
 # pruned from the Helm release Secret, keeping it under the 1 MiB limit. The
 # parent merges each enabled subchart's library YAML into the
-# HAProxyTemplateConfig (templates/_libraries.tpl). Every library is a subchart,
+# HAProxyTemplateConfig (charts/helm-helpers/templates/_libraries.tpl). Every library is a subchart,
 # including base/kubernetes-backends/ssl/ingress; spoa-hub carries no condition because its enable
 # predicate is an `or` over a template helper, which a Helm condition cannot
 # express — its own _helm_load.enable still gates it.
 dependencies:
+  - name: helm-helpers
+    version: 0.1.0
   - name: base
     version: 0.1.0
     condition: controller.templateLibraries.base.enabled
@@ -42,7 +44,12 @@ dependencies:
   # turns the library on. The library's own _helm_load.enable still gates it.
   - name: spoa-hub
     version: 0.1.0
+  - name: http-policies
+    version: "0.1.0"
   - name: gateway
+    version: 0.1.0
+    condition: controller.templateLibraries.gateway.enabled
+  - name: gateway-policies
     version: 0.1.0
     condition: controller.templateLibraries.gateway.enabled
   - name: haptic-annotations

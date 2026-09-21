@@ -530,57 +530,63 @@ func incrementalActiveLeaseChanges(
 }
 
 func TestRenderServiceIncrementalHTTPDoesNotCacheNonCriticalFailure(t *testing.T) {
-	var requests atomic.Int32
-	var available atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		if !available.Load() {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		_, _ = w.Write([]byte("present"))
-	}))
-	t.Cleanup(server.Close)
-	service, provider, query := newNonCriticalIncrementalHTTPService(t, server.URL)
+	for _, rootFetch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("root=%t", rootFetch), func(t *testing.T) {
+			var requests atomic.Int32
+			var available atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				if !available.Load() {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				_, _ = w.Write([]byte("present"))
+			}))
+			t.Cleanup(server.Close)
+			service, provider, query := newNonCriticalIncrementalHTTPService(t, server.URL, rootFetch)
 
-	result, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
-	require.NoError(t, err)
-	require.NotNil(t, result.InputTransaction)
-	assert.Equal(t, "a=\n", result.HAProxyConfig)
-	require.NoError(t, result.InputTransaction.Commit(t.Context()))
-	assert.Equal(t, int32(2), requests.Load())
-	assert.Equal(t, uint64(0), service.incremental.graph.Counters(query).Executions)
+			result, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+			require.NoError(t, err)
+			require.NotNil(t, result.InputTransaction)
+			assert.Equal(t, "a=\n", result.HAProxyConfig)
+			require.NoError(t, result.InputTransaction.Commit(t.Context()))
+			assert.Equal(t, int32(2), requests.Load())
+			assert.Equal(t, uint64(0), service.incremental.graph.Counters(query).Executions)
 
-	descriptor, err := purehttpstore.DescribeSource(
-		purehttpstore.FetchOptions{Retries: 1, Timeout: time.Second}, nil,
-	)
-	require.NoError(t, err)
-	assert.False(t, service.httpStoreComponent.GetStore().AcceptedSnapshot(server.URL, descriptor).Found)
+			descriptor, err := purehttpstore.DescribeSource(
+				purehttpstore.FetchOptions{Retries: 1, Timeout: time.Second}, nil,
+			)
+			require.NoError(t, err)
+			assert.False(t, service.httpStoreComponent.GetStore().AcceptedSnapshot(server.URL, descriptor).Found)
 
-	available.Store(true)
-	result, err = service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
-	require.NoError(t, err)
-	require.NotNil(t, result.InputTransaction)
-	assert.Equal(t, "a=present\n", result.HAProxyConfig)
-	assert.Equal(t, int32(3), requests.Load())
-	result.InputTransaction.Abort()
-	assert.False(t, service.httpStoreComponent.GetStore().AcceptedSnapshot(server.URL, descriptor).Found)
+			available.Store(true)
+			result, err = service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+			require.NoError(t, err)
+			require.NotNil(t, result.InputTransaction)
+			assert.Equal(t, "a=present\n", result.HAProxyConfig)
+			assert.Equal(t, int32(3), requests.Load())
+			result.InputTransaction.Abort()
+			assert.False(t, service.httpStoreComponent.GetStore().AcceptedSnapshot(server.URL, descriptor).Found)
 
-	result, err = service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
-	require.NoError(t, err)
-	require.NotNil(t, result.InputTransaction)
-	assert.Equal(t, "a=present\n", result.HAProxyConfig)
-	assert.Equal(t, int32(4), requests.Load())
-	require.NoError(t, result.InputTransaction.Commit(t.Context()))
-	accepted := service.httpStoreComponent.GetStore().AcceptedSnapshot(server.URL, descriptor)
-	require.True(t, accepted.Found)
-	assert.Equal(t, "present", accepted.Content)
-	assert.Equal(t, uint64(0), service.incremental.graph.Counters(query).Executions)
+			result, err = service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+			require.NoError(t, err)
+			require.NotNil(t, result.InputTransaction)
+			assert.Equal(t, "a=present\n", result.HAProxyConfig)
+			assert.Equal(t, int32(4), requests.Load())
+			require.NoError(t, result.InputTransaction.Commit(t.Context()))
+			accepted := service.httpStoreComponent.GetStore().AcceptedSnapshot(server.URL, descriptor)
+			require.True(t, accepted.Found)
+			assert.Equal(t, "present", accepted.Content)
+			if !rootFetch {
+				assert.Equal(t, uint64(0), service.incremental.graph.Counters(query).Executions)
+			}
 
-	assert.Equal(t, "a=present\n", renderAndCommitIncrementalCacheReady(t, service, provider))
-	assert.Equal(t, "a=present\n", renderAndCommitIncrementalCacheReady(t, service, provider))
-	assert.Equal(t, int32(4), requests.Load())
-	assert.Equal(t, uint64(1), service.incremental.graph.Counters(query).Executions)
+			assert.Equal(t, "a=present\n", renderAndCommitIncrementalCacheReady(t, service, provider))
+			assert.Equal(t, "a=present\n", renderAndCommitIncrementalCacheReady(t, service, provider))
+			assert.Equal(t, int32(4), requests.Load())
+			assert.Equal(t, uint64(1), service.incremental.graph.Counters(query).Executions)
+		})
+	}
 }
 
 func TestRenderServiceColdRestartRejectsExtraContextMutationWithoutPublication(t *testing.T) {
@@ -934,6 +940,7 @@ func incrementalHTTPRegistryURLs(state *incrementalRenderState) []string {
 func newNonCriticalIncrementalHTTPService(
 	t *testing.T,
 	url string,
+	rootFetch bool,
 ) (*RenderService, stores.StoreProvider, incremental.QueryKey) {
 	t.Helper()
 	cfg := &config.Config{
@@ -956,6 +963,15 @@ func newNonCriticalIncrementalHTTPService(
 		},
 		HAProxyConfig: config.HAProxyConfig{Template: `{{ render "routes" }}`},
 	}
+	if rootFetch {
+		snippet := cfg.TemplateSnippets["routes"]
+		snippet.Template = `{{ item | dig_string("", "metadata", "name") }}=`
+		cfg.TemplateSnippets["routes"] = snippet
+		cfg.TemplatingSettings.ExtraContext = map[string]any{"url": url}
+		cfg.HAProxyConfig.Template = `{{ render "routes" }}{{ http.Fetch(extraContext["url"], map[string]any{"retries": 1, "timeout": "1s"}) }}
+`
+	}
+
 	declarations := helpers.BuildAdditionalDeclarations(cfg, &typebootstrap.Result{
 		Types: map[string]reflect.Type{}, Kinds: map[string]string{}, Errors: map[string]error{},
 	})

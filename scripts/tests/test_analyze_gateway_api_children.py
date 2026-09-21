@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -297,6 +298,55 @@ build_live_secret_patterns "$2" "$3" "$4"
                     },
                     {"decoded", "base64"},
                 )
+
+    def test_repeated_secret_scans_count_every_scan_and_preserve_failure(self):
+        command = r'''
+source "$1"
+trap - EXIT INT TERM
+WORK_DIR="$2/work"
+BENCH_OUTPUT_DIR="$2/artifacts"
+live_secret_patterns="$2/patterns.json"
+live_secret_scan_ready=true
+mkdir -p "$WORK_DIR" "$BENCH_OUTPUT_DIR/cluster"
+for scan in 1 2 3; do
+    scan_artifacts_for_live_secrets
+    cp "$BENCH_OUTPUT_DIR/cluster/artifact-secret-scan.json" "$2/report-$scan.json"
+done
+printf '%s' fixture-sensitive-value > "$BENCH_OUTPUT_DIR/credential.txt"
+scan_artifacts_for_live_secrets && exit 91
+cp "$BENCH_OUTPUT_DIR/cluster/artifact-secret-scan.json" "$2/report-4.json"
+scan_artifacts_for_live_secrets && exit 92
+cp "$BENCH_OUTPUT_DIR/cluster/artifact-secret-scan.json" "$2/report-5.json"
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            patterns = {
+                "patterns": [{
+                    "bytes_base64": base64.b64encode(b"fixture-sensitive-value").decode(),
+                    "source": "test/credential/value",
+                    "representation": "decoded",
+                }]
+            }
+            (directory / "patterns.json").write_text(json.dumps(patterns), encoding="utf-8")
+            result = subprocess.run(
+                ["/usr/bin/bash", "-c", command, "repeated-secret-scan-test", str(RUNNER), str(directory)],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for index in range(1, 6):
+                report = json.loads((directory / f"report-{index}.json").read_text(encoding="utf-8"))
+                self.assertEqual(report["scan_count"], index)
+                self.assertEqual(report["pass"], index < 4)
+                if index < 4:
+                    self.assertEqual(report["redacted"], [])
+                else:
+                    self.assertEqual(report["redacted"], [{
+                        "artifact": "credential.txt",
+                        "secrets": [{"secret": "test/credential/value", "representation": "decoded"}],
+                    }])
+            self.assertEqual(
+                (directory / "artifacts/credential.txt").read_text(encoding="utf-8"), "<redacted>"
+            )
 
     def test_secret_scanner_preserves_haptic_ssl_path_and_rejects_other_values(self):
         def encoded(value):
@@ -2067,6 +2117,130 @@ validate_haptic_scale_routes 1 "$3" "$4"
         self.assertIn("readonly DEFAULT_PROBE_ROUTES=3000", runner)
         self.assertIn('BENCH_DEPLOY_INTERVAL="${BENCH_DEPLOY_INTERVAL:-}"', runner)
         self.assertIn('BENCH_WATCH_DEBOUNCE="${BENCH_WATCH_DEBOUNCE:-}"', runner)
+
+
+
+class HostedBenchmarkArtifactTests(unittest.TestCase):
+    def test_cleanup_requires_two_successful_secret_scans(self):
+        command = r"""
+source "$1"
+trap - EXIT INT TERM
+calls=0
+scan_artifacts_for_live_secrets() {
+    calls=$((calls + 1))
+    [[ "$calls" != "$FAIL_AT" ]] || return "$SCAN_RC"
+    return 0
+}
+rc=0
+scan_cleanup_artifacts || rc=$?
+printf '%s\n' "$calls"
+exit "$rc"
+"""
+        for fail_at, scan_rc, expected_calls, expected_rc in (
+            (0, 0, 2, 0), (1, 1, 1, 1), (1, 2, 1, 1),
+            (2, 1, 2, 1), (2, 2, 2, 1),
+        ):
+            with self.subTest(fail_at=fail_at, scan_rc=scan_rc):
+                result = subprocess.run(
+                    ["bash", "-c", command, "cleanup-scan-test", str(RUNNER)],
+                    env={**os.environ, "FAIL_AT": str(fail_at), "SCAN_RC": str(scan_rc)},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, expected_rc, result.stderr)
+                self.assertEqual(result.stdout.strip(), str(expected_calls))
+
+    def test_ci_retains_failed_diagnostics_only_after_security_and_provenance_checks(self):
+        ci = CI_CONFIG.read_text(encoding="utf-8")
+        start = ci.index("      trusted=false", ci.index("gateway-api-benchmark-smoke:"))
+        end = ci.index('      exit "$runner_rc"', start) + len('      exit "$runner_rc"')
+        staging = textwrap.dedent(ci[start:end])
+        for case in (
+            "complete", "aborted", "one-scan", "redacted", "untrusted",
+            "wrong-profile", "false-success", "false-measurement", "symlink",
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                raw, staged = root / "raw", root / "staged"
+                (raw / "cluster").mkdir(parents=True)
+                rc = 0 if case == "complete" else 1
+                summary = self.summary(rc)
+                metadata = self.metadata()
+                scan = {
+                    "schema_version": 1, "pass": True, "redacted": [], "scan_count": 2,
+                    "method": "bytewise raw-base64 and decoded captured sensitive Secret value scan; HAPTIC SSL path metadata excluded",
+                }
+                if case == "one-scan":
+                    scan["scan_count"] = 1
+                elif case == "redacted":
+                    scan.update({"pass": False, "redacted": ["failure.log"]})
+                elif case == "untrusted":
+                    summary["harness"]["secret_inventory_trusted"] = False
+                elif case == "wrong-profile":
+                    metadata["scale"]["startup_timeout"] = "30m"
+                elif case == "false-success":
+                    summary["harness"]["pass"] = True
+                elif case == "false-measurement":
+                    summary["measured_result"] = {"pass": True}
+                (raw / "runner-summary.json").write_text(json.dumps(summary), encoding="utf-8")
+                (raw / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+                (raw / "cluster/artifact-secret-scan.json").write_text(json.dumps(scan), encoding="utf-8")
+                (raw / "runner-exit-code.txt").write_text(str(rc) + "\n", encoding="utf-8")
+                (raw / "failure.log").write_text("startup deadline exceeded\n", encoding="utf-8")
+                if case == "symlink":
+                    (raw / "unexpected-link").symlink_to(root / "outside")
+                result = subprocess.run(
+                    ["bash", "-c", staging], check=False, capture_output=True, text=True,
+                    env={**os.environ, "BENCH_RAW_OUTPUT": str(raw),
+                         "BENCH_STAGED_OUTPUT": str(staged), "runner_rc": str(rc)},
+                )
+                self.assertEqual(result.returncode, rc, result.stderr)
+                retained = case in ("complete", "aborted")
+                self.assertEqual((staged / "failure.log").exists(), retained)
+                self.assertEqual((staged / "ci-wrapper-invalid.json").exists(), not retained)
+                if case == "aborted":
+                    report = json.loads((staged / "runner-summary.json").read_text(encoding="utf-8"))
+                    self.assertFalse(report["harness"]["pass"])
+                    self.assertIsNone(report["measured_result"])
+
+    @staticmethod
+    def summary(rc):
+        return {
+            "schema_version": 1, "public_comparison": "ballpark-only",
+            "harness": {"secret_inventory_trusted": True, "final_exit_code": rc,
+                        "pass": rc == 0, "status": "passed" if rc == 0 else "invalid"},
+            "scenarios": [
+                {"scenario": name, "measurement_valid": True, "pass": True,
+                 "supervised_child_continuity": {"evidence_valid": True, "pass": True}}
+                for name in ("probe", "scale", "routechange")
+            ] if rc == 0 else [],
+            "measured_result": {"pass": True} if rc == 0 else None,
+        }
+
+    @staticmethod
+    def metadata():
+        return {
+            "benchmark_requested_ref": "e81292ed876472804e0a2245876a7c445ab80881",
+            "benchmark_commit": "e81292ed876472804e0a2245876a7c445ab80881",
+            "scenarios": ["probe", "scale", "routechange"],
+            "gateway_targets": ["haptic-bench/haptic"],
+            "gateway_api": {"version": "v1.4.0", "channel": "experimental"},
+            "haproxy_version": "3.4", "probe_routes": 300, "probe_timeout": "45m",
+            "timings": {"requested": {"min_deployment_interval": "100ms",
+                                       "gateway_and_httproute_debounce": "100ms"}},
+            "scale": {"namespaces": 50, "routes_per_namespace": 100,
+                      "duration": "10m", "startup_timeout": "20m"},
+            "routechange": {"iterations": 20, "grace_period": "200ms", "timeout": "10m"},
+            "haptic_dirty_allowed": False, "build_only": False,
+            "haptic_source_provenance": {"classification": "clean"},
+            "cluster": {"reuse_requested": False, "keep_created": False,
+                        "coscheduled_clusters_allowed": False, "provenance_class": "fresh-controlled"},
+            "comparison": {
+                "published_workload_inputs_match": False, "controlled_default_profile": False,
+                "profile_deviation_reasons": ["probe route count differs from the published workload",
+                                              "minDeploymentInterval override requested",
+                                              "watch debounce override requested"],
+            },
+        }
 
 
 if __name__ == "__main__":

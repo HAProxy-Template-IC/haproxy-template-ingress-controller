@@ -33,7 +33,7 @@ import (
 func TestGatewayTLSTerminate(t *testing.T) {
 	t.Parallel()
 	host := "gateway-tls-terminate.localdev.me"
-	var fwd GatewayForward
+	var fwd ServiceForward
 
 	feature := features.New("Gateway: HTTPS listener with TLS Terminate mode").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -62,15 +62,6 @@ func TestGatewayTLSTerminate(t *testing.T) {
 				}},
 			})
 
-			// Gate on the controller deploying THIS route to every HAProxy pod
-			// before asserting. The single-shot HTTPS ExpectOK below has no
-			// convergence wait of its own, so without this it races the route's
-			// deploy. The marker is route-gated (issue #71): the bare namespace
-			// already enters spec.Content via the Gateway's route-independent
-			// typed-access-smoke comment (rendered when the Gateway is created,
-			// before this route), so it would pass off a pre-route render. The
-			// fragment "gtw_<ns>_echo-gateway-tls_" appears only once this
-			// route's backend renders; <ns> is unique per test.
 			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-gateway-tls")
 			return ctx
 		}).

@@ -76,6 +76,8 @@ templateSnippets:
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocol %}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted %}
       {%- import "util-backend-servers-result" for BackendServersResult %}
+      {%- import "util-resolve-backend-tls" for ResolveBackendTLS %}
+      {%- import "util-backend" for FlagsToKeywordArgs %}
       {%- macro PublishGatewayTCPRouteClaims(route *resources.tcproutes.T) -%}
       {%%
         var nsStr = route.Metadata.Namespace
@@ -92,22 +94,7 @@ templateSnippets:
         }
 
         for ruleIdx, rule := range route.Spec.Rules {
-              // First valid backendRef of the rule wins. Per Gateway API
-              // spec only core/v1 Service refs are routable; anything
-              // else is skipped (an all-invalid rule simply contributes
-              // no backend — the listener port stays unclaimed and its
-              // frontend rejects, mirroring the TLSRoute invalid-ref
-              // contract).
-              // Collect EVERY valid backendRef with its weight. A single
-              // routable ref forwards the whole port; several weighted refs
-              // become a `balance roundrobin` mode-tcp backend (weighted
-              // TCPRoute). Weight defaults to 1 (Gateway API); weight 0 stays
-              // in the backend but is emitted with `weight 0` so it takes no
-              // traffic. refName/refPort/refNs keep the first ref for the
-              // single-backend server resolution.
               var refName = ""
-              var refPort = 0
-              var refNs = ""
               var refs = []any{}
               for _, br := range rule.BackendRefs {
                 var brGroup = br.Group
@@ -135,8 +122,6 @@ templateSnippets:
                 })
                 if refName == "" {
                   refName = br.Name
-                  refPort = brPort
-                  refNs = brNs
                 }
               }
               if refName == "" {
@@ -146,22 +131,48 @@ templateSnippets:
               var backendName = "gtw_tcp_" + nsStr + "_" + nameStr + "_" + tostring(ruleIdx)
               var balance = ""
               var servers = []any{}
-              if len(refs) <= 1 {
-                var serverResult = BackendServersResult(refName, 0, refPort, nil, nil, backendName, refNs)
-                servers = serverResult["servers"].([]any)
-              } else {
-                balance = "roundrobin"
-                for _, r := range refs {
-                  var rm = r.(map[string]any)
-                  var opts = map[string]any{
-                    "namePrefix": tostring(rm["name"]) + "-",
-                    "weight":     toint(rm["weight"]),
+              var body = []any{}
+              var files = []any{}
+              if len(refs) > 1 { balance = "roundrobin" }
+              for _, r := range refs {
+                var rm = r.(map[string]any)
+                var backendNamespace = tostring(rm["ns"])
+                var serviceName = tostring(rm["name"])
+                var servicePort = toint(rm["port"])
+                var btls = ResolveBackendTLS(backendNamespace, serviceName, servicePort)
+                var flags = []any{}
+                if btls["found"] == true {
+                  var caPath = ""
+                  if tostring(btls["caBundle"]) != "" {
+                    var caFilename = tostring(btls["caFilename"])
+                    files = append(files, map[string]any{
+                      "type": "ca-file", "filename": caFilename, "content": tostring(btls["caBundle"]),
+                    })
+                    caPath = caFilename
+                    if tostring(props["fileDir"]) != "" { caPath = tostring(props["fileDir"]) + "/" + caFilename }
+                  } else if btls["systemCA"] == true {
+                    caPath = "@system-ca"
                   }
-                  var serverResult = BackendServersResult(tostring(rm["name"]), 0, toint(rm["port"]),
-                    opts, nil, backendName, tostring(rm["ns"]))
-                  for _, server := range serverResult["servers"].([]any) {
-                    servers = append(servers, server)
+                  if caPath == "" {
+                    body = []any{"tcp-request content reject"}
+                    continue
                   }
+                  flags = append(flags, "ssl")
+                  if caPath != "@system-ca" { flags = append(flags, "ca-file " + caPath) }
+                  flags = append(flags, "verify required", "sni str(" + tostring(btls["hostname"]) + ")",
+                    "verifyhost " + tostring(btls["verifyHost"]))
+                }
+                var opts = map[string]any{}
+                if len(refs) > 1 {
+                  opts["namePrefix"] = serviceName + "-"
+                  opts["weight"] = toint(rm["weight"])
+                }
+                var serverResult = BackendServersResult(serviceName, 0, servicePort,
+                  opts, nil, backendName, backendNamespace)
+                for _, server := range serverResult["servers"].([]any) {
+                  var record = server.(map[string]any)
+                  if len(flags) > 0 { record["extra"] = FlagsToKeywordArgs(flags) }
+                  servers = append(servers, record)
                 }
               }
 
@@ -261,6 +272,8 @@ templateSnippets:
                       "ruleIdx":     ruleIdx,
                       "balance":     balance,
                       "servers":     servers,
+                      "body":        body,
+                      "files":       files,
                     })
                 }
                 }
@@ -269,11 +282,17 @@ templateSnippets:
       %%}
       {%- end macro -%}
 
+  util-gateway-tcp-backend-bindings:
+    template: |-
+      {%- import "util-gateway-backend-bindings" for GatewayBackendProps -%}
+      {{- toJSON(map[string]any{"tcproutes": GatewayBackendProps()}) -}}
+
   gateway-tcproute-claims-100-route:
     requires: [gateways, namespaces, referencegrants, services, endpoints, tcproutes]
     incremental:
-      source: tcproutes
       group: gateway-tcproute-claims
+      bindingsTemplate: '{{- render "util-gateway-tcp-backend-bindings" -}}'
+      optionalConsumes: [gateway-backend-tls-policies]
       effects: [publishValue]
     template: |-
       {%- import "util-publish-gateway-tcproute-claims" for PublishGatewayTCPRouteClaims -%}
@@ -291,6 +310,7 @@ templateSnippets:
     requires: [gateways, namespaces, referencegrants, services, endpoints, tcproutes]
     template: |
       {%- import "util-backend" for Backend %}
+      {{ render "backendtlsvalues-490-gateway" default "" }}
       {{ render "gateway-tcproute-claims-100-route" }}
         {%- var claims = incremental_values("gateway-tcproute-claims", "ports") %}
         {#- A TCPRoute attaching to multiple listener ports (e.g. one that
@@ -310,6 +330,11 @@ templateSnippets:
           {%- var beName = tostring(info["backendName"]) %}
           {%- if !seenBackends[beName] %}
             {%- seenBackends[beName] = true %}
+            {%- for _, file := range toSlice(info["files"]) %}
+              {%- var record = file.(map[string]any) %}
+              {%- var _, registerErr = fileRegistry.Register(tostring(record["type"]), tostring(record["filename"]), tostring(record["content"])) %}
+              {%- if registerErr != nil %}{{ fail(tostring(registerErr)) }}{%- end %}
+            {%- end %}
       {{ Backend(map[string]any{
            "name": beName,
            "guid": make_guid("be", beName),
@@ -318,6 +343,7 @@ templateSnippets:
            "comments": []any{"# gateway/backends-502-gateway-tcproute: " + tostring(info["routeNs"]) + "/" +
              tostring(info["routeName"]) + " rule " + tostring(info["ruleIdx"]) + " (port " + tostring(port) + ")"},
            "servers": info["servers"].([]any),
+           "body": info["body"],
          }) }}
           {%- end %}
         {%- end %}
@@ -340,6 +366,7 @@ templateSnippets:
   frontends-700-gateway-tcp-listener:
     requires: [gateways, namespaces, referencegrants, services, endpoints, tcproutes]
     template: |
+      {{ render "backendtlsvalues-490-gateway" default "" }}
       {{ render "gateway-tcproute-claims-100-route" }}
         {%- var claims = incremental_values("gateway-tcproute-claims", "ports") %}
         {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}

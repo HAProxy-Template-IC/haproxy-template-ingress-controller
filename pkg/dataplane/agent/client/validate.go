@@ -37,8 +37,8 @@ func validateApply(m *api.Manifest, parts map[string]io.Reader, manifestBytes in
 	if len(m.Files) > api.MaxFiles {
 		return fmt.Errorf("agent client: %d files exceeds the limit of %d", len(m.Files), api.MaxFiles)
 	}
-	if ops := len(m.Ops) + len(m.InPlaceOps); ops > api.MaxOpsPerApply {
-		return fmt.Errorf("agent client: %d ops exceeds the limit of %d", ops, api.MaxOpsPerApply)
+	if err := m.ValidateOpBatches(); err != nil {
+		return fmt.Errorf("agent client: %w", err)
 	}
 
 	declared := make(map[string]int64, len(m.Files))

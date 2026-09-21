@@ -100,9 +100,7 @@ func testBackendRecordDigest(backend *renderplan.Backend) string {
 
 const mapEntry = "example.com be_app\n"
 
-// renderWithServers builds a render whose backend holds enough servers to push
-// the diff past one apply's op cap. addressOffset moves every server, so the
-// diff between two of these is one op per server.
+// renderWithServers moves 1,001 server addresses between renders.
 func renderWithServers(id string, addressOffset int) (*renderplan.Plan, string, *dataplane.AuxiliaryFiles) {
 	_ = id
 	const servers = api.MaxOpsPerApply + 1
@@ -777,9 +775,8 @@ func TestApply_UnchangedRenderDoesNotRepeatThePlanBlob(t *testing.T) {
 	assert.Zero(t, agent.PlanReads(), "a controller that holds the plan reads the state without the blob")
 }
 
-// One deployment that needs several fenced applies stores one blob: every
-// chunk carries the same plan id, so the blob follows the last chunk, once.
-func TestApply_ChunkedApplyCarriesThePlanBlobOnce(t *testing.T) {
+// A multi-batch transaction binds one plan blob to its completed role proof.
+func TestApply_BatchedApplyCarriesThePlanBlobOnce(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
 	component := createTestDeployer(bus.EventBus)
@@ -791,14 +788,14 @@ func TestApply_ChunkedApplyCarriesThePlanBlobOnce(t *testing.T) {
 	deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
 
 	applies := agent.Applies()
-	require.Len(t, applies, 3)
+	require.Len(t, applies, 2)
 	assert.Empty(t, applies[1].Plan)
-	assert.Empty(t, applies[2].Plan)
+	require.Len(t, applies[1].Manifest.OpBatches, 1)
 	awaitStoredPlan(t, agent, plan2.ID)
 	puts := agent.PlanPuts()
-	require.Len(t, puts, 1, "one upload for the deployment, bound to the last chunk's proof")
+	require.Len(t, puts, 1, "one upload bound to the completed transaction")
 	assert.Equal(t, plan2.ID, puts[0].PlanID)
-	assert.Equal(t, applies[2].Result.AppliedPlanProof, puts[0].Proof)
+	assert.Equal(t, applies[1].Result.AppliedPlanProof, puts[0].Proof)
 }
 
 // The upload runs on the term's context, not the deployment's: a deployment
@@ -855,9 +852,8 @@ func TestApply_AgentWithoutPlanEndpointGetsTheBlobWithTheApply(t *testing.T) {
 	assert.NotEmpty(t, agent.State().AppliedPlan)
 }
 
-// More ops than one apply may carry are split into fenced chunks, each one
-// composed against what the previous chunk applied.
-func TestApply_LargeOpBatchIsChunked(t *testing.T) {
+// Read-back and plan publication must observe the complete operation set.
+func TestApply_LargeOpBatchUsesOneTransaction(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
 	component := createTestDeployer(bus.EventBus)
@@ -866,24 +862,20 @@ func TestApply_LargeOpBatchIsChunked(t *testing.T) {
 	plan1, config1, aux1 := renderWithServers("plan-1", 10)
 	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
 
-	// Every server moves: one op each, past the per-apply cap.
 	plan2, config2, aux2 := renderWithServers("plan-2", 20)
 	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
 
 	require.Equal(t, 1, completed.Succeeded)
 	applies := agent.Applies()
-	require.Len(t, applies, 3, "one apply per chunk")
+	require.Len(t, applies, 2, "all operation batches share one apply")
 	assert.Len(t, applies[1].Manifest.Ops, api.MaxOpsPerApply)
-	assert.NotEmpty(t, applies[2].Manifest.Ops)
-	assert.Equal(t, applies[1].Result.AppliedPlanID, applies[2].Manifest.ExpectedPrevPlanID,
-		"each chunk is fenced on what the previous one applied")
+	require.Len(t, applies[1].Manifest.OpBatches, 1)
+	assert.Len(t, applies[1].Manifest.OpBatches[0], 1)
+	assert.Len(t, applies[1].Result.OpResults, api.MaxOpsPerApply+1)
+	assert.Equal(t, applies[0].Result.AppliedPlanID, applies[1].Manifest.ExpectedPrevPlanID)
 	assert.Equal(t, 0, completed.ReloadsTriggered)
 }
 
-// A pod holding a paced reload takes the in-place batch on the same apply as
-// the first op chunk, and the agent's client refuses an apply whose two lists
-// exceed the cap together — before a byte is sent, so the pod would not even
-// get the files. The batch has to come out of the first chunk's budget.
 func TestApply_InPlaceBatchSharesTheFirstChunksBudget(t *testing.T) {
 	agent := agenttest.New(t)
 	bus := newTestBus(t)
@@ -1158,4 +1150,21 @@ func TestApply_InPlaceBatchFollowsARuntimeApply(t *testing.T) {
 	assert.Equal(t, "10.0.0.3", third.InPlaceOps[0].Address)
 	assert.Equal(t, plan2.ID, third.ExpectedWorkerOpsPlanID)
 	assert.True(t, applies[2].Result.OK, "%+v", applies[2].Result.Error)
+}
+
+func TestApply_LargeBatchReloadsAnAgentWithoutRuntimeBatches(t *testing.T) {
+	agent := agenttest.New(t, agenttest.WithoutRuntimeBatches())
+	bus := newTestBus(t)
+	component := createTestDeployer(bus.EventBus)
+	endpoint := agentEndpoint(agent, "haproxy-0")
+	plan1, config1, aux1 := renderWithServers("plan-1", 10)
+	deployTo(t, component, bus, plan1, config1, aux1, "config_validation", endpoint)
+	plan2, config2, aux2 := renderWithServers("plan-2", 20)
+	completed := deployTo(t, component, bus, plan2, config2, aux2, "config_validation", endpoint)
+	require.Equal(t, 1, completed.Succeeded)
+	assert.Equal(t, 1, completed.ReloadsTriggered)
+	applies := agent.Applies()
+	require.Len(t, applies, 2)
+	assert.Equal(t, api.ModeReload, applies[1].Manifest.Mode)
+	assert.Empty(t, applies[1].Manifest.RuntimeOps())
 }

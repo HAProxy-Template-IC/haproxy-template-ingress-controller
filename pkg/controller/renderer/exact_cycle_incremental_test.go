@@ -17,6 +17,7 @@ package renderer
 import (
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -35,6 +36,7 @@ func TestObservationKeyMatchesTupleOfFormattedParts(t *testing.T) {
 		{7, "scope", 1, 2, "g", "c", "cell", "|"},
 		{255, "with\x00nul", 1 << 40, math.MaxUint64, "grp\x00", "comp", "c\x00ell", "\x00"},
 		{12, "unicode-ä", 999999, 1234567890, "group", "component", "cell", "--"},
+		{255, strings.Repeat("long\x00scope", 200), math.MaxUint64, math.MaxUint64, "group", "component", "cell", "\x00"},
 	}
 	for _, tc := range cases {
 		want := string(incrementalOrderedTuple(

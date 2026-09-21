@@ -16,9 +16,15 @@
 */ -}}
 {{- $watched := include "haptic.watchedResourcesUnion" . | fromYaml }}
 {{- $webhookRules := list }}
+{{- $ruleNames := dict }}
 {{- range $name, $resource := $watched }}
   {{- if $resource.enableValidationWebhook }}
-    {{- $webhookRules = append $webhookRules (dict "name" $name "resource" $resource) }}
+    {{- $ruleName := include "haptic.webhook.ruleName" $name }}
+    {{- if hasKey $ruleNames $ruleName }}
+      {{- fail (printf "Watched resources %s and %s produce the same admission webhook name. Rename one watch key." (index $ruleNames $ruleName) $name) }}
+    {{- end }}
+    {{- $_ := set $ruleNames $ruleName $name }}
+    {{- $webhookRules = append $webhookRules (dict "name" $ruleName "resource" $resource) }}
   {{- end }}
 {{- end }}
 {{- $resourceTimeoutSeconds := include "haptic.webhook.resourceTimeoutSeconds" . | int }}

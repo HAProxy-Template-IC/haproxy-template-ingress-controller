@@ -97,6 +97,14 @@ pins the ClusterRole rules on chart defaults:
         - list
         - watch
     - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxyroutepolicies
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
         - ""
       resources:
         - secrets
@@ -322,6 +330,14 @@ pins the ClusterRole rules with every rule-adding feature enabled:
         - gateway.networking.k8s.io
       resources:
         - referencegrants
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - haproxy-haptic.org
+      resources:
+        - haproxyroutepolicies
       verbs:
         - get
         - list

@@ -46,6 +46,7 @@ pkg/
 ├── rendercontent/     # Rendered-output value types (Output, TextFragment, Document)
 ├── stores/            # Store overlay/provider used for webhook dry-run
 ├── templating/        # Pure template engine library (Scriggo)
+├── transportsecurity/ # Reloadable mutual TLS for HTTP connections
 ├── k8s/               # Kubernetes integration library
 ├── dataplane/         # HAProxy integration library
 ├── webhook/           # Pure admission-webhook HTTPS server
@@ -63,6 +64,8 @@ For the canonical layout (with sub-packages), see [`docs/site/docs/development/d
 **pkg/introspection/** — Generic `/debug/vars` HTTP server (registry + JSONPath + pprof).
 
 **pkg/metrics/** — Generic Prometheus registry + `/metrics` server.
+
+**pkg/transportsecurity/** — Utility for atomic certificate snapshots and reloadable mutual TLS. No Kubernetes or domain dependencies.
 
 **pkg/lifecycle/** — Component registry, dependency ordering, leader-only gating, health tracking.
 

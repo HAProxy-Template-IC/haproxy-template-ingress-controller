@@ -26,22 +26,6 @@
 # Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.hapticAnnotations.enabled }}'
-  inject:
-    # Scope the self-service WAF catalog watch to the configured well-known
-    # ConfigMap name so the full-body store only ever holds those catalogs
-    # (one small ConfigMap per participating namespace), never every cluster
-    # ConfigMap.
-    - path: watchedResources.waf_selfservice_catalogs.fieldSelector
-      value: 'metadata.name={{ .Values.controller.config.templatingSettings.extraContext.waf.policies.selfService.configMapName | default "waf-policies" }}'
-  unset:
-    # This snippet imports util-spoa-rate-limit-dispatch, which the spoa-hub
-    # library defines. The import is compile-time: with the hub absent it fails
-    # to compile and bricks the whole config. It only emits when hub messages
-    # are present (the hub is on), so dropping it when it is off changes no
-    # output. The fail-closed guard for a rate-limit annotation without the hub
-    # lives in map-rate-limit-820-haptic, which has no such import.
-    - path: templateSnippets.frontend-filters-863-haptic-shared-rate-limit-consumer
-      when: '{{ include "haptic.spoaHub.disabled" . }}'
 
 # Library-declared extraContext defaults. These flow into the rendered config's
 # templatingSettings.extraContext as low-precedence defaults — an operator can
@@ -67,120 +51,23 @@ templatingSettings:
     # the vendor libraries' hash-validation guard. Default accepts bcrypt
     # ($2a/$2b/$2y), Apache MD5 ($apr1), and crypt SHA-256/512 ($5/$6) / MD5 ($1).
     hapticPasswordHashRegex: '^\$(2[aby]|apr1|1|5|6)\$'
-    # Feature-resource contracts. The chart copies its public cache and
-    # rateLimit trees here and enriches them with release-derived names. These
-    # defaults keep the annotation library independently renderable.
-    cache:
-      haproxy: {hashBalanceFactor: 150}
-      varnish:
-        enabled: false
-        serviceName: haptic-varnish-cache
-        namespace: default
-        servicePort: 6081
-        loopbackPort: 8090
-        originServiceName: haptic-cache-origin
-        workload: statefulset
-        replicas: 2
-        # renovate: datasource=docker depName=varnish
-        image: varnish:9.0
-        imagePullPolicy: IfNotPresent
-        malloc: 256m
-        resources: {requests: {cpu: 100m, memory: 384Mi}, limits: {memory: 384Mi}}
-        podDisruptionBudget: {enabled: true, maxUnavailable: 1}
-        autoscaling:
-          enabled: false
-          minReplicas: 2
-          maxReplicas: 6
-          targetCPUUtilizationPercentage: 70
-          scaleDownStabilizationSeconds: 600
-    rateLimit:
-      shared:
-        enabled: false
-        managedStore:
-          enabled: false
-          serviceName: haptic-rate-limit-store
-          namespace: default
-          port: 6379
-          # renovate: datasource=docker depName=valkey/valkey
-          image: valkey/valkey:9.1.2-alpine
-          imagePullPolicy: IfNotPresent
-          replicas: 3
-          maxMemory: 96mb
-          maxMemoryPolicy: noeviction
-          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 128Mi}}
-          sentinel:
-            masterName: haptic-rate-limit
-            port: 26379
-            quorum: 2
-            downAfterMilliseconds: 2000
-            failoverTimeoutMilliseconds: 10000
-            parallelSyncs: 1
-            resources: {requests: {cpu: 25m, memory: 64Mi}, limits: {memory: 64Mi}}
-          podDisruptionBudget: {enabled: true, maxUnavailable: 1}
-    # Shared process-wide HAProxy buffer for request-body inspectors.
-    requestBodyInspection: {haproxyBuffer: {sizeBytes: "16384", reservedBytes: "8192"}}
     # API-gateway JSON request validation (SPOA api-gateway plugin).
     apiGateway:
       requestSchemaValidation:
         enabled: false
         requestBody: {waitTimeout: "100ms", defaultMaxBytes: "8192"}
         defaultFailOpen: false
-    # WAF dispatch, custom-rule resource bounds, and reusable policies.
-    waf:
-      dispatch: {mode: opt-in, defaultEnforcement: deny}
-      ingressPermissions:
-        allowPolicySelection: true
-        allowEnforcementOverride: false
-        allowWafDisable: false
-        allowCustomRules: false
-        allowRawHAProxyConfig: false
-      customRules: {limits: {maxIngresses: "32", maxBytesPerIngress: "16384"}}
-      policies:
-        defaultPolicy: ""
-        requestBody: {waitTimeout: "100ms", defaultMaxBytes: "8192", maxBytes: "8192"}
-        limits: {maxCount: "16", maxSecLangBytes: "65536", maxRuleExclusions: "256"}
-        inline: {}
-        configMapRefs: {}
-        selfService:
-          enabled: false
-          configMapName: waf-policies
-          key: policies.yaml
-          allowSecLang: false
-          limits: {maxPoliciesPerNamespace: "4", maxTotalPolicies: "64"}
 
 watchedResources:
   secrets:
     apiVersion: v1
     resources: secrets
     indexBy: ["metadata.namespace", "metadata.name"]
-  configmaps:
-    apiVersion: v1
-    resources: configmaps
-    # Request-validation schemas are looked up by exact reference only. Keep
-    # ConfigMap bodies on-demand so enabling this library doesn't retain every
-    # cluster ConfigMap body in controller memory.
-    store: on-demand
-    indexBy: ["metadata.namespace", "metadata.name"]
-  # Self-service WAF policy catalogs: the per-namespace well-known ConfigMap
-  # (waf.policies.selfService). A dedicated full-body watch — scoped by the
-  # injected metadata.name fieldSelector to just those catalogs — because
-  # one incremental component binds every participating namespace, while the
-  # on-demand configmaps store above retains only explicitly addressed entries.
-  waf_selfservice_catalogs:
-    apiVersion: v1
-    resources: configmaps
-    indexBy: ["metadata.namespace", "metadata.name"]
-
 # Per-route settings of the API-gateway features, read by one uniform rule
 # block per HTTP frontend (frontend-filters-858..899 in this library). Keyed by
 # <ns>/<name> (txn.resource_id) unless noted; a route is added, changed or
 # removed with map operations only, so its backend stays dynamic.
 maps:
-  haptic-api-key-routes.map:
-    template: |
-      # <ns>/<name> → "<hdr|query|_> <name|_> <secret ns/name|_> <ok|missing|nosecret> <consumer-header|_>"
-      # Populated by map-haptic-api-key-routes-*; read by frontend-filters-860-haptic-api-key.
-      {{ render_glob "map-haptic-api-key-routes-*" -}}
   haptic-basic-auth-routes.map:
     template: |
       # <ns>/<name> → "ok <userlist> <realm>" | "missing" | "nosecret"
@@ -196,16 +83,6 @@ maps:
       # <ns>/<name>|<prefix> → "<offset> <new prefix>", a prefix-tree lookup (map_beg) per map-lane route.
       # Populated by map-haptic-rewrite-prefix-*; read by frontend-filters-995-haptic-path-rewrite.
       {{ render_glob "map-haptic-rewrite-prefix-*" -}}
-  haptic-apikeys.map:
-    template: |
-      # <secret ns/name>|<apikey> → <consumer>, for every Secret an Ingress references.
-      # Populated by map-haptic-apikeys-*; looked up by frontend-filters-860-haptic-api-key.
-      {{ render_glob "map-haptic-apikeys-*" -}}
-  haptic-jwt-routes.map:
-    template: |
-      # <ns>/<name> → "<alg> <key file|_> <ok|missing> <issuer|_> <audience|_> <,required,claims,|_> <,claim:Header,|_>"
-      # Populated by map-haptic-jwt-routes-*; read by frontend-filters-858-haptic-jwt.
-      {{ render_glob "map-haptic-jwt-routes-*" -}}
   haptic-hmac-routes.map:
     template: |
       # <ns>/<name> → "<alg> <signature header> <body|path> <ok|missing> <base64 key|_>"

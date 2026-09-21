@@ -66,8 +66,8 @@ func (r *incrementalRenderSession) executeActivationPredicate(
 func (r *incrementalRenderSession) boundActivationComponents(
 	reader incremental.Reader,
 	source string,
-) ([]incrementalComponent, error) {
-	bound := make([]incrementalComponent, 0, len(r.state.activations[source]))
+) ([]*incrementalComponent, error) {
+	bound := make([]*incrementalComponent, 0, len(r.state.activations[source]))
 	for index := range r.state.activations[source] {
 		component := &r.state.activations[source][index]
 		props, found, err := reader.Input(bindingInputKey(component.name, source))
@@ -82,18 +82,17 @@ func (r *incrementalRenderSession) boundActivationComponents(
 			return nil, fmt.Errorf("incremental activation binding %q for %q does not match its plan",
 				component.name, source)
 		}
-		bound = append(bound, *component)
+		bound = append(bound, component)
 	}
 	return bound, nil
 }
 
 func activeActivationComponents(
-	bound []incrementalComponent,
+	bound []*incrementalComponent,
 	item map[string]any,
 ) ([]string, error) {
 	active := make([]string, 0, len(bound))
-	for index := range bound {
-		component := &bound[index]
+	for _, component := range bound {
 		for _, path := range component.activationPaths {
 			exists, pathErr := path.Exists(item)
 			if pathErr != nil {

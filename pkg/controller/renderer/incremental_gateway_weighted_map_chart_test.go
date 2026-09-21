@@ -72,8 +72,8 @@ func TestGatewayWeightedMapExecutionScaling(t *testing.T) {
 			}
 
 			cold := fixture.renderAndCommitCacheReady(t)
-			assert.Contains(t, cold, "0:default_route-000000_0 gtw_default_route-000000_echo_80")
-			assert.Contains(t, cold, "1:default_route-000000_0 gtw_default_route-000000_other_80")
+			assert.Contains(t, cold, "0:h_default_route-000000_0 gw_h_default_route-000000_echo_80")
+			assert.Contains(t, cold, "1:h_default_route-000000_0 gw_h_default_route-000000_other_80")
 			last := fmt.Sprintf("route-%06d", routeCount-1)
 			targetExecutions := fixture.executions(gatewayHTTPWeightedMapComponent, "httproutes", "route-000000")
 			lastExecutions := fixture.executions(gatewayHTTPWeightedMapComponent, "httproutes", last)
@@ -97,7 +97,7 @@ func TestGatewayWeightedMapExecutionScaling(t *testing.T) {
 			changedRoute := gatewayWeightedMapRoute("HTTPRoute", "route-000000", "other", "echo", "echo")
 			require.NoError(t, fixture.httpRoutes.Update(changedRoute, []string{"default", "route-000000"}))
 			changed := fixture.renderAndCommitCacheReady(t)
-			assert.Contains(t, changed, "2:default_route-000000_0 gtw_default_route-000000_echo_80")
+			assert.Contains(t, changed, "2:h_default_route-000000_0 gw_h_default_route-000000_echo_80")
 			assert.Equal(t, targetExecutions+1,
 				fixture.executions(gatewayHTTPWeightedMapComponent, "httproutes", "route-000000"))
 			assert.Equal(t, lastExecutions,
@@ -244,7 +244,7 @@ func loadGatewayWeightedMapSnippets(t *testing.T) map[string]config.TemplateSnip
 	require.True(t, ok)
 	chartRoot := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "charts", "haptic", "charts", "gateway")
 	wanted := map[string]bool{
-		"util-backend-name-gateway": true, "util-reference-grant-permitted": true,
+		"util-gateway-route-identity": true, "util-backend-name-gateway": true, "util-reference-grant-permitted": true,
 		"util-backend-ref-valid":                               true,
 		"util-generate-httproute-weighted-backend-map-gateway": true,
 		"util-generate-grpcroute-weighted-backend-map-gateway": true,

@@ -114,35 +114,30 @@ func TestInPlaceMapAndCertOps(t *testing.T) {
 
 	got := deployplan.Diff(next, base)
 
-	assert.Equal(t, []string{api.OpMapSet, api.OpMapDel, api.OpCertSet}, kinds(got.InPlace))
-	assert.Equal(t, "a.example.com", got.InPlace[0].Key)
-	assert.Equal(t, "gone.example.com", got.InPlace[1].Key)
-
-	// The worker plan is the worker plus exactly those ops: the value change
-	// and the delete landed, the second "multi" entry waits for the reload.
+	require.Equal(t, []string{api.OpCertSet}, kinds(got.InPlace))
 	require.NotNil(t, got.WorkerPlan)
 	after := got.WorkerPlan.Maps[routeMap]
-	assert.Equal(t, []renderplan.Entry{entry("a.example.com", "be-z"), entry("multi", "one")}, after.Entries)
+	assert.Equal(t, worker.Maps[routeMap].Entries, after.Entries)
 	assert.Equal(t, "after", fileDigest(got.WorkerPlan, certPath))
 	assert.NotEqual(t, worker.ID, got.WorkerPlan.ID)
 	assert.NotEqual(t, next.ID, got.WorkerPlan.ID)
 
-	// Composed against that plan, the same render has nothing left to do in
-	// place — a delete is never sent for a key the worker no longer has.
 	base.WorkerOps = got.WorkerPlan
 	again := deployplan.Diff(next, base)
 	assert.Empty(t, again.InPlace)
 	assert.Nil(t, again.WorkerPlan)
 
-	// A later render dropping the entry the worker never had composes no
-	// delete for it either.
+	// Without the deferred multiset replacement, the complete map delta can run.
 	later := basePlan(
 		withMap(renderplan.Map{Path: routeMap, Entries: []renderplan.Entry{entry("a.example.com", "be-z")}}),
 		withFile(&renderplan.File{Path: certPath, Kind: renderplan.FileKindCert, Digest: "after"}),
 	)
 	third := deployplan.Diff(later, base)
-	assert.Equal(t, []string{api.OpMapDel}, kinds(third.InPlace))
-	assert.Equal(t, "multi", third.InPlace[0].Key)
+	require.Equal(t, []string{api.OpMapSet, api.OpMapDel, api.OpMapDel}, kinds(third.InPlace))
+	assert.Equal(t, "a.example.com", third.InPlace[0].Key)
+	assert.Equal(t, "gone.example.com", third.InPlace[1].Key)
+	assert.Equal(t, "multi", third.InPlace[2].Key)
+	assert.Equal(t, later.Maps[routeMap].Entries, third.WorkerPlan.Maps[routeMap].Entries)
 }
 
 func TestInPlaceWorkerPlanIsStableAndCarriesTheServerChanges(t *testing.T) {
@@ -206,11 +201,6 @@ func weighted(weight int) renderplan.Server {
 	return server
 }
 
-// A route's backendRef moved to a backend this render adds structurally. The
-// map value change would run in place, but the worker gets that backend only
-// from the pending reload: a value routing to it, through however many map
-// layers, sends requests to the default backend until then. No value change
-// runs in place while the render adds a backend; deletes still do.
 func TestInPlaceMapSetWaitsForABackendTheReloadAdds(t *testing.T) {
 	worker := basePlan(
 		withBackend(structuralBackend("be-old", srv("s1", "10.0.0.1", 8080))),
@@ -236,13 +226,13 @@ func TestInPlaceMapSetWaitsForABackendTheReloadAdds(t *testing.T) {
 
 	got := deployplan.Diff(next, base)
 
-	require.Equal(t, []string{api.OpMapDel}, kinds(got.InPlace), "the delete runs, the value change waits")
-	assert.Equal(t, "gone.example.com", got.InPlace[0].Key)
-	assert.Equal(t, []renderplan.Entry{entry("route-key/", "be-old")}, got.WorkerPlan.Maps["maps/path.map"].Entries)
+	assert.Empty(t, got.InPlace)
+	assert.Nil(t, got.WorkerPlan)
 
 	// Once the reload created the backend, the same value change runs in
 	// place against a worker that has it.
-	worker.Backends["be-new"] = next.Backends["be-new"]
+	loadedBackend := next.Backends["be-new"]
+	worker = basePlan(withBackend(&loadedBackend), withMap(worker.Maps[routeMap]), withMap(worker.Maps["maps/path.map"]))
 	base.WorkerOps = worker
 	again := deployplan.Diff(next, base)
 	assert.Equal(t, []string{api.OpMapSet, api.OpMapDel}, kinds(again.InPlace))

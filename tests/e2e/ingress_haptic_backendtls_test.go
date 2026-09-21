@@ -108,7 +108,7 @@ func TestHapticBackendTLSRouteAddRemoveIsReloadFree(t *testing.T) {
 		cs     kubernetes.Interface
 		dyn    dynamic.Interface
 		ns     string
-		mtls   HAProxyMTLSBackend
+		mtls   HAProxyTLSBackend
 	)
 	feature := features.New("Ingress: haptic backend-TLS client-cert route add/remove is reload-free on 3.4").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -177,7 +177,7 @@ func TestHapticBackendTLSRouteAddRemoveIsReloadFree(t *testing.T) {
 
 // backendTLSIngress is the verified-mTLS route shape; sni is the backend-sni
 // annotation value ("host", or a literal name the upstream certificate covers).
-func backendTLSIngress(name, host, sni string, mtls HAProxyMTLSBackend) *IngressSpec {
+func backendTLSIngress(name, host, sni string, mtls HAProxyTLSBackend) *IngressSpec {
 	return &IngressSpec{
 		Name:           name,
 		Host:           host,

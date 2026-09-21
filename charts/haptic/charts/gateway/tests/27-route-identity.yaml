@@ -1,0 +1,184 @@
+validationTests:
+  test-gateway-route-kind-identity:
+    assertions:
+    - type: not_contains
+      target: haproxy.cfg
+      pattern: 'var\(req\.gw_rule_id\)'
+    - type: contains
+      target: haproxy.cfg
+      pattern: 'http-request set-var\(txn\.resource_namespace\) var\(txn\.gw_rule_id\),field\(2,_\)'
+    - type: contains
+      target: haproxy.cfg
+      pattern: 'http-request set-var\(txn\.resource_name\) var\(txn\.gw_rule_id\),field\(3,_\)'
+    - type: haproxy_valid
+    - pattern: h_default_same-name_0\|set\|x-shared from-a
+      target: map:gw-reqhdr.map
+      type: contains
+    - pattern: g_default_same-name_0\|set\|x-shared from-b
+      target: map:gw-reqhdr.map
+      type: contains
+    - pattern: '(?m)^backend gw_h_default_same-name_echo_80 '
+      target: haproxy.cfg
+      type: contains
+    - pattern: '(?m)^backend gw_g_default_same-name_echo_80 '
+      target: haproxy.cfg
+      type: contains
+    - type: not_contains
+      target: map:gw-reqhdr.map
+      pattern: (?m)^default_same-name_0\|
+    - type: contains
+      target: map:backend-service.map
+      pattern: (?m)^gw_g_default_same-name_echo_80 default/echo$
+    fixtures:
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          name: same-name
+          namespace: default
+        spec:
+          hostnames:
+          - b.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - requestHeaderModifier:
+                set:
+                - name: X-Shared
+                  value: from-b
+              type: RequestHeaderModifier
+            matches:
+            - method:
+                method: Call
+                service: echo.Service
+                type: Exact
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          name: same-name
+          namespace: default
+        spec:
+          hostnames:
+          - a.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - requestHeaderModifier:
+                set:
+                - name: x-shared
+                  value: from-a
+              type: RequestHeaderModifier
+            matches:
+            - path:
+                type: PathPrefix
+                value: /a
+    requires:
+    - httproutes
+    - grpcroutes
+  test-gateway-backend-namespace-identity:
+    requires:
+    - httproutes
+    - services
+    - referencegrants
+    - endpoints
+    fixtures:
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          name: cross-namespace
+          namespace: default
+        spec:
+          hostnames:
+          - namespaces.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+              weight: 1
+              filters:
+              - type: RequestHeaderModifier
+                requestHeaderModifier:
+                  set:
+                  - name: X-Target
+                    value: local
+            - name: echo
+              namespace: other
+              port: 80
+              weight: 1
+              filters:
+              - type: RequestHeaderModifier
+                requestHeaderModifier:
+                  set:
+                  - name: X-Target
+                    value: remote
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          name: echo
+          namespace: other
+        spec:
+          ports:
+          - name: http
+            port: 80
+            targetPort: 8080
+      endpoints:
+      - apiVersion: discovery.k8s.io/v1
+        kind: EndpointSlice
+        metadata:
+          name: echo-other
+          namespace: other
+          labels:
+            kubernetes.io/service-name: echo
+        addressType: IPv4
+        ports:
+        - name: http
+          protocol: TCP
+          port: 8080
+        endpoints:
+        - addresses:
+          - 10.0.0.8
+          conditions:
+            ready: true
+          targetRef:
+            kind: Pod
+            name: remote-pod
+            namespace: other
+      referencegrants:
+      - apiVersion: gateway.networking.k8s.io/v1beta1
+        kind: ReferenceGrant
+        metadata:
+          name: allow-default
+          namespace: other
+        spec:
+          from:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+            namespace: default
+          to:
+          - group: ''
+            kind: Service
+            name: echo
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:weighted-multi-backend.map
+      pattern: (?m)^0:h_default_cross-namespace_0 gw_h_default_cross-namespace_echo_80$
+    - type: contains
+      target: map:weighted-multi-backend.map
+      pattern: (?m)^1:h_default_cross-namespace_0 gw_h_default_cross-namespace_other_echo_80$
+    - type: contains
+      target: map:backend-service.map
+      pattern: (?m)^gw_h_default_cross-namespace_other_echo_80 other/echo$
+    - type: contains
+      target: map:gw-reqhdr.map
+      pattern: h_default_cross-namespace_0\|gw_h_default_cross-namespace_other_echo_80\|set\|x-target remote
+    - type: contains
+      target: haproxy.cfg
+      pattern: (?ms)^backend gw_h_default_cross-namespace_other_echo_80 .*?server remote-pod 10\.0\.0\.8:8080

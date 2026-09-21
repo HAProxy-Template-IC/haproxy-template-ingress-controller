@@ -86,7 +86,7 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	initialDiscoveryDone := c.initialDiscoveryDone
 
 	// Recreate discovery instance with the new port
-	c.discovery = &Discovery{dataplanePort: c.dataplanePort}
+	c.discovery = &Discovery{dataplanePort: c.dataplanePort, useTLS: c.tls != nil}
 
 	c.mu.Unlock()
 	c.discoveryMu.Unlock()

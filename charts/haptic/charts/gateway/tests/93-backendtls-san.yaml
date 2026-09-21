@@ -1,155 +1,254 @@
+_fixtures: &backendTLSFixtures
+  gatewayclasses:
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: GatewayClass
+      metadata: {name: haptic}
+      spec: {controllerName: haproxy.org/haptic}
+  gateways:
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata: {name: gw, namespace: gateway-conformance-infra}
+      spec:
+        gatewayClassName: haptic
+        listeners:
+          - {name: http, port: 80, protocol: HTTP}
+  endpoints:
+    - apiVersion: discovery.k8s.io/v1
+      kind: EndpointSlice
+      metadata:
+        name: backend-svc
+        namespace: gateway-conformance-infra
+        labels: {kubernetes.io/service-name: backend-svc}
+      addressType: IPv4
+      ports: [{port: 8443, protocol: TCP}]
+      endpoints:
+        - addresses: [192.0.2.10]
+          conditions: {ready: true}
+  services:
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: backend-svc, namespace: gateway-conformance-infra}
+      spec:
+        ports:
+          - {port: 443, targetPort: 8443}
+  configmaps:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: ca-cert, namespace: gateway-conformance-infra}
+      data:
+        ca.crt: |
+          -----BEGIN CERTIFICATE-----
+          MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
+          BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
+          MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+          AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
+          4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
+          ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
+          DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
+          06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
+          6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
+          DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
+          NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
+          3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
+          nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
+          IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
+          kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
+          Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
+          hJoZ+gyfZqGArrz3WVM9
+          -----END CERTIFICATE-----
+  httproutes:
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      metadata: {name: btls-san-route, namespace: gateway-conformance-infra}
+      spec:
+        parentRefs:
+          - name: gw
+        rules:
+          - backendRefs:
+              - {name: backend-svc, port: 443}
+_policy: &backendTLSPolicy
+  apiVersion: gateway.networking.k8s.io/v1
+  kind: BackendTLSPolicy
+  metadata: {name: btls-san-policy, namespace: gateway-conformance-infra}
+  spec: &backendTLSSpec
+    targetRefs:
+      - {group: "", kind: Service, name: backend-svc}
+    validation: &backendTLSValidation
+      caCertificateRefs:
+        - {group: "", kind: ConfigMap, name: ca-cert}
+      hostname: sni.example.com
 validationTests:
-  test-backendtlspolicy-san-hostname-drives-verifyhost:
+  test-backendtlspolicy-san-matching-hostname:
     requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
-    description: "BackendTLSPolicy spec.validation.subjectAltNames: a Hostname-type SAN drives HAProxy `verifyhost` (cert-identity check), while spec.validation.hostname still drives `sni`. This mirrors the Gateway API rule that when SANs are present the cert must match a SAN, and hostname is used only for SNI / cert selection. URI-type SANs and a multi-Hostname OR-list are DEFERRED (HAProxy verifyhost is single-valued)."
+    description: A single Hostname SAN matching SNI preserves certificate verification.
+    extraContext: {renderMode: reconcile}
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata: {name: haptic}
-          spec: {controllerName: haproxy.org/haptic}
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata: {name: gw, namespace: gateway-conformance-infra}
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - {name: http, port: 80, protocol: HTTP}
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: backend-svc, namespace: gateway-conformance-infra}
-          spec:
-            ports:
-              - {port: 443, targetPort: 8443}
-      configmaps:
-        - apiVersion: v1
-          kind: ConfigMap
-          metadata: {name: ca-cert, namespace: gateway-conformance-infra}
-          data:
-            ca.crt: |
-              -----BEGIN CERTIFICATE-----
-              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
-              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
-              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
-              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
-              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
-              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
-              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
-              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
-              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
-              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
-              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
-              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
-              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
-              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
-              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
-              hJoZ+gyfZqGArrz3WVM9
-              -----END CERTIFICATE-----
-      httproutes:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: HTTPRoute
-          metadata: {name: btls-san-route, namespace: gateway-conformance-infra}
-          spec:
-            parentRefs:
-              - name: gw
-            rules:
-              - backendRefs:
-                  - {name: backend-svc, port: 443}
+      <<: *backendTLSFixtures
       backendtlspolicies:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: BackendTLSPolicy
-          metadata: {name: btls-san-policy, namespace: gateway-conformance-infra}
+        - <<: *backendTLSPolicy
           spec:
-            targetRefs:
-              - {group: "", kind: Service, name: backend-svc}
+            <<: *backendTLSSpec
             validation:
-              caCertificateRefs:
-                - {group: "", kind: ConfigMap, name: ca-cert}
-              hostname: sni.example.com
-              subjectAltNames:
-                - {type: Hostname, hostname: san.example.com}
-                - {type: URI, uri: spiffe://cluster.local/ns/x/sa/y}
+              <<: *backendTLSValidation
+              subjectAltNames: [{type: Hostname, hostname: sni.example.com}]
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'default-server check ssl ca-file [^\s]+ verify required sni str\(sni\.example\.com\) verifyhost san\.example\.com'
+      - {type: contains, target: haproxy.cfg, pattern: 'default-server check ssl ca-file [^\s]+ verify required sni str\(sni\.example\.com\) verifyhost sni\.example\.com'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"Accepted","status":"True","type":"Accepted"'}
 
   test-backendtlspolicy-no-san-hostname-drives-both:
     requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
-    description: "Regression: with no subjectAltNames, validation.hostname still drives BOTH sni and verifyhost (pre-SAN behaviour unchanged)."
+    description: Without SANs, hostname controls SNI and certificate verification.
+    extraContext: {renderMode: reconcile}
     fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata: {name: haptic}
-          spec: {controllerName: haproxy.org/haptic}
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata: {name: gw, namespace: gateway-conformance-infra}
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - {name: http, port: 80, protocol: HTTP}
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: backend-svc, namespace: gateway-conformance-infra}
-          spec:
-            ports:
-              - {port: 443, targetPort: 8443}
-      configmaps:
-        - apiVersion: v1
-          kind: ConfigMap
-          metadata: {name: ca-cert, namespace: gateway-conformance-infra}
-          data:
-            ca.crt: |
-              -----BEGIN CERTIFICATE-----
-              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
-              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
-              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
-              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
-              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
-              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
-              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
-              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
-              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
-              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
-              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
-              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
-              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
-              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
-              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
-              hJoZ+gyfZqGArrz3WVM9
-              -----END CERTIFICATE-----
-      httproutes:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: HTTPRoute
-          metadata: {name: btls-nosan-route, namespace: gateway-conformance-infra}
-          spec:
-            parentRefs:
-              - name: gw
-            rules:
-              - backendRefs:
-                  - {name: backend-svc, port: 443}
+      <<: *backendTLSFixtures
       backendtlspolicies:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: BackendTLSPolicy
-          metadata: {name: btls-nosan-policy, namespace: gateway-conformance-infra}
-          spec:
-            targetRefs:
-              - {group: "", kind: Service, name: backend-svc}
-            validation:
-              caCertificateRefs:
-                - {group: "", kind: ConfigMap, name: ca-cert}
-              hostname: backend.example.com
+        - <<: *backendTLSPolicy
     assertions:
       - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'default-server check ssl ca-file [^\s]+ verify required sni str\(backend\.example\.com\) verifyhost backend\.example\.com'
+      - {type: contains, target: haproxy.cfg, pattern: 'default-server check ssl ca-file [^\s]+ verify required sni str\(sni\.example\.com\) verifyhost sni\.example\.com'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"Accepted","status":"True","type":"Accepted"'}
+
+  test-backendtlspolicy-san-uri:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
+    description: A URI identity blocks the backend and is rejected at admission.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      <<: *backendTLSFixtures
+      backendtlspolicies:
+        - <<: *backendTLSPolicy
+          spec:
+            <<: *backendTLSSpec
+            validation:
+              <<: *backendTLSValidation
+              subjectAltNames: [{type: URI, uri: "spiffe://cluster.local/ns/x/sa/y"}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 503'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'verifyhost|sni str\(sni\.example\.com\)'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"Invalid","status":"False","type":"Accepted"'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"ResolvedRefs","status":"True","type":"ResolvedRefs"'}
+
+  test-backendtlspolicy-san-uri-admission-rejected:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
+    description: A URI identity blocks the backend and is rejected at admission.
+    extraContext: {renderMode: admission}
+    fixtures:
+      <<: *backendTLSFixtures
+      backendtlspolicies:
+        - <<: *backendTLSPolicy
+          spec:
+            <<: *backendTLSSpec
+            validation:
+              <<: *backendTLSValidation
+              subjectAltNames: [{type: URI, uri: "spiffe://cluster.local/ns/x/sa/y"}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "BackendTLSPolicy gateway-conformance-infra/btls-san-policy: subjectAltNames must contain exactly one Hostname entry"}
+
+  test-backendtlspolicy-san-multiple-hostnames:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
+    description: Multiple DNS alternatives cannot be reduced to the first name.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      <<: *backendTLSFixtures
+      backendtlspolicies:
+        - <<: *backendTLSPolicy
+          spec:
+            <<: *backendTLSSpec
+            validation:
+              <<: *backendTLSValidation
+              subjectAltNames: [{type: Hostname, hostname: first.example.com}, {type: Hostname, hostname: second.example.com}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 503'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'verifyhost|sni str\(sni\.example\.com\)'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"Invalid","status":"False","type":"Accepted"'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"ResolvedRefs","status":"True","type":"ResolvedRefs"'}
+
+  test-backendtlspolicy-san-multiple-hostnames-admission-rejected:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
+    description: Multiple DNS alternatives cannot be reduced to the first name.
+    extraContext: {renderMode: admission}
+    fixtures:
+      <<: *backendTLSFixtures
+      backendtlspolicies:
+        - <<: *backendTLSPolicy
+          spec:
+            <<: *backendTLSSpec
+            validation:
+              <<: *backendTLSValidation
+              subjectAltNames: [{type: Hostname, hostname: first.example.com}, {type: Hostname, hostname: second.example.com}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "BackendTLSPolicy gateway-conformance-infra/btls-san-policy: subjectAltNames must contain exactly one Hostname entry"}
+
+  test-backendtlspolicy-san-mixed:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
+    description: A DNS identity cannot replace a list containing a URI identity.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      <<: *backendTLSFixtures
+      backendtlspolicies:
+        - <<: *backendTLSPolicy
+          spec:
+            <<: *backendTLSSpec
+            validation:
+              <<: *backendTLSValidation
+              subjectAltNames: [{type: Hostname, hostname: san.example.com}, {type: URI, uri: "spiffe://cluster.local/ns/x/sa/y"}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 503'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'verifyhost|sni str\(sni\.example\.com\)'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"Invalid","status":"False","type":"Accepted"'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"ResolvedRefs","status":"True","type":"ResolvedRefs"'}
+
+  test-backendtlspolicy-san-mixed-admission-rejected:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
+    description: A DNS identity cannot replace a list containing a URI identity.
+    extraContext: {renderMode: admission}
+    fixtures:
+      <<: *backendTLSFixtures
+      backendtlspolicies:
+        - <<: *backendTLSPolicy
+          spec:
+            <<: *backendTLSSpec
+            validation:
+              <<: *backendTLSValidation
+              subjectAltNames: [{type: Hostname, hostname: san.example.com}, {type: URI, uri: "spiffe://cluster.local/ns/x/sa/y"}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "BackendTLSPolicy gateway-conformance-infra/btls-san-policy: subjectAltNames must contain exactly one Hostname entry"}
+
+  test-backendtlspolicy-san-distinct-hostname:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
+    description: A DNS SAN distinct from SNI cannot be authenticated by HAProxy.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      <<: *backendTLSFixtures
+      backendtlspolicies:
+        - <<: *backendTLSPolicy
+          spec:
+            <<: *backendTLSSpec
+            validation:
+              <<: *backendTLSValidation
+              subjectAltNames: [{type: Hostname, hostname: different.example.com}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 503'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'verifyhost|sni str\(sni\.example\.com\)'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"Invalid","status":"False","type":"Accepted"'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-san-policy:rendered", pattern: '"reason":"ResolvedRefs","status":"True","type":"ResolvedRefs"'}
+
+  test-backendtlspolicy-san-distinct-hostname-admission-rejected:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
+    description: A DNS SAN distinct from SNI cannot be authenticated by HAProxy.
+    extraContext: {renderMode: admission}
+    fixtures:
+      <<: *backendTLSFixtures
+      backendtlspolicies:
+        - <<: *backendTLSPolicy
+          spec:
+            <<: *backendTLSSpec
+            validation:
+              <<: *backendTLSValidation
+              subjectAltNames: [{type: Hostname, hostname: different.example.com}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "BackendTLSPolicy gateway-conformance-infra/btls-san-policy: subjectAltNames must contain exactly one Hostname entry"}

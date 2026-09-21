@@ -1,0 +1,89 @@
+{{- include "haptic.agentTLS.validate" . -}}
+{{- $tls := .Values.haproxy.agent.tls -}}
+{{- if and $tls.enabled $tls.managed $tls.certManager.enabled -}}
+{{- $rootSecret := include "haptic.agentTLS.issuerSecretName" . -}}
+{{- $selfSigned := include "haptic.suffixedName" (dict "name" $rootSecret "suffix" "-selfsigned" "maxLength" 63) -}}
+{{- $signer := include "haptic.suffixedName" (dict "name" $rootSecret "suffix" "-signer" "maxLength" 63) -}}
+{{- $leafHours := mul (int $tls.certValidityDays) 24 -}}
+{{- if $tls.certManager.createIssuer }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $selfSigned }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $rootSecret }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+spec:
+  secretName: {{ $rootSecret }}
+  isCA: true
+  commonName: {{ printf "%s agent CA" (include "haptic.fullname" .) | trunc 64 | quote }}
+  duration: {{ printf "%dh" (max 87600 (mul $leafHours 3)) | quote }}
+  renewBefore: {{ printf "%dh" (mul $leafHours 2) | quote }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    encoding: PKCS8
+    # Retain the CA key so leaf renewal can distribute its renewed certificate.
+    rotationPolicy: Never
+  issuerRef:
+    name: {{ $selfSigned }}
+    kind: Issuer
+    group: cert-manager.io
+  usages:
+    - cert sign
+    - crl sign
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $signer }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ $rootSecret }}
+{{- end }}
+{{- range $role := list "server" "client" }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include (printf "haptic.agentTLS.%sSecretName" $role) $ }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" $ | nindent 4 }}
+spec:
+  secretName: {{ include (printf "haptic.agentTLS.%sSecretName" $role) $ }}
+  duration: {{ printf "%dh" $leafHours | quote }}
+  renewBefore: {{ printf "%dh" (min 720 (div $leafHours 3)) | quote }}
+  dnsNames:
+    - {{ include (printf "haptic.agentTLS.%sName" $role) $ | quote }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    encoding: PKCS8
+    rotationPolicy: Always
+  issuerRef:
+    {{- if $tls.certManager.createIssuer }}
+    name: {{ $signer }}
+    kind: Issuer
+    group: cert-manager.io
+    {{- else }}
+    {{- toYaml $tls.certManager.issuerRef | nindent 4 }}
+    {{- end }}
+  usages:
+    - digital signature
+    - {{ if eq $role "server" }}server auth{{ else }}client auth{{ end }}
+{{- end }}
+{{- end -}}

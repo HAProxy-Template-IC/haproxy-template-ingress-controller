@@ -98,17 +98,17 @@ validationTests:
       # from:Same listener — only the same-namespace route attaches.
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^same\\.com/route-in-same-namespace/ GW_ROUTE_ID:http:gateway-conformance-infra_route-same_0$"
+        pattern: "(?m)^same\\.com/route-in-same-namespace/ GW_ROUTE_ID:http:h_gateway-conformance-infra_route-same_0$"
       - {type: not_contains, target: map:path-prefix.map, pattern: "same\\.com/route-in-selected-namespace"}
       # from:Selector listener — only the label-matched namespace's route attaches.
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^selector\\.com/route-in-selected-namespace/ GW_ROUTE_ID:http:routes-allowed-ns_route-other_0$"
+        pattern: "(?m)^selector\\.com/route-in-selected-namespace/ GW_ROUTE_ID:http:h_routes-allowed-ns_route-other_0$"
       - {type: not_contains, target: map:path-prefix.map, pattern: "selector\\.com/route-in-same-namespace"}
       # from:All listener — both routes attach.
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^all\\.com/route-in-same-namespace/ GW_ROUTE_ID:http:gateway-conformance-infra_route-same_0$"
+        pattern: "(?m)^all\\.com/route-in-same-namespace/ GW_ROUTE_ID:http:h_gateway-conformance-infra_route-same_0$"
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^all\\.com/route-in-selected-namespace/ GW_ROUTE_ID:http:routes-allowed-ns_route-other_0$"
+        pattern: "(?m)^all\\.com/route-in-selected-namespace/ GW_ROUTE_ID:http:h_routes-allowed-ns_route-other_0$"

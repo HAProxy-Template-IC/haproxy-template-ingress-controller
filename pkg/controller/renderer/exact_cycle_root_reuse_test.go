@@ -15,6 +15,7 @@
 package renderer
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -36,6 +37,40 @@ type rootReuseFixture struct {
 	provider stores.StoreProvider
 	hosts    *k8sstore.MemoryStore
 	paths    *k8sstore.MemoryStore
+}
+
+func TestRootCallBookkeepingRestoresScopeValidation(t *testing.T) {
+	components := []incrementalComponent{{name: "first"}, {name: "second"}}
+	for _, count := range []int{0, 1, 2} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			session := &incrementalRenderSession{
+				state: &incrementalRenderState{
+					groups: map[string][]incrementalComponent{"group": components},
+					config: &config.Config{},
+				},
+				requested:           map[string]bool{"group": true},
+				exactCycleRootCalls: map[string][]exactCycleIncrementalObservation{},
+				valueAccesses:       map[string]int{},
+			}
+			for _, component := range components[:count] {
+				session.calls, session.scopedCalls = recordIncrementalCall(session.calls, session.scopedCalls,
+					"group", components, incrementalCall{scope: "routes.map", component: component.name})
+			}
+			saved := session.saveRootCallBookkeeping("routes.map", []exactCycleIncrementalObservation{{group: "group"}})
+			session.calls, session.scopedCalls = recordIncrementalCall(session.calls, session.scopedCalls,
+				"group", components, incrementalCall{scope: "routes.map", component: "unexpected"})
+			require.Error(t, session.requireProducerGroupCall("group", "routes.map"))
+			session.restoreRootCallBookkeeping("routes.map", saved)
+			if count == len(components) {
+				require.NoError(t, session.requireProducerGroupCall("group", "routes.map"))
+			} else {
+				require.Error(t, session.requireProducerGroupCall("group", "routes.map"))
+			}
+			assert.Len(t, session.calls["group"], count)
+			assert.Len(t, incrementalCallsInScope(session.scopedCalls, session.calls, "group", "routes.map"), count)
+			require.Error(t, session.requireProducerGroupCall("group", "other.map"))
+		})
+	}
 }
 
 // Two map roots over two independent groups, plus a general file that reads

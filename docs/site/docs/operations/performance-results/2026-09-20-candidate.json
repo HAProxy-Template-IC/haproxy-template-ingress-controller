@@ -1,0 +1,818 @@
+{
+  "schema_version": 1,
+  "measured_at": "2026-09-20",
+  "release_evidence": false,
+  "source": {
+    "commit": "d11b94d1bbe69b30623e829e2fad11638eca0cfe",
+    "tree": "ccbcdc32c4863285251d93aaf0a57af4bd2bcd5d",
+    "source_hash": "eb26cc4a92f6",
+    "binary_sha256": "70028d28808ba08c3e332b9a89c5653a3e31c7e529e4c7f942872220301ded60",
+    "image_id": "sha256:385aca118e3bcc72d29c43b38c965cad67eae177b9c174c76ddda98485ce587b",
+    "archive_sha256": "17c7d3372eddedc6db63f516af6a283c3722517eeb2e217d7da086e20f037c5e"
+  },
+  "environment": {
+    "cpu": "AMD Ryzen 7 5700X3D",
+    "logical_cpus": 16,
+    "memory_gib": 31.26,
+    "kubernetes": "v1.33.0",
+    "haproxy": "3.4.4",
+    "gateway_api": "v1.6.2",
+    "coscheduled_kind_clusters": true,
+    "comparable_to_other_runs": false
+  },
+  "methodology": [
+    "Fresh owned Kind clusters; one unrelated Kind cluster remained on the host. No competing owned build or test ran during measurement.",
+    "Resource observer polled every 5 seconds and retained kubelet source timestamps; repeated source timestamps do not add samples.",
+    "Memory means are arithmetic means of distinct kubelet samples. Sampled maxima can miss short peaks.",
+    "Cgroup memory.peak is the lifetime charged-memory maximum including cache, not resident memory.",
+    "Webhook histograms cover all resource types between each controller's first and last successful scrape. Reported p95 is a bucket upper bound.",
+    "Scale controller limits were 4 CPU and 2Gi memory; requests were 100m CPU and 128Mi memory; GOMEMLIMIT was explicitly 966367641 bytes.",
+    "Cold rollout kept all Ingress, HTTPRoute, and Gateway UIDs and generations unchanged; doctor reported complete and healthy after the 120-second observation.",
+    "Startup resource collection retained one vanished hook cgroup and two not-yet-addressable controller proxy errors. The post-rollout window had no collection errors.",
+    "The legacy TestScale field controller_rss_bytes reports working set; controller_memory_rss_bytes is resident memory.",
+    "Churn used the end-to-end fixture: controller limits 4 CPU and 1Gi memory, requests 100m CPU and 128Mi memory, DEBUG logging. Its resource window includes startup and teardown, not only the five-minute churn phase."
+  ],
+  "scale": {
+    "test": "TestScale",
+    "metrics": {
+      "budget_change_p95_seconds": 15,
+      "budget_rss_bytes": 1073741824,
+      "budget_seed_seconds": 600,
+      "change_convergence_seconds_median": 4.12,
+      "change_convergence_seconds_p95": 4.17,
+      "change_convergence_seconds_sample_1": 2.12,
+      "change_convergence_seconds_sample_2": 4.17,
+      "change_convergence_seconds_sample_3": 3.08,
+      "change_convergence_seconds_sample_4": 4.13,
+      "change_convergence_seconds_sample_5": 4.12,
+      "change_marker_seconds_median": 4.12,
+      "change_marker_seconds_p95": 4.17,
+      "compression_engaged": false,
+      "compression_threshold_bytes": 1048576,
+      "config_bytes": 496584,
+      "config_lines": 3957,
+      "controller_binary_sha256": "70028d28808ba08c3e332b9a89c5653a3e31c7e529e4c7f942872220301ded60",
+      "controller_container_cpu_seconds_delta": 399.18,
+      "controller_cpu_sampling_window_seconds": 77.92,
+      "controller_identity_verified": true,
+      "controller_memory_rss_bytes": 922144768,
+      "controller_rollout_id": "sha256:385aca118e3bcc72d29c43b38c965cad67eae177b9c174c76ddda98485ce587b",
+      "controller_rss_bytes": 941236224,
+      "controller_source_hash": "eb26cc4a92f6",
+      "deployment_duration_seconds_avg": 0.02,
+      "haproxy_reloads_total_delta": 4,
+      "haproxy_replicas": 2,
+      "haproxy_version": "3.4",
+      "haproxycfg_spec_content_bytes": 496584,
+      "post_seed_quiesce_seconds": 5.18,
+      "reconciliation_duration_seconds_avg": 0.11,
+      "scale_gateways": 20,
+      "scale_ingresses_per_ns": 40,
+      "scale_ingresses_total": 800,
+      "scale_namespaces": 20,
+      "seed_to_converged_seconds": 53.98,
+      "timestamp": "2026-09-20T07:25:51Z",
+      "webhook_request_duration_seconds_avg": 0.43
+    },
+    "raw_resources_sha256": "3d310b0df94a805b8a8e8d3ae4fc01cfa5ef8a413d5bc560da78134e8391a61e",
+    "resources": {
+      "window": [
+        "2026-09-20T07:23:48.448656+00:00",
+        "2026-09-20T07:30:49.084236+00:00"
+      ],
+      "samples": 85,
+      "errors": [
+        {
+          "pod": "haptic-haptic-pre-rollout-dq8jz",
+          "pod_uid": "81cf93c8-33f7-47bd-811a-c67e4556bec6",
+          "container": "preflight",
+          "container_id": "e01b2a05140f5bd8f8100a3d6126656e63d66bb4a36f8941a5725cce8d2df0c0",
+          "time": "2026-09-20T07:24:48.559489+00:00",
+          "error": "Command '['docker', 'exec', 'haptic-gwbench-scale-20260920f-control-plane', 'cat', '/sys/fs/cgroup/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-burstable.slice/kubelet-kubepods-burstable-pod81cf93c8_33f7_47bd_811a_c67e4556bec6.slice/cri-containerd-e01b2a05140f5bd8f8100a3d6126656e63d66bb4a36f8941a5725cce8d2df0c0.scope/memory.peak', '/sys/fs/cgroup/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-burstable.slice/kubelet-kubepods-burstable-pod81cf93c8_33f7_47bd_811a_c67e4556bec6.slice"
+        },
+        {
+          "started": "2026-09-20T07:24:58.577769+00:00",
+          "finished": "2026-09-20T07:24:58.657966+00:00",
+          "error": "Error from server (BadRequest): address not allowed\n",
+          "kind": "metrics",
+          "name": "haptic-controller-7cfcc4865b-fnplr"
+        },
+        {
+          "started": "2026-09-20T07:24:58.578069+00:00",
+          "finished": "2026-09-20T07:24:58.658169+00:00",
+          "error": "Error from server (BadRequest): address not allowed\n",
+          "kind": "metrics",
+          "name": "haptic-controller-7cfcc4865b-nwg4c"
+        }
+      ],
+      "containers": [
+        {
+          "pod_uid": "81cf93c8-33f7-47bd-811a-c67e4556bec6",
+          "container": "preflight",
+          "started": "2026-09-20T07:24:23Z",
+          "memory_sample_count": 4,
+          "cpu_sample_count": 4,
+          "observed_roles": [],
+          "component": "pre-rollout-validation",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 564244480,
+              "mean": 564244480.0,
+              "max": 564244480,
+              "last": 564244480
+            },
+            "workingSetBytes": {
+              "min": 2256896,
+              "mean": 376188928.0,
+              "max": 636370944,
+              "last": 617984000
+            },
+            "usageBytes": {
+              "min": 656838656,
+              "mean": 656838656.0,
+              "max": 656838656,
+              "last": 656838656
+            }
+          },
+          "cpu_cores_mean": 5.761201785714285,
+          "cpu_window_seconds": 14.0,
+          "lifetime_charged_memory_peak_bytes": 895762432
+        },
+        {
+          "pod_uid": "c9c2e2b1-ff49-4295-ac38-679b0dd5745d",
+          "container": "validators",
+          "started": "2026-09-20T07:24:58Z",
+          "memory_sample_count": 15,
+          "cpu_sample_count": 15,
+          "observed_roles": [
+            0.0,
+            1.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 5324800,
+              "mean": 14127104.0,
+              "max": 19599360,
+              "last": 18780160
+            },
+            "workingSetBytes": {
+              "min": 6483968,
+              "mean": 15390310.4,
+              "max": 24399872,
+              "last": 20566016
+            },
+            "usageBytes": {
+              "min": 6832128,
+              "mean": 17956181.333333332,
+              "max": 28758016,
+              "last": 21917696
+            }
+          },
+          "cpu_cores_mean": 0.011770550561797754,
+          "cpu_window_seconds": 178.0,
+          "lifetime_charged_memory_peak_bytes": 49471488
+        },
+        {
+          "pod_uid": "dab438c9-979d-4772-aac8-66792981ca43",
+          "container": "validators",
+          "started": "2026-09-20T07:24:58Z",
+          "memory_sample_count": 16,
+          "cpu_sample_count": 16,
+          "observed_roles": [
+            0.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 5185536,
+              "mean": 11732406.857142856,
+              "max": 15917056,
+              "last": 15917056
+            },
+            "workingSetBytes": {
+              "min": 6344704,
+              "mean": 12385280.0,
+              "max": 17473536,
+              "last": 17473536
+            },
+            "usageBytes": {
+              "min": 6901760,
+              "mean": 14251154.285714285,
+              "max": 19148800,
+              "last": 18165760
+            }
+          },
+          "cpu_cores_mean": 0.008442780373831777,
+          "cpu_window_seconds": 214.0,
+          "lifetime_charged_memory_peak_bytes": 27799552
+        },
+        {
+          "pod_uid": "dab438c9-979d-4772-aac8-66792981ca43",
+          "container": "controller",
+          "started": "2026-09-20T07:25:00Z",
+          "memory_sample_count": 17,
+          "cpu_sample_count": 17,
+          "observed_roles": [
+            0.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 294891520,
+              "mean": 664325851.4285715,
+              "max": 843313152,
+              "last": 790294528
+            },
+            "workingSetBytes": {
+              "min": 115716096,
+              "mean": 604555384.4705882,
+              "max": 852230144,
+              "last": 794476544
+            },
+            "usageBytes": {
+              "min": 338640896,
+              "mean": 693571584.0,
+              "max": 875171840,
+              "last": 797986816
+            }
+          },
+          "cpu_cores_mean": 1.5429435890410959,
+          "cpu_window_seconds": 219.0,
+          "lifetime_charged_memory_peak_bytes": 995880960
+        },
+        {
+          "pod_uid": "c9c2e2b1-ff49-4295-ac38-679b0dd5745d",
+          "container": "controller",
+          "started": "2026-09-20T07:25:00Z",
+          "memory_sample_count": 14,
+          "cpu_sample_count": 14,
+          "observed_roles": [
+            0.0,
+            1.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 276668416,
+              "mean": 698656085.3333334,
+              "max": 922144768,
+              "last": 899817472
+            },
+            "workingSetBytes": {
+              "min": 234110976,
+              "mean": 650485174.8571428,
+              "max": 941236224,
+              "last": 908685312
+            },
+            "usageBytes": {
+              "min": 316870656,
+              "mean": 731999232.0,
+              "max": 956534784,
+              "last": 912539648
+            }
+          },
+          "cpu_cores_mean": 2.082641836158192,
+          "cpu_window_seconds": 177.0,
+          "lifetime_charged_memory_peak_bytes": 1018650624
+        },
+        {
+          "pod_uid": "1aeef8ea-29a6-42a2-82e9-fb95a47ac6be",
+          "container": "controller",
+          "started": "2026-09-20T07:27:26Z",
+          "memory_sample_count": 16,
+          "cpu_sample_count": 16,
+          "observed_roles": [
+            0.0,
+            1.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 342544384,
+              "mean": 708906692.9230769,
+              "max": 802910208,
+              "last": 674328576
+            },
+            "workingSetBytes": {
+              "min": 207654912,
+              "mean": 695832832.0,
+              "max": 870051840,
+              "last": 798916608
+            },
+            "usageBytes": {
+              "min": 405905408,
+              "mean": 802077144.6153846,
+              "max": 895922176,
+              "last": 805416960
+            }
+          },
+          "cpu_cores_mean": 0.6524709157894737,
+          "cpu_window_seconds": 190.0,
+          "lifetime_charged_memory_peak_bytes": 993751040
+        },
+        {
+          "pod_uid": "1aeef8ea-29a6-42a2-82e9-fb95a47ac6be",
+          "container": "validators",
+          "started": "2026-09-20T07:27:24Z",
+          "memory_sample_count": 15,
+          "cpu_sample_count": 15,
+          "observed_roles": [
+            0.0,
+            1.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 7090176,
+              "mean": 8193890.461538462,
+              "max": 8433664,
+              "last": 8433664
+            },
+            "workingSetBytes": {
+              "min": 8278016,
+              "mean": 10910105.6,
+              "max": 19464192,
+              "last": 9662464
+            },
+            "usageBytes": {
+              "min": 8712192,
+              "mean": 15759832.615384616,
+              "max": 34664448,
+              "last": 12976128
+            }
+          },
+          "cpu_cores_mean": 0.004613744791666667,
+          "cpu_window_seconds": 192.0,
+          "lifetime_charged_memory_peak_bytes": 45379584
+        },
+        {
+          "pod_uid": "ea3a631d-692b-40f8-ac9d-8dca2893903f",
+          "container": "controller",
+          "started": "2026-09-20T07:28:08Z",
+          "memory_sample_count": 14,
+          "cpu_sample_count": 14,
+          "observed_roles": [
+            0.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 358006784,
+              "mean": 760470434.9090909,
+              "max": 885678080,
+              "last": 841396224
+            },
+            "workingSetBytes": {
+              "min": 43958272,
+              "mean": 782627693.7142857,
+              "max": 1003356160,
+              "last": 981704704
+            },
+            "usageBytes": {
+              "min": 551718912,
+              "mean": 927176890.1818181,
+              "max": 1014349824,
+              "last": 986824704
+            }
+          },
+          "cpu_cores_mean": 0.7879845000000001,
+          "cpu_window_seconds": 154.0,
+          "lifetime_charged_memory_peak_bytes": 1057099776
+        },
+        {
+          "pod_uid": "ea3a631d-692b-40f8-ac9d-8dca2893903f",
+          "container": "validators",
+          "started": "2026-09-20T07:28:05Z",
+          "memory_sample_count": 14,
+          "cpu_sample_count": 14,
+          "observed_roles": [
+            0.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 9621504,
+              "mean": 9639005.090909092,
+              "max": 9650176,
+              "last": 9650176
+            },
+            "workingSetBytes": {
+              "min": 10850304,
+              "mean": 11226258.285714285,
+              "max": 13135872,
+              "last": 11014144
+            },
+            "usageBytes": {
+              "min": 11116544,
+              "mean": 11377198.545454545,
+              "max": 13312000,
+              "last": 11268096
+            }
+          },
+          "cpu_cores_mean": 0.00468899358974359,
+          "cpu_window_seconds": 156.0,
+          "lifetime_charged_memory_peak_bytes": 24047616
+        }
+      ],
+      "webhook_all_resource_types": {
+        "request_count": 845.0,
+        "duration_seconds_sum": 366.7746399680001,
+        "buckets": {
+          "0.01": 0.0,
+          "0.05": 0.0,
+          "0.1": 0.0,
+          "0.25": 10.0,
+          "0.5": 698.0,
+          "1": 845.0,
+          "2.5": 845.0,
+          "5": 845.0,
+          "10": 845.0,
+          "+Inf": 845.0
+        },
+        "mean_seconds": 0.43405282836449716,
+        "p95_bucket_upper_bound_seconds": 1.0
+      }
+    },
+    "cold_rollout_seconds": 82,
+    "post_rollout_observation_seconds": 120,
+    "post_rollout_resources": {
+      "window": [
+        "2026-09-20T07:28:48.542006+00:00",
+        "2026-09-20T07:30:44.076902+00:00"
+      ],
+      "samples": 24,
+      "errors": [],
+      "containers": [
+        {
+          "pod_uid": "1aeef8ea-29a6-42a2-82e9-fb95a47ac6be",
+          "container": "controller",
+          "started": "2026-09-20T07:27:26Z",
+          "memory_sample_count": 9,
+          "cpu_sample_count": 9,
+          "observed_roles": [
+            1.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 674328576,
+              "mean": 759854876.4444444,
+              "max": 802910208,
+              "last": 674328576
+            },
+            "workingSetBytes": {
+              "min": 798916608,
+              "mean": 842635491.5555556,
+              "max": 866308096,
+              "last": 798916608
+            },
+            "usageBytes": {
+              "min": 805416960,
+              "mean": 852656583.1111112,
+              "max": 880062464,
+              "last": 805416960
+            }
+          },
+          "cpu_cores_mean": 0.0016455213675213676,
+          "cpu_window_seconds": 117.0,
+          "lifetime_charged_memory_peak_bytes": 993751040
+        },
+        {
+          "pod_uid": "1aeef8ea-29a6-42a2-82e9-fb95a47ac6be",
+          "container": "validators",
+          "started": "2026-09-20T07:27:24Z",
+          "memory_sample_count": 9,
+          "cpu_sample_count": 9,
+          "observed_roles": [
+            1.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 8302592,
+              "mean": 8416824.888888888,
+              "max": 8433664,
+              "last": 8433664
+            },
+            "workingSetBytes": {
+              "min": 9506816,
+              "mean": 11139754.666666666,
+              "max": 12345344,
+              "last": 9662464
+            },
+            "usageBytes": {
+              "min": 10780672,
+              "mean": 18587192.888888888,
+              "max": 34664448,
+              "last": 12976128
+            }
+          },
+          "cpu_cores_mean": 0.004578669491525423,
+          "cpu_window_seconds": 118.0,
+          "lifetime_charged_memory_peak_bytes": 45379584
+        },
+        {
+          "pod_uid": "ea3a631d-692b-40f8-ac9d-8dca2893903f",
+          "container": "controller",
+          "started": "2026-09-20T07:28:08Z",
+          "memory_sample_count": 10,
+          "cpu_sample_count": 10,
+          "observed_roles": [
+            0.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 390348800,
+              "mean": 800716800.0,
+              "max": 885678080,
+              "last": 841396224
+            },
+            "workingSetBytes": {
+              "min": 666517504,
+              "mean": 952938086.4,
+              "max": 1003356160,
+              "last": 981704704
+            },
+            "usageBytes": {
+              "min": 717991936,
+              "mean": 964722688.0,
+              "max": 1014349824,
+              "last": 986824704
+            }
+          },
+          "cpu_cores_mean": 0.12642746031746033,
+          "cpu_window_seconds": 126.0,
+          "lifetime_charged_memory_peak_bytes": 1057099776
+        },
+        {
+          "pod_uid": "ea3a631d-692b-40f8-ac9d-8dca2893903f",
+          "container": "validators",
+          "started": "2026-09-20T07:28:05Z",
+          "memory_sample_count": 9,
+          "cpu_sample_count": 9,
+          "observed_roles": [
+            0.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 9621504,
+              "mean": 9639708.444444444,
+              "max": 9646080,
+              "last": 9646080
+            },
+            "workingSetBytes": {
+              "min": 10850304,
+              "mean": 10861681.777777778,
+              "max": 10866688,
+              "last": 10866688
+            },
+            "usageBytes": {
+              "min": 11116544,
+              "mean": 11174343.111111112,
+              "max": 11370496,
+              "last": 11120640
+            }
+          },
+          "cpu_cores_mean": 0.0045888,
+          "cpu_window_seconds": 110.0,
+          "lifetime_charged_memory_peak_bytes": 24047616
+        }
+      ],
+      "webhook_all_resource_types": {
+        "request_count": 0.0,
+        "duration_seconds_sum": 0.0,
+        "buckets": {
+          "0.01": 0.0,
+          "0.05": 0.0,
+          "0.1": 0.0,
+          "0.25": 0.0,
+          "0.5": 0.0,
+          "1": 0.0,
+          "2.5": 0.0,
+          "5": 0.0,
+          "10": 0.0,
+          "+Inf": 0.0
+        }
+      }
+    },
+    "workload_identities_unchanged": true,
+    "doctor_complete": true,
+    "doctor_healthy": true,
+    "container_restarts": 0
+  },
+  "churn": {
+    "test": "TestGatewayChurn",
+    "workers": 6,
+    "duration_seconds": 300,
+    "completed_cycles": 356,
+    "allocator_samples": 152,
+    "allocator_fetch_errors": 0,
+    "survivor_service_updates": 0,
+    "final_convergence": true,
+    "survivor_routing": true,
+    "idle_quiescence": true,
+    "container_restarts": 0,
+    "raw_resources_sha256": "f1cc03e907cbc3402f7b72b8f46ae4fcb3524492bb88a918f57915f86085ee65",
+    "resources": {
+      "window": [
+        "2026-09-20T07:36:02.740137+00:00",
+        "2026-09-20T07:43:43.653490+00:00"
+      ],
+      "samples": 93,
+      "errors": [],
+      "containers": [
+        {
+          "pod_uid": "644aed77-3862-41c3-8187-ac55b42f80d9",
+          "container": "preflight",
+          "started": "2026-09-20T07:36:37Z",
+          "memory_sample_count": 3,
+          "cpu_sample_count": 3,
+          "observed_roles": [],
+          "component": "pre-rollout-validation",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 594034688,
+              "mean": 594034688.0,
+              "max": 594034688,
+              "last": 594034688
+            },
+            "workingSetBytes": {
+              "min": 109932544,
+              "mean": 311682389.3333333,
+              "max": 688672768,
+              "last": 688672768
+            },
+            "usageBytes": {
+              "min": 714166272,
+              "mean": 714166272.0,
+              "max": 714166272,
+              "last": 714166272
+            }
+          },
+          "cpu_cores_mean": 4.8900832,
+          "cpu_window_seconds": 10.0,
+          "lifetime_charged_memory_peak_bytes": 996499456
+        },
+        {
+          "pod_uid": "a5cd2cbc-5774-46a3-8a0b-617ccbed1ac3",
+          "container": "controller",
+          "started": "2026-09-20T07:37:12Z",
+          "memory_sample_count": 28,
+          "cpu_sample_count": 28,
+          "observed_roles": [
+            0.0,
+            1.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 294158336,
+              "mean": 360034619.0769231,
+              "max": 388055040,
+              "last": 368492544
+            },
+            "workingSetBytes": {
+              "min": 33042432,
+              "mean": 359762797.71428573,
+              "max": 430383104,
+              "last": 374464512
+            },
+            "usageBytes": {
+              "min": 351297536,
+              "mean": 388575389.53846157,
+              "max": 446496768,
+              "last": 389992448
+            }
+          },
+          "cpu_cores_mean": 0.8449609609375001,
+          "cpu_window_seconds": 384.0,
+          "lifetime_charged_memory_peak_bytes": 543997952
+        },
+        {
+          "pod_uid": "a5cd2cbc-5774-46a3-8a0b-617ccbed1ac3",
+          "container": "validators",
+          "started": "2026-09-20T07:37:10Z",
+          "memory_sample_count": 30,
+          "cpu_sample_count": 30,
+          "observed_roles": [
+            0.0,
+            1.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 7499776,
+              "mean": 17801216.0,
+              "max": 23875584,
+              "last": 21925888
+            },
+            "workingSetBytes": {
+              "min": 8925184,
+              "mean": 19996262.4,
+              "max": 27234304,
+              "last": 24207360
+            },
+            "usageBytes": {
+              "min": 9211904,
+              "mean": 24153656.888888888,
+              "max": 40402944,
+              "last": 26910720
+            }
+          },
+          "cpu_cores_mean": 0.011135940721649484,
+          "cpu_window_seconds": 388.0,
+          "lifetime_charged_memory_peak_bytes": 43597824
+        },
+        {
+          "pod_uid": "70f2e97b-330c-43ae-aebc-198f477d0783",
+          "container": "validators",
+          "started": "2026-09-20T07:37:10Z",
+          "memory_sample_count": 28,
+          "cpu_sample_count": 28,
+          "observed_roles": [
+            0.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 5988352,
+              "mean": 11026432.0,
+              "max": 14565376,
+              "last": 14565376
+            },
+            "workingSetBytes": {
+              "min": 7528448,
+              "mean": 12511085.714285715,
+              "max": 15966208,
+              "last": 15810560
+            },
+            "usageBytes": {
+              "min": 7880704,
+              "mean": 13109248.0,
+              "max": 16478208,
+              "last": 16478208
+            }
+          },
+          "cpu_cores_mean": 0.006030221932114883,
+          "cpu_window_seconds": 383.0,
+          "lifetime_charged_memory_peak_bytes": 29777920
+        },
+        {
+          "pod_uid": "70f2e97b-330c-43ae-aebc-198f477d0783",
+          "container": "controller",
+          "started": "2026-09-20T07:37:11Z",
+          "memory_sample_count": 27,
+          "cpu_sample_count": 27,
+          "observed_roles": [
+            0.0
+          ],
+          "component": "controller",
+          "sampled_memory": {
+            "rssBytes": {
+              "min": 222216192,
+              "mean": 349402624.0,
+              "max": 421912576,
+              "last": 362053632
+            },
+            "workingSetBytes": {
+              "min": 56750080,
+              "mean": 356799070.8148148,
+              "max": 514097152,
+              "last": 365887488
+            },
+            "usageBytes": {
+              "min": 277262336,
+              "mean": 376225621.3333333,
+              "max": 528269312,
+              "last": 371417088
+            }
+          },
+          "cpu_cores_mean": 0.7673659072164949,
+          "cpu_window_seconds": 388.0,
+          "lifetime_charged_memory_peak_bytes": 599109632
+        }
+      ],
+      "webhook_all_resource_types": {
+        "request_count": 718.0,
+        "duration_seconds_sum": 70.84053812100001,
+        "buckets": {
+          "0.01": 0.0,
+          "0.05": 0.0,
+          "0.1": 492.0,
+          "0.25": 715.0,
+          "0.5": 718.0,
+          "1": 718.0,
+          "2.5": 718.0,
+          "5": 718.0,
+          "10": 718.0,
+          "+Inf": 718.0
+        },
+        "mean_seconds": 0.09866370211838442,
+        "p95_bucket_upper_bound_seconds": 0.25
+      }
+    }
+  }
+}

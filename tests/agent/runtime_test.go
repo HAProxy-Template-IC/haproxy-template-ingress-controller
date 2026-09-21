@@ -588,3 +588,28 @@ func (p *hostProbe) stop() probeResult {
 	defer p.mu.Unlock()
 	return p.result
 }
+
+func TestLargeMapDeletionCompletesBeforeReadBack(t *testing.T) {
+	e, s := converged(t)
+	var content strings.Builder
+	ops := make([]api.Op, api.MaxOpsPerApply+1)
+	for i := range ops {
+		key := fmt.Sprintf("key-%d", i)
+		fmt.Fprintf(&content, "%s value\n", key)
+		ops[i] = api.Op{Kind: api.OpMapDel, Path: noteMapPath, Key: key}
+	}
+	s.set(noteMapPath, content.String())
+	require.True(t, s.apply(s.next(api.ModeReload), s.allParts()).OK)
+	worker := e.workerPID()
+	s.set(noteMapPath, "")
+	manifest := s.next(api.ModeAuto)
+	manifest.Ops = ops[:api.MaxOpsPerApply]
+	manifest.OpBatches = [][]api.Op{ops[api.MaxOpsPerApply:]}
+	result := s.apply(manifest, s.allParts())
+	require.True(t, result.OK, "%+v", result.Error)
+	assert.Equal(t, api.ResultRuntime, result.Mode)
+	assert.Len(t, result.OpResults, len(ops))
+	assert.Empty(t, mapEntries(e.worker("show map "+noteMapPath)))
+	assert.Equal(t, worker, e.workerPID())
+	assert.Equal(t, "", e.read(noteMapPath))
+}

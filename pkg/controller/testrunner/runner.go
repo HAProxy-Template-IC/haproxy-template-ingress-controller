@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -76,10 +77,7 @@ func New(
 
 	workers := options.Workers
 	if workers <= 0 {
-		// GOMAXPROCS, not NumCPU: inside the controller's pod NumCPU reports the
-		// node's cores, so a CPU-limited pod ran that many workers against a
-		// fraction of one and the suite missed its budget, failing the load gate.
-		workers = runtime.GOMAXPROCS(0)
+		workers = automaticWorkers(runtime.GOMAXPROCS(0), debug.SetMemoryLimit(-1))
 	}
 
 	// Capture tracing state from template engine
@@ -99,6 +97,12 @@ func New(
 		typedResourceTypes: options.TypedResourceTypes,
 		checkWithoutBinary: options.CheckWithoutBinary,
 	}
+}
+
+func automaticWorkers(parallelism int, memoryLimit int64) int {
+	// HAProxy subprocess memory is outside GOMEMLIMIT; see README.md#concurrency-model.
+	const memoryPerWorker = 128 << 20
+	return max(1, int(min(int64(parallelism), memoryLimit/memoryPerWorker)))
 }
 
 // RunTests executes all validation tests (or a specific test if filtered).
@@ -172,11 +176,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 	// Determine number of workers (use 1 worker if only 1 test)
 	numWorkers := min(len(runnableTests), r.workers)
 
-	// A gate the workers share so their `haproxy -c` runs go wide instead of
-	// serializing behind dataplane's single-slot default gate. Bound concurrent
-	// checks by the CPU allocation (GOMAXPROCS, which automaxprocs sets from the
-	// cgroup limit) so a CPU-limited controller pod doesn't oversubscribe with
-	// haproxy subprocesses during the startup/reinit load gate.
+	// Subprocesses share the workers' memory budget and the pod's CPU allocation.
 	gateSlots := numWorkers
 	if p := runtime.GOMAXPROCS(0); p > 0 && p < gateSlots {
 		gateSlots = p
@@ -234,7 +234,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 }
 
 // testWorker is a worker goroutine that processes tests from the test channel.
-// Each test gets its own isolated temp directory and template engine to prevent file conflicts.
+// Each test gets isolated paths and shares the compiled template engine.
 func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan testEntry, results chan<- TestResult, wg *sync.WaitGroup) {
 	defer wg.Done()
 

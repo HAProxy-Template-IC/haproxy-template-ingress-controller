@@ -107,7 +107,9 @@ func (c *Component) handleEndpointSuccess(
 		"correlation_id", event.CorrelationID())
 
 	c.clearBaselineInvalidation(endpoint)
-	c.recordAppliedOps(endpoint, result.Mode, outcome.sent)
+	if !outcome.observed {
+		c.recordAppliedOps(endpoint, result.Mode, outcome.sent)
+	}
 	c.recordRuntimeFallback(result.OpResults)
 	authority := podKey(endpoint)
 	state.noteRunning(endpoint, runningRender{

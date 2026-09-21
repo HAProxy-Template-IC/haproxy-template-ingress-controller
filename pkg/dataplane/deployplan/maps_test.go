@@ -27,8 +27,7 @@ import (
 
 const routeMap = "maps/route-backend.map"
 
-// TestDiffUnorderedMap covers rule 5 for a map whose lookup order does not
-// matter: every change is reachable per entry.
+// TestDiffUnorderedMap covers deltas and atomic replacements of unordered maps.
 func TestDiffUnorderedMap(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -58,20 +57,13 @@ func TestDiffUnorderedMap(t *testing.T) {
 			name:   "a value the line form would mangle is replaced",
 			before: []renderplan.Entry{entry("a.example.com", "be-a")},
 			after:  []renderplan.Entry{entry("a.example.com", "301|https|example.com; x")},
-			want: []api.Op{
-				{Kind: api.OpMapDel, Path: routeMap, Key: "a.example.com"},
-				{Kind: api.OpMapAdd, Path: routeMap, Key: "a.example.com", Value: "301|https|example.com; x"},
-			},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
 		},
 		{
-			name:   "a multiset change is deleted and re-added",
+			name:   "a multiset change is replaced atomically",
 			before: []renderplan.Entry{entry("a.example.com", "be-a")},
 			after:  []renderplan.Entry{entry("a.example.com", "be-a"), entry("a.example.com", "be-b")},
-			want: []api.Op{
-				{Kind: api.OpMapDel, Path: routeMap, Key: "a.example.com"},
-				{Kind: api.OpMapAdd, Path: routeMap, Key: "a.example.com", Value: "be-a"},
-				{Kind: api.OpMapAdd, Path: routeMap, Key: "a.example.com", Value: "be-b"},
-			},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
 		},
 		{
 			name:   "reordering alone is not a change",
@@ -101,19 +93,13 @@ func TestDiffUnorderedMap(t *testing.T) {
 			name:   "an emptied value takes the payload form",
 			before: []renderplan.Entry{entry("a.example.com", "be-a")},
 			after:  []renderplan.Entry{entry("a.example.com", "")},
-			want: []api.Op{
-				{Kind: api.OpMapDel, Path: routeMap, Key: "a.example.com"},
-				{Kind: api.OpMapAdd, Path: routeMap, Key: "a.example.com", Value: ""},
-			},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
 		},
 		{
 			name:   "an angle bracket in a value takes the payload form",
 			before: []renderplan.Entry{entry("a.example.com", "be-a")},
 			after:  []renderplan.Entry{entry("a.example.com", "x>y")},
-			want: []api.Op{
-				{Kind: api.OpMapDel, Path: routeMap, Key: "a.example.com"},
-				{Kind: api.OpMapAdd, Path: routeMap, Key: "a.example.com", Value: "x>y"},
-			},
+			want:   []api.Op{{Kind: api.OpMapReplace, Path: routeMap}},
 		},
 		{
 			name:   "a value that spans lines replaces the map",

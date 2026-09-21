@@ -1,0 +1,839 @@
+templateSnippets:
+  util-haptic-cache-private-request-header-deletes:
+    template: |
+      {% macro HapticCachePrivateRequestHeaderDeletes(includeProbeHeaders bool) string %}{%%
+        var headers = []string{}
+        if includeProbeHeaders {
+          headers = append(headers, "X-Haptic-Cache-Fetch")
+          headers = append(headers, "X-Haptic-Cache-Probe")
+        }
+        headers = append(headers, "X-Haptic-Cache-Vary")
+        headers = append(headers, "X-Haptic-Cache-Skip-CT")
+        headers = append(headers, "X-Haptic-Cache-Max-Size")
+        headers = append(headers, "X-Haptic-Cache-TTL")
+        headers = append(headers, "X-Haptic-Cache-Grace")
+        headers = append(headers, "X-Haptic-Cache-SWR")
+        headers = append(headers, "X-Haptic-Cache-Stale-If-Error")
+        headers = append(headers, "X-Haptic-Cache-Keep")
+        headers = append(headers, "X-Haptic-Cache-Strip-Cookie")
+        headers = append(headers, "X-Haptic-Cache-Negative-TTL")
+        headers = append(headers, "X-Haptic-Cache-Auth")
+        headers = append(headers, "X-Haptic-Cache-Uncacheable")
+        headers = append(headers, "X-Haptic-Cache-Origin-425")
+        headers = append(headers, "X-Haptic-Cache-Origin-Transport-Failure")
+        headers = append(headers, "X-Haptic-Cache-Failure")
+        headers = append(headers, "X-Haptic-Backend")
+        var directives = []string{}
+        for _, header := range headers {
+          directives = append(directives, "http-request del-header " + header)
+        }
+        show join(directives, "\n")
+      %%}{% end %}
+
+  # ==========================================================================
+  # Build the reload-free per-route cache maps (always registered when the tier
+  # is on, so map() references resolve even with no entries). Keyed by
+  # resource_id (ns/name), which base routing sets before frontend-filters.
+  # ==========================================================================
+  features-870-haptic-cache-maps:
+    template: |
+      {# HAPTIC shared cache — build the cache-enable / ttl / skip-ct / maxsize maps. #}
+      {{- render "haptic-cache-record-publications" default "" -}}
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
+      {%- if enabled == "true" %}
+        {%- var vSvc = extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring() %}
+        {%- var vNs = extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring() %}
+        {%- var enLines = []string{} %}
+        {%- var ttlLines = []string{} %}
+        {%- var skipLines = []string{} %}
+        {%- var sizeLines = []string{} %}
+        {%- var graceLines = []string{} %}
+        {%- var swrLines = []string{} %}
+        {%- var sieLines = []string{} %}
+        {%- var keepLines = []string{} %}
+        {%- var stripLines = []string{} %}
+        {%- var varyLines = []string{} %}
+        {%- var privateLines = []string{} %}
+        {%- var negLines = []string{} %}
+        {%- var authKeyedLines = []string{} %}
+        {%- for _, recordAny := range incremental_values("haptic-cache-records", "records") %}
+            {%- var record = recordAny.(map[string]any) %}
+            {%- var rid = tostring(record["id"]) %}
+            {#- A cache-enabled route is switched to `backend varnish_cache` in the
+                frontend, so the application backend that holds an auth deny is
+                never entered on the client leg — an uncredentialed caller would
+                be served the authenticated response from cache. Varnish's
+                builtin does not save us: it refuses cached responses only to
+                requests carrying Authorization or Cookie, and none of these
+                credentials are either.
+
+                All three credential kinds are therefore enforced on the CLIENT
+                leg for a cache-enabled route, before the cache is consulted:
+                api-key by frontend-filters-860, HMAC by 861, consumer-groups by
+                862, which run for every route on the client leg. This combination used to be refused outright; the refusal
+                is gone because the enforcement exists, not because the risk did.
+                Basic auth and JWT need no such snippet: both carry the
+                credential in `Authorization`, which the builtin already refuses
+                to serve from cache. The three handled here are exactly the ones
+                using a custom header or a derived identity, which the builtin
+                cannot see. A fourth credential kind needs its own client-leg
+                snippet only if it is in that second group. -#}
+            {%- enLines = append(enLines, rid + " 1") %}
+            {%- var ttl = tostring(record["ttl"]) %}
+            {%- if ttl != "" %}
+              {#- Validate the raw string, not toint(ttl): toint uses strconv.Atoi
+                  (all-or-nothing), so a unit-suffixed value like "60s" parses to 0,
+                  passes a `toint(ttl) < 0` guard, and is written verbatim into
+                  haptic-cache-ttl.map — where the Varnish VCL computes
+                  std.duration(ttl + "s") = "60ss" = 0s and silently never caches.
+                  Require digits only so a bad unit is rejected at admission. -#}
+              {%- if !regex_search(ttl, "^([0-9]+|auto)$") %}{{ fail("Invalid value '" + ttl + "' for annotation 'haproxy-haptic.org/cache-ttl' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"60\" not \"60s\", or \"auto\" to follow the origin's Cache-Control.") }}{%- end %}
+              {%- ttlLines = append(ttlLines, rid + " " + ttl) %}
+            {%- end %}
+            {%- var skip = tostring(record["excludeContentTypes"]) %}
+            {%- if skip != "" %}
+              {%- var toks = []string{} %}
+              {%- for _, tok := range split(skip, ",") %}
+                {%- var ct = strip(tok) %}
+                {%- if ct != "" %}
+                  {%- if !regex_search(ct, "^[A-Za-z0-9./+-]+$") %}{{ fail("Invalid media type '" + ct + "' in 'haproxy-haptic.org/cache-exclude-content-types' on Ingress '" + rid + "'.") }}{%- end %}
+                  {%- toks = append(toks, ct) %}
+                {%- end %}
+              {%- end %}
+              {%- if len(toks) > 0 %}{%- skipLines = append(skipLines, rid + " |" + join(toks, "|") + "|") %}{%- end %}
+            {%- end %}
+            {%- var maxsz = tostring(record["maxObjectSize"]) %}
+            {%- if maxsz != "" %}
+              {#- Same footgun as cache-ttl: validate the raw digits-only string
+                  rather than leaning on toint()<=0 to reject unit suffixes. -#}
+              {%- if !regex_search(maxsz, "^[0-9]+$") || toint(maxsz) <= 0 %}{{ fail("Invalid value '" + maxsz + "' for annotation 'haproxy-haptic.org/cache-max-object-size' on Ingress '" + rid + "'. Must be a positive integer (bytes) with no unit suffix, e.g. \"1048576\" not \"1mb\".") }}{%- end %}
+              {%- sizeLines = append(sizeLines, rid + " " + maxsz) %}
+            {%- end %}
+            {#- Negative caching gets its OWN clock rather than reusing cache-ttl:
+                a cached 404 during a bad deploy pins the outage for its lifetime,
+                so it must be shortenable independently of the route's ordinary
+                TTL. Same digits-only rule as cache-ttl. -#}
+            {%- var negTtl = tostring(record["negativeTTL"]) %}
+            {%- if negTtl != "" %}
+              {%- if !regex_search(negTtl, "^[0-9]+$") %}{{ fail("Invalid value '" + negTtl + "' for annotation 'haproxy-haptic.org/cache-negative-ttl' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"30\" not \"30s\".") }}{%- end %}
+              {%- negLines = append(negLines, rid + " " + negTtl) %}
+            {%- end %}
+            {#- Staleness windows. Same digits-only rule as cache-ttl and for the
+                same reason: the VCL builds a duration by appending "s", so a
+                unit-suffixed value yields 0s and silently disables the window. -#}
+            {%- var swr = tostring(record["staleWhileRevalidate"]) %}
+            {%- if swr != "" && !regex_search(swr, "^[0-9]+$") %}{{ fail("Invalid value '" + swr + "' for annotation 'haproxy-haptic.org/cache-stale-while-revalidate' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"30\" not \"30s\".") }}{%- end %}
+            {%- var sie = tostring(record["staleIfError"]) %}
+            {%- if sie != "" && !regex_search(sie, "^[0-9]+$") %}{{ fail("Invalid value '" + sie + "' for annotation 'haproxy-haptic.org/cache-stale-if-error' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"300\" not \"5m\".") }}{%- end %}
+            {#- Grace covers both stale windows; SWR marks the proactive interval. -#}
+            {%- if swr != "" || sie != "" %}
+              {%- var grace = toint(swr) %}
+              {%- if toint(sie) > grace %}{%- grace = toint(sie) %}{%- end %}
+              {%- graceLines = append(graceLines, rid + " " + tostring(grace)) %}
+              {%- swrLines = append(swrLines, rid + " " + tostring(toint(swr))) %}
+            {%- end %}
+            {%- if sie != "" %}{%- sieLines = append(sieLines, rid + " 1") %}{%- end %}
+            {%- var keep = tostring(record["revalidate"]) %}
+            {%- if keep != "" %}
+              {%- if !regex_search(keep, "^[0-9]+$") %}{{ fail("Invalid value '" + keep + "' for annotation 'haproxy-haptic.org/cache-revalidate' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"600\" not \"10m\".") }}{%- end %}
+              {%- keepLines = append(keepLines, rid + " " + keep) %}
+            {%- end %}
+            {# Declare the variance to caches DOWNSTREAM of HAPTIC. Varnish keys
+                on X-Haptic-Cache-Vary internally, but that header is ours: a CDN
+                or proxy in front of HAPTIC sees one publicly-cacheable response
+                with no declared variance and will serve one consumer's body to
+                another. Split by what the CLIENT actually sends, because that is
+                what a downstream cache can key on:
+                  header:<h>  -> Vary: <h>          exact, the client sends it
+                  cookie:<c>  -> Vary: Cookie       coarse but correct
+                  query:<q>   -> nothing            already part of the URL
+                  consumer    -> Cache-Control: private
+                  src         -> Cache-Control: private
+                consumer and src are NOT expressible as Vary: emitting
+                `Vary: X-Haptic-Consumer` would have every downstream client
+                present it as absent, collapsing back to one shared variant — the
+                same leak. Origin-sent Vary is untouched and still honoured by
+                Varnish natively; this only adds what WE introduced.
+                cache-key is parsed again here (it is also parsed in
+                backends-870 to build the key expression) because the two need
+                different things from it: the value there, the classification
+                here. #}
+            {# A client-certificate DN is per-caller and no downstream cache can key
+                on it, so a route forwarding one is private the same way a
+                consumer-keyed route is. #}
+            {%- if tostring(record["authTLSCertHeader"]) == "true" %}
+              {%- privateLines = append(privateLines, rid + " 1") %}
+            {%- end %}
+            {%- var ckeyForVary = tostring(record["cacheKey"]) %}
+            {%- if ckeyForVary != "" %}
+              {%- var varyHdrs = []any{} %}
+              {%- var needPrivate = false %}
+              {%- for _, comp := range split(ckeyForVary, ",") %}
+                {%- var c = strip(comp) %}
+                {%- if c == "consumer" || c == "src" %}{%- needPrivate = true %}
+                {%- else if hasPrefix(c, "header:") %}{%- varyHdrs = append(varyHdrs, strip(c[7:])) %}
+                {%- else if hasPrefix(c, "cookie:") %}{%- varyHdrs = append(varyHdrs, "Cookie") %}
+                {%- end %}
+              {%- end %}
+              {%- if len(varyHdrs) > 0 %}
+                {%- var seenVary = map[string]bool{} %}
+                {%- var uniq = []string{} %}
+                {%- for _, h := range varyHdrs %}
+                  {#- Header names are case-insensitive, so dedup on the folded
+                      name while emitting the operator's original spelling. -#}
+                  {%- if !seenVary[toLower(tostring(h))] %}{%- seenVary[toLower(tostring(h))] = true %}{%- uniq = append(uniq, h) %}{%- end %}
+                {%- end %}
+                {%- varyLines = append(varyLines, rid + " " + join(uniq, ",") ) %}
+              {%- end %}
+              {%- if needPrivate %}{%- privateLines = append(privateLines, rid + " 1") %}{%- end %}
+              {#- Caching a response to an AUTHENTICATED request is only safe when
+                  the key identifies the caller. `consumer` is the one component
+                  that provably does — it is HAPTIC's authenticated identity.
+                  header:/cookie:/query:/src may or may not correlate with the
+                  caller and cannot be trusted to, so a route keyed on those
+                  keeps Varnish's builtin behaviour and simply does not cache
+                  authenticated requests. -#}
+              {%- for _, comp := range split(ckeyForVary, ",") %}
+                {%- if strip(comp) == "consumer" %}{%- authKeyedLines = append(authKeyedLines, rid + " 1") %}{%- break %}{%- end %}
+              {%- end %}
+            {%- end %}
+            {%- var stripCookie = tostring(record["stripSetCookie"]) %}
+            {%- if stripCookie != "" %}
+              {%- if stripCookie != "true" && stripCookie != "false" %}{{ fail("Invalid value '" + stripCookie + "' for annotation 'haproxy-haptic.org/cache-strip-set-cookie' on Ingress '" + rid + "'. Must be \"true\" or \"false\".") }}{%- end %}
+              {%- if stripCookie == "true" %}{%- stripLines = append(stripLines, rid + " 1") %}{%- end %}
+            {%- end %}
+        {%- end %}
+        {%- var _, e1 = fileRegistry.Register("map", "haptic-cache-enable.map", join(enLines, "\n") + "\n") %}
+        {%- if e1 != nil %}{{ fail("failed to register haptic-cache-enable.map: " + tostring(e1)) }}{%- end %}
+        {%- var _, e2 = fileRegistry.Register("map", "haptic-cache-ttl.map", join(ttlLines, "\n") + "\n") %}
+        {%- if e2 != nil %}{{ fail("failed to register haptic-cache-ttl.map: " + tostring(e2)) }}{%- end %}
+        {%- var _, e3 = fileRegistry.Register("map", "haptic-cache-skip-ct.map", join(skipLines, "\n") + "\n") %}
+        {%- if e3 != nil %}{{ fail("failed to register haptic-cache-skip-ct.map: " + tostring(e3)) }}{%- end %}
+        {%- var _, e4 = fileRegistry.Register("map", "haptic-cache-maxsize.map", join(sizeLines, "\n") + "\n") %}
+        {%- if e4 != nil %}{{ fail("failed to register haptic-cache-maxsize.map: " + tostring(e4)) }}{%- end %}
+        {%- var _, e5 = fileRegistry.Register("map", "haptic-cache-grace.map", join(graceLines, "\n") + "\n") %}
+        {%- if e5 != nil %}{{ fail("failed to register haptic-cache-grace.map: " + tostring(e5)) }}{%- end %}
+        {%- var _, e5b = fileRegistry.Register("map", "haptic-cache-swr.map", join(swrLines, "\n") + "\n") %}
+        {%- if e5b != nil %}{{ fail("failed to register haptic-cache-swr.map: " + tostring(e5b)) }}{%- end %}
+        {%- var _, e6 = fileRegistry.Register("map", "haptic-cache-stale-if-error.map", join(sieLines, "\n") + "\n") %}
+        {%- if e6 != nil %}{{ fail("failed to register haptic-cache-stale-if-error.map: " + tostring(e6)) }}{%- end %}
+        {%- var _, e7 = fileRegistry.Register("map", "haptic-cache-keep.map", join(keepLines, "\n") + "\n") %}
+        {%- if e7 != nil %}{{ fail("failed to register haptic-cache-keep.map: " + tostring(e7)) }}{%- end %}
+        {%- var _, e8 = fileRegistry.Register("map", "haptic-cache-strip-cookie.map", join(stripLines, "\n") + "\n") %}
+        {%- if e8 != nil %}{{ fail("failed to register haptic-cache-strip-cookie.map: " + tostring(e8)) }}{%- end %}
+        {%- var _, e9 = fileRegistry.Register("map", "haptic-cache-vary.map", join(varyLines, "\n") + "\n") %}
+        {%- if e9 != nil %}{{ fail("failed to register haptic-cache-vary.map: " + tostring(e9)) }}{%- end %}
+        {%- var _, e10 = fileRegistry.Register("map", "haptic-cache-private.map", join(privateLines, "\n") + "\n") %}
+        {%- if e10 != nil %}{{ fail("failed to register haptic-cache-private.map: " + tostring(e10)) }}{%- end %}
+        {%- var _, e11 = fileRegistry.Register("map", "haptic-cache-negative-ttl.map", join(negLines, "\n") + "\n") %}
+        {%- if e11 != nil %}{{ fail("failed to register haptic-cache-negative-ttl.map: " + tostring(e11)) }}{%- end %}
+        {%- var _, e12 = fileRegistry.Register("map", "haptic-cache-authkey.map", join(authKeyedLines, "\n") + "\n") %}
+        {%- if e12 != nil %}{{ fail("failed to register haptic-cache-authkey.map: " + tostring(e12)) }}{%- end %}
+      {%- end %}
+
+  frontend-filters-865-haptic-cache-route:
+    template: |
+      {# HAPTIC shared cache — route cache-eligible requests to varnish_cache. #}
+      {%- import "util-haptic-cache-private-request-header-deletes" for HapticCachePrivateRequestHeaderDeletes -%}
+      {%- import "util-register-map" for RegisterMap -%}
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
+      {%- if enabled == "true" %}
+        {%- var enMap, _ = pathResolver.GetPath("haptic-cache-enable.map", "map") %}
+        {%- var varyMap, _ = pathResolver.GetPath("haptic-cache-vary.map", "map") %}
+        {%- var privateMap, _ = pathResolver.GetPath("haptic-cache-private.map", "map") %}
+      # haptic/cache routing
+      # Strip the cache tier's private protocol before every direct or cached path.
+      {{ HapticCachePrivateRequestHeaderDeletes(true) }}
+      http-after-response add-header Vary %[var(txn.policy_id),map({{ varyMap }})] if { var(txn.policy_id),map({{ varyMap }}) -m found }
+      http-after-response replace-value Cache-Control (?i)^[[:space:]]*public[[:space:]]*$ private if { var(txn.policy_id),map({{ privateMap }}) -m found }
+      http-after-response add-header Cache-Control private if { var(txn.policy_id),map({{ privateMap }}) -m found }
+      http-request set-var(txn.cache_eligible) bool(true) if { var(txn.policy_id),map({{ enMap }}) -m found } { method GET HEAD }
+      {%- if incremental_value_count("features-900-haptic-fragment-865-cache-route-items", "exclude") > 0 %}
+        {%%
+          var excludeVal, _ = shared.ComputeIfAbsent("hapticCacheExcludeMap", func() any {
+            var rows = []any{}
+            for _, v := range incremental_values("features-900-haptic-fragment-865-cache-route-items", "exclude") {
+              rows = append(rows, tostring(v))
+            }
+            var lines = []string{}
+            for _, r := range sort_strings(rows) {
+              lines = append(lines, tostring(r))
+            }
+            return RegisterMap("haptic-cache-exclude.map", lines, map[string]any{"ordered": false})
+          })
+          var excludeMap = tostring(excludeVal)
+        %%}
+      {#- `<route>|<request path>` against `<route>|<excluded prefix>` keys: map_beg
+          matches when a key is a prefix of the input, which is exactly path_beg
+          scoped to the route. #}
+      http-request set-var-fmt(txn.cache_excl_key) %[var(txn.policy_id)]|%[path] if { var(txn.cache_eligible) -m bool }
+      http-request unset-var(txn.cache_eligible) if { var(txn.cache_excl_key),map_beg({{ excludeMap }}) -m found }
+      {%- end %}
+      acl haptic_varnish_available srv_is_up(varnish_cache/CACHE_DISPATCH)
+      http-request set-var(txn.cache_degraded) str(1) if { var(txn.cache_eligible) -m bool } !haptic_varnish_available
+      {%- end %}
+
+  frontend-switching-865-haptic-cache-route:
+    template: |
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
+      {%- if enabled == "true" %}
+      use_backend varnish_cache if { var(txn.cache_eligible) -m bool } haptic_varnish_available
+      {%- end %}
+
+  haptic-varnish-backend-publication:
+    requires: [services, endpoints]
+    incremental:
+      bindingsTemplate: |-
+        {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() -%}
+        {%- if enabled == "true" -%}
+          {%- var props = map[string]any{
+            "namespace": extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring(),
+            "serviceName": extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring(),
+            "servicePort": toint(extraContext | dig("cache", "varnish", "servicePort") | fallback("6081") | tostring()),
+          } -%}
+          {%- var serviceProps = map[string]any{} -%}
+          {%- var endpointProps = map[string]any{} -%}
+          {%- for key, value := range props -%}
+            {%- serviceProps[key] = value -%}
+            {%- endpointProps[key] = value -%}
+          {%- end -%}
+          {%- serviceProps["source"] = "services" -%}
+          {%- endpointProps["source"] = "endpoints" -%}
+          {{- toJSON(map[string]any{"services": serviceProps, "endpoints": endpointProps}) -}}
+        {%- else -%}
+          {}
+        {%- end -%}
+      group: haptic-varnish-backend
+      effects: [publishValue]
+    template: |-
+      {%- import "util-backend-servers-result" for BackendServersResult -%}
+      {%- var namespace = tostring(props["namespace"]) -%}
+      {%- var serviceName = tostring(props["serviceName"]) -%}
+      {%- var itemNamespace = dig_string(item, "", "metadata", "namespace") -%}
+      {%- var itemName = dig_string(item, "", "metadata", "name") -%}
+      {%- var source = tostring(props["source"]) -%}
+      {%- var matches = source == "services" && itemNamespace == namespace && itemName == serviceName -%}
+      {%- if source == "endpoints" -%}
+        {%- matches = itemNamespace == namespace &&
+          dig_string(item, "", "metadata", "labels", "kubernetes.io/service-name") == serviceName -%}
+      {%- end -%}
+      {%- if matches -%}
+        {%- var result = BackendServersResult(serviceName, 0, toint(props["servicePort"]),
+          map[string]any{"flags": []any{}}, "", "varnish_cache_shards", namespace) -%}
+        {{- shared.Publish("backends", "varnish_cache_shards", result["servers"]) -}}
+      {%- end -%}
+
+  backends-870-haptic-varnish-cache:
+    requires: [services, endpoints]
+    template: |
+      {# HAPTIC shared cache — the sharded varnish_cache backend + header injection. #}
+      {%- import "util-backend" for Backend, AppendLines -%}
+      {%- import "util-haptic-cache-private-request-header-deletes" for HapticCachePrivateRequestHeaderDeletes -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
+      {%- if enabled == "true" %}
+        {{- render "haptic-varnish-backend-publication" -}}
+        {%%
+          var loopbackPort = extraContext | dig("cache", "varnish", "loopbackPort") | fallback("8090") | tostring()
+          var hbf = extraContext | dig("cache", "haproxy", "hashBalanceFactor") | fallback("150") | tostring()
+          var responseTimeoutMs = toint(extraContext | dig("cache", "haproxy", "responseTimeoutMs") | fallback("2000"))
+          var ttlMap, _ = pathResolver.GetPath("haptic-cache-ttl.map", "map")
+          var skipMap, _ = pathResolver.GetPath("haptic-cache-skip-ct.map", "map")
+          var sizeMap, _ = pathResolver.GetPath("haptic-cache-maxsize.map", "map")
+          var graceMap, _ = pathResolver.GetPath("haptic-cache-grace.map", "map")
+          var swrMap, _ = pathResolver.GetPath("haptic-cache-swr.map", "map")
+          var sieMap, _ = pathResolver.GetPath("haptic-cache-stale-if-error.map", "map")
+          var keepMap, _ = pathResolver.GetPath("haptic-cache-keep.map", "map")
+          var stripMap, _ = pathResolver.GetPath("haptic-cache-strip-cookie.map", "map")
+          var negMap, _ = pathResolver.GetPath("haptic-cache-negative-ttl.map", "map")
+          var authMap, _ = pathResolver.GetPath("haptic-cache-authkey.map", "map")
+          var initStateDown = ""
+          var initStateUp = ""
+          var shardServers = []any{}
+          var shardPublications = incremental_values("haptic-varnish-backend", "backends")
+          if len(shardPublications) > 0 {
+            shardServers = shardPublications[0].([]any)
+          }
+          if semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.1") {
+            initStateDown = " init-state fully-down"
+            initStateUp = " init-state fully-up"
+          }
+        %%}
+      {%%
+        var cacheBody = []any{
+          "option httpchk",
+          "http-check send meth GET uri /.well-known/haptic-cache-dispatch-ready ver HTTP/1.1 hdr Host haptic-cache-health hdr X-Haptic-Cache-Probe dispatch",
+          "http-check expect status 204",
+          "timeout check 500ms",
+          "timeout server 0",
+          "retries 1",
+          "retry-on conn-failure empty-response response-timeout 425",
+          "option redispatch 1",
+          "# Strip the cache tier's private request protocol before dispatch.",
+          "# Stamp the HAProxy-resolved backend so the dedicated backend-fetch",
+          "# frontend routes the cache-miss loopback to the SAME backend this",
+          "# client-leg selected — without re-deriving routing from an",
+          "# already-rewritten request. del-header first so a client can't forge it.",
+        }
+        cacheBody = AppendLines(cacheBody, HapticCachePrivateRequestHeaderDeletes(false))
+        cacheBody = append(cacheBody, "http-request set-header X-Haptic-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }")
+
+        var mapHeader = func(header string, path string) string {
+          return "http-request set-header " + header + " %[var(txn.policy_id),map(" + path + ")]" +
+            " if { var(txn.policy_id),map(" + path + ") -m found }"
+        }
+        cacheBody = append(cacheBody,
+          mapHeader("X-Haptic-Cache-TTL", ttlMap),
+          mapHeader("X-Haptic-Cache-Skip-CT", skipMap),
+          mapHeader("X-Haptic-Cache-Max-Size", sizeMap),
+          // Only set when the route opted in: an explicit "0" grace would
+          // override Varnish's default_grace and disable stale delivery for a
+          // route that never asked to change it.
+          mapHeader("X-Haptic-Cache-Grace", graceMap),
+          mapHeader("X-Haptic-Cache-SWR", swrMap),
+          mapHeader("X-Haptic-Cache-Stale-If-Error", sieMap),
+          mapHeader("X-Haptic-Cache-Keep", keepMap),
+          mapHeader("X-Haptic-Cache-Strip-Cookie", stripMap),
+          mapHeader("X-Haptic-Cache-Negative-TTL", negMap),
+          // The flag that lets Varnish cache an authenticated request. Requires
+          // BOTH that the route is keyed on `consumer` AND that a consumer was
+          // actually resolved: an empty identity would put every caller in one
+          // bucket, which is the leak this guards, not a fix for it.
+          "http-request set-header X-Haptic-Cache-Auth 1 if { var(txn.policy_id),map(" + authMap +
+            ") -m found } { var(txn.haptic_consumer),length gt 0 }")
+
+        for _, recordAny := range incremental_values("haptic-cache-records", "records") {
+          var record = recordAny.(map[string]any)
+          var ckey = tostring(record["cacheKey"])
+          // auth-tls-cert-header injects per-CALLER X-SSL-Client-* headers at band
+          // 820, before the cache switch at 865. Those are an identity the app
+          // personalises on, so they must be in the key — otherwise one
+          // certificate holder's page is stored under (Host, URL) alone and
+          // served to the next holder, or to an anonymous caller on :80 where
+          // no header is injected at all. Folded in automatically rather than
+          // left to the operator to remember.
+          var certHdr = tostring(record["authTLSCertHeader"]) == "true"
+          var partition = dig_string(record, "", "partition")
+          if ckey == "" && !certHdr && partition == "" {
+            continue
+          }
+          var rid = tostring(record["id"])
+          var parts = []string{}
+          if partition != "" { parts = append(parts, partition | b64encode()) }
+          // Only walk the components when there ARE components: split("", ",")
+          // yields one empty element, which the else branch below rightly
+          // rejects as an invalid component — so a cert-header route with no
+          // cache-key of its own would fail to render.
+          var comps = []string{}
+          if ckey != "" { comps = split(ckey, ",") }
+          for _, comp := range comps {
+            var c = strip(comp)
+            if c == "consumer" {
+              parts = append(parts, "%[var(txn.haptic_consumer),base64]")
+            } else if c == "src" {
+              parts = append(parts, "%[src,base64]")
+            } else if hasPrefix(c, "header:") {
+              parts = append(parts, "%[req.hdr(" + ValidateConfigValue(c[7:], "haproxy-haptic.org/cache-key", rid, false) + "),base64]")
+            } else if hasPrefix(c, "cookie:") {
+              parts = append(parts, "%[req.cook(" + ValidateConfigValue(c[7:], "haproxy-haptic.org/cache-key", rid, false) + "),base64]")
+            } else if hasPrefix(c, "query:") {
+              parts = append(parts, "%[urlp(" + ValidateConfigValue(c[6:], "haproxy-haptic.org/cache-key", rid, false) + "),base64]")
+            } else {
+              fail("Invalid cache-key component '" + c + "' in 'haproxy-haptic.org/cache-key' on Ingress '" + rid + "'. Valid: consumer, src, header:<h>, cookie:<c>, query:<q>.")
+            }
+          }
+          if certHdr { parts = append(parts, "%[ssl_c_s_dn(CN),base64]") }
+          cacheBody = append(cacheBody, "http-request set-header X-Haptic-Cache-Vary " + join(parts, "|") +
+            " if { var(txn.policy_id) -m str " + rid + " }")
+        }
+
+        cacheBody = append(cacheBody,
+          "http-after-response set-var(txn.cache_status) res.hdr(X-Cache) if { res.hdr(X-Cache) -m found }",
+          "http-after-response set-var(txn.cache_age) res.hdr(Age) if { res.hdr(Age) -m found }",
+          "http-after-response set-var(txn.cache_uncacheable_reason) res.hdr(X-Haptic-Cache-Uncacheable) if { res.hdr(X-Haptic-Cache-Uncacheable) -m found }",
+          "http-after-response set-var(txn.cache_degraded) str(1) if { srv_name -m str ORIGIN_FALLBACK }",
+          "http-after-response set-status 425 if { srv_name -m str CACHE_DISPATCH } { res.hdr(X-Haptic-Cache-Origin-425) -m str 1 }",
+          "http-after-response del-header X-Haptic-Cache-Uncacheable",
+          "http-after-response del-header X-Haptic-Cache-Origin-425",
+          "http-after-response del-header X-Haptic-Cache-Origin-Transport-Failure",
+          "http-after-response del-header X-Haptic-Cache-Failure")
+        var dispatchExtra = []any{map[string]any{"name": "check"}}
+        var fallbackExtra = []any{map[string]any{"name": "no-check"}}
+        if initStateDown != "" {
+          dispatchExtra = append(dispatchExtra, map[string]any{"name": "init-state", "args": []any{"fully-down"}})
+          fallbackExtra = append(fallbackExtra, map[string]any{"name": "init-state", "args": []any{"fully-up"}})
+        }
+        dispatchExtra = append(dispatchExtra,
+          map[string]any{"name": "inter", "args": []any{"1s"}},
+          map[string]any{"name": "fastinter", "args": []any{"500ms"}},
+          map[string]any{"name": "downinter", "args": []any{"1s"}},
+          map[string]any{"name": "fall", "args": []any{"2"}},
+          map[string]any{"name": "rise", "args": []any{"2"}})
+        var cacheServers = []any{
+          map[string]any{"name": "CACHE_DISPATCH", "address": "unix@/etc/haproxy/cache-dispatch.sock", "extra": dispatchExtra},
+          map[string]any{"name": "ORIGIN_FALLBACK", "address": "127.0.0.1", "port": toint(loopbackPort), "extra": fallbackExtra},
+        }
+      %%}
+      {{ "\n" }}{{ Backend(map[string]any{
+           "name": "varnish_cache",
+           "balance": "first",
+           "comments": []any{"# haptic/varnish-cache — shared, consistent-hash-sharded cache tier"},
+           "body": cacheBody,
+           "servers": cacheServers,
+         }) }}
+
+      frontend haptic_cache_dispatch
+          mode http
+          bind unix@/etc/haproxy/cache-dispatch.sock mode 660{{ render "util-log-format-http" }}
+          http-request set-log-level silent
+          http-request return status 204 if { path /.well-known/haptic-cache-dispatch-ready } { req.hdr(X-Haptic-Cache-Probe) -m str dispatch } { nbsrv(varnish_cache_shards) gt 0 }
+          http-request return status 503 if { path /.well-known/haptic-cache-dispatch-ready } { req.hdr(X-Haptic-Cache-Probe) -m str dispatch }
+          http-request del-header X-Haptic-Cache-Probe
+          default_backend varnish_cache_shards
+
+      {%%
+        var shardBody = []any{
+          "option httpchk",
+          "http-check send meth GET uri /.well-known/haptic-cache-ready ver HTTP/1.1 hdr Host haptic-cache-health hdr X-Haptic-Cache-Probe origin",
+          "http-check expect status 204",
+          "timeout check 500ms",
+          "timeout server " + tostring(responseTimeoutMs) + "ms",
+          "retries 0",
+          "http-after-response set-status 425 if { txn.sess_term_state -m str SC sC SH sH sQ PH }",
+          "http-after-response set-status 425 if { res.hdr(X-Haptic-Cache-Failure) -m str 1 }",
+          "http-after-response del-header X-Haptic-Cache-Failure",
+        }
+        if hbf != "0" {
+          shardBody = append(shardBody, "hash-balance-factor " + tostring(hbf))
+        }
+        shardBody = append(shardBody,
+          "default-server check" + initStateDown + " inter 1s fastinter 500ms downinter 1s fall 2 rise 2")
+      %%}
+      {{ Backend(map[string]any{
+           "name": "varnish_cache_shards",
+           "balance": "uri",
+           "hashType": "consistent",
+           "body": shardBody,
+           "servers": shardServers,
+         }) }}
+      {%- end %}
+
+  # ==========================================================================
+  # Dedicated Varnish backend-fetch frontend — the "sandwich" backend leg. On a
+  # cache miss Varnish fetches the origin from THIS internal-only port instead of
+  # looping back through the client-facing frontend, so the WAF / rate-limit /
+  # auth / routing chain runs exactly once (on the client leg) and never re-runs
+  # on the miss. This is the canonical HAProxy+Varnish topology (separate
+  # client-facing and backend-fetch frontends), replacing the source-IP loop-break
+  # (which churned with Varnish pod IPs, raced pod restarts, and broke under SNAT).
+  #
+  # Vetted by construction: only Varnish reaches this port (NetworkPolicy; it is
+  # never published on the LoadBalancer). It routes by the HAProxy-computed
+  # X-Haptic-Backend header — set in the varnish_cache backend and stripped of any
+  # client copy there — because the request Varnish forwards was already
+  # Host/path/prefix-rewritten on the client leg, so RE-DERIVING routing here
+  # would mis-route rewritten routes and re-roll weighted (MULTIBACKEND) routes.
+  # The header is captured, then stripped before the app. Infrastructure backend
+  # names are refused so a stray or forged value can't loop back to Varnish
+  # (varnish_cache), hit the SPOP agent (spoa-hub), or reach the tcp loopbacks.
+  # ==========================================================================
+  frontends-500-haptic-cache-origin:
+    template: |
+      {%- import "util-haptic-cache-private-request-header-deletes" for HapticCachePrivateRequestHeaderDeletes -%}
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
+      {%- if enabled == "true" %}
+        {%- var loopbackPort = extraContext | dig("cache", "varnish", "loopbackPort") | fallback("8090") | tostring() %}
+      {{ "\n" }}frontend haptic_cache_origin
+          mode http
+          option forwardfor if-none
+          bind *:{{ loopbackPort }}{{ render "util-log-format-http" }}
+          http-request set-log-level silent if { path /.well-known/haptic-cache-ready } { req.hdr(X-Haptic-Cache-Probe) -m str origin }
+          http-request return status 204 if { path /.well-known/haptic-cache-ready } { req.hdr(X-Haptic-Cache-Probe) -m str origin }
+          {# Capture the routing decision, then strip the cache protocol before origin. #}
+          http-request set-var(txn.origin_backend) req.hdr(X-Haptic-Backend)
+      {{ HapticCachePrivateRequestHeaderDeletes(true) | indent(4, true) }}
+          http-after-response del-header X-Haptic-Cache-Origin-Transport-Failure
+          http-after-response set-header X-Haptic-Cache-Origin-Transport-Failure 1 if { txn.sess_term_state -m str SC sC SH sH sQ }
+          {# Refuse the infrastructure backends: varnish_cache would re-loop to
+              Varnish, spoa-hub is a SPOP agent, and the tcp loopbacks/default are
+              not app targets. Any legitimate value is a real app backend. #}
+          acl origin_backend_internal var(txn.origin_backend) -m str varnish_cache varnish_cache_shards spoa-hub default_backend http-h1-loopback http-h2c-loopback
+          http-request set-var(txn.denied_by) str(cache_origin_internal_backend) if origin_backend_internal
+          http-request deny deny_status 421 if origin_backend_internal
+          use_backend %[var(txn.origin_backend)] if { var(txn.origin_backend) -m found }
+          default_backend default_backend
+      {%- end %}
+
+# ============================================================================
+# The Varnish tier itself: a chart-deployed StatefulSet (or Deployment) +
+# headless Service + static loopback VCL, applied via Server-Side Apply and
+# owner-referenced to the HAProxyTemplateConfig (GC'd on uninstall). Emitted
+# only when the tier is enabled. The VCL is generic: routing/TTL/vary/exclusions
+# are driven by the X-Haptic-Cache-* request headers HAProxy injects.
+# ============================================================================
+k8sResources:
+  varnish-cache:
+    # The replica count is the size this starts at, not the size it keeps:
+    # HAProxy routes to whatever pods exist, so an operator draining it or an
+    # autoscaler owns the count from creation onward.
+    createOnlyFields: ["spec.replicas"]
+    template: |
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
+      {%- if enabled == "true" %}
+      {%- var vSvc = extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring() %}
+      {%- var vNs = extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring() %}
+      {%- var vPort = extraContext | dig("cache", "varnish", "servicePort") | fallback("6081") | tostring() %}
+      {#- renovate: datasource=docker depName=varnish #}
+      {%- var img = extraContext | dig("cache", "varnish", "image") | fallback("varnish:9.0") | tostring() %}
+      {%- var imagePullPolicy = extraContext | dig("cache", "varnish", "imagePullPolicy") | fallback("IfNotPresent") | tostring() %}
+      {%- var replicas = extraContext | dig("cache", "varnish", "replicas") | fallback("2") | tostring() %}
+      {%- var malloc = extraContext | dig("cache", "varnish", "malloc") | fallback("256m") | tostring() %}
+      {%- var workload = extraContext | dig("cache", "varnish", "workload") | fallback("statefulset") | tostring() %}
+      {#- Varnish fetches cache misses from HAProxy's DEDICATED backend-fetch port
+          (frontends-500-haptic-cache-origin) via an internal-only Service, never
+          the client-facing frontend — so the WAF/RL/auth/routing chain runs once
+          on the client leg. The origin Service + port are chart-owned (below), so
+          this needs no operator originHost/originPort tuning. -#}
+      {%- var loopbackPort = extraContext | dig("cache", "varnish", "loopbackPort") | fallback("8090") | tostring() %}
+      {%- var originSvcName = extraContext | dig("cache", "varnish", "originServiceName") | fallback("haptic-cache-origin") | tostring() %}
+      {%- var ctrlNs = extraContext | dig("controllerNamespace") | fallback(vNs) | tostring() %}
+      {#- FQDN so Varnish resolves the origin Service even if the Varnish tier and
+          the HAProxy fleet land in different namespaces. -#}
+      {%%
+        var originHost = originSvcName + "." + ctrlNs + ".svc.cluster.local"
+        var originPort = loopbackPort
+        var haproxySelector = extraContext | dig("haproxyPodSelector") | fallback(map[string]any{})
+        var autoscaling = extraContext | dig("cache", "varnish", "autoscaling", "enabled") | fallback("false") | tostring()
+        var cpuReq = extraContext | dig("cache", "varnish", "resources", "requests", "cpu") | fallback("100m") | tostring()
+        var memReq = extraContext | dig("cache", "varnish", "resources", "requests", "memory") | fallback("384Mi") | tostring()
+        var memLim = extraContext | dig("cache", "varnish", "resources", "limits", "memory") | fallback("384Mi") | tostring()
+        var pdbEnabled = extraContext | dig("cache", "varnish", "podDisruptionBudget", "enabled") | fallback("true") | tostring()
+        var pdbMaxUnavailable = extraContext | dig("cache", "varnish", "podDisruptionBudget", "maxUnavailable") | fallback("1") | tostring()
+        var vcl = "vcl 4.1;\nimport std;\n\nbackend default {\n    .host = \"" + originHost + "\";\n    .port = \"" + originPort + "\";\n}\n\nsub vcl_recv {\n    # Look up a request the builtin would have passed. The builtin refuses to\n    # serve a cached response to a request carrying Authorization or Cookie,\n    # which is correct unless the cache key identifies the caller — so this\n    # bypass demands X-Haptic-Cache-Auth, which HAProxy sets only for a route\n    # keyed on `consumer` AND only when a consumer was actually resolved.\n    #\n    # Gating on X-Haptic-Cache-Vary alone was a cross-user leak: any cache-key at\n    # all enabled the bypass, so a route keyed on e.g. header:X-Api-Version cached\n    # one caller's authenticated response and served it to the next caller\n    # presenting the same header. Verified with varnishtest before and after.\n    if (req.http.X-Haptic-Cache-Vary && req.http.X-Haptic-Cache-Auth && (req.method == \"GET\" || req.method == \"HEAD\")) {\n        return (hash);\n    }\n    # beresp.grace is the total window the object may still be used; this caps\n    # how much of it is spent serving stale PROACTIVELY. A route that set only\n    # stale-if-error sends 0 here, so ordinary expiry fetches synchronously and\n    # the wider grace is reachable only as the fallback below.\n    if (req.http.X-Haptic-Cache-SWR) {\n        set req.grace = std.duration(req.http.X-Haptic-Cache-SWR + \"s\", 0s);\n    }\n}\n\nsub vcl_hash {\n    if (req.http.X-Haptic-Cache-Vary) {\n        hash_data(req.http.X-Haptic-Cache-Vary);\n    }\n    # Host and path reach the cache ALREADY REWRITTEN (set-host, rewrite-target),\n    # so two unrelated Ingresses can converge on one key and share an entry across\n    # tenants. X-Haptic-Backend is HAProxy's resolved backend for this request —\n    # del-header'd off the client first, so it cannot be forged — and two routes\n    # resolving to the same backend genuinely produce the same response.\n    if (req.http.X-Haptic-Backend) {\n        hash_data(req.http.X-Haptic-Backend);\n    }\n}\n\n# Applied from several paths, and always AFTER any std.rfc_ttl(): verified with\n# varnishtest that rfc_ttl() resets grace and keep to their parameter defaults,\n# so setting them earlier is silently discarded.\nsub haptic_stale_windows {\n    if (bereq.http.X-Haptic-Cache-Grace) {\n        set beresp.grace = std.duration(bereq.http.X-Haptic-Cache-Grace + \"s\", 0s);\n    }\n    if (bereq.http.X-Haptic-Cache-Keep) {\n        set beresp.keep = std.duration(bereq.http.X-Haptic-Cache-Keep + \"s\", 0s);\n    }\n}\n\nsub vcl_backend_response {\n    # An origin that says no-store / no-cache / private, or Vary: *, has refused to\n    # be shared. Both TTL branches below set a ttl and return(deliver) before the\n    # builtin ever tests for that, so without this the refusal is silently\n    # discarded and the response is served to the next caller. First, so both\n    # branches inherit it.\n    if (beresp.http.Cache-Control ~ \"(?i:no-cache|no-store|private)\" || beresp.http.Vary == \"*\") {\n        set beresp.http.X-Haptic-Cache-Uncacheable = \"origin_refused_sharing\";\n        set beresp.uncacheable = true;\n        set beresp.ttl = param.uncacheable_ttl;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-Skip-CT && beresp.http.Content-Type && std.strstr(bereq.http.X-Haptic-Cache-Skip-CT, \"|\" + regsub(beresp.http.Content-Type, \";.*$\", \"\") + \"|\")) {\n        set beresp.http.X-Haptic-Cache-Uncacheable = \"content_type_excluded\";\n        set beresp.uncacheable = true;\n        set beresp.ttl = param.uncacheable_ttl;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-Max-Size && beresp.http.Content-Length && std.integer(beresp.http.Content-Length, 0) > std.integer(bereq.http.X-Haptic-Cache-Max-Size, 0)) {\n        set beresp.http.X-Haptic-Cache-Uncacheable = \"too_large\";\n        set beresp.uncacheable = true;\n        set beresp.ttl = param.uncacheable_ttl;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-Strip-Cookie) {\n        unset beresp.http.Set-Cookie;\n    }\n    # stale-if-error. Abandoning leaves the existing object in place and lets\n    # Varnish fall back to it while it is still within beresp.grace — which is\n    # what turns an origin 5xx into a stale hit. Deliberately NOT limited to\n    # background fetches: past the stale-while-revalidate window the refresh is\n    # synchronous, and that is exactly the fetch a client is waiting on.\n    if (bereq.http.X-Haptic-Cache-Stale-If-Error && beresp.status >= 500) {\n        return (abandon);\n    }\n    # Negative caching, opt-in per route and on its own shorter clock: a cached\n    # 404 during a bad deploy pins the outage for its TTL, so it must not inherit\n    # the route's ordinary lifetime. 404 and 410 only — both mean \"this resource\n    # is not here\", which is what scanning traffic hammers the origin for.\n    #\n    # Deliberately OUTSIDE the cache-ttl branch: a route may want 404s cached\n    # while leaving ordinary lifetimes to the origin's own Cache-Control, and\n    # nesting this made the annotation a silent no-op without cache-ttl.\n    if (bereq.http.X-Haptic-Cache-Negative-TTL && !beresp.http.Set-Cookie && (beresp.status == 404 || beresp.status == 410)) {\n        set beresp.ttl = std.duration(bereq.http.X-Haptic-Cache-Negative-TTL + \"s\", 0s);\n        call haptic_stale_windows;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-TTL) {\n        if (beresp.http.Set-Cookie) {\n            set beresp.http.X-Haptic-Cache-Uncacheable = \"set_cookie\";\n            set beresp.uncacheable = true;\n            set beresp.ttl = param.uncacheable_ttl;\n            return (deliver);\n        }\n        if (beresp.status != 200) {\n            set beresp.http.X-Haptic-Cache-Uncacheable = \"status_not_cacheable\";\n            set beresp.uncacheable = true;\n            set beresp.ttl = param.uncacheable_ttl;\n            return (deliver);\n        }\n        if (bereq.http.X-Haptic-Cache-TTL == \"auto\") {\n            std.rfc_ttl();\n        } else {\n            set beresp.ttl = std.duration(bereq.http.X-Haptic-Cache-TTL + \"s\", 0s);\n        }\n        call haptic_stale_windows;\n        return (deliver);\n    }\n    call haptic_stale_windows;\n}\n\nsub vcl_backend_error {\n    # Same fallback for a fetch that never produced a response at all.\n    if (bereq.http.X-Haptic-Cache-Stale-If-Error) {\n        return (abandon);\n    }\n}\n\nsub vcl_deliver {\n    if (obj.hits > 0) {\n        if (obj.ttl <= 0s) {\n            set resp.http.X-Cache = \"STALE\";\n        } else {\n            set resp.http.X-Cache = \"HIT\";\n        }\n    } else {\n        set resp.http.X-Cache = \"MISS\";\n    }\n}\n"
+        vcl = replace(vcl, "sub vcl_recv {\n", "sub vcl_recv {\n    if (req.restarts == 1 &&\n        req.http.X-Haptic-Cache-Failure == \"fetch-stale-if-error\") {\n        set req.grace = 0s;\n    } else if (req.http.X-Haptic-Cache-Grace) {\n        set req.grace = std.duration(req.http.X-Haptic-Cache-Grace + \"s\", 0s);\n    }\n")
+        vcl = replace(vcl, "    # beresp.grace is the total window the object may still be used; this caps\n    # how much of it is spent serving stale PROACTIVELY. A route that set only\n    # stale-if-error sends 0 here, so ordinary expiry fetches synchronously and\n    # the wider grace is reachable only as the fallback below.\n", "")
+        vcl = replace(vcl, "    if (req.http.X-Haptic-Cache-SWR) {\n        set req.grace = std.duration(req.http.X-Haptic-Cache-SWR + \"s\", 0s);\n    }\n", "")
+        vcl = replace(vcl, "    # stale-if-error. Abandoning leaves the existing object in place and lets\n    # Varnish fall back to it while it is still within beresp.grace — which is\n    # what turns an origin 5xx into a stale hit. Deliberately NOT limited to\n    # background fetches: past the stale-while-revalidate window the refresh is\n    # synchronous, and that is exactly the fetch a client is waiting on.\n    if (bereq.http.X-Haptic-Cache-Stale-If-Error && beresp.status >= 500) {\n        return (abandon);\n    }\n", "")
+        vcl = replace(vcl, "    # Same fallback for a fetch that never produced a response at all.\n    if (bereq.http.X-Haptic-Cache-Stale-If-Error) {\n        return (abandon);\n    }\n}\n\nsub vcl_deliver", "    if (bereq.http.X-Haptic-Cache-Stale-If-Error &&\n        (bereq.is_bgfetch || bereq.http.X-Haptic-Cache-Failure == \"fetch-stale-if-error\")) {\n        return (abandon);\n    }\n}\n\nsub vcl_deliver")
+        vcl = replace(vcl, "sub vcl_backend_response {\n", "sub vcl_backend_response {\n    unset beresp.http.X-Haptic-Cache-Failure;\n    if (bereq.http.X-Haptic-Cache-Stale-If-Error && beresp.status >= 500 &&\n        (bereq.is_bgfetch || bereq.http.X-Haptic-Cache-Failure == \"fetch-stale-if-error\")) {\n        return (abandon);\n    }\n    if (beresp.http.X-Haptic-Cache-Origin-Transport-Failure == \"1\") {\n        set beresp.http.X-Haptic-Cache-Failure = \"1\";\n    }\n    unset beresp.http.X-Haptic-Cache-Origin-Transport-Failure;\n")
+        vcl = replace(vcl, "    }\n}\n\nsub vcl_deliver", "    }\n    set beresp.http.X-Haptic-Cache-Failure = \"1\";\n}\n\nsub vcl_deliver")
+        vcl += "\nsub vcl_hit {\n    if (obj.ttl <= 0s &&\n        req.http.X-Haptic-Cache-Stale-If-Error &&\n        obj.ttl + std.duration(req.http.X-Haptic-Cache-SWR + \"s\", 0s) <= 0s &&\n        req.restarts == 0) {\n        set req.http.X-Haptic-Cache-Failure = \"fetch-stale-if-error\";\n        return (restart);\n    }\n}\n"
+        vcl += "\nsub vcl_deliver {\n    unset resp.http.X-Haptic-Cache-Origin-425;\n    if (resp.status == 425) {\n        set resp.status = 418;\n        set resp.http.X-Haptic-Cache-Origin-425 = \"1\";\n    }\n}\n"
+        vcl += "\nsub vcl_synth {\n    unset resp.http.X-Haptic-Cache-Failure;\n    if (req.http.X-Haptic-Cache-Failure == \"fetch-stale-if-error\" &&\n        resp.status == 503 && req.restarts == 1) {\n        set req.http.X-Haptic-Cache-Failure = \"serve-stale-if-error\";\n        return (restart);\n    }\n}\n"
+        vcl = replace(vcl, "}\n\nsub vcl_recv", "    .probe = {\n        .request =\n            \"GET /.well-known/haptic-cache-ready HTTP/1.1\"\n            \"Host: haptic-cache-origin\"\n            \"X-Haptic-Cache-Probe: origin\"\n            \"Connection: close\";\n        .expected_response = 204;\n        .timeout = 500ms;\n        .interval = 1s;\n        .window = 2;\n        .threshold = 1;\n        .initial = 0;\n    }\n}\n\nsub vcl_recv")
+        vcl = replace(vcl, "sub vcl_recv {\n", "sub vcl_recv {\n    if (req.url == \"/.well-known/haptic-cache-live\" && req.http.X-Haptic-Cache-Probe == \"local\") {\n        return (synth(204));\n    }\n    if (req.url == \"/.well-known/haptic-cache-ready\" && req.http.X-Haptic-Cache-Probe == \"origin\") {\n        if (std.healthy(default)) {\n            return (synth(204));\n        }\n        return (synth(503));\n    }\n")
+        var vclHash = sha256(vcl)
+      %%}
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: {{ vSvc }}-vcl
+        namespace: {{ vNs }}
+        labels:
+          app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
+          app.kubernetes.io/managed-by: haptic
+      data:
+        default.vcl: |
+      {{ vcl | indent(4, true) }}
+      ---
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: {{ vSvc }}
+        namespace: {{ vNs }}
+        labels:
+          app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        clusterIP: None
+        selector:
+          app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
+        ports:
+          - name: http
+            port: {{ vPort }}
+            targetPort: 6081
+      ---
+      # Dedicated internal Service for the Varnish backend-fetch (loopback)
+      # origin. Gives Varnish a stable name for HAProxy's dedicated backend-fetch
+      # frontend, targeting the HAProxy fleet on the loopback port. ClusterIP,
+      # never a LoadBalancer (it must not be externally reachable); the haproxy
+      # NetworkPolicy restricts this port to Varnish. (A YAML `#` comment, not a
+      # Scriggo `{#- -#}` one — the stripping form would fuse `---` and
+      # `apiVersion` into one line and break the multi-document parse.)
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: {{ originSvcName }}
+        namespace: {{ ctrlNs }}
+        labels:
+          app.kubernetes.io/name: haptic-cache-origin
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        type: ClusterIP
+        selector:
+        {#- keys() sorts; ranging the map emits a new key order per render. #}
+        {%- for _, k := range keys(haproxySelector) %}
+          {{ k }}: {{ tostring(haproxySelector[k]) }}
+        {%- end %}
+        ports:
+          - name: cache-origin
+            port: {{ loopbackPort }}
+            targetPort: {{ loopbackPort }}
+      ---
+      {%- if workload == "deployment" %}
+      apiVersion: apps/v1
+      kind: Deployment
+      {%- else %}
+      apiVersion: apps/v1
+      kind: StatefulSet
+      {%- end %}
+      metadata:
+        name: {{ vSvc }}
+        namespace: {{ vNs }}
+        labels:
+          app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        {%- if autoscaling != "true" %}
+        replicas: {{ replicas }}
+        {%- end %}
+        {%- if workload != "deployment" %}
+        serviceName: {{ vSvc }}
+        podManagementPolicy: Parallel
+        {%- end %}
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: haptic-varnish-cache
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: haptic-varnish-cache
+              app.kubernetes.io/instance: {{ vSvc }}
+            annotations:
+              haproxy-haptic.org/vcl-checksum: "{{ vclHash }}"
+          spec:
+            securityContext:
+              fsGroup: 1000
+            affinity:
+              podAntiAffinity:
+                preferredDuringSchedulingIgnoredDuringExecution:
+                  - weight: 100
+                    podAffinityTerm:
+                      topologyKey: kubernetes.io/hostname
+                      labelSelector:
+                        matchLabels:
+                          app.kubernetes.io/name: haptic-varnish-cache
+                          app.kubernetes.io/instance: {{ vSvc }}
+            topologySpreadConstraints:
+              - maxSkew: 1
+                topologyKey: kubernetes.io/hostname
+                whenUnsatisfiable: ScheduleAnyway
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haptic-varnish-cache
+                    app.kubernetes.io/instance: {{ vSvc }}
+            containers:
+              - name: varnish
+                image: {{ img }}
+                imagePullPolicy: {{ imagePullPolicy }}
+                command: ["varnishd"]
+                args: ["-F", "-a", ":6081", "-n", "/var/lib/varnish/varnishd", "-f", "/etc/varnish/default.vcl", "-s", "malloc,{{ malloc }}"]
+                resources:
+                  requests:
+                    # A CPU request is required for the autoscaling HPA to compute
+                    # utilization; keep the memory limit above malloc + overhead.
+                    cpu: {{ cpuReq }}
+                    memory: {{ memReq }}
+                  limits:
+                    memory: {{ memLim }}
+                ports:
+                  - name: http
+                    containerPort: 6081
+                volumeMounts:
+                  - name: vcl
+                    mountPath: /etc/varnish
+                  - name: varnish-workdir
+                    mountPath: /var/lib/varnish
+                readinessProbe:
+                  httpGet:
+                    path: /.well-known/haptic-cache-ready
+                    port: 6081
+                    httpHeaders:
+                      - name: X-Haptic-Cache-Probe
+                        value: origin
+                  initialDelaySeconds: 2
+                  periodSeconds: 5
+                livenessProbe:
+                  httpGet:
+                    path: /.well-known/haptic-cache-live
+                    port: 6081
+                    httpHeaders:
+                      - name: X-Haptic-Cache-Probe
+                        value: local
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+            volumes:
+              - name: vcl
+                configMap:
+                  name: {{ vSvc }}-vcl
+              - name: varnish-workdir
+                emptyDir:
+                  medium: Memory
+      {%- if autoscaling == "true" %}
+      {%- var minR = extraContext | dig("cache", "varnish", "autoscaling", "minReplicas") | fallback("2") | tostring() %}
+      {%- var maxR = extraContext | dig("cache", "varnish", "autoscaling", "maxReplicas") | fallback("6") | tostring() %}
+      {%- var cpuTarget = extraContext | dig("cache", "varnish", "autoscaling", "targetCPUUtilizationPercentage") | fallback("70") | tostring() %}
+      {%- var scaleDownWindow = extraContext | dig("cache", "varnish", "autoscaling", "scaleDownStabilizationSeconds") | fallback("600") | tostring() %}
+      ---
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: {{ vSvc }}
+        namespace: {{ vNs }}
+        labels:
+          app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        scaleTargetRef:
+          apiVersion: apps/v1
+          kind: {% if workload == "deployment" %}Deployment{% else %}StatefulSet{% end %}
+          name: {{ vSvc }}
+        minReplicas: {{ minR }}
+        maxReplicas: {{ maxR }}
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: {{ cpuTarget }}
+        behavior:
+          scaleDown:
+            # A scale event re-maps ~1/(N±1) of keys to a cold shard; a generous
+            # window keeps the HPA from thrashing a warm cache.
+            stabilizationWindowSeconds: {{ scaleDownWindow }}
+      {%- end %}
+      {%- if pdbEnabled == "true" %}
+      ---
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: {{ vSvc }}
+        namespace: {{ vNs }}
+        labels:
+          app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        maxUnavailable: {{ pdbMaxUnavailable }}
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: haptic-varnish-cache
+            app.kubernetes.io/instance: {{ vSvc }}
+      {%- end %}
+      {%- end %}

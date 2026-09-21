@@ -141,6 +141,7 @@ func init() {
 func newDiffLogger() *slog.Logger {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	slog.SetDefault(logger)
+	configureMemoryLimit(logger)
 	return logger
 }
 

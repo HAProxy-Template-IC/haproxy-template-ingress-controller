@@ -226,6 +226,7 @@ func (c *Component) probeAgent(ctx context.Context, endpoint *dataplane.Endpoint
 		Username: endpoint.Username,
 		Password: endpoint.Password,
 		Timeout:  probeTimeout,
+		TLS:      c.tls,
 	})
 	if err != nil {
 		return nil, err

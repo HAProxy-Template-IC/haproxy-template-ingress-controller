@@ -52,6 +52,7 @@ import (
 	k8stypes "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
@@ -208,6 +209,7 @@ func (s *configState) Message() string {
 // These servers are started once and reused to prevent port binding race conditions
 // during rapid reinitializations.
 type persistentInfra struct {
+	AgentTLS              *transportsecurity.Source
 	IntrospectionRegistry *introspection.Registry
 	IntrospectionServer   *introspection.Server
 	MetricsServer         *pkgmetrics.Server
@@ -547,6 +549,7 @@ func Run(
 	secretName, webhookCertDir string,
 	webhookAdmissionTimeouts WebhookAdmissionTimeouts,
 	debugPort int,
+	agentTLS *transportsecurity.Source,
 ) error {
 	logger := slog.Default()
 
@@ -572,6 +575,7 @@ func Run(
 	})
 	defer stopShutdownClock()
 	infra := &persistentInfra{
+		AgentTLS:              agentTLS,
 		IntrospectionRegistry: introspection.NewRegistry(),
 		eventDropMetrics:      &persistentEventDropMetrics{},
 		processCancel:         procCancel,
@@ -726,6 +730,7 @@ func listenerPortFromEnv(envName string, defaultPort int, allowDisabled bool) (i
 
 // componentSetup contains all resources created during component initialization.
 type componentSetup struct {
+	AgentTLS              *transportsecurity.Source
 	Bus                   *busevents.EventBus
 	Registry              *lifecycle.Registry // Component lifecycle registry
 	MetricsComponent      *metrics.Component

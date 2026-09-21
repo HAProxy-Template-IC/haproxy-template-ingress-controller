@@ -141,6 +141,7 @@ func readManifest(reader *multipart.Reader) (*api.Manifest, error) {
 	if manifest.Mode == api.ModeAuto && manifest.ExpectedWorkerOpsPlanProof == "" && len(manifest.InPlaceOps) == 0 {
 		manifest.Mode = api.ModeReload
 		manifest.Ops = nil
+		manifest.OpBatches = nil
 	}
 	return manifest, nil
 }
@@ -151,6 +152,7 @@ func normalizeLegacyManifest(manifest *api.Manifest) {
 	}
 	manifest.Mode = api.ModeReload
 	manifest.Ops = nil
+	manifest.OpBatches = nil
 	manifest.InPlaceOps = nil
 	manifest.ExpectedWorkerOpsPlanID = ""
 	manifest.ExpectedPrevPlanProof = ""
@@ -177,6 +179,7 @@ func workIdentity(m *api.Manifest) ([]byte, error) {
 		PlanSchemaVersion          int        `json:"plan_schema_version"`
 		Files                      []api.File `json:"files"`
 		Ops                        []api.Op   `json:"ops"`
+		OpBatches                  [][]api.Op `json:"op_batches"`
 		InPlaceOps                 []api.Op   `json:"in_place_ops"`
 		ExpectedWorkerOpsPlanID    string     `json:"expected_worker_ops_plan_id"`
 		ExpectedWorkerOpsPlanProof string     `json:"expected_worker_ops_plan_proof"`
@@ -189,6 +192,7 @@ func workIdentity(m *api.Manifest) ([]byte, error) {
 		PlanSchemaVersion:          m.PlanSchemaVersion,
 		Files:                      declared,
 		Ops:                        m.Ops,
+		OpBatches:                  m.OpBatches,
 		InPlaceOps:                 m.InPlaceOps,
 		ExpectedWorkerOpsPlanID:    m.ExpectedWorkerOpsPlanID,
 		ExpectedWorkerOpsPlanProof: m.ExpectedWorkerOpsPlanProof,
@@ -200,15 +204,14 @@ func workIdentity(m *api.Manifest) ([]byte, error) {
 // validateManifest enforces the wire limits and the path rules. Everything it
 // rejects is a controller bug, so it fails loudly rather than degrading.
 func validateManifest(m *api.Manifest) error {
+	if err := m.ValidateOpBatches(); err != nil {
+		return err
+	}
 	switch {
 	case m.PlanID == "":
 		return errors.New("plan_id is empty")
 	case len(m.Files) > api.MaxFiles:
 		return fmt.Errorf("%d files exceed the %d-file limit", len(m.Files), api.MaxFiles)
-	case len(m.Ops) > api.MaxOpsPerApply:
-		return fmt.Errorf("%d ops exceed the %d-op limit", len(m.Ops), api.MaxOpsPerApply)
-	case len(m.InPlaceOps) > api.MaxOpsPerApply:
-		return fmt.Errorf("%d in-place ops exceed the %d-op limit", len(m.InPlaceOps), api.MaxOpsPerApply)
 	case len(m.InPlaceOps) > 0 && (m.ExpectedWorkerOpsPlanID == "" || m.WorkerOpsPlanID == ""):
 		return errors.New("in-place ops need expected_worker_ops_plan_id and worker_ops_plan_id")
 	case len(m.InPlaceOps) > 0 && m.ExpectedWorkerOpsPlanProof == "":

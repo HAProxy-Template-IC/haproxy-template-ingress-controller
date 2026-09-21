@@ -483,8 +483,9 @@ The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-s
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `credentials.dataplane.username` | string | `admin` | Agent username. The Secret keys keep their `dataplane_` names, so a rotation set up before the agent still works |
-| `credentials.dataplane.password` | string | `""` | Agent password. Empty generates a random 32-char password. When `lookup` works (a normal `helm upgrade`, or an install against a reachable cluster) the chart reads the existing Secret and preserves the current password across renders. GitOps tools that render without cluster access (ArgoCD/Flux) can't `lookup`, so an empty value regenerates every sync — **set an explicit value** (SealedSecret / external secret) in those setups. |
+| `credentials.existingSecret` | string | `""` | Existing Secret with `dataplane_username` and `dataplane_password` keys. The chart doesn't create or change it. Use a different name when migrating from chart-managed credentials. |
+| `credentials.dataplane.username` | string | `admin` | Username for chart-managed credentials; used by the explicit legacy HTTP agent transport. |
+| `credentials.dataplane.password` | string | `""` | Password for chart-managed credentials. Empty reuses the live Secret during Helm install or upgrade, otherwise generates a random password. For rendering without cluster access, use `credentials.existingSecret` or supply an explicit value through your secret manager. |
 
 ## ServiceAccount & RBAC
 
@@ -727,11 +728,23 @@ to it.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `haproxy.agent.service.type` | string | `ClusterIP` | Type of the internal Service that fronts the agent port |
+| `haproxy.agent.tls.enabled` | bool | `true` | Require mutual TLS for controller-to-agent requests |
+| `haproxy.agent.tls.managed` | bool | `true` | Create and automatically renew identities; false uses externally managed Secrets |
+| `haproxy.agent.tls.issuerSecretName` | string | `""` | Internal issuer state or cert-manager root Secret; empty derives a release-specific name |
+| `haproxy.agent.tls.certManager.enabled` | bool | `false` | Select cert-manager instead of HAPTIC renewal Jobs; requires cert-manager installed |
+| `haproxy.agent.tls.certManager.createIssuer` | bool | `true` | Create a self-signed root Certificate and CA Issuer |
+| `haproxy.agent.tls.certManager.issuerRef` | object | `{name: "", kind: Issuer, group: cert-manager.io}` | Existing issuer when `createIssuer` is false |
+| `haproxy.agent.tls.renewal.resources` | object | requests: `10m` CPU, `32Mi` memory; limit: `128Mi` memory | Internal bootstrap and renewal Job resources |
+| `haproxy.agent.tls.serverSecretName` | string | `""` | Server identity Secret; empty derives a release-specific name |
+| `haproxy.agent.tls.clientSecretName` | string | `""` | Controller identity Secret; empty derives a release-specific name |
+| `haproxy.agent.tls.serverName` | string | `""` | Required server DNS identity; empty derives it from the server Secret name and namespace |
+| `haproxy.agent.tls.clientName` | string | `""` | Required controller DNS identity; empty derives it from the client Secret name and namespace |
+| `haproxy.agent.tls.certValidityDays` | int | `365` | Identity lifetime, from 1 to 3650 days; also the CA lifetime with internal renewal. Applies at next issuance. See [renewal monitoring](./operations/agent-certificates.md#check-expiry) |
 | `haproxy.agent.logLevel` | string | `info` | Log level for the agent, which logs JSON on stdout: `trace`, `debug`, `info`, `warning`, `error`. At `debug` the agent logs a line per apply with its verdict, the ops it ran and the reload it performed — raise it when diagnosing an apply the controller reports as failing but HAProxy accepts. The stream carries no end-user data; the only client is the controller |
 | `haproxy.agent.resources.requests.cpu` | string | `50m` | Agent CPU request |
 | `haproxy.agent.resources.requests.memory` | string | `256Mi` | Agent memory request (matches `limits.memory`) |
 | `haproxy.agent.resources.limits.memory` | string | `256Mi` | Agent memory limit |
-| `haproxy.agent.extraEnv` | list | `[]` | Extra env vars for the agent container; `GOMAXPROCS` here overrides the auto-calculation from CPU/memory limits |
+| `haproxy.agent.extraEnv` | list | `[]` | Extra env vars for the agent container; `GOMAXPROCS` overrides Go's CPU-based default |
 
 The agent's reload pacing and reload deadline aren't separate values: the chart
 templates them from [`controller.config.dataplane.minDeploymentInterval` and

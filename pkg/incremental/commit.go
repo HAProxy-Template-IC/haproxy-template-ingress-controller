@@ -781,8 +781,9 @@ func (s *Session) replaceChangedReverseDependencies(
 }
 
 type reverseSetEditor struct {
-	graph *Graph
-	roots map[dependencyKey]orderedset.Root
+	graph   *Graph
+	roots   map[dependencyKey]orderedset.Root
+	pending map[dependencyKey]map[string]bool
 }
 
 func (e *reverseSetEditor) replace(key QueryKey, previous, next []dependency) error {
@@ -819,38 +820,58 @@ func (e *reverseSetEditor) replace(key QueryKey, previous, next []dependency) er
 }
 
 func (e *reverseSetEditor) add(dependency dependencyKey, dependent QueryKey) error {
-	root, err := e.root(dependency)
-	if err != nil {
-		return err
-	}
-	next, changed, err := root.Add(e.graph.reverseAuthority, reverseScope(dependency), dependent.value)
-	if err != nil {
-		return fmt.Errorf("adding incremental reverse dependency: %w", err)
-	}
-	if !changed {
-		return fmt.Errorf("incremental reverse dependency already contains query %q", dependent.value)
-	}
-	e.roots[dependency] = next
-	return nil
+	return e.setMembership(dependency, dependent, true)
 }
 
 func (e *reverseSetEditor) delete(dependency dependencyKey, dependent QueryKey) error {
-	root, err := e.root(dependency)
+	return e.setMembership(dependency, dependent, false)
+}
+
+func (e *reverseSetEditor) setMembership(dependency dependencyKey, dependent QueryKey, present bool) error {
+	root, err := e.baseRoot(dependency)
 	if err != nil {
 		return err
 	}
-	next, changed, err := root.Delete(e.graph.reverseAuthority, reverseScope(dependency), dependent.value)
-	if err != nil {
-		return fmt.Errorf("removing incremental reverse dependency: %w", err)
+	current, pending := e.pending[dependency][dependent.value]
+	if !pending {
+		current, err = root.Contains(e.graph.reverseAuthority, reverseScope(dependency), dependent.value)
+		if err != nil {
+			return fmt.Errorf("reading incremental reverse dependency: %w", err)
+		}
 	}
-	if !changed {
+	if current == present {
+		if present {
+			return fmt.Errorf("incremental reverse dependency already contains query %q", dependent.value)
+		}
 		return fmt.Errorf("incremental reverse dependency does not contain query %q", dependent.value)
 	}
-	e.roots[dependency] = next
+	if e.pending == nil {
+		e.pending = make(map[dependencyKey]map[string]bool)
+	}
+	if e.pending[dependency] == nil {
+		e.pending[dependency] = make(map[string]bool)
+	}
+	e.pending[dependency][dependent.value] = present
 	return nil
 }
 
 func (e *reverseSetEditor) root(dependency dependencyKey) (orderedset.Root, error) {
+	root, err := e.baseRoot(dependency)
+	if err != nil {
+		return orderedset.Root{}, err
+	}
+	if membership := e.pending[dependency]; len(membership) != 0 {
+		root, err = root.Update(e.graph.reverseAuthority, reverseScope(dependency), membership)
+		if err != nil {
+			return orderedset.Root{}, fmt.Errorf("updating incremental reverse dependency: %w", err)
+		}
+		e.roots[dependency] = root
+		delete(e.pending, dependency)
+	}
+	return root, nil
+}
+
+func (e *reverseSetEditor) baseRoot(dependency dependencyKey) (orderedset.Root, error) {
 	if root, changed := e.roots[dependency]; changed {
 		if err := root.ValidateOwnership(e.graph.reverseAuthority, reverseScope(dependency)); err != nil {
 			return orderedset.Root{}, fmt.Errorf("incremental reverse dependency change: %w", err)
@@ -880,6 +901,11 @@ func (e *reverseSetEditor) validateRemovedQueries(removed []QueryKey) error {
 }
 
 func (e *reverseSetEditor) changes() (map[dependencyKey]reverseSetChange, error) {
+	for dependency := range e.pending {
+		if _, err := e.root(dependency); err != nil {
+			return nil, err
+		}
+	}
 	return prepareReverseSetChanges(e.graph.reverseAuthority, e.roots)
 }
 

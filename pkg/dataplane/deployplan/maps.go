@@ -101,10 +101,8 @@ func unorderedEntryOps(path string, prev, next []renderplan.Entry) mapOps {
 		case len(have) == 1 && len(want) == 1 && api.SafeToken(want[0]):
 			ops.upserts = append(ops.upserts, api.Op{Kind: api.OpMapSet, Path: path, Key: key, Value: want[0]})
 		default:
-			// A replacement's del must stay ahead of its re-adds; only a key
-			// that is gone for good waits until traffic has moved off it.
-			ops.upserts = append(ops.upserts, api.Op{Kind: api.OpMapDel, Path: path, Key: key})
-			ops.upserts = append(ops.upserts, addEntries(path, key, want)...)
+			// An absent key can disable authentication; replace it atomically.
+			return mapOps{whole: true}
 		}
 	}
 	return withRemovals(ops, path, prev, after)

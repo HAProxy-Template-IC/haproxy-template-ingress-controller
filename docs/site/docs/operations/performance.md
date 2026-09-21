@@ -7,56 +7,60 @@ Size HAProxy separately for traffic volume and connection lifetime. Use the
 measurements below as workload examples, then measure your own configuration
 before changing resource limits or timeouts.
 
-## Measured render cost by object count
+## Measure render cost by object count
 
-A full render walks the whole watched-object store, so its cost scales with cluster size. This cost applies when the render cache is cold, such as on startup or after a configuration change. For the cost of a steady-state render after a single object changes, see [Incremental render cost](#incremental-render-cost).
-
-These numbers come from `scripts/test-benchmark.sh` against the bundled chart's default libraries, with a realistic mix of one Ingress, one Service, and two EndpointSlices per step:
-
-| Ingresses | Total render | Per Ingress | `haproxy.cfg` | Path maps |
-|---|---|---|---|---|
-| 100 | 15 ms | 0.15 ms | 10 ms | 2.6 ms |
-| 1,000 | 113 ms | 0.11 ms | 77 ms | 20 ms |
-| 5,000 | 742 ms | 0.15 ms | 386 ms | 302 ms |
-
-Reproduce them with:
+A cold render rebuilds the template outputs and their dependency graph. Its cost
+depends on the resource data your templates read. Measure several sizes with the
+bundled chart's Ingress workload:
 
 ```bash
 ./scripts/test-benchmark.sh --ingress-only --steps 100,1000,5000 --iterations 3
 ```
 
-In this measurement, total cost grows roughly with object count. Path-map rendering accounts for about 40% of the 5,000-Ingress render; measure your templates to identify their dominant cost.
+The workload creates one Ingress, one Service, and two EndpointSlices per step.
+Inspect the per-template timings to identify the dominant cost in configuration
+and map generation. Retain the source commit, chart values, and host details
+with the output.
 
-Admission uses the same render service and can reuse its warm graph. Each admission still runs synchronous HAProxy validation, so render-only timings aren't admission latency. Measure the complete request against `controller.webhook.timeoutSeconds` (10 seconds by default).
+Admission uses the render service and can reuse its warm graph. It also runs
+synchronous HAProxy validation, so render-only timings aren't admission latency.
+Measure the complete request against `controller.webhook.timeoutSeconds`
+(10 seconds by default).
 
 ## Incremental render cost
 
-When template snippets declare `incremental`, a reconcile render re-executes only the components whose recorded inputs changed. The numbers below come from `cmd/haptic`'s incremental render-service benchmark against the bundled chart's Gateway API libraries on a 16-thread x86-64 desktop CPU. The routes are plain path-prefix routes, the shape the `gateway-api-bench` workloads create; a route with header and query matches costs within 10% of the same column.
+When template snippets declare `incremental`, a reconcile render re-executes
+components whose recorded inputs changed. Document assembly and changed maps
+still contribute to total latency. Followers keep their own render graphs warm;
+only the leader deploys.
 
-| HTTPRoutes | First render (cold) | Nothing changed | One route changed | One route added | One endpoint changed |
-|---|---|---|---|---|---|
-| 300 | 600 ms | 2.2 ms | 14 ms | 19 ms | 3.3 ms |
-| 1,000 | 1,022 ms | 2.3 ms | 18 ms | 26 ms | 3.6 ms |
-| 3,000 | 2,415 ms | 2.3 ms | 27 ms | 50 ms | 3.9 ms |
-
-Reproduce them with:
+Compare cold loading, unchanged output, route edits, route additions, and
+endpoint changes with the bundled Gateway render benchmark:
 
 ```bash
 HAPTIC_BENCHMARK_BARE_ENGINE=1 HAPTIC_BENCHMARK_SKIP_ORACLE=1 \
   BENCH='^BenchmarkBundledChartHTTPRouteIncrementalRenderService$' PKG=./cmd/haptic make bench
 ```
 
-`HAPTIC_BENCHMARK_BARE_ENGINE=1` renders on the chart's engine, as the controller does. Without it the benchmark wraps the engine to count component executions, and the document caches refuse a wrapped engine, so the timings then describe a controller without them. `HAPTIC_BENCHMARK_SKIP_ORACLE=1` skips the cold render the benchmark otherwise runs after every iteration to prove the incremental output equal to a cold one; leave it unset to run that check.
+`HAPTIC_BENCHMARK_BARE_ENGINE=1` uses the chart's engine directly, including its
+document caches. Without it, the benchmark wraps the engine to count component
+executions and those caches aren't used. `HAPTIC_BENCHMARK_SKIP_ORACLE=1`
+omits the additional cold render that checks incremental output after each
+iteration. Leave it unset when checking correctness.
 
-Cold renders cost more as the watched set grows. A follower also renders changes
-to keep its graph warm, so it pays render CPU and cache memory even while only
-the leader deploys.
+To compare a committed branch with its main-branch baseline on one host:
 
-In this measurement, unchanged output costs about 2.3 ms across all three sizes.
-A changed route re-executes 13 components; an added route re-executes 14. Total
-latency still rises with route count because document assembly and changed maps
-also contribute. These are measurements of this workload, not fixed costs for
-other templates.
+```bash
+git fetch origin main
+BENCH_BASE_REF=$(git merge-base HEAD origin/main) make bench-render-comparison
+```
+
+This requires a clean checkout and a new output directory. It measures route
+additions at 1,000 and 3,000 routes, with six samples per revision and the cold
+output check enabled. Commits, source archive hashes, settings, and logs go to
+`build/render-comparison`; set `BENCH_COMPARISON_OUTPUT` to retain another run.
+Keep other CPU and memory workloads idle. The manual `render-benchmark-comparison`
+job runs the same comparison against the merge request base on one GitLab runner.
 
 ## Gateway API implementation benchmark
 
@@ -71,6 +75,11 @@ Pinned source doesn't make the resulting numbers interchangeable with the public
 | `probe` | Create 3,000 HTTPRoutes sequentially; wait for each route's first HTTP `200` | Start with a ready backend. Require one sample per route and Gateway. Unexpected HTTP responses make the result negative even if each route eventually returns `200`. |
 | `routechange` | Send continuous traffic through 20 route changes, 200 ms apart | Observe the response-header marker on every Gateway and HAProxy pod while its route variant is active. After cleanup, require `404`, no marker, and baseline config and map checksums. |
 | `scale` | Create 50 namespaces with 100 applications each: one Pod, Service, and HTTPRoute per application, plus 20 simulated nodes | Require current route status, deployed config and maps, and two matching runtime-map reads from every current HAProxy worker before starting the 10-minute measurement window. |
+
+The upstream probe starts its latency timer after the Kubernetes apply call
+returns. Its numbers exclude API admission and apply time. Expected `404`
+responses while a new route propagates don't count as HTTP errors; other
+non-`200` responses do.
 
 Scale retains the upstream 500 ms grace period, 1 s configuration jitter, and
 2 s workload jitter. During the measurement window, route identities must stay
@@ -150,46 +159,58 @@ artifacts only after trusted Secret inventory and scan verdicts, otherwise the
 validated five-file failure result or `ci-wrapper-invalid.json`. It preserves
 runner failures and fails if artifact staging fails.
 
-### Results
+### Candidate results: 2026-09-20
 
-Measured 2026-09-06 with the controlled default profile on a 16-thread `AMD Ryzen 7 5700X3D` CPU with 31 GB RAM, single-node Kind, HAProxy 3.4, Gateway API v1.4.0 Experimental, HAPTIC commit `eed0cf9c`. The published Part 2 numbers come from a different machine (a 16-core `AMD Ryzen 9 9950X` CPU with 96 GB) and a joined multi-controller run, so compare shapes, not digits.
+The fresh run uses HAPTIC commit `d11b94d1b`, Kubernetes 1.33.0, HAProxy 3.4.4,
+and the pinned Gateway API 1.4.0 experimental bundle. The host is a 16-thread
+`AMD Ryzen 7 5700X3D` with 31 GiB RAM. Another Kind cluster shared the host, and unused
+task caches were removed during probe and scale startup because disk space was low. The
+runner marks this environment `fresh-coscheduled-non-comparable`; these numbers
+aren't a normalized comparison with the public report or the earlier HAPTIC run.
 
-Route propagation (`probe`, 3,000 sequential HTTPRoute creates, time from apply to first `200`):
+The profile removes CPU and memory limits from measured pods and keeps HAPTIC's
+default deployment and watch timings. It differs from the bounded regression
+profile in [Measured startup, scale, and churn](#measured-startup-scale-and-churn).
 
-| Implementation | Mean | Median | p99 | Max | HTTP errors |
-|---|---:|---:|---:|---:|---:|
-| HAPTIC | 133 ms | 118 ms | 253 ms | 329 ms | 0 |
-| `Agentgateway` (published) | 16.6 ms | — | — | 74.6 ms | 0 |
-| `Istio` (published) | 221 ms | — | — | 1.24 s | 0 |
-| `Envoy Gateway` (published) | 320 ms | — | — | 1.21 s | 14,808 |
-| `Nginx` (published) | 508 ms | — | — | 919 ms | 0 |
+For 3,000 sequential HTTPRoute creations, propagation after apply returned was:
 
-HAPTIC's mean by route count: 104 ms at 0–499 routes, 87 ms at 500–999, 104 ms at 1,000–1,499, 135 ms at 1,500–1,999, 166 ms at 2,000–2,499, and 201 ms at 2,500–2,999. The remaining slope is the per-change assembly and deployment of a configuration that grows with the route count; the render itself stays warm.
+| Mean | Median | p95 | p99 | Maximum | Unexpected HTTP responses |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 83 ms | 81 ms | 118 ms | 159 ms | 261 ms | 0 |
 
-Before the 2026-09 fixes the same run on the same machine measured a 601 ms median and a 1,961 ms p99, and admission of a single HTTPRoute took over a second past 2,000 routes. Two costs grew with the route count: the controller's own Gateway `attachedRoutes` status write echoed back as a Gateway update and re-rendered every route, twice per create, and the admission webhook rendered on a private render service that never had a warm graph. The gateway library now ignores that counter with `ignoreFields`, and admission renders on the reconciliation service.
+Every route produced a sample. The probe passed the resource-series, supervised
+child, error-counter, and cleanup checks. Admission and apply time are excluded
+from these latency figures.
 
-Route scale (`scale`, `BENCH_SCALE_NAMESPACES=20`, 2,000 routes under `pilot-load` churn, 10-minute steady window after the readiness proof). The published run creates 5,000 routes; on this machine that workload reached 4,804 routes at the 20-minute startup deadline because the per-change render and deployment both grow linearly with the route count (45 ms per change at 0 routes, 364 ms at 4,500), so the numbers below cover 2,000 routes and don't compare directly. The upstream window also spans the ramp-up, while HAPTIC's covers only steady churn.
+During the probe's sampled 865-second window, pod-level resource totals were:
 
-| Component | Working set (mean) | CPU (mean cores) |
-|---|---:|---:|
-| HAPTIC controller, leader | 1.5 GiB | 0.89 |
-| HAPTIC controller, standby | 1.0 GiB | 0.47 |
-| HAPTIC HAProxy pod, each of two | 205 MiB | 0.06 |
-| `kgateway` control plane (published, 5,000 routes) | 428 MiB | 0.10 |
-| `istiod` (published, 5,000 routes) | 570 MiB | 0.21 |
-| `Nginx Gateway Fabric` control plane (published, 5,000 routes) | 447 MiB | 0.41 |
-| `Envoy Gateway` control plane (published, 5,000 routes) | 2.38 GiB | 3.70 |
+| Pods | Mean CPU cores | Mean working set | Maximum working set |
+| --- | ---: | ---: | ---: |
+| Two controllers, including validator sidecars | 2.30 | 3.12 GiB | 5.08 GiB |
+| Two load balancers, including agent and other sidecars | 0.81 | 0.41 GiB | 0.47 GiB |
 
-During HAPTIC's window the leader completed 1,809 reconciliations and 1,153 deployments with no HAProxy reload, 3,186 runtime server operations, and zero adverse counter deltas. The standby's share is its own warm render graph, which is what makes a leader change start warm. The control-plane figures put HAPTIC between `Nginx Gateway Fabric` and `Envoy Gateway` at 40% of their route count; the linear per-change cost is the next lever.
+These cover route creation and cleanup, rather than a steady 3,000-route
+workload. The unrestricted Go heap also differs from the bounded profile below.
 
-Route change (`routechange`, 20 backend flips 200 ms apart under continuous traffic): 20,757 requests, 0 failures, which passes the upstream availability check. HAPTIC's stricter header-observation gate stays product-negative: adding a header name the Gateway's frontend doesn't carry yet needs a paced reload, and the workload re-adds it every other flip. Ten filter flips on a serving Gateway, timed from the start of the `kubectl apply` call to the first response reflecting the change, polled every 20 ms:
+The subsequent scale scenario is **invalid**. At a sampled peak of 4,690 routes,
+the host's `earlyoom` service sent SIGTERM to a controller because available
+memory fell below its threshold while swap was full. The controller had a
+3,725 MiB resident set at termination and restarted; admission rejected an
+in-flight route while validation was unavailable. The run never reached the
+5,000-route readiness proof or steady-state window. This establishes neither
+5,000-route capacity nor a product capacity ceiling.
 
-| Change | Apply call | Visible after apply returned | Mechanism |
-|---|---:|---:|---|
-| Remove the response header filter | ~300 ms | 40 ms | Runtime map delete |
-| Add it back | ~300 ms | 2.4 s | Frontend directive, next paced reload |
+The [upstream workload record](performance-results/2026-09-20-upstream.json)
+preserves the passing probe analysis, invalid overall verdict, host interruption,
+and artifact hashes.
 
-The apply call covers the admission dry-run render and `haproxy -c`.
+A separate fresh cluster ran the unchanged 20-change, 200 ms route-change
+scenario against the same candidate. All 20,283 requests completed without
+unexpected responses or request failures. Live header observations proved the
+changed route behavior reached both HAProxy pods; cleanup restored the baseline
+configuration and maps. The scenario and final evidence checks passed. Its
+7.2-second workload was too short for a resource-series verdict, so no CPU or
+memory result is reported for it.
 
 ### Choose the appropriate performance test
 
@@ -267,44 +288,117 @@ The published Part 2 results are a reference, not a hardware-normalized score. T
 
 Part 2's `Agentgateway` result uses `kgateway` as its control plane, so it's the relevant result in that report when looking for a HAPTIC control-plane gap. The [Part 1 result for `kgateway` v2.0.1](https://github.com/howardjohn/gateway-api-bench/blob/95b8373e4e2994c4c8c4b3119340cfa98af645fe/README.md) came from an older benchmark commit and isn't directly comparable with the default Part 2 profile.
 
+## Measured startup, scale, and churn
+
+These measurements use candidate commit `d11b94d1b` dated 2026-09-20, Kubernetes
+1.33.0, Gateway API 1.6.2, and HAProxy 3.4.4 on a 16-thread `AMD Ryzen 7 5700X3D` with
+31 GiB RAM. Each test used a fresh Kind cluster. Another Kind cluster shared the
+host, so these results establish observed behavior on this machine, without a
+normalized comparison to other implementations or earlier runs.
+
+The [measurement record](performance-results/2026-09-20-candidate.json) retains
+source, binary, and image digests, workload settings, resource summaries, and
+collection errors. It describes a development candidate, not a released build.
+
+### Scale and cold loading
+
+`TestScale` created 800 Ingresses, 20 Gateways, and 20 HTTPRoutes across
+20 namespaces. Both controllers had a 4-CPU limit, a 2 GiB memory limit, and
+`GOMEMLIMIT=966367641` (922 MiB). Their requests were 100m CPU and 128 MiB memory;
+the test fixture's memory request differs from the chart default.
+
+| Measurement | Result |
+| --- | ---: |
+| Seed to complete convergence | 53.98 s |
+| Single-change convergence, median / p95 of five samples | 4.12 s / 4.17 s |
+| HAProxy reloads during the scale measurement | 4 |
+| Cold controller rollout with all routing objects retained | 82 s |
+| Largest sampled controller working set, including cold loading | 957 MiB |
+| Largest controller cgroup charged-memory peak | 1,008 MiB |
+| Container restarts | 0 |
+
+The unchanged test budgets were 600 seconds for seeding, 15 seconds for change
+p95, and 1 GiB for the test's working-set snapshot. All passed. The legacy
+`controller_rss_bytes` output names the working set; the separate
+`controller_memory_rss_bytes` field measures resident memory.
+
+After the cold rollout, a 120-second observation kept every routing object's UID
+and generation unchanged. `haptic doctor` confirmed healthy controllers and
+matching deployment evidence on both agents.
+
+| Controller | Working set, mean / maximum | Resident memory, mean / maximum |
+| --- | ---: | ---: |
+| Leader | 804 / 826 MiB | 725 / 766 MiB |
+| Follower | 909 / 957 MiB | 764 / 845 MiB |
+
+These are sample means and maxima, not guaranteed bounds. The observer retained
+three startup collection errors: one completed hook's cgroup disappeared and two
+controller metrics endpoints weren't addressable yet. The post-rollout window
+had no collection errors. The cgroup peak includes cache and differs from resident memory.
+The tested 2 GiB limit provided headroom; this run doesn't establish that a
+1 GiB container limit is safe for the same workload.
+
+Across 845 admission requests during the run, the combined webhook mean was
+434 ms and the p95 histogram bucket upper bound was 1 second. This combines
+resource types and both controllers; it isn't a per-kind latency guarantee.
+
+### Parallel Gateway churn
+
+`TestGatewayChurn` ran six workers for five minutes and completed 356
+create/converge/delete/prune cycles. All 152 allocator observations succeeded.
+Three surviving Gateways kept their marker Services unchanged throughout the
+churn; their routing, final allocator state, and idle quiescence checks passed.
+
+This run used the end-to-end fixture's 4-CPU and 1 GiB controller limits. No
+container restarted. The largest sampled controller working set was 490 MiB;
+the largest charged-memory peak was 571 MiB. Across 718 admission requests, the
+combined mean was 99 ms and the p95 histogram bucket upper bound was 250 ms.
+These resource observations include startup and cleanup, not just the five
+minutes of churn.
+
+Run the regression workloads with the repository's
+[end-to-end test instructions](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/tests/e2e/CLAUDE.md).
+Select `TestScale` with `HAPTIC_E2E_SCALE=1`, or `TestGatewayChurn` with
+`HAPTIC_E2E_CHURN=1`. Keep their default workload sizes and budgets when comparing
+regression results.
+
 ## Controller resource sizing
 
-### Recommended resources
+### Defaults and sizing {#recommended-resources}
 
-| Deployment Size | CPU Request | CPU Limit | Memory Request | Memory Limit |
-|-----------------|-------------|-----------|----------------|--------------|
-| Small (<50 Ingresses) | 50m | 200m | 1Gi | 1Gi |
-| Medium (50-200 Ingresses) | 100m | 500m | 1Gi | 1Gi |
-| Large (200+ Ingresses) | 200m | 1000m | 1Gi | 2Gi |
-| Very large (thousands of Ingresses) | 500m | 2000m | 2Gi | 4Gi |
+Each controller requests `100m` CPU and `1Gi` memory, with a `1Gi` memory limit
+and no CPU limit. The default two controllers reserve `2Gi` of memory in total,
+before validator sidecars, HAProxy pods, and optional services.
 
-Memory has a floor that no amount of shrinking the workload gets under: on every
-config load the controller runs the bundled `validationTests`, which peaks at
-514 MiB on chart defaults and 605 MiB with every template library enabled. That
-is why the small and medium rows don't drop below 1Gi — the number is set by the
-configuration being validated, not by how many Ingresses you serve. Above the
-floor, the consumers that scale with your workload are the watched-resource
-caches and render buffers (memory) and rendering plus watch streams (CPU).
-
-!!! tip "Scaling past a few thousand Ingresses"
-    Start by measuring the watched-resource cache, render graph, and startup tests. Narrow watches to relevant resources and use on-demand storage for large, infrequently read objects; see [Resource watching optimization](#resource-watching-optimization). Check `haproxy.shmStats.maxObjects` if you enable shared-memory stats.
-
-!!! note "Chart defaults"
-    The controller container requests `100m` CPU and `1Gi` memory, limits memory to `1Gi`, and has no CPU limit. The table above provides starting points if you choose CPU limits; measure your workload before adopting them.
-
-Configure via Helm values. `controller.resources` applies to the controller container; HAProxy and the agent have their own blocks under `haproxy.resources` and `haproxy.agent.resources` (see [HAProxy Deployment](../haproxy-deployment.md)):
+`controller.resources` sets each controller's budget. Admission runs in the same
+process. HAProxy and the agent use `haproxy.resources` and `haproxy.agent.resources` (see [HAProxy Deployment](../haproxy-deployment.md)).
 
 ```yaml
-# values.yaml
 controller:
   resources:
     requests:
       cpu: 100m
       memory: 1Gi
     limits:
-      # No CPU limit — avoids throttling GOMAXPROCS-aware Go under bursts.
-      memory: 1Gi   # memory request == limit; no CPU limit → Burstable QoS (by design)
+      memory: 1Gi
 ```
+
+Measure startup validation, cold loading of your complete watched-resource set,
+and steady operation under admission traffic before changing these budgets.
+Every controller runs the bundled validation tests on
+configuration load. A small routing workload can still require substantial
+startup memory. Include the validator sidecars when measuring pod totals.
+
+Keep headroom above the largest observed working set and check for out-of-memory
+kills and CPU throttling. A sampled maximum can miss a short peak; cgroup
+`memory.peak` includes charged cache and differs from resident memory. Neither
+figure alone establishes a safe limit for a different configuration.
+
+For thousands of routing objects, measure the watched-resource cache, render
+graph, and startup tests. Narrow watches to relevant resources and use on-demand
+storage for large, infrequently read objects; see
+[Resource watching optimization](#resource-watching-optimization). Check
+`haproxy.shmStats.maxObjects` if you enable shared-memory stats.
 
 ### Container awareness (`GOMAXPROCS` and `GOMEMLIMIT`)
 
@@ -454,11 +548,11 @@ rate(haptic_reconciliation_total[5m])
 histogram_quantile(0.95, rate(haptic_reconciliation_duration_seconds_bucket[5m]))
 ```
 
-**Target metrics:**
-
-- Average reconciliation: <500 ms
-- P95 reconciliation: <2 s
-- Error rate: <1%
+Set latency objectives from measurements at your expected object count and
+change rate. Reconciliation duration excludes watcher delay and deployment
+pacing, so also measure the time until changed routes serve traffic. Investigate
+increases in `haptic_reconciliation_errors_total`; a short reconciliation time
+doesn't establish successful deployment.
 
 ## Template optimization
 
@@ -844,20 +938,19 @@ A non-zero `haptic_events_dropped_total` rate means a critical subscriber was to
     dominated by unreachable objects, and an unreachable object has no retainer
     to report, so `--anchors` correctly returns nothing for most of it.
 
-    Writing the dump **stops the world** for its duration — seconds on a
-    multi-gigabyte heap — so treat it as a deliberate diagnostic on one replica,
-    never as something to poll. While the world is stopped the controller answers
-    neither health checks nor admission requests, and with `failurePolicy: Fail`
-    the latter rejects writes to watched resources cluster-wide. A second request
-    while one is running is refused with `409`.
+    Writing the dump pauses the selected process, including its health checks.
+    Dump one replica at a time; don't poll this endpoint. Pausing the leader can
+    delay deployment or cause failover. Admission requests routed to a paused
+    controller can fail because the webhook fails closed. A concurrent dump
+    request receives `409`.
 
     The endpoint answers on loopback only, like `/debug/pprof`, so reach it with
     `kubectl port-forward`.
 
     The dump is written to a temporary file first — `WriteHeapDump` forbids a pipe
     whose reader is in the same process — and is roughly heap-sized. That file
-    lands in `$TMPDIR`, normally the container's writable layer, which counts
-    against the pod's `ephemeral-storage` limit. The endpoint refuses with `507`
+    lands in `$TMPDIR`. The chart mounts `/tmp` as a disk-backed `emptyDir`, which
+    counts against the pod's `ephemeral-storage` limit. The endpoint refuses with `507`
     rather than filling the filesystem when there is not enough room; set
     `HAPTIC_HEAPDUMP_DIR` to a mounted volume for heaps larger than that
     allowance.
@@ -886,7 +979,7 @@ Controller images ship built with Profile-Guided Optimization (PGO), which typic
 
 **Slow deployments:**
 
-- Check the agent's health (`curl localhost:5555/v1/state` from inside the pod)
+- Inspect the agent (`haptic agent state` inside the agent container)
 - Verify network latency to HAProxy pods
 - Reduce config size by avoiding unnecessary nested loops in templates
 
