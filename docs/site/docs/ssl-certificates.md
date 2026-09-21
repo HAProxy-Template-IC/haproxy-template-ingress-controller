@@ -2,8 +2,10 @@
 
 The [Helm chart](deploying-with-helm.md) creates a default certificate for HTTPS.
 It uses cert-manager when available, or generates a self-signed Secret otherwise.
-Use the options below to supply your own certificate, manage renewal, or
-[disable HTTPS](#disabling-https).
+For public traffic, supply a trusted certificate for your hostnames. Choose
+[cert-manager](#production-deployment) for automatic renewal or
+[an existing certificate](#alternative-manual-certificate) from your issuer.
+Controller-to-agent certificates are separate; see [agent certificates](operations/agent-certificates.md).
 
 !!! tip "The default certificate and per-host TLS"
     This page covers the chart's **default** certificate. HAPTIC serves it for every Ingress over HTTPS by default, and as the fallback when a Server Name Indication (SNI) match isn't found. To serve a specific certificate for one host, add a `spec.tls` entry and a `kubernetes.io/tls` Secret to the Ingress itself. See [Ingress library — TLS configuration](libraries/ingress.md#tls-configuration) for per-host certificates and the `ingressDefaultHTTPS` toggle.
@@ -45,14 +47,15 @@ defaultSSLCertificate:
   certManager:
     createIssuer: false  # Use your own issuer
     dnsNames:
-      - "*.example.com"
-      - "example.com"
+      - "app.example.com"
     issuerRef:
       name: letsencrypt-prod
       kind: ClusterIssuer
 ```
 
-This requires an existing ClusterIssuer or Issuer. Create one if you haven't already:
+Install cert-manager first. Point `app.example.com` at HAPTIC and allow public
+HTTP access on port 80 for the HTTP-01 challenge. The example requires an existing
+ClusterIssuer; create it if needed:
 
 ```bash
 # Create a ClusterIssuer (example with Let's Encrypt)
@@ -70,11 +73,14 @@ spec:
     solvers:
     - http01:
         ingress:
-          class: haptic   # Match ingressClass.name from chart values
+          ingressClassName: haptic
 EOF
 ```
 
-The Helm chart creates a Certificate resource that cert-manager uses to automatically provision and renew the TLS Secret.
+Apply the values through your Helm deployment. The chart creates a Certificate
+resource; cert-manager provisions and renews its TLS Secret. For a wildcard such
+as `*.example.com`, use a [DNS-01 issuer](https://cert-manager.io/docs/configuration/acme/dns01/)
+instead: HTTP-01 can't issue wildcard certificates.
 
 ### Alternative: Manual certificate
 
@@ -386,14 +392,19 @@ controller:
     # certManager.enabled defaults to false → the chart issues a self-signed cert
 ```
 
-Rotate the self-signed certificate by deleting its Secret and re-running the upgrade:
+The generated certificate lasts ten years and isn't renewed automatically.
+Check its expiry with OpenSSL (for release `haptic` in namespace `haptic`):
 
 ```bash
-kubectl delete secret <release>-webhook-tls -n haptic
-helm upgrade <release> oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --reuse-values
+kubectl get secret haptic-webhook-tls -n haptic \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -enddate
 ```
 
-If cert-manager is installed, hand it the certificate instead so it issues and **auto-rotates** with a real CA:
+Arrange renewal before it expires: an expired webhook certificate blocks changes
+to resources covered by admission validation. Don't delete the serving Secret as
+a rotation procedure; certificate replacement must preserve API-server trust.
+
+If cert-manager is installed, select it for automatic renewal:
 
 ```yaml
 controller:
@@ -406,9 +417,12 @@ controller:
 
 The chart then creates:
 
-- A self-signed `Issuer` resource
-- A `Certificate` resource that references the Issuer
+- A self-signed `Issuer` and its `Certificate`, valid for one year by default
+- Renewal 30 days before expiry
 - CA-bundle injection into the webhook configuration
+
+The controller reloads certificate updates without a restart. The default issuer
+still uses a self-signed certificate; it doesn't issue a publicly trusted one.
 
 To use an existing Issuer or ClusterIssuer instead:
 
@@ -423,15 +437,40 @@ controller:
         kind: ClusterIssuer
 ```
 
-For manual certificate management without cert-manager, provide the CA bundle:
+### Supply your own webhook certificate
 
-```yaml
-controller:
-  webhook:
-    certManager:
-      enabled: false
-    caBundle: "LS0tLS1CRUdJTi..."  # Base64-encoded CA certificate
+For a new release named `haptic` in namespace `haptic`, obtain a server certificate
+with the DNS name `haptic-webhook.haptic.svc`. You need its PEM certificate chain
+(`tls.crt`), private key (`tls.key`), and issuing CA bundle (`ca.crt`).
+
+Create the namespace and serving Secret before installing the chart:
+
+```bash
+kubectl create namespace haptic --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret tls haptic-webhook-tls --namespace haptic \
+  --cert=tls.crt --key=tls.key
+base64 < ca.crt | tr -d '\n' > webhook-ca.base64
 ```
+
+Install with the manual CA bundle and cert-manager disabled. Keep your other
+settings in `haptic-values.yaml`:
+
+```bash
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic \
+  --values haptic-values.yaml \
+  --set controller.webhook.certManager.enabled=false \
+  --set-file controller.webhook.caBundle=webhook-ca.base64
+```
+
+Keep this CA setting in your release configuration for subsequent upgrades.
+For manual renewal under the same CA, update the serving Secret before expiry;
+the controller reloads it automatically. When changing certificate authorities, first publish a
+bundle trusting both old and new authorities, then replace the serving certificate. Remove
+the old CA only after every controller replica serves the replacement certificate.
+Switching an existing release from Helm or cert-manager certificate ownership
+also requires transferring ownership of the Secret; this first-install procedure
+doesn't perform that migration.
 
 ## See also
 

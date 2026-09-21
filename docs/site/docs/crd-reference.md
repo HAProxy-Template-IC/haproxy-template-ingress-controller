@@ -74,7 +74,9 @@ credentialsSecretRef:
   name: haproxy-credentials
 ```
 
-The Secret must contain the keys `dataplane_username` and `dataplane_password` — the keys keep their names across the agent cutover, so a rotation set up before it still works. Credentials authenticate the controller to each pod's agent; config validation runs locally against the `haproxy` binary and needs no credentials. See [Security — Credentials](./operations/security.md#credentials) for rotation and GitOps caveats.
+The Secret contains `dataplane_username` and `dataplane_password` for the explicit
+legacy HTTP transport. The default controller-to-agent connection uses separate
+mutual TLS identities. See [credentials](./operations/security.md#credentials).
 
 ### `podSelector`
 
@@ -495,7 +497,7 @@ maps:
       {% end %}
 ```
 
-Set `ordered: false` when the configuration reads the map with `map_str`, `map_beg`, `map_ip` or `map_str_int`. Those find a key by its own value, so the controller can add a new entry over the runtime API instead of rewriting the file and reloading HAProxy.
+Set `ordered: false` when the configuration reads the map with `map_str`, `map_beg`, `map_ip` or `map_str_int`. Those find a key by its own value, so the controller can update individual entries through the Runtime API. Ordered maps use atomic replacement when needed to preserve match order.
 
 Keep the default `true` for `map_reg`, `map_sub`, `map_dom`, `map_dir` and `map_end`. HAProxy evaluates those as a list and takes the first match, so an entry has to land in its intended position — appending it to the end would silently never match.
 
@@ -516,12 +518,17 @@ files:
   503.http:
     template: |
       HTTP/1.1 503 Service Unavailable
+      Content-Type: text/html
+
       <html><body><h1>503</h1></body></html>
 ```
 
 Set `reloadOnPush: false` when a sidecar owns the file and watches it itself — the bundled Vector and SPOA-hub configs both do. HAProxy never opens those, so the controller writes the new content and skips the reload. Keep the default for anything the HAProxy configuration references: only a reload makes that content take effect.
 
-`reloadOnPush` governs writes. **Removing** a file reloads only when the rendered configuration, or a crt-list, still names it — that reference would otherwise dangle until some later change reloaded HAProxy and every worker failed to start. A sidecar-owned file is named nowhere, so removing it doesn't reload either.
+Removing a file also reloads HAProxy when that file was declared with
+`reloadOnPush: true`. A sidecar-owned file with `reloadOnPush: false` can be
+removed without a reload. Remove references from the HAProxy configuration when
+you remove a file it uses.
 
 See [Templating — General Files](./templating.md#general-files).
 
@@ -871,9 +878,12 @@ The controller updates the status field with validation results:
 | `validationErrors` | `[]string` | Populated when `Invalid`; each entry names the template and error context |
 | `conditions` | `[]Condition` | Standard `metav1.Condition` list. The controller writes exactly one type, `Validated`. |
 
-The `Validated` condition carries its own `observedGeneration`, so `kubectl wait --for=condition=Validated` answers whether the controller has processed *this* generation, rather than whether some past generation validated. Its reasons are `ValidationSucceeded`, `ConfigInvalid`, `HAProxyValidationFailed`, and `LoadGateFailed` — the last meaning the fatal startup load gate rejected the config, so the pod is in `CrashLoopBackOff` rather than merely having a rejected live reload.
+The `Validated` condition carries `observedGeneration`. Compare it with
+`metadata.generation` before relying on the result: `kubectl wait --for=condition=Validated` alone can succeed on a condition from an older generation. Its reasons are `ValidationSucceeded`, `ConfigInvalid`, `HAProxyValidationFailed`, and `LoadGateFailed` — the last meaning the fatal startup load gate rejected the config, so the pod is in `CrashLoopBackOff` rather than merely having a rejected live reload.
 
-When a config is assembled from several objects (see [`libraryRefs`](#libraryrefs)), the same set-level result is stamped on every `HAProxyTemplateConfig` in the set, each with its own `observedGeneration`.
+When the config references libraries (see [`libraryRefs`](#libraryrefs)), the
+condition reports validation of the combined configuration on the owning
+`HAProxyTemplateConfig`.
 
 ```yaml
 status:
@@ -881,8 +891,7 @@ status:
   lastValidated: "2025-01-27T10:00:00Z"
   validationStatus: Valid
   validationMessage: "All validation tests passed"
-  validationErrors:
-    - "haproxy.cfg: parse error at line 12: …"   # only when Invalid
+  validationErrors: []
   conditions:
     - type: Validated
       status: "True"
@@ -1052,7 +1061,7 @@ Additional validation occurs when:
 
 - Never include credentials in the CRD - use credentialsSecretRef
 - Restrict RBAC access to HAProxyTemplateConfig resources
-- Use separate namespaces for controller and configs in multi-tenant scenarios
+- Keep the controller and its configuration in the same release namespace; restrict who can edit that configuration
 
 **Organization:**
 

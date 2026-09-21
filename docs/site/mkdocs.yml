@@ -120,7 +120,7 @@ nav:
     - Response caching: operations/response-cache.md
     - WAF policies: operations/waf-policies.md
     - Networking: operations/networking.md
-    - Performance: operations/performance.md
+    - Resource sizing: operations/performance.md
     - Validate before deploying: operations/validate-before-deploy.md
     - Fleet diagnostics: operations/diagnostics.md
     - Debugging: operations/debugging.md

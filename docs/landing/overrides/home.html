@@ -311,7 +311,7 @@
 
   <section class="quickstart">
     <h2 class="section-head">Install with <span class="flag">Helm</span></h2>
-    <p class="extend-lead">Requires Kubernetes 1.33 or newer. The chart installs
+    <p class="extend-lead">Requires Kubernetes 1.33 or newer and Helm 3.8 or newer. The chart installs
        the controller, HAProxy, and the bundled routing libraries. Review the
        <a href="./docs/latest/changelog/">release notes</a> before upgrading.</p>
     <div class="terminal terminal-shell">
@@ -335,8 +335,9 @@
       <div class="term-body">
         <pre class="code shell" tabindex="0"><code><span class="t-prompt">$</span> <span class="t-kw">helm</span> install \
     haptic <span class="t-str">oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic</span> \
-    --version <span id="helm-version" class="t-num">0.2.0-alpha.3</span>
-<span class="t-prompt">$</span> <span class="t-kw">kubectl</span> get haproxytemplateconfig</code></pre>
+    --version <span id="helm-version" class="t-num">0.2.0-alpha.3</span> \
+    --namespace haptic --create-namespace
+<span class="t-prompt">$</span> <span class="t-kw">kubectl</span> get haproxytemplateconfig --namespace haptic</code></pre>
       </div>
     </div>
   </section>

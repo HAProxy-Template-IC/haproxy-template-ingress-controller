@@ -936,6 +936,17 @@ served at `/docs/`, covering both the controller and the Helm chart) and the
 landing page (`docs/landing/`). The reader is often new to HAPTIC and takes every
 sentence literally.
 
+- **Answer the user's practical question first.** Give usable defaults, rough
+  resource estimates, and complete examples before optional detail. Resource
+  guidance must help an operator budget an installation without running our
+  benchmarks. Label estimates and their assumptions; don't invent certainty.
+- **Include detail only when it helps the reader act or decide.** Automatic
+  implementation details such as `automemlimit` and `GOMEMLIMIT` don't belong in
+  user documentation. Describe memory sizing through Kubernetes requests and
+  limits. Keep benchmark methodology, raw measurements, and engineering evidence
+  in maintainer records; moving them to another user-facing page doesn't make
+  them useful. Preserve advanced reference material when it serves a concrete
+  operator or template-author task.
 - **Examine prerequisites vs. procedure for contradictions.** Cross-check every
   "Before you start" / "Prerequisites" item against the steps that follow. If a
   step performs it, it's not a prerequisite (e.g. don't list "HAPTIC is installed"

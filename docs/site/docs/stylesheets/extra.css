@@ -1,6 +1,10 @@
 /* Import shared brand colors (copied during build from docs/shared/colors.css) */
 @import url('./colors.css');
 
+.md-typeset [data-development-docs][hidden] {
+  display: none;
+}
+
 /* Map brand colors to MkDocs Material variables */
 /* Light mode: light blue header */
 [data-md-color-scheme="default"] {

@@ -1,515 +1,201 @@
-# Performance
-
-## Overview
-
-Size the controller for its watched resources, templates, and validation workload.
-Size HAProxy separately for traffic volume and connection lifetime. Use the
-measurements below as workload examples, then measure your own configuration
-before changing resource limits or timeouts.
-
-## Measure render cost by object count
-
-A cold render rebuilds the template outputs and their dependency graph. Its cost
-depends on the resource data your templates read. Measure several sizes with the
-bundled chart's Ingress workload:
-
-```bash
-./scripts/test-benchmark.sh --ingress-only --steps 100,1000,5000 --iterations 3
-```
-
-The workload creates one Ingress, one Service, and two EndpointSlices per step.
-Inspect the per-template timings to identify the dominant cost in configuration
-and map generation. Retain the source commit, chart values, and host details
-with the output.
-
-Admission uses the render service and can reuse its warm graph. It also runs
-synchronous HAProxy validation, so render-only timings aren't admission latency.
-Measure the complete request against `controller.webhook.timeoutSeconds`
-(10 seconds by default).
-
-## Incremental render cost
-
-When template snippets declare `incremental`, a reconcile render re-executes
-components whose recorded inputs changed. Document assembly and changed maps
-still contribute to total latency. Followers keep their own render graphs warm;
-only the leader deploys.
-
-Compare cold loading, unchanged output, route edits, route additions, and
-endpoint changes with the bundled Gateway render benchmark:
-
-```bash
-HAPTIC_BENCHMARK_BARE_ENGINE=1 HAPTIC_BENCHMARK_SKIP_ORACLE=1 \
-  BENCH='^BenchmarkBundledChartHTTPRouteIncrementalRenderService$' PKG=./cmd/haptic make bench
-```
-
-`HAPTIC_BENCHMARK_BARE_ENGINE=1` uses the chart's engine directly, including its
-document caches. Without it, the benchmark wraps the engine to count component
-executions and those caches aren't used. `HAPTIC_BENCHMARK_SKIP_ORACLE=1`
-omits the additional cold render that checks incremental output after each
-iteration. Leave it unset when checking correctness.
-
-To compare a committed branch with its main-branch baseline on one host:
-
-```bash
-git fetch origin main
-BENCH_BASE_REF=$(git merge-base HEAD origin/main) make bench-render-comparison
-```
-
-This requires a clean checkout and a new output directory. It measures route
-additions at 1,000 and 3,000 routes, with six samples per revision and the cold
-output check enabled. Commits, source archive hashes, settings, and logs go to
-`build/render-comparison`; set `BENCH_COMPARISON_OUTPUT` to retain another run.
-Keep other CPU and memory workloads idle. The manual `render-benchmark-comparison`
-job runs the same comparison against the merge request base on one GitLab runner.
-
-## Gateway API implementation benchmark
-
-`make bench-gateway-api` runs the exact probe, route-change, and route-scale programs used by the [`gateway-api-bench` Part 2 report](https://github.com/howardjohn/gateway-api-bench/blob/e81292ed876472804e0a2245876a7c445ab80881/README-v2.md). The runner checks out commit `e81292ed876472804e0a2245876a7c445ab80881` by default, verifies it, and builds the upstream Go programs in a temporary directory. For that snapshot, it also verifies and installs the Gateway API `v1.4.0` experimental bundle by its exact manifest digest.
-
-Pinned source doesn't make the resulting numbers interchangeable with the public report. The report used joined, multi-controller runs with shared status-write contention and imported results through VictoriaMetrics. This runner uses one HAPTIC target in a dedicated Kind cluster, executes each self-paced upstream program from a static sibling container, and analyzes its raw logs directly. Use the result to find material gaps; don't present it as a reproduced public score.
-
-### Workloads and verdicts
-
-| Scenario | Upstream workload | Additional HAPTIC checks |
-|----------|-------------------|--------------------------|
-| `probe` | Create 3,000 HTTPRoutes sequentially; wait for each route's first HTTP `200` | Start with a ready backend. Require one sample per route and Gateway. Unexpected HTTP responses make the result negative even if each route eventually returns `200`. |
-| `routechange` | Send continuous traffic through 20 route changes, 200 ms apart | Observe the response-header marker on every Gateway and HAProxy pod while its route variant is active. After cleanup, require `404`, no marker, and baseline config and map checksums. |
-| `scale` | Create 50 namespaces with 100 applications each: one Pod, Service, and HTTPRoute per application, plus 20 simulated nodes | Require current route status, deployed config and maps, and two matching runtime-map reads from every current HAProxy worker before starting the 10-minute measurement window. |
-
-The upstream probe starts its latency timer after the Kubernetes apply call
-returns. Its numbers exclude API admission and apply time. Expected `404`
-responses while a new route propagates don't count as HTTP errors; other
-non-`200` responses do.
-
-Scale retains the upstream 500 ms grace period, 1 s configuration jitter, and
-2 s workload jitter. During the measurement window, route identities must stay
-stable, route paths and generations must advance, upstream refresh logs must
-show activity, and HAPTIC must reconcile and deploy changes. These checks prove
-temporal overlap between churn and controller activity; they don't map each
-mutation to a deployment. A readiness deadline produces a negative result
-without steady-state CPU or memory figures.
-
-Across every scenario, error-counter increases or restarted/unhealthy supervised
-children make the product result negative. Missing evidence, changed controller
-identities, decreasing counters, or incomplete cleanup invalidate the run.
-Cleanup must restore the workload, configuration, and map baselines.
-
-Read `runner-summary.json`:
-
-| Field | Meaning |
-|-------|---------|
-| `measured_result.pass`, `negative_scenarios` | Product quality: propagation, availability, convergence, and error outcomes |
-| `harness.pass`, `harness.final_exit_code` | Evidence and cleanup validity, finalized after terminal checks |
-
-A valid negative measurement exits `0`. A nonzero exit means the evidence or
-cleanup is incomplete or invalid. **Check the measured result as well as the
-process exit code.** Reload counts are diagnostic, not an availability verdict.
-
-The runner covers these three Part 2 control-plane scenarios. It doesn't cover
-attached routes, traffic throughput, ListenerSet, backend failover, or the
-100-route propagation test running alongside scale.
-
-### Resource measurements and provenance
-
-The runner installs the pinned upstream Prometheus manifest and samples every
-5 seconds. It retains values and source timestamps, requiring matching labels
-and grids, advancing timestamps, and source ages no greater than 20 seconds.
-Missing, duplicate, restarted, replaced, stale, or misaligned series fail analysis.
-
-- `upstream_compatible_pod_cgroups` uses pod-root CPU and working-set series,
-  excluding pause-container duplicates.
-- `haptic_container_diagnostics` reports CPU, working set, and resident set for
-  each real container.
-- Both report time-aligned mean, p95, maximum, and last values. CPU also reports
-  counter deltas, window length, and normalized cores.
-
-Probe and route-change resource windows cover the upstream process only. Too few
-fresh samples yield `analysis_status: not_gated`, `gating: false`, and `pass: null`;
-malformed or stale samples still invalidate the evidence. Scale requires a
-complete resource series for its proven steady-churn window.
-
-The default profile starts from chart defaults, enables experimental Gateway API
-fields to match the pinned CRDs, and removes CPU/memory limits and explicit
-`GOMEMLIMIT` from measured pods. Artifacts retain effective settings, source digests, manifest digests,
-image/binary/pod/container identities, child-process identities,
-logs, metric responses, and terminal status. The mutable upstream backend image
-is recorded by its actual runtime digest. The local SPOA bundle is checked
-against `versions-spoa.env` before and after measurement.
-
-Before accepting artifacts, the runner scans for raw and base64 forms of live
-Secret values at least eight bytes long. Only the controller-owned SSL Secret's
-`path` metadata is exempt; its certificate remains covered. A match is redacted
-and fails the run. An incomplete Secret inventory, scan, or redaction replaces
-the artifact tree with five files recording the invalid result. Helm captures
-also redact passwords, Secret data, and webhook CA bundles.
-
-### CI smoke profile
-
-The manual `gateway-api-benchmark-smoke` GitLab job uses the same pinned source,
-Gateway API bundle, HAProxy 3.4, 5,000-route scale workload, and route-change
-workload. It reduces the probe to 300 routes and sets deployment and watcher
-intervals to 100 ms. Its probe, scale-startup, scale-window, and route-change
-bounds are 45, 20, 10, and 10 minutes. An outer watchdog and cleanup grace leave
-time for checked artifact staging within the 2-hour-45-minute job limit.
-
-This hosted-runner smoke records `published_workload_inputs_match: false` and
-`controlled_default_profile: false`. Use it to check runner integration; use the
-local 3,000-route default profile for Part 2 gap measurements. CI publishes full
-artifacts only after trusted Secret inventory and scan verdicts, otherwise the
-validated five-file failure result or `ci-wrapper-invalid.json`. It preserves
-runner failures and fails if artifact staging fails.
-
-### Candidate results: 2026-09-20
-
-The fresh run uses HAPTIC commit `d11b94d1b`, Kubernetes 1.33.0, HAProxy 3.4.4,
-and the pinned Gateway API 1.4.0 experimental bundle. The host is a 16-thread
-`AMD Ryzen 7 5700X3D` with 31 GiB RAM. Another Kind cluster shared the host, and unused
-task caches were removed during probe and scale startup because disk space was low. The
-runner marks this environment `fresh-coscheduled-non-comparable`; these numbers
-aren't a normalized comparison with the public report or the earlier HAPTIC run.
-
-The profile removes CPU and memory limits from measured pods and keeps HAPTIC's
-default deployment and watch timings. It differs from the bounded regression
-profile in [Measured startup, scale, and churn](#measured-startup-scale-and-churn).
-
-For 3,000 sequential HTTPRoute creations, propagation after apply returned was:
-
-| Mean | Median | p95 | p99 | Maximum | Unexpected HTTP responses |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 83 ms | 81 ms | 118 ms | 159 ms | 261 ms | 0 |
-
-Every route produced a sample. The probe passed the resource-series, supervised
-child, error-counter, and cleanup checks. Admission and apply time are excluded
-from these latency figures.
-
-During the probe's sampled 865-second window, pod-level resource totals were:
-
-| Pods | Mean CPU cores | Mean working set | Maximum working set |
-| --- | ---: | ---: | ---: |
-| Two controllers, including validator sidecars | 2.30 | 3.12 GiB | 5.08 GiB |
-| Two load balancers, including agent and other sidecars | 0.81 | 0.41 GiB | 0.47 GiB |
-
-These cover route creation and cleanup, rather than a steady 3,000-route
-workload. The unrestricted Go heap also differs from the bounded profile below.
-
-The subsequent scale scenario is **invalid**. At a sampled peak of 4,690 routes,
-the host's `earlyoom` service sent SIGTERM to a controller because available
-memory fell below its threshold while swap was full. The controller had a
-3,725 MiB resident set at termination and restarted; admission rejected an
-in-flight route while validation was unavailable. The run never reached the
-5,000-route readiness proof or steady-state window. This establishes neither
-5,000-route capacity nor a product capacity ceiling.
-
-The [upstream workload record](performance-results/2026-09-20-upstream.json)
-preserves the passing probe analysis, invalid overall verdict, host interruption,
-and artifact hashes.
-
-A separate fresh cluster ran the unchanged 20-change, 200 ms route-change
-scenario against the same candidate. All 20,283 requests completed without
-unexpected responses or request failures. Live header observations proved the
-changed route behavior reached both HAProxy pods; cleanup restored the baseline
-configuration and maps. The scenario and final evidence checks passed. Its
-7.2-second workload was too short for a resource-series verdict, so no CPU or
-memory result is reported for it.
-
-### Choose the appropriate performance test
-
-| Test | Use it for | Don't use it for |
-|---|---|---|
-| `make bench-gateway-api` | Finding ballpark gaps against Part 2 with the pinned upstream programs and a controlled, isolated HAPTIC profile | Treating the local and published numbers as interchangeable scores, claiming full-suite coverage, or enforcing HAPTIC-specific budgets |
-| `TestScale` | HAPTIC regression testing for full convergence, single-change latency at scale, controller memory, reloads, and explicit budgets | Cross-controller comparison with published `gateway-api-bench` results |
-| `TestGatewayChurn` | Sustained parallel Gateway and HTTPRoute create/delete correctness, allocator isolation, oscillation bounds, and final quiescence | Published cross-controller latency, CPU, or memory comparison |
-
-Run all three scenarios from the repository root:
-
-```bash
-make bench-gateway-api
-```
-
-Set `BENCH_SCENARIOS` to run a subset:
-
-```bash
-BENCH_SCENARIOS=routechange make bench-gateway-api
-```
-
-Set both HAPTIC timing controls to measure a tuned profile:
-
-```bash
-BENCH_DEPLOY_INTERVAL=100ms \
-BENCH_WATCH_DEBOUNCE=100ms \
-make bench-gateway-api
-```
-
-The artifacts record the requested, product-default, configured, and effective timing values. Any timing override makes the run a profile deviation, which is recorded in `metadata.json`.
-
-The runner accepts these environment variables:
-
-| Variable | Default | Effect |
-|---|---|---|
-| `BENCH_REF` | `e81292ed876472804e0a2245876a7c445ab80881` | Exact `gateway-api-bench` commit to check out and record |
-| `BENCH_GATEWAY_API_VERSION` | `v1.4.0` | Gateway API release whose experimental CRD bundle is installed and verified |
-| `BENCH_KIND_NODE_IMAGE` | Kind's bundled default | Node image for a new cluster; use a digest-pinned image to control the Kubernetes version |
-| `BENCH_GATEWAY_API_CHANNEL` | `experimental` | Gateway API release channel (`experimental` or `standard`) |
-| `BENCH_SCENARIOS` | `probe,scale,routechange` | Comma-separated scenario subset and execution order |
-| `BENCH_OUTPUT_DIR` | `artifacts/gateway-api-bench/<YYYYMMDDtHHMMSSz>-<runner PID>` | Per-run result directory |
-| `BENCH_GATEWAYS` | `haptic-bench/haptic` | Comma-separated namespace/name Gateway targets |
-| `BENCH_PROBE_ROUTES` | `3000` | Sequential routes in the propagation scenario |
-| `BENCH_PROBE_TIMEOUT` | `6h` | Hard timeout for the propagation program |
-| `BENCH_ROUTECHANGE_ITERATIONS` | `20` | Route updates while traffic continues |
-| `BENCH_ROUTECHANGE_GRACE_PERIOD` | `200ms` | Delay between route updates |
-| `BENCH_ROUTECHANGE_TIMEOUT` | `10m` | Hard timeout for the route-change program |
-| `BENCH_SCALE_NAMESPACES` | `50` | Namespaces in the scale workload |
-| `BENCH_SCALE_ROUTES_PER_NAMESPACE` | `100` | Applications and routes per scale namespace |
-| `BENCH_SCALE_DURATION` | `10m` | HAPTIC analysis duration after the scale readiness proof; accepts a positive integer followed by `s`, `m`, or `h` |
-| `BENCH_SCALE_STARTUP_TIMEOUT` | `20m` | Maximum time for the scale workload to pass the HAPTIC readiness proof |
-| `BENCH_DEPLOY_INTERVAL` | unset; chart default (`5s` at this commit) | Override HAPTIC's minimum structural-deployment interval |
-| `BENCH_WATCH_DEBOUNCE` | unset; controller default (`100ms` at this commit) | Override the Gateway and HTTPRoute watcher debounce |
-| `BENCH_KEEP_CLUSTER` | `false` | Keep a cluster that this runner created |
-| `BENCH_ALLOW_DIRTY` | `false` | Allow an uncommitted HAPTIC tree and mark the result non-comparable |
-| `BENCH_ALLOW_COSCHEDULED_CLUSTERS` | `false` | Allow other Kind clusters for a non-comparable smoke or debug run |
-| `REUSE_CLUSTER` | `false` | Reuse an owned benchmark cluster and mark the result non-comparable |
-| `BENCH_CLUSTER_NAME` | none | Existing benchmark cluster name required with `REUSE_CLUSTER=true` |
-| `BENCH_DOCKER_NETWORK` | none | Existing benchmark Docker network required with `REUSE_CLUSTER=true` |
-| `BENCH_CLUSTER_TOKEN` | none | Ownership token required with `REUSE_CLUSTER=true` |
-| `BUILD_ONLY` | `false` | Verify the upstream checkout and build its programs without using a cluster |
-| `HAPROXY_VERSION` | `3.4` from `versions.env` | HAProxy version for the fresh HAPTIC environment |
-
-`BENCH_GATEWAY_API_CHANNEL` defaults to `experimental`; use `standard` only when intentionally measuring a different Gateway API schema profile. The Make target passes no positional arguments to the runner.
-
-By default, the runner creates a unique `haptic-gwbench-*` Kind cluster and Docker network with an ownership token. Its kubeconfig is `/tmp/<cluster-name>.kubeconfig`, and its static workload container joins only that network. Cleanup verifies the ownership token before deleting the cluster or network. The controlled default profile rejects every other active Kind cluster, including `haptic-e2e` and `haptic-dev`, but never owns, reuses, or changes them. Set `BENCH_ALLOW_COSCHEDULED_CLUSTERS=true` only for smoke or debug runs; metadata marks their CPU, memory, and latency results non-comparable.
-
-Set `BENCH_KEEP_CLUSTER=true` to retain a newly created benchmark cluster and its mode `0600` kubeconfig for inspection. Reuse requires `REUSE_CLUSTER=true` plus the exact cluster name, Docker network, and ownership token recorded by that run. Before replacing the retained kubeconfig, the runner generates a temporary one and uses it to verify the network, in-cluster ownership record, and HAPTIC release. Reused runs are recorded as non-comparable because they inherit cluster state.
-
-The default clean-tree check stops uncommitted source from being mistaken for the recorded HAPTIC commit. `BENCH_ALLOW_DIRTY=true` marks the run non-comparable and retains a binary patch of tracked changes. For `untracked` files, it retains only the path list and content hashes, not their contents. Don't publish the artifacts when the tracked patch contains credentials or other private data.
-
-`metadata.json` reports both `published_workload_inputs_match` and `controlled_default_profile`. The first means the pinned upstream commit, Gateway API bundle, Gateway target, and selected workload sizes match this wrapper's public-snapshot inputs. The second also requires a clean fresh cluster, no co-scheduling, product-default HAProxy and HAPTIC timings, and no reuse. Neither field claims that the local topology or score reproduces the joined public run.
-
-The published Part 2 results are a reference, not a hardware-normalized score. They came from a single-node Kind cluster on a 16-core `AMD Ryzen 9 9950X` CPU with 96 GB RAM. Your CPU, memory, container runtime, co-scheduled workloads, Kubernetes version, isolated topology, and raw-log analysis affect absolute values. Retain the provenance artifacts and treat the published controller numbers as a ballpark.
-
-Part 2's `Agentgateway` result uses `kgateway` as its control plane, so it's the relevant result in that report when looking for a HAPTIC control-plane gap. The [Part 1 result for `kgateway` v2.0.1](https://github.com/howardjohn/gateway-api-bench/blob/95b8373e4e2994c4c8c4b3119340cfa98af645fe/README.md) came from an older benchmark commit and isn't directly comparable with the default Part 2 profile.
-
-## Measured startup, scale, and churn
-
-These measurements use candidate commit `d11b94d1b` dated 2026-09-20, Kubernetes
-1.33.0, Gateway API 1.6.2, and HAProxy 3.4.4 on a 16-thread `AMD Ryzen 7 5700X3D` with
-31 GiB RAM. Each test used a fresh Kind cluster. Another Kind cluster shared the
-host, so these results establish observed behavior on this machine, without a
-normalized comparison to other implementations or earlier runs.
-
-The [measurement record](performance-results/2026-09-20-candidate.json) retains
-source, binary, and image digests, workload settings, resource summaries, and
-collection errors. It describes a development candidate, not a released build.
-
-### Scale and cold loading
-
-`TestScale` created 800 Ingresses, 20 Gateways, and 20 HTTPRoutes across
-20 namespaces. Both controllers had a 4-CPU limit, a 2 GiB memory limit, and
-`GOMEMLIMIT=966367641` (922 MiB). Their requests were 100m CPU and 128 MiB memory;
-the test fixture's memory request differs from the chart default.
-
-| Measurement | Result |
-| --- | ---: |
-| Seed to complete convergence | 53.98 s |
-| Single-change convergence, median / p95 of five samples | 4.12 s / 4.17 s |
-| HAProxy reloads during the scale measurement | 4 |
-| Cold controller rollout with all routing objects retained | 82 s |
-| Largest sampled controller working set, including cold loading | 957 MiB |
-| Largest controller cgroup charged-memory peak | 1,008 MiB |
-| Container restarts | 0 |
-
-The unchanged test budgets were 600 seconds for seeding, 15 seconds for change
-p95, and 1 GiB for the test's working-set snapshot. All passed. The legacy
-`controller_rss_bytes` output names the working set; the separate
-`controller_memory_rss_bytes` field measures resident memory.
-
-After the cold rollout, a 120-second observation kept every routing object's UID
-and generation unchanged. `haptic doctor` confirmed healthy controllers and
-matching deployment evidence on both agents.
-
-| Controller | Working set, mean / maximum | Resident memory, mean / maximum |
-| --- | ---: | ---: |
-| Leader | 804 / 826 MiB | 725 / 766 MiB |
-| Follower | 909 / 957 MiB | 764 / 845 MiB |
-
-These are sample means and maxima, not guaranteed bounds. The observer retained
-three startup collection errors: one completed hook's cgroup disappeared and two
-controller metrics endpoints weren't addressable yet. The post-rollout window
-had no collection errors. The cgroup peak includes cache and differs from resident memory.
-The tested 2 GiB limit provided headroom; this run doesn't establish that a
-1 GiB container limit is safe for the same workload.
-
-Across 845 admission requests during the run, the combined webhook mean was
-434 ms and the p95 histogram bucket upper bound was 1 second. This combines
-resource types and both controllers; it isn't a per-kind latency guarantee.
-
-### Parallel Gateway churn
-
-`TestGatewayChurn` ran six workers for five minutes and completed 356
-create/converge/delete/prune cycles. All 152 allocator observations succeeded.
-Three surviving Gateways kept their marker Services unchanged throughout the
-churn; their routing, final allocator state, and idle quiescence checks passed.
-
-This run used the end-to-end fixture's 4-CPU and 1 GiB controller limits. No
-container restarted. The largest sampled controller working set was 490 MiB;
-the largest charged-memory peak was 571 MiB. Across 718 admission requests, the
-combined mean was 99 ms and the p95 histogram bucket upper bound was 250 ms.
-These resource observations include startup and cleanup, not just the five
-minutes of churn.
-
-Run the regression workloads with the repository's
-[end-to-end test instructions](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/tests/e2e/CLAUDE.md).
-Select `TestScale` with `HAPTIC_E2E_SCALE=1`, or `TestGatewayChurn` with
-`HAPTIC_E2E_CHURN=1`. Keep their default workload sizes and budgets when comparing
-regression results.
+# Resource sizing and performance
+
+For a default installation, reserve **about 1 CPU core and 5.4 GiB of memory**
+across four pods: two controllers and two HAProxy pods, including their sidecars.
+These are Kubernetes resource requests, not constant CPU or memory consumption.
+The containers can use spare CPU when busy; their combined memory limits are
+**7.25 GiB**.
 
 ## Controller resource sizing
 
-### Defaults and sizing {#recommended-resources}
+### Starting budgets {#recommended-resources}
 
-Each controller requests `100m` CPU and `1Gi` memory, with a `1Gi` memory limit
-and no CPU limit. The default two controllers reserve `2Gi` of memory in total,
-before validator sidecars, HAProxy pods, and optional services.
+Size each controller for the routes and backend resources it watches. These
+are rough planning estimates for the bundled templates, with one or a few
+backends per route:
 
-`controller.resources` sets each controller's budget. Admission runs in the same
-process. HAProxy and the agent use `haproxy.resources` and `haproxy.agent.resources` (see [HAProxy Deployment](../haproxy-deployment.md)).
+| Routing workload | CPU request per controller | Memory request and limit per controller |
+| --- | ---: | ---: |
+| Small installation, up to roughly 100 routes | `100m` | `1Gi` (chart default) |
+| Hundreds of routes, approaching 1,000 | `500m` | `2Gi` |
+| Several thousand routes, around 5,000 | `1` | `4Gi` |
+
+These are starting estimates, not capacity limits.
+Many endpoints per Service, large certificates, custom templates, and frequent
+configuration changes can need more resources at the same route count.
+
+For an installation with hundreds of routes, start with these Helm values:
 
 ```yaml
 controller:
   resources:
     requests:
-      cpu: 100m
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      memory: 2Gi
+```
+
+Both controller replicas need this budget. With the other chart defaults
+unchanged, this example reserves about **2 CPU cores and 7.4 GiB** across the
+installation.
+
+Set memory through the container's Kubernetes requests and limits. Leave CPU
+limits unset unless your cluster requires them, so startup and bursts of
+configuration changes can use spare node CPU.
+
+Keep the default `1Gi` controller memory budget even for a small route set:
+startup also compiles templates and validates the configuration. Setting memory
+requests equal to limits reserves that memory when Kubernetes schedules the pod.
+
+## What the default installation reserves
+
+These values include the default Gateway API, request logging, and metrics
+features. CPU uses Kubernetes units (`1000m` = one core).
+
+| Container | Copies | CPU request each | Memory request each | Memory limit each |
+| --- | ---: | ---: | ---: | ---: |
+| Controller | 2 | `100m` | `1Gi` | `1Gi` |
+| Configuration validator | 2 | `25m` | `64Mi` | `128Mi` |
+| HAProxy | 2 | `250m` | `1Gi` | `1Gi` |
+| HAPTIC agent | 2 | `50m` | `256Mi` | `256Mi` |
+| Vector log and metrics collector | 2 | `50m` | `256Mi` | `1Gi` |
+| SPOA plugin hub | 2 | `50m` | `128Mi` | `256Mi` |
+| **Total** | **4 pods** | **`1050m`** | **`5.375Gi`** | **`7.25Gi`** |
+
+Allow room for rolling upgrades. One extra controller pod and one extra HAProxy
+pod add about **2.7 GiB of memory requests** with these defaults. The temporary
+preflight Job requests another `512Mi`, with a `1Gi` limit. A cluster filled to
+its steady-state reservation may have no room to complete an upgrade.
+
+Optional services add to the total:
+
+| Feature | Additional default reservation |
+| --- | --- |
+| Shared response cache | `100m` CPU and `384Mi` memory per Varnish pod |
+| Shared rate-limit store | Three Valkey/Sentinel pods, together `225m` CPU and `576Mi` memory |
+| Custom sidecars | The requests you configure for those containers |
+
+See [response caching](response-cache.md) and
+[shared rate limiting](spoa-hub.md#managed-shared-rate-limit-store) before enabling
+those services. Their memory use depends on cache size and active keys.
+
+## Size HAProxy for traffic {#haproxy-optimization}
+
+Route count chiefly affects the controller. Requests per second, concurrent
+connections, TLS handshakes, compression, and WAF inspection determine traffic
+capacity. Start with the chart's **two HAProxy replicas**, each requesting
+`250m` CPU and `1Gi` memory, plus the sidecars listed above.
+
+For a busy edge service, reserve more CPU for HAProxy and add replicas as traffic
+grows. For example:
+
+```yaml
+haproxy:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 1
       memory: 1Gi
     limits:
       memory: 1Gi
 ```
 
-Measure startup validation, cold loading of your complete watched-resource set,
-and steady operation under admission traffic before changing these budgets.
-Every controller runs the bundled validation tests on
-configuration load. A small routing workload can still require substantial
-startup memory. Include the validator sidecars when measuring pod totals.
+There is no measured requests-per-second guarantee for these budgets. A short
+plaintext request and a WAF-inspected upload have different costs. Normal
+production metrics show when to increase capacity; a custom benchmark isn't an
+installation prerequisite.
 
-Keep headroom above the largest observed working set and check for out-of-memory
-kills and CPU throttling. A sampled maximum can miss a short peak; cgroup
-`memory.peak` includes charged cache and differs from resident memory. Neither
-figure alone establishes a safe limit for a different configuration.
+### Scaling strategies
 
-For thousands of routing objects, measure the watched-resource cache, render
-graph, and startup tests. Narrow watches to relevant resources and use on-demand
-storage for large, infrequently read objects; see
-[Resource watching optimization](#resource-watching-optimization). Check
-`haproxy.shmStats.maxObjects` if you enable shared-memory stats.
+Increase `haproxy.replicaCount` for more traffic capacity, or configure
+[HAProxy autoscaling](../haproxy-deployment.md#replicas-and-autoscaling).
+Keep at least two replicas for availability. Include the agent, Vector, and SPOA
+hub in the budget for every additional HAProxy pod.
 
-### Container awareness (`GOMAXPROCS` and `GOMEMLIMIT`)
+Increase `controller.resources` when configuration changes become slow or a
+controller runs out of memory. Adding controller replicas provides failover and
+more admission capacity; it doesn't divide the rendering workload between them.
+See [high availability](high-availability.md).
 
-The controller automatically detects and respects the limits you set above — no tuning env vars are needed:
+### Response compression
 
-- **CPU limits (GOMAXPROCS):** native cgroup-aware GOMAXPROCS (added upstream in Go 1.25; the controller currently builds with Go 1.27). The runtime adjusts GOMAXPROCS using the CPU quota and available cores, with a minimum of two unless fewer cores are available. This reduces scheduling overhead but doesn't prevent quota throttling.
-- **Memory limits (GOMEMLIMIT):** the controller uses the `automemlimit` library to set GOMEMLIMIT to 90% of the container memory limit (10% headroom for non-heap memory), with both cgroups v1 and v2. GOMEMLIMIT is a soft garbage-collection target; it doesn't prevent all out-of-memory kills.
+Response compression is off by default. It saves bandwidth and costs HAProxy
+CPU. Set `haproxy-haptic.org/compress-enable: "true"` on an Ingress to enable it
+for eligible responses.
+See [compression settings](../libraries/haptic-annotations.md#compression)
+for content types, CPU limits, and response-safety considerations.
 
-At startup the controller logs the detected limits, for example:
+### Password hash performance
 
-```
-INFO HAPTIC starting ... gomaxprocs=8 gomemlimit="966367641 bytes (921.60 MiB)"
-```
+Large basic-auth user lists and expensive password hashes increase
+authentication, configuration validation, and reload costs. Keep the password
+protection your security policy requires. For large user sets, consider
+[external authentication](spoa-hub.md#what-each-plugin-does) instead of weakening
+hashes to fit a CPU budget.
 
-`gomemlimit` is about 90% of the 1Gi memory limit (921.6 MiB). Without a CPU limit, `gomaxprocs` follows the CPU cores available to the process. Check the startup log for the effective values.
+## When to adjust the budget
 
-The `AUTOMEMLIMIT` environment variable adjusts the memory limit ratio (default: 0.9; valid range `0.0 < AUTOMEMLIMIT <= 1.0`). Set `AUTOMEMLIMIT=off` to skip the automatic detection entirely; setting `GOMEMLIMIT` yourself also takes precedence, and the controller then leaves it alone. Set it via the chart's `controller.extraEnv` list, which is injected into the controller container:
+Enable the [bundled monitoring](monitoring.md) and watch these symptoms during
+ordinary operation:
 
-```yaml
-controller:
-  extraEnv:
-    - name: AUTOMEMLIMIT
-      value: "0.8"   # Set GOMEMLIMIT to 80% of container memory limit
-```
+| Symptom | First action |
+| --- | --- |
+| Controller is `OOMKilled`, or memory repeatedly approaches its limit | Increase `controller.resources.requests.memory` and `limits.memory` together. |
+| Configuration changes lag while controller CPU stays busy | Increase its CPU request; check CPU throttling if you set a limit. |
+| Traffic latency rises while HAProxy CPU stays busy | Increase HAProxy's CPU request or replica count. |
+| Vector is `OOMKilled` or drops access-log records | Increase `vector.resources`; reduce unused metric labels as described in [monitoring](monitoring.md#controlling-cardinality). |
+| WAF processing is saturated | Increase `spoaHub.resources`; inspect hub timeout and queue metrics before raising timeouts. |
 
-### Memory considerations
+CPU requests reserve scheduling capacity; they don't cap usage. Memory limits
+cap each container, so available memory elsewhere in the pod doesn't prevent an
+individual container from being killed. Include startup and rolling upgrades
+when checking memory headroom.
 
-Memory usage scales with:
+### Resource watching optimization
 
-- Number of watched resources (Ingresses, Services, Endpoints)
-- Size of template library
-- Event buffer size (default 1000 events)
-- Number of HAProxy pods being managed
+The bundled chart already fetches Secrets on demand and ignores common noisy
+metadata. For custom watches, use on-demand storage for large objects you read
+occasionally and indexes for lookups. Preserve every field your templates need.
+See [watching resources](../watching-resources.md) for settings and examples.
 
-Monitor memory usage:
+### Template debugging
 
-```promql
-container_memory_working_set_bytes{container="controller"}
-```
-
-### CPU considerations
-
-CPU spikes occur during:
-
-- Template rendering (complex templates with many resources)
-- Initial resource synchronization (startup)
-- Burst of resource changes (rolling updates)
-
-Monitor CPU usage:
-
-```promql
-rate(container_cpu_usage_seconds_total{container="controller"}[5m])
-```
+If a custom template makes configuration changes slow, use
+`haptic validate --file config.yaml --trace-templates` to identify expensive
+snippets. This needs your complete configuration and the
+[validation tools](validate-before-deploy.md). For a running installation,
+start with [fleet diagnostics](diagnostics.md).
 
 ## Reconciliation tuning
 
-### Debounce interval (per-resource override, `100ms` default)
-
-The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 100-millisecond refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 100 ms are batched.
-
-Each watched resource can override the window via `spec.watchedResources.<name>.debounceInterval`:
-
-```yaml
-watchedResources:
-  httproutes:
-    apiVersion: gateway.networking.k8s.io/v1
-    resources: httproutes
-    debounceInterval: "1s"     # batch harder where route churn is noisy
-  endpointslices:
-    apiVersion: discovery.k8s.io/v1
-    resources: endpointslices
-    debounceInterval: "0"      # fire immediately — no watcher delay for pod-IP changes (chart default)
-```
-
-Empty or invalid durations use the `100ms` default; `"0"` disables watcher
-debouncing. The Reconciler adds no timer, but its coordinator coalesces triggers
-that arrive during a render. Reload pacing is separate; see
-[Deployment pacing](#deployment-pacing).
+Keep the chart's timing defaults unless configuration delivery is missing your
+latency target. Most watches batch updates within `100ms`; the bundled
+EndpointSlice watch has no debounce delay so backend address changes arrive
+promptly. A render already in progress can still delay a subsequent change.
 
 ### Deployment pacing
 
-CRD fields on `spec.dataplane` bound how often each pod reloads and how long the controller waits for it:
-
-| Field | Default | Purpose |
-|-------|---------|---------|
-| `dataplane.minDeploymentInterval` | `2s` (Helm chart ships `5s`) | Shortest interval between two reloads of one pod. A reload inside the window is scheduled, never dropped |
-| `dataplane.driftPreventionInterval` | `60s` | How often each pod re-hashes its tree and the controller re-applies on a disagreement; corrects external drift |
-| `dataplane.configPublishInterval` | `10s` | Throttle for republishing the rendered config as the `HAProxyCfg` observability CRD; not on the deployment hot path |
-| `dataplane.reloadVerificationTimeout` | `10s` (Helm chart ships `60s`, the agent's ceiling) | How long the agent waits for HAProxy to confirm a graceful reload before restoring the last known good file set |
-| `dataplane.syncTimeout` | 2m | How long the controller waits for one pod to answer an apply |
+The chart spaces reloads of an individual HAProxy pod at least **5 seconds**
+apart. Runtime updates don't wait for this reload interval. Raising it reduces
+reload frequency but delays changes that require a reload.
 
 ```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: haptic-config
-spec:
-  dataplane:
-    minDeploymentInterval: "2s"
-    driftPreventionInterval: "60s"
+controller:
+  config:
+    dataplane:
+      minDeploymentInterval: 5s
 ```
+
+See [supported runtime updates](../supported-configuration.md) for which changes
+need a reload and the [dataplane reference](../crd-reference.md#dataplane)
+for other timing controls.
 
 ### Graceful reload drain bound
 
-HAProxy normally lets an old worker drain established connections after a
-reload. HAPTIC bounds that drain with `hard-stop-after 10s` so a persistent
-connection or master-socket subscriber can't retain stale worker generations
-indefinitely. The chart's bootstrap worker uses the same bound when the
-controller installs the first rendered configuration.
-
-Tune both bootstrap and rendered configurations with one Helm value:
+After a reload, HAProxy lets the old worker finish existing connections for up
+to **10 seconds** by default, then closes those still open. Long-lived streams
+need a longer drain window if they must survive reloads:
 
 ```yaml
 controller:
@@ -519,496 +205,6 @@ controller:
         hardStopAfter: 30s
 ```
 
-Set `hardStopAfter: ""` to disable the bound. This isn't recommended for
-production because a connection that never drains can otherwise retain an old
-worker until its pod restarts. If you replace `haproxy.initialConfig` entirely,
-include your own `hard-stop-after` directive in that custom bootstrap config.
-
-Resource deletions trigger reconciliation through the same watch and debounce path as updates. Removing a dynamic backend can use the Runtime API on HAProxy 3.4; removing a structural backend requires a paced reload. Deleting a route that shares its backend may only change maps. See [Reload-free route changes](#reload-free-route-changes).
-
-**Tuning guidelines:**
-
-- Raise `minDeploymentInterval` in very high-churn environments to absorb more updates per reload (trades latency for fewer reloads), up to the agent's 60-second ceiling. It doesn't pace reload-free applies, which never fork the process.
-- Keep `driftPreventionInterval` at or below 2 minutes so that a misbehaving external client can't hold HAProxy in a drifted state for long.
-- Lower `reloadVerificationTimeout` to fail a stuck reload sooner and restore the last known good file set earlier. The agent rejects values above 60 seconds; the Helm chart already uses that ceiling.
-
-### Reconciliation metrics
-
-Monitor reconciliation performance:
-
-```promql
-# Average reconciliation duration
-rate(haptic_reconciliation_duration_seconds_sum[5m]) /
-rate(haptic_reconciliation_duration_seconds_count[5m])
-
-# Reconciliation rate
-rate(haptic_reconciliation_total[5m])
-
-# P95 reconciliation latency
-histogram_quantile(0.95, rate(haptic_reconciliation_duration_seconds_bucket[5m]))
-```
-
-Set latency objectives from measurements at your expected object count and
-change rate. Reconciliation duration excludes watcher delay and deployment
-pacing, so also measure the time until changed routes serve traffic. Investigate
-increases in `haptic_reconciliation_errors_total`; a short reconciliation time
-doesn't establish successful deployment.
-
-## Template optimization
-
-### Efficient template patterns
-
-**Use early filtering:**
-
-```go
-{#- GOOD: Filter early, process less data -#}
-{%- var matching_ingresses = []any{} %}
-{%- for _, ingress := range resources.ingresses.List() %}
-  {%- if ingress.spec.ingressClassName == "haptic" %}
-    {%- matching_ingresses = append(matching_ingresses, ingress) %}
-  {%- end %}
-{%- end %}
-{%- for _, ingress := range matching_ingresses %}
-  ...
-{%- end %}
-
-{#- ALTERNATIVE: Process with inline filtering -#}
-{%- for _, ingress := range resources.ingresses.List() %}
-  {%- if ingress.spec.ingressClassName == "haptic" %}
-    ...
-  {%- end %}
-{%- end %}
-```
-
-**Use caching for expensive operations:**
-
-The template engine exposes a thread-safe `shared` cache via `ComputeIfAbsent(key, factory)` / `Get(key)`. `ComputeIfAbsent` guarantees the factory runs exactly once per render even across concurrent template sections:
-
-```go
-{%- var _, _ = shared.ComputeIfAbsent("sorted_routes", func() any {
-  var sorted = []any{}
-  for _, route := range resources.httproutes.List() {
-    sorted = append(sorted, route)
-  }
-  return sorted
-}) -%}
-{%- var analysis_routes = shared.Get("sorted_routes") %}
-```
-
-There is no `Set` method on the shared cache — this is deliberate and prevents racy check-then-act patterns. Use the `shared.ComputeIfAbsent` / `shared.Get` pair shown above for compute-once and read-only access respectively.
-
-**Avoid nested loops when possible:**
-
-```go
-{#- AVOID: O(n*m) complexity -#}
-{%- for _, ingress := range ingresses %}
-  {%- for _, service := range services %}
-    {%- if ingress.spec.defaultBackend.service.name == service.metadata.name %}
-      ...
-    {%- end %}
-  {%- end %}
-{%- end %}
-
-{#- BETTER: Use indexing or filtering -#}
-{%- var service_map = map[string]any{} %}
-{%- for _, service := range services %}
-  {%- service_map[service.metadata.name] = service %}
-{%- end %}
-{%- for _, ingress := range ingresses %}
-  {%- var service = service_map[ingress.spec.defaultBackend.service.name] %}
-  ...
-{%- end %}
-```
-
-### Template debugging
-
-Profile template rendering with the `validate` subcommand's tracing flags (the trace and include profile print to stdout; log lines go to stderr):
-
-```bash
-# Top-level render order with per-template timing
-./bin/haptic validate -f config.yaml --trace-templates
-
-# Full call tree including nested render/render_glob
-./bin/haptic validate -f config.yaml --trace-templates --profile-includes
-
-# Combine with --verbose and --dump-rendered for end-to-end diagnosis
-./bin/haptic validate -f config.yaml --verbose --dump-rendered --trace-templates
-```
-
-### Measuring render time (`benchmark`)
-
-`--trace-templates` tells you where a single render spends its time. The `benchmark` subcommand tells you whether a change made rendering faster or slower, by rendering the same validation test repeatedly and timing each pass. It separates template *compilation* from *rendering*, so a cold first render doesn't hide a warm-path regression:
-
-```bash
-# Every validation test in the config, 2 iterations each (the default)
-./bin/haptic benchmark -f config.yaml
-
-# One test, more iterations for a tighter median
-./bin/haptic benchmark -f config.yaml --test benchmark-ingress-100 --iterations 10
-
-# Rank the 20 slowest template includes
-./bin/haptic benchmark -f config.yaml --profile-includes
-```
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `-f`, `--file` | — (required) | `HAProxyTemplateConfig` YAML to benchmark |
-| `--test` | all tests | Validation test name to benchmark; repeatable |
-| `--iterations` | `2` | Render passes per test |
-| `--profile-includes` | `false` | Show include timing statistics (top 20 slowest) |
-| `--schema-dir` | `$HAPTIC_SCHEMA_DIR` | Schemas for typed resource access. Without it, typed access falls back to untyped `resources["name"].List()`, which benchmarks a different code path than production |
-
-Render the chart first so you benchmark what the controller actually assembles — see [Validate before deploying](./validate-before-deploy.md).
-
-## HAProxy optimization
-
-### Configuration parameters
-
-Key HAProxy parameters for performance. Surface them as `extraContext` values in your HAProxyTemplateConfig so they can be tuned without editing templates:
-
-```yaml
-# HAProxyTemplateConfig
-spec:
-  templatingSettings:
-    extraContext:
-      maxconn: 2000
-      nbthread: 4
-      bufsize: 16384
-```
-
-Then reference them in your template (or override a built-in `global-settings-*` snippet):
-
-```go
-global
-    maxconn {{ fallback(maxconn, 2000) }}
-    nbthread {{ fallback(nbthread, 4) }}
-    tune.bufsize {{ fallback(bufsize, 16384) }}
-
-defaults
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-    timeout http-request 10s
-    timeout queue 60s
-```
-
-### Connection limits
-
-Calculate `maxconn` based on expected load:
-
-```
-maxconn = (expected_concurrent_connections * safety_factor) / num_haproxy_pods
-```
-
-Example:
-
-- Expected: 10,000 concurrent connections
-- Safety factor: 1.5
-- HAProxy pods: 3
-- `maxconn` = (10,000 * 1.5) / 3 = 5,000
-
-### Thread configuration
-
-The chart sizes `nbthread` for you — you rarely set it by hand:
-
-- **No CPU limit (default).** The `nbthread` directive is omitted and HAProxy
-  auto-detects all node cores from its CPU affinity. On a static on-prem node
-  this uses every core without inflating CPU requests (which only fence off CPU
-  from other pods rather than granting more cores).
-- **CPU limit set.** The chart renders `nbthread = ceil(limits.cpu)`, matching
-  the thread count to the CPU quota. The quota can still throttle busy threads. In the cloud, where the node is
-  sized to fit the pod, set a limit to pin threads to that size.
-
-```yaml
-# Cap HAProxy to 4 threads (and 4 cores of CPU quota):
-haproxy:
-  resources:
-    limits:
-      cpu: 4        # chart renders `nbthread 4`
-```
-
-Set `haproxy.nbthread` explicitly only to override both branches (a positive
-int pins the value; `0` force-omits the directive).
-
-### Buffer sizing
-
-Increase buffers for large headers or payloads:
-
-```go
-global
-    tune.bufsize 32768        # 32KB for large headers
-    tune.http.maxhdr 128      # Allow more headers
-```
-
-### Response compression
-
-Enable response compression on selected Ingresses with `haproxy-haptic.org/compress-enable: "true"`. HAProxy uses `gzip` by default and compresses only matching content types that the backend left uncompressed. See [compression settings and response-safety considerations](../libraries/haptic-annotations.md#compression) before enabling it.
-
-Compression costs CPU on the HAProxy pods. Two global limits bound that cost, both reachable through the `haproxy-haptic.org/config-global` annotation:
-
-```yaml
-metadata:
-  annotations:
-    haproxy-haptic.org/config-global: |
-      maxcompcpuusage 80
-      tune.comp.maxlevel 1
-```
-
-`maxcompcpuusage` stops compressing new sessions once compression exceeds that share of process CPU, so a traffic spike degrades to uncompressed responses instead of slowing every request. `tune.comp.maxlevel` is the compression level each session starts at; HAProxy's default of `1` is the cheapest and is what the chart runs with.
-
-To measure the effect before changing anything, watch `haproxy_backend_http_comp_bytes_in_total` against `haproxy_backend_http_comp_bytes_out_total` — the ratio is the bandwidth you're actually saving, per backend.
-
-### Password hash performance
-
-HAProxy checks password hashes while parsing `userlist` entries. Expensive hashes
-therefore affect `haproxy -c`, admission latency, reload time, and authentication
-requests. Cost depends on the algorithm, work factor, user count, and CPU; measure
-the complete configuration with the HAProxy binary you deploy.
-
-For example, if one hash check takes 85 ms on your machine, 200 occurrences add
-about 17 seconds to a parse. This is a sizing example, not a portable benchmark.
-Avoid duplicate userlist entries. For large user sets, consider external
-authentication rather than reducing password protection to fit a validation
-budget.
-
-[`htpasswd`](https://httpd.apache.org/docs/2.4/programs/htpasswd.html) uses `-B` for
-bcrypt, `-2` for SHA-256 crypt, and `-5` for SHA-512 crypt. `-C` sets bcrypt's cost
-factor; `-r` sets SHA-2 rounds. Its default Apache MD5 format (`$apr1$`) isn't
-supported by HAProxy's system crypt implementation. Choose the algorithm and
-work factor to meet your authentication policy, then measure the resulting cost.
-
-## Scaling strategies
-
-### Horizontal scaling
-
-Scale HAProxy pods for increased traffic:
-
-```bash
-kubectl scale deployment haptic-haproxy --replicas=5 -n haptic
-```
-
-The controller automatically discovers new pods and deploys configuration.
-
-### Controller scaling (HA mode)
-
-Running multiple controller replicas adds failover and webhook capacity, not render/deploy throughput — only the leader deploys. See [High Availability](./high-availability.md) for configuration and sizing.
-
-### Resource watching optimization
-
-Reduce watched resources to minimize controller load:
-
-```yaml
-# Pin a watch to a single namespace (fieldSelector is a client-side
-# JSONPath equality filter — see Watching Resources)
-spec:
-  watchedResources:
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
-      fieldSelector: "metadata.namespace=production"
-
-# Or narrow by label selector on the resources themselves
-spec:
-  watchedResources:
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
-      labelSelector: "managed-by=haptic"
-```
-
-`labelSelector` is a comma-separated equality-only string (`k=v[,k=v]`) — the `matchLabels`/`matchExpressions` object form and set-based syntax (`in`, `notin`, `!`) aren't supported. For label-based namespace filtering, fall back to per-namespace `Role`/`RoleBinding`s and watch each namespace explicitly, or filter inside the template against a watched `namespaces` resource.
-
-## Deployment performance
-
-### Deployment latency
-
-Monitor deployment time:
-
-```promql
-# Average deployment duration
-rate(haptic_deployment_duration_seconds_sum[5m]) /
-rate(haptic_deployment_duration_seconds_count[5m])
-
-# P95 deployment latency
-histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
-```
-
-**Target metrics:**
-
-- Average deployment: <1 s per HAProxy pod
-- P95 deployment: <3 s
-
-### Reload-free route changes
-
-Adding or removing a route can update the running HAProxy worker over the runtime API instead of forking a new process, so the change takes effect without dropping in-flight connections and without a reload. Whether a given route qualifies depends on the HAProxy version and the route's backend:
-
-| HAProxy version | Plain route (empty backend body, map-driven logic) | Route whose backend carries a filter |
-|---|---|---|
-| 3.4 | Add and remove are reload-free — the backend is created and published, or drained and deleted, over the runtime API | Reloads on add and remove |
-| 3.0-3.3 | Reloads on add and remove; the backend's servers are still added and removed at runtime | Reloads on add and remove |
-
-A plain backend has no custom body directives. Shared settings live in a named
-`defaults` profile; adding the first backend with a new profile requires a
-reload, while later backends can reuse it.
-
-Map-based header values, redirects, timeouts, and routing changes can run at
-runtime when their processing rules already exist. Introducing a new rule,
-header name, userlist, or raw configuration directive can require a reload.
-An IPv6 allowlist or a realm that needs escaping keeps `satisfy: any` in the
-backend and requires a reload. Server additions also depend on the balance
-algorithm and server keywords.
-See [Reload-free routing](../libraries/reload-free.md) for the complete
-conditions.
-
-Watch the fleet's reload rate to confirm route churn isn't reloading:
-
-```promql
-# Reloads across the fleet — flat while plain routes are added and removed on 3.4
-rate(haptic_haproxy_reloads_total[5m])
-```
-
-The `tests/e2e` reload-free suites (`gateway_reloadfree_test.go`, `ingress_reloadfree_test.go`) assert a zero reload delta across route add/remove cycles on 3.4, and `TestScale` records `haproxy_reloads_total_delta` over its single-change churn as a trend. For latency at scale, run [`make bench-gateway-api`](#gateway-api-implementation-benchmark) — its `routechange` scenario measures availability while a route is repeatedly changed.
-
-### Parallel Deployment
-
-The controller deploys to multiple HAProxy pods in parallel. If deployment is slow:
-
-1. Check apply timings in the agent logs and deployment summaries; `haptic_deploy_apply_total` counts applies, not latency
-2. Verify network connectivity to HAProxy pods
-3. Consider reducing config complexity
-
-## Event processing
-
-The controller's in-process event bus uses per-subscriber buffers sized at construction time (see `pkg/events/bus.go`); there is no CRD field to tune them. Monitor the event subsystem via the standard metrics:
-
-```promql
-# Per-event-type publish rate
-rate(haptic_events_published_total[5m])
-
-# Dropped events — subscriber channel was full (should be 0)
-rate(haptic_events_dropped_total[5m])
-
-# Critical drops — dropped event was flagged critical (should always be 0)
-rate(haptic_events_dropped_critical_total[5m])
-
-# Drops per subscriber — pinpoint which component can't keep up
-rate(haptic_events_dropped_by_subscriber_total[5m])
-```
-
-A non-zero `haptic_events_dropped_total` rate means a critical subscriber was too slow to keep up. The controller restarts that iteration from authoritative state instead of continuing after lost coordination work. Use the per-subscriber metric to identify the component causing repeated restarts.
-
-## Profiling
-
-??? note "Go profiling with pprof"
-
-    Access pprof endpoints for profiling:
-
-    ```bash
-    # CPU profile (30 seconds)
-    curl http://localhost:8080/debug/pprof/profile?seconds=30 > cpu.pprof
-    go tool pprof -http=:9999 cpu.pprof
-
-    # Memory profile
-    curl http://localhost:8080/debug/pprof/heap > heap.pprof
-    go tool pprof -http=:9999 heap.pprof
-
-    # Goroutine dump
-    curl http://localhost:8080/debug/pprof/goroutine?debug=1
-    ```
-
-??? note "Finding what retains memory (`/debug/heapdump`)"
-
-    `pprof` reports where memory was allocated, not what still holds it. When a
-    heap profile shows a large block whose allocation site is not the problem —
-    memory that survives a forced GC and never comes back — take a heap dump
-    instead. It contains every object, the pointer edges between them, and the
-    roots, so a reader can walk the retainer chain back to whatever is holding
-    the memory.
-
-    ```bash
-    curl http://localhost:8080/debug/heapdump > heap.dump
-    ```
-
-    Read it with a heap-dump reader such as
-    [heapspurs](https://github.com/adamroach/heapspurs): `--owners` prints the
-    chain of objects keeping a given address alive, and `--anchors` names the
-    root — a global, a stack frame, or a finalizer — that the chain ends at.
-
-    The heap is collected before the dump is written. Without that the dump is
-    dominated by unreachable objects, and an unreachable object has no retainer
-    to report, so `--anchors` correctly returns nothing for most of it.
-
-    Writing the dump pauses the selected process, including its health checks.
-    Dump one replica at a time; don't poll this endpoint. Pausing the leader can
-    delay deployment or cause failover. Admission requests routed to a paused
-    controller can fail because the webhook fails closed. A concurrent dump
-    request receives `409`.
-
-    The endpoint answers on loopback only, like `/debug/pprof`, so reach it with
-    `kubectl port-forward`.
-
-    The dump is written to a temporary file first — `WriteHeapDump` forbids a pipe
-    whose reader is in the same process — and is roughly heap-sized. That file
-    lands in `$TMPDIR`. The chart mounts `/tmp` as a disk-backed `emptyDir`, which
-    counts against the pod's `ephemeral-storage` limit. The endpoint refuses with `507`
-    rather than filling the filesystem when there is not enough room; set
-    `HAPTIC_HEAPDUMP_DIR` to a mounted volume for heaps larger than that
-    allowance.
-
-    Both the estimate that drives that refusal and the completeness of the
-    written file are checked, because the Go runtime ignores write errors while
-    dumping — a filesystem that fills mid-dump would otherwise hand you a
-    truncated object graph with a `200`. A short dump is reported as `507` too.
-
-Controller images ship built with Profile-Guided Optimization (PGO), which typically yields 2-7% CPU improvement on hot paths — contributors updating the committed profile should see [Deployment — Build Optimizations](../development/design/deployment.md#build-optimizations-contributors).
-
-### Common performance issues
-
-**High memory usage:**
-
-- Check for memory leaks: growing heap over time (`/debug/pprof/heap`)
-- Switch large, infrequently accessed resources (for example, TLS Secrets) to `store: on-demand`
-- Trim noisy fields with `watchedResourcesIgnoreFields`
-- Narrow watch scope via `fieldSelector` or `labelSelector` (see [Resource Watching Optimization](#resource-watching-optimization))
-
-**High CPU usage:**
-
-- Profile to find hot spots (`/debug/pprof/profile?seconds=30`)
-- Optimize template complexity — see [Template Optimization](#template-optimization)
-- Raise `dataplane.minDeploymentInterval` (up to the agent's 60-second ceiling) to absorb more updates per push, and consider raising `spec.watchedResources.<name>.debounceInterval` for high-churn resources (for example, EndpointSlices on a large cluster) so each watcher batches more aggressively before triggering reconciliation
-
-**Slow deployments:**
-
-- Inspect the agent (`haptic agent state` inside the agent container)
-- Verify network latency to HAProxy pods
-- Reduce config size by avoiding unnecessary nested loops in templates
-
-## Performance checklist
-
-### Initial Deployment
-
-- [ ] Set appropriate resource requests/limits
-- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the `100ms` default is wrong for a specific kind (for example, slower on EndpointSlice on large clusters)
-- [ ] Set HAProxy `maxconn` based on expected load
-- [ ] Match `nbthread` to CPU allocation
-
-### Ongoing optimization
-
-- [ ] Monitor reconciliation latency
-- [ ] Monitor deployment latency
-- [ ] Watch for memory growth
-- [ ] Track event subscriber count
-
-### High-load environments
-
-- [ ] Scale HAProxy pods horizontally
-- [ ] Enable HA mode for controller
-- [ ] Limit watched namespaces
-- [ ] Use label selectors to filter resources
-- [ ] Profile and optimize templates
-
-## See also
-
-- [Monitoring Guide](./monitoring.md) - Performance metrics and alerting
-- [High Availability](./high-availability.md) - HA deployment patterns
-- [Debugging Guide](./debugging.md) - Performance troubleshooting
+Longer windows retain old workers and their memory for longer. An empty string
+disables the bound. If you replace `haproxy.initialConfig`, also set
+`hard-stop-after` in that custom bootstrap configuration.

@@ -2,8 +2,11 @@
 
 ## Overview
 
-Use validator sidecars to check auxiliary files before publication or deployment.
-Declare each validator's socket and file patterns in `spec.validators`. The
+The Helm chart configures its SPOA hub validator automatically when the hub is
+enabled. You don't need to configure a validator for the default installation.
+
+Add a custom validator when your templates produce another auxiliary format
+that HAProxy can't check. Declare its socket and file patterns in `spec.validators`. The
 controller sends matching files to it and blocks new output if validation fails.
 Admission errors include diagnostics with line numbers to help locate the problem.
 
@@ -12,6 +15,30 @@ validator checks its TOML configuration and embedded WAF directives. The
 controller sends matching files over a Unix socket and uses the returned
 diagnostic logs. Implementations follow the
 [validator wire protocol](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/development/validator-protocol.md).
+
+### Chart wiring (default)
+
+The chart's validator sidecar **auto-enables** whenever you have a SPOA hub plugin turned on. The shipped default is `controller.validators.enabled: null`, which derives the sidecar's state from the SPOA hub. Enable a plugin and the validator comes with it:
+
+```yaml
+# values.yaml
+controller:
+  validators:
+    enabled: null  # default: auto-derive from the SPOA hub sidecar
+```
+
+When on, this adds one sidecar container to the controller pod, an `emptyDir` volume mounted at `/var/run/haptic-validators/`, and a default `spec.validators` entry pointing at the sidecar's socket with appropriate file globs.
+
+Set `enabled` explicitly only to override the auto-derive:
+
+```yaml
+# values.yaml
+controller:
+  validators:
+    enabled: true   # force the sidecar on even with no SPOA hub plugins
+```
+
+For custom validator implementations or multiple sidecars, see "Custom validators" below.
 
 ## How it works
 
@@ -78,32 +105,6 @@ Two validators can claim overlapping globs:
 The `config.toml` file is sent to both validators in parallel, and their diagnostics are combined.
 
 A file that matches no validator's globs isn't validated by any sidecar; it still flows through the existing template + HAProxy syntax dry-run.
-
-### Chart wiring (default)
-
-The chart's validator sidecar **auto-enables** whenever you have a SPOA hub plugin turned on. The shipped default is `controller.validators.enabled: null`, which derives the sidecar's state from the SPOA hub. Enable a plugin and the validator comes with it:
-
-```yaml
-# values.yaml
-controller:
-  validators:
-    enabled: null  # default: auto-derive from the SPOA hub sidecar
-```
-
-When on, this adds one sidecar container to the controller pod, an `emptyDir` volume mounted at `/var/run/haptic-validators/`, and a default `spec.validators` entry pointing at the sidecar's socket with appropriate file globs.
-
-Set `enabled` explicitly only to override the auto-derive:
-
-```yaml
-# values.yaml
-controller:
-  validators:
-    enabled: true   # force the sidecar on even with no SPOA hub plugins
-                    # (useful for bench/test setups validating template fragments)
-    # enabled: false  # force the sidecar off even when a plugin is enabled
-```
-
-For custom validator implementations or multiple sidecars, see "Custom validators" below.
 
 ## Operations
 

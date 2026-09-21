@@ -22,7 +22,7 @@ Validation of the config itself and validation of watched resources take differe
 
 A fifth gate sits outside the reconcile path: the **startup load gate** runs the config's embedded `validationTests` on every fresh or upgraded controller pod and fails the iteration if they don't pass, so a bad config crash-loops the new pod rather than replacing a working one. It stamps the reason onto `status.conditions[Validated]` with reason `LoadGateFailed` before it does. Operators can run the same checks ahead of `helm upgrade` with [`haptic preflight`](../operations/validate-before-deploy.md).
 
-Failure at layer 4 never takes down traffic — the reconciler refuses to deploy invalid output while continuing to serve the last good config. The watched-resource webhooks ship `failurePolicy: Fail` (`charts/haptic/templates/validatingwebhookconfiguration.yaml`), so creates and updates of *opted-in resources* are rejected when the controller is unreachable; that's deliberate, since rendering an admission decision from an unvalidated overlay is riskier than asking the user to retry.
+A rejected update preserves the last accepted configuration. Traffic still depends on the backends in that configuration remaining available. The watched-resource webhooks ship `failurePolicy: Fail` (`charts/haptic/templates/validatingwebhookconfiguration.yaml`), so creates and updates of *opted-in resources* are rejected when the controller is unreachable; that's deliberate, since rendering an admission decision from an unvalidated overlay is riskier than asking the user to retry.
 
 ## Credentials Stay in a Secret
 
@@ -46,7 +46,12 @@ TLS certificates come from the chart's own self-signed issuance (the default), f
 
 ### Multi-controller isolation
 
-Each Helm release deploys its own `ValidatingWebhookConfiguration` named `<release>-webhook`, and each entry's `clientConfig.service` points at the controller `Service` for that release. So cross-validation between two HAPTIC instances doesn't happen by accident — the apiserver only invokes the webhooks whose `rules` match the resource being admitted, and each release's rules cite a different Service. There is **no** `objectSelector` in the chart today; if you need to scope a webhook to a label-selector subset of objects, add one in `validatingwebhookconfiguration.yaml`.
+Each Helm release has its own webhook Service. Kubernetes calls every webhook
+whose rules match the proposed resource; different Service names don't isolate
+admission. Each controller applies its configured watch selectors when building
+the proposal. Keep class ownership distinct as described in
+[multiple HAPTIC installations](../deploying-with-helm.md#running-multiple-haptic-instances-in-one-cluster).
+Don't narrow webhook coverage to work around a rejected configuration change.
 
 ## CRD versioning posture
 

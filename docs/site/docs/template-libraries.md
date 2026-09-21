@@ -66,9 +66,6 @@ Inspect the merged configuration:
 haptic config view --input --namespace haptic
 ```
 
-Separate library objects reduce the size of each custom resource. The complete
-Helm release still has a size limit; enabling libraries adds to that total.
-
 See the full library stack compose into one HAProxy config live:
 
 <div class="pg-embed" markdown data-scenario="all" data-facade="spec.templateSnippets.map-host-500-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Full library stack → HAProxy config" data-height="440">
@@ -178,12 +175,6 @@ controller:
           timeout tunnel 600000
           timeout http-request 10000
 
-      # Add custom global tuning directives
-      global-settings-500-tuning:
-        template: |
-          tune.bufsize 262144
-          no-memory-trimming
-
       # Add early frontend directives (matches frontend-extra-*)
       frontend-extra-custom-captures:
         template: |
@@ -264,7 +255,9 @@ Reserved numeric ranges used by the built-in libraries:
 | 800-899 | haptic-annotations (`haproxy-haptic.org/*`) native vocabulary |
 | 900-999 | Finalization / cleanup |
 
-The haproxytech (`haproxy.org/*`) library is the exception among the vendor annotation libraries: its snippets sit in the 100–500 band rather than a dedicated block. The haproxy-ingress (600), nginx-ingress (700), and haptic-annotations (800) ranges deliberately sort after it, so when annotations from more than one prefix target the same directive on one Ingress, the later library's snippet wins — the native `haproxy-haptic.org/*` value layers last.
+These ranges determine snippet order. They don't resolve conflicting annotations
+on one Ingress: HAPTIC rejects contradictory values from different annotation
+families. Use one annotation family per feature; see [annotations](annotations.md).
 
 To override a built-in snippet, use the **same key name**; values-file entries take precedence over library entries during merge.
 
@@ -372,9 +365,10 @@ items:
 
 </div>
 
-To use this example in a Helm release, put its `watchedResources` and
-`templateSnippets` under `controller.config` in your values file. The bundled base
-library already calls these extension points.
+This example supplies its own minimal routing configuration. Its `host.map` maps
+hostnames directly to backends; the bundled base library uses a different map
+contract. For an example that extends the bundled chart, use the
+[custom-CRD library](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd).
 
 ## Library Architecture
 

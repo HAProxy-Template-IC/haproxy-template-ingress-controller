@@ -79,6 +79,18 @@ HTTPS Gateway named `public` and a Service named `api` on port 8080 in namespace
     kubectl get httproute api -n apps -o jsonpath='{.status.parents[*].conditions}'
     ```
 
+6. Test authentication through the Gateway's HTTPS address.
+
+    DNS for `api.example.com` must point to the Gateway, and its certificate must
+    cover that hostname. In the same shell where you generated `key`, run:
+
+    ```bash
+    curl -i https://api.example.com/
+    curl -i -H "X-API-Key: $key" https://api.example.com/
+    ```
+
+    The first request returns 401. The second reaches your `api` Service.
+
 The policy and its credential Secret must share the route's namespace. Requests
 without a valid `X-API-Key` receive 401. The authenticated request forwards
 `X-Authenticated-Consumer: example-client`; a caller can't supply its own value.
@@ -119,6 +131,7 @@ clients have switched.
     ```bash
     helm upgrade haptic \
       oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      --version 0.2.0-alpha.3 \
       --namespace haptic --reuse-values \
       --set rateLimit.shared.enabled=true \
       --set rateLimit.shared.managedStore.enabled=true
@@ -237,9 +250,8 @@ traffic. Keep the previous version while any policy references it; deleting a
 referenced catalog makes those rules return 503. Roll back by changing the
 reference to `api-waf-v1`.
 
-Kubernetes rejects catalog data edits even when HAPTIC is stopped. Policy changes
-wait for the controller's admission webhook to recover. Helm's operational
-ConfigMap and Secret writes remain available during recovery.
+Kubernetes rejects edits to immutable catalog data. Create a new catalog and
+change the policy reference for each update.
 
 ## Recover an invalid policy
 

@@ -112,7 +112,7 @@ Callers must skip the offending resource's output in the warn path (`{% continue
 
 ### Other exported macros
 
-The scaffold exports six more macros, all imported the same way:
+The scaffold exports these additional macros, all imported the same way:
 
 | Macro | Signature | What it does |
 |-------|-----------|--------------|

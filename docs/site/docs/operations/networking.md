@@ -43,21 +43,23 @@ Interface (CNI) plugin.
 
 ## Production hardening
 
-For production, clear the default allow-all egress rule (only needed when templates call `http.Fetch()` against in-cluster services) and restrict Kubernetes API access to the CIDRs your apiserver actually uses:
+Restrict API-server egress to your cluster's actual API endpoints. Ask your
+cluster administrator which addresses and ports the network plugin sees: policy
+can apply before or after Service address translation. Allowing only the Service
+CIDR can block the controller from watching resources.
 
-```yaml
-controller:
-  networkPolicy:
-    egress:
-      additionalRules: []  # drop the default all-pods rule
-      kubernetesApi:
-        - cidr: 10.96.0.0/12  # Your cluster's service CIDR
-          ports:
-            - port: 443
-              protocol: TCP
+Inspect the Service and its backing endpoints:
+
+```bash
+kubectl get service kubernetes --namespace default -o wide
+kubectl get endpointslice --namespace default \
+  -l kubernetes.io/service-name=kubernetes -o wide
 ```
 
-On an IPv6 or dual-stack cluster, add the matching IPv6 CIDR — the IPv4 entry alone won't reach an apiserver dialed over IPv6:
+For example, this values file allows an API endpoint at `192.0.2.10:6443` and
+removes the default rule allowing connections to all cluster pods. Replace the
+example address with the endpoints your cluster administrator identifies before
+applying it:
 
 ```yaml
 controller:
@@ -65,40 +67,21 @@ controller:
     egress:
       additionalRules: []
       kubernetesApi:
-        - cidr: 10.96.0.0/12  # Your cluster's IPv4 service CIDR
+        - cidr: 192.0.2.10/32
           ports:
-            - port: 443
-              protocol: TCP
-        - cidr: fd00:10:96::/112  # Your cluster's IPv6 service CIDR
-          ports:
-            - port: 443
-              protocol: TCP
-```
-
-## `kind` cluster specifics
-
-The chart defaults allow API access on ports `443` and `6443` over both address families. Keep these defaults for a local kind setup, or restrict the CIDRs to the API endpoints your network plugin observes:
-
-```yaml
-controller:
-  networkPolicy:
-    enabled: true
-    egress:
-      allowDNS: true
-      kubernetesApi:
-        - cidr: 0.0.0.0/0  # Default; narrow to your API endpoints
-          ports:
-            - port: 443
-              protocol: TCP
-            - port: 6443
-              protocol: TCP
-        - cidr: "::/0"
-          ports:
-            - port: 443
-              protocol: TCP
             - port: 6443
               protocol: TCP
 ```
+
+Include every required endpoint, including IPv6 addresses on a dual-stack
+cluster. Helm replaces the entire `kubernetesApi` list when you set it. If your
+templates use `http.Fetch()`, add rules for those destinations under
+`additionalRules` before removing the default allow-all rule.
+
+<a id="kind-cluster-specifics"></a>
+
+The defaults allow API ports `443` and `6443` over IPv4 and IPv6, including local
+Kind clusters. You don't need a separate Kind-specific values file.
 
 ## Replacing the shipped policies
 
@@ -145,5 +128,5 @@ controller:
             app: prometheus
         namespaceSelector:
           matchLabels:
-            name: monitoring
+            kubernetes.io/metadata.name: monitoring
 ```

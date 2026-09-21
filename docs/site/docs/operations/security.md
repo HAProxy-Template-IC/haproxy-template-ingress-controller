@@ -138,8 +138,8 @@ including the TLS private keys carried as auxiliary files. Disabling agent TLS
 requires equivalent network encryption, such as an encrypted Container Network
 Interface (CNI) or service mesh.
 
-Agent liveness probes use the local Unix socket, so certificate expiry doesn't restart the agent. The control endpoints
-still require one. `haptic agent state` inside the agent container uses a local
+Agent liveness probes use the local Unix socket, so certificate expiry doesn't
+restart the agent. Remote control endpoints still require a valid certificate. `haptic agent state` inside the agent container uses a local
 Unix socket that exposes state without accepting deployments.
 
 NetworkPolicies are enabled by default for the controller and HAProxy pods.
@@ -255,7 +255,7 @@ Replace `<namespace>`/`<release>` with your Helm release. The SA name is the rel
 
 Before exposing a HAPTIC deployment to production traffic:
 
-- [ ] Mutual TLS for agent traffic, with certificate expiry monitored and CA rotation completed before its overlap deadline.
+- [ ] Default mutual TLS retained, with failed certificate-renewal Jobs monitored. If you supply external certificates, monitor their expiry and manage CA rotation.
 - [ ] RBAC that limits `pods/portforward` access to loopback-only `/debug/*` endpoints.
 - [ ] Watched-resource selectors scoped to the namespaces you intend to serve.
 - [ ] Release namespace labelled with `pod-security.kubernetes.io/enforce=restricted`.

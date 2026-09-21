@@ -75,6 +75,10 @@ See the nginx-ingress compatibility verdict render live:
 
 ## Quick start: Basic authentication
 
+This example requires HAPTIC and a Service named `my-service` on port 80 in your
+current namespace. Use an HTTPS endpoint before sending real credentials; see
+[SSL certificates](ssl-certificates.md).
+
 Create the credentials Secret. OpenSSL prompts for the password:
 
 ```bash

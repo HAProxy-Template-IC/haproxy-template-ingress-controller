@@ -2,7 +2,10 @@
 
 ## Overview
 
-The chart can deploy HAProxy pods alongside the controller, or you can manage HAProxy separately.
+The chart deploys two HAProxy replicas by default. Configure [Service access](#haproxy-service),
+[replicas and autoscaling](#replicas-and-autoscaling), and [resource budgets](#resource-limits)
+through Helm values. Use `haproxy.podSpec` for scheduling, volumes, and other pod
+settings. You can also [manage the pods separately](#haproxy-pod-requirements).
 
 Each pod runs HAProxy in master-worker mode plus the HAPTIC agent, which owns
 the pod's file tree and its runtime sockets. The chart supervises the SPOA hub
@@ -17,9 +20,9 @@ before HAProxy and stops them after HAProxy exits, preserving dependencies durin
 connection draining.
 
 The agent's `/readyz` endpoint reports whether it can accept configuration updates;
-a rejected update doesn't make it unready. Kubernetes uses the agent's `/healthz`
-for liveness. A stopped container or a failing probe on a custom sidecar can
-still make the pod unready.
+a rejected update doesn't make it unready. Its liveness probe uses the local Unix
+socket. A stopped container or a failing probe on a custom sidecar can still make
+the pod unready.
 
 The watchdog uses `/usr/bin/bash` and `timeout`, which the default images provide.
 With a custom sidecar image missing either command, the supervisor logs a warning
@@ -27,7 +30,7 @@ and still restarts child processes that exit.
 
 ## Resource limits
 
-Controller-pod sizing — the chart's request/limit defaults, the sizing table, and the GOMAXPROCS/GOMEMLIMIT container awareness — is covered in [Performance — Controller Resource Sizing](operations/performance.md#controller-resource-sizing). HAProxy and the agent have their own resource blocks in the chart values: `haproxy.resources` and `haproxy.agent.resources`.
+Use the [resource sizing guide](operations/performance.md#controller-resource-sizing) to budget the installation. Set HAProxy resources with `haproxy.resources` and agent resources with `haproxy.agent.resources`.
 
 ## Service Architecture
 
@@ -216,6 +219,7 @@ haproxy:
   initialConfig: |
     global
         log stdout len 4096 local0 info
+        stats socket /etc/haproxy/haproxy-worker.sock mode 660 level admin
         {{- with include "haptic.haproxy.nbthread" . }}
         nbthread {{ . }}
         {{- end }}
@@ -236,7 +240,9 @@ haproxy:
 The string is processed through Helm's `tpl`, so chart helpers and `.Values` references are available. Editing this value bumps the bootstrap-config checksum on the HAProxy Deployment, which rolls HAProxy pods on the next `helm upgrade`.
 
 !!! warning "Keep /ready returning 503 until the controller takes over"
-    An override that returns 200 on `/ready` lets the Service route traffic to HAProxy before any backends exist — clients see 404 responses. Replicate the 503 behaviour, or accept the gap.
+    Keep the worker socket and return `503` on `/ready` until a rendered
+    configuration runs. Returning `200` admits the bootstrap pod to the Service
+    before application routes exist.
 
 ## Access logging
 
@@ -385,20 +391,8 @@ That trade-off is deliberate — the alternative is stalling request processing
 behind a slow log consumer — but it means **the access log isn't a guaranteed
 record of traffic**. Requests are served normally while records vanish.
 
-The socket is the shock absorber, and it's small. At the default
-`net.core.rmem_default` of 212992 bytes it holds roughly **167 records** of the
-~700-byte JSON shape (the kernel charges per-datagram overhead, not payload).
-Converted to time at your request rate, that's how long Vector may stall before
-records are lost:
-
-| Request rate | Stall tolerated |
-|---|---|
-| 1 000 req/s | ~170 ms |
-| 5 000 req/s | ~35 ms |
-
-Things that can exceed that window: a Vector topology reload (the sidecar
-reloads on config change), a garbage-collection pause, or CPU starvation on a
-busy node.
+A stalled or CPU-starved collector can exhaust the socket queue. Monitor dropped
+logs if you rely on them for traffic analysis.
 
 **Loss is exact and observable.** HAProxy counts every discarded record:
 
@@ -434,10 +428,8 @@ with `unknown ring named`, so the render rejects it instead.
 #### Why a ring for a sidecar
 
 A `ring` is a buffered TCP client: records queue in memory when the collector is
-unavailable and flush when it reconnects. Measured with the collector stopped,
-25 of 25 requests were served in 112 ms total with no HAProxy errors, and all 25
-records arrived once it came back. A plain `<host>:<port>` target is UDP and
-drops them instead.
+unavailable and flush when it reconnects, up to the configured buffer capacity.
+A plain `<host>:<port>` target uses UDP and provides no replay buffer.
 
 Configure each ring with these fields:
 
@@ -468,7 +460,7 @@ transforms:
       . = parse_json!(string!(.message))
 ```
 
-Two things to know:
+Keep these constraints in mind:
 
 - **A ring server's address is resolved when the config is parsed.** A Service DNS
   name that doesn't resolve at that moment fails the render. Use a loopback
@@ -480,10 +472,8 @@ Two things to know:
   see it.
 - **A plain-path (Unix socket) target does no buffering.** It's the way to reach a
   collector on a socket, since HAProxy 3.4 rejects a Unix socket as a ring server.
-  The socket doesn't have to exist when HAProxy starts, so a sidecar that comes up
-  later is fine: measured with the socket absent, 25 of 25 requests were served
-  and HAProxy logged one rate-limited `sendmsg()/writev() failed` alert for the
-  whole run. But those records are gone — only a ring buffers them for replay.
+  If the socket is absent, HAProxy continues serving and reports log-delivery
+  errors. Those records are lost; use a ring when you need bounded buffering.
 
 Redirecting the stream changes who can read the records, not what they contain.
 
@@ -543,9 +533,6 @@ the hub can keep its loopback bind (`spoaHub.hub.metricsAddr: auto` resolves to
 HAProxy's own Prometheus exporter is **not** re-exported: Prometheus scrapes it
 directly on the `stats` port (`8404`), where HAProxy applies the chart's
 exclusion policy itself — see [Where to scrape](operations/monitoring.md#where-to-scrape).
-Measured standalone at 2,500 backends, re-exporting it was 1.3 GB steady and
-2.3 GB peak of the sidecar's memory; scraped directly, the same sidecar idles at
-146 MB.
 
 One `PodMonitor` covers every endpoint on the pod:
 
@@ -570,10 +557,9 @@ and Prometheus scrapes HAProxy and the hub directly.
 The same path the SPOA hub's config takes. HAPTIC renders the Vector config and
 the agent writes it into the shared general-storage volume, where Vector's file
 watch picks it up and reloads without a restart. A bootstrap
-ConfigMap seeds the file before regular containers start, so Vector doesn't wait
-for the first push before it can bind the log socket. Kubernetes doesn't order
-regular-container startup, and HAProxy deliberately doesn't wait for telemetry;
-records emitted before Vector binds the socket can therefore be lost.
+ConfigMap seeds the file before HAProxy starts, so Vector doesn't wait for the
+first configuration push. The native sidecar starts first, but HAProxy doesn't
+wait for Vector to bind its socket; early access records can therefore be lost.
 
 Vector runs under a supervisor as process 1 without a readiness probe. If the Vector
 process exits or its metrics endpoint fails three consecutive health checks, the
@@ -664,109 +650,31 @@ Each discovered pod must:
 1. **Carry labels matching `podSelector.matchLabels`**
 2. **Run HAProxy in master-worker mode** with a master socket the agent can reload through, and a worker `stats socket` it can run runtime commands on
 3. **Run the agent** in the same pod, from the HAPTIC image, sharing the config volume with HAProxy
-4. **Expose the agent** on `haproxy.ports.dataplane` (default 5555)
+4. **Expose the agent** on `haproxy.ports.dataplane` (default 5555), mounting its TLS identity and trusting the controller identity; see [agent certificates](operations/agent-certificates.md)
 5. **Run the same HAProxy major.minor series as `haproxyVersion`** so the controller validates configuration with the matching binary
+6. **Keep the agent available during termination** with native-sidecar ordering and the drain hook used by the chart
+7. **Provide every dependency selected by your templates**, including SPOA plugins and log sockets when enabled
 
 <a id="example-haproxy-pod-deployment-byo-haproxy"></a>
 
-### Example HAProxy Pod Deployment (bring-your-own HAProxy)
+### Start from the deployment for your installed version
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: haproxy
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/component: loadbalancer
-      app.kubernetes.io/name: haptic
-      app.kubernetes.io/instance: haptic
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/component: loadbalancer
-        app.kubernetes.io/name: haptic
-        app.kubernetes.io/instance: haptic
-    spec:
-      containers:
-      - name: haproxy
-        image: haproxytech/haproxy-debian:3.4
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            mkdir -p /etc/haproxy/maps /etc/haproxy/ssl /etc/haproxy/general
-            cat > /etc/haproxy/haproxy.cfg <<EOF
-            global
-                log stdout len 4096 local0 info
-                # The agent runs every runtime command on this socket.
-                stats socket /etc/haproxy/haproxy-worker.sock mode 600 level admin
-                default-path origin /etc/haproxy
-            defaults
-                timeout connect 5s
-            frontend status
-                bind *:8404
-                http-request return status 200 if { path /healthz }
-                # Note: /ready endpoint intentionally omitted - added by controller
-            EOF
-            exec haproxy -W -db -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
-        volumeMounts:
-        - name: haproxy-config
-          mountPath: /etc/haproxy
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8404
-          initialDelaySeconds: 10
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8404
-          initialDelaySeconds: 5
-          periodSeconds: 5
+A separate workload controller must preserve the agent's TLS mounts, shared
+volumes, runtime sockets, bootstrap configuration, probes, and termination
+ordering. Use the chart-generated deployment for your version as the reference;
+a minimal HAProxy-plus-agent manifest omits dependencies enabled by default.
 
-      - name: agent
-        # The HAPTIC image, not the HAProxy one: the agent is the controller's
-        # binary in its second role, so its tag must match the controller's.
-        image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.3-haproxy3.4
-        args:
-          - agent
-          - --base-dir=/etc/haproxy
-          - --config=haproxy.cfg
-          - --listen=:5555
-        env:
-          # The Secret the controller already reads, so both ends agree
-          # without a second credential to rotate.
-          - name: DATAPLANE_USERNAME
-            valueFrom:
-              secretKeyRef:
-                name: haptic-credentials
-                key: dataplane_username
-          - name: DATAPLANE_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: haptic-credentials
-                key: dataplane_password
-        ports:
-        - name: dataplane
-          containerPort: 5555
-        volumeMounts:
-        - name: haproxy-config
-          mountPath: /etc/haproxy
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 5555
-          periodSeconds: 10
-        securityContext:
-          readOnlyRootFilesystem: true
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
+For an existing `haptic` release in namespace `haptic`, export its deployment
+for inspection:
 
-      volumes:
-      - name: haproxy-config
-        emptyDir: {}
+```bash
+kubectl get deployment haptic-haproxy -n haptic -o yaml > haptic-haproxy-reference.yaml
+helm get manifest haptic -n haptic > haptic-release-reference.yaml
 ```
+
+The second file includes the associated bootstrap ConfigMaps and Services.
+Identity Secrets are managed separately, as described in
+[agent certificate management](operations/agent-certificates.md).
+Set `haproxy.enabled: false` only once your external workload definition supplies
+these dependencies and matches the configured pod selector. Helm removes its
+Deployment when you disable it; plan that ownership change as a rollout.

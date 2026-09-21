@@ -4,6 +4,10 @@ Use this guide to upgrade from 0.1.0 or a 0.2.0 alpha to 0.2.0. The controller
 and chart share one version. The chart replaces the HAProxy Data Plane API with
 the HAPTIC agent and changes several values paths.
 
+Confirm that 0.2.0 is available on the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases)
+before running the upgrade commands. Development documentation can describe a
+release before its artifacts are published.
+
 ## Check requirements
 
 - Kubernetes 1.33 or newer. The HAProxy pod uses native sidecars to keep its
@@ -54,8 +58,8 @@ Keep `haptic-values-before.yaml` as the record of your previous configuration.
 
 ## Migrate 0.1.0 values
 
-If you're already running alpha.3, these migrations are already applied. Review
-the Kubernetes requirement and changed defaults, then continue with validation.
+For an alpha installation, some migrations may already be applied. Check the
+values you use against the table and review the changed defaults before validation.
 
 For 0.1.0, update the paths you use in `haptic-values-0.2.yaml`:
 
@@ -223,8 +227,3 @@ kubectl --namespace "$HAPTIC_NAMESPACE" get haproxytemplateconfig,haproxycfg -o 
 Test existing HTTP and HTTPS routes, including authentication and custom
 annotations. A successful Helm command alone doesn't prove traffic has converged.
 See [troubleshooting](troubleshooting.md) if a pod or route remains unavailable.
-
-The intermittent artifact/plan mismatch in
-[#213](https://gitlab.com/haproxy-haptic/haptic/-/issues/213) remains without a
-confirmed root cause. A recurrence rejects that output before publication;
-capture its correlation ID, source version, and complete mismatch diagnostic.

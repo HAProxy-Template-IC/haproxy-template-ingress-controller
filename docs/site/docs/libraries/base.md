@@ -17,7 +17,7 @@ The Ingress preset uses base to assemble its configuration:
 
 <div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Base library underpinning a render" data-height="440">
 
-<p class="pg-task" markdown>In the **Templates** pane, add a `global-settings-500-tuning` snippet under `spec.templateSnippets` (the YAML is in the hint), then watch `tune.bufsize 262144` appear inside the `global` section of the `haproxy.cfg` tab.</p>
+<p class="pg-task" markdown>In the **Templates** pane, add a `global-settings-500-tuning` snippet under `spec.templateSnippets` (the YAML is in the hint), then watch `maxconn 10000` appear inside the `global` section of the `haproxy.cfg` tab.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
@@ -29,10 +29,10 @@ section. Matching snippets render alphabetically. For example, add this under
 ```yaml
 global-settings-500-tuning:
   template: |
-    tune.bufsize 262144
+    maxconn 10000
 ```
 
-Its `tune.bufsize 262144` line lands in `global` after the built-in path and
+Its `maxconn 10000` line lands in `global` after the built-in path and
 process settings. The bundled chart deliberately doesn't emit
 `tune.ssl.default-dh-param`: the supported community images use AWS-LC, where
 HAProxy doesn't support this setting and warns that the directive was ignored.
@@ -171,12 +171,6 @@ controller:
           timeout tunnel 600000
           timeout http-request 10000
 
-      # Add custom global tuning directives (extends the global section)
-      global-settings-500-tuning:
-        template: |
-          tune.bufsize 262144
-          no-memory-trimming
-
       # Add custom security rules to the HTTP frontend
       frontend-filters-custom-security:
         template: |
@@ -303,7 +297,9 @@ The `default_backend` returns a gRPC-aware fallback for unmatched requests. For 
 
 HAProxy waits for the request body before it takes a backend connection, so a client that trickles its upload holds an HAProxy buffer instead of a backend connection. This is the standard defence against the slow POST attack, where an attacker declares a large body and sends it a byte at a time to exhaust the application's worker pool.
 
-Buffering is on by default. Turn it off fleet-wide, or change how long HAProxy waits:
+Buffering is on by default with a 10-second wait. These are the default values;
+set `enabled: false` to disable buffering fleet-wide, or change `waitTimeout` to
+adjust the wait:
 
 ```yaml
 controller:
@@ -319,9 +315,12 @@ Override it for a single route with the [`haproxy-haptic.org/request-buffering`]
 
 HAProxy releases the request as soon as *either* the body is complete or `tune.bufsize` is full, so this is slow-client protection rather than an upload buffer — a 1 GB upload proceeds once the first 16 KiB arrive. When the wait expires with neither condition met, the client gets a `408` and the backend is never contacted.
 
-#### Streaming requests are never buffered
+<a id="streaming-requests-are-never-buffered"></a>
 
-Only requests that declare a `Content-Length` are held. Nothing that streams can know its length in advance, so this single condition excludes every streaming protocol without naming any of them.
+#### Streaming requests
+
+Only requests that declare a `Content-Length` are held. Requests without that
+header bypass this buffering step.
 
 Buffering a bidirectional stream can prevent progress: the client waits for a
 response while HAProxy waits for more request data. Excluding requests without
@@ -329,7 +328,8 @@ response while HAProxy waits for more request data. Excluding requests without
 
 gRPC sends neither `Content-Length` nor `Transfer-Encoding` — for unary and streaming calls alike — so no gRPC request is ever buffered. Chunked HTTP/1.1 uploads are excluded on the same rule, which also covers long-poll and command-channel patterns where the server answers before the request body ends.
 
-Setting the annotation to `on` therefore can't break a streaming route. Use `off` for a route whose clients *do* declare a `Content-Length` but still expect a response before the body ends, such as a resumable-upload endpoint.
+Use `off` for a route whose clients declare a `Content-Length` but expect a
+response before the body ends, such as a resumable-upload endpoint.
 
 ### Built-in operators and functions
 
@@ -369,11 +369,13 @@ Built-in function that escapes regex metacharacters so a user-supplied literal (
 
 ### Utility macros
 
-The base library provides reusable macros across several `util-*` snippets, imported by other libraries:
+The following macros are available in the bundled library stack. `BackendServers()`
+and its server helpers come from `kubernetes-backends`; the other utilities come
+from base:
 
 | Macro | Purpose |
 |-------|---------|
-| `CalculateShardCount(resourceCount, itemsPerShard)` | Computes `clamp(count / itemsPerShard, 1, 2*GOMAXPROCS)` |
+| `CalculateShardCount(resourceCount, itemsPerShard)` | Chooses a bounded number of shards for the resource count |
 | `HostMatchCondition(hosts)` | Builds a host-match ACL condition (in `util-ingress-helpers`) |
 | `BuildServerOptions(serverOpts)` | Renders server-line option flags (in `util-backend-servers-helpers`) |
 | `Backend(spec)` | Emits one `backend` section (`from` a content-addressed profile) from a record (in `util-backend`) |

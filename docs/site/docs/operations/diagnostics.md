@@ -20,8 +20,8 @@ Use a HAPTIC binary from the same release as the controller.
 2. Save a support bundle:
 
    ```bash
-   haptic doctor --namespace haptic \
-     --bundle "haptic-support-$(date -u +%Y%m%dT%H%M%SZ).zip"
+   bundle="haptic-support-$(date -u +%Y%m%dT%H%M%SZ).zip"
+   haptic doctor --namespace haptic --bundle "$bundle"
    ```
 
    The ZIP contains `report.json` and a description of the collection limits.
@@ -31,7 +31,7 @@ Use a HAPTIC binary from the same release as the controller.
 3. Inspect the report before sharing it:
 
    ```bash
-   haptic doctor --namespace haptic --output json
+   unzip -p "$bundle" report.json
    ```
 
    Reports include resource names, UIDs, image references, condition reasons,

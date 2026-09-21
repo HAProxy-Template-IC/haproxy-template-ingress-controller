@@ -71,14 +71,18 @@ haptic agent \
   --master-socket haproxy-master.sock \
   --worker-socket haproxy-worker.sock \
   --listen :5555 \
-  --metrics-listen :9101 \
+  --metrics-listen :5557 \
+  --tls-dir /etc/haptic/agent-tls/..data \
+  --tls-client-name haptic-controller-tls.haptic.svc \
   --state-file .haptic-agent.json \
   --reload-interval-min 5s
 ```
 
 Socket flags are relative to `--base-dir` unless you give an absolute path. The
-credentials come from `DATAPLANE_USERNAME` and `DATAPLANE_PASSWORD`, which the
-HAProxy pod already mounts from its credentials Secret. `LOG_LEVEL` sets the
+TLS directory contains `tls.crt`, `tls.key`, and `ca.crt`; the allowed client
+name must match the controller identity. See [Agent certificates](../operations/agent-certificates.md)
+for issuance and rotation. Legacy HTTP Basic authentication uses
+`DATAPLANE_USERNAME` and `DATAPLANE_PASSWORD` only when TLS is explicitly disabled. `LOG_LEVEL` sets the
 log level; logs are JSON.
 
 | Endpoint | Auth | Purpose |
@@ -106,19 +110,18 @@ repair path exactly when an operator needs it.
 
 `haptic agent state` reads `/v1/state` and prints it: the plans the pod applied,
 runs and can fall back to, the runtime inventory, the deletes still outstanding,
-and the last apply's outcome. It takes the credentials from the same
-`DATAPLANE_USERNAME` and `DATAPLANE_PASSWORD` the agent itself was given, so it
-needs no arguments inside the pod:
+and the last apply's outcome. It uses the read-only local Unix socket, so it needs no network credentials
+inside the pod:
 
 ```console
-kubectl exec -n haptic haptic-haproxy-0 -c agent -- haptic agent state
+kubectl exec -n haptic deployment/haptic-haproxy -c agent -- haptic agent state
 ```
 
 `--verify` makes the agent re-hash its tree first, so the digests are
 observations rather than its last-known set. `--files` lists every file it holds
 with its digest and size, and `--output json` prints the raw response.
-`--url` reaches another endpoint; it defaults to `http://127.0.0.1:<--listen
-port>`.
+`--url` selects a remote endpoint instead of the local socket. For HTTPS,
+provide the TLS identity and the expected server name.
 
 ## Paths
 
@@ -417,7 +420,7 @@ per-pod facts it can't see.
 
 ## Testing
 
-Four layers cover the agent, and each answers a different question.
+Five layers cover the agent, and each answers a different question.
 
 | Layer | Question it answers | Where |
 | --- | --- | --- |
@@ -489,7 +492,7 @@ runtime by the literal base-relative string the configuration references. That
 string is also the manifest's `File.Path` and an op's `Path`, so no component
 translates paths. `TestRuntimeNamesAreTheManifestPaths` pins that.
 
-To debug one test, keep its containers and read their logs:
+To debug one test and see the logs emitted on failure:
 
 ```bash
 go test -tags=agentdocker -run TestMapOpsRunAtRuntimeAndKeepEveryByte -v ./tests/agent/

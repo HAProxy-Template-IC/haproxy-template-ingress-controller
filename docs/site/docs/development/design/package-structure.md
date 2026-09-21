@@ -13,7 +13,7 @@ This split keeps the libraries reusable and independently testable; all event ch
 ```
 haptic/
 ├── cmd/
-│   ├── controller/          # Entry point (main.go)
+│   ├── haptic/              # CLI and controller entry point
 │   ├── gen-validators/      # Generator for the zero-alloc OpenAPI validators in pkg/generated
 │   └── playground/          # WASM browser template playground (drives the production RenderService)
 │       └── internal/migratecheck/ # Ingress migration report classifier
@@ -92,9 +92,9 @@ haptic/
 │       ├── pipeline/        # Chains stages into a composable reconciliation pipeline
 │       ├── pluggablevalidator/ # Client for the pluggable-validator-sidecar wire protocol
 │       ├── proposalvalidator/ # Validates proposed configs from the webhook
-│       ├── reconciler/      # Debounces resource changes, triggers reconciliation
+│       ├── reconciler/      # Triggers reconciliation and drives its pipeline
 │       ├── rendercontext/   # Builds the template context from stores and HTTP resources
-│       ├── renderer/        # Template rendering adapter
+│       ├── renderer/        # Synchronous template rendering service
 │       ├── resourceapplier/ # Reconciles template-declared resources via Server-Side Apply
 │       │                    #   (configloader, credentialsloader)
 │       ├── resourcewatcher/ # Lifecycle manager for all configured resource watchers

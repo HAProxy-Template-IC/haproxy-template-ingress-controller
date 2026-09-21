@@ -27,7 +27,7 @@ The `backend storefront_shop_svc_shop_http` section changes `option httpchk GET 
 </div>
 
 !!! note "Migrating from jcmoraisjr/haproxy-ingress"
-    Enable this library (see [Configuration](#configuration) below), and your existing `haproxy-ingress.github.io/*` annotations work without changes. See [Migrating from haproxy-ingress](../migrating.md#from-haproxy-ingress) for the cutover guide and the per-annotation verdict table, and [Annotations](../annotations.md) for the feature comparison between annotation libraries.
+    Enable this library (see [Configuration](#configuration) below), then check which of your `haproxy-ingress.github.io/*` annotations carry over. See [Migrating from haproxy-ingress](../migrating.md#from-haproxy-ingress) for the cutover guide and the per-annotation verdict table, and [Annotations](../annotations.md) for the feature comparison between annotation libraries.
 
 ## Configuration
 
@@ -37,73 +37,6 @@ controller:
     haproxyIngress:
       enabled: true  # Set to enable this opt-in library (disabled by default)
 ```
-
-## Extension points
-
-The haproxy-ingress library hooks into these extension points. Snippet names encode priority via a numeric prefix — the 600-range deliberately runs after the core haproxytech 100–500 range so `haproxy-ingress.github.io/*` annotations override `haproxy.org/*` when both are set on the same Ingress.
-
-### `features-*` (shared-state initialization)
-
-| Snippet | Purpose |
-|---------|---------|
-| `features-100-haproxy-ingress-ssl-passthrough` | Scans ingresses annotated with `haproxy-ingress.github.io/ssl-passthrough` and registers backends in `gf["sslPassthroughBackends"]` |
-| `features-105-haproxy-ingress-ssl-redirect` | Processes `ssl-redirect`, `ssl-redirect-code` — registers hosts into the shared `ssl-redirect-<code>.map` (ssl.yaml emits the redirect rule) |
-| `features-135-haproxy-ingress-redirect-to` | Processes `redirect-to`, `redirect-to-code` — registers host→location in the shared `redirect-loc-<code>.map` |
-| `features-145-haproxy-ingress-app-root` | Processes `app-root` — registers host→path into the shared `app-root.map` (base.yaml emits the gated rule) |
-| `features-155-haproxy-ingress-hsts` | Processes `hsts`, `hsts-max-age`, `hsts-include-subdomains`, `hsts-preload` — registers host→value into the shared `hsts.map` (base.yaml emits the response-header rule) |
-
-### `map-path-*` (path-map extension points)
-
-| Snippet | Extension Point | Purpose |
-|---------|-----------------|---------|
-| `map-path-regex-600-haproxy-ingress` | `map-path-regex-*` | Regex path-map entries for `path-type: regex` |
-| `map-path-exact-600-haproxy-ingress` | `map-path-exact-*` | Exact path-map entries for `path-type: exact` |
-| `map-path-prefix-600-haproxy-ingress` | `map-path-prefix-*` | Prefix path-map entries for `path-type: begin` |
-| `map-pfxexact-600-haproxy-ingress` | `map-pfxexact-*` | Prefix-exact entries for `path-type: prefix` |
-
-### `backend-directives-*` (per-backend directives)
-
-| Snippet | Annotations Processed |
-|---------|----------------------|
-| `backend-directives-600-haproxy-ingress-timeouts` | `timeout-connect`, `timeout-server`, `timeout-queue`, `timeout-http-request`, `timeout-keep-alive`, `timeout-tunnel` |
-| `backend-directives-610-haproxy-ingress-load-balance` | `balance-algorithm` |
-| `backend-directives-620-haproxy-ingress-maxconn` | `maxconn-server` |
-| `backend-directives-630-haproxy-ingress-health-checks` | `health-check-uri`, `backend-check-interval`, `health-check-port`, `health-check-fall-count`, `health-check-rise-count` |
-| `backend-directives-640-haproxy-ingress-proxy-protocol` | `proxy-protocol` |
-| `backend-directives-650-haproxy-ingress-ssl-backend` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-hostname`, `secure-verify-ca-secret`, `secure-crt-secret` |
-| `backend-directives-660-haproxy-ingress-server-options` | `initial-weight`, other server-line options |
-| `backend-directives-670-haproxy-ingress-session-affinity` | `affinity`, `session-cookie-*` |
-| `backend-directives-680-haproxy-ingress-auth` | `auth-secret`, `auth-realm` (attaches userlist to the backend) |
-| `ingress-rate-limit-0685-haproxy-ingress` | `limit-rps`, `limit-rpm`, `limit-whitelist` (published into the shared frontend lane) |
-| `backend-directives-690-haproxy-ingress-rewrite-target` | `rewrite-target` (capture-group rewrites; literal rewrites go to `path-rewrite.map`) |
-| `backend-directives-695-haproxy-ingress-agent-check` | `agent-check-port`, `agent-check-addr`, `agent-check-interval`, `agent-check-send` |
-| `backend-directives-900-haproxy-ingress-config-backend` | `config-backend` |
-
-### `frontend-filters-*` (HTTP-frontend request/response filters)
-
-| Snippet | Annotations Processed |
-|---------|----------------------|
-| `frontend-filters-600-haproxy-ingress-forwardfor` | `forwardfor` |
-| `frontend-filters-610-haproxy-ingress-access-control` | `allowlist-source-range` (or its deprecated alias `whitelist-source-range`), `denylist-source-range` |
-| `frontend-filters-660-haproxy-ingress-cors` | `cors-enable`, `cors-*` |
-| `frontend-filters-670-haproxy-ingress-headers` | `headers` |
-| `frontend-filters-680-haproxy-ingress-default-backend-redirect` | `default-backend-redirect`, `default-backend-redirect-code` |
-
-### Other extension points
-
-| Snippet | Extension Point | Purpose |
-|---------|-----------------|---------|
-| `global-top-600-haproxy-ingress-auth` | `global-top-*` | Emits a `userlist auth_<secretNs>_<secretName>` per unique auth secret (deduplicated) |
-| `backends-501-haproxy-ingress-ssl-passthrough` | `backends-*` | TCP-mode passthrough backends for hosts with `ssl-passthrough: "true"` |
-| `map-host-650-haproxy-ingress-alias` | `map-host-*` | `server-alias` hostnames → the primary host's routing key in `host.map` |
-| `map-hostregex-650-haproxy-ingress-alias` | `map-hostregex-*` | `server-alias-regex` patterns → the primary host's routing key in `host-regex.map` |
-| `map-body-size-680-haproxy-ingress` | `map-body-size-*` | Per-backend `body-size.map` entries for `proxy-body-size` limits |
-| `map-path-rewrite-690-haproxy-ingress` | `map-path-rewrite-*` | Per-backend `path-rewrite.map` entries for literal `rewrite-target` values |
-| `frontend-extra-650-haproxy-ingress-config-frontend` | `frontend-extra-*` | `config-frontend` raw directives in the HTTP frontend |
-| `global-settings-650-haproxy-ingress-config-global` | `global-settings-*` | `config-global` raw directives in the `global` section |
-| `defaults-settings-650-haproxy-ingress-config-defaults` | `defaults-settings-*` | `config-defaults` raw directives in the `defaults` section |
-
----
 
 ## Path matching
 
@@ -937,6 +870,7 @@ metadata:
   annotations:
     haproxy-ingress.github.io/ssl-passthrough: "true"
 spec:
+  ingressClassName: haptic
   tls:
     - hosts:
         - secure.example.com
@@ -1001,7 +935,7 @@ data:
 **Generate password hash**:
 
 ```bash
-htpasswd -nbB admin mypassword | cut -d: -f2 | base64 -w0
+htpasswd -n -B admin | cut -d: -f2 | base64 -w0
 ```
 
 ---
@@ -1027,7 +961,7 @@ The hub auto-enables when any plugin is on, and the spoa-hub template library au
     Unlike the nginx-ingress library, enabling the haproxy-ingress library doesn't auto-enable the `external-auth` plugin. Without the plugin, `auth-url` is silently not enforced — set `spoaHub.plugins.external-auth.enabled=true` explicitly.
 
 !!! warning "Host-less rules error at render time"
-    All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` can't be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress; add a `host:` to the rule to fix.
+    All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` can't be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. HAPTIC rejects the configuration with an explicit error identifying the offending Ingress; add a `host:` to the rule to fix.
 
 ---
 
@@ -1290,7 +1224,7 @@ The library wires the haproxy-ingress.github.io/auth-tls-* annotations for incom
 
 **Status**: ✅ Supported
 
-**Description**: Reference to a `kubernetes.io/tls` Secret whose `ca.crt` field contains the CA bundle that signs the clients' certificates. The chart writes the CA to `ssl/<ns>-<secret>-client-ca.pem` and adds `[ca-file <path> verify <mode>]` to the crt-list line for every host on the annotated Ingress.
+**Description**: Reference to a Secret whose `ca.crt` field contains the CA bundle that signs the clients' certificates. The chart writes the CA to `ssl/<ns>-<secret>-client-ca.pem` and adds `[ca-file <path> verify <mode>]` to the crt-list line for every host on the annotated Ingress.
 
 **Format**: `name` (resolves in the Ingress namespace) or `namespace/name`.
 
@@ -1301,20 +1235,14 @@ annotations:
   haproxy-ingress.github.io/auth-tls-secret: "client-ca"
 ```
 
-The Secret:
+Create the Secret from your client CA bundle in the Ingress's namespace:
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: client-ca
-type: kubernetes.io/tls
-data:
-  ca.crt: <base64 PEM CA bundle>
+```bash
+kubectl -n default create secret generic client-ca --from-file=ca.crt=ca.crt
 ```
 
 !!! warning "Host-less rules error at render time"
-    SNI-keyed verification can't be enforced on Ingress rules without a `host:`. The chart fails the Helm render with a descriptive error.
+    SNI-keyed verification can't be enforced on Ingress rules without a `host:`. HAPTIC rejects the configuration with a descriptive error.
 
 ---
 
@@ -1331,7 +1259,7 @@ data:
 | `on` (default) | `required` | Reject connections without a valid client cert |
 | `off` | (no-op) | Don't enable verification on this host — the entry is skipped, falling through to the default crt-list line |
 | `optional` | `optional` | Verify when a cert is presented; allow connections without |
-| `optional_no_ca` | `optional` | Same as `optional` — HAProxy doesn't have a distinct mode for "verify but accept invalid"; operators wanting to accept self-signed certs should set `optional` and inspect `ssl_c_used` in their `auth-tls-error-page` logic |
+| `optional_no_ca` | `optional` | Same as `optional`; a certificate from an unknown CA still fails verification. Add the issuing CA to the trusted bundle to accept it |
 
 Other values fail the render.
 
@@ -1368,7 +1296,10 @@ annotations:
 http-request redirect location https://example.com/cert-required code 302 if { ssl_c_verify gt 0 } { hdr(host) -i example.com }
 ```
 
-The `ssl_c_verify gt 0` condition matches any verification error (including missing cert when `verify required` is set).
+The redirect can only run after a successful TLS handshake. With the default
+`verify required`, a missing or invalid certificate aborts the handshake: the
+client sees a TLS error, not this page. `optional` still rejects an invalid
+certificate; it only permits clients that send no certificate.
 
 ---
 
@@ -1435,6 +1366,73 @@ sets `auth-tls-secret` or `auth-tls-cert-header`: the certificate verification
 result (0 on success, otherwise an X509 error code) and the client's CN. The
 other annotation libraries contribute identical fields, so several can be enabled
 at once.
+
+## Extension points
+
+The haproxy-ingress library hooks into these extension points. Snippet names encode execution order via a numeric prefix. Conflicting settings from different annotation families are rejected; execution order doesn't choose a winner.
+
+### `features-*` (shared-state initialization)
+
+| Snippet | Purpose |
+|---------|---------|
+| `features-100-haproxy-ingress-ssl-passthrough` | Scans ingresses annotated with `haproxy-ingress.github.io/ssl-passthrough` and registers backends in `gf["sslPassthroughBackends"]` |
+| `features-105-haproxy-ingress-ssl-redirect` | Processes `ssl-redirect`, `ssl-redirect-code` — registers hosts into the shared `ssl-redirect-<code>.map` (ssl.yaml emits the redirect rule) |
+| `features-135-haproxy-ingress-redirect-to` | Processes `redirect-to`, `redirect-to-code` — registers host→location in the shared `redirect-loc-<code>.map` |
+| `features-145-haproxy-ingress-app-root` | Processes `app-root` — registers host→path into the shared `app-root.map` (base.yaml emits the gated rule) |
+| `features-155-haproxy-ingress-hsts` | Processes `hsts`, `hsts-max-age`, `hsts-include-subdomains`, `hsts-preload` — registers host→value into the shared `hsts.map` (base.yaml emits the response-header rule) |
+
+### `map-path-*` (path-map extension points)
+
+| Snippet | Extension Point | Purpose |
+|---------|-----------------|---------|
+| `map-path-regex-600-haproxy-ingress` | `map-path-regex-*` | Regex path-map entries for `path-type: regex` |
+| `map-path-exact-600-haproxy-ingress` | `map-path-exact-*` | Exact path-map entries for `path-type: exact` |
+| `map-path-prefix-600-haproxy-ingress` | `map-path-prefix-*` | Prefix path-map entries for `path-type: begin` |
+| `map-pfxexact-600-haproxy-ingress` | `map-pfxexact-*` | Prefix-exact entries for `path-type: prefix` |
+
+### `backend-directives-*` (per-backend directives)
+
+| Snippet | Annotations Processed |
+|---------|----------------------|
+| `backend-directives-600-haproxy-ingress-timeouts` | `timeout-connect`, `timeout-server`, `timeout-queue`, `timeout-http-request`, `timeout-keep-alive`, `timeout-tunnel` |
+| `backend-directives-610-haproxy-ingress-load-balance` | `balance-algorithm` |
+| `backend-directives-620-haproxy-ingress-maxconn` | `maxconn-server` |
+| `backend-directives-630-haproxy-ingress-health-checks` | `health-check-uri`, `backend-check-interval`, `health-check-port`, `health-check-fall-count`, `health-check-rise-count` |
+| `backend-directives-640-haproxy-ingress-proxy-protocol` | `proxy-protocol` |
+| `backend-directives-650-haproxy-ingress-ssl-backend` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-hostname`, `secure-verify-ca-secret`, `secure-crt-secret` |
+| `backend-directives-660-haproxy-ingress-server-options` | `initial-weight`, other server-line options |
+| `backend-directives-670-haproxy-ingress-session-affinity` | `affinity`, `session-cookie-*` |
+| `backend-directives-680-haproxy-ingress-auth` | `auth-secret`, `auth-realm` (attaches userlist to the backend) |
+| `ingress-rate-limit-0685-haproxy-ingress` | `limit-rps`, `limit-rpm`, `limit-whitelist` (published into the shared frontend lane) |
+| `backend-directives-690-haproxy-ingress-rewrite-target` | `rewrite-target` (capture-group rewrites; literal rewrites go to `path-rewrite.map`) |
+| `backend-directives-695-haproxy-ingress-agent-check` | `agent-check-port`, `agent-check-addr`, `agent-check-interval`, `agent-check-send` |
+| `backend-directives-900-haproxy-ingress-config-backend` | `config-backend` |
+
+### `frontend-filters-*` (HTTP-frontend request/response filters)
+
+| Snippet | Annotations Processed |
+|---------|----------------------|
+| `frontend-filters-600-haproxy-ingress-forwardfor` | `forwardfor` |
+| `frontend-filters-610-haproxy-ingress-access-control` | `allowlist-source-range` (or its deprecated alias `whitelist-source-range`), `denylist-source-range` |
+| `frontend-filters-660-haproxy-ingress-cors` | `cors-enable`, `cors-*` |
+| `frontend-filters-670-haproxy-ingress-headers` | `headers` |
+| `frontend-filters-680-haproxy-ingress-default-backend-redirect` | `default-backend-redirect`, `default-backend-redirect-code` |
+
+### Other extension points
+
+| Snippet | Extension Point | Purpose |
+|---------|-----------------|---------|
+| `global-top-600-haproxy-ingress-auth` | `global-top-*` | Emits a `userlist auth_<secretNs>_<secretName>` per unique auth secret (deduplicated) |
+| `backends-501-haproxy-ingress-ssl-passthrough` | `backends-*` | TCP-mode passthrough backends for hosts with `ssl-passthrough: "true"` |
+| `map-host-650-haproxy-ingress-alias` | `map-host-*` | `server-alias` hostnames → the primary host's routing key in `host.map` |
+| `map-hostregex-650-haproxy-ingress-alias` | `map-hostregex-*` | `server-alias-regex` patterns → the primary host's routing key in `host-regex.map` |
+| `map-body-size-680-haproxy-ingress` | `map-body-size-*` | Per-backend `body-size.map` entries for `proxy-body-size` limits |
+| `map-path-rewrite-690-haproxy-ingress` | `map-path-rewrite-*` | Per-backend `path-rewrite.map` entries for literal `rewrite-target` values |
+| `frontend-extra-650-haproxy-ingress-config-frontend` | `frontend-extra-*` | `config-frontend` raw directives in the HTTP frontend |
+| `global-settings-650-haproxy-ingress-config-global` | `global-settings-*` | `config-global` raw directives in the `global` section |
+| `defaults-settings-650-haproxy-ingress-config-defaults` | `defaults-settings-*` | `config-defaults` raw directives in the `defaults` section |
+
+---
 
 ## See also
 

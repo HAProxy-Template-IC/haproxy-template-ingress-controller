@@ -40,53 +40,6 @@ controller:
 
 Enabling the library also auto-enables two Stream Processing Offload Agent (SPOA) hub plugins — `external-auth` (backing the `auth-url` family) and `coraza` (the Web Application Firewall (WAF) backing `modsecurity-snippet`) — which deploys the [SPOA hub sidecar](../operations/spoa-hub.md) in the HAProxy pod. An explicit `spoaHub.plugins.<name>.enabled` value overrides the auto-enable in either direction.
 
-## Extension points
-
-### Extension points used
-
-The Nginx Ingress library implements these extension points:
-
-| Extension Point | This Library's Snippets | What They Generate |
-|-----------------|-------------------------|-------------------|
-| Backend Directives | `backend-directives-670-nginx-ingress-session-affinity` | Cookie-based session affinity |
-| Backend Directives | `backend-directives-700-nginx-ingress-timeouts` | Backend timeouts |
-| Backend Directives | `backend-directives-710-nginx-ingress-load-balance` | Load balancing algorithm |
-| Backend Directives | `backend-directives-715-nginx-ingress-next-upstream` | Retry conditions (`proxy-next-upstream`, `proxy-next-upstream-tries`) |
-| Map (body-size) | `map-body-size-720-nginx-ingress` | Request body size limit (per-backend entry in `body-size.map`) |
-| Publications | `ingress-bandwidth-0725-nginx-ingress` | Per-stream bandwidth throttle (`limit-rate`, `limit-rate-after`) — publishes the route into the shared frontend lane |
-| Backend Directives | `backend-directives-730-nginx-ingress-backend-protocol` | Backend protocol (HTTPS, gRPC) |
-| Backend Directives | `backend-directives-740-nginx-ingress-proxy-protocol` | PROXY protocol to backend |
-| Backend Directives | `backend-directives-750-nginx-ingress-rewrite-target` | URL rewriting (capture rewrites; literal rewrites go to `path-rewrite.map` via `map-path-rewrite-750-nginx-ingress`) |
-| Backend Directives | `backend-directives-760-nginx-ingress-auth` | Basic auth enforcement |
-| Backend Directives | `backend-directives-760-nginx-ingress-proxy-ssl` | Backend TLS (`proxy-ssl-*` server flags) |
-| Publications | `ingress-satisfy-0765-nginx-ingress` | `satisfy: any` combined IP-or-auth gate — publishes the route into the shared frontend lane |
-| Backend Directives | `backend-directives-765-nginx-ingress-satisfy-any` | The same gate for a route the lane can't serve: an allow-list with an IPv6 entry, or a realm needing escaping |
-| Publications | `ingress-rate-limit-0770-nginx-ingress` | Rate limiting / connection limiting (`limit-rps`, `limit-rpm`, `limit-connections`, `limit-whitelist`) — publishes the route into the shared frontend lane |
-| Backend Directives | `backend-directives-780-nginx-ingress-upstream-hash` | Hash-based load balancing |
-| Frontend Filters | `frontend-filters-791-nginx-ingress-proxy-cookie` | Upstream `Set-Cookie` rewriting (`proxy-cookie-domain`, `proxy-cookie-path`), from a per-route map |
-| Frontend Filters | `frontend-filters-796-nginx-ingress-proxy-redirect` | Upstream `Location`/`Refresh` rewriting (`proxy-redirect-from`, `proxy-redirect-to`), from a per-route map |
-| Backend Directives | `backend-directives-900-nginx-ingress-config-snippet` | Raw backend config injection |
-| Map (request headers) | `map-reqhdr-host-760-nginx-ingress`, `map-reqhdr-xfwd-prefix-760-nginx-ingress`, `map-reqhdr-connection-760-nginx-ingress` | per-backend map entries for `upstream-vhost` / `x-forwarded-prefix` / `connection-proxy-header` |
-| Map (host) | `map-host-720-nginx-ingress-server-alias` | `server-alias` hostnames → the rule host's routing key in `host.map` |
-| Backends | `backends-510-nginx-ingress-default-backend` | Per-Ingress `default-backend` pools (+ catch-all path entries via `map-path-prefix-510-nginx-ingress-default-backend`) |
-| Frontend Filters | `frontend-filters-700-nginx-ingress-access-control` | IP allowlist/denylist |
-| Features | `features-105-nginx-ingress-ssl-redirect` | HTTP to HTTPS redirect (registers hosts into the shared `ssl-redirect-<code>.map`; ssl.yaml emits the rule) |
-| Features | `features-155-nginx-ingress-hsts` | HTTP Strict Transport Security (HSTS) header — registers host→value into the shared `hsts.map` |
-| Frontend Filters | `frontend-filters-730-nginx-ingress-cors` | CORS headers |
-| Frontend Filters | `frontend-filters-740-nginx-ingress-custom-headers` | Custom request/response headers |
-| Features | `features-145-nginx-ingress-app-root` | Root path redirect — registers host→path into the shared `app-root.map` |
-| Features | `features-140-nginx-ingress-redirects` | Permanent (301) / temporal (302) redirect — registers host→location in the shared `redirect-loc-<code>.map` |
-| Features | `features-150-nginx-ingress-mtls-error` | mTLS error-page redirect — registers host→URL into the shared `mtls-error.map` |
-| Frontend Filters | `frontend-filters-775-nginx-ingress-from-to-www-redirect` | apex↔www redirect via `from-to-www.map` |
-| Publications | `ingress-canary-0780-nginx-ingress` | Canary routing — publishes the canary into the shared frontend lane |
-| Publications | `ingress-mirror-0555-nginx-ingress` | Request mirroring (`mirror-target`) — publishes the target into the shared frontend lane |
-| Frontend Filters | `frontend-filters-790-nginx-ingress-mtls-error` | mTLS cert passthrough (set-headers; the error-page redirect moved to features-150) |
-| Features | `features-100-nginx-ingress-ssl-passthrough` | SSL passthrough registration |
-| Backends | `backends-501-nginx-ingress-ssl-passthrough` | SSL passthrough backends |
-| Global Top | `global-top-700-nginx-ingress-auth` | Userlist definitions for basic auth |
-
----
-
 ## Backend configuration
 
 ### Timeouts
@@ -1086,31 +1039,14 @@ annotations:
   nginx.ingress.kubernetes.io/auth-realm: "Protected Area"
 ```
 
-**Secret format**:
+Create credentials with Apache `htpasswd`, which prompts for a password. This
+example uses bcrypt; serve the protected route over HTTPS.
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: basic-auth
-type: Opaque
-stringData:
-  auth: |
-    admin:$2y$05$mO1VWak5QnbhNgJ4QwdAdXbfz.8b3ceH6U5KOVCKxR2IkNAfJgLi5pIKW
-    user:$2y$05$anotherBcryptHash
-```
-
-**Generated HAProxy Configuration**:
-
-```haproxy
-userlist ni_auth_default_basic-auth
-  user admin password '$2y$05$mO1VWak5QnbhNgJ4QwdAdXbfz.8b3ceH6U5KOVCKxR2IkNAfJgLi5pIKW'
-  user user password '$2y$05$anotherBcryptHash'
-
-frontend http_frontend
-    # nginx-ingress/basic-auth
-    http-request set-var(txn.ni_ba) var(txn.resource_id),map(maps/nginx-ingress-basic-auth-routes.map)
-    http-request auth realm "Protected Area" if { var(txn.ni_ba) -m str "ok ni_auth_default_basic-auth Protected Area" } !{ http_auth(ni_auth_default_basic-auth) }
+```bash
+umask 077
+htpasswd -n -B admin > auth
+kubectl -n default create secret generic basic-auth --from-file=auth=auth
+rm auth
 ```
 
 The challenge is one rule block per HTTP frontend fed by a per-route map, so a route on an existing credentials Secret is added and removed at runtime. A realm that needs escaping (`"`, `\` or `$`) keeps a backend `http-request auth` rule, which reloads on add and remove.
@@ -1172,7 +1108,7 @@ spoaHub:
 The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. Note: enabling `controller.templateLibraries.nginxIngress.enabled` **also** auto-enables `external-auth` (the nginx-ingress library is opt-in for this reason). See the [SPOA Hub operations guide](../operations/spoa-hub.md) for the full deployment surface.
 
 !!! warning "Host-less rules error at render time"
-    All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` can't be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress.
+    All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` can't be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. HAPTIC rejects the configuration with an explicit error identifying the offending Ingress.
 
 ---
 
@@ -1210,7 +1146,7 @@ http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.h
 ```yaml
 annotations:
   nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com/check"
-  nginx.ingress.kubernetes.io/auth-signin: "https://login.example.com/oauth2/start?rd=$escaped_request_uri"
+  nginx.ingress.kubernetes.io/auth-signin: "https://login.example.com/oauth2/start"
 ```
 
 !!! note "nginx variables in the URL aren't expanded"
@@ -1288,6 +1224,7 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/ssl-passthrough: "true"
 spec:
+  ingressClassName: haptic
   tls:
     - hosts:
         - secure.example.com
@@ -1382,7 +1319,7 @@ new header or cookie name adds a processing rule and requires a reload. A
 canaries for one host define the same rule type, the first by namespace/name wins.
 
 !!! note "Canary and rate limiting compose per backend"
-    Canary selection happens in the frontend (`use_backend %[var(txn.canary_backend)]`) before backend selection, and [rate limits](#rate-limiting) count against a key built from the matched route. The main and canary Ingresses are separate routes, so each enforces the rate limit set on its own Ingress. A `limit-rps` on the main Ingress alone does *not* limit canary traffic — the split-off portion is attributed to the canary route, which has no limit of its own. To bound both, set the rate-limit annotation on the canary Ingress too. Gateway API weighted splitting has no rate-limit annotation, so there's nothing to combine there.
+    Canary selection happens in the frontend (`use_backend %[var(txn.canary_backend)]`) before backend selection, and [rate limits](#rate-limiting) count against a key built from the matched route. The main and canary Ingresses are separate routes, so each enforces the rate limit set on its own Ingress. A `limit-rps` on the main Ingress alone does *not* limit canary traffic — the split-off portion is attributed to the canary route, which has no limit of its own. To bound both, set the rate-limit annotation on the canary Ingress too. For Gateway API routes, configure rate limits with [HAProxyRoutePolicy](../operations/gateway-policies.md).
 
 ---
 
@@ -1394,7 +1331,7 @@ The library wires the four `auth-tls-*` annotations that nginx-ingress uses for 
 
 **Status**: ✅ Supported
 
-**Description**: Reference to a `kubernetes.io/tls` Secret whose `ca.crt` field contains the CA bundle that signs the clients' certificates. The chart writes the CA to `ssl/<ns>-<secret>-client-ca.pem` and adds `[ca-file <path> verify <mode>]` to the crt-list line for every host on the annotated Ingress.
+**Description**: Reference to a Secret whose `ca.crt` field contains the CA bundle that signs the clients' certificates. The chart writes the CA to `ssl/<ns>-<secret>-client-ca.pem` and adds `[ca-file <path> verify <mode>]` to the crt-list line for every host on the annotated Ingress.
 
 **Format**: `name` (resolves in the Ingress namespace) or `namespace/name`.
 
@@ -1405,16 +1342,10 @@ annotations:
   nginx.ingress.kubernetes.io/auth-tls-secret: "client-ca"
 ```
 
-The Secret:
+Create the Secret from your client CA bundle in the Ingress's namespace:
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: client-ca
-type: kubernetes.io/tls
-data:
-  ca.crt: <base64 PEM CA bundle>
+```bash
+kubectl -n default create secret generic client-ca --from-file=ca.crt=ca.crt
 ```
 
 **Generated crt-list entry**:
@@ -1424,7 +1355,7 @@ default_server-tls.pem [ocsp-update on ca-file ssl/default-client-ca-client-ca.p
 ```
 
 !!! warning "Host-less rules error at render time"
-    SNI-keyed verification can't be enforced on Ingress rules without a `host:`. The chart fails the Helm render with a descriptive error.
+    SNI-keyed verification can't be enforced on Ingress rules without a `host:`. HAPTIC rejects the configuration with a descriptive error.
 
 ---
 
@@ -1441,7 +1372,7 @@ default_server-tls.pem [ocsp-update on ca-file ssl/default-client-ca-client-ca.p
 | `on` (default) | `required` | Reject connections without a valid client cert |
 | `off` | (no-op) | Don't enable verification on this host — the entry is skipped, falling through to the default crt-list line |
 | `optional` | `optional` | Verify when a cert is presented; allow connections without |
-| `optional_no_ca` | `optional` | Same as `optional` — HAProxy doesn't have a distinct mode for "verify but accept invalid"; operators wanting to accept self-signed certs should set `optional` and inspect `ssl_c_used` in their `auth-tls-error-page` logic |
+| `optional_no_ca` | `optional` | Same as `optional`; a certificate from an unknown CA still fails verification. Add the issuing CA to the trusted bundle to accept it |
 
 **Usage**:
 
@@ -1476,7 +1407,10 @@ annotations:
 http-request redirect location https://example.com/cert-required code 302 if { ssl_c_verify gt 0 } { hdr(host) -i example.com }
 ```
 
-The `ssl_c_verify gt 0` condition matches any verification error (including missing cert when `verify required` is set). Hosts without `auth-tls-error-page` fall through to HAProxy's default behaviour for failed verification (connection drop).
+The redirect can only run after a successful TLS handshake. With the default
+`verify required`, a missing or invalid certificate aborts the handshake: the
+client sees a TLS error, not this page. `optional` still rejects an invalid
+certificate; it only permits clients that send no certificate.
 
 ---
 
@@ -1558,6 +1492,53 @@ sets `auth-tls-secret` or `auth-tls-pass-certificate-to-upstream`. Its
 rate-limit and WAF fail-closed gates also name themselves in the `denied_by`
 field (`rate_limit_local`, `rate_limit_connections`, `basic_auth`,
 `waf_policy_unavailable`).
+
+## Extension points
+
+### Extension points used
+
+The Nginx Ingress library implements these extension points:
+
+| Extension Point | This Library's Snippets | What They Generate |
+|-----------------|-------------------------|-------------------|
+| Backend Directives | `backend-directives-670-nginx-ingress-session-affinity` | Cookie-based session affinity |
+| Backend Directives | `backend-directives-700-nginx-ingress-timeouts` | Backend timeouts |
+| Backend Directives | `backend-directives-710-nginx-ingress-load-balance` | Load balancing algorithm |
+| Backend Directives | `backend-directives-715-nginx-ingress-next-upstream` | Retry conditions (`proxy-next-upstream`, `proxy-next-upstream-tries`) |
+| Map (body-size) | `map-body-size-720-nginx-ingress` | Request body size limit (per-backend entry in `body-size.map`) |
+| Publications | `ingress-bandwidth-0725-nginx-ingress` | Per-stream bandwidth throttle (`limit-rate`, `limit-rate-after`) — publishes the route into the shared frontend lane |
+| Backend Directives | `backend-directives-730-nginx-ingress-backend-protocol` | Backend protocol (HTTPS, gRPC) |
+| Backend Directives | `backend-directives-740-nginx-ingress-proxy-protocol` | PROXY protocol to backend |
+| Backend Directives | `backend-directives-750-nginx-ingress-rewrite-target` | URL rewriting (capture rewrites; literal rewrites go to `path-rewrite.map` via `map-path-rewrite-750-nginx-ingress`) |
+| Backend Directives | `backend-directives-760-nginx-ingress-auth` | Basic auth enforcement |
+| Backend Directives | `backend-directives-760-nginx-ingress-proxy-ssl` | Backend TLS (`proxy-ssl-*` server flags) |
+| Publications | `ingress-satisfy-0765-nginx-ingress` | `satisfy: any` combined IP-or-auth gate — publishes the route into the shared frontend lane |
+| Backend Directives | `backend-directives-765-nginx-ingress-satisfy-any` | The same gate for a route the lane can't serve: an allow-list with an IPv6 entry, or a realm needing escaping |
+| Publications | `ingress-rate-limit-0770-nginx-ingress` | Rate limiting / connection limiting (`limit-rps`, `limit-rpm`, `limit-connections`, `limit-whitelist`) — publishes the route into the shared frontend lane |
+| Backend Directives | `backend-directives-780-nginx-ingress-upstream-hash` | Hash-based load balancing |
+| Frontend Filters | `frontend-filters-791-nginx-ingress-proxy-cookie` | Upstream `Set-Cookie` rewriting (`proxy-cookie-domain`, `proxy-cookie-path`), from a per-route map |
+| Frontend Filters | `frontend-filters-796-nginx-ingress-proxy-redirect` | Upstream `Location`/`Refresh` rewriting (`proxy-redirect-from`, `proxy-redirect-to`), from a per-route map |
+| Backend Directives | `backend-directives-900-nginx-ingress-config-snippet` | Raw backend config injection |
+| Map (request headers) | `map-reqhdr-host-760-nginx-ingress`, `map-reqhdr-xfwd-prefix-760-nginx-ingress`, `map-reqhdr-connection-760-nginx-ingress` | per-backend map entries for `upstream-vhost` / `x-forwarded-prefix` / `connection-proxy-header` |
+| Map (host) | `map-host-720-nginx-ingress-server-alias` | `server-alias` hostnames → the rule host's routing key in `host.map` |
+| Backends | `backends-510-nginx-ingress-default-backend` | Per-Ingress `default-backend` pools (+ catch-all path entries via `map-path-prefix-510-nginx-ingress-default-backend`) |
+| Frontend Filters | `frontend-filters-700-nginx-ingress-access-control` | IP allowlist/denylist |
+| Features | `features-105-nginx-ingress-ssl-redirect` | HTTP to HTTPS redirect (registers hosts into the shared `ssl-redirect-<code>.map`; ssl.yaml emits the rule) |
+| Features | `features-155-nginx-ingress-hsts` | HTTP Strict Transport Security (HSTS) header — registers host→value into the shared `hsts.map` |
+| Frontend Filters | `frontend-filters-730-nginx-ingress-cors` | CORS headers |
+| Frontend Filters | `frontend-filters-740-nginx-ingress-custom-headers` | Custom request/response headers |
+| Features | `features-145-nginx-ingress-app-root` | Root path redirect — registers host→path into the shared `app-root.map` |
+| Features | `features-140-nginx-ingress-redirects` | Permanent (301) / temporal (302) redirect — registers host→location in the shared `redirect-loc-<code>.map` |
+| Features | `features-150-nginx-ingress-mtls-error` | mTLS error-page redirect — registers host→URL into the shared `mtls-error.map` |
+| Frontend Filters | `frontend-filters-775-nginx-ingress-from-to-www-redirect` | apex↔www redirect via `from-to-www.map` |
+| Publications | `ingress-canary-0780-nginx-ingress` | Canary routing — publishes the canary into the shared frontend lane |
+| Publications | `ingress-mirror-0555-nginx-ingress` | Request mirroring (`mirror-target`) — publishes the target into the shared frontend lane |
+| Frontend Filters | `frontend-filters-790-nginx-ingress-mtls-error` | mTLS cert passthrough (set-headers; the error-page redirect moved to features-150) |
+| Features | `features-100-nginx-ingress-ssl-passthrough` | SSL passthrough registration |
+| Backends | `backends-501-nginx-ingress-ssl-passthrough` | SSL passthrough backends |
+| Global Top | `global-top-700-nginx-ingress-auth` | Userlist definitions for basic auth |
+
+---
 
 ## See also
 

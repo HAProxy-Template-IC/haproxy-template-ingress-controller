@@ -1,0 +1,615 @@
+{
+  "schema_version": 1,
+  "measured_at": "2026-09-21",
+  "release_evidence": false,
+  "execution": {
+    "location": "local",
+    "order": [
+      "baseline",
+      "candidate"
+    ],
+    "pairs": 1,
+    "retries": 0
+  },
+  "environment": {
+    "cpu": "AMD Ryzen 7 5700X3D",
+    "physical_cores": 8,
+    "logical_cpus": 16,
+    "memory_bytes": 33566134272,
+    "kind_node_image": "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5",
+    "kubernetes": "v1.37.0",
+    "haproxy_version_line": "3.4",
+    "cluster_provenance": "fresh-controlled",
+    "coscheduled_kind_clusters": false,
+    "controller_builder_image": "docker.io/library/golang:1.27-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195"
+  },
+  "profile": {
+    "benchmark_commit": "e81292ed876472804e0a2245876a7c445ab80881",
+    "gateway_api": {
+      "version": "v1.4.0",
+      "channel": "experimental"
+    },
+    "probe_routes": 300,
+    "scale": {
+      "namespaces": 50,
+      "routes_per_namespace": 100,
+      "duration": "10m",
+      "startup_timeout": "20m"
+    },
+    "routechange": {
+      "changes": 20,
+      "grace_ms": 200
+    },
+    "controller_replicas": 2,
+    "haproxy_replicas": 2,
+    "min_deployment_interval": "100ms",
+    "gateway_debounce": "100ms",
+    "httproute_debounce": "100ms",
+    "measured_pod_cpu_limits": null,
+    "measured_pod_memory_limits": null,
+    "measured_pod_explicit_gomemlimit": null,
+    "pre_rollout_validation_cpu_limit": 8,
+    "pre_rollout_validation_memory_limit": "1Gi",
+    "controlled_default_profile": false,
+    "published_workload_inputs_match": false
+  },
+  "methodology": [
+    "One sequential pair on the same host, with a new isolated Kind cluster per revision.",
+    "Diagnostic commits change only the three listed harness files; those files are byte-identical across revisions. Runtime and chart sources match the product commits.",
+    "Readiness includes current status for all 5000 routes and matching deployed configuration and runtime maps on every HAProxy worker before the ten-minute churn window.",
+    "Container resource totals include sidecars. Agent-only totals isolate the two agents. Fleet totals exclude Kubernetes, benchmark backends, and monitoring.",
+    "Resources use the common validated 585-second window, with 118 evaluation samples at five-second intervals and checked source timestamps. Repeated source values are not independent observations.",
+    "Mean CPU is cumulative CPU-seconds delta divided by window seconds. Memory mean is the arithmetic mean of aligned samples; aggregate p95 is computed after summing the aligned series.",
+    "Controller roles are identified by per-pod deployment counter deltas. Controller RSS first/last and half-window means use only the same validated samples.",
+    "Evidence hashes identify the original retained artifacts. This record publishes selected results, not the full logs or Kubernetes object captures."
+  ],
+  "harness_files_sha256": {
+    ".gitlab-ci.yml": "d3b6c77f6386dbe9a76268d09a5abfa222e9091350f5224fbbe412cae3032628",
+    "scripts/bench-gateway-api.sh": "6d5080059b7eba11be08c9dbf1a7a7fa5f21a21bebd4e02f45fb24b25f0afd8a",
+    "scripts/ci-scale-control-arm.sh": "795e8116aa04f9ffb5b6ce3e40e454021c0455a6fe2e7dd09d125fa395bb6610"
+  },
+  "revisions": {
+    "baseline": {
+      "product_commit": "80a69872b36c1497a69afe84f39f9b6fbe305609",
+      "diagnostic_commit": "8235b2ac79ba9bde0d3bc5be1a7c2eff1c1e6bca",
+      "source_hash": "92a1e1440bd6",
+      "controller_binary_sha256": "65ecc67db19c8b0448b48e15dd4b7de20e1a4aed93cb3264f96b9a5a6ed03683",
+      "harness_pass": true,
+      "measured_result_pass": true,
+      "secret_scan_count": 3,
+      "scenarios": {
+        "probe": {
+          "measurement_valid": true,
+          "pass": true,
+          "supervised_child_continuity_pass": true,
+          "lifecycle_outcome_quality_pass": true
+        },
+        "scale": {
+          "measurement_valid": true,
+          "pass": true,
+          "supervised_child_continuity_pass": true,
+          "lifecycle_outcome_quality_pass": true
+        },
+        "routechange": {
+          "measurement_valid": true,
+          "pass": true,
+          "supervised_child_continuity_pass": true,
+          "lifecycle_outcome_quality_pass": true
+        }
+      },
+      "resource_window": {
+        "end_unix_seconds": 1789975811.36,
+        "evaluation_step_seconds": 5,
+        "interval_count": 117,
+        "max_source_age_seconds": 20,
+        "requested_end_unix_seconds": 1789975811.3821347,
+        "requested_start_unix_seconds": 1789975211.3603854,
+        "sample_count": 118,
+        "source_sample_boundary": "(start,end]",
+        "start_unix_seconds": 1789975226.36,
+        "window_seconds": 585
+      },
+      "resource_components": {
+        "controller": {
+          "container_count": 4,
+          "cpu_cores": {
+            "counter_delta_seconds": 700.47043,
+            "last": 3.2180566,
+            "max": 4.4565972,
+            "mean": 1.1973853504273504,
+            "normalized_cores": 1.1973853504273504,
+            "p95": 3.8213984,
+            "window_seconds": 585
+          },
+          "rss_bytes": {
+            "last": 4954734592,
+            "max": 5128896512,
+            "mean": 4823231609.491526,
+            "p95": 4958851072
+          },
+          "working_set_bytes": {
+            "last": 5020975104,
+            "max": 5305147392,
+            "mean": 4913291194.576271,
+            "p95": 5043912704
+          }
+        },
+        "loadbalancer": {
+          "container_count": 8,
+          "cpu_cores": {
+            "counter_delta_seconds": 112.78654,
+            "last": 0.3974544,
+            "max": 0.5005466,
+            "mean": 0.19279750427350428,
+            "normalized_cores": 0.19279750427350428,
+            "p95": 0.3611144,
+            "window_seconds": 585
+          },
+          "rss_bytes": {
+            "last": 536637440,
+            "max": 544952320,
+            "mean": 538922695.5932204,
+            "p95": 542666752
+          },
+          "working_set_bytes": {
+            "last": 625930240,
+            "max": 644026368,
+            "mean": 633699171.7966101,
+            "p95": 642596864
+          }
+        }
+      },
+      "controller_containers": {
+        "leader": {
+          "cpu_cores": {
+            "counter_delta_seconds": 528.250144,
+            "last": 3.171306,
+            "max": 3.5874376,
+            "mean": 0.9029916991452992,
+            "normalized_cores": 0.9029916991452992,
+            "p95": 3.2666056,
+            "window_seconds": 585
+          },
+          "rss_bytes": {
+            "last": 2872397824,
+            "max": 3046367232,
+            "mean": 2739705682.440678,
+            "p95": 2875871232,
+            "first": 3046367232.0,
+            "first_half_mean": 2717449059.7966104,
+            "second_half_mean": 2761962305.084746
+          },
+          "working_set_bytes": {
+            "last": 2928144384,
+            "max": 3212419072,
+            "mean": 2819152948.0677967,
+            "p95": 2952114176
+          }
+        },
+        "follower": {
+          "cpu_cores": {
+            "counter_delta_seconds": 164.247518,
+            "last": 0,
+            "max": 1.1972164,
+            "mean": 0.28076498803418803,
+            "normalized_cores": 0.28076498803418803,
+            "p95": 1.1211418,
+            "window_seconds": 585
+          },
+          "rss_bytes": {
+            "last": 2078810112,
+            "max": 2080620544,
+            "mean": 2080002950.5084746,
+            "p95": 2080600064,
+            "first": 2079006720.0,
+            "first_half_mean": 2079983997.8305085,
+            "second_half_mean": 2080021903.1864407
+          },
+          "working_set_bytes": {
+            "last": 2086379520,
+            "max": 2090446848,
+            "mean": 2088379548.20339,
+            "p95": 2089701376
+          }
+        }
+      },
+      "container_type_totals": {
+        "agent": {
+          "cpu_cores_mean": 0.06889113675213676,
+          "rss_bytes_mean": 46068926.915254235,
+          "working_set_bytes_mean": 77686888.13559322
+        },
+        "controller": {
+          "cpu_cores_mean": 1.1837566871794873,
+          "rss_bytes_mean": 4819708632.949153,
+          "working_set_bytes_mean": 4907532496.271187
+        },
+        "haproxy": {
+          "cpu_cores_mean": 0.11453483076923077,
+          "rss_bytes_mean": 276981343.4576271,
+          "working_set_bytes_mean": 326141292.47457623
+        },
+        "spoa-hub": {
+          "cpu_cores_mean": 0.0019727794871794873,
+          "rss_bytes_mean": 88372137.22033899,
+          "working_set_bytes_mean": 94608783.18644068
+        },
+        "validators": {
+          "cpu_cores_mean": 0.013628663247863246,
+          "rss_bytes_mean": 3522976.5423728814,
+          "working_set_bytes_mean": 5758698.305084746
+        },
+        "vector": {
+          "cpu_cores_mean": 0.007398757264957265,
+          "rss_bytes_mean": 127500288.0,
+          "working_set_bytes_mean": 135262208.0
+        }
+      },
+      "activity_counter_deltas": {
+        "haptic_reconciliation_total": 1749.0,
+        "haptic_reconciliation_errors_total": 0.0,
+        "haptic_deployment_total": 1081.0,
+        "haptic_deployment_errors_total": 0.0,
+        "haptic_haproxy_reloads_total": 0.0,
+        "haptic_deploy_apply_total": 2162.0,
+        "haptic_apply_rejected_total": 0.0,
+        "haptic_runtime_server_ops_total": 2728.0,
+        "haptic_runtime_backend_ops_total": 0.0,
+        "haptic_runtime_map_divergence_total": 0.0,
+        "haptic_validation_total": 630.0,
+        "haptic_validation_errors_total": 0.0,
+        "haptic_events_dropped_total": 0.0,
+        "haptic_events_dropped_critical_total": 0.0
+      },
+      "route_refresh_log_lines": 597,
+      "routechange_requests": 21532,
+      "routechange_duration_seconds": 6.932478428,
+      "evidence_sha256": {
+        "metadata.json": "9e326dd1413c1da19b4adf8dbaddccf73d4cc66106b0eac524fdbb4c3d8ad0ad",
+        "runner-summary.json": "d950d7b1ec8e5ac8b7994ab444e73808654be8fa99d206ef2135af88311bdbda",
+        "cluster/artifact-secret-scan.json": "66f239f811bbed0f82e398bebd71630e4366125dbc65de8d201801f6046523be",
+        "cluster/controller-runtime/verified.json": "2397dc10c422b341cc8760a0d2410d0ca8f750b989cf613cc75c65c0631fb5ac",
+        "scale/resources.json": "342170b559f3e0b3d959a9d52b3aec6f5d5d120d53554bf793518e0550810fc6",
+        "scale/steady-activity.json": "75b89ffc0c1fa333201ce8b0462c3df8e86fc66db7bb64f0826a6e2c573325ae",
+        "probe/analysis.json": "8d137e476f40771cedecb3f71dc9dc5562625717407a731850aa16a7d6c2609d",
+        "scale/analysis.json": "df28a37d4850e86050a3f711567a9a756f6e1cbd7c004779d04ff6fa21f54000",
+        "routechange/analysis.json": "7d105b557c59a3b896fcc5823340e5012fbcce50c996c8238d84b8c0d3480b7c",
+        "scale/steady-prometheus-range/rss.json": "ef39056405d7bf9248899bec26de05aef5f5f18a5e85ce7f0902d915ce25712b",
+        "scale/steady-prometheus-range/rss-source-timestamps.json": "7796953c0e288c73c14ee45fd26acc96ff9f6afbf0420936cffebe0653c2c85e",
+        "host/kubectl-version.yaml": "8bdbb69e1bd83f7a542abfa712e17665bd6fcee1178de6f1e51550bd04b9d3e6",
+        "cluster/kind-control-plane.json": "4864e279e0f279bc8c69e3c336d3ab3815a348aef6dd618d1d3829624d0b8655"
+      }
+    },
+    "candidate": {
+      "product_commit": "858e6d05833aa5956105d08acad365b9166ef728",
+      "diagnostic_commit": "7517f2228b5f1112879a141f5e48ece459f49994",
+      "source_hash": "b2030cf23d6a",
+      "controller_binary_sha256": "cc0cb1239a8431a50470cfeb5c405b495e091f518dcacc262b65bb67f30953f2",
+      "harness_pass": true,
+      "measured_result_pass": true,
+      "secret_scan_count": 3,
+      "scenarios": {
+        "probe": {
+          "measurement_valid": true,
+          "pass": true,
+          "supervised_child_continuity_pass": true,
+          "lifecycle_outcome_quality_pass": true
+        },
+        "scale": {
+          "measurement_valid": true,
+          "pass": true,
+          "supervised_child_continuity_pass": true,
+          "lifecycle_outcome_quality_pass": true
+        },
+        "routechange": {
+          "measurement_valid": true,
+          "pass": true,
+          "supervised_child_continuity_pass": true,
+          "lifecycle_outcome_quality_pass": true
+        }
+      },
+      "resource_window": {
+        "end_unix_seconds": 1789978254.114,
+        "evaluation_step_seconds": 5,
+        "interval_count": 117,
+        "max_source_age_seconds": 20,
+        "requested_end_unix_seconds": 1789978254.127919,
+        "requested_start_unix_seconds": 1789977654.1137943,
+        "sample_count": 118,
+        "source_sample_boundary": "(start,end]",
+        "start_unix_seconds": 1789977669.114,
+        "window_seconds": 585
+      },
+      "resource_components": {
+        "controller": {
+          "container_count": 4,
+          "cpu_cores": {
+            "counter_delta_seconds": 689.140442,
+            "last": 0.6637448,
+            "max": 4.1247088,
+            "mean": 1.1780178495726497,
+            "normalized_cores": 1.1780178495726497,
+            "p95": 3.494791,
+            "window_seconds": 585
+          },
+          "rss_bytes": {
+            "last": 5048791040,
+            "max": 5170065408,
+            "mean": 5011704606.372881,
+            "p95": 5154836480
+          },
+          "working_set_bytes": {
+            "last": 5094281216,
+            "max": 5465288704,
+            "mean": 5164027973.423729,
+            "p95": 5442686976
+          }
+        },
+        "loadbalancer": {
+          "container_count": 8,
+          "cpu_cores": {
+            "counter_delta_seconds": 119.513446,
+            "last": 0.2799366,
+            "max": 0.5379214,
+            "mean": 0.20429648888888888,
+            "normalized_cores": 0.20429648888888888,
+            "p95": 0.4850024,
+            "window_seconds": 585
+          },
+          "rss_bytes": {
+            "last": 548720640,
+            "max": 562634752,
+            "mean": 551599329.6271186,
+            "p95": 560205824
+          },
+          "working_set_bytes": {
+            "last": 633212928,
+            "max": 657907712,
+            "mean": 638328311.3220339,
+            "p95": 655777792
+          }
+        }
+      },
+      "controller_containers": {
+        "follower": {
+          "cpu_cores": {
+            "counter_delta_seconds": 164.491608,
+            "last": 0.6637448,
+            "max": 1.265483,
+            "mean": 0.2811822358974359,
+            "normalized_cores": 0.2811822358974359,
+            "p95": 1.1566572,
+            "window_seconds": 585
+          },
+          "rss_bytes": {
+            "last": 2166222848,
+            "max": 2166222848,
+            "mean": 2151124749.016949,
+            "p95": 2166190080,
+            "first": 2139365376.0,
+            "first_half_mean": 2148543887.1864405,
+            "second_half_mean": 2153705610.8474574
+          },
+          "working_set_bytes": {
+            "last": 2173419520,
+            "max": 2173419520,
+            "mean": 2157390171.118644,
+            "p95": 2173128704
+          }
+        },
+        "leader": {
+          "cpu_cores": {
+            "counter_delta_seconds": 516.770185,
+            "last": 0,
+            "max": 3.4162852,
+            "mean": 0.8833678376068376,
+            "normalized_cores": 0.8833678376068376,
+            "p95": 3.1224204,
+            "window_seconds": 585
+          },
+          "rss_bytes": {
+            "last": 2879709184,
+            "max": 3018022912,
+            "mean": 2857377410.1694913,
+            "p95": 3001200640,
+            "first": 2874429440.0,
+            "first_half_mean": 2864125223.0508475,
+            "second_half_mean": 2850629597.2881355
+          },
+          "working_set_bytes": {
+            "last": 2916024320,
+            "max": 3303460864,
+            "mean": 3001262982.5084743,
+            "p95": 3280109568
+          }
+        }
+      },
+      "container_type_totals": {
+        "agent": {
+          "cpu_cores_mean": 0.0808675641025641,
+          "rss_bytes_mean": 45610834.44067797,
+          "working_set_bytes_mean": 70487057.3559322
+        },
+        "controller": {
+          "cpu_cores_mean": 1.1645500735042735,
+          "rss_bytes_mean": 5008502159.18644,
+          "working_set_bytes_mean": 5158653153.627119
+        },
+        "haproxy": {
+          "cpu_cores_mean": 0.1138439264957265,
+          "rss_bytes_mean": 286005317.4237288,
+          "working_set_bytes_mean": 334923498.30508476
+        },
+        "spoa-hub": {
+          "cpu_cores_mean": 0.0020586957264957266,
+          "rss_bytes_mean": 86022977.08474576,
+          "working_set_bytes_mean": 91393076.06779662
+        },
+        "validators": {
+          "cpu_cores_mean": 0.013467776068376068,
+          "rss_bytes_mean": 3202447.1864406783,
+          "working_set_bytes_mean": 5374819.796610169
+        },
+        "vector": {
+          "cpu_cores_mean": 0.007526302564102564,
+          "rss_bytes_mean": 133960200.67796609,
+          "working_set_bytes_mean": 141524679.59322035
+        }
+      },
+      "activity_counter_deltas": {
+        "haptic_reconciliation_total": 1771.0,
+        "haptic_reconciliation_errors_total": 0.0,
+        "haptic_deployment_total": 1091.0,
+        "haptic_deployment_errors_total": 0.0,
+        "haptic_haproxy_reloads_total": 0.0,
+        "haptic_deploy_apply_total": 2182.0,
+        "haptic_apply_rejected_total": 0.0,
+        "haptic_runtime_server_ops_total": 2786.0,
+        "haptic_runtime_backend_ops_total": 0.0,
+        "haptic_runtime_map_divergence_total": 0.0,
+        "haptic_validation_total": 643.0,
+        "haptic_validation_errors_total": 0.0,
+        "haptic_events_dropped_total": 0.0,
+        "haptic_events_dropped_critical_total": 0.0
+      },
+      "route_refresh_log_lines": 598,
+      "routechange_requests": 20516,
+      "routechange_duration_seconds": 6.836996078,
+      "evidence_sha256": {
+        "metadata.json": "d00a1374ccd11273d13dfc0f0d27fdb073bf57c6b706710c42dc07ee5748d22a",
+        "runner-summary.json": "1d4cacb2b1eec01de4893f0cb071397b2151de2798eba68c79e3af08030584d4",
+        "cluster/artifact-secret-scan.json": "66f239f811bbed0f82e398bebd71630e4366125dbc65de8d201801f6046523be",
+        "cluster/controller-runtime/verified.json": "a8985dca3d65fed5c18221995c47bd299a3fda1fb3f5e7b6553358645e8304cc",
+        "scale/resources.json": "0c1113a2767a18a45df43a00f50c885b3ff0333e3fb02dbbdd468b3634d27c9d",
+        "scale/steady-activity.json": "45af7f32c9be55e3c4fe0704869f99a7b03e2de96308690637d76c62058a1dcf",
+        "probe/analysis.json": "b09a8377f346ba04b8f111334727743c78664db9fbaecdd4a31fc6b19548df7a",
+        "scale/analysis.json": "a2df284bb4ae0625c0e35e7608e5ba3d6910e172b042532caa7155d4e068da25",
+        "routechange/analysis.json": "cfc6f1ae85836d85210bc66025ac37d7846f820f42c5fb13d4eea792c96147b6",
+        "scale/steady-prometheus-range/rss.json": "120fd11f06bdf9913b330dc0114e3a495cae35c602eefbe2d3ca8dd936606b8e",
+        "scale/steady-prometheus-range/rss-source-timestamps.json": "7127b6f59847e665e89c48f57f57ada48665ede2ab5095dbdfc1e9ef16d558f7",
+        "host/kubectl-version.yaml": "8bdbb69e1bd83f7a542abfa712e17665bd6fcee1178de6f1e51550bd04b9d3e6",
+        "cluster/kind-control-plane.json": "f83b7c11182d64f6c20fd35fdfc94452779fb8b69a2f0cc81023f267f7c861d2"
+      }
+    }
+  },
+  "comparison": {
+    "probe_mean_ms": {
+      "baseline": 106.60252073000001,
+      "candidate": 106.45328883333333,
+      "change_percent": -0.13998908810481936
+    },
+    "probe_median_ms": {
+      "baseline": 107.192611,
+      "candidate": 106.904224,
+      "change_percent": -0.2690362678076763
+    },
+    "probe_p95_ms": {
+      "baseline": 123.203069,
+      "candidate": 120.871101,
+      "change_percent": -1.8927840182292877
+    },
+    "scale_agents_cpu_cores_mean": {
+      "baseline": 0.06889113675213676,
+      "candidate": 0.0808675641025641,
+      "change_percent": 17.384569213188183
+    },
+    "scale_agents_rss_bytes_mean": {
+      "baseline": 46068926.915254235,
+      "candidate": 45610834.44067797,
+      "change_percent": -0.9943632405828406
+    },
+    "scale_agents_working_set_bytes_mean": {
+      "baseline": 77686888.13559322,
+      "candidate": 70487057.3559322,
+      "change_percent": -9.267755412077472
+    },
+    "scale_controller_cpu_cores_mean": {
+      "baseline": 1.1973853504273504,
+      "candidate": 1.1780178495726497,
+      "change_percent": -1.617482696592909
+    },
+    "scale_controller_cpu_cores_p95": {
+      "baseline": 3.8213984,
+      "candidate": 3.494791,
+      "change_percent": -8.54680318074137
+    },
+    "scale_controller_rss_bytes_mean": {
+      "baseline": 4823231609.491526,
+      "candidate": 5011704606.372881,
+      "change_percent": 3.9076082622792496
+    },
+    "scale_controller_rss_bytes_p95": {
+      "baseline": 4958851072,
+      "candidate": 5154836480,
+      "change_percent": 3.9522342001078847
+    },
+    "scale_controller_working_set_bytes_mean": {
+      "baseline": 4913291194.576271,
+      "candidate": 5164027973.423729,
+      "change_percent": 5.10323465306195
+    },
+    "scale_controller_working_set_bytes_p95": {
+      "baseline": 5043912704,
+      "candidate": 5442686976,
+      "change_percent": 7.906050231276951
+    },
+    "scale_fleet_cpu_cores_mean": {
+      "baseline": 1.3901828547008548,
+      "candidate": 1.3823143384615386,
+      "change_percent": -0.5660058468358375
+    },
+    "scale_fleet_rss_bytes_mean": {
+      "baseline": 5362154305.084746,
+      "candidate": 5563303936.0,
+      "change_percent": 3.751283895812363
+    },
+    "scale_fleet_working_set_bytes_mean": {
+      "baseline": 5546990366.372881,
+      "candidate": 5802356284.745763,
+      "change_percent": 4.6036841873922985
+    },
+    "scale_loadbalancer_cpu_cores_mean": {
+      "baseline": 0.19279750427350428,
+      "candidate": 0.20429648888888888,
+      "change_percent": 5.964280844150371
+    },
+    "scale_loadbalancer_cpu_cores_p95": {
+      "baseline": 0.3611144,
+      "candidate": 0.4850024,
+      "change_percent": 34.30713369502849
+    },
+    "scale_loadbalancer_rss_bytes_mean": {
+      "baseline": 538922695.5932204,
+      "candidate": 551599329.6271186,
+      "change_percent": 2.3522175142288937
+    },
+    "scale_loadbalancer_rss_bytes_p95": {
+      "baseline": 542666752,
+      "candidate": 560205824,
+      "change_percent": 3.2320152165872917
+    },
+    "scale_loadbalancer_working_set_bytes_mean": {
+      "baseline": 633699171.7966101,
+      "candidate": 638328311.3220339,
+      "change_percent": 0.73049480438796
+    },
+    "scale_loadbalancer_working_set_bytes_p95": {
+      "baseline": 642596864,
+      "candidate": 655777792,
+      "change_percent": 2.0511970627979936
+    },
+    "scale_verified_startup_seconds": {
+      "baseline": 951.381361,
+      "candidate": 948.095384,
+      "change_percent": -0.345390096411613
+    }
+  },
+  "limitations": [
+    "One pair does not estimate run-to-run variance or establish the cause or repeatability of resource differences.",
+    "These commits precede the issue 243 runtime-map replay fix. These are not measurements of a release or of subsequent main commits.",
+    "The 300-route probe, 100ms deployment interval, unlimited measured pods, and validation CPU override are a tuned profile, not chart defaults or a normalized public benchmark comparison.",
+    "No heap profiles or Go memory statistics were captured; RSS cannot identify a leak, retained heap, garbage-collection behavior, or a specific source change.",
+    "No safe per-controller memory limit or general 5000-route capacity guarantee follows from this unlimited-resource run.",
+    "Route-change request totals measure short continuity windows, not sustained traffic throughput."
+  ]
+}

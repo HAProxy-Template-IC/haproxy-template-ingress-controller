@@ -69,6 +69,12 @@ spec:
 EOF
 ```
 
+Wait for the sample application to become ready:
+
+```bash
+kubectl rollout status deployment/echo --namespace default --timeout=120s
+```
+
 ### Step 2: Create a Gateway
 
 Create a Gateway that references the `haptic` GatewayClass and opens an HTTP listener on port 80:

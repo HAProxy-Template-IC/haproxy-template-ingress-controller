@@ -24,46 +24,24 @@ A generated report isn't an accepted upstream submission. Upstream review and th
 [Gateway API implementations listing](https://gateway-api.sigs.k8s.io/implementations/)
 are separate evidence.
 
-## Release artifacts
+## Find evidence for your release
 
-The `release-gateway-conformance` job runs after the release controller and chart
-are published. Its artifacts have no scheduled expiration:
+Check the [Gateway API implementations listing](https://gateway-api.sigs.k8s.io/implementations/)
+for an accepted report matching your HAPTIC and Gateway API versions. A report for
+another version doesn't establish coverage for your installation.
 
-| File | Contents |
-| --- | --- |
-| `report.yaml` | Unmodified upstream report, including partial coverage |
-| `provenance.json` | Source commit and hash, chart digest, controller image and binary digests, running controller identities, Kubernetes and Gateway API versions, and test exit code |
-| `SHA256SUMS` | Checksums of the report and provenance |
+When a HAPTIC release has a successful `release-gateway-conformance` job, you can
+also open its artifacts from the release tag's pipeline on
+[GitLab](https://gitlab.com/haproxy-haptic/haptic/-/pipelines):
 
-Successful evidence requires a clean checkout at the release tag, a published
-image digest, matching image version and source hash, matching running binaries,
-all three passing core profiles, and no failed extended tests. Missing or
-incomplete reports fail the job. Failed jobs retain available artifacts with
-`verified: false`; they don't establish conformance.
+- `report.yaml` lists the tested profiles, supported features, and skipped tests.
+- `provenance.json` identifies the tested release and environment. Its `verified`
+  and `release_evidence` fields must both be `true`.
+- `SHA256SUMS` contains checksums for those files.
 
-The manual `gateway-conformance-report` job produces candidate evidence for a
-pipeline snapshot. Its version identifies that pipeline's image. It doesn't
-claim to test the released version in `VERSION`.
+An absent or failed job provides no verified release report. A manual
+`gateway-conformance-report` job tests a development candidate. Neither an
+artifact nor a passing regression test is an accepted upstream submission.
 
-Download artifacts from the release job using the GitLab CLI, `unzip`, and
-`sha256sum`:
-
-```bash
-read -r -p 'Release conformance job ID: ' job_id
-artifact_dir="$(mktemp -d)"
-glab api "projects/haproxy-haptic%2Fhaptic/jobs/${job_id}/artifacts" >"$artifact_dir/evidence.zip"
-unzip -q "$artifact_dir/evidence.zip" -d "$artifact_dir"
-cd "$artifact_dir/build/gateway-conformance"
-sha256sum --check SHA256SUMS
-python3 - <<'PY'
-import json
-from pathlib import Path
-p = json.loads(Path('provenance.json').read_text())
-assert p['verified'] and p['release_evidence'] and p['test_exit_code'] == 0, p['errors']
-print(p['controller']['version'], p['git_commit'])
-print(json.dumps(p['profiles'], indent=2))
-PY
-```
-
-For generation and upstream submission, see the repository's
+Maintainers generating or submitting reports should use the
 [conformance instructions](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/tests/conformance/README.md).

@@ -5,9 +5,8 @@ and both controller-to-agent identities. It doesn't require cert-manager. You ca
 select cert-manager explicitly or supply externally managed identity Secrets.
 Both peers reload mounted certificates without restarting.
 
-The commands below use Bash, `kubectl`, `jq`, Python 3, and OpenSSL, with release
-`haptic` in namespace `haptic`. You need permission to inspect Secrets and Jobs;
-manual certificate replacement also requires updating Secrets and exec access.
+The commands use release `haptic` in namespace `haptic`. Checking renewal Jobs
+requires `kubectl` and permission to read Jobs and their logs.
 For the authentication model, see [Security](./security.md#credentials).
 
 ## Default renewal
@@ -126,7 +125,8 @@ kubectl rollout status deployment/haptic-haproxy -n haptic
 
 ## Check expiry
 
-Check both identities and their CA. This command prints expiry
+This check requires Bash, `kubectl`, `jq`, OpenSSL, and permission to read the
+identity Secrets. Check both identities and their CA. The command prints expiry
 dates and exits with an error if any certificate expires within 30 days or can't
 be read. It reads only public certificates from the Secrets.
 
@@ -153,6 +153,9 @@ inside the renewal window indicate a failed renewal process. With an external
 issuer, monitor its CA lifetime as well as the identity lifetimes.
 
 ## Supply external identities
+
+The manual procedures below require Bash, `kubectl`, `jq`, Python 3, and OpenSSL,
+with permission to create and update Secrets and execute commands in pods.
 
 Prepare `agent.crt`, `agent.key`, `controller.crt`, `controller.key`, and `ca.crt`
 from your certificate issuer. The agent certificate needs the `serverAuth`

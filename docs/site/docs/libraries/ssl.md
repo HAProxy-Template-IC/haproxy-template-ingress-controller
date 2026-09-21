@@ -175,22 +175,21 @@ The SSL library already applies one TLS policy to every frontend `bind ... ssl` 
 
 To change the policy, set those three keys rather than adding your own snippet — a second `ssl-default-bind-*` in `global` would be a duplicate directive. Values are charset-checked at render time, so an injection attempt fails the config load instead of reaching HAProxy.
 
-If you do need directives the keys don't cover, emit them into the `global` section through a [`global-settings-*` extension point](base.md#extension-points):
+For example, keep TLS 1.2 as the minimum and select the TLS 1.3 cipher suites:
 
 ```yaml
 controller:
   config:
-    templateSnippets:
-      global-settings-400-tls-hardening:
-        template: |
-          ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305
-          ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
-          ssl-default-bind-options ssl-min-ver TLSv1.2
+    templatingSettings:
+      extraContext:
+        tls:
+          minVersion: TLSv1.2
+          ciphersuites: TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
 ```
 
-- `ssl-default-bind-ciphers` sets the cipher list for TLS 1.2 and below.
-- `ssl-default-bind-ciphersuites` sets the cipher suites for TLS 1.3.
-- `ssl-default-bind-options ssl-min-ver TLSv1.2` rejects handshakes below TLS 1.2.
+Use `tls.ciphers` for TLS 1.2 cipher selection. Add a
+[`global-settings-*` snippet](base.md#extension-points) only for directives these
+settings don't cover.
 
 The bundled community HAProxy images use AWS-LC, so HAPTIC doesn't emit
 `tune.ssl.default-dh-param`: HAProxy doesn't support that setting with AWS-LC
