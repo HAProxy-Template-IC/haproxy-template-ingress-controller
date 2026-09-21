@@ -7,9 +7,18 @@ import (
 )
 
 // TestSyncSections runs table-driven synchronization tests for section operations
-// (resolvers, mailers, peers, cache, ring)
+// (resolvers, mailers, peers, cache, ring).
 func TestSyncSections(t *testing.T) {
 	t.Parallel()
+	mailersConfig := "mailers/mailers-with-alerts.cfg"
+	var mailersScript map[string]string
+	if haproxyAtLeast("3.1") {
+		mailersConfig = "mailers/mailers-with-alerts-lua.cfg"
+		mailersScript = map[string]string{"general/mailers.lua": "mailers/mailers-legacy.lua"}
+	}
+	if haproxyAtLeast("3.3") {
+		mailersScript["general/mailers.lua"] = "mailers/mailers.lua"
+	}
 	testCases := []syncTestCase{
 		// ==================== RESOLVERS SECTION OPERATIONS ====================
 		{
@@ -27,12 +36,14 @@ func TestSyncSections(t *testing.T) {
 		{
 			name:              "mailers-add-section",
 			initialConfigFile: "mailers/mailers-base.cfg",
-			desiredConfigFile: "mailers/mailers-with-alerts.cfg",
+			desiredConfigFile: mailersConfig,
+			generalFiles:      mailersScript,
 		},
 		{
-			name:              "mailers-remove-section",
-			initialConfigFile: "mailers/mailers-with-alerts.cfg",
-			desiredConfigFile: "mailers/mailers-base.cfg",
+			name:                "mailers-remove-section",
+			initialConfigFile:   mailersConfig,
+			initialGeneralFiles: mailersScript,
+			desiredConfigFile:   "mailers/mailers-base.cfg",
 		},
 
 		// ==================== PEERS SECTION OPERATIONS ====================
@@ -73,10 +84,10 @@ func TestSyncSections(t *testing.T) {
 	}
 
 	for _, tt := range testCases {
-		tt := tt // capture range variable
+		// capture range variable
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			runSyncTest(t, tt)
+			runSyncTest(t, &tt)
 		})
 	}
 }

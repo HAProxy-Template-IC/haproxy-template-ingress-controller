@@ -9,10 +9,9 @@ import (
 
 func TestGenerateSafeNamespaceName(t *testing.T) {
 	tests := []struct {
-		name        string
-		testName    string
-		maxLength   int
-		shouldPanic bool
+		name      string
+		testName  string
+		maxLength int
 	}{
 		{
 			name:      "short test name",
@@ -48,14 +47,6 @@ func TestGenerateSafeNamespaceName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.shouldPanic {
-				defer func() {
-					if r := recover(); r == nil {
-						t.Errorf("Expected panic but didn't get one")
-					}
-				}()
-			}
-
 			result := generateSafeNamespaceName(tt.testName)
 
 			// Verify length constraint
@@ -90,27 +81,27 @@ func TestGenerateSafeNamespaceName(t *testing.T) {
 // isValidK8sName checks if a name follows RFC 1123 label requirements:
 // - lowercase alphanumeric characters or '-'
 // - start with alphanumeric character
-// - end with alphanumeric character
+// - end with alphanumeric character.
 func isValidK8sName(name string) bool {
-	if len(name) == 0 || len(name) > 63 {
+	if name == "" || len(name) > 63 {
 		return false
 	}
 
 	// Check first character (must be alphanumeric)
 	first := name[0]
-	if !((first >= 'a' && first <= 'z') || (first >= '0' && first <= '9')) {
+	if !isNameAlphanumeric(rune(first)) {
 		return false
 	}
 
 	// Check last character (must be alphanumeric)
 	last := name[len(name)-1]
-	if !((last >= 'a' && last <= 'z') || (last >= '0' && last <= '9')) {
+	if !isNameAlphanumeric(rune(last)) {
 		return false
 	}
 
 	// Check all characters (must be alphanumeric or hyphen)
 	for _, ch := range name {
-		if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-') {
+		if !isNameAlphanumeric(ch) && ch != '-' {
 			return false
 		}
 	}
@@ -147,3 +138,5 @@ func TestIsValidK8sName(t *testing.T) {
 		})
 	}
 }
+
+func isNameAlphanumeric(ch rune) bool { return ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' }

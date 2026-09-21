@@ -75,10 +75,10 @@ func TestSyncObservability(t *testing.T) {
 	}
 
 	for _, tt := range testCases {
-		tt := tt // capture range variable
+		// capture range variable
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			runSyncTest(t, tt)
+			runSyncTest(t, &tt)
 		})
 	}
 }

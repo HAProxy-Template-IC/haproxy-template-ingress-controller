@@ -33,6 +33,8 @@ import (
 // the chart emits, and they are what makes HAProxy name a map or a certificate
 // at runtime by the same base-relative string the manifest carries.
 var podGlobals = []string{
+	"    uid 0",
+	"    chroot /",
 	"    stats socket " + WorkerSocketPath + " mode 600 level admin",
 	"    default-path origin " + BaseDir,
 	"    crt-base " + SSLDir,

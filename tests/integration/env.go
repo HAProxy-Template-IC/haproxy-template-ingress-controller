@@ -32,9 +32,9 @@ import (
 )
 
 const (
-	// maxK8sNameLength is the maximum length for Kubernetes resource names (RFC 1123)
+	// maxK8sNameLength is the maximum length for Kubernetes resource names (RFC 1123).
 	maxK8sNameLength = 63
-	// hashSuffixLength is the length of the hash suffix used to ensure uniqueness
+	// hashSuffixLength is the length of the hash suffix used to ensure uniqueness.
 	hashSuffixLength = 8
 )
 
@@ -84,7 +84,7 @@ func generateSafeNamespaceName(testName string) string {
 // SharedCluster provides a package-scoped Kind cluster shared across all tests
 // This fixture runs only once per test package and is kept by default for faster test iterations
 // The cluster is automatically reused if it already exists
-// Set KEEP_CLUSTER=false to force cleanup after tests
+// Set KEEP_CLUSTER=false to force cleanup after tests.
 func SharedCluster(env fixenv.Env) *KindCluster {
 	return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*KindCluster], error) {
 		cluster, err := SetupKindCluster(&KindClusterConfig{
@@ -129,7 +129,7 @@ func AgentImage(env fixenv.Env) string {
 // TestNamespace provides a test-scoped namespace (fresh for each test)
 // Automatically depends on SharedCluster fixture
 // Namespaces are kept by default for faster test iterations
-// Set KEEP_CLUSTER=false to force cleanup after tests
+// Set KEEP_CLUSTER=false to force cleanup after tests.
 func TestNamespace(env fixenv.Env) *Namespace {
 	// Automatic dependency: request SharedCluster fixture
 	cluster := SharedCluster(env)
@@ -161,7 +161,7 @@ func TestNamespace(env fixenv.Env) *Namespace {
 // its agent, the topology the chart deploys.
 // Automatically depends on TestNamespace fixture (which depends on SharedCluster)
 // HAProxy instances are kept by default for faster test iterations
-// Set KEEP_CLUSTER=false to force cleanup after tests
+// Set KEEP_CLUSTER=false to force cleanup after tests.
 func TestHAProxy(env fixenv.Env) *HAProxyInstance {
 	// Automatic dependency chain: TestNamespace -> SharedCluster
 	ns := TestNamespace(env)
@@ -196,7 +196,7 @@ func TestHAProxy(env fixenv.Env) *HAProxyInstance {
 
 // TestAgentClient provides the controller's end of the wire contract, pointed
 // at the test pod's agent through the forwarded port.
-// Automatically depends on TestHAProxy fixture
+// Automatically depends on TestHAProxy fixture.
 func TestAgentClient(env fixenv.Env) *client.Client {
 	// Automatic dependency chain: TestHAProxy -> TestNamespace -> SharedCluster
 	haproxy := TestHAProxy(env)

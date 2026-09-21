@@ -108,7 +108,7 @@ else
 endif
 	@echo "Running golangci-lint over the playground-tagged files..."
 	$(GOLANGCI_LINT) run --build-tags=playground ./pkg/dataplane/... ./pkg/generated/validators/...
-	@$(MAKE) lint-e2e
+	@$(MAKE) lint-e2e lint-integration
 	@echo "Checking no production binary links a HAProxy config parser..."
 	./scripts/check-client-native-free.sh
 	@echo "Running arch-go..."
@@ -130,6 +130,10 @@ lint-e2e: ## Lint the full-stack e2e suite without creating a cluster
 
 lint-e2e-fix: ## Apply supported automatic fixes to the full-stack e2e suite
 	$(GOLANGCI_LINT) run --fix --build-tags=e2e ./tests/e2e/...
+
+.PHONY: lint-integration
+lint-integration: ## Lint the integration suite without creating a cluster
+	$(GOLANGCI_LINT) run --build-tags=integration ./tests/integration/...
 
 ## Chart linting
 
@@ -295,6 +299,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	bash scripts/tests/test_cluster_node_image.sh
 	python3 -m unittest \
 		scripts/tests/test_gitops_lifecycle.py \
+		scripts/tests/test_upgrade_traffic.py \
 		scripts/tests/test_shard_go_tests.py \
 		scripts/tests/test_prepare_gateway_api_canary.py \
 		scripts/tests/test_validate_conformance_report.py \

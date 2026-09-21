@@ -11,6 +11,8 @@ Configuration validation orchestrator and reinitialization signaller.
 
 This package also contains `StatusUpdater`, which writes validation results back onto the `HAProxyTemplateConfig` CRD's status subresource.
 
+Leadership handover replays the real validation result, including its source generations. A synthetic startup event only seeds an empty replay cache; it cannot replace a validation result or turn an active-state restoration into a new verdict.
+
 ## Quick Start
 
 ```go

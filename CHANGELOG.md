@@ -37,6 +37,7 @@ installations and custom templates.
 
 ### Fixed
 
+- Leadership handover preserves the validated configuration result when startup events arrive out of order, allowing stale upgrade validation failures to clear.
 - Pending reload follow-ups observe already accepted configurations without resending updates that can collide with the reload.
 - Large runtime updates complete all operation batches before map read-back and plan publication, avoiding false divergence and fallback reloads during bulk route removal.
 

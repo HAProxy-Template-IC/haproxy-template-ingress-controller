@@ -906,11 +906,11 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 		return
 	}
 
-	// Always cache the event for leadership transition replay
-	h.configReplayer.Cache(event)
-
-	// Skip synthetic bootstrap events (version="initial") - these don't trigger reinitialization
 	if event.Version == syntheticBootstrapVersion {
+		// A late bootstrap placeholder must not replace the validated leadership replay.
+		if !h.configReplayer.HasState() {
+			h.configReplayer.Cache(event)
+		}
 		h.mu.Lock()
 		if h.activeReplay == nil {
 			h.activeReplay = event
@@ -919,6 +919,7 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 		h.logger.Debug("Ignoring synthetic bootstrap ConfigValidatedEvent (version='initial')")
 		return
 	}
+	h.configReplayer.Cache(event)
 
 	cfg, ok := event.Config.(*coreconfig.Config)
 	if !ok {
