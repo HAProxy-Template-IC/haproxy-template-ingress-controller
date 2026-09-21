@@ -55,6 +55,7 @@ version: ## Display version information
 ## Linting targets
 
 lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
+	@$(MAKE) test-ci-rules
 	@echo "Checking test inventory (every test must run somewhere)..."
 	./scripts/check-test-inventory.sh
 	@echo "Checking template libraries parse as YAML..."
@@ -292,6 +293,10 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 	@echo "✓ All checks passed!"
 
 ## Testing
+
+.PHONY: test-ci-rules
+test-ci-rules: ## Check that CI selects chart inputs and excludes chart prose
+	python3 -m unittest scripts/tests/test_ci_chart_rules.py
 
 test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
 	@echo "Running tests..."
