@@ -2,7 +2,7 @@
 
 `make lint` is the umbrella check, and it's much more than the Go linters. It runs, in order:
 
-1. **Repo-consistency guards** — the `scripts/check-*.sh` set: test inventory, template libraries parsing as YAML, comment fusion, migration-coverage drift, vendor annotation docs coverage and status, generated `migrating.md` tables, chart values docs coverage, `denied_by` metric values, image-pin agreement, webhook-routed kinds, the Gateway API version source, storage-path literals, and the playground highlight bundle. Each one fails the build on its own; most exist because a specific drift shipped once.
+1. **Repo-consistency guards** — CI job selection and the `scripts/check-*.sh` set: test inventory, template libraries parsing as YAML, comment fusion, migration-coverage drift, vendor annotation docs coverage and status, generated `migrating.md` tables, chart values docs coverage, `denied_by` metric values, image-pin agreement, webhook-routed kinds, the Gateway API version source, storage-path literals, and the playground highlight bundle. Each one fails the build on its own; most exist because a specific drift shipped once.
 2. **Format and prose linters** — `yamllint`, `jq` on `renovate.json`, `markdownlint-cli2` over every Markdown file, and `vale` over `docs/site/docs`.
 3. **Go checkers** — the table below.
 4. **`make verify-generate`** — fails if generated code (CRDs, DeepCopy, clientset, validators) is out of date.
@@ -16,7 +16,25 @@
 
 Chart linting also runs four rendered-object gates: `cr-spec-conformance-check` (no rendered spec field its own CRD doesn't declare), `cr-size-check` (each object against etcd's per-object limit), `chart-size-check` (the Helm release Secret against the 1 MiB limit), and `vector-config-check` (the rendered `vector.yaml` actually loads).
 
-`make check-all` runs lint, audit, and the full test suite — the same set CI runs on every MR. `make lint-fix` applies golangci-lint's auto-fixes where possible.
+`make check-all` runs lint, audit, and the full test suite. `make lint-fix` applies golangci-lint's auto-fixes where possible.
+
+## Documentation and CI job selection
+
+CI selects tests according to the files changed. Edits to `charts/CLAUDE.md`,
+`charts/haptic/README.md`, and `charts/haptic/CHANGELOG.md` run lint and strict
+documentation builds without starting the chart and runtime test matrices.
+Every other chart path remains a validation input, including Markdown files used
+by templates and files with new extensions.
+
+When changing CI file filters, check that chart inputs still select their tests:
+
+```bash
+make test-ci-rules
+```
+
+After a documentation merge, the main pipeline builds the matching playground
+bundle and publishes both sites. A commit marked `[skip ci]` also skips this
+publication; merging it doesn't update the live documentation.
 
 ## `golangci-lint`
 
