@@ -1109,6 +1109,36 @@ k8sResources:
       {%- end -%}
 
 validationTests:
+  test-gateway-frontend-blocks-absent-without-routes:
+    requires: [ingresses]
+    description: >-
+      An Ingress-only fleet has no Gateway and no route, so none of the
+      Gateway frontend blocks is emitted.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {name: plain, namespace: default}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: app, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:path-prefix.map, pattern: "plain.example.com/ BACKEND:"}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# gateway/frontend-extra-misdirected$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# gateway/frontend-matchers-advanced-010-route-id-setup$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# gateway/frontend-matchers-advanced-900-path-match$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# gateway/frontend-filters-gateway-redirect$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# gateway/frontend-filters-gateway-urlrewrite$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# gateway/frontend-filters-gateway-mirror$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^ *# gateway/mirror-buffer:'}
+
   test-ingress-host-map-incremental-order-and-duplicates:
     description: Cold incremental host-map rendering keeps resource and rule order without removing duplicate host lines.
     fixtures:

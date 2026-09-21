@@ -544,6 +544,10 @@ func (r *incrementalRenderSession) commit(
 	cold := r.cold
 	cacheGeneration := r.cacheOutputGeneration
 	r.mu.Unlock()
+	if r.httpWrapper != nil {
+		_, cacheable := r.httpWrapper.ContentSnapshots()
+		cachePublishable = cachePublishable && cacheable
+	}
 	if !cachePublishable || !r.cachePublicationEnabled {
 		return r.commitHTTPWithoutCache(ctx, httpPublication, publications)
 	}
@@ -1662,8 +1666,7 @@ type coldIncrementalRenderer struct {
 	outputs               map[string]map[string]string
 	groupIndexes          map[string]*incrementalGroupIndex
 	calls                 map[string][]incrementalCall
-	scopedCalls           map[string]map[string][]incrementalCall
-	callStatuses          map[string]map[string]incrementalScopeCallStatus
+	scopedCalls           map[incrementalCallScope]incrementalScopeCalls
 	valueAccesses         map[string]int
 	requested             map[string]bool
 	backendPlanReady      bool
@@ -1806,8 +1809,7 @@ func newColdIncrementalRendererWithInputs(
 		outputs:          map[string]map[string]string{},
 		groupIndexes:     map[string]*incrementalGroupIndex{},
 		calls:            map[string][]incrementalCall{},
-		scopedCalls:      map[string]map[string][]incrementalCall{},
-		callStatuses:     map[string]map[string]incrementalScopeCallStatus{},
+		scopedCalls:      map[incrementalCallScope]incrementalScopeCalls{},
 		valueAccesses:    map[string]int{},
 		requested:        map[string]bool{},
 	}
@@ -1842,10 +1844,9 @@ func (r *coldIncrementalRenderer) RenderIncrementalTextFragment(
 	if err := validateIncrementalBackendPlanScope(&component, scope); err != nil {
 		return nil, err
 	}
-	r.calls, r.scopedCalls, r.callStatuses = recordIncrementalCall(
+	r.calls, r.scopedCalls = recordIncrementalCall(
 		r.calls,
 		r.scopedCalls,
-		r.callStatuses,
 		component.group,
 		r.state.groups[component.group],
 		incrementalCall{scope: scope, component: name},

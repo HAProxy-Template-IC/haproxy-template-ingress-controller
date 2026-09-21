@@ -11,7 +11,7 @@ For a first installation with a sample app, follow [Getting started](getting-sta
 
 ## Prerequisites
 
-- Kubernetes 1.33 or newer
+- Kubernetes 1.33 or newer; see [Kubernetes compatibility checks](./operations/kubernetes-versions.md)
 - Helm 3.8 or newer
 
 !!! note

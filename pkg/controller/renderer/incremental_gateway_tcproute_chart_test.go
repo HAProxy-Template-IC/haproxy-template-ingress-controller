@@ -39,10 +39,11 @@ import (
 
 const gatewayTCPRouteClaimComponent = "gateway-tcproute-claims-100-route"
 
-const gatewayTCPRouteClaimRoot = `{{ render "gateway-tcproute-claims-100-route" -}}
+const gatewayTCPRouteClaimRoot = `{{ render "backendtlsvalues-490-gateway" -}}
+{{ render "gateway-tcproute-claims-100-route" -}}
 {%- for _, claim := range incremental_values("gateway-tcproute-claims", "ports") %}
 {%- var value = claim.(map[string]any) %}
-{{ tostring(value["port"]) }}={{ tostring(value["backendName"]) }}={{ toJSON(value["servers"]) }}
+{{ tostring(value["port"]) }}={{ tostring(value["backendName"]) }}={{ toJSON(value["servers"]) }}={{ toJSON(value["body"]) }}
 {%- end %}
 {%- if extraContext | dig("fail") | fallback(false) %}{{ fail("forced TCPRoute claim failure") }}{%- end -%}`
 
@@ -51,6 +52,7 @@ type gatewayTCPRouteClaimFixture struct {
 	service         *RenderService
 	engine          *dynamicBindingCountingEngine
 	gateways        *k8sstore.MemoryStore
+	policies        *k8sstore.MemoryStore
 	tcpRoutes       *k8sstore.MemoryStore
 	services        *k8sstore.MemoryStore
 	endpoints       *k8sstore.MemoryStore
@@ -169,12 +171,15 @@ func newGatewayTCPRouteClaimFixture(t *testing.T) *gatewayTCPRouteClaimFixture {
 	cfg := &config.Config{
 		Dataplane: testDataplaneConfig(),
 		WatchedResources: map[string]config.WatchedResource{
-			"gateways":        {APIVersion: "gateway.networking.k8s.io/v1", Resources: "gateways", IndexBy: []string{"metadata.namespace", "metadata.name"}},
-			"tcproutes":       {APIVersion: "gateway.networking.k8s.io/v1", Resources: "tcproutes", IndexBy: []string{"metadata.namespace", "metadata.name"}},
-			"services":        {APIVersion: "v1", Resources: "services", IndexBy: []string{"metadata.namespace", "metadata.name"}},
-			"endpoints":       {APIVersion: "discovery.k8s.io/v1", Resources: "endpointslices", IndexBy: []string{"metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"}},
-			"namespaces":      {APIVersion: "v1", Resources: "namespaces", IndexBy: []string{"metadata.name"}},
-			"referencegrants": {APIVersion: "gateway.networking.k8s.io/v1", Resources: "referencegrants", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"backendtlspolicies": {APIVersion: "gateway.networking.k8s.io/v1", Resources: "backendtlspolicies", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"configmaps":         {APIVersion: "v1", Resources: "configmaps", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"secrets":            {APIVersion: "v1", Resources: "secrets", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"gateways":           {APIVersion: "gateway.networking.k8s.io/v1", Resources: "gateways", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"tcproutes":          {APIVersion: "gateway.networking.k8s.io/v1", Resources: "tcproutes", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"services":           {APIVersion: "v1", Resources: "services", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+			"endpoints":          {APIVersion: "discovery.k8s.io/v1", Resources: "endpointslices", IndexBy: []string{"metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"}},
+			"namespaces":         {APIVersion: "v1", Resources: "namespaces", IndexBy: []string{"metadata.name"}},
+			"referencegrants":    {APIVersion: "gateway.networking.k8s.io/v1", Resources: "referencegrants", IndexBy: []string{"metadata.namespace", "metadata.name"}},
 		},
 		TemplateSnippets: loadGatewayTCPRouteClaimSnippets(t),
 		HAProxyConfig:    config.HAProxyConfig{Template: gatewayTCPRouteClaimRoot},
@@ -194,12 +199,14 @@ func newGatewayTCPRouteClaimFixture(t *testing.T) *gatewayTCPRouteClaimFixture {
 	})
 	fixture := &gatewayTCPRouteClaimFixture{
 		config: cfg, service: service, engine: engine,
+		policies: k8sstore.NewMemoryStore(2),
 		gateways: k8sstore.NewMemoryStore(2), tcpRoutes: k8sstore.NewMemoryStore(2),
 		services: k8sstore.NewMemoryStore(2), endpoints: k8sstore.NewMemoryStore(2),
 		namespaces:      k8sstore.NewMemoryStore(1),
 		referenceGrants: k8sstore.NewMemoryStore(2),
 	}
 	fixture.provider = stores.NewRealStoreProvider(map[string]stores.Store{
+		"backendtlspolicies": fixture.policies, "configmaps": k8sstore.NewMemoryStore(2), "secrets": k8sstore.NewMemoryStore(2),
 		"gateways": fixture.gateways, "tcproutes": fixture.tcpRoutes, "services": fixture.services,
 		"endpoints":  fixture.endpoints,
 		"namespaces": fixture.namespaces, "referencegrants": fixture.referenceGrants,
@@ -213,6 +220,9 @@ func loadGatewayTCPRouteClaimSnippets(t *testing.T) map[string]config.TemplateSn
 	require.True(t, ok)
 	chartRoot := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "charts", "haptic", "charts")
 	wanted := map[string]bool{
+		"util-backend": true, "util-backend-tls-identity": true, "util-resolve-backend-tls": true,
+		"util-webhook-reject-or-warn": true, "backendtlsvalues-490-gateway": true,
+		"util-gateway-backend-bindings": true, "util-gateway-tcp-backend-bindings": true,
 		"util-resource-helpers": true, "util-reference-grant-permitted": true,
 		"util-backend-servers-helpers": true, "util-backend-servers-result": true,
 		"util-publish-gateway-tcproute-claims": true, gatewayTCPRouteClaimComponent: true,
@@ -223,6 +233,7 @@ func loadGatewayTCPRouteClaimSnippets(t *testing.T) map[string]config.TemplateSn
 		filepath.Join(chartRoot, "kubernetes-backends", "library.yaml"),
 		filepath.Join(chartRoot, "gateway", "21-route-helpers.yaml"),
 		filepath.Join(chartRoot, "gateway", "90-tcproute.yaml"),
+		filepath.Join(chartRoot, "gateway", "30-backends.yaml"),
 	} {
 		content, err := os.ReadFile(path)
 		require.NoError(t, err)
@@ -236,7 +247,9 @@ func loadGatewayTCPRouteClaimSnippets(t *testing.T) map[string]config.TemplateSn
 			if chartSnippet.Incremental != nil {
 				snippet.Incremental = &config.IncrementalTemplate{
 					Source: chartSnippet.Incremental.Source, Group: chartSnippet.Incremental.Group,
-					Effects: chartSnippet.Incremental.Effects,
+					BindingsTemplate: chartSnippet.Incremental.BindingsTemplate,
+					OptionalConsumes: chartSnippet.Incremental.OptionalConsumes,
+					Effects:          chartSnippet.Incremental.Effects,
 				}
 			}
 			result[name] = snippet
@@ -255,6 +268,9 @@ func gatewayTCPRouteClaimSchemaTypes(t *testing.T) *typebootstrap.Result {
 	require.NoError(t, err)
 	result, err := typebootstrap.Bootstrap(t.Context(), typebootstrap.Config{
 		Resources: []typebootstrap.Resource{
+			{Name: "backendtlspolicies", GVK: schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "BackendTLSPolicy"}},
+			{Name: "configmaps", GVK: schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}},
+			{Name: "secrets", GVK: schema.GroupVersionKind{Version: "v1", Kind: "Secret"}},
 			{Name: "gateways", GVK: schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "Gateway"}},
 			{Name: "tcproutes", GVK: schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "TCPRoute"}},
 			{Name: "services", GVK: schema.GroupVersionKind{Version: "v1", Kind: "Service"}},
@@ -267,7 +283,7 @@ func gatewayTCPRouteClaimSchemaTypes(t *testing.T) *typebootstrap.Result {
 	})
 	require.NoError(t, err)
 	require.Empty(t, result.Errors)
-	require.Len(t, result.Types, 6)
+	require.Len(t, result.Types, 9)
 	return result
 }
 
@@ -369,4 +385,40 @@ func (f *gatewayTCPRouteClaimFixture) renderAndCommitCacheReady(t *testing.T) st
 	require.NoError(t, result.InputTransaction.Commit(t.Context()))
 	waitForIncrementalCache(t, f.service)
 	return result.HAProxyConfig
+}
+
+func TestGatewayTCPRouteClaimsTrackBackendTLSIdentity(t *testing.T) {
+	fixture := newGatewayTCPRouteClaimFixture(t)
+	fixture.addGateway(t)
+	fixture.addService(t)
+	fixture.addEndpoint(t, "echo", "echo-slice", "10.0.0.1")
+	fixture.addRoute(t, gatewayTCPRouteClaim(0))
+	initial := fixture.renderAndCommitCacheReady(t)
+	assert.NotContains(t, initial, "verifyhost")
+	validation := map[string]any{"hostname": "backend.example.com", "wellKnownCACertificates": "System"}
+	policy := map[string]any{
+		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "BackendTLSPolicy",
+		"metadata": map[string]any{"name": "backend-tls", "namespace": "default"},
+		"spec": map[string]any{
+			"targetRefs": []any{map[string]any{"group": "", "kind": "Service", "name": "echo"}},
+			"validation": validation,
+		},
+	}
+	require.NoError(t, fixture.policies.Add(policy, []string{"default", "backend-tls"}))
+	accepted := fixture.renderAndCommitCacheReady(t)
+	assert.Contains(t, accepted, "verifyhost")
+	assert.Contains(t, accepted, "backend.example.com")
+	assert.NotContains(t, accepted, "tcp-request content reject")
+
+	validation["subjectAltNames"] = []any{map[string]any{"type": "Hostname", "hostname": "different.example.com"}}
+	require.NoError(t, fixture.policies.Add(policy, []string{"default", "backend-tls"}))
+	rejected := fixture.renderAndCommitCacheReady(t)
+	assert.Contains(t, rejected, "tcp-request content reject")
+	assert.NotContains(t, rejected, "10.0.0.1")
+
+	delete(validation, "subjectAltNames")
+	require.NoError(t, fixture.policies.Add(policy, []string{"default", "backend-tls"}))
+	assert.Equal(t, accepted, fixture.renderAndCommitCacheReady(t))
+	require.NoError(t, fixture.policies.Delete("default", "backend-tls", []string{"default", "backend-tls"}))
+	assert.Equal(t, initial, fixture.renderAndCommitCacheReady(t))
 }

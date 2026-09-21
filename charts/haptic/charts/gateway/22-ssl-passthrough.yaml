@@ -1,21 +1,32 @@
 templateSnippets:
-  util-publish-gateway-http-ssl-passthrough:
-    requires: [httproutes]
-    template: |
-      {%- macro PublishGatewayHTTPSSLPassthrough(route any) %}
+  util-gateway-http-ssl-passthrough:
+    template: |-
+      {%- macro GatewayHTTPSSLPassthrough(route any) -%}
         {%%
-          var hasPassthrough = false
+          var passthrough = false
+          var policy = false
           for _, rule := range toSlice(dig(route, "spec", "rules")) {
             for _, filter := range toSlice(dig(rule, "filters")) {
               if dig_string(filter, "", "type") != "ExtensionRef" { continue }
-              var extensionRef = dig(filter, "extensionRef")
-              var kind = dig_string(extensionRef, "", "kind")
-              var name = dig_string(extensionRef, "", "name")
-              if kind == "SSLPassthrough" || (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
-                hasPassthrough = true
+              var ref = dig(filter, "extensionRef")
+              if dig_string(ref, "", "group") == "haproxy-haptic.org" && dig_string(ref, "", "kind") == "HAProxyRoutePolicy" {
+                policy = true
+              } else if dig_string(ref, "", "kind") == "SSLPassthrough" || regex_search(toLower(dig_string(ref, "", "name")), "ssl.*passthrough") {
+                passthrough = true
               }
             }
           }
+          show passthrough && !policy
+        %%}
+      {%- end macro -%}
+
+  util-publish-gateway-http-ssl-passthrough:
+    requires: [httproutes]
+    template: |
+      {%- import "util-gateway-http-ssl-passthrough" for GatewayHTTPSSLPassthrough %}
+      {%- macro PublishGatewayHTTPSSLPassthrough(route any) %}
+        {%%
+          var hasPassthrough = GatewayHTTPSSLPassthrough(route) == "true"
           var namespace = dig_string(route, "", "metadata", "namespace")
           var routeName = dig_string(route, "", "metadata", "name")
         %%}

@@ -1,0 +1,4246 @@
+validationTests:
+  test-gateway-policy-authentication:
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: api
+        spec:
+          authentication:
+            apiKey: &id001
+              secretRef:
+                name: api-keys
+              consumerHeader: X-Consumer
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          authentication:
+            jwt: &id002
+              secretRef:
+                name: jwt-keys
+              issuer: https://issuer.example.com
+              audience: api
+              requiredClaims:
+              - exp
+              forwardClaims:
+              - claim: sub
+                header: X-User
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: ssl-passthrough
+        spec:
+          authentication:
+            apiKey: *id001
+            jwt: *id002
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /both
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: ssl-passthrough
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /public
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:haptic-api-key-routes.map
+      pattern: (?m)^gateway/h_default_same-name_0 hdr X-API-Key default/api-keys ok X-Consumer true$
+    - type: contains
+      target: map:haptic-api-key-routes.map
+      pattern: (?m)^gateway/g_default_same-name_0 hdr X-API-Key default/api-keys ok X-Consumer true$
+    - type: contains
+      target: map:haptic-api-key-routes.map
+      pattern: '(?m)^gateway/h_default_same-name_2 '
+    - type: contains
+      target: map:haptic-jwt-routes.map
+      pattern: (?m)^gateway/h_default_same-name_1 RS256 haptic-jwt-default_jwt-keys\.pem ok https://issuer\.example\.com
+        api ,exp, ,sub:X-User, true true$
+    - type: contains
+      target: map:haptic-jwt-routes.map
+      pattern: '(?m)^gateway/h_default_same-name_2 '
+    - type: not_contains
+      target: map:haptic-jwt-routes.map
+      pattern: h_default_same-name_3
+    - type: not_contains
+      target: map:haptic-api-key-routes.map
+      pattern: h_default_same-name_3
+    - type: contains
+      target: map:haptic-apikeys.map
+      pattern: (?m)^default/api-keys\|key-one alice$
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: invalid
+    - type: not_contains
+      target: haproxy.cfg
+      pattern: backend ssl-passthrough-default-same-name
+    - type: match_order
+      target: haproxy.cfg
+      patterns:
+      - set-var\(txn.policy_id\)
+      - str\(route_policy_unavailable\)
+      - str\(jwt_signature\)
+      - str\(api_key\)
+  test-gateway-policy-invalid-dependencies:
+    requires:
+    - httproutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: bad-key
+        data:
+          pubkey.pem: bm90IGEga2V5
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: missing-key
+        spec:
+          authentication:
+            jwt:
+              secretRef:
+                name: absent
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: bad-key
+        spec:
+          authentication:
+            jwt:
+              secretRef:
+                name: bad-key
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: partial
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - partial.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /protected
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: absent
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /public
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: missing-key
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - missing-key.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: missing-key
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: bad-key
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - bad-key.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: bad-key
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_partial_0 invalid$
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_missing-key_0 invalid$
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_bad-key_0 invalid$
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: h_default_partial_1
+    - type: not_contains
+      target: map:haptic-jwt-routes.map
+      pattern: ^gateway/
+    - type: contains
+      target: status:default/partial:deployed
+      pattern: '"status":"True","type":"PartiallyInvalid"'
+    - type: contains
+      target: status:default/partial:deployed
+      pattern: '"reason":"PolicyNotFound"'
+    - type: contains
+      target: status:default/bad-key:deployed
+      pattern: '"status":"False","type":"Accepted"'
+  test-gateway-policy-passthrough-conflict:
+    requires:
+    - httproutes
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: mixed
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - mixed.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: missing
+            - type: ExtensionRef
+              extensionRef:
+                group: example.com
+                kind: SSLPassthrough
+                name: passthrough
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /public
+    assertions:
+    - type: haproxy_valid
+    - type: not_contains
+      target: haproxy.cfg
+      pattern: backend ssl-passthrough-default-mixed
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_mixed_0 invalid$
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_mixed_1 invalid$
+    - type: contains
+      target: status:default/mixed:deployed
+      pattern: '"reason":"IncompatibleFilters"'
+  test-gateway-policy-shared-rate-limit:
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: shared
+        spec:
+          authentication:
+            apiKey:
+              secretRef:
+                name: api-keys
+          rateLimit:
+            requests: 50
+            period: 2s
+            burst: 75
+            key: consumer
+            algorithm: gcra
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /both
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /public
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:rate-limit.map
+      pattern: (?m)^gateway/h_default_same-name_0 50 2 75 exact consumer routepolicy/default/shared$
+    - type: contains
+      target: map:rate-limit.map
+      pattern: (?m)^gateway/h_default_same-name_3 50 2 75 exact consumer routepolicy/default/shared$
+    - type: contains
+      target: map:rate-limit.map
+      pattern: (?m)^gateway/g_default_same-name_0 50 2 75 exact consumer routepolicy/default/shared$
+    - type: contains
+      target: haproxy.cfg
+      pattern: set-var\(txn.rl_budget\) var\(txn.rl_cfg\),field\(6,
+    - type: contains
+      target: haproxy.cfg
+      pattern: set-var\(txn.rl_key\) var\(txn.rl_budget\),concat\(\|,txn.rl_dim\)
+    - type: match_order
+      target: haproxy.cfg
+      patterns:
+      - str\(api_key\)
+      - str\(policy_consumer_missing\)
+      - send-spoe-group spoa-hub-check-ratelimit check-ratelimit-group if .*rl_keyspec.*consumer
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: invalid
+    _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
+  test-gateway-policy-rate-limit-disabled:
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: shared
+        spec:
+          authentication:
+            apiKey:
+              secretRef:
+                name: api-keys
+          rateLimit:
+            requests: 50
+            period: 2s
+            burst: 75
+            key: consumer
+            algorithm: gcra
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /both
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /public
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: shared
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: not_contains
+      target: map:haptic-api-key-routes.map
+      pattern: ^gateway/
+    extraContext:
+      rateLimit:
+        shared:
+          enabled: false
+  test-gateway-policy-private-cache:
+    requires:
+    - httproutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: private
+        spec:
+          authentication:
+            apiKey:
+              secretRef:
+                name: api-keys
+          cache:
+            ttlSeconds: 60
+            maxObjectSizeBytes: 1048576
+            varyHeaders:
+            - X-Api-Version
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: private
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: private
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /both
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: private
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /public
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: private
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:haptic-cache-enable.map
+      pattern: (?m)^gateway/h_default_same-name_0 1$
+    - type: contains
+      target: map:haptic-cache-ttl.map
+      pattern: (?m)^gateway/h_default_same-name_0 60$
+    - type: contains
+      target: map:haptic-cache-maxsize.map
+      pattern: (?m)^gateway/h_default_same-name_0 1048576$
+    - type: contains
+      target: map:haptic-cache-private.map
+      pattern: (?m)^gateway/h_default_same-name_0 1$
+    - type: contains
+      target: map:haptic-cache-vary.map
+      pattern: (?m)^gateway/h_default_same-name_0 X-Api-Version$
+    - type: contains
+      target: haproxy.cfg
+      pattern: X-Haptic-Cache-Vary Z2F0ZXdheS9oX2RlZmF1bHRfc2FtZS1uYW1lXzA=\|%\[var\(txn.haptic_consumer\),base64\]\|%\[req.hdr\(X-Api-Version\),base64\]
+    - type: contains
+      target: haproxy.cfg
+      pattern: X-Haptic-Backend %\[var\(txn.backend_name\)\]
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: invalid
+    - type: match_order
+      target: haproxy.cfg
+      patterns:
+      - str\(policy_consumer_missing\)
+      - set-var\(txn.cache_eligible\) bool\(true\)
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+  test-gateway-policy-waf:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: api
+        spec:
+          waf:
+            policy: headers
+          authentication:
+            apiKey:
+              secretRef:
+                name: api-keys
+                key: keys
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: body
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+    extraContext:
+      spoaHub: &id003
+        enabled: true
+        haproxy:
+          messages: [check-request]
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+            headers:
+              requestBody:
+                mode: none
+            body:
+              requestBody:
+                mode: json
+                maxBytes: 4096
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: false
+    assertions:
+    - type: haproxy_valid
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: invalid
+    - type: contains
+      target: map:haproxy-ingress-waf.map
+      pattern: (?m)^gateway/h_default_same-name_0 deny$
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/h_default_same-name_0 policy:headers$
+    - type: contains
+      target: map:coraza-body.map
+      pattern: (?m)^gateway/h_default_same-name_0 none any 8192$
+    - type: contains
+      target: map:haproxy-ingress-waf.map
+      pattern: (?m)^gateway/g_default_same-name_0 deny$
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/g_default_same-name_0 policy:headers$
+    - type: contains
+      target: map:coraza-body.map
+      pattern: (?m)^gateway/g_default_same-name_0 none any 8192$
+    - type: contains
+      target: map:coraza-body.map
+      pattern: (?m)^gateway/h_default_same-name_1 buffered json 4096$
+    - type: contains
+      target: file:spoa-hub-config.toml
+      pattern: (?s)applications\."policy:headers".*SecRequestBodyAccess Off
+    - type: contains
+      target: file:spoa-hub-config.toml
+      pattern: (?s)applications\."policy:body".*SecRequestBodyAccess On
+    - type: contains
+      target: haproxy.cfg
+      pattern: var\(txn.policy_id\),map\([^ ]*coraza-app.map
+  test-gateway-policy-waf-invalid:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: api
+        spec:
+          waf:
+            policy: missing
+            catalogRef:
+              name: waf-policies
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: body-policy
+        spec:
+          waf:
+            policy: body
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: body-policy
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: other
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+            body:
+              requestBody:
+                mode: any
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: not_contains
+      target: map:haproxy-ingress-waf.map
+      pattern: gateway/h_default_same-name_0
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_1 invalid$
+    - type: not_contains
+      target: map:haproxy-ingress-waf.map
+      pattern: gateway/h_default_same-name_1
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/g_default_same-name_0 invalid$
+    - type: not_contains
+      target: map:haproxy-ingress-waf.map
+      pattern: gateway/g_default_same-name_0
+
+  test-gateway-policy-waf-catalogs:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: api
+        spec:
+          waf:
+            policy: trusted
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: security
+          name: catalog
+        data:
+          policies.yaml: "trusted:\n  requestBody: {mode: none}\n"
+        immutable: true
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+            central:
+              namespace: security
+              name: catalog
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: invalid
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/h_default_same-name_0 policy:trusted$
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/h_default_same-name_1 policy:default/waf-policies/policies.yaml/tenant$
+    - type: contains
+      target: file:spoa-hub-config.toml
+      pattern: applications\."policy:default/waf-policies/policies.yaml/tenant"
+
+  test-gateway-policy-waf-baseline:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: api
+        spec:
+          waf:
+            policy: trusted
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: security
+          name: catalog
+        data:
+          policies.yaml: "trusted:\n  requestBody: {mode: none}\n"
+        immutable: true
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n  enforcement: detect\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: default-on
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+            central:
+              namespace: security
+              name: catalog
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_1 invalid$
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: gateway/h_default_same-name_0
+    - type: not_contains
+      target: map:coraza-app.map
+      pattern: policy:default/waf-policies/policies.yaml/tenant
+    - type: contains
+      target: map:coraza-app.map
+      pattern: policy:trusted
+
+  test-gateway-policy-unavailable-watch:
+    requires:
+    - httproutes
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: partial
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - partial.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /protected
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: absent
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /public
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_partial_0 invalid$
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: h_default_partial_1
+    - type: contains
+      target: status:default/partial:deployed
+      pattern: '"status":"True","type":"PartiallyInvalid"'
+    - type: contains
+      target: status:default/partial:deployed
+      pattern: '"reason":"PolicyNotFound"'
+
+  test-gateway-policy-mutable-credentials:
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: false
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: api
+        spec:
+          authentication:
+            apiKey: &mutableApiKey
+              secretRef:
+                name: api-keys
+              consumerHeader: X-Consumer
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          authentication:
+            jwt: &mutableJWT
+              secretRef:
+                name: jwt-keys
+              issuer: https://issuer.example.com
+              audience: api
+              requiredClaims:
+              - exp
+              forwardClaims:
+              - claim: sub
+                header: X-User
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: ssl-passthrough
+        spec:
+          authentication:
+            apiKey: *mutableApiKey
+            jwt: *mutableJWT
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /both
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: ssl-passthrough
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /public
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_1 invalid$
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_2 invalid$
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/g_default_same-name_0 invalid$
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: h_default_same-name_3
+    - type: not_contains
+      target: map:haptic-api-key-routes.map
+      pattern: gateway/
+    - type: not_contains
+      target: map:haptic-jwt-routes.map
+      pattern: gateway/
+    - type: contains
+      target: status:default/same-name:deployed
+      pattern: RefNotPermitted
+    - type: contains
+      target: status:default/same-name:deployed
+      pattern: is mutable and cannot supply policy credentials
+  test-gateway-policy-grpc-cache-errors:
+    requires: [grpcroutes, routepolicies]
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: grpc
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        metadata:
+          namespace: default
+          name: mutable-keys
+        immutable: false
+        data:
+          keys: a2V5OmFsaWNlCg==
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: credentials-first
+        spec:
+          authentication:
+            apiKey:
+              secretRef:
+                name: mutable-keys
+          cache:
+            ttlSeconds: 60
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: unsupported-cache
+        spec:
+          cache:
+            ttlSeconds: 60
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: credentials-first
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames: [credentials.example.com]
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: credentials-first
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: unsupported-cache
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames: [cache.example.com]
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: unsupported-cache
+    extraContext:
+      cache:
+        varnish:
+          enabled: false
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: status:default/credentials-first:deployed
+      pattern: is mutable and cannot supply policy credentials
+    - type: not_contains
+      target: status:default/credentials-first:deployed
+      pattern: GRPCRoute does not support response caching
+    - type: contains
+      target: status:default/unsupported-cache:deployed
+      pattern: GRPCRoute does not support response caching
+    - type: not_contains
+      target: status:default/unsupported-cache:deployed
+      pattern: Enable cache.varnish.enabled
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/g_default_credentials-first_0 invalid$
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/g_default_unsupported-cache_0 invalid$
+
+  test-gateway-policy-waf-mutable-catalog:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: contains
+      target: events
+      pattern: is mutable
+    - type: not_contains
+      target: map:coraza-app.map
+      pattern: gateway/h_default_same-name_0
+  test-gateway-policy-waf-missing-catalog:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes: []
+      configmaps: []
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: contains
+      target: events
+      pattern: is missing
+    - type: not_contains
+      target: map:coraza-app.map
+      pattern: gateway/h_default_same-name_0
+  test-gateway-policy-waf-malformed-catalog:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: 'tenant: ['
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: contains
+      target: events
+      pattern: invalid YAML
+    - type: not_contains
+      target: map:coraza-app.map
+      pattern: gateway/h_default_same-name_0
+  test-gateway-policy-waf-catalog-key-missing:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+              key: absent.yaml
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: contains
+      target: events
+      pattern: empty or missing
+    - type: not_contains
+      target: map:coraza-app.map
+      pattern: gateway/h_default_same-name_0
+  test-gateway-policy-waf-catalog-selfservice-disabled:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: false
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: contains
+      target: events
+      pattern: catalog references are disabled
+    - type: not_contains
+      target: map:coraza-app.map
+      pattern: gateway/h_default_same-name_0
+  test-gateway-policy-waf-catalog-no-implicit-reference:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: contains
+      target: events
+      pattern: policy.*tenant.*is missing
+    - type: not_contains
+      target: map:coraza-app.map
+      pattern: gateway/h_default_same-name_0
+
+  test-gateway-policy-waf-catalog-versions:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-v1
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: second
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-v2
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /second
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: second
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-v1
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-v2
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n  enforcement: detect\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: invalid
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/h_default_same-name_0 policy:default/waf-v1/policies\.yaml/tenant$
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/h_default_same-name_1 policy:default/waf-v2/policies\.yaml/tenant$
+    - type: contains
+      target: map:haproxy-ingress-waf.map
+      pattern: (?m)^gateway/h_default_same-name_0 deny$
+    - type: contains
+      target: map:haproxy-ingress-waf.map
+      pattern: (?m)^gateway/h_default_same-name_1 detect$
+  test-gateway-policy-waf-catalog-namespace-limit:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-v1
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: second
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-v2
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /second
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: second
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-v1
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-v2
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n  enforcement: detect\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+            limits:
+              maxPoliciesPerNamespace: '1'
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: events
+      pattern: per-namespace self-service limit
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: gateway/h_default_same-name_0
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_1 invalid$
+  test-gateway-policy-waf-catalog-cluster-limit:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-v1
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: second
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-v2
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /second
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: second
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-v1
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-v2
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n  enforcement: detect\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+            limits:
+              maxTotalPolicies: '1'
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: events
+      pattern: cluster-wide self-service WAF policy budget
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: gateway/h_default_same-name_0
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_1 invalid$
+  test-gateway-policy-waf-shared-catalog-budget:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-v1
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: second
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-v1
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /second
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: second
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-v1
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+            limits:
+              maxPoliciesPerNamespace: '1'
+              maxTotalPolicies: '1'
+    assertions:
+    - type: haproxy_valid
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: invalid
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/h_default_same-name_0 policy:default/waf-v1/policies\.yaml/tenant$
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/h_default_same-name_1 policy:default/waf-v1/policies\.yaml/tenant$
+  test-gateway-policy-waf-ingress-shared-catalog-budget:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: second
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /second
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: second
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+      waf_selfservice_catalogs:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+            limits:
+              maxPoliciesPerNamespace: '1'
+              maxTotalPolicies: '1'
+    assertions:
+    - type: haproxy_valid
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: invalid
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/h_default_same-name_0 policy:default/waf-policies/policies\.yaml/tenant$
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^gateway/h_default_same-name_1 policy:default/waf-policies/policies\.yaml/tenant$
+  test-gateway-policy-waf-mutable-reference-admission:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+      renderMode: admission
+    assertions:
+    - type: contains
+      target: rendering_error
+      pattern: is mutable
+  test-gateway-policy-waf-malformed-reference-admission:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: 'tenant: ['
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+      renderMode: admission
+    assertions:
+    - type: contains
+      target: rendering_error
+      pattern: invalid YAML
+  test-gateway-policy-waf-mutable-trusted-catalog:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: api
+        spec:
+          waf:
+            policy: trusted
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /api
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: GRPCRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: api
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: security
+          name: catalog
+        data:
+          policies.yaml: "trusted:\n  requestBody: {mode: none}\n"
+        immutable: false
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+            central:
+              namespace: security
+              name: catalog
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: events
+      pattern: mutable and cannot supply Gateway WAF policies
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: gateway/h_default_same-name_0 invalid
+    - type: not_contains
+      target: map:gw-policy-errors.map
+      pattern: gateway/h_default_same-name_1
+
+  test-gateway-policy-waf-invalid-unselected-entry:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - httproutes
+    - grpcroutes
+    - routepolicies
+    fixtures:
+      gateways:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: Gateway
+        metadata:
+          namespace: default
+          name: policy-gateway
+          generation: 1
+        spec:
+          gatewayClassName: haptic
+          listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      routepolicies:
+      - apiVersion: haproxy-haptic.org/v1alpha1
+        kind: HAProxyRoutePolicy
+        metadata:
+          namespace: default
+          name: jwt
+        spec:
+          waf:
+            policy: tenant
+            catalogRef:
+              name: waf-policies
+      httproutes:
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          namespace: default
+          name: same-name
+          generation: 2
+        spec:
+          parentRefs:
+          - name: policy-gateway
+          hostnames:
+          - same-name.example.com
+          rules:
+          - backendRefs:
+            - name: echo
+              port: 80
+            matches:
+            - path:
+                type: PathPrefix
+                value: /jwt
+            filters:
+            - type: ExtensionRef
+              extensionRef:
+                group: haproxy-haptic.org
+                kind: HAProxyRoutePolicy
+                name: jwt
+      grpcroutes: []
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\nbroken:\n  requestBody: {mode: invalid}\n"
+        immutable: true
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+          configMapRefs:
+            __replace__: true
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:gw-policy-errors.map
+      pattern: (?m)^gateway/h_default_same-name_0 invalid$
+    - type: contains
+      target: events
+      pattern: requestBody.mode
+    - type: not_contains
+      target: map:coraza-app.map
+      pattern: gateway/h_default_same-name_0

@@ -2,7 +2,7 @@
 
 The controller is split into small Go packages with one of three roles:
 
-- **Infrastructure** — domain-agnostic building blocks (`pkg/events`, `pkg/introspection`, `pkg/metrics`, `pkg/compression`, `pkg/lifecycle`).
+- **Infrastructure** — domain-agnostic building blocks (`pkg/events`, `pkg/introspection`, `pkg/metrics`, `pkg/compression`, `pkg/lifecycle`, `pkg/transportsecurity`).
 - **Domain libraries** — pure business logic with no coupling to the event bus (`pkg/k8s`, `pkg/dataplane`, `pkg/templating`, `pkg/stores`, `pkg/httpstore`, `pkg/webhook`).
 - **Coordination** — event adapters that wire the libraries together (`pkg/controller` and its subpackages).
 

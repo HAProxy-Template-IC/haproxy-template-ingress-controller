@@ -1,0 +1,5 @@
+apiVersion: v2
+name: helm-helpers
+version: 0.1.0
+type: library
+description: Shared Helm rendering helpers for HAPTIC

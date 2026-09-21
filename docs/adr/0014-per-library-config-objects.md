@@ -189,7 +189,7 @@ image-resolved libraries above.
 ## References
 
 - `pkg/controller/conversion/merge.go` — the merge, and `CompositeVersion`
-- `charts/haptic/templates/_libraries.tpl` — `haptic.prepareLibraries`,
+- `charts/haptic/charts/helm-helpers/templates/_libraries.tpl` — `haptic.prepareLibraries`,
   `haptic.libraryFiles` (the order), `haptic.libraryConfigNames` (the `CRD_NAME` list)
 - `scripts/check-cr-size.py` / `make cr-size-check` — the gate that was missing
 - ADR-0002 — decentralized `_helm_load` loader (retained)

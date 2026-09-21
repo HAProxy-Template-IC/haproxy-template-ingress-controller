@@ -87,9 +87,9 @@ func TestGatewayBackendChartCachesExactRouteDependencies(t *testing.T) {
 	fixture.add(t, fixture.grpcRoutes, gatewayBackendRoute("GRPCRoute", "grpc-a", "echo"), "default", "grpc-a")
 
 	first := fixture.renderAndCommitCacheReady(t)
-	assert.Contains(t, first.HAProxyConfig, "backend gtw_default_http-a_echo_80")
-	assert.Contains(t, first.HAProxyConfig, "backend gtw_default_http-b_other_80")
-	assert.Contains(t, first.HAProxyConfig, "backend gtw_default_grpc-a_echo_80")
+	assert.Contains(t, first.HAProxyConfig, "backend gw_h_default_http-a_echo_80")
+	assert.Contains(t, first.HAProxyConfig, "backend gw_h_default_http-b_other_80")
+	assert.Contains(t, first.HAProxyConfig, "backend gw_g_default_grpc-a_echo_80")
 	assert.Contains(t, first.HAProxyConfig, "10.0.0.1:8080")
 	assert.Contains(t, first.HAProxyConfig, "10.0.0.2:8080")
 
@@ -221,8 +221,8 @@ func TestGatewayBackendChartHTTPRouteExecutionScaling(t *testing.T) {
 			}
 
 			cold := fixture.renderAndCommitCacheReady(t)
-			assert.Contains(t, cold.HAProxyConfig, "backend gtw_default_route-000000_echo_80")
-			assert.Contains(t, cold.HAProxyConfig, fmt.Sprintf("backend gtw_default_route-%06d_echo_80", routeCount-1))
+			assert.Contains(t, cold.HAProxyConfig, "backend gw_h_default_route-000000_echo_80")
+			assert.Contains(t, cold.HAProxyConfig, fmt.Sprintf("backend gw_h_default_route-%06d_echo_80", routeCount-1))
 			coldCounts := fixture.engine.executionCounts()
 			require.Len(t, coldCounts, routeCount)
 
@@ -235,8 +235,8 @@ func TestGatewayBackendChartHTTPRouteExecutionScaling(t *testing.T) {
 				"default", "route-000000",
 			)
 			changed := fixture.renderAndCommitCacheReady(t)
-			assert.Contains(t, changed.HAProxyConfig, "backend gtw_default_route-000000_other_80")
-			assert.NotContains(t, changed.HAProxyConfig, "backend gtw_default_route-000000_echo_80")
+			assert.Contains(t, changed.HAProxyConfig, "backend gw_h_default_route-000000_other_80")
+			assert.NotContains(t, changed.HAProxyConfig, "backend gw_h_default_route-000000_echo_80")
 			changedCounts := fixture.engine.executionCounts()
 			assert.Equal(t, coldCounts["httproutes/route-000000"]+1, changedCounts["httproutes/route-000000"])
 			assert.Equal(t, coldCounts[fmt.Sprintf("httproutes/route-%06d", routeCount-1)],
@@ -245,7 +245,7 @@ func TestGatewayBackendChartHTTPRouteExecutionScaling(t *testing.T) {
 	}
 }
 
-func TestGatewayBackendChartHTTPWinsGRPCCollisionAndDeletionPromotes(t *testing.T) {
+func TestGatewayBackendChartSameNameRouteKindsRemainIndependent(t *testing.T) {
 	fixture := newGatewayBackendChartFixture(t)
 	fixture.add(t, fixture.gateways, gatewayBackendGateway("gateway"), "default", "gateway")
 	fixture.add(t, fixture.services, sslPassthroughService("echo", "http", 80), "default", "echo")
@@ -253,16 +253,18 @@ func TestGatewayBackendChartHTTPWinsGRPCCollisionAndDeletionPromotes(t *testing.
 	fixture.add(t, fixture.httpRoutes, gatewayBackendRoute("HTTPRoute", "same", "echo"), "default", "same")
 	fixture.add(t, fixture.grpcRoutes, gatewayBackendRoute("GRPCRoute", "same", "echo"), "default", "same")
 
-	httpWinner := fixture.renderAndCommitCacheReady(t)
-	assert.Contains(t, httpWinner.HAProxyConfig, "# Backend for: HTTPRoute default/same")
-	assert.NotContains(t, httpWinner.HAProxyConfig, "# Backend for: GRPCRoute default/same")
-	require.Equal(t, 1, strings.Count(httpWinner.HAProxyConfig, "backend gtw_default_same_echo_80 "))
+	both := fixture.renderAndCommitCacheReady(t)
+	assert.Contains(t, both.HAProxyConfig, "# Backend for: HTTPRoute default/same")
+	assert.Contains(t, both.HAProxyConfig, "# Backend for: GRPCRoute default/same")
+	require.Equal(t, 1, strings.Count(both.HAProxyConfig, "backend gw_h_default_same_echo_80 "))
+	require.Equal(t, 1, strings.Count(both.HAProxyConfig, "backend gw_g_default_same_echo_80 "))
 
 	fixture.delete(t, fixture.httpRoutes, "same", "default", "same")
-	grpcPromoted := fixture.renderAndCommitCacheReady(t)
-	assert.NotContains(t, grpcPromoted.HAProxyConfig, "# Backend for: HTTPRoute default/same")
-	assert.Contains(t, grpcPromoted.HAProxyConfig, "# Backend for: GRPCRoute default/same")
-	require.Equal(t, 1, strings.Count(grpcPromoted.HAProxyConfig, "backend gtw_default_same_echo_80 "))
+	remaining := fixture.renderAndCommitCacheReady(t)
+	assert.NotContains(t, remaining.HAProxyConfig, "# Backend for: HTTPRoute default/same")
+	assert.Contains(t, remaining.HAProxyConfig, "# Backend for: GRPCRoute default/same")
+	assert.NotContains(t, remaining.HAProxyConfig, "backend gw_h_default_same_echo_80 ")
+	require.Equal(t, 1, strings.Count(remaining.HAProxyConfig, "backend gw_g_default_same_echo_80 "))
 	fixture.assertExecutions(t, gatewayGRPCBackendComponent, "grpcroutes", "same", 1)
 }
 
@@ -310,8 +312,8 @@ func TestGatewayBackendChartAbortAdmissionAndConcurrencyStayIsolated(t *testing.
 		rendercontext.WithAdmissionSubject("httproutes", "default", "subject"),
 	)
 	require.NoError(t, err)
-	assert.Contains(t, admission.HAProxyConfig, "backend gtw_default_subject_other_80")
-	assert.Contains(t, admission.HAProxyConfig, "backend gtw_default_stable_echo_80")
+	assert.Contains(t, admission.HAProxyConfig, "backend gw_h_default_subject_other_80")
+	assert.Contains(t, admission.HAProxyConfig, "backend gw_h_default_stable_echo_80")
 	admission.InputTransaction.Abort()
 	fixture.assertExecutions(t, gatewayHTTPBackendComponent, "httproutes", "subject", 1)
 	fixture.assertExecutions(t, gatewayHTTPBackendComponent, "httproutes", "stable", 1)
@@ -327,8 +329,8 @@ func TestGatewayBackendChartAbortAdmissionAndConcurrencyStayIsolated(t *testing.
 
 	fixture.config.TemplatingSettings.ExtraContext["failAfterBackends"] = false
 	retried := fixture.renderAndCommitCacheReady(t)
-	assert.Contains(t, retried.HAProxyConfig, "backend gtw_default_subject_other_80")
-	assert.NotContains(t, retried.HAProxyConfig, "backend gtw_default_subject_echo_80")
+	assert.Contains(t, retried.HAProxyConfig, "backend gw_h_default_subject_other_80")
+	assert.NotContains(t, retried.HAProxyConfig, "backend gw_h_default_subject_echo_80")
 	fixture.assertExecutions(t, gatewayHTTPBackendComponent, "httproutes", "subject", 2)
 	fixture.assertExecutions(t, gatewayHTTPBackendComponent, "httproutes", "stable", 1)
 }
@@ -505,9 +507,11 @@ func loadGatewayBackendChartSnippets(t *testing.T) map[string]config.TemplateSni
 		"util-backend-servers-helpers": true,
 		"util-backend-servers-result":  true, "util-backend-servers": true,
 		"util-backend-name-gateway":      true,
+		"util-gateway-route-identity":    true,
 		"util-reference-grant-permitted": true, "util-backend-ref-valid": true,
 		"util-bounded-name":                        true,
 		"util-resolve-backend-tls":                 true,
+		"util-backend-tls-identity":                true,
 		"util-generate-httproute-backends-gateway": true,
 		"util-generate-grpcroute-backends-gateway": true,
 		"backendtlsvalues-490-gateway":             true, "util-gateway-backend-bindings": true,

@@ -20,18 +20,22 @@ kind_in_dind() { local h="${DOCKER_HOST:-}"; [ "$h" != "${h#tcp://}" ]; }
 kind_create_cluster() {
   local name="$1"
   local repo config
+  local -a image_args=()
   repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  if [ -n "${KIND_NODE_IMAGE:-}" ]; then
+    image_args=(--image "$KIND_NODE_IMAGE")
+  fi
 
   kind delete cluster --name "$name" >/dev/null 2>&1 || true
 
   if kind_in_dind; then
     config="$repo/.gitlab/ci/kind-config-dind.yaml"
     [ -f "$config" ] || { echo "FAIL: $config not found" >&2; return 1; }
-    kind create cluster --name "$name" --config "$config" >/dev/null || return 1
+    kind create cluster --name "$name" --config "$config" "${image_args[@]}" >/dev/null || return 1
     # kind writes the bind address it was given; only the client needs the name.
     sed -i 's|https://0\.0\.0\.0:|https://docker:|g' "${KUBECONFIG:-$HOME/.kube/config}"
   else
-    kind create cluster --name "$name" >/dev/null || return 1
+    kind create cluster --name "$name" "${image_args[@]}" >/dev/null || return 1
   fi
 
   kubectl --context "kind-$name" cluster-info >/dev/null 2>&1 \

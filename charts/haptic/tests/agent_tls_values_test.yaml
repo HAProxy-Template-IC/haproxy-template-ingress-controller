@@ -1,0 +1,84 @@
+suite: agent TLS value guards
+templates:
+  - haproxytemplateconfig.yaml
+tests:
+  - it: should reject two certificate owners
+    set:
+      haproxy.agent.tls.certManager.enabled: true
+      haproxy.agent.tls.managed: false
+    asserts:
+      - failedTemplate:
+          errorMessage: Agent cert-manager provisioning requires haproxy.agent.tls.managed=true
+  - it: should reject an unspecified external issuer
+    set:
+      haproxy.agent.tls.certManager.enabled: true
+      haproxy.agent.tls.certManager.createIssuer: false
+    asserts:
+      - failedTemplate:
+          errorMessage: External agent TLS issuerRef needs name, kind, and group
+  - it: should reject ignored issuer selection
+    set:
+      haproxy.agent.tls.certManager.enabled: true
+      haproxy.agent.tls.certManager.issuerRef.name: existing
+    asserts:
+      - failedTemplate:
+          errorMessage: Set agent TLS certManager.createIssuer=false when selecting an existing issuer
+  - it: should reject an identity overwriting its issuer state
+    set:
+      haproxy.agent.tls.issuerSecretName: shared
+      haproxy.agent.tls.serverSecretName: shared
+    asserts:
+      - failedTemplate:
+          errorMessage: Agent TLS issuer and identity Secret names must differ
+  - it: should reject external TLS without both identities
+    template: haproxytemplateconfig.yaml
+    set:
+      haproxy.agent.tls.managed: false
+    asserts:
+      - failedTemplate:
+          errorMessage: External agent TLS needs serverSecretName and clientSecretName. Create both identity Secrets before installing.
+  - it: should reject a shared server and client identity name
+    template: haproxytemplateconfig.yaml
+    set:
+      haproxy.agent.tls.serverName: same.example.test
+      haproxy.agent.tls.clientName: same.example.test
+    asserts:
+      - failedTemplate:
+          errorMessage: Agent TLS server and client certificate names must differ
+  - it: should reject a shared server and client Secret
+    template: haproxytemplateconfig.yaml
+    set:
+      haproxy.agent.tls.serverSecretName: shared
+      haproxy.agent.tls.clientSecretName: shared
+    asserts:
+      - failedTemplate:
+          errorMessage: Agent TLS server and client Secret names must differ
+  - it: should reject an unknown security setting
+    template: haproxytemplateconfig.yaml
+    set:
+      haproxy.agent.tls.insecureSkipVerify: true
+    asserts:
+      - failedTemplate:
+          errorMessage: 'haproxy.agent.tls contains unknown field "insecureSkipVerify"'
+  - it: should reject non-boolean enabled values
+    template: haproxytemplateconfig.yaml
+    set:
+      haproxy.agent.tls.enabled: "false"
+    asserts:
+      - failedTemplate:
+          errorMessage: haproxy.agent.tls.enabled must be a boolean
+  - it: should reject invalid certificate lifetimes
+    template: haproxytemplateconfig.yaml
+    set:
+      haproxy.agent.tls.certValidityDays: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: haproxy.agent.tls.certValidityDays must be an integer from 1 to 3650
+  - it: should reject ambiguous certificate-name casing
+    template: haproxytemplateconfig.yaml
+    set:
+      haproxy.agent.tls.serverName: Agent.example.test
+      haproxy.agent.tls.clientName: agent.example.test
+    asserts:
+      - failedTemplate:
+          errorMessage: haproxy.agent.tls.serverName must be a lowercase DNS name

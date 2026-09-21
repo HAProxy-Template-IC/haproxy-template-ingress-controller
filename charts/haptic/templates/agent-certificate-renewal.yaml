@@ -1,0 +1,39 @@
+{{- include "haptic.agentTLS.validate" . -}}
+{{- $tls := .Values.haproxy.agent.tls -}}
+{{- if and $tls.enabled $tls.managed (not $tls.certManager.enabled) -}}
+{{- $name := include "haptic.agentTLS.renewalName" . -}}
+{{- $bootstrap := printf "%s-bootstrap" ($name | trunc 53 | trimSuffix "-") -}}
+{{- include "haptic.agentTLS.renewalRBAC" (dict "root" . "name" $name "hook" false) }}
+{{- include "haptic.agentTLS.renewalRBAC" (dict "root" . "name" $bootstrap "hook" true) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $bootstrap }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "7"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  {{- include "haptic.agentTLS.renewalJobSpec" (dict "root" . "serviceAccount" $bootstrap) | nindent 2 }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels.withCommon" . | nindent 4 }}
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      {{- include "haptic.agentTLS.renewalJobSpec" (dict "root" . "serviceAccount" $name) | nindent 6 }}
+{{- end -}}

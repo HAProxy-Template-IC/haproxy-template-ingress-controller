@@ -34,6 +34,7 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {%- import "util-gateway-policy-status" for GatewayPolicyStatusSummary, ApplyGatewayPolicyConditions -%}
       {% macro GenerateHTTPRouteStatusPatch(route any) %}
         {%- var controllerName = dig_string(props, "", "controllerName") %}
         {#- Resolved at runtime: the version the controller actually
@@ -54,6 +55,8 @@ templateSnippets:
             // backendRef. Spec precedence: InvalidKind > RefNotPermitted
             // > BackendNotFound. Flattened via `[*]`: outer rule loop
             // only accessed rule.BackendRefs.
+            var policyStatus = map[string]any{}
+            GatewayPolicyStatusSummary(route, kind, policyStatus)
             var allRefsResolved = true
             var refFailReason = ""
             var refFailMsg = ""
@@ -267,15 +270,17 @@ templateSnippets:
                     resolvedMsg = refFailMsg
                   }
 
+                  var policyConditions = map[string]any{"conditions": []any{
+                    condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
+                      generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                    condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
+                      generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
+                  }}
+                  ApplyGatewayPolicyConditions(route, parentIdx, policyStatus, policyConditions)
                   parents = append(parents, map[string]any{
-                    "parentRef":      parentRefStatus,
+                    "parentRef": parentRefStatus,
                     "controllerName": controllerName,
-                    "conditions": []any{
-                      condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                        generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
-                      condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
-                        generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
-                    },
+                    "conditions": policyConditions["conditions"],
                   })
                 }
               }
@@ -301,6 +306,7 @@ templateSnippets:
       bindingsTemplate: '{{- render "util-gateway-httproute-status-bindings" -}}'
       root: gateway-http-route-pre-analysis
       group: gateway-httproute-status
+      consumes: [gateway-policy-records]
       optionalConsumes: [gateway-host-listenersets]
       effects: [statusPatch]
     template: |-
@@ -324,6 +330,7 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {%- import "util-gateway-policy-status" for GatewayPolicyStatusSummary, ApplyGatewayPolicyConditions -%}
       {% macro GenerateGRPCRouteStatusPatch(route *resources.grpcroutes.T) %}
         {%- var controllerName = dig_string(props, "", "controllerName") %}
         {%- var apiVersion = resources.grpcroutes.APIVersion() %}
@@ -335,6 +342,8 @@ templateSnippets:
             var generation = route.Metadata.Generation
             var routeHostnames = route.Spec.Hostnames | toSlice()
 
+            var policyStatus = map[string]any{}
+            GatewayPolicyStatusSummary(route, kind, policyStatus)
             var allRefsResolved = true
             var refFailReason = ""
             var refFailMsg = ""
@@ -528,15 +537,17 @@ templateSnippets:
                     resolvedMsg = refFailMsg
                   }
 
+                  var policyConditions = map[string]any{"conditions": []any{
+                    condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
+                      generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                    condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
+                      generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
+                  }}
+                  ApplyGatewayPolicyConditions(route, parentIdx, policyStatus, policyConditions)
                   parents = append(parents, map[string]any{
-                    "parentRef":      parentRefStatus,
+                    "parentRef": parentRefStatus,
                     "controllerName": controllerName,
-                    "conditions": []any{
-                      condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                        generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
-                      condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
-                        generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
-                    },
+                    "conditions": policyConditions["conditions"],
                   })
                 }
               }
@@ -558,6 +569,7 @@ templateSnippets:
     incremental:
       bindingsTemplate: '{{- render "util-gateway-grpcroute-status-bindings" -}}'
       group: gateway-grpcroute-status
+      consumes: [gateway-policy-records]
       optionalConsumes: [gateway-host-listenersets]
       effects: [statusPatch]
     template: |-

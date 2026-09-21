@@ -296,7 +296,12 @@ func incrementalStructFieldValue(rv reflect.Value, fieldName string) (reflect.Va
 		return reflect.Value{}, false, nil
 	}
 	field := rv.Field(index)
-	if isStructFieldOmitempty(rv.Type(), index) && field.IsZero() {
+	if field.Kind() == reflect.Pointer && needsTristatePointerKind(field.Type().Elem().Kind()) {
+		if field.IsNil() {
+			return reflect.Value{}, false, nil
+		}
+		field = field.Elem()
+	} else if isStructFieldOmitempty(rv.Type(), index) && field.IsZero() {
 		return reflect.Value{}, false, nil
 	}
 	if !field.CanInterface() {

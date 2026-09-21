@@ -1,0 +1,35 @@
+templateSnippets:
+  features-003-policy-empty-jwt-files:
+    incremental:
+      bindingsTemplate: '{}'
+      group: haptic-jwt-files
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  features-003-policy-empty-jwt-routes:
+    incremental:
+      bindingsTemplate: '{}'
+      group: haptic-jwt-routes
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  features-003-policy-empty-api-key-routes:
+    incremental:
+      bindingsTemplate: '{}'
+      group: haptic-api-key-routes
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  features-003-policy-empty-cache-records:
+    incremental:
+      bindingsTemplate: '{}'
+      group: haptic-cache-records
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  features-003-policy-empty-cache-exclusions:
+    incremental:
+      bindingsTemplate: '{}'
+      group: features-900-haptic-fragment-865-cache-route-items
+      effects: [publishValue]
+    template: '{{- "" -}}'

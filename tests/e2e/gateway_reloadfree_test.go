@@ -67,7 +67,7 @@ func TestGatewayRouteAddRemoveIsReloadFree(t *testing.T) {
 		dyn       dynamic.Interface
 		namespace string
 		cycleSvc  BackendRef
-		fwd       GatewayForward
+		fwd       ServiceForward
 	)
 
 	feature := features.New("Gateway route add/remove is reload-free on 3.4").

@@ -58,7 +58,7 @@ import (
 // servers default `slots = 10`): >= 14 lines per Ingress. 20 namespaces x 40
 // Ingresses = 800 backends x 14+ = 11,200+ lines from Ingress backends alone,
 // plus the chart baseline (frontend/global/defaults/spoa sections, ~470
-// lines) and 20 Gateway binds + `gtw_*` route backends on top: ~12k lines at
+// lines) and 20 Gateway binds + `gw_h_*` route backends on top: ~12k lines at
 // defaults — past the project bar of judging config-apply against 10k+ line
 // configs. Cross-checked against a reduced-scale smoke run (4x10 Ingresses
 // + 4 Gateways + 5 latency probes = 49 Ingress backends): 1,160 rendered
@@ -269,11 +269,9 @@ func ingressBackendMarker(namespace, ingressName string) string {
 	return namespace + "_" + ingressName + "_svc_"
 }
 
-// gatewayBackendMarker is the chart-emitted backend-name prefix for an
-// HTTPRoute (see BackendNameGateway in charts/haptic/charts/gateway/
-// 21-route-helpers.yaml: `gtw_<ns>_<routeName>_<svc>_<port>`).
+// gatewayBackendMarker identifies the HTTPRoute backend names emitted by the chart.
 func gatewayBackendMarker(namespace, routeName string) string {
-	return "gtw_" + namespace + "_" + routeName + "_"
+	return "gw_h_" + namespace + "_" + routeName + "_"
 }
 
 // createScaleIngress creates one Ingress via the typed client, retrying
@@ -788,31 +786,31 @@ func TestControllerCPUSecondsDelta(t *testing.T) {
 	}
 }
 
-// controllerHistogramAvg returns sum/count of the named histogram from the
-// leader controller pod (the replica doing the rendering/deploying). Returns
-// ok=false when no leader is identifiable or the histogram is empty.
-func controllerHistogramAvg(ctx context.Context, cs kubernetes.Interface, name string) (float64, bool) {
-	list, err := cs.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: LabelSelectorController,
-	})
+func histogramAverage(ctx context.Context, cs kubernetes.Interface, name, selector string, leaderOnly bool) (float64, error) {
+	list, err := cs.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return 0, false
+		return 0, fmt.Errorf("list histogram sources: %w", err)
 	}
+	var sum, count float64
 	for i := range list.Items {
-		metrics, err := scrapeControllerMetrics(ctx, cs, list.Items[i].Name)
+		pod := &list.Items[i]
+		if pod.DeletionTimestamp != nil {
+			return 0, fmt.Errorf("histogram source %s is terminating", pod.Name)
+		}
+		metrics, err := scrapeControllerMetrics(ctx, cs, pod.Name)
 		if err != nil {
+			return 0, err
+		}
+		if leaderOnly && metrics["haptic_leader_election_is_leader"] != 1 {
 			continue
 		}
-		if metrics["haptic_leader_election_is_leader"] != 1 {
-			continue
-		}
-		count := metrics[name+"_count"]
-		if count == 0 {
-			return 0, false
-		}
-		return metrics[name+"_sum"] / count, true
+		sum += metrics[name+"_sum"]
+		count += metrics[name+"_count"]
 	}
-	return 0, false
+	if count == 0 {
+		return 0, fmt.Errorf("histogram %s has no observations from %s", name, selector)
+	}
+	return sum / count, nil
 }
 
 // scaleMetricsSink accumulates the tier's flat-key metrics AS they are
@@ -1214,15 +1212,7 @@ func (s *scaleScenario) collectMetrics(ctx context.Context, t *testing.T, cfg *e
 	}
 	s.sink.set("controller_container_cpu_seconds_delta", round2(cpuDelta))
 	s.sink.set("controller_cpu_sampling_window_seconds", round2(cpuWindowEnd.Sub(s.cpuWindowStart).Seconds()))
-	for key, metric := range map[string]string{
-		"reconciliation_duration_seconds_avg":  "haptic_reconciliation_duration_seconds",
-		"deployment_duration_seconds_avg":      "haptic_deployment_duration_seconds",
-		"webhook_request_duration_seconds_avg": "haptic_webhook_request_duration_seconds",
-	} {
-		if avg, ok := controllerHistogramAvg(ctx, s.cs, metric); ok {
-			s.sink.set(key, round2(avg))
-		}
-	}
+	s.collectHistogramMetrics(ctx, t)
 	if err := verifyControllerBinary(ctx, s.cs, controllerRuntimeIdentities(cpuAfter)); err != nil {
 		t.Fatalf("verify measured controller binary: %v", err)
 	}
@@ -1262,4 +1252,22 @@ func (s *scaleScenario) collectMetrics(ctx context.Context, t *testing.T, cfg *e
 			len(content), threshold, wantCompressed, obj.Spec.Compressed)
 	}
 	return ctx
+}
+
+func (s *scaleScenario) collectHistogramMetrics(ctx context.Context, t *testing.T) {
+	t.Helper()
+	for _, histogram := range []struct {
+		key, metric, selector string
+		leaderOnly            bool
+	}{
+		{"reconciliation_duration_seconds_avg", "haptic_reconciliation_duration_seconds", LabelSelectorController, true},
+		{"deployment_duration_seconds_avg", "haptic_deployment_duration_seconds", LabelSelectorController, true},
+		{"webhook_request_duration_seconds_avg", "haptic_webhook_request_duration_seconds", LabelSelectorController, false},
+	} {
+		avg, err := histogramAverage(ctx, s.cs, histogram.metric, histogram.selector, histogram.leaderOnly)
+		if err != nil {
+			t.Fatalf("measure %s: %v", histogram.key, err)
+		}
+		s.sink.set(histogram.key, round2(avg))
+	}
 }

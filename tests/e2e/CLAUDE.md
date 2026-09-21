@@ -19,13 +19,15 @@ The suite owns its dependencies. `make test-e2e` will:
 3. Create kind cluster `haptic-e2e` if it doesn't exist (or reuse it).
 4. Load `haptic:test-haproxyX.Y` into kind.
 5. Apply CRDs.
-6. Helm-install the chart from `charts/haptic` via the Helm CLI with
-   values pointing at the local image.
-7. Apply embedded backend fixtures (auth-server, blocklist-server,
+6. Apply embedded backend fixtures (auth-server, blocklist-server,
    echo-server, haproxy-demo-backend, haproxy-test-backend).
+7. Helm-install the chart from `charts/haptic` with `--wait` and values pointing
+   at the local image.
 8. Verify that every controller pod belongs to the expected rollout.
 9. Wait for the controller pipeline to reach `deployment.status=succeeded`.
-10. Verify every controller pod's binary checksum, then run the tests. The scale
+10. In the cache profile, wait for the Varnish StatefulSet to reach its configured
+    replica count before inspecting the running processes.
+11. Verify every controller pod's binary checksum, then run the tests. The scale
     test defers this checksum until after its memory and CPU samples.
 
 Nothing outside the suite is required. `scripts/start-dev-env.sh` is the
@@ -101,5 +103,8 @@ replace an existing cluster. Omit it to use Kind's bundled default.
 
 ## CI
 
-The CI job runs `make test-e2e` directly. No `start-dev-env.sh` invocation.
-On failure, the `debug-logs/` directory is uploaded as a CI artifact.
+CI enumerates the compiled tests with `go test -list` before creating clusters.
+Each complete-suite profile runs three disjoint shards through `make test-e2e`;
+their union covers every listed test. The inventory and selection are retained
+in `debug-logs/`, along with diagnostics on failure. Focused nightly jobs keep
+their existing selections. Local `make test-e2e` runs the complete suite.

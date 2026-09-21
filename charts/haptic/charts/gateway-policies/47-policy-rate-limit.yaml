@@ -1,0 +1,78 @@
+maps:
+  gw-policy-consumer.map:
+    template: |
+      {{ render_glob "map-gateway-policy-consumer-*" -}}
+
+templateSnippets:
+  frontend-filters-862-gateway-policy-consumer:
+    template: |
+      {%- var path, err = pathResolver.GetPath("gw-policy-consumer.map", "map") -%}
+      {%- if err != nil -%}{{ fail(tostring(err)) }}{%- end -%}
+      {{ "\n" }}http-request set-var(txn.denied_by) str(policy_consumer_missing) if { var(txn.policy_id),map({{ path }}) -m found } !{ var(txn.haptic_consumer),length gt 0 }
+      http-request deny deny_status 401 if { var(txn.policy_id),map({{ path }}) -m found } !{ var(txn.haptic_consumer),length gt 0 }
+
+  map-rate-limit-830-gateway-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-rate-limit-830-gateway" for GatewayRateLimitMap -%}
+      {{- GatewayRateLimitMap(item, "HTTPRoute") -}}
+
+  map-gateway-policy-consumer-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-gateway-policy-consumer" for GatewayPolicyConsumerMap -%}
+      {{- GatewayPolicyConsumerMap(item, "HTTPRoute") -}}
+
+  map-rate-limit-830-gateway-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-rate-limit-830-gateway" for GatewayRateLimitMap -%}
+      {{- GatewayRateLimitMap(item, "GRPCRoute") -}}
+
+  map-gateway-policy-consumer-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-gateway-policy-consumer" for GatewayPolicyConsumerMap -%}
+      {{- GatewayPolicyConsumerMap(item, "GRPCRoute") -}}
+
+  util-map-rate-limit-830-gateway:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro GatewayRateLimitMap(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && record["rateLimit"] != nil -%}
+            {{- "\n" + tostring(record["id"]) + " " + dig_string(record, "", "rateLimit", "value") + " " + tostring(record["policyID"]) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-map-gateway-policy-consumer:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro GatewayPolicyConsumerMap(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && record["requireConsumer"] == true -%}
+            {{- "\n" + tostring(record["id"]) + " required" -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}

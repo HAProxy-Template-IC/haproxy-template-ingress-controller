@@ -1399,12 +1399,7 @@ func ownMap(source Map) Map {
 	if source.Entries == nil {
 		entries = nil
 	}
-	for index := range source.Entries {
-		entries[index] = Entry{
-			Key:   source.Entries[index].Key,
-			Value: source.Entries[index].Value,
-		}
-	}
+	copy(entries, source.Entries)
 	return Map{Path: source.Path, Ordered: source.Ordered, Entries: entries}
 }
 

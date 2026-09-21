@@ -627,7 +627,10 @@ func (s *DeploymentScheduler) clearPendingReloadLogState() {
 // reloads are pending are dispatched at once: the pods coalesce their files
 // into the pending reload and run the in-place subset — an endpoint change
 // must never wait for a reload window.
-const pendingReloadFollowUpMargin = 250 * time.Millisecond
+const (
+	pendingReloadFollowUpMargin = 250 * time.Millisecond
+	pendingReloadFollowUpReason = "pending_reload_follow_up"
+)
 
 // schedulePendingReloadFollowUp re-drives the last validated render once the
 // pods' paced reloads have fired. The agent never cancels a scheduled reload
@@ -664,7 +667,7 @@ func (s *DeploymentScheduler) schedulePendingReloadFollowUp(event *events.Deploy
 	s.retryTimerDone = done
 	s.retryTimer = time.AfterFunc(wait, func() {
 		defer done()
-		s.runRetry(generation, workRevision, "pending_reload_follow_up")
+		s.runRetry(generation, workRevision, pendingReloadFollowUpReason)
 	})
 
 	// Renders keep dispatching while a reload is pending, and every completion

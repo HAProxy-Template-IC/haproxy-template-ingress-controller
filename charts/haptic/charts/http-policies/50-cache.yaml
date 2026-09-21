@@ -1,0 +1,34 @@
+templateSnippets:
+  util-policy-cache:
+    template: |-
+      {%- macro PolicyCache(config any, id string, authenticated bool, result map[string]any) -%}
+        {%%
+          result["error"] = ""
+          var ttl = "auto"
+          if dig(config, "ttlSeconds") != nil { ttl = tostring(dig(config, "ttlSeconds")) }
+          if ttl != "auto" && !regex_search(ttl, "^[0-9]+$") {
+            result["error"] = "cache ttlSeconds must be non-negative. Use an integer number of seconds."
+          }
+          var size = dig_string(config, "", "maxObjectSizeBytes")
+          if size != "" && (!regex_search(size, "^[0-9]+$") || toint(size) <= 0) {
+            result["error"] = "cache maxObjectSizeBytes must be positive. Use an integer number of bytes."
+          }
+          var key = []string{}
+          if authenticated { key = append(key, "consumer") }
+          var headers = map[string]bool{}
+          for _, value := range toSlice(dig(config, "varyHeaders")) {
+            var header = tostring(value)
+            var folded = toLower(header)
+            if !regex_search(header, "^[A-Za-z][A-Za-z0-9-]*$") || hasPrefix(folded, "x-haptic-") {
+              result["error"] = "cache varyHeaders has an invalid or reserved header. Use HTTP header names outside X-Haptic-*."
+            }
+            if !headers[folded] { key = append(key, "header:" + header); headers[folded] = true }
+          }
+          result["record"] = map[string]any{
+            "id": id, "partition": id, "ttl": ttl, "maxObjectSize": size,
+            "cacheKey": join(key, ","), "excludeContentTypes": "", "negativeTTL": "",
+            "staleWhileRevalidate": "", "staleIfError": "", "revalidate": "",
+            "authTLSCertHeader": "", "stripSetCookie": "",
+          }
+        %%}
+      {%- end macro -%}

@@ -111,7 +111,7 @@ validationTests:
       # Cache outages bypass the cache tier instead of taking the app route down.
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^[ \t]+http-request set-var\(txn\.cache_eligible\) bool\(true\) if \{ var\(txn\.resource_id\),map\([^)]*haptic-cache-enable\.map\) -m found \} \{ method GET HEAD \}$'
+        pattern: '(?m)^[ \t]+http-request set-var\(txn\.cache_eligible\) bool\(true\) if \{ var\(txn\.policy_id\),map\([^)]*haptic-cache-enable\.map\) -m found \} \{ method GET HEAD \}$'
       # Exclusions are map rows, one per (route, prefix) pair, read by a single
       # map_beg lookup on `<route>|<path>`, so no route adds rule text.
       - {type: contains, target: "map:haptic-cache-exclude.map", pattern: '(?m)^default/cache-ingress\|/admin 1$'}
@@ -119,7 +119,7 @@ validationTests:
       - {type: contains, target: "map:haptic-cache-exclude.map", pattern: '(?m)^default/second-cache-ingress\|/private 1$'}
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^[ \t]+http-request set-var-fmt\(txn\.cache_excl_key\) %\[var\(txn\.resource_id\)\]\|%\[path\] if \{ var\(txn\.cache_eligible\) -m bool \}$'
+        pattern: '(?m)^[ \t]+http-request set-var-fmt\(txn\.cache_excl_key\) %\[var\(txn\.policy_id\)\]\|%\[path\] if \{ var\(txn\.cache_eligible\) -m bool \}$'
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^[ \t]+http-request unset-var\(txn\.cache_eligible\) if \{ var\(txn\.cache_excl_key\),map_beg\([^)]*haptic-cache-exclude\.map\) -m found \}$'
@@ -172,7 +172,7 @@ validationTests:
       - {type: not_contains, target: haproxy.cfg, pattern: "req.hdr\\(X-Haptic-Cache-Fetch\\)"}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-header X-Haptic-Cache-TTL %\\[var\\(txn.resource_id\\),map\\([^)]*haptic-cache-ttl\\.map\\)\\]"
+        pattern: "http-request set-header X-Haptic-Cache-TTL %\\[var\\(txn.policy_id\\),map\\([^)]*haptic-cache-ttl\\.map\\)\\]"
       - {type: contains, target: haproxy.cfg, pattern: "backend varnish_cache"}
       - {type: contains, target: haproxy.cfg, pattern: "balance first"}
       - {type: contains, target: haproxy.cfg, pattern: "balance uri"}
@@ -250,11 +250,11 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Vary"}
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-header X-Haptic-Cache-Vary %\\[var\\(txn.haptic_consumer\\)\\]\\|%\\[req.hdr\\(X-Api-Version\\)\\] if \\{ var\\(txn.resource_id\\) -m str default/cache-ingress \\}"
+        pattern: "http-request set-header X-Haptic-Cache-Vary %\\[var\\(txn.haptic_consumer\\),base64\\]\\|%\\[req.hdr\\(X-Api-Version\\),base64\\] if \\{ var\\(txn.policy_id\\) -m str default/cache-ingress \\}"
       # An excluded request needs no per-route switch: with cache_eligible unset the
       # varnish switch never matches, and base's trailing
       # `use_backend %[var(txn.backend_name)]` routes it to its own backend.
-      - {type: not_contains, target: haproxy.cfg, pattern: 'use_backend %\[var\(txn\.backend_name\)\] if \{ var\(txn\.resource_id\) -m str'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'use_backend %\[var\(txn\.backend_name\)\] if \{ var\(txn\.policy_id\) -m str'}
       - {type: contains, target: "k8s:varnish-cache", pattern: "hash_data\\(req.http.X-Haptic-Cache-Vary\\)"}
       - type: contains
         target: "k8s:varnish-cache"
@@ -555,10 +555,10 @@ validationTests:
         target: haproxy.cfg
         patterns:
           - "http-request del-header X-Haptic-Cache-Grace"
-          - "http-request set-header X-Haptic-Cache-Grace %\\[var\\(txn\\.resource_id\\),map\\("
+          - "http-request set-header X-Haptic-Cache-Grace %\\[var\\(txn\\.policy_id\\),map\\("
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-header X-Haptic-Cache-Stale-If-Error %\\[var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-stale-if-error\\.map\\)\\]"
+        pattern: "http-request set-header X-Haptic-Cache-Stale-If-Error %\\[var\\(txn\\.policy_id\\),map\\([^)]*haptic-cache-stale-if-error\\.map\\)\\]"
       # The VCL wires each header to the matching beresp field.
       - { type: contains, target: "k8s:varnish-cache", pattern: "set beresp.grace = std.duration\\(bereq.http.X-Haptic-Cache-Grace" }
       - { type: contains, target: "k8s:varnish-cache", pattern: "set beresp.keep = std.duration\\(bereq.http.X-Haptic-Cache-Keep" }
@@ -740,11 +740,11 @@ validationTests:
       - { type: not_contains, target: "map:haptic-cache-private.map", pattern: "default/vary-ingress" }
       - type: contains
         target: haproxy.cfg
-        pattern: "(?m)^\\s*http-after-response add-header Vary %\\[var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-vary\\.map\\)\\] if \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-vary\\.map\\) -m found \\}$"
+        pattern: "(?m)^\\s*http-after-response add-header Vary %\\[var\\(txn\\.policy_id\\),map\\([^)]*haptic-cache-vary\\.map\\)\\] if \\{ var\\(txn\\.policy_id\\),map\\([^)]*haptic-cache-vary\\.map\\) -m found \\}$"
       - type: match_order
         target: haproxy.cfg
         patterns:
-          - "http-after-response add-header Vary %\\[var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-vary\\.map\\)\\]"
+          - "http-after-response add-header Vary %\\[var\\(txn\\.policy_id\\),map\\([^)]*haptic-cache-vary\\.map\\)\\]"
           - "use_backend varnish_cache if"
 
   test-haptic-cache-identity-key-marks-response-private:
@@ -781,12 +781,12 @@ validationTests:
       # `private`: RFC 9111 defines no precedence for a response carrying both.
       - type: contains
         target: haproxy.cfg
-        pattern: "http-after-response replace-value Cache-Control \\(\\?i\\)\\^\\[\\[:space:\\]\\]\\*public\\[\\[:space:\\]\\]\\*\\$ private if \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-private\\.map\\) -m found \\}"
+        pattern: "http-after-response replace-value Cache-Control \\(\\?i\\)\\^\\[\\[:space:\\]\\]\\*public\\[\\[:space:\\]\\]\\*\\$ private if \\{ var\\(txn\\.policy_id\\),map\\([^)]*haptic-cache-private\\.map\\) -m found \\}"
       # Always add an unqualified directive: private="Header" protects only the
       # named field and cannot keep the rest of the response out of shared caches.
       - type: contains
         target: haproxy.cfg
-        pattern: "(?m)^\\s*http-after-response add-header Cache-Control private if \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-private\\.map\\) -m found \\}$"
+        pattern: "(?m)^\\s*http-after-response add-header Cache-Control private if \\{ var\\(txn\\.policy_id\\),map\\([^)]*haptic-cache-private\\.map\\) -m found \\}$"
       - type: match_order
         target: haproxy.cfg
         patterns:
@@ -861,7 +861,7 @@ validationTests:
       - { type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Negative-TTL" }
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-header X-Haptic-Cache-Negative-TTL %\\[var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-negative-ttl\\.map\\)\\]"
+        pattern: "http-request set-header X-Haptic-Cache-Negative-TTL %\\[var\\(txn\\.policy_id\\),map\\([^)]*haptic-cache-negative-ttl\\.map\\)\\]"
       # 404 and 410 only — a 5xx must never be negatively cached, or an origin
       # outage would be served back for the whole window.
       - { type: contains, target: "k8s:varnish-cache", pattern: "beresp.status == 404 \\|\\| beresp.status == 410" }
@@ -955,7 +955,7 @@ validationTests:
       # identity would put every caller in one bucket, which is the leak itself.
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-header X-Haptic-Cache-Auth 1 if \\{ var\\(txn\\.resource_id\\),map\\([^)]*haptic-cache-authkey\\.map\\) -m found \\} \\{ var\\(txn\\.haptic_consumer\\),length gt 0 \\}"
+        pattern: "http-request set-header X-Haptic-Cache-Auth 1 if \\{ var\\(txn\\.policy_id\\),map\\([^)]*haptic-cache-authkey\\.map\\) -m found \\} \\{ var\\(txn\\.haptic_consumer\\),length gt 0 \\}"
       # A client must not be able to forge the flag.
       - { type: contains, target: haproxy.cfg, pattern: "http-request del-header X-Haptic-Cache-Auth" }
       - type: match_order
@@ -1139,7 +1139,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-header X-Haptic-Cache-Vary %\\[ssl_c_s_dn\\(CN\\)\\] if \\{ var\\(txn\\.resource_id\\) -m str default/cert-only \\}"
+        pattern: "http-request set-header X-Haptic-Cache-Vary %\\[ssl_c_s_dn\\(CN\\),base64\\] if \\{ var\\(txn\\.policy_id\\) -m str default/cert-only \\}"
       - { type: contains, target: "map:haptic-cache-private.map", pattern: "(?m)^default/cert-only 1$" }
 
   test-haptic-cache-consumer-groups-without-identity-denies:

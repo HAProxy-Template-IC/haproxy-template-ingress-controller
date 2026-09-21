@@ -41,6 +41,58 @@ type incrementalDigFrameItem struct {
 	Pointer *int                      `json:"pointer"`
 }
 
+type incrementalDigOptionalScalar[T any] struct {
+	Value *T `json:"value,omitempty"`
+}
+
+func TestIncrementalDigOptionalScalars(t *testing.T) {
+	enabled, disabled := true, false
+	integer, integerZero := int64(7), int64(0)
+	unsigned, unsignedZero := uint32(7), uint32(0)
+	fraction, fractionZero := 1.5, 0.0
+	tests := []struct {
+		name string
+		item any
+		want string
+	}{
+		{"true", incrementalDigOptionalScalar[bool]{&enabled}, "bool:true|true"},
+		{"false", incrementalDigOptionalScalar[bool]{&disabled}, "bool:false|false"},
+		{"integer", incrementalDigOptionalScalar[int64]{&integer}, "int64:7|7"},
+		{"integer zero", incrementalDigOptionalScalar[int64]{&integerZero}, "int64:0|0"},
+		{"unsigned", incrementalDigOptionalScalar[uint32]{&unsigned}, "uint32:7|7"},
+		{"unsigned zero", incrementalDigOptionalScalar[uint32]{&unsignedZero}, "uint32:0|0"},
+		{"fraction", incrementalDigOptionalScalar[float64]{&fraction}, "float64:1.5|1.5"},
+		{"fraction zero", incrementalDigOptionalScalar[float64]{&fractionZero}, "float64:0|0"},
+		{"absent boolean", incrementalDigOptionalScalar[bool]{}, "<nil>:<nil>|missing"},
+		{"absent integer", incrementalDigOptionalScalar[int64]{}, "<nil>:<nil>|missing"},
+		{"absent fraction", incrementalDigOptionalScalar[float64]{}, "<nil>:<nil>|missing"},
+	}
+	format := func(value any) string { return fmt.Sprintf("%T:%v", value, value) }
+	const source = `{{ format(dig(item, "value")) }}|{{ dig_string(item, "missing", "value") }}`
+	ordinary := buildIncrementalDigFrameTemplate(t, source, native.Declarations{
+		"dig":        native.Synchronous(scriggoDig),
+		"dig_string": native.Synchronous(scriggoDigString),
+		"format":     native.Synchronous(format),
+	})
+	incremental := buildIncrementalDigFrameTemplate(t, source, native.Declarations{
+		"format": native.Synchronous(format),
+	})
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output, err := runIncrementalDigFrameTemplate(t, ordinary, test.item, false)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, output)
+			for _, direct := range []bool{false, true} {
+				t.Run(fmt.Sprintf("frame=%t", direct), func(t *testing.T) {
+					output, err := runIncrementalDigFrameTemplate(t, incremental, test.item, direct)
+					require.NoError(t, err)
+					assert.Equal(t, test.want, output)
+				})
+			}
+		})
+	}
+}
+
 func buildIncrementalDigFrameTemplate(tb testing.TB, source string, declarations native.Declarations) *scriggo.Template {
 	tb.Helper()
 	globals := native.Declarations{

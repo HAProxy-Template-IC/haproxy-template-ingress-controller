@@ -15,6 +15,7 @@
 package renderartifact
 
 import (
+	"crypto/sha256"
 	"errors"
 	"io"
 	"strings"
@@ -238,4 +239,13 @@ func (w fixedContentWriter) Write([]byte) (int, error) {
 
 func (w fixedContentWriter) WriteString(string) (int, error) {
 	return w.count, w.err
+}
+
+func TestContentDigestAcrossBufferBoundaries(t *testing.T) {
+	for _, length := range []int{0, 1, 4095, 4096, 4097, 1 << 20} {
+		value := strings.Repeat("π\x00", length/3) + strings.Repeat("x", length%3)
+		content := NewLiteralContent(value)
+		require.NoError(t, content.ValidateAuthentication())
+		assert.Equal(t, sha256.Sum256([]byte(value)), content.digest, "length %d", length)
+	}
 }

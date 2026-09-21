@@ -1,0 +1,93 @@
+suite: cert-manager agent identities
+release:
+  name: haptic
+  namespace: haptic
+templates:
+  - agent-certificates-cert-manager.yaml
+tests:
+  - it: should require explicit selection
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: should renew the root certificate with its existing key
+    set:
+      haproxy.agent.tls.certManager.enabled: true
+    documentSelector:
+      path: metadata.name
+      value: haptic-agent-issuer
+    asserts:
+      - equal:
+          path: spec.isCA
+          value: true
+      - equal:
+          path: spec.duration
+          value: 87600h
+      - equal:
+          path: spec.renewBefore
+          value: 17520h
+      - equal:
+          path: spec.privateKey.rotationPolicy
+          value: Never
+  - it: should rotate the server key with a single server identity
+    set:
+      haproxy.agent.tls.certManager.enabled: true
+    documentSelector:
+      path: metadata.name
+      value: haptic-agent-tls
+    asserts:
+      - equal:
+          path: spec.dnsNames
+          value: [haptic-agent-tls.haptic.svc]
+      - equal:
+          path: spec.usages
+          value: [digital signature, server auth]
+      - equal:
+          path: spec.privateKey.rotationPolicy
+          value: Always
+      - equal:
+          path: spec.renewBefore
+          value: 720h
+  - it: should issue only client authentication for the controller
+    set:
+      haproxy.agent.tls.certManager.enabled: true
+    documentSelector:
+      path: metadata.name
+      value: haptic-controller-tls
+    asserts:
+      - equal:
+          path: spec.dnsNames
+          value: [haptic-controller-tls.haptic.svc]
+      - equal:
+          path: spec.usages
+          value: [digital signature, client auth]
+  - it: should use an existing issuer without creating another CA
+    set:
+      haproxy.agent.tls.certManager.enabled: true
+      haproxy.agent.tls.certManager.createIssuer: false
+      haproxy.agent.tls.certManager.issuerRef:
+        name: organisation
+        kind: ClusterIssuer
+        group: cert-manager.io
+    asserts:
+      - hasDocuments:
+          count: 2
+      - equal:
+          path: spec.issuerRef
+          value:
+            name: organisation
+            kind: ClusterIssuer
+            group: cert-manager.io
+  - it: should fit renewal within a short certificate lifetime
+    set:
+      haproxy.agent.tls.certManager.enabled: true
+      haproxy.agent.tls.certValidityDays: 1
+    documentSelector:
+      path: metadata.name
+      value: haptic-agent-tls
+    asserts:
+      - equal:
+          path: spec.duration
+          value: 24h
+      - equal:
+          path: spec.renewBefore
+          value: 8h

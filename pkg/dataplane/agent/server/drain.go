@@ -16,11 +16,8 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
 	"net/http"
-	"os"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
@@ -128,45 +125,10 @@ func (s *Server) drain(stop <-chan struct{}) DrainResult {
 	}
 }
 
-// serveDrain answers GET /drain on the unix socket until ctx ends. The socket
-// lives in the shared HAProxy directory, so only the pod's own containers reach
-// it and no credential has to sit in the pod spec.
 func (s *Server) serveDrain(ctx context.Context) error {
-	if err := os.Remove(s.cfg.DrainSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove stale drain socket %s: %w", s.cfg.DrainSocket, err)
-	}
-	listener, err := net.Listen("unix", s.cfg.DrainSocket)
-	if err != nil {
-		return fmt.Errorf("listen on drain socket %s: %w", s.cfg.DrainSocket, err)
-	}
+	defer close(s.drainStop)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+api.PathDrain, s.handleDrain)
-	server := &http.Server{
-		Handler:           mux,
-		ReadHeaderTimeout: readHeaderTimeout,
-		WriteTimeout:      s.cfg.DrainMaxWait + shutdownGrace,
-	}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
-	select {
-	case err := <-done:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
-	case <-ctx.Done():
-	}
-	// A drain being served is a pod that is terminating: let it finish, whatever
-	// ends the agent (its own stop signal or a failing sibling goroutine), so the
-	// hook gets the drain's verdict and not a cut-short one. The drain is bounded
-	// by DrainMaxWait; drainStop only ends a handler that outlived that bound.
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.DrainMaxWait+shutdownGrace)
-	defer cancel()
-	err = server.Shutdown(shutdownCtx)
-	close(s.drainStop)
-	<-done
-	if removeErr := os.Remove(s.cfg.DrainSocket); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-		s.logger.Warn("could not remove the drain socket", "error", removeErr)
-	}
-	return err
+	// Finish an active preStop drain before stopping the listener's handlers.
+	return s.serveUnix(ctx, s.cfg.DrainSocket, mux, s.cfg.DrainMaxWait+shutdownGrace)
 }

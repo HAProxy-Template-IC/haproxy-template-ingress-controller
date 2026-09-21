@@ -1,0 +1,284 @@
+validationTests:
+  test-haptic-waf-trusted-missing-no-tenant-fallback:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - ingresses
+    fixtures:
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\ntrusted:\n  enforcement: detect\n  requestBody:\
+            \ {mode: none}\n"
+        immutable: true
+      waf_selfservice_catalogs:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\ntrusted:\n  enforcement: detect\n  requestBody:\
+            \ {mode: none}\n"
+        immutable: true
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          namespace: default
+          name: trusted-ingress
+          annotations:
+            haproxy-haptic.org/waf-policy: trusted
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: trusted-ingress.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          namespace: default
+          name: inline-policy
+          annotations:
+            haproxy-haptic.org/waf-policy: inline-safe
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: inline-policy.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ''
+          inline:
+            __replace__: true
+            inline-safe:
+              requestBody:
+                mode: none
+          configMapRefs:
+            __replace__: true
+            central:
+              namespace: security
+              name: catalog
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: haproxy.cfg
+      pattern: http-request deny deny_status 503 if \{ var\(txn.resource_id\) -m str default/trusted-ingress \}
+    - type: not_contains
+      target: map:coraza-app.map
+      pattern: default/trusted-ingress
+    - type: contains
+      target: events
+      pattern: cannot resolve safely
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^default/inline-policy policy:inline-safe$
+  test-haptic-waf-trusted-missing-default:
+    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    requires:
+    - ingresses
+    fixtures:
+      services:
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          namespace: default
+          name: echo
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+      secrets:
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: jwt-keys
+        type: Opaque
+        data:
+          pubkey.pem: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF1NlJodWp4Vi8xSG41dmF5bjA2Wgpubzhid0NIOFdTb05KTGRaWGJIYVBHM1doYnB5WGdVdk1IKzU1dWRiVGVwcVl3dTl5TmlINHNtQVVsNFJsanNGClZvVVE2VnBFK043dmJqM2FZMUdLWnV5MHhrUzM1ZjVLcW9VVGora3JjdEVEVStKSnJnamU3VHZRZEpRT3JGV0kKbnlVdHNhalF2a3RNdjVVSkVyazJuVmQwZTRJci9TWWQ4Y0tOeHdEejY4SDNXOWdnbWZLSm9Xd2xqUGJsUTJCOQpaVWdDNUZlZWpkaS9TYXZBWUNPcGpzSGNlRm80QXlZd25PVDhqMEdVTzF2Uk02M1NMUGdHUk5tclQ0SFFva0tSCi9LZFprRDVDWHZEdFBJZ1RsQTlvR25XdWVIQk5wWlB1SmpibWV5N2IyRS9wWmRhd0pyVjd3U25HL1FQSkoxMlgKd1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      - apiVersion: v1
+        kind: Secret
+        immutable: true
+        metadata:
+          namespace: default
+          name: api-keys
+        data:
+          keys: a2V5LW9uZTphbGljZQprZXktdHdvOmJvYgo=
+      configmaps:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          namespace: default
+          name: waf-policies
+        data:
+          policies.yaml: "tenant:\n  requestBody: {mode: none}\n"
+        immutable: true
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          namespace: default
+          name: default-policy
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: default-policy.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          namespace: default
+          name: inline-policy
+          annotations:
+            haproxy-haptic.org/waf-policy: inline-safe
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: inline-policy.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          messages:
+          - check-request
+        plugins:
+        - name: coraza
+          library: libcoraza_plugin.so
+          messages:
+          - check-request
+          timeoutMs: 15
+          params: ''
+          dependsOn: []
+          directives: 'Include @coraza.conf-recommended
+
+            Include @crs-setup.conf.example
+
+            Include @owasp_crs/*.conf
+
+            SecRuleEngine On
+
+            '
+      waf:
+        dispatch:
+          mode: opt-in
+          defaultEnforcement: deny
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: trusted
+          inline:
+            __replace__: true
+            inline-safe:
+              requestBody:
+                mode: none
+          configMapRefs:
+            __replace__: true
+            central:
+              namespace: security
+              name: catalog
+          selfService:
+            enabled: true
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: haproxy.cfg
+      pattern: http-request deny deny_status 503 if \{ var\(txn.resource_id\) -m str default/default-policy \}
+    - type: contains
+      target: map:coraza-app.map
+      pattern: (?m)^default/inline-policy policy:inline-safe$

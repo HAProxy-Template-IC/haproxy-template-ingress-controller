@@ -297,6 +297,7 @@ templateSnippets:
   util-analyze-gateway-route-incremental:
     requires: [grpcroutes, httproutes]
     template: |
+      {%- import "util-gateway-route-identity" for GatewayRuleID -%}
       {%- macro AnalyzeGatewayRouteIncremental(route any, routeKind string) -%}
       {%%
         var namespace = dig_string(route, "", "metadata", "namespace")
@@ -374,10 +375,9 @@ templateSnippets:
             if buildConditions(candidate) != firstConditions {
               hasConflicts = true
             }
-            routeIDs = append(routeIDs,
-              dig_string(candidate, "", "routeNamespace") + "_" +
-              dig_string(candidate, "", "routeName") + "_" +
-              tostring(dig(candidate, "ruleIdx") | fallback(0)))
+            routeIDs = append(routeIDs, GatewayRuleID(dig_string(candidate, "", "kind"),
+              dig_string(candidate, "", "routeNamespace"), dig_string(candidate, "", "routeName"),
+              toint(dig(candidate, "ruleIdx") | fallback(0))))
             var candidateRank = dig_string(candidate, "", "sortRank")
             if groupRank == "" || candidateRank < groupRank {
               groupRank = candidateRank
@@ -389,8 +389,8 @@ templateSnippets:
             if dig_string(candidate, "", "entryID") != entryID {
               continue
             }
-            var routeID = namespace + "_" + name + "_" +
-              tostring(dig(candidate, "ruleIdx") | fallback(0))
+            var routeID = GatewayRuleID(routeKind, namespace, name,
+              toint(dig(candidate, "ruleIdx") | fallback(0)))
             var finalized = merge(candidate, map[string]any{
               "hasConflicts": hasConflicts,
               "routeId": routeID,

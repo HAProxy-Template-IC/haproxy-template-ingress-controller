@@ -3,6 +3,14 @@ suite: validating webhook configuration
 templates:
   - validatingwebhookconfiguration.yaml
 tests:
+  - it: should validate policy references while Kubernetes protects immutable credentials
+    asserts:
+      - equal:
+          path: webhooks[?(@.name == "routepolicies.validation.RELEASE-NAME-haptic-webhook")].failurePolicy
+          value: Fail
+      - notExists:
+          path: webhooks[?(@.name == "secrets.validation.RELEASE-NAME-haptic-webhook")].name
+
   - it: should keep watched-resource admission on the tight default timeout
     asserts:
       - equal:
@@ -81,3 +89,39 @@ tests:
           path: webhooks[?(@.name == "tlsroutes.validation.RELEASE-NAME-haptic-webhook")].name
       - notExists:
           path: webhooks[?(@.name == "tcproutes.validation.RELEASE-NAME-haptic-webhook")].name
+
+  - it: should give arbitrary watch keys distinct valid webhook names
+    set:
+      controller.config.watchedResources.custom_records:
+        apiVersion: example.com/v1
+        resources: widgets
+        enableValidationWebhook: true
+      controller.config.watchedResources.custom-records:
+        apiVersion: example.com/v1
+        resources: widgets
+        enableValidationWebhook: true
+      controller.config.watchedResources.MixedCase:
+        apiVersion: example.com/v1
+        resources: widgets
+        enableValidationWebhook: true
+      controller.config.watchedResources.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:
+        apiVersion: example.com/v1
+        resources: widgets
+        enableValidationWebhook: true
+    asserts:
+      - notExists:
+          path: webhooks[?(@.name == "waf-selfservice-catalogs-dc5f2d38ab835ece.validation.RELEASE-NAME-haptic-webhook")].name
+      - notExists:
+          path: webhooks[?(@.name == "configmaps.validation.RELEASE-NAME-haptic-webhook")].name
+      - equal:
+          path: webhooks[?(@.name == "custom-records-03f04f92eba61f5d.validation.RELEASE-NAME-haptic-webhook")].rules[0].resources
+          value: [widgets]
+      - equal:
+          path: webhooks[?(@.name == "custom-records.validation.RELEASE-NAME-haptic-webhook")].rules[0].resources
+          value: [widgets]
+      - equal:
+          path: webhooks[?(@.name == "mixedcase-5d8ea3a747d91c20.validation.RELEASE-NAME-haptic-webhook")].rules[0].resources
+          value: [widgets]
+      - equal:
+          path: webhooks[?(@.name == "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-09ecb6ebc8bcefc7.validation.RELEASE-NAME-haptic-webhook")].rules[0].resources
+          value: [widgets]

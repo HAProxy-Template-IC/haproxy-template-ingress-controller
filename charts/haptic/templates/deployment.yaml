@@ -1,3 +1,4 @@
+{{- include "haptic.agentTLS.validate" . -}}
 {{- $controller := .Values.controller }}
 {{- $podSpec := $controller.podSpec }}
 {{- $ports := $controller.ports }}
@@ -181,6 +182,12 @@ spec:
             {{- with $controller.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+            {{- if .Values.haproxy.agent.tls.enabled }}
+            - name: AGENT_TLS_DIR
+              value: /etc/haptic/agent-tls/..data
+            - name: AGENT_TLS_SERVER_NAME
+              value: {{ include "haptic.agentTLS.serverName" . | quote }}
+            {{- end }}
           {{- $startupProbe := $controller.startupProbe }}
           {{- if $startupProbe.enabled }}
           startupProbe:
@@ -205,6 +212,11 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.haproxy.agent.tls.enabled }}
+            - name: agent-tls
+              mountPath: /etc/haptic/agent-tls
+              readOnly: true
+            {{- end }}
             {{- if $webhookEnabled }}
             - name: webhook-certs
               mountPath: /etc/webhook/certs
@@ -223,6 +235,11 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if .Values.haproxy.agent.tls.enabled }}
+        - name: agent-tls
+          secret:
+            secretName: {{ include "haptic.agentTLS.clientSecretName" . }}
+        {{- end }}
         {{- if $webhookEnabled }}
         - name: webhook-certs
           secret:

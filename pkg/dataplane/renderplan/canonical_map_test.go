@@ -17,6 +17,7 @@ package renderplan
 import (
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ import (
 // the characters encoding/json escapes.
 func TestSplicedCanonicalMapMemberEqualsFullEncoding(t *testing.T) {
 	random := rand.New(rand.NewPCG(3, 5))
-	values := []string{"be1", "<b>&amp;</b>", "ünïcödé", "tab\tsep", " line", "quote\"q", ""}
+	values := []string{"be1", "<b>&amp;</b>", "ünïcödé", "tab\tsep", " line", "quote\"q", "", strings.Repeat("long<&>\"\t", 256)}
 	randomEntry := func(i int) Entry {
 		return Entry{Key: fmt.Sprintf("host-%d.example.com", i), Value: values[random.IntN(len(values))]}
 	}

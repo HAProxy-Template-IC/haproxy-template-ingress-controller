@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 )
 
 const (
@@ -50,6 +51,9 @@ type Config struct {
 	BaseURL  string
 	Username string
 	Password string
+	TLS      *transportsecurity.Source
+	// UnixSocket uses local filesystem access instead of network authentication.
+	UnixSocket string
 	// Timeout bounds a State call, PerPodApplyTimeout an Apply call.
 	Timeout            time.Duration
 	PerPodApplyTimeout time.Duration
@@ -81,6 +85,10 @@ func New(cfg *Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	transport, err := configuredTransport(cfg, base)
+	if err != nil {
+		return nil, err
+	}
 	c := &Client{
 		baseURL:      base,
 		username:     cfg.Username,
@@ -89,7 +97,12 @@ func New(cfg *Config) (*Client, error) {
 		applyTimeout: cfg.PerPodApplyTimeout,
 		retries:      cfg.ConnectRetries,
 		backoff:      cfg.ConnectRetryBackoff,
-		http:         &http.Client{Transport: newTransport()},
+		http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}},
+	}
+	if cfg.TLS != nil || cfg.UnixSocket != "" {
+		c.username, c.password = "", ""
 	}
 	if c.timeout <= 0 {
 		c.timeout = defaultTimeout
@@ -104,6 +117,27 @@ func New(cfg *Config) (*Client, error) {
 		c.backoff = api.ConnectRetryBackoffMs * time.Millisecond
 	}
 	return c, nil
+}
+
+func configuredTransport(cfg *Config, base string) (http.RoundTripper, error) {
+	transport := newTransport()
+	if cfg.UnixSocket != "" {
+		if cfg.TLS != nil || base != "http://localhost" {
+			return nil, errors.New("agent client: UnixSocket requires BaseURL http://localhost without TLS")
+		}
+		socket := cfg.UnixSocket
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "unix", socket)
+		}
+		return transport, nil
+	}
+	if cfg.TLS == nil {
+		return transport, nil
+	}
+	if !strings.HasPrefix(base, "https://") {
+		return nil, errors.New("agent client: TLS requires an HTTPS BaseURL")
+	}
+	return transportsecurity.NewTransport(cfg.TLS, transport), nil
 }
 
 func normalizeBaseURL(raw string) (string, error) {
@@ -143,6 +177,16 @@ func newTransport() *http.Transport {
 // Close releases the pooled connections.
 func (c *Client) Close() {
 	c.http.CloseIdleConnections()
+}
+
+// Health checks process liveness independently of the HAProxy worker.
+func (c *Client) Health(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	_, err := c.roundTrip(ctx, func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+api.PathHealthz, http.NoBody)
+	}, replayableAlways)
+	return err
 }
 
 // State reads the agent's baseline. verify makes the agent re-hash its tree

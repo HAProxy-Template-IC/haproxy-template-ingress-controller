@@ -66,16 +66,16 @@ The benchmark:
 
 Example usage:
   # Run all validation tests with 5 iterations each
-  controller benchmark -f config.yaml
+  haptic benchmark -f config.yaml
 
   # Run specific tests
-  controller benchmark -f config.yaml --test benchmark-ingress-100 --test benchmark-httproute-100
+  haptic benchmark -f config.yaml --test benchmark-ingress-100 --test benchmark-httproute-100
 
   # Run 10 iterations
-  controller benchmark -f config.yaml --test benchmark-test --iterations 10
+  haptic benchmark -f config.yaml --test benchmark-test --iterations 10
 
   # Profile include timing (identify slow template snippets)
-  controller benchmark -f config.yaml --profile-includes`,
+  haptic benchmark -f config.yaml --profile-includes`,
 	RunE: runBenchmark,
 }
 
@@ -118,6 +118,7 @@ func runBenchmark(cmd *cobra.Command, _ []string) error {
 		Level: slog.LevelWarn,
 	}))
 	slog.SetDefault(logger)
+	configureMemoryLimit(logger)
 
 	configSpec, err := loadConfigFromFiles([]string{benchmarkConfigFile})
 	if err != nil {

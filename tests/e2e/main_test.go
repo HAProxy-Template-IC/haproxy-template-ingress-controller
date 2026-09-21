@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -119,6 +120,10 @@ func initializeE2ERuntime() error {
 }
 
 func TestMain(m *testing.M) {
+	flag.Parse()
+	if flag.Lookup("test.list").Value.String() != "" {
+		os.Exit(m.Run())
+	}
 	if err := initializeE2ERuntime(); err != nil {
 		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
 		os.Exit(1)
@@ -179,6 +184,7 @@ func TestMain(m *testing.M) {
 			return ctx, WaitForE2EEnvironmentReady(ctx, client)
 		}),
 		phase("configure-traffic-endpoint", configureTrafficEndpoint),
+		phase("wait-profile-ready", waitForProfileReady),
 		phase("verify-controller-binary", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			if os.Getenv(scaleEnableEnv) == "1" {
 				return ctx, nil
@@ -229,6 +235,17 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func waitForProfileReady(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+	if os.Getenv("HAPTIC_E2E_PROFILE") != "cache" {
+		return ctx, nil
+	}
+	client, err := cfg.NewClient()
+	if err != nil {
+		return ctx, fmt.Errorf("new client: %w", err)
+	}
+	return ctx, waitForVarnishReplicasReady(ctx, client, 1)
+}
+
 func installClusterServices(ctx context.Context, _ *envconf.Config) (context.Context, error) {
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -240,14 +257,12 @@ func installClusterServices(ctx context.Context, _ *envconf.Config) (context.Con
 		if err != nil {
 			return err
 		}
-		if _, err := helmInstallChart(gctx, caBundleB64); err != nil {
-			return err
+		if os.Getenv("HAPTIC_E2E_PROFILE") != "conformance" {
+			if _, err := applyBackendFixtures(gctx); err != nil {
+				return err
+			}
 		}
-		if os.Getenv("HAPTIC_E2E_PROFILE") == "conformance" {
-			fmt.Fprintln(os.Stderr, "e2e: conformance profile — skipping backend fixtures")
-			return nil
-		}
-		_, err = applyBackendFixtures(gctx)
+		_, err = helmInstallChart(gctx, caBundleB64)
 		return err
 	})
 	return ctx, g.Wait()
@@ -670,6 +685,7 @@ kind: ConfigMap
 metadata:
   namespace: security
   name: haptic-waf-policies
+immutable: true
 data:
   policies.yaml: |
     streaming-search:
@@ -804,18 +820,12 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		return ctx, fmt.Errorf("close temp values: %w", err)
 	}
 
-	// We deliberately omit --wait. The chart's HAProxy readiness probe
-	// only passes once the controller has pushed an initial config — which
-	// is a chicken-and-egg situation under helm --wait, since helm waits
-	// for *all* pods Ready before returning. Instead, we let helm install
-	// return as soon as the manifests are applied, and WaitForE2EEnvironmentReady
-	// polls the controller's debug endpoint for deployment.status=succeeded
-	// (which implies HAProxy received and reloaded the config).
 	args := []string{
 		"upgrade", "--install", HelmReleaseName, chartDir,
 		kubeconfigFlag, kubeconfigPath,
 		"--namespace", ControllerNamespace,
 		"--create-namespace",
+		"--wait",
 		"--values", valuesFile.Name(),
 		"--set", "controller.image.tag=test",
 		// haproxyVersion gates two things in the chart: the controller image

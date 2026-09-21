@@ -1,0 +1,60 @@
+templateSnippets:
+  util-policy-waf-selection:
+    template: |-
+      {%- macro SelectWafPolicy(catalog map[string]any, scope string, requested string, result map[string]any) -%}
+        {%%
+          result["error"] = ""
+          result["dependencies"] = catalog["dependencies"]
+          var selected = requested
+          var ownPolicy = scope + "/" + requested
+          var sources = to_str_map(catalog["policySource"])
+          var broken = to_str_map(catalog["selfServiceBrokenPolicy"])
+          var brokenCatalogs = to_str_map(catalog["selfServiceBrokenCatalog"])
+          if catalog["corazaEnabled"] != true {
+            result["error"] = "WAF enforcement is unavailable. Enable spoaHub.plugins.coraza."
+          } else if catalog["allowPolicySelection"] != true {
+            result["error"] = "WAF policy selection is disabled. Ask the administrator to enable waf.ingressPermissions.allowPolicySelection."
+          } else if !regex_search(requested, "^[a-z0-9][a-z0-9._-]{0,62}$") {
+            result["error"] = "The WAF policy name is invalid. Select a bare catalog name in the route's namespace."
+          } else if to_str_map(catalog["trustedBrokenPolicy"])[requested] != "" {
+            result["error"] = to_str_map(catalog["trustedBrokenPolicy"])[requested]
+          } else if broken[ownPolicy] != "" {
+            result["error"] = broken[ownPolicy]
+          } else if scope == "" && sources[requested] != "" {
+            selected = requested
+          } else if sources[ownPolicy] != "" {
+            selected = ownPolicy
+          } else if brokenCatalogs[scope] != "" {
+            result["error"] = brokenCatalogs[scope]
+          } else {
+            result["error"] = "WAF policy '" + requested + "' is missing. Define it in a trusted or own-namespace catalog."
+          }
+          if result["error"] == "" {
+            var mutableSource = to_str_map(catalog["policyMutableSource"])[selected]
+            if mutableSource != "" {
+              result["error"] = mutableSource + " is mutable and cannot supply Gateway WAF policies. Set immutable: true before attaching it."
+              return
+            }
+            var mode = to_str_map(catalog["policyEnforcement"])[selected]
+            var setup = to_str_map(catalog["policySetupDirectives"])[selected]
+            if selected == ownPolicy && catalog["dispatchMode"] == "default-on" && catalog["dispatchDefaultEnforcement"] == "deny" && mode == "detect" {
+              result["error"] = "The self-service WAF policy weakens default-on enforcement. Set enforcement to deny."
+            } else if setup != "" && !strings_contains(tostring(catalog["corazaBaseDirectives"]), "Include @owasp_crs") {
+              result["error"] = "The WAF policy needs the CRS ruleset. Restore Include @owasp_crs in the Coraza directives."
+            } else {
+              var maxBody = to_str_map(catalog["policyMaxBody"])[selected]
+              var appName = "policy:" + selected
+              result["mode"] = mode
+              result["appName"] = appName
+              result["bodyMode"] = to_str_map(catalog["policyBodyMode"])[selected]
+              result["contentMode"] = to_str_map(catalog["policyContentMode"])[selected]
+              result["maxBodyBytes"] = maxBody
+              result["application"] = map[string]any{
+                "appName": appName, "source": sources[selected], "setupDirectives": setup,
+                "snippet": to_str_map(catalog["policyConfiguration"])[selected] + to_str_map(catalog["policySafety"])[selected],
+                "requestBodyMaxBytes": maxBody,
+              }
+            }
+          }
+        %%}
+      {%- end macro -%}

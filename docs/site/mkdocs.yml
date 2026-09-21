@@ -93,6 +93,7 @@ nav:
     - Upgrading to 0.2: upgrading-to-0.2.md
     - IngressClass: ingress-class.md
     - GatewayClass: gateway-class.md
+    - HAProxyRoutePolicy: route-policy.md
     - SSL Certificates: ssl-certificates.md
     - HAProxy Deployment: haproxy-deployment.md
     - Chart Values Reference: reference.md
@@ -110,18 +111,24 @@ nav:
     - haproxy-ingress (haproxy-ingress.github.io/*): libraries/haproxy-ingress.md
     - nginx-ingress (nginx.ingress.kubernetes.io/*): libraries/nginx-ingress.md
   - Operations:
+    - GitOps: operations/gitops.md
     - High Availability: operations/high-availability.md
     - Monitoring: operations/monitoring.md
     - Security: operations/security.md
+    - Agent certificates: operations/agent-certificates.md
     - Governance guardrails: operations/governance.md
     - Response caching: operations/response-cache.md
     - WAF policies: operations/waf-policies.md
     - Networking: operations/networking.md
     - Performance: operations/performance.md
     - Validate before deploying: operations/validate-before-deploy.md
+    - Fleet diagnostics: operations/diagnostics.md
     - Debugging: operations/debugging.md
     - Troubleshooting: troubleshooting.md
     - HAProxy Versions: operations/haproxy-versions.md
+    - Kubernetes Versions: operations/kubernetes-versions.md
+    - Gateway route policies: operations/gateway-policies.md
+    - Gateway API conformance: operations/gateway-conformance.md
     - SPOA Hub: operations/spoa-hub.md
     - Pluggable Validators: operations/pluggable-validators.md
     - SPIFFE/SPIRE mTLS: operations/spiffe-mtls.md

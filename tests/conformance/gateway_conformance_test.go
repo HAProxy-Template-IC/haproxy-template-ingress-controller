@@ -55,6 +55,7 @@ package conformance
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"os"
 	"testing"
@@ -104,6 +105,10 @@ var metalLBPoolGVR = schema.GroupVersionResource{
 const gatewayClassName = "haptic"
 
 func TestGatewayAPIConformance(t *testing.T) {
+	if os.Getenv("CONFORMANCE_REPORT_OUTPUT") != "" {
+		require.NoError(t, validateReportInvocation(flag.Lookup("test.run").Value.String(),
+			flag.Lookup("test.skip").Value.String(), os.Getenv("CONFORMANCE_IMPL_VERSION"), testing.Short()))
+	}
 	controllerruntimelog.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
 
 	// KUBECONFIG must be provided by the caller. When run as a sibling
@@ -346,10 +351,8 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// t.Skip() for the whole suite. Each entry must include an issue
 	// link in a comment so it can be revisited.
 	opts.SkipTests = []string{
-		// BackendTLSPolicySANValidation: HAProxy 3.x can only match one DNS SAN
-		// (`verifyhost`), has no fetcher for the backend cert's SAN list, and rejects a
-		// repeated `verifyhost` — so multi-SAN OR matching and URI SANs are
-		// unimplementable without a SPOA-side TLS probe.
+		// SNI determines the verified name; independent DNS/URI SAN matching is unsupported.
+		// https://github.com/haproxy/haproxy/issues/3452
 		"BackendTLSPolicySANValidation",
 	}
 	opts.UsableNetworkAddresses = usable

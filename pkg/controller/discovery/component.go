@@ -34,6 +34,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 )
 
 const (
@@ -138,6 +139,7 @@ type Component struct {
 	*component.Base
 
 	discovery *Discovery
+	tls       *transportsecurity.Source
 	// discoveryMu orders endpoint-authority updates with complete discovery
 	// publications. SetPodStore runs outside Base's serial event loop, so a
 	// store swap must not land mid-pass.
@@ -174,7 +176,7 @@ type Component struct {
 //
 // Note: The Discovery pure component is created lazily when the dataplane port
 // is configured via ConfigValidatedEvent.
-func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
+func New(eventBus *busevents.EventBus, logger *slog.Logger, options ...Option) *Component {
 	c := &Component{
 		discoveredReplayer: leadership.NewStateReplayer[*events.HAProxyPodsDiscoveredEvent](eventBus),
 		lastEndpoints:      make(map[podIdentity]endpointAuthority),
@@ -201,7 +203,18 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) *Component {
 		EventFilter: discoveryWantsEvent,
 	})
 
+	for _, option := range options {
+		option(c)
+	}
 	return c
+}
+
+// Option configures discovery's operational connections before startup.
+type Option func(*Component)
+
+// WithTLS makes discovery use authenticated HTTPS without a plaintext fallback.
+func WithTLS(source *transportsecurity.Source) Option {
+	return func(c *Component) { c.tls = source }
 }
 
 // Start runs the embedded component.Base event loop until the context is

@@ -352,15 +352,17 @@ func newGatewaySSLPassthroughBackendDependencyFixture(
 	snippets := loadGatewayHostMapSnippets(t, gatewayHostMapChartRoot(t), map[string][]string{
 		"base/library.yaml": {
 			"util-backend-servers-helpers", "util-backend",
+			"util-webhook-reject-or-warn",
 		},
 		"kubernetes-backends/library.yaml": {
 			"util-backend-servers-result", "util-backend-servers",
 		},
+		"gateway/22-ssl-passthrough.yaml": {"util-gateway-http-ssl-passthrough"},
 		"gateway/30-backends.yaml": {
 			gatewaySSLPassthroughHTTPBackendComponent,
 			"backenditems-501-gateway-ssl-passthrough-tls",
 			"backends-501-gateway-ssl-passthrough",
-			"util-resolve-backend-tls", "util-gateway-backend-bindings",
+			"util-resolve-backend-tls", "util-backend-tls-identity", "util-gateway-backend-bindings",
 			"util-gateway-tls-backend-bindings", "util-replay-gateway-backend-effects",
 			"backendtlsvalues-490-gateway",
 		},

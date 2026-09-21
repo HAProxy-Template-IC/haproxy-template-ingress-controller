@@ -278,7 +278,9 @@ func TestApplyRejectsMalformedManifest(t *testing.T) {
 		{"negative size", func(m *api.Manifest) { m.Files[0].Size = -1 }, "negative size"},
 		{"too many ops", func(m *api.Manifest) {
 			m.Ops = make([]api.Op, api.MaxOpsPerApply+1)
-		}, "exceeds the limit"},
+		}, "op limit"},
+		{"too many operation batches", func(m *api.Manifest) { m.OpBatches = make([][]api.Op, api.MaxOpBatches) }, "batch limit"},
+		{"oversized continuation", func(m *api.Manifest) { m.OpBatches = [][]api.Op{make([]api.Op, api.MaxOpsPerApply+1)} }, "must contain"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

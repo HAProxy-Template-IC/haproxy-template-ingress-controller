@@ -358,7 +358,9 @@ a shared consumer identity for authorization, rate limits, and caching.
 
 JSON request-body validation, and request correlation IDs.
 
-JWT and API-key auth both set a shared `txn.haptic_consumer` identity (JWT from the `sub` claim, API key from its map), which consumer-group authorization and the consumer-keyed shared rate limit build on.
+JWT and API-key authentication share a consumer identity for consumer-group
+authorization and shared rate limits. JWT `sub` takes precedence when both apply;
+the API-key consumer supplies the identity when the token has no `sub` claim.
 
 Authentication rules read route settings from shared maps. Changing an existing
 map value can avoid a reload. A new literal used by a rule—such as an API-key

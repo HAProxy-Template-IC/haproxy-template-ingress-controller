@@ -39,6 +39,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/server"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 )
 
 const (
@@ -64,6 +65,9 @@ type options struct {
 	baseDir           string
 	model             *haproxytest.HAProxy
 	drainSocket       string
+	adminSocket       string
+	serverTLS         *transportsecurity.Source
+	clientTLS         *transportsecurity.Source
 	drainQuietPeriod  time.Duration
 	drainMaxWait      time.Duration
 }
@@ -96,6 +100,8 @@ func newHarness(tb testing.TB, opts ...func(*options)) *harness {
 		AgentVersion:         "test",
 		Logger:               slog.New(slog.DiscardHandler),
 		Registry:             registry,
+		TLS:                  settings.serverTLS,
+		AdminSocket:          settings.adminSocket,
 		DrainSocket:          settings.drainSocket,
 		DrainQuietPeriod:     settings.drainQuietPeriod,
 		DrainMaxWait:         settings.drainMaxWait,
@@ -122,6 +128,11 @@ func newHarness(tb testing.TB, opts ...func(*options)) *harness {
 	}
 	require.Eventually(t, func() bool { return agent.Ready() }, 10*time.Second, 10*time.Millisecond)
 	h.url = "http://" + agent.Addr()
+	if settings.serverTLS != nil {
+		h.url = "https://" + agent.Addr()
+		h.client.Transport = transportsecurity.NewTransport(settings.clientTLS, &http.Transport{})
+	}
+	t.Cleanup(h.client.CloseIdleConnections)
 	return h
 }
 
@@ -302,6 +313,7 @@ func (h *harness) prepareExactManifest(m *api.Manifest) {
 	if state.AppliedPlanID != "" && state.AppliedPlanProof == "" {
 		m.Mode = api.ModeReload
 		m.Ops = nil
+		m.OpBatches = nil
 		m.InPlaceOps = nil
 		m.ExpectedWorkerOpsPlanID = ""
 		m.ExpectedWorkerOpsPlanProof = ""

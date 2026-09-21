@@ -1,0 +1,44 @@
+templateSnippets:
+  util-policy-rate-limit:
+    template: |-
+      {%- macro PolicyRateLimit(config any, result map[string]any) -%}
+        {%%
+          result["error"] = ""
+          var requests = toint(dig(config, "requests"))
+          var burst = toint(dig(config, "burst") | fallback(requests))
+          if requests <= 0 || burst <= 0 {
+            result["error"] = "rateLimit requests and burst must be positive integers. Set both to at least one."
+          }
+          var period = dig_string(config, "1s", "period")
+          var seconds = 0.0
+          if regex_search(period, "^[0-9]+(ms|s|m|h|d)$") {
+            var multiplier = 1.0
+            var digits = period[0:len(period)-1]
+            if hasSuffix(period, "ms") { multiplier = 0.001; digits = period[0:len(period)-2] }
+            if hasSuffix(period, "m") { multiplier = 60.0 }
+            if hasSuffix(period, "h") { multiplier = 3600.0 }
+            if hasSuffix(period, "d") { multiplier = 86400.0 }
+            var number, err = tofloat(digits)
+            if err == nil { seconds = number * multiplier }
+          }
+          var burstNumber, _ = tofloat(burst)
+          var requestNumber, _ = tofloat(requests)
+          if seconds <= 0.0 {
+            result["error"] = "rateLimit period must be positive. Use a duration such as 1s or 10m."
+          } else if requests > 0 && burstNumber * seconds / requestNumber > 3600.0 {
+            result["error"] = "rateLimit refill horizon exceeds 3600 seconds. Reduce period or burst."
+          }
+          var dimension = dig_string(config, "ip", "key")
+          if dimension != "ip" && dimension != "consumer" {
+            result["error"] = "rateLimit key is unsupported. Use ip or consumer."
+          }
+          var algorithm = dig_string(config, "token-bucket", "algorithm")
+          var mode = "lease"
+          if algorithm == "gcra" { mode = "exact" }
+          if algorithm != "token-bucket" && algorithm != "gcra" {
+            result["error"] = "rateLimit algorithm is unsupported. Use token-bucket or gcra."
+          }
+          result["value"] = tostring(requests) + " " + tostring(seconds) + " " + tostring(burst) + " " + mode + " " + dimension
+          result["consumer"] = dimension == "consumer"
+        %%}
+      {%- end macro -%}

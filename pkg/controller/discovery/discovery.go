@@ -65,6 +65,7 @@ const (
 // that coordination is handled by the event adapter.
 type Discovery struct {
 	dataplanePort int
+	useTLS        bool
 }
 
 // traceIf logs msg at the trace level with the supplied attributes when
@@ -277,8 +278,12 @@ func (d *Discovery) evaluatePod(
 	if err != nil {
 		return zero, false, fmt.Errorf("identifying pod runtime for %s: %w", pod.GetName(), err)
 	}
+	scheme := "http"
+	if d.useTLS {
+		scheme = "https"
+	}
 	candidate := Candidate{Endpoint: dataplane.Endpoint{
-		URL:          "http://" + net.JoinHostPort(podIP, strconv.Itoa(d.dataplanePort)),
+		URL:          scheme + "://" + net.JoinHostPort(podIP, strconv.Itoa(d.dataplanePort)),
 		Username:     credentials.DataplaneUsername,
 		Password:     credentials.DataplanePassword,
 		PodName:      pod.GetName(),

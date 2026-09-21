@@ -21,7 +21,8 @@ const (
 	MaxFiles                 = 4096
 	MaxPlanBlobBytes         = 8 << 20
 	MaxPathBytes             = 255
-	MaxOpsPerApply           = 1000     // deployplan chunks beyond this; the agent never refuses a well-formed batch
+	MaxOpsPerApply           = 1000 // operations per execution batch, including in-place ops in the first
+	MaxOpBatches             = 8
 	MaxCommandLineBytes      = 12 << 10 // ';'-joined CLI line; tune.bufsize is 16 KiB all-or-nothing
 	MaxPayloadBytes          = 12 << 10 // one payload command; HAProxy 3.0 caps payloads at tune.bufsize
 	MaxWaitBudgetMs          = 30000    // total wait …-removable per apply

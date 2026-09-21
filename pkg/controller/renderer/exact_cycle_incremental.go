@@ -15,6 +15,7 @@
 package renderer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -137,9 +138,21 @@ func exactCycleIncrementalObservationKey(
 	occurrence uint64,
 	group, component, cell, delimiter string,
 ) string {
-	// Built in one buffer rather than through eight strings and a variadic
-	// slice: this key is made per observation, and the parts are known here.
-	buffer := make([]byte, 0, observationKeyBufferHint)
+	buffer := make([]byte, 0, observationKeyBufferSize)
+	return string(appendExactCycleIncrementalObservationKey(
+		buffer, kind, scope, ordinal, occurrence, group, component, cell, delimiter,
+	))
+}
+
+const observationKeyBufferSize = 512
+
+func appendExactCycleIncrementalObservationKey(
+	buffer []byte,
+	kind exactCycleIncrementalKind,
+	scope string,
+	ordinal, occurrence uint64,
+	group, component, cell, delimiter string,
+) []byte {
 	buffer = appendIncrementalOrderedTupleUint(buffer, occurrence, 20)
 	buffer = appendIncrementalOrderedTuplePart(buffer, scope)
 	buffer = appendIncrementalOrderedTupleUint(buffer, ordinal, 20)
@@ -147,14 +160,8 @@ func exactCycleIncrementalObservationKey(
 	buffer = appendIncrementalOrderedTuplePart(buffer, group)
 	buffer = appendIncrementalOrderedTuplePart(buffer, component)
 	buffer = appendIncrementalOrderedTuplePart(buffer, cell)
-	buffer = appendIncrementalOrderedTuplePart(buffer, delimiter)
-	return string(buffer)
+	return appendIncrementalOrderedTuplePart(buffer, delimiter)
 }
-
-// observationKeyBufferHint covers the two 20-digit counters, the 3-digit kind
-// and their separators, leaving room for the four names before the buffer has
-// to grow.
-const observationKeyBufferHint = 128
 
 func (r *incrementalRenderSession) recordExactCycleIncrementalObservation(
 	ctx context.Context,
@@ -311,8 +318,7 @@ func (o *exactCycleIncrementalObservations) matches(
 func (r *incrementalRenderSession) resetExactCycleReplayTracking() error {
 	r.renderMu.Lock()
 	r.calls = map[string][]incrementalCall{}
-	r.scopedCalls = map[string]map[string][]incrementalCall{}
-	r.callStatuses = map[string]map[string]incrementalScopeCallStatus{}
+	r.scopedCalls = map[incrementalCallScope]incrementalScopeCalls{}
 	r.valueAccesses = map[string]int{}
 	r.renderMu.Unlock()
 
@@ -350,14 +356,15 @@ func (o *exactCycleIncrementalObservation) identityComplete() bool {
 }
 
 func (o *exactCycleIncrementalObservation) matchesAuthentication() bool {
+	buffer := make([]byte, 0, observationKeyBufferSize)
 	return o.authority == o.auth.authority && o.kind == o.auth.kind && o.key == o.auth.key &&
 		o.scope == o.auth.scope && o.ordinal == o.auth.ordinal &&
 		o.occurrence == o.auth.occurrence && o.group == o.auth.group &&
 		o.component == o.auth.component && o.cell == o.auth.cell &&
 		o.delimiter == o.auth.delimiter && o.root == o.auth.root &&
-		o.key == exactCycleIncrementalObservationKey(
-			o.kind, o.scope, o.ordinal, o.occurrence, o.group, o.component, o.cell, o.delimiter,
-		)
+		bytes.Equal([]byte(o.key), appendExactCycleIncrementalObservationKey(
+			buffer, o.kind, o.scope, o.ordinal, o.occurrence, o.group, o.component, o.cell, o.delimiter,
+		))
 }
 
 func (o *exactCycleIncrementalObservation) validateKindFields() error {

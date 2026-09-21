@@ -787,3 +787,31 @@ func runPlanDeltaConfigDocumentBenchmark(
 }
 
 var benchmarkPlanDeltaIDSink string
+
+func TestPlanDeltaSectionChangesStayDetachedAndValidateOtherRecords(t *testing.T) {
+	authority := NewAuthority()
+	source := snapshotPlanFixture(16)
+	base := mustPlanSnapshot(t, authority, source, nil)
+	_, replacements := mutatedPlanReplacementOracle(source)
+	transaction, err := BeginTransaction(authority, base)
+	require.NoError(t, err)
+	applyPlanReplacements(t, base, transaction, &replacements)
+	_, delta, err := transaction.Commit()
+	require.NoError(t, err)
+
+	complete, err := delta.Changes()
+	require.NoError(t, err)
+	sections, err := delta.SectionChanges()
+	require.NoError(t, err)
+	require.Equal(t, complete.Sections, sections)
+	sections[0].After.Text = "poison"
+	sections[0].Index = -1
+	sections, err = delta.SectionChanges()
+	require.NoError(t, err)
+	assert.Equal(t, complete.Sections, sections)
+
+	delta.maps[0].key = "poison"
+	sections, err = delta.SectionChanges()
+	require.ErrorIs(t, err, errInvalidPlanDelta)
+	assert.Nil(t, sections)
+}

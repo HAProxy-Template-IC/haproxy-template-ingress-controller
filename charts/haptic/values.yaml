@@ -221,11 +221,6 @@ controller:
     readOnlyRootFilesystem: true
     runAsNonRoot: true
     runAsUser: 65532
-  # Guaranteed memory QoS by default; no CPU limit to avoid throttling.
-  # Both sides move together — splitting them would trade that QoS away.
-  # 512Mi was not enough: the controller runs the bundled validationTests on
-  # every config load, which peaks at 514 MiB on chart defaults and 605 MiB
-  # with every library enabled, so it OOMKilled itself on the load gate.
   resources:
     requests:
       cpu: 100m
@@ -1416,19 +1411,11 @@ gatewayClass:
     name: ""
     # Namespace will default to Release.Namespace if empty
     namespace: ""
-# HAPTIC agent credentials
-# The keys keep their `dataplane_` names across the agent cutover, so a rotation
-# set up against the old Secret keeps working.
-# If password is empty, it will be:
-#   1. Preserved from the existing Secret (via lookup during helm install/upgrade)
-#   2. Otherwise generated as a random 32-char password
-# The agent applies whatever it is sent to HAProxy, over plain HTTP, so the
-# password must not be guessable — set an explicit value for dev environments
-# where you need predictable credentials.
-# GitOps note: under ArgoCD/Flux (rendering without cluster lookup), an empty
-# password regenerates randomly on every sync and cannot be preserved — set an
-# explicit password here (e.g. via a SealedSecret / external secret).
+# Basic credentials for the explicit legacy agent transport. The controller
+# still reads this Secret when mutual TLS is enabled.
 credentials:
+  # Read an externally managed Secret instead of rendering credentials.
+  existingSecret: ""
   dataplane:
     username: admin
     password: ""  # Leave empty for a random auto-generated password
@@ -1538,6 +1525,30 @@ haproxy:
   # Pod readiness stays with HAProxy's own /ready — see the HAProxy deployment
   # page in the docs for the readiness semantics.
   agent:
+    tls:
+      enabled: true
+      # Managed identities renew automatically; false uses external Secrets.
+      managed: true
+      issuerSecretName: ""
+      serverSecretName: ""
+      clientSecretName: ""
+      serverName: ""
+      clientName: ""
+      certValidityDays: 365
+      renewal:
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+      certManager:
+        enabled: false
+        createIssuer: true
+        issuerRef:
+          name: ""
+          kind: Issuer
+          group: cert-manager.io
     # Log level for the agent, which logs JSON on stdout: one record per apply,
     # plus every reload and every runtime command HAProxy rejected.
     #
@@ -1554,7 +1565,6 @@ haproxy:
       # port references haproxy.ports.dataplane (set in template)
     # Credentials are configured via top-level 'credentials.dataplane' section
     # Resource limits and requests for the agent sidecar.
-    # Default configuration uses Guaranteed QoS for memory (requests = limits).
     # No CPU limit is set to avoid throttling.
     resources:
       requests:
@@ -1567,8 +1577,7 @@ haproxy:
     #   extraEnv:
     #     - name: GOMAXPROCS
     #       value: "4"
-    # Note: GOMAXPROCS is auto-calculated from memory limits when no CPU limit is set.
-    # Setting it here overrides the automatic calculation.
+    # GOMAXPROCS overrides Go's CPU-based default.
     extraEnv: []
   # Extra environment variables for HAProxy container
   # Example:
@@ -2673,7 +2682,7 @@ vector:
       enabled: true
       field: denied_by
       kind: enum
-      values: ["api_key", "api_key_unavailable", "backend_tls_unavailable", "basic_auth", "basic_auth_unavailable", "body_too_large", "cache_origin_internal_backend", "consumer_groups", "consumer_groups_unavailable", "content_type", "external_auth", "gw_sni_host_mismatch", "hmac", "hmac_body_incomplete", "hmac_no_content_length", "hmac_unavailable", "jwt_algorithm", "jwt_audience", "jwt_expired", "jwt_issuer", "jwt_key_unavailable", "jwt_not_yet_valid", "jwt_required_claim", "jwt_signature", "jwt_unavailable", "method_not_allowed", "mtls_unavailable", "rate_limit_connections", "rate_limit_local", "rate_limit_shared", "rate_limit_shared_invalid", "rate_limit_shared_unavailable", "required_header", "schema_body_incomplete", "schema_body_too_large", "schema_duplicate_content_length", "schema_invalid", "schema_no_content_length", "schema_unavailable", "schema_unsupported_media_type", "waf", "waf_body_chunked", "waf_body_content_type", "waf_body_duplicate_content_length", "waf_body_incomplete", "waf_body_too_large", "waf_policy_unavailable", "waf_status_400", "waf_status_413", "waf_unavailable"]
+      values: ["api_key", "api_key_unavailable", "backend_tls_unavailable", "basic_auth", "basic_auth_unavailable", "body_too_large", "cache_origin_internal_backend", "consumer_groups", "consumer_groups_unavailable", "content_type", "external_auth", "gw_sni_host_mismatch", "hmac", "hmac_body_incomplete", "hmac_no_content_length", "hmac_unavailable", "jwt_algorithm", "jwt_audience", "jwt_expired", "jwt_issuer", "jwt_key_unavailable", "jwt_not_yet_valid", "jwt_required_claim", "jwt_signature", "jwt_unavailable", "method_not_allowed", "mtls_unavailable", "policy_consumer_missing", "rate_limit_connections", "rate_limit_local", "rate_limit_shared", "rate_limit_shared_invalid", "rate_limit_shared_unavailable", "required_header", "route_policy_unavailable", "schema_body_incomplete", "schema_body_too_large", "schema_duplicate_content_length", "schema_invalid", "schema_no_content_length", "schema_unavailable", "schema_unsupported_media_type", "waf", "waf_body_chunked", "waf_body_content_type", "waf_body_duplicate_content_length", "waf_body_incomplete", "waf_body_too_large", "waf_policy_unavailable", "waf_status_400", "waf_status_413", "waf_unavailable"]
       metric: denied_total
       tag: reason
 

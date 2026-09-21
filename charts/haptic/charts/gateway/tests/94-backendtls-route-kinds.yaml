@@ -176,6 +176,38 @@ _fx:
   gatewayAncestor: &gatewayAncestor '"ancestorRef":\{"group":"gateway\.networking\.k8s\.io","kind":"Gateway","name":"gw"\}'
   serviceAncestor: &serviceAncestor '"ancestorRef":\{"group":"","kind":"Service","name":"backend-svc","namespace":"gateway-conformance-infra"\}'
 
+  backendtlspoliciesURI: &backendtlspoliciesURI
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: BackendTLSPolicy
+      metadata: {name: btls-policy, namespace: gateway-conformance-infra, generation: 1}
+      spec:
+        targetRefs:
+          - {group: "", kind: Service, name: backend-svc}
+        validation:
+          caCertificateRefs:
+            - {group: "", kind: ConfigMap, name: ca-cert}
+          hostname: backend.example.com
+          subjectAltNames:
+            - {type: URI, uri: "spiffe://cluster.local/ns/x/sa/y"}
+  gatewaysTCP: &gatewaysTCP
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata: {name: gw, namespace: gateway-conformance-infra}
+      spec:
+        gatewayClassName: haptic
+        listeners:
+          - {name: tcp, port: 9100, protocol: TCP}
+  tcproutesBackend: &tcproutesBackend
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: TCPRoute
+      metadata: {name: tcp-route, namespace: gateway-conformance-infra}
+      spec:
+        parentRefs:
+          - {name: gw, sectionName: tcp}
+        rules:
+          - backendRefs:
+              - {name: backend-svc, port: 443}
+
 validationTests:
   test-backendtlspolicy-ancestor-from-grpcroute:
     requires: [backendtlspolicies, gatewayclasses, gateways, grpcroutes, httproutes]
@@ -415,3 +447,155 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-8443$\n(?:  [^\n]*\n|\n)*?  use_backend gtw_tls_gateway-conformance-infra_tls-route_0_terminate if \{ ssl_fc_sni -m str tls\.example\.com \}$'}
       - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend gateway-tls-port-9443$\n(?:  [^\n]*\n|\n)*?  use_backend gtw_tls_gateway-conformance-infra_tls-route_0_passthrough if \{ req_ssl_sni -m str tls\.example\.com \}$'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'backend gtw_tls_gateway-conformance-infra_tls-route_0 from'}
+
+  test-backendtlspolicy-grpcroute-unsupported-identity-rejects:
+    requires: [backendtlspolicies, gatewayclasses, gateways, grpcroutes, httproutes]
+    description: Unsupported URI identities block backend traffic.
+    fixtures:
+      gatewayclasses: *gatewayclassesHaptic
+      gateways: *gatewaysGw
+      services: *servicesBackendSvc
+      endpoints: *endpointsBackendSvc
+      configmaps: *configmapsCaCert
+      backendtlspolicies: *backendtlspoliciesURI
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata: {name: grpc-route, namespace: gateway-conformance-infra}
+          spec:
+            parentRefs:
+              - {name: gw}
+            hostnames: [abc.example.com]
+            rules:
+              - backendRefs:
+                  - {name: backend-svc, port: 443}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 503'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'verifyhost backend\.example\.com'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-policy:rendered", pattern: '"reason":"Invalid","status":"False","type":"Accepted"'}
+
+  test-backendtlspolicy-tlsroute-unsupported-identity-rejects:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes, tlsroutes]
+    description: Unsupported URI identities block backend traffic.
+    fixtures:
+      gatewayclasses: *gatewayclassesHaptic
+      gateways: *gatewaysGwTlsTerminate
+      secrets: *secretsTlsCert
+      services: *servicesBackendSvc
+      endpoints: *endpointsBackendSvc
+      configmaps: *configmapsCaCert
+      backendtlspolicies: *backendtlspoliciesURI
+      tlsroutes: *tlsroutesTlsRoute
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'tcp-request content reject'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'verifyhost backend\.example\.com'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-policy:rendered", pattern: '"reason":"Invalid","status":"False","type":"Accepted"'}
+
+  test-backendtlspolicy-tcproute-reencrypts:
+    requires: [backendtlspolicies, gatewayclasses, gateways, tcproutes]
+    description: TCP backends enforce the policy's trust and identity requirements.
+    fixtures:
+      gatewayclasses: *gatewayclassesHaptic
+      gateways: *gatewaysTCP
+      services: *servicesBackendSvc
+      endpoints: *endpointsBackendSvc
+      configmaps: *configmapsCaCert
+      backendtlspolicies: *backendtlspoliciesBtlsPolicySection
+      tcproutes: *tcproutesBackend
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "status:gateway-conformance-infra/btls-policy:rendered", pattern: *gatewayAncestor}
+      - {type: contains, target: haproxy.cfg, pattern: 'server [^ ]+ 10\.0\.0\.1:8443[^\n]+ssl ca-file [^ ]+ verify required sni str\(backend\.example\.com\) verifyhost backend\.example\.com'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'tcp-request content reject'}
+
+  test-backendtlspolicy-tcproute-unsupported-identity-rejects:
+    requires: [backendtlspolicies, gatewayclasses, gateways, tcproutes]
+    description: TCP backends enforce the policy's trust and identity requirements.
+    fixtures:
+      gatewayclasses: *gatewayclassesHaptic
+      gateways: *gatewaysTCP
+      services: *servicesBackendSvc
+      endpoints: *endpointsBackendSvc
+      configmaps: *configmapsCaCert
+      backendtlspolicies: *backendtlspoliciesURI
+      tcproutes: *tcproutesBackend
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "status:gateway-conformance-infra/btls-policy:rendered", pattern: *gatewayAncestor}
+      - {type: contains, target: haproxy.cfg, pattern: 'tcp-request content reject'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '10\.0\.0\.1:8443'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-policy:rendered", pattern: '"reason":"Invalid","status":"False","type":"Accepted"'}
+
+  test-backendtlspolicy-tcproute-missing-ca-rejects:
+    requires: [backendtlspolicies, gatewayclasses, gateways, tcproutes]
+    description: TCP backends enforce the policy's trust and identity requirements.
+    fixtures:
+      gatewayclasses: *gatewayclassesHaptic
+      gateways: *gatewaysTCP
+      services: *servicesBackendSvc
+      endpoints: *endpointsBackendSvc
+      configmaps: *configmapsCaCert
+      backendtlspolicies: *backendtlspoliciesBtlsPolicyMissingCa
+      tcproutes: *tcproutesBackend
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "status:gateway-conformance-infra/btls-policy:rendered", pattern: *gatewayAncestor}
+      - {type: contains, target: haproxy.cfg, pattern: 'tcp-request content reject'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '10\.0\.0\.1:8443'}
+      - {type: contains, target: "status:gateway-conformance-infra/btls-policy:rendered", pattern: '"reason":"NoValidCACertificate","status":"False","type":"Accepted"'}
+
+  test-backendtlspolicy-tcproute-weighted-tls-isolation:
+    requires: [backendtlspolicies, gatewayclasses, gateways, tcproutes]
+    description: Weighted TCP backends apply TLS only to the policy's target Service.
+    fixtures:
+      gatewayclasses: *gatewayclassesHaptic
+      gateways: *gatewaysTCP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: backend-svc, namespace: gateway-conformance-infra}
+          spec:
+            ports: [{name: btls, port: 443, targetPort: 8443}]
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: plaintext, namespace: gateway-conformance-infra}
+          spec:
+            ports: [{name: http, port: 80, targetPort: 8080}]
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tls
+            namespace: gateway-conformance-infra
+            labels: {kubernetes.io/service-name: backend-svc}
+          addressType: IPv4
+          endpoints: [{addresses: ["192.0.2.10"], conditions: {ready: true}}]
+          ports: [{name: btls, port: 8443, protocol: TCP}]
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: plaintext
+            namespace: gateway-conformance-infra
+            labels: {kubernetes.io/service-name: plaintext}
+          addressType: IPv4
+          endpoints: [{addresses: ["192.0.2.11"], conditions: {ready: true}}]
+          ports: [{name: http, port: 8080, protocol: TCP}]
+      configmaps: *configmapsCaCert
+      backendtlspolicies: *backendtlspoliciesBtlsPolicySection
+      tcproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TCPRoute
+          metadata: {name: weighted, namespace: gateway-conformance-infra}
+          spec:
+            parentRefs: [{name: gw, sectionName: tcp}]
+            rules:
+              - backendRefs:
+                  - {name: backend-svc, port: 443, weight: 2}
+                  - {name: plaintext, port: 80, weight: 3}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'server backend-svc-[^ ]+ 192\.0\.2\.10:8443[^\n]+weight 2 ssl ca-file [^ ]+ verify required sni str\(backend\.example\.com\) verifyhost backend\.example\.com'}
+      - {type: contains, target: haproxy.cfg, pattern: 'server plaintext-[^ ]+ 192\.0\.2\.11:8080[^\n]+weight 3  #'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'default-server[^\n]*ssl|tcp-request content reject'}

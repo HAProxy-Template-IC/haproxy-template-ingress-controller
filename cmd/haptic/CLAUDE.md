@@ -777,7 +777,7 @@ spec:
         resources:
           requests:
             cpu: 100m
-            memory: 512Mi        # request = limit gives Guaranteed QoS
+            memory: 512Mi
           limits:
             memory: 512Mi        # CPU limit deliberately omitted
 ```

@@ -322,6 +322,10 @@ func makeIncrementalMixedSignatureFrameTrampoline(function any) *native.Function
 				native.FunctionCallFrameArg[map[string]any](frame, 1),
 			)))
 		})
+	case func(string) (any, error):
+		return makeIncrementalStringParserFrameTrampoline(function)
+	case func(string) (map[string]any, error):
+		return makeIncrementalStringParserFrameTrampoline(function)
 	case func(string) (time.Duration, error):
 		return makeIncrementalFunctionFrameTrampoline(function, func(frame native.FunctionCallFrame) {
 			value, err := function(frame.ArgString(0))
@@ -773,4 +777,12 @@ func incrementalNativeCallableKind(kind scriggo.NativeCallableKind) string {
 	default:
 		return fmt.Sprintf("callable-%d", kind)
 	}
+}
+
+func makeIncrementalStringParserFrameTrampoline[T any](function func(string) (T, error)) *native.FunctionTrampoline {
+	return makeIncrementalFunctionFrameTrampoline(function, func(frame native.FunctionCallFrame) {
+		value, err := function(frame.ArgString(0))
+		frame.SetResultValue(0, incrementalFrameValue(value))
+		incrementalFrameSetError(frame, err)
+	})
 }

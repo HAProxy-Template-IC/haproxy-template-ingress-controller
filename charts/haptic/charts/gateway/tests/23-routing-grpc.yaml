@@ -66,7 +66,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'bind unix@/etc/haproxy/http-h2c-frontend\.sock mode 660 accept-proxy proto h2'
-      - {type: contains, target: haproxy.cfg, pattern: 'backend gtw_default_grpc-h2c_grpc-svc_9090'}
+      - {type: contains, target: haproxy.cfg, pattern: 'backend gw_g_default_grpc-h2c_grpc-svc_9090'}
       - {type: contains, target: haproxy.cfg, pattern: 'default-server check proto h2'}
   test-grpcroute-https-listener-alpn-h2:
     requires: [gatewayclasses, gateways, grpcroutes]
@@ -123,7 +123,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+bind \*:443 ssl crt-list [^ ]+ alpn h2,http/1\.1'
-      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gtw_default_grpc-https_grpc-svc_9090'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gw_g_default_grpc-https_grpc-svc_9090'}
 
       - {type: contains, target: haproxy.cfg, pattern: 'default-server check proto h2'}
       - {type: contains, target: map:host.map, pattern: '(?m)^grpc\.example\.com\b'}

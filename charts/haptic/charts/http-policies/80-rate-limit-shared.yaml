@@ -1,0 +1,370 @@
+templateSnippets:
+  frontend-filters-863-haptic-shared-rate-limit-consumer:
+    template: |
+      {%- import "util-spoa-rate-limit-dispatch" for DispatchSharedRateLimit %}
+      {%- var messages = toStringSlice(extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{})) %}
+      {%- if messages contains "check-ratelimit" %}
+      {{ "\n" }}# haptic/shared-rate-limit consumer
+      {{- DispatchSharedRateLimit("consumer", "", tostring(extraContext | dig("rateLimit", "shared", "failClosed") | fallback(false)) == "true") }}
+      {%- end %}
+
+k8sResources:
+  rate-limit-store:
+    # The replica count is the size this starts at, not the size it keeps:
+    # HAProxy routes to whatever pods exist, so an operator draining it or an
+    # autoscaler owns the count from creation onward.
+    createOnlyFields: ["spec.replicas"]
+    template: |
+      {#- managedStore is a SUB-option of rateLimit.shared: "when shared rate limiting
+          is on, deploy the store for you" — which is why it defaults to true. So it
+          must also require shared.enabled, and for a hard reason beyond tidiness: the
+          chart's RBAC (templates/role.yaml, the apps/statefulsets and
+          policy/poddisruptionbudgets rules) grants apply permission only when BOTH
+          flags are set. Gating on managedStore alone made the render gate true and the
+          RBAC gate false on PURE DEFAULTS, so the controller rendered a Valkey
+          StatefulSet + PDB it could not apply and retried forever — 704 forbidden
+          applies in 74s on a real cluster, with no backoff (the checksum cache is
+          written only on success) and no metric, status condition or non-zero exit
+          anywhere to surface it. This gate must stay identical to role.yaml's.
+          Pinned by test-haptic-rate-limit-store-requires-shared-opt-in. -#}
+      {%- var sharedEnabled = extraContext | dig("rateLimit", "shared", "enabled") | fallback("false") | tostring() %}
+      {%- var enabled = extraContext | dig("rateLimit", "shared", "managedStore", "enabled") | fallback("false") | tostring() %}
+      {%- if sharedEnabled == "true" && enabled == "true" %}
+      {%%
+        var base = extraContext | dig("rateLimit", "shared", "managedStore", "serviceName") | fallback("haptic-rate-limit-store") | tostring()
+        var sentinelSvc = base + "-sentinel"
+        var ns = extraContext | dig("rateLimit", "shared", "managedStore", "namespace") | fallback("default") | tostring()
+        var port = extraContext | dig("rateLimit", "shared", "managedStore", "port") | fallback("6379") | tostring()
+        var sentinelPort = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "port") | fallback("26379") | tostring()
+        var sentinelMaster = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "masterName") | fallback("haptic-rate-limit") | tostring()
+        var replicas = extraContext | dig("rateLimit", "shared", "managedStore", "replicas") | fallback("3") | tostring()
+        var quorum = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "quorum") | fallback("2") | tostring()
+        var downAfterMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "downAfterMilliseconds") | fallback("5000") | tostring()
+      %%}
+      {#- Sentinel resolves the monitored primary by hostname on its single event
+          loop. When that pod's DNS record disappears, the blocking lookup stalls
+          the loop past the 2s TILT trigger and Sentinel goes blind for a fixed
+          30s (SENTINEL_PING_PERIOD * 30, valkey 9.1 sentinel.c). By the time it
+          declares the primary down, each replica's link has been down ~30s
+          longer — and sentinelSelectReplica rejects any replica whose link has
+          been down longer than downAfterMilliseconds * 10. That allowance and
+          the replica's downtime advance at the same rate, so a head start the
+          allowance cannot absorb is never made up: failover aborts with
+          -failover-abort-no-good-slave on every retry, permanently.
+          Surviving one full TILT needs downAfterMs * 10 > 30000 + downAfterMs,
+          i.e. downAfterMs > 3333. -#}
+      {%- if toint(downAfterMs) * 9 <= 30000 %}
+        {{- fail("rateLimit.shared.managedStore.sentinel.downAfterMilliseconds is " + downAfterMs + ", below the 3334 ms minimum. Sentinel's 30s TILT window then outlasts its replica-selection allowance (downAfterMilliseconds x 10) and Valkey failover never completes, so the rate-limit store stays without a primary. Set it to 5000 or higher.") -}}
+      {%- end %}
+      {%- var failoverTimeoutMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "failoverTimeoutMilliseconds") | fallback("10000") | tostring() %}
+      {%- var parallelSyncs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "parallelSyncs") | fallback("1") | tostring() %}
+      {#- renovate: datasource=docker depName=valkey/valkey #}
+      {%%
+        var img = extraContext | dig("rateLimit", "shared", "managedStore", "image") | fallback("valkey/valkey:9.1.1-alpine") | tostring()
+        var imagePullPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "imagePullPolicy") | fallback("IfNotPresent") | tostring()
+        var maxMemory = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemory") | fallback("96mb") | tostring()
+        var maxMemoryPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemoryPolicy") | fallback("noeviction") | tostring()
+        var cpuReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "cpu") | fallback("50m") | tostring()
+        var memReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "memory") | fallback("128Mi") | tostring()
+        var memLim = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "limits", "memory") | fallback("128Mi") | tostring()
+        var sentinelCpuReq = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "requests", "cpu") | fallback("25m") | tostring()
+        var sentinelMemReq = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "requests", "memory") | fallback("64Mi") | tostring()
+        var sentinelMemLim = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "limits", "memory") | fallback("64Mi") | tostring()
+        var pdbEnabled = extraContext | dig("rateLimit", "shared", "managedStore", "podDisruptionBudget", "enabled") | fallback("true") | tostring()
+        var pdbMaxUnavailable = extraContext | dig("rateLimit", "shared", "managedStore", "podDisruptionBudget", "maxUnavailable") | fallback("1") | tostring()
+      %%}
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: {{ base }}
+        namespace: {{ ns }}
+        labels:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        clusterIP: None
+        publishNotReadyAddresses: true
+        selector:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+        ports:
+          - name: valkey
+            port: {{ port }}
+            targetPort: valkey
+          - name: sentinel
+            port: {{ sentinelPort }}
+            targetPort: sentinel
+      ---
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: {{ sentinelSvc }}
+        namespace: {{ ns }}
+        labels:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+          app.kubernetes.io/component: sentinel
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        selector:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+        ports:
+          - name: sentinel
+            port: {{ sentinelPort }}
+            targetPort: sentinel
+      ---
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: {{ base }}
+        namespace: {{ ns }}
+        labels:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        serviceName: {{ base }}
+        podManagementPolicy: Parallel
+        replicas: {{ replicas }}
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: haptic-rate-limit-store
+            app.kubernetes.io/instance: {{ base }}
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: haptic-rate-limit-store
+              app.kubernetes.io/instance: {{ base }}
+          spec:
+            {# Sentinel and valkey both resolve peers by hostname with blocking
+               getaddrinfo on their event loop. The stock resolver gives a deleted
+               peer 5s x 2 attempts per search domain, long enough to trip
+               Sentinel's 2s TILT trigger and blind it for 30s exactly when a
+               failover is due. One attempt, one second bounds the stall.
+               The comment must not strip on its left, or the newline after
+               `spec:` is eaten and the two keys fuse into one line. -#}
+            dnsConfig:
+              options:
+                - name: timeout
+                  value: "1"
+                - name: attempts
+                  value: "1"
+            affinity:
+              podAntiAffinity:
+                preferredDuringSchedulingIgnoredDuringExecution:
+                  - weight: 100
+                    podAffinityTerm:
+                      topologyKey: kubernetes.io/hostname
+                      labelSelector:
+                        matchLabels:
+                          app.kubernetes.io/name: haptic-rate-limit-store
+                          app.kubernetes.io/instance: {{ base }}
+            topologySpreadConstraints:
+              - maxSkew: 1
+                topologyKey: kubernetes.io/hostname
+                whenUnsatisfiable: ScheduleAnyway
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haptic-rate-limit-store
+                    app.kubernetes.io/instance: {{ base }}
+            containers:
+              - name: valkey
+                image: {{ img }}
+                imagePullPolicy: {{ imagePullPolicy }}
+                command: ["/bin/sh", "-ec"]
+                args:
+                  - |
+                    ordinal="${POD_NAME##*-}"
+                    self="${POD_NAME}.{{ base }}.${POD_NAMESPACE}.svc.cluster.local"
+                    master_host=""
+                    master_port=""
+                    for _ in 1 2 3 4 5 6 7 8 9 10; do
+                      master_info="$(timeout 1 valkey-cli -h "{{ sentinelSvc }}" -p "{{ sentinelPort }}" sentinel get-master-addr-by-name "{{ sentinelMaster }}" 2>/dev/null || true)"
+                      master_host="$(printf '%s\n' "$master_info" | sed -n '1p')"
+                      master_port="$(printf '%s\n' "$master_info" | sed -n '2p')"
+                      if [ -n "$master_host" ] && [ -n "$master_port" ]; then
+                        break
+                      fi
+                      sleep 1
+                    done
+                    # A Sentinel that has just (re)started replays the bootstrap config
+                    # written below, which names {{ base }}-0 — so "the master is me" is
+                    # not proof, it is what a returning ex-primary is always told. Ask the
+                    # peers before believing it, or pod-0 reclaims the role after every
+                    # failover and the promotion is silently undone.
+                    if [ -z "$master_host" ] || [ "$master_host" = "$self" ]; then
+                      i=0
+                      while [ "$i" -lt "{{ replicas }}" ]; do
+                        peer="{{ base }}-${i}.{{ base }}.${POD_NAMESPACE}.svc.cluster.local"
+                        i=$((i + 1))
+                        if [ "$peer" = "$self" ]; then continue; fi
+                        if timeout 1 valkey-cli -h "$peer" -p "{{ port }}" info replication 2>/dev/null \
+                             | tr -d '\r' | grep -qx "role:master"; then
+                          master_host="$peer"
+                          master_port="{{ port }}"
+                          break
+                        fi
+                      done
+                    fi
+                    # Announce the stable FQDN, never the pod IP: Sentinel exchanges
+                    # hostnames between peers but learns replicas from the master's
+                    # INFO, so an IP there makes one pod two entries — and Sentinel
+                    # then tells the node it just promoted to replicate from itself.
+                    if [ -n "$master_host" ] && [ -n "$master_port" ] && [ "$master_host" != "$self" ]; then
+                      exec valkey-server \
+                        --port "{{ port }}" \
+                        --bind "0.0.0.0" \
+                        --protected-mode "no" \
+                        --save "" \
+                        --appendonly "no" \
+                        --maxmemory "{{ maxMemory }}" \
+                        --maxmemory-policy "{{ maxMemoryPolicy }}" \
+                        --replica-announce-ip "$self" \
+                        --replica-announce-port "{{ port }}" \
+                        --replicaof "$master_host" "$master_port"
+                    fi
+                    # Bootstrap only: no Sentinel knows a master and no peer claims to
+                    # be one, so someone has to start the cluster — Sentinel cannot,
+                    # since `sentinel monitor` needs a master to point at.
+                    #
+                    # RESIDUAL RISK, deliberate: from pod-0 alone, "first boot, peers
+                    # not up yet" and "partitioned away from peers that ARE up" look
+                    # identical. No local signal separates them — that is what a
+                    # partition means — so an isolated pod-0 promotes and runs beside
+                    # the real master until the partition heals and Sentinel demotes
+                    # one. Bounded on purpose: this store holds volatile rate-limit
+                    # counters, so the cost is per-side budgets for the duration, not
+                    # lost data. Anything stronger needs quorum, which by definition is
+                    # unavailable in the case that would need it.
+                    if [ "$ordinal" = "0" ]; then
+                      exec valkey-server \
+                        --port "{{ port }}" \
+                        --bind "0.0.0.0" \
+                        --protected-mode "no" \
+                        --save "" \
+                        --appendonly "no" \
+                        --maxmemory "{{ maxMemory }}" \
+                        --maxmemory-policy "{{ maxMemoryPolicy }}" \
+                        --replica-announce-ip "$self" \
+                        --replica-announce-port "{{ port }}"
+                    fi
+                    exec valkey-server \
+                      --port "{{ port }}" \
+                      --bind "0.0.0.0" \
+                      --protected-mode "no" \
+                      --save "" \
+                      --appendonly "no" \
+                      --maxmemory "{{ maxMemory }}" \
+                      --maxmemory-policy "{{ maxMemoryPolicy }}" \
+                      --replica-announce-ip "$self" \
+                      --replica-announce-port "{{ port }}" \
+                      --replicaof "{{ base }}-0.{{ base }}.${POD_NAMESPACE}.svc.cluster.local" "{{ port }}"
+                env:
+                  - name: POD_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.name
+                  - name: POD_NAMESPACE
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.namespace
+                resources:
+                  requests:
+                    cpu: {{ cpuReq }}
+                    memory: {{ memReq }}
+                  limits:
+                    memory: {{ memLim }}
+                ports:
+                  - name: valkey
+                    containerPort: {{ port }}
+                readinessProbe:
+                  exec:
+                    command: ["sh", "-ec", "valkey-cli -p {{ port }} ping | grep -q PONG"]
+                  initialDelaySeconds: 2
+                  periodSeconds: 5
+                livenessProbe:
+                  exec:
+                    command: ["sh", "-ec", "valkey-cli -p {{ port }} ping | grep -q PONG"]
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+              - name: sentinel
+                image: {{ img }}
+                imagePullPolicy: {{ imagePullPolicy }}
+                command: ["/bin/sh", "-ec"]
+                args:
+                  - |
+                    # Written ONCE. Sentinel rewrites this file itself to record the
+                    # current master, and regenerating it on every start throws that away
+                    # — a restarted Sentinel would announce the original topology and
+                    # contradict its peers.
+                    if [ ! -s /sentinel/sentinel.conf ]; then
+                    cat > /sentinel/sentinel.conf <<EOF
+                    port {{ sentinelPort }}
+                    bind 0.0.0.0
+                    protected-mode no
+                    sentinel resolve-hostnames yes
+                    sentinel announce-hostnames yes
+                    sentinel announce-ip ${POD_NAME}.{{ base }}.${POD_NAMESPACE}.svc.cluster.local
+                    sentinel announce-port {{ sentinelPort }}
+                    sentinel monitor {{ sentinelMaster }} {{ base }}-0.{{ base }}.${POD_NAMESPACE}.svc.cluster.local {{ port }} {{ quorum }}
+                    sentinel down-after-milliseconds {{ sentinelMaster }} {{ downAfterMs }}
+                    sentinel failover-timeout {{ sentinelMaster }} {{ failoverTimeoutMs }}
+                    sentinel parallel-syncs {{ sentinelMaster }} {{ parallelSyncs }}
+                    EOF
+                    fi
+                    exec valkey-sentinel /sentinel/sentinel.conf
+                env:
+                  - name: POD_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.name
+                  - name: POD_NAMESPACE
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.namespace
+                resources:
+                  requests:
+                    cpu: {{ sentinelCpuReq }}
+                    memory: {{ sentinelMemReq }}
+                  limits:
+                    memory: {{ sentinelMemLim }}
+                ports:
+                  - name: sentinel
+                    containerPort: {{ sentinelPort }}
+                readinessProbe:
+                  exec:
+                    command: ["sh", "-ec", "valkey-cli -p {{ sentinelPort }} ping | grep -q PONG"]
+                  initialDelaySeconds: 2
+                  periodSeconds: 5
+                livenessProbe:
+                  exec:
+                    command: ["sh", "-ec", "valkey-cli -p {{ sentinelPort }} ping | grep -q PONG"]
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                volumeMounts:
+                  - name: sentinel
+                    mountPath: /sentinel
+            volumes:
+              - name: sentinel
+                emptyDir: {}
+      {%- if pdbEnabled == "true" %}
+      ---
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: {{ base }}
+        namespace: {{ ns }}
+        labels:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        maxUnavailable: {{ pdbMaxUnavailable }}
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: haptic-rate-limit-store
+            app.kubernetes.io/instance: {{ base }}
+      {%- end %}
+      {%- end %}

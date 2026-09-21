@@ -1,0 +1,110 @@
+_helm_load:
+  enable: '{{ or .Values.controller.templateLibraries.hapticAnnotations.enabled .Values.controller.templateLibraries.gateway.enabled .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}'
+
+  inject:
+    - path: watchedResources.waf_selfservice_catalogs.fieldSelector
+      value: 'metadata.name={{ .Values.controller.config.templatingSettings.extraContext.waf.policies.selfService.configMapName | default "waf-policies" }}'
+
+  unset:
+    - path: templateSnippets.frontend-filters-863-haptic-shared-rate-limit-consumer
+      when: '{{ include "haptic.spoaHub.disabled" . }}'
+
+templatingSettings:
+  extraContext:
+    requestBodyInspection: {haproxyBuffer: {sizeBytes: "16384", reservedBytes: "8192"}}
+    waf:
+      dispatch: {mode: opt-in, defaultEnforcement: deny}
+      ingressPermissions:
+        allowPolicySelection: true
+        allowEnforcementOverride: false
+        allowWafDisable: false
+        allowCustomRules: false
+        allowRawHAProxyConfig: false
+      customRules: {limits: {maxIngresses: "32", maxBytesPerIngress: "16384"}}
+      policies:
+        defaultPolicy: ""
+        requestBody: {waitTimeout: "100ms", defaultMaxBytes: "8192", maxBytes: "8192"}
+        limits: {maxCount: "16", maxSecLangBytes: "65536", maxRuleExclusions: "256"}
+        inline: {}
+        configMapRefs: {}
+        selfService:
+          enabled: false
+          configMapName: waf-policies
+          key: policies.yaml
+          allowSecLang: false
+          limits: {maxPoliciesPerNamespace: "4", maxTotalPolicies: "64"}
+
+    cache:
+      haproxy: {hashBalanceFactor: 150}
+      varnish:
+        enabled: false
+        serviceName: haptic-varnish-cache
+        namespace: default
+        servicePort: 6081
+        loopbackPort: 8090
+        originServiceName: haptic-cache-origin
+        workload: statefulset
+        replicas: 2
+        # renovate: datasource=docker depName=varnish
+        image: varnish:9.0
+        imagePullPolicy: IfNotPresent
+        malloc: 256m
+        resources: {requests: {cpu: 100m, memory: 384Mi}, limits: {memory: 384Mi}}
+        podDisruptionBudget: {enabled: true, maxUnavailable: 1}
+        autoscaling:
+          enabled: false
+          minReplicas: 2
+          maxReplicas: 6
+          targetCPUUtilizationPercentage: 70
+          scaleDownStabilizationSeconds: 600
+    rateLimit:
+      shared:
+        enabled: false
+        managedStore:
+          enabled: false
+          serviceName: haptic-rate-limit-store
+          namespace: default
+          port: 6379
+          # renovate: datasource=docker depName=valkey/valkey
+          image: valkey/valkey:9.1.2-alpine
+          imagePullPolicy: IfNotPresent
+          replicas: 3
+          maxMemory: 96mb
+          maxMemoryPolicy: noeviction
+          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 128Mi}}
+          sentinel:
+            masterName: haptic-rate-limit
+            port: 26379
+            quorum: 2
+            downAfterMilliseconds: 5000
+            failoverTimeoutMilliseconds: 10000
+            parallelSyncs: 1
+            resources: {requests: {cpu: 25m, memory: 64Mi}, limits: {memory: 64Mi}}
+          podDisruptionBudget: {enabled: true, maxUnavailable: 1}
+
+watchedResources:
+  secrets:
+    apiVersion: v1
+    resources: secrets
+    indexBy: ["metadata.namespace", "metadata.name"]
+
+  configmaps:
+    apiVersion: v1
+    resources: configmaps
+    store: on-demand
+    indexBy: ["metadata.namespace", "metadata.name"]
+  waf_selfservice_catalogs:
+    apiVersion: v1
+    resources: configmaps
+    indexBy: ["metadata.namespace", "metadata.name"]
+
+maps:
+  haptic-api-key-routes.map:
+    template: |
+      {{ render_glob "map-haptic-api-key-routes-*" -}}
+  haptic-apikeys.map:
+    template: |
+      {{ render_glob "map-haptic-apikeys-*" -}}
+  haptic-jwt-routes.map:
+    template: |
+      {{ render_glob "map-haptic-jwt-routes-*" -}}

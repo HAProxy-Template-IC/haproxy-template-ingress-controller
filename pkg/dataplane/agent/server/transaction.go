@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -176,13 +177,14 @@ func (r *applyRun) activate() error {
 	if r.server.baselineUnknown() {
 		return r.reload("unknown_baseline")
 	}
-	programs, err := r.compile(r.manifest.Ops)
+	ops := r.manifest.RuntimeOps()
+	programs, err := r.compile(ops)
 	if err != nil {
 		r.server.metrics.invariant(false, "ops_executable")
 		r.server.logger.Error("refusing an op batch; falling back to a reload", "error", err)
 		return r.reload("unknown_op")
 	}
-	if len(programs) == 0 && len(r.manifest.Ops) == 0 {
+	if len(programs) == 0 && len(ops) == 0 {
 		return r.settle()
 	}
 	return r.runOps(programs)
@@ -241,10 +243,10 @@ func (r *applyRun) runOps(programs []cli.Program) error {
 		return r.reload("worker_changed")
 	}
 	worker := r.server.workerIdentity()
-	results, err := r.server.runtime.Execute(programs)
+	results, err := r.executeBatches(programs)
 	r.result.OpResults = results
-	r.opsRan = true
 	if err != nil {
+		r.server.recordWorkerOps("", "")
 		r.server.metrics.opErrors.WithLabelValues(failedKind(results)).Inc()
 		r.server.logger.Warn("an op was rejected; reloading the desired set", "error", err)
 		return r.reload("op_rejected")
@@ -259,6 +261,23 @@ func (r *applyRun) runOps(programs []cli.Program) error {
 	r.result.Mode = api.ResultRuntime
 	r.server.setPhase(phaseApplied, r.manifest.PlanID)
 	return nil
+}
+
+func (r *applyRun) executeBatches(programs []cli.Program) ([]api.OpResult, error) {
+	if len(programs) <= api.MaxOpsPerApply {
+		r.opsRan = true
+		return r.server.runtime.Execute(programs)
+	}
+	results := make([]api.OpResult, 0, len(programs))
+	for batch := range slices.Chunk(programs, api.MaxOpsPerApply) {
+		batchResults, err := r.server.runtime.Execute(batch)
+		r.opsRan = true
+		results = append(results, batchResults...)
+		if err != nil {
+			return results, err
+		}
+	}
+	return results, nil
 }
 
 func (r *applyRun) enqueueDeletes(worker api.HAProxyInfo) error {

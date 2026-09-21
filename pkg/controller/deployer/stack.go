@@ -21,6 +21,7 @@ import (
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 )
 
 // AckedPlanSink receives the plan the fleet confirmed it is running. The
@@ -58,9 +59,11 @@ func NewDeployStack(
 	domainMetrics *metrics.Metrics,
 	renderInputs RenderInputs,
 	fence LeadershipFence,
+	tls *transportsecurity.Source,
 ) *DeployStack {
 	deployer := New(eventBus, logger, cfg.Dataplane.GetSyncTimeout(), domainMetrics)
 	deployer.fence = fence
+	deployer.clients.tls = tls
 
 	scheduler := newDeploymentScheduler(eventBus, logger,
 		cfg.Dataplane.GetMinDeploymentInterval(),

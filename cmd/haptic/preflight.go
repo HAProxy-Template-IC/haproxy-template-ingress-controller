@@ -105,6 +105,7 @@ func init() {
 func runPreflight(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 	logger := newValidateLogger()
+	configureMemoryLimit(logger)
 
 	// Schemas decide whether typed resource access works. Without any, the
 	// render silently falls back to untyped and passes on a weaker check than

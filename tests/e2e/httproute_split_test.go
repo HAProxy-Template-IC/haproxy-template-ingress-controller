@@ -53,7 +53,7 @@ import (
 func TestHTTPRouteSplit(t *testing.T) {
 	t.Parallel()
 	host := "httproute-split.localdev.me"
-	var fwd GatewayForward
+	var fwd ServiceForward
 
 	const (
 		samples = 200
@@ -124,18 +124,6 @@ func TestHTTPRouteSplit(t *testing.T) {
 				}},
 			})
 
-			// Wait until the controller has rendered the route AND deployed it
-			// to EVERY HAProxy pod before sampling. With minDeploymentInterval
-			// throttling reloads, the initial structural deploy can take a couple
-			// seconds; the 50-attempt warmup alone races it (the b48f3c9d CI run
-			// failed here with "warmup: failed to achieve 5 consecutive 200s").
-			// The marker is route-gated (issue #71): gating on the bare
-			// namespace passes off the Gateway's route-independent
-			// typed-access-smoke comment (rendered before this HTTPRoute) and
-			// still races the route's own deploy. The backend-name fragment
-			// "gtw_<ns>_echo-split_" appears only once this route's backends
-			// render, and <ns> is unique per test. Same convergence wait the
-			// rolling-restart test uses.
 			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-split")
 			return ctx
 		}).

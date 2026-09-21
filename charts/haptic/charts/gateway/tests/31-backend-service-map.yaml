@@ -30,5 +30,5 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: map:backend-service.map
-        pattern: '(?m)^gtw_default_a-http_alpha_80 default/alpha\ngtw_default_shared_shared_80 default/shared\ngtw_default_z-http_zeta_80 default/zeta\ngtw_default_z-grpc_grpc_9090 default/grpc$'
-      - {type: match_count, target: map:backend-service.map, pattern: '(?m)^gtw_default_shared_shared_80 ', expected: "1"}
+        pattern: '(?m)^gw_h_default_a-http_alpha_80 default/alpha\ngw_h_default_shared_shared_80 default/shared\ngw_h_default_z-http_zeta_80 default/zeta\ngw_g_default_z-grpc_grpc_9090 default/grpc$'
+      - {type: match_count, target: map:backend-service.map, pattern: '(?m)^gw_h_default_shared_shared_80 ', expected: "1"}

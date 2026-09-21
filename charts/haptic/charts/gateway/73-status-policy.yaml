@@ -108,10 +108,21 @@ templateSnippets:
       {%- import "util-publish-gateway-backendtlspolicy-route-ancestors" for PublishGatewayBackendTLSPolicyRouteAncestors -%}
       {%- if item != nil -%}{{- PublishGatewayBackendTLSPolicyRouteAncestors(item, "TLSRoute") -}}{%- end -%}
 
+  gateway-backendtlspolicy-route-ancestors-400-tcp:
+    requires: [backendtlspolicies, tcproutes]
+    incremental:
+      source: tcproutes
+      group: gateway-backendtlspolicy-route-ancestors
+      effects: [publishValue]
+    template: |-
+      {%- import "util-publish-gateway-backendtlspolicy-route-ancestors" for PublishGatewayBackendTLSPolicyRouteAncestors -%}
+      {%- if item != nil -%}{{- PublishGatewayBackendTLSPolicyRouteAncestors(item, "TCPRoute") -}}{%- end -%}
+
   util-generate-backendtlspolicy-status-patch:
     requires: [backendtlspolicies]
     template: |
       {%- import "util-condition-transition-time" for AncestorTransitionTime -%}
+      {%- import "util-backend-tls-identity" for BackendTLSIdentity -%}
       {% macro GenerateBackendTLSPolicyStatusPatch(policy *resources.backendtlspolicies.T) %}
         {%%
           var policyNamespace = policy.Metadata.Namespace
@@ -218,6 +229,12 @@ templateSnippets:
             acceptedReason = "NoValidCACertificate"
             acceptedMessage = noValidCAMessage
           }
+          var _, identityError = BackendTLSIdentity(validation)
+          if identityError != "" && acceptedStatus == "True" {
+            acceptedStatus = "False"
+            acceptedReason = "Invalid"
+            acceptedMessage = identityError + ". Backend traffic is blocked. Use a DNS identity matching validation.hostname."
+          }
 
           var ancestorSet = map[string]bool{}
           var ancestors = []any{}
@@ -298,10 +315,11 @@ templateSnippets:
       {%- if policy != nil -%}{{- GenerateBackendTLSPolicyStatusPatch(policy) -}}{%- end -%}
 
   status-patches-300-backendtlspolicy:
-    requires: [backendtlspolicies, httproutes]
+    requires: [backendtlspolicies]
     template: |-
       {{- render "gateway-backendtlspolicy-targets-100" -}}
-      {{- render "gateway-backendtlspolicy-route-ancestors-100" -}}
+      {{- render "gateway-backendtlspolicy-route-ancestors-100" default "" -}}
       {{- render "gateway-backendtlspolicy-route-ancestors-200-grpc" default "" -}}
       {{- render "gateway-backendtlspolicy-route-ancestors-300-tls" default "" -}}
+      {{- render "gateway-backendtlspolicy-route-ancestors-400-tcp" default "" -}}
       {{- render "gateway-backendtlspolicy-status-100" -}}

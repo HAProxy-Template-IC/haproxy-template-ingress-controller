@@ -1,0 +1,88 @@
+suite: automatic agent certificate renewal
+release:
+  name: haptic
+  namespace: haptic
+templates:
+  - agent-certificate-renewal.yaml
+tests:
+  - it: should bootstrap after preflight validation and use the same renewal command
+    documentSelector:
+      path: kind
+      value: Job
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: pre-install,pre-upgrade
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "7"
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: haptic-agent-renewal-bootstrap
+      - equal:
+          path: spec.template.spec.containers[0].args
+          value:
+            - certificates
+            - renew
+            - --namespace=haptic
+            - --issuer-secret=haptic-agent-issuer
+            - --server-secret=haptic-agent-tls
+            - --client-secret=haptic-controller-tls
+            - --server-name=haptic-agent-tls.haptic.svc
+            - --client-name=haptic-controller-tls.haptic.svc
+            - --validity-days=365
+  - it: should renew hourly without overlapping scheduled jobs
+    documentSelector:
+      path: kind
+      value: CronJob
+    asserts:
+      - equal:
+          path: spec.schedule
+          value: "0 * * * *"
+      - equal:
+          path: spec.concurrencyPolicy
+          value: Forbid
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.serviceAccountName
+          value: haptic-agent-renewal
+      - notExists:
+          path: metadata.annotations["helm.sh/hook"]
+  - it: should restrict reads and writes to the three managed Secrets
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: [secrets]
+              verbs: [create]
+            - apiGroups: [""]
+              resources: [secrets]
+              resourceNames: [haptic-agent-issuer, haptic-agent-tls, haptic-controller-tls]
+              verbs: [get, update]
+  - it: should leave cert-manager as the only issuer when selected
+    set:
+      haproxy.agent.tls.certManager.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: should keep long fullname a distinct within the CronJob name limit
+    set:
+      fullnameOverride: haptic-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa
+    documentSelector:
+      path: kind
+      value: CronJob
+    asserts:
+      - equal:
+          path: metadata.name
+          value: haptic-xxxxxxxxxxxxxxxxxxxx-fad9f66526-agent-renewal
+  - it: should keep long fullname b distinct within the CronJob name limit
+    set:
+      fullnameOverride: haptic-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb
+    documentSelector:
+      path: kind
+      value: CronJob
+    asserts:
+      - equal:
+          path: metadata.name
+          value: haptic-xxxxxxxxxxxxxxxxxxxx-576a0e9827-agent-renewal

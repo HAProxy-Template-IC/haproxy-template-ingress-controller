@@ -785,6 +785,9 @@ func incrementalSerializationUsesCustomMethod(typ reflect.Type) bool {
 }
 
 func incrementalSerializationTypeUsesCustomMethod(typ reflect.Type) bool {
+	if typ.NumMethod() == 0 {
+		return false
+	}
 	return typ.Implements(jsonMarshalerType) || typ.Implements(textMarshalerType) ||
 		typ.Implements(yamlMarshalerType) || typ.Implements(stringerType) ||
 		typ.Implements(formatterType) || typ.Implements(errorType) ||

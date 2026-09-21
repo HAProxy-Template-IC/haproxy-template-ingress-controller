@@ -85,9 +85,15 @@ log level; logs are JSON.
 |---|---|---|
 | `GET /healthz` | none | The process is alive. |
 | `GET /readyz` | none | Startup initialisation finished. |
-| `GET /v1/state[?verify=1][&plan=0]` | basic | What this pod holds and runs; `plan=0` leaves the stored plan blob out. |
-| `POST /v1/apply` | basic | Apply a desired state. |
-| `PUT /v1/plan?plan_id=…&proof=…` | basic | Store the blob of the applied plan after the apply. |
+| `GET /v1/state[?verify=1][&plan=0]` | mTLS | What this pod holds and runs; `plan=0` leaves the stored plan blob out. |
+| `POST /v1/apply` | mTLS | Apply a desired state. |
+| `PUT /v1/plan?plan_id=…&proof=…` | mTLS | Store the blob of the applied plan after the apply. |
+
+The chart uses mutual TLS (mTLS) by default. Explicitly disabling agent TLS
+selects legacy HTTP Basic authentication. The local Unix socket exposes state
+and process health without network credentials. Kubernetes runs
+`haptic agent health` through that socket, so an expired certificate rejects
+control requests without causing a liveness restart.
 
 `/readyz` turns true once the worker socket answers `show info`, the master
 socket answers `show proc`, the tree is hashed against the state file, crash
@@ -144,6 +150,14 @@ file. The controller patches every file whose content it last had the pod
 accept, the byte range being the run between the common prefix and the common
 suffix of the two contents, and only for an agent whose state lists
 `file_patch` under `features`.
+
+Agents advertising `runtime_batches` accept up to eight operation batches in
+one apply. Each batch contains at most 1,000 operations; in-place operations
+share the first batch's budget. The agent validates all operations before
+executing the first batch, then commits the plan and reads back the runtime
+state after the final batch. It holds the apply lock throughout, so another
+apply or reload can't interrupt the transaction. Older agents receive a
+complete reload when a change needs multiple batches.
 
 ```mermaid
 sequenceDiagram
@@ -320,8 +334,11 @@ worker that keeps serving until the reload fires gets the endpoint changes
 immediately. Once they ran the pod records the manifest's
 `worker_ops_plan_id`: the worker's plan with exactly those ops applied, which
 the controller derives and keeps. It's never the render's own id, because an
-in-place batch carries only part of the change — a new map key waits for the
-reload — and the next batch has to be composed against what the worker holds.
+in-place batch can carry only part of the change, and the next batch has to be
+composed against what the worker holds. Map updates wait together if any map
+operation or its required configuration needs the reload. This keeps a denial
+entry active until its replacement enforcement is available. Replacing a map
+value uses an atomic set or map transaction; it never deletes the key temporarily.
 The answer says when the reload fires (`reload.scheduled_at`), so the
 controller can follow up. A rejected in-place op invalidates the pod's baseline
 and is reported; it never triggers a second reload.
@@ -369,7 +386,8 @@ They live in `pkg/dataplane/agent/api/limits.go` and are asserted at both ends.
 | `MaxFiles` | 4096 | Files per manifest. |
 | `MaxPlanBlobBytes` | 8 MiB | The opaque plan. |
 | `MaxPathBytes` | 255 | One manifest path. |
-| `MaxOpsPerApply` | 1000 | Ops per apply; the controller chunks beyond it. |
+| `MaxOpsPerApply` | 1000 | Operations per execution batch, including in-place operations in the first batch. |
+| `MaxOpBatches` | 8 | Execution batches within one agent transaction. |
 | `MaxCommandLineBytes` | 12 KiB | One `;`-joined line, under the 16 KiB buffer. |
 | `MaxPayloadBytes` | 12 KiB | One payload command, under HAProxy 3.0's cap. |
 | `MaxWaitBudgetMs` | 30000 | Total `wait …-removable` per apply. |

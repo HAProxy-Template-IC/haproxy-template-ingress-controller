@@ -13,6 +13,10 @@
 # Resource strips only: tcproutes is absent from this bundle (TCPRoute was
 # removed in v1.5). Every field the annotated tests require exists in this
 # generation, so nothing field-strips.
+test-backendtlspolicy-tcproute-missing-ca-rejects
+test-backendtlspolicy-tcproute-reencrypts
+test-backendtlspolicy-tcproute-unsupported-identity-rejects
+test-backendtlspolicy-tcproute-weighted-tls-isolation
 test-tcproute-basic-l4-forward
 test-tcproute-cross-namespace-backend-without-referencegrant-not-routed
 test-tcproute-multi-listener-single-backend

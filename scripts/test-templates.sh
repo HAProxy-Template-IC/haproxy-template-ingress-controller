@@ -71,13 +71,16 @@ This script automates the correct workflow:
 
 OPTIONS:
   --test NAME           Run specific test by name
-  --workers N           Number of parallel test workers (0=auto-detect CPUs, 1=sequential, default: 0)
+  --workers N           Number of parallel test workers (0=automatic CPU and memory budget, 1=sequential, default: 0)
   --dump-rendered       Dump all rendered content
   --verbose             Show rendered content preview for failed assertions
   --trace-templates     Show template execution trace (top-level; use with --profile-includes for full call tree)
   --profile-includes    Show include timing statistics (top 20 slowest)
   --output FORMAT       Output format: summary, json, yaml (default: summary)
   --help                Show this help message
+
+ENVIRONMENT:
+  HAPTIC_TEMPLATE_VALUES  Optional Helm values file for the initial render
 
 EXAMPLES:
   # Run all validation tests
@@ -199,10 +202,19 @@ fi
 #      load gate. ingress-annotations-compat.yaml's _global test pins governance
 #      OFF so it can't leak; the governance-specific tests re-enable it per-test.
 # Both leaked into every test before their _global pins and broke the homelab.
+TEMPLATE_VALUES_ARGS=()
+if [[ -n "${HAPTIC_TEMPLATE_VALUES:-}" ]]; then
+    if [[ ! -f "$HAPTIC_TEMPLATE_VALUES" ]]; then
+        echo "HAPTIC_TEMPLATE_VALUES file does not exist: $HAPTIC_TEMPLATE_VALUES" >&2
+        exit 1
+    fi
+    TEMPLATE_VALUES_ARGS=(--values "$HAPTIC_TEMPLATE_VALUES")
+fi
 echo -e "${YELLOW}Rendering Helm chart (custom default-cert name, isolation regression)...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --namespace default \
     $HAPROXY_VERSION_ARG \
+    "${TEMPLATE_VALUES_ARGS[@]}" \
     --set controller.templateLibraries.gateway.enabled=true \
     --set controller.templateLibraries.gateway.experimentalChannel=true \
     --set controller.templateLibraries.hapticAnnotations.enabled=true \
@@ -398,6 +410,37 @@ print("checked %d frontends" % len(fes), file=sys.stderr)
 fi
 
 
+# Gateway policies must also work without any Ingress annotation adapter.
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
+    POLICY_CONFIG=$(mktemp /tmp/haptic-policy-config-XXXXXX.yaml)
+    helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.ingress.enabled=false \
+        --set controller.templateLibraries.ingressAnnotationsCompat.enabled=false \
+        --set controller.templateLibraries.hapticAnnotations.enabled=false \
+        --set controller.templateLibraries.haproxytech.enabled=false \
+        --set controller.templateLibraries.haproxyIngress.enabled=false \
+        --set controller.templateLibraries.nginxIngress.enabled=false \
+        --set cache.varnish.enabled=true \
+        --set rateLimit.shared.enabled=true \
+        --set rateLimit.shared.managedStore.enabled=true \
+        --set spoaHub.plugins.coraza.enabled=true \
+        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' > "$POLICY_CONFIG"
+    for TEST in test-gateway-policy-authentication test-gateway-policy-shared-rate-limit \
+        test-gateway-policy-private-cache test-gateway-policy-waf-catalogs; do
+        "$CONTROLLER_BIN" validate --file "$POLICY_CONFIG" "${SCHEMA_DIR_ARGS[@]}" --test "$TEST" "$@" || FULL_RC=$?
+        if [[ $FULL_RC -ne 0 ]]; then break; fi
+    done
+    if [[ $FULL_RC -eq 0 && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]]; then
+        POLICY_SCHEMAS=$(mktemp -d /tmp/haptic-policy-schemas-XXXXXX)
+        cp "$SCHEMA_DIR"/*.yaml "$POLICY_SCHEMAS/"
+        rm "$POLICY_SCHEMAS/haproxy-haptic.org_haproxyroutepolicies.yaml"
+        "$CONTROLLER_BIN" validate --file "$POLICY_CONFIG" --schema-dir "$POLICY_SCHEMAS" \
+            --test test-gateway-policy-unavailable-watch "$@" || FULL_RC=$?
+        rm -rf "$POLICY_SCHEMAS"
+    fi
+    rm -f "$POLICY_CONFIG"
+fi
+
 # Optional shared-rate-limit profile. The normal render above must keep the
 # feature off so validationTests can assert that using
 # haproxy-haptic.org/rate-limit-requests without the opt-in fails loudly.
@@ -429,6 +472,11 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         test-haptic-canary-by-header \
         test-nginx-ingress-canary-by-header \
         test-haptic-cache-core \
+        test-gateway-policy-shared-rate-limit \
+        test-gateway-policy-waf \
+        test-gateway-policy-waf-invalid \
+        test-gateway-policy-waf-catalogs \
+        test-gateway-policy-waf-baseline \
         test-haptic-rate-limit-shared-ip \
         test-haptic-rate-limit-shared-ip-allowlist \
         test-haptic-rate-limit-shared-ip-before-waf \

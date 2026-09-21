@@ -177,7 +177,7 @@ func TestGatewayRouteAnalysisCollisionFanoutAndDeletionPromotion(t *testing.T) {
 	fixture.addHTTPRoute(t, gatewayRouteAnalysisRoute("isolated", "isolated.example.com", "/isolated", ""))
 
 	both := fixture.renderAndCommitCacheReady(t)
-	assert.Contains(t, both.HAProxyConfig, "default_a_0__default_b_0")
+	assert.Contains(t, both.HAProxyConfig, "h_default_a_0__h_default_b_0")
 	fixture.assertHTTPRouteExecutions(t, "a", 1, 1, 1)
 	fixture.assertHTTPRouteExecutions(t, "b", 1, 1, 1)
 	fixture.assertHTTPRouteExecutions(t, "isolated", 1, 1, 1)
@@ -191,7 +191,7 @@ func TestGatewayRouteAnalysisCollisionFanoutAndDeletionPromotion(t *testing.T) {
 
 	fixture.deleteHTTPRoute(t, "a")
 	promoted := fixture.renderAndCommitCacheReady(t)
-	assert.NotContains(t, promoted.HAProxyConfig, "default_a_0__default_b_0")
+	assert.NotContains(t, promoted.HAProxyConfig, "h_default_a_0__h_default_b_0")
 	assert.Contains(t, promoted.HAProxyConfig, "default_b_0")
 	fixture.assertHTTPRouteExecutions(t, "b", 2, 3, 3)
 	fixture.assertHTTPRouteExecutions(t, "isolated", 1, 1, 1)
@@ -451,7 +451,7 @@ func loadGatewayRouteAnalysisSnippets(t *testing.T) map[string]config.TemplateSn
 			"util-listenerset-routing-gate",
 		},
 		"gateway/21-route-helpers.yaml": {
-			"util-resource-helpers", "util-hostname-intersect-gateway",
+			"util-resource-helpers", "util-hostname-intersect-gateway", "util-gateway-route-identity",
 			"util-reference-grant-permitted", "util-gw-mtls-blocked-value",
 		},
 		"gateway/40-maps-host.yaml": {
@@ -491,7 +491,7 @@ func loadGatewayRouteAnalysisLegacySnippets(
 			"util-listenerset-routing-gate", "util-route-effective-hosts", "util-analyze-routes",
 		},
 		"charts/haptic/charts/gateway/21-route-helpers.yaml": {
-			"util-resource-helpers", "util-hostname-intersect-gateway",
+			"util-resource-helpers", "util-hostname-intersect-gateway", "util-gateway-route-identity",
 			"util-reference-grant-permitted", "util-gw-mtls-blocked",
 		},
 		"charts/haptic/charts/gateway/41-maps-path.yaml": {

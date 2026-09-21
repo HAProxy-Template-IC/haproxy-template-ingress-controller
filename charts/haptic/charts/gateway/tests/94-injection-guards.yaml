@@ -62,8 +62,8 @@ validationTests:
                 backendRefs: [{name: web, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_rh-good_0\|set\|x-version ok'}
-      - {type: not_contains, target: map:gw-reqhdr.map, pattern: 'default_rh-attacker_0'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'h_default_rh-good_0\|set\|x-version ok'}
+      - {type: not_contains, target: map:gw-reqhdr.map, pattern: 'h_default_rh-attacker_0'}
       - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
 
   test-httproute-request-header-value-injection-admission-rejected:
@@ -113,7 +113,7 @@ validationTests:
       - type: haproxy_valid
       # The value lives in a map, so it is percent-encoded rather than escaped
       # for a quoted directive — a quote or a dollar has nothing to break out of.
-      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_rh-esc_0\|set\|x-esc a%22b%24c'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'h_default_rh-esc_0\|set\|x-esc a%22b%24c'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'X-Esc "a'}
 
   test-httproute-request-header-value-percent-escaped:
@@ -140,7 +140,7 @@ validationTests:
       - type: haproxy_valid
       # Percent-encoded in the map and inserted through a fetch, so HAProxy
       # never re-reads the value as a log-format string.
-      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_rh-pct_0\|set\|x-con 50%25-%25%5bvar%28txn.foo%29%5d'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'h_default_rh-pct_0\|set\|x-con 50%25-%25%5bvar%28txn.foo%29%5d'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'var\(txn\.foo\)'}
 
   # ---- ResponseHeaderModifier value (frontend) ----
@@ -179,8 +179,8 @@ validationTests:
                 backendRefs: [{name: web, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:gw-reshdr.map, pattern: 'default_rsh-good_0\|set\|x-frame SAMEORIGIN'}
-      - {type: not_contains, target: map:gw-reshdr.map, pattern: 'default_rsh-attacker_0'}
+      - {type: contains, target: map:gw-reshdr.map, pattern: 'h_default_rsh-good_0\|set\|x-frame SAMEORIGIN'}
+      - {type: not_contains, target: map:gw-reshdr.map, pattern: 'h_default_rsh-attacker_0'}
       - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
 
   test-httproute-response-header-value-injection-admission-rejected:
@@ -246,8 +246,8 @@ validationTests:
                             - {name: Backend, value: v2ok}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_brh-route_0\|gtw_default_brh-route_web2_80\|set\|backend v2ok'}
-      - {type: not_contains, target: map:gw-reqhdr.map, pattern: 'gtw_default_brh-route_web_80\|set\|backend'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'h_default_brh-route_0\|gw_h_default_brh-route_web2_80\|set\|backend v2ok'}
+      - {type: not_contains, target: map:gw-reqhdr.map, pattern: 'gw_h_default_brh-route_web_80\|set\|backend'}
       - {type: not_contains, target: haproxy.cfg, pattern: "X-Pwned"}
 
   test-httproute-backend-header-value-injection-admission-rejected:

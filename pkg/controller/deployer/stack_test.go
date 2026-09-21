@@ -72,7 +72,7 @@ func TestNewDeployStack_WiresTheDeploySide(t *testing.T) {
 	domainMetrics := metrics.NewMetrics(prometheus.NewRegistry())
 	fence := &fixedFence{epoch: 7}
 
-	stack := NewDeployStack(bus, &coreconfig.Config{}, logger, domainMetrics, nil, fence)
+	stack := NewDeployStack(bus, &coreconfig.Config{}, logger, domainMetrics, nil, fence, nil)
 
 	require.NotNil(t, stack.Deployer)
 	require.NotNil(t, stack.Scheduler)
@@ -90,7 +90,7 @@ func TestNewDeployStack_WithoutALeadershipFence(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	stack := NewDeployStack(bus, &coreconfig.Config{}, logger,
-		metrics.NewMetrics(prometheus.NewRegistry()), nil, nil)
+		metrics.NewMetrics(prometheus.NewRegistry()), nil, nil, nil)
 
 	assert.Equal(t, uint64(0), stack.Deployer.leaderEpoch())
 	assert.Equal(t, standaloneIdentity, stack.Deployer.identity())
@@ -100,7 +100,7 @@ func TestNewDeployStack_AppliesConfiguredIntervals(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &coreconfig.Config{}
-	stack := NewDeployStack(bus, cfg, logger, metrics.NewMetrics(prometheus.NewRegistry()), nil, nil)
+	stack := NewDeployStack(bus, cfg, logger, metrics.NewMetrics(prometheus.NewRegistry()), nil, nil, nil)
 
 	// Taking the whole config rather than positional durations is deliberate: a
 	// forgotten duration argument silently becomes 0, and a zero

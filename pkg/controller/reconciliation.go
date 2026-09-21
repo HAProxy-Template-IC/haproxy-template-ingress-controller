@@ -275,13 +275,13 @@ func createReconciliationComponents(
 	deployStack := deployer.NewDeployStack(setup.Bus, cfg, logger,
 		setup.MetricsComponent.Metrics(),
 		renderInputs{AckedPlanSink: renderService, FleetCapabilitiesSink: capabilities},
-		leadershipFence(setup, cfg, k8sClient, logger))
+		leadershipFence(setup, cfg, k8sClient, logger), setup.AgentTLS)
 	deployerComponent := deployStack.Deployer
 	deploymentSchedulerComponent := deployStack.Scheduler
 	driftMonitorComponent := deployStack.DriftMonitor
 
 	// Create Discovery component and set pod store
-	discoveryComponent := discovery.New(setup.Bus, logger)
+	discoveryComponent := discovery.New(setup.Bus, logger, discovery.WithTLS(setup.AgentTLS))
 	podStore := resourceWatcher.GetStore(names.HAProxyPodsResourceType)
 	if podStore == nil {
 		return nil, fmt.Errorf("%s store not found (should be auto-injected)", names.HAProxyPodsResourceType)

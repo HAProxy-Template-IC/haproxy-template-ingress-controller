@@ -57,7 +57,7 @@ func TestGatewayAPIReleaseMatrix(t *testing.T) {
 		dc       *debugClient
 		baseline *effectiveResolution
 		fp       map[string]int32
-		fwd      GatewayForward
+		fwd      ServiceForward
 	)
 
 	feature := features.New("Gateway API release matrix: degraded startup on "+release+" + in-place upgrade to "+defaultGatewayAPIVersion).

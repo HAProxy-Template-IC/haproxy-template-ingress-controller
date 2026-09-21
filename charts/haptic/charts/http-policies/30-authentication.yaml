@@ -1,0 +1,140 @@
+templateSnippets:
+  util-policy-authentication:
+    requires: [secrets]
+    template: |-
+      {%- import "util-public-key-secret" for ReadPublicKeySecret -%}
+      {%- import "util-api-key-secret" for ReadAPIKeySecret -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- macro PolicyAuthentication(namespace string, config any, result map[string]any) -%}
+        {%%
+          result["error"] = ""
+          result["resolvedReason"] = ""
+          var reject = func(message string) {
+            if result["error"] == "" { result["error"] = message }
+          }
+          var forwardedHeaders = map[string]bool{}
+          var jwt = dig(config, "jwt")
+          if jwt != nil {
+            var secretName = dig_string(jwt, "", "secretRef", "name")
+            var secretNamespace = dig_string(jwt, namespace, "secretRef", "namespace")
+            var key = map[string]any{}
+            ReadPublicKeySecret(secretNamespace, secretName, key)
+            var algorithm = dig_string(jwt, "RS256", "algorithm")
+            if algorithm == "" { algorithm = "RS256" }
+            if !regex_search(algorithm, "^(RS|PS|ES)(256|384|512)$") {
+              reject("JWT algorithm is unsupported. Choose an RS, PS, or ES algorithm with 256, 384, or 512 bits.")
+            }
+            if !key["found"].(bool) {
+              result["resolvedReason"] = "SecretNotFound"
+              reject("JWT Secret " + secretNamespace + "/" + secretName + " is missing. Create it with a pubkey.pem entry.")
+            } else if key["error"] != "" {
+              reject(tostring(key["error"]))
+            } else {
+              var info = key["info"].(map[string]any)
+              if hasPrefix(algorithm, "RS") || hasPrefix(algorithm, "PS") {
+                if info["algorithm"] != "RSA" || toint(info["bits"]) < 2048 {
+                  reject("JWT algorithm requires an RSA key of at least 2048 bits. Replace the public key.")
+                }
+              } else if hasPrefix(algorithm, "ES") {
+                var curve = "P-256"
+                if algorithm == "ES384" { curve = "P-384" }
+                if algorithm == "ES512" { curve = "P-521" }
+                if info["algorithm"] != "ECDSA" || info["curve"] != curve {
+                  reject("JWT algorithm requires an ECDSA " + curve + " key. Replace the public key.")
+                }
+              }
+            }
+            var settings = map[string]any{
+              "alg": algorithm, "keyFile": key["filename"], "state": "ok",
+              "iss": "_", "aud": "_", "issSet": false, "audSet": false,
+              "req": []any{}, "fwd": []any{},
+            }
+            for _, field := range []string{"issuer", "audience"} {
+              var value = dig_string(jwt, "", field)
+              if value == "" { continue }
+              if ConfigInjectionKind(value, "mapkey") != "" || regex_search(value, "[\"{}\\\\]") {
+                reject("JWT " + field + " contains unsafe characters. Remove whitespace, control characters, quotes, braces, and backslashes.")
+              }
+              var target = "iss"
+              if field == "audience" { target = "aud" }
+              settings[target] = value
+              settings[target + "Set"] = true
+            }
+            var claims = []any{}
+            for _, claim := range toSlice(dig(jwt, "requiredClaims")) {
+              var name = tostring(claim)
+              if !regex_search(name, "^[A-Za-z0-9_-]+$") {
+                reject("JWT requiredClaims contains an invalid name. Use letters, digits, underscores, or hyphens.")
+              }
+              claims = append(claims, name)
+            }
+            settings["req"] = claims
+            var forwarded = []any{}
+            var headers = map[string]bool{}
+            for _, entry := range toSlice(dig(jwt, "forwardClaims")) {
+              var claim = dig_string(entry, "", "claim")
+              var header = dig_string(entry, "", "header")
+              var folded = toLower(header)
+              if !regex_search(claim, "^[A-Za-z0-9_-]+$") || !regex_search(header, "^[A-Za-z][A-Za-z0-9-]*$") {
+                reject("JWT forwardClaims contains an invalid claim or header. Use a claim name and an HTTP header name.")
+              }
+              if headers[folded] || folded == "authorization" {
+                reject("JWT forwardClaims has a duplicate or reserved header. Use distinct headers other than Authorization.")
+              }
+              headers[folded] = true
+              forwardedHeaders[folded] = true
+              forwarded = append(forwarded, claim + ":" + header)
+            }
+            settings["fwd"] = forwarded
+            result["jwt"] = settings
+            result["publicKey"] = key
+          }
+          var apiKey = dig(config, "apiKey")
+          if apiKey != nil {
+            var secretName = dig_string(apiKey, "", "secretRef", "name")
+            var secretNamespace = dig_string(apiKey, namespace, "secretRef", "namespace")
+            var keys = map[string]any{}
+            ReadAPIKeySecret(secretNamespace, secretName, keys)
+            if !keys["found"].(bool) {
+              result["resolvedReason"] = "SecretNotFound"
+              reject("API-key Secret " + secretNamespace + "/" + secretName + " is missing. Create it with a keys entry.")
+            } else if keys["error"] != "" {
+              reject(tostring(keys["error"]))
+            }
+            var header = dig_string(apiKey, "X-API-Key", "header")
+            if header == "" { header = "X-API-Key" }
+            var consumerHeader = dig_string(apiKey, "", "consumerHeader")
+            if !regex_search(header, "^[A-Za-z][A-Za-z0-9-]*$") ||
+              (consumerHeader != "" && !regex_search(consumerHeader, "^[A-Za-z][A-Za-z0-9-]*$")) {
+              reject("API-key authentication has an invalid header. Use HTTP header names containing letters, digits, and hyphens.")
+            }
+            if toLower(header) == toLower(consumerHeader) || toLower(consumerHeader) == "authorization" {
+              reject("API-key consumerHeader overwrites a credential header. Choose a different header.")
+            }
+            if jwt != nil && (toLower(header) == "authorization" || forwardedHeaders[toLower(header)] || forwardedHeaders[toLower(consumerHeader)]) {
+              reject("JWT and API-key authentication share a credential or forwarded header. Use distinct header names.")
+            }
+            var forward = consumerHeader
+            if forward == "" { forward = "_" }
+            result["apiKey"] = map[string]any{
+              "source": "hdr", "name": header, "secretRef": secretNamespace + "/" + secretName,
+              "state": "ok", "fwd": forward, "fwdSet": consumerHeader != "",
+            }
+            result["apiKeys"] = keys["entries"]
+          }
+        %%}
+      {%- end macro -%}
+
+  util-jwt-map-value:
+    template: |-
+      {%- macro JWTMapValue(settings map[string]any) -%}
+        {%- var required = "_" -%}
+        {%- if len(toStringSlice(settings["req"])) > 0 -%}
+          {%- required = "," + join(toStringSlice(settings["req"]), ",") + "," -%}
+        {%- end -%}
+        {%- var forwarded = "_" -%}
+        {%- if len(toStringSlice(settings["fwd"])) > 0 -%}
+          {%- forwarded = "," + join(toStringSlice(settings["fwd"]), ",") + "," -%}
+        {%- end -%}
+        {{- settings["alg"] }} {{ settings["keyFile"] }} {{ settings["state"] }} {{ settings["iss"] }} {{ settings["aud"] }} {{ required }} {{ forwarded }} {{ settings["issSet"] }} {{ settings["audSet"] -}}
+      {%- end macro -%}

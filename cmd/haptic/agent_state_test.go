@@ -28,24 +28,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 )
 
-func TestLocalAgentURL(t *testing.T) {
-	tests := []struct {
-		name   string
-		listen string
-		want   string
-	}{
-		{name: "a wildcard bind is reached on loopback", listen: ":5555", want: "http://127.0.0.1:5555"},
-		{name: "an explicit wildcard too", listen: "0.0.0.0:5555", want: "http://127.0.0.1:5555"},
-		{name: "an address is kept", listen: "10.0.0.1:5555", want: "http://10.0.0.1:5555"},
-		{name: "a value with no port is passed through", listen: "agent", want: "http://agent"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, localAgentURL(tt.listen))
-		})
-	}
-}
-
 func TestFetchAgentStateNeedsTheCredentials(t *testing.T) {
 	t.Setenv(agentUsernameEnv, "")
 	t.Setenv(agentPasswordEnv, "")
@@ -53,7 +35,7 @@ func TestFetchAgentStateNeedsTheCredentials(t *testing.T) {
 	_, err := fetchAgentState(context.Background(), "http://127.0.0.1:5555")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), agentUsernameEnv)
-	assert.Contains(t, err.Error(), "agent container")
+	assert.Contains(t, err.Error(), "--tls-dir")
 }
 
 func TestFetchAgentStateReadsTheFakeAgent(t *testing.T) {
@@ -205,4 +187,16 @@ func setAgentStateFlags(t *testing.T) func() {
 	return func() {
 		agentStateOutput, agentStateFiles, agentStateVerify = previousOutput, previousFiles, previousVerify
 	}
+}
+
+func TestAgentStateUsesLocalSocketWithoutNetworkCredentials(t *testing.T) {
+	t.Setenv(agentUsernameEnv, "")
+	t.Setenv(agentPasswordEnv, "")
+	t.Setenv("AGENT_TLS_DIR", "/nonexistent/server-identity")
+	cfg, err := agentStateClientConfig("")
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost", cfg.BaseURL)
+	assert.Equal(t, "/etc/haproxy/haptic-agent.sock", cfg.UnixSocket)
+	assert.Nil(t, cfg.TLS)
+	assert.Empty(t, cfg.Password)
 }

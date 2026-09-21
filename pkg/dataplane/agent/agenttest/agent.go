@@ -121,6 +121,9 @@ func WithoutFilePatches() Option {
 	return withoutFeature(api.FeatureFilePatch)
 }
 
+// WithoutRuntimeBatches models an agent without complete multi-batch transactions.
+func WithoutRuntimeBatches() Option { return withoutFeature(api.FeatureRuntimeBatches) }
+
 // WithoutWorkerFence models an agent that predates automatic-apply worker fencing.
 func WithoutWorkerFence() Option {
 	return withoutFeature(api.FeatureWorkerFence)
@@ -161,7 +164,7 @@ func New(tb testing.TB, opts ...Option) *Agent {
 			AgentVersion:      "agenttest",
 			PlanSchemaVersion: 1,
 			AgentOps:          client.ComposableOps(),
-			Features:          []string{api.FeatureFilePatch, api.FeatureWorkerFence},
+			Features:          []string{api.FeatureFilePatch, api.FeatureWorkerFence, api.FeatureRuntimeBatches},
 			HAProxy:           api.HAProxyInfo{Version: "3.4.3", FullVersion: "3.4.3-1", WorkerPID: defaultWorkerPID},
 			Files:             map[string]api.FileAt{},
 		},

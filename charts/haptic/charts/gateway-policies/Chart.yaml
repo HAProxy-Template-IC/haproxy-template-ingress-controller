@@ -1,0 +1,4 @@
+apiVersion: v2
+name: gateway-policies
+description: Authentication and traffic policies for Gateway routes.
+version: 0.1.0

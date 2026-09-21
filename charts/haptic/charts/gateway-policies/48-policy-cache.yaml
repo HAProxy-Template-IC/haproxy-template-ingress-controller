@@ -1,0 +1,18 @@
+templateSnippets:
+  features-855-gateway-cache-records:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+      group: haptic-cache-records
+      effects: [publishValue]
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- for index, rule := range toSlice(dig(item, "spec", "rules")) -%}
+        {%- var record = map[string]any{} -%}
+        {{- GatewayPolicyDecision(item, "HTTPRoute", rule, index, record) -}}
+        {%- if record["attached"] == true && record["error"] == "" && record["cache"] != nil -%}
+          {{- shared.Publish("records", tostring(record["id"]), record["cache"]) -}}
+        {%- end -%}
+      {%- end -%}

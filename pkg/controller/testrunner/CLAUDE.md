@@ -848,7 +848,7 @@ func TestRunner_RegexMatch(t *testing.T) {
 
 ### What's Already Optimized
 
-- **Parallel test execution**: A worker pool (`testWorker` in `runner.go`, sized to `Options.Workers` or `runtime.GOMAXPROCS(0)`) processes tests concurrently. Each worker gets its own `ValidationPaths` temp directory so `haproxy -c` runs don't collide.
+- **Parallel test execution**: A worker pool (`testWorker` in `runner.go`, sized to `Options.Workers`, or automatically limited by `GOMAXPROCS` and one worker per 128 MiB of `GOMEMLIMIT`) processes tests concurrently. Each worker gets its own `ValidationPaths` temp directory so `haproxy -c` runs don't collide.
 - **Concurrent `haproxy -c`**: `RunTests` builds a multi-slot `dataplane.CheckGate` (`r.checkGate`, sized to the worker count but capped at `GOMAXPROCS`) and passes it to every `haproxy_valid` assertion. Without it the workers serialize behind dataplane's single-slot *default* gate, so the pool gains nothing on `haproxy_valid`-heavy suites — measured 12.8s → 2.3s on a 529-test / 411-`haproxy_valid` corpus (16 cores). This path is the startup and reinit config-load gate, so the win is also faster startup and shorter leaderless windows on a config-change reinit.
 - **Template engine reuse**: The pre-compiled `templating.Engine` is shared across workers. Per-render state (filter context, current config) is passed in `additionalDeclarations`, not stored on the engine.
 - **Fresh HAProxy verdicts**: repeated `haproxy_valid` assertions invoke HAProxy again. A content-only cache can't observe a changed executable or runtime environment.

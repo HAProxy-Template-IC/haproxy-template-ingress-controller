@@ -9,9 +9,9 @@ For each test case:
 1. Build a fixture-driven render context (the test's `fixtures` are injected as a parallel resource store, no cluster calls).
 2. Render every template in the config.
 3. Evaluate each assertion in the test (`haproxy_valid`, `contains`, `not_contains`, `match_count`, `equals`, `jsonpath`, `match_order`, `deterministic`). The `haproxy_valid` assertion type runs `haproxy -c` against the rendered output using the supplied `ValidationPaths`; other assertion types do not invoke the HAProxy binary.
-5. Collect timing, rendered content, and assertion results into a `TestResult`.
+4. Collect timing, rendered content, and assertion results into a `TestResult`.
 
-The whole suite runs in a worker pool (`Options.Workers`, defaults to `runtime.NumCPU`). `TestResults` aggregates pass/fail/skip counts and optional summary timings.
+The whole suite runs in a worker pool (`Options.Workers`, defaults to the CPU and memory budget). `TestResults` aggregates pass/fail/skip counts and optional summary timings.
 
 ## Minimal Usage
 
@@ -41,7 +41,7 @@ paths := &dataplane.ValidationPaths{
 }
 
 runner := testrunner.New(cfg, engine, paths, &testrunner.Options{
-    Workers:         0,            // 0 → NumCPU
+    Workers:         0,            // 0 → CPU and memory budget
     DebugFilters:    false,        // set for `--debug-filters`
     ProfileIncludes: false,        // set for `--profile-includes`
     Capabilities:    capabilities, // from dataplane.CapabilitiesFromVersion
@@ -83,7 +83,7 @@ func FormatResults(results *TestResults, options OutputOptions) (string, error)
 type Options struct {
     TestName        string                 // filter; empty = all tests (alternative to RunTests' second arg)
     Logger          *slog.Logger           // defaults to slog.Default()
-    Workers         int                    // 0 → NumCPU; 1 → sequential
+    Workers         int                    // 0 → CPU and memory budget; 1 → sequential
     DebugFilters    bool                   // wired to --debug-filters
     ProfileIncludes bool                   // wired to --profile-includes
     Capabilities    dataplane.Capabilities // value, not pointer; gates tests that need specific DP API features
@@ -91,7 +91,7 @@ type Options struct {
 }
 ```
 
-`DebugFilters` and `ProfileIncludes` are passed through to per-worker engine configuration — every worker gets its own `templating.Engine` clone so tracing and debug output don't cross-contaminate between parallel tests.
+`DebugFilters` and `ProfileIncludes` control diagnostic output for each render. Workers share the compiled template engine; render context and paths remain separate.
 
 ## Result Types
 
@@ -103,7 +103,11 @@ See `pkg/controller/testrunner/types.go` for the full schema; `FormatResults` ca
 
 ## Concurrency Model
 
-- Each worker holds its own cloned `templating.Engine` (sharing the parent compiled templates but with independent trace/debug state).
+The automatic worker count is the smaller of `GOMAXPROCS` and one worker per 128 MiB of Go's soft memory limit, with a minimum of one. Explicit `Options.Workers` or `haptic validate --workers` values override this calculation. Every selected test and assertion still runs.
+
+`haproxy -c` subprocesses consume container memory outside Go's soft limit. In a 1 GiB container, 32 validation workers reached 29 concurrent HAProxy processes using 415 MiB alongside the Go process and were OOM-killed. Eight workers completed the same suite with a 578 MiB container peak. The 128 MiB allowance bounds both rendering and subprocess concurrency; it is not a hard limit on an individual test. Larger fixtures can still require more memory.
+
+- Workers share the compiled `templating.Engine` and pass filter state through each render context.
 - Fixtures are in-memory overlays built per-test; no shared mutable state between tests.
 - `RunTests` fans tests out over a channel, fans results back in, and preserves deterministic ordering in the result slice.
 - Safe to call `RunTests` multiple times on the same `Runner` — per-run state (rendered content, stores) is re-created each invocation.

@@ -1,0 +1,10 @@
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.gateway.enabled }}'
+
+watchedResources:
+  routepolicies:
+    apiVersion: haproxy-haptic.org/v1alpha1
+    resources: haproxyroutepolicies
+    optional: true
+    indexBy: ["metadata.namespace", "metadata.name"]
+    enableValidationWebhook: true

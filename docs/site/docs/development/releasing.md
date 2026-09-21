@@ -150,6 +150,12 @@ When a `v*` tag is pushed, CI does the following:
 6. **Sign all artifacts** with Cosign using keyless OpenID Connect (OIDC)
 7. **Generate a Software Bill of Materials (SBOM)** for each image and attach it as a Cosign attestation
 8. **Trigger the versioned documentation build** (the `/docs/` site)
+9. **Run release conformance** against the published image and retain the
+   [report and provenance](../operations/gateway-conformance.md) without scheduled expiration
+
+The conformance job runs after publication. A failed job marks the release
+pipeline failed but doesn't retract published artifacts; inspect its report and
+fix the failure before claiming conformance for that release.
 
 ## Documentation versioning
 

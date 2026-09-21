@@ -102,6 +102,7 @@ type Manifest struct {
 	ValidatedPlanProof string `json:"validated_plan_proof,omitempty"`
 	Files              []File `json:"files"`
 	Ops                []Op   `json:"ops,omitempty"`
+	OpBatches          [][]Op `json:"op_batches,omitempty"`
 	InPlaceOps         []Op   `json:"in_place_ops,omitempty"`
 	Mode               string `json:"mode"`
 }
@@ -141,8 +142,9 @@ type FilePatch struct {
 
 // Features an agent advertises in its state beyond the op kinds it executes.
 const (
-	FeatureFilePatch   = "file_patch" // accepts File.Patch
-	FeatureWorkerFence = "worker_fence"
+	FeatureFilePatch      = "file_patch" // accepts File.Patch
+	FeatureWorkerFence    = "worker_fence"
+	FeatureRuntimeBatches = "runtime_batches"
 )
 
 // Op kinds the agent executes. Unknown kinds are refused and the apply falls

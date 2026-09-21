@@ -50,6 +50,12 @@ The chart creates a default HTTPS certificate. It uses cert-manager for issuance
 and renewal when available; otherwise, it creates a self-signed certificate.
 For your own domains, configure [SSL certificates](./ssl-certificates.md).
 
+Controller-to-agent authentication uses separate mutual TLS certificates. By
+default, HAPTIC renews their CA and both identities automatically before their
+365-day lifetime ends. Cert-manager is optional. See
+[Agent certificates](./operations/agent-certificates.md) for renewal monitoring
+and issuer selection.
+
 Verify both components are running:
 
 ```bash

@@ -4,6 +4,7 @@ templateSnippets:
     template: |
       {# Generate weighted backend map entries for HTTPRoute. #}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-gateway-route-identity" for GatewayRuleID -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- macro GenerateHTTPRouteWeightedBackendMap(routes any) -%}
       {%- for _, route := range toSlice(routes) %}
@@ -14,12 +15,12 @@ templateSnippets:
       {%- for _, rule := range toSlice(dig(route, "spec", "rules")) %}
         {%- var backendRefs = toSlice(dig(rule, "backendRefs")) %}
         {%- if len(backendRefs) > 1 %}
-          {%- var routeKey = routeNs + "_" + routeName + "_" + ruleIdx %}
+          {%- var routeKey = GatewayRuleID("HTTPRoute", routeNs, routeName, ruleIdx) %}
           {%- var cumulative = 0 %}
           {%- for _, backendRef := range backendRefs %}
             {%- var backendPort = toint(dig(backendRef, "port") | fallback(0)) %}
             {%- if backendPort == 0 %}{%- backendPort = 80 %}{%- end %}
-            {%- var backend = map[string]any{"name": dig_string(backendRef, "", "name"), "port": backendPort} %}
+            {%- var backend = map[string]any{"namespace": dig_string(backendRef, routeNs, "namespace"), "name": dig_string(backendRef, "", "name"), "port": backendPort} %}
             {%- var weight = toint(dig(backendRef, "weight") | fallback(0)) %}
             {%- if weight == 0 && dig(backendRef, "weight") == nil %}{%- weight = 1 %}{%- end %}
             {%- var refValid = BackendRefValid("HTTPRoute", routeNs, backendRef) == "true" %}
@@ -52,6 +53,7 @@ templateSnippets:
           Typed sibling of GenerateHTTPRouteWeightedBackendMap; body
           differs only in the `route` slice type. #}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-gateway-route-identity" for GatewayRuleID -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- macro GenerateGRPCRouteWeightedBackendMap(routes []*resources.grpcroutes.T) -%}
       {%- for _, route := range routes %}
@@ -61,12 +63,12 @@ templateSnippets:
       {%- var ruleIdx = 0 %}
       {%- for _, rule := range route.Spec.Rules %}
         {%- if len(rule.BackendRefs) > 1 %}
-          {%- var routeKey = routeNs + "_" + routeName + "_" + ruleIdx %}
+          {%- var routeKey = GatewayRuleID("GRPCRoute", routeNs, routeName, ruleIdx) %}
           {%- var cumulative = 0 %}
           {%- for _, backendRef := range rule.BackendRefs %}
             {%- var backendPort = toint(backendRef.Port) %}
             {%- if backendPort == 0 %}{%- backendPort = 80 %}{%- end %}
-            {%- var backend = map[string]any{"name": backendRef.Name, "port": backendPort} %}
+            {%- var backend = map[string]any{"namespace": dig_string(backendRef, routeNs, "namespace"), "name": backendRef.Name, "port": backendPort} %}
             {%- var weight = toint(backendRef.Weight) %}
             {%- if weight == 0 && dig(backendRef, "weight") == nil %}{%- weight = 1 %}{%- end %}
             {%- var refValid = BackendRefValid("GRPCRoute", routeNs, backendRef) == "true" %}

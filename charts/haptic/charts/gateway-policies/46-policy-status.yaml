@@ -1,0 +1,71 @@
+templateSnippets:
+  util-gateway-policy-status:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {%- macro GatewayPolicyStatusSummary(route any, kind string, result map[string]any) -%}
+        {%%
+          var rules = toSlice(dig(route, "spec", "rules"))
+          var invalid = 0
+          result["error"] = ""
+          result["reason"] = "UnsupportedValue"
+          result["resolvedReason"] = ""
+          for index, rule := range rules {
+            var record = map[string]any{}
+            GatewayPolicyDecision(route, kind, rule, index, record)
+            if record["attached"] != true || record["error"] == "" { continue }
+            invalid++
+            if result["error"] == "" {
+              result["error"] = record["error"]
+              result["reason"] = record["reason"]
+            }
+            if dig_string(record, "", "resolvedReason") != "" && result["resolvedReason"] == "" {
+              result["resolvedReason"] = record["resolvedReason"]
+              result["resolvedError"] = record["error"]
+            }
+          }
+          result["invalid"] = invalid
+          result["allInvalid"] = invalid > 0 && invalid == len(rules)
+          result["partiallyInvalid"] = invalid > 0 && invalid < len(rules)
+        %%}
+      {%- end macro -%}
+      {%- macro ApplyGatewayPolicyConditions(route any, parentIndex int, summary map[string]any, result map[string]any) -%}
+        {%%
+          var conditions = result["conditions"].([]any)
+          var generation = toint(dig(route, "metadata", "generation"))
+          for index, value := range conditions {
+            var current = value.(map[string]any)
+            var kind = tostring(current["type"])
+            if kind == "Accepted" && current["status"] == "True" && summary["allInvalid"] == true {
+              conditions[index] = condition("Accepted", "False", tostring(summary["reason"]), tostring(summary["error"]),
+                generation, RouteParentTransitionTime(route, parentIndex, "Accepted", "False"))
+            }
+            if kind == "ResolvedRefs" && current["status"] == "True" && summary["resolvedReason"] != "" {
+              conditions[index] = condition("ResolvedRefs", "False", tostring(summary["resolvedReason"]), tostring(summary["resolvedError"]),
+                generation, RouteParentTransitionTime(route, parentIndex, "ResolvedRefs", "False"))
+            }
+          }
+          var previous = false
+          for _, parent := range toSlice(dig(route, "status", "parents")) {
+            for _, current := range toSlice(dig(parent, "conditions")) {
+              if dig_string(current, "", "type") == "PartiallyInvalid" { previous = true }
+            }
+          }
+          if summary["partiallyInvalid"] == true || previous {
+            var status = "False"
+            var reason = "AllRulesValid"
+            var message = "No route rule is rejected by a route policy"
+            if summary["partiallyInvalid"] == true {
+              status = "True"
+              reason = tostring(summary["reason"])
+              message = tostring(summary["error"])
+            } else if summary["allInvalid"] == true {
+              reason = "AllRulesInvalid"
+              message = tostring(summary["error"])
+            }
+            conditions = append(conditions, condition("PartiallyInvalid", status, reason, message, generation,
+              RouteParentTransitionTime(route, parentIndex, "PartiallyInvalid", status)))
+          }
+          result["conditions"] = conditions
+        %%}
+      {%- end macro -%}

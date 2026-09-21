@@ -15,6 +15,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -31,6 +32,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/server"
 	"gitlab.com/haproxy-haptic/haptic/pkg/metrics"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 )
 
 // Credentials come from the Secret the HAProxy pod already mounts.
@@ -48,12 +50,15 @@ var (
 	agentListen            string
 	agentMetricsListen     string
 	agentDrainSocket       string
+	agentAdminSocket       string
 	agentDrainQuietPeriod  time.Duration
 	agentDrainMaxWait      time.Duration
 	agentDrainIgnore       []string
 	agentStateFile         string
 	agentReloadIntervalMin time.Duration
 	agentReloadTimeout     time.Duration
+	agentTLSDirectory      string
+	agentTLSClientName     string
 )
 
 var agentCmd = &cobra.Command{
@@ -80,7 +85,11 @@ Example usage:
 }
 
 func init() {
-	agentCmd.Flags().StringVar(&agentBaseDir, "base-dir", "/etc/haproxy",
+	agentCmd.PersistentFlags().StringVar(&agentTLSDirectory, "tls-dir", "",
+		"Directory containing tls.crt, tls.key, and ca.crt (env: AGENT_TLS_DIR)")
+	agentCmd.Flags().StringVar(&agentTLSClientName, "tls-client-name", "",
+		"Required controller certificate DNS SAN (env: AGENT_TLS_CLIENT_NAME)")
+	agentCmd.PersistentFlags().StringVar(&agentBaseDir, "base-dir", "/etc/haproxy",
 		"Directory the agent owns; every manifest path is relative to it")
 	agentCmd.Flags().StringVar(&agentConfigFile, "config", "haproxy.cfg",
 		"Manifest path of the HAProxy configuration, which is always written last")
@@ -88,11 +97,12 @@ func init() {
 		"Master CLI socket, used only for reload and show proc (relative to --base-dir unless absolute)")
 	agentCmd.Flags().StringVar(&agentWorkerSocket, "worker-socket", "haproxy-worker.sock",
 		"Worker stats socket that carries every runtime command (relative to --base-dir unless absolute)")
-	// Persistent, because `agent state` reads the same endpoint this serves.
 	agentCmd.PersistentFlags().StringVar(&agentListen, "listen", ":5555",
 		"Address the apply and state API listens on")
 	agentCmd.Flags().StringVar(&agentMetricsListen, "metrics-listen", ":9101",
 		"Address the Prometheus endpoint listens on; empty disables it")
+	agentCmd.PersistentFlags().StringVar(&agentAdminSocket, "admin-socket", "haptic-agent.sock",
+		"Read-only local state and health socket (relative to --base-dir); empty disables it")
 	agentCmd.Flags().StringVar(&agentDrainSocket, "drain-socket", "haptic-drain.sock",
 		"Unix socket (relative to --base-dir) serving GET /drain for the pod's preStop hook; empty disables it")
 	agentCmd.Flags().DurationVar(&agentDrainQuietPeriod, "drain-quiet-period", server.DefaultDrainQuietPeriod,
@@ -116,9 +126,20 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	// Everything this process writes is the JSON the chart promises: the metrics
 	// server and net/http take their logger from the default one.
 	slog.SetDefault(logger)
+	configureMemoryLimit(logger)
 
 	username, password := os.Getenv(agentUsernameEnv), os.Getenv(agentPasswordEnv)
-	if username == "" || password == "" {
+	directory := cmp.Or(agentTLSDirectory, os.Getenv("AGENT_TLS_DIR"))
+	peerName := cmp.Or(agentTLSClientName, os.Getenv("AGENT_TLS_CLIENT_NAME"))
+	var tlsSource *transportsecurity.Source
+	if directory != "" || peerName != "" {
+		var err error
+		tlsSource, err = transportsecurity.NewSource(directory, peerName)
+		if err != nil {
+			return err
+		}
+	}
+	if tlsSource == nil && (username == "" || password == "") {
 		return errors.New("the agent needs " + agentUsernameEnv + " and " + agentPasswordEnv + " from the credentials Secret")
 	}
 
@@ -137,10 +158,12 @@ func runAgent(_ *cobra.Command, _ []string) error {
 		ReloadTimeout:        agentReloadTimeout,
 		Username:             username,
 		Password:             password,
+		TLS:                  tlsSource,
 		AgentVersion:         version,
 		Logger:               logger,
 		Registry:             registry,
-		DrainSocket:          drainSocketPath(agentBaseDir, agentDrainSocket),
+		AdminSocket:          localSocketPath(agentBaseDir, agentAdminSocket),
+		DrainSocket:          localSocketPath(agentBaseDir, agentDrainSocket),
 		DrainQuietPeriod:     agentDrainQuietPeriod,
 		DrainMaxWait:         agentDrainMaxWait,
 		DrainIgnoreFrontends: agentDrainIgnore,
@@ -164,10 +187,7 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-// resolveSocket lets the flags name sockets relative to the tree the agent
-// owns, which is where the chart mounts them.
-// drainSocketPath keeps an empty flag empty, which disables the drain socket.
-func drainSocketPath(baseDir, socket string) string {
+func localSocketPath(baseDir, socket string) string {
 	if socket == "" {
 		return ""
 	}

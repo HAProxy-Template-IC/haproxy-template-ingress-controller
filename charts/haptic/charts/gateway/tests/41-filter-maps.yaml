@@ -74,8 +74,8 @@ validationTests:
                 backendRefs: [{name: echo, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_hdr-a_0\|set\|x-shared from-a'}
-      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_hdr-b_0\|set\|x-shared from-b'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'h_default_hdr-a_0\|set\|x-shared from-a'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'h_default_hdr-b_0\|set\|x-shared from-b'}
       # One line per rendered frontend — not one line per route per frontend.
       - {type: match_count, target: haproxy.cfg, pattern: 'set-header X-Shared %\[var\(txn\.gw_rule_id\),concat\(\|set\|x-shared\)', expected: "2"}
       # Negative control: the lowercase spelling loses even though the route
@@ -99,7 +99,7 @@ validationTests:
                 backendRefs: [{name: echo, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:gw-timeout.map, pattern: 'default_to-route_0 90000'}
+      - {type: contains, target: map:gw-timeout.map, pattern: 'h_default_to-route_0 90000'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request set-timeout server var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-timeout\.map\) if \{ var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-timeout\.map\) -m found \}'}
       # One line per backend, and its value never appears in the config.
       - {type: not_contains, target: haproxy.cfg, pattern: 'set-timeout server 1m30s'}
@@ -129,14 +129,14 @@ validationTests:
     assertions:
       - type: haproxy_valid
       # "M" defers the length to the per-match lines below.
-      - {type: contains, target: map:gw-redirect.map, pattern: 'default_multi-pfx_0 302\|https\|new\.example\.com\|\|P\|M\|%2fz'}
-      - {type: match_count, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\(2\) if \{ var\(txn\.gw_rule_id\) -m str "default_multi-pfx_0" \}', expected: "2"}
-      - {type: match_count, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\(4\) if \{ var\(txn\.gw_rule_id\) -m str "default_multi-pfx_0" \}', expected: "2"}
+      - {type: contains, target: map:gw-redirect.map, pattern: 'h_default_multi-pfx_0 302\|https\|new\.example\.com\|\|P\|M\|%2fz'}
+      - {type: match_count, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\(2\) if \{ var\(txn\.gw_rule_id\) -m str "h_default_multi-pfx_0" \}', expected: "2"}
+      - {type: match_count, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\(4\) if \{ var\(txn\.gw_rule_id\) -m str "h_default_multi-pfx_0" \}', expected: "2"}
       - type: match_order
         target: haproxy.cfg
         patterns:
-          - 'set-var\(txn\.gw_pfxlen\) int\(2\) if \{ var\(txn\.gw_rule_id\) -m str "default_multi-pfx_0" \}'
-          - 'set-var\(txn\.gw_pfxlen\) int\(4\) if \{ var\(txn\.gw_rule_id\) -m str "default_multi-pfx_0" \}'
+          - 'set-var\(txn\.gw_pfxlen\) int\(2\) if \{ var\(txn\.gw_rule_id\) -m str "h_default_multi-pfx_0" \}'
+          - 'set-var\(txn\.gw_pfxlen\) int\(4\) if \{ var\(txn\.gw_rule_id\) -m str "h_default_multi-pfx_0" \}'
 
   test-gateway-redirect-single-prefix-has-no-fallback:
     requires: [httproutes]
@@ -160,7 +160,7 @@ validationTests:
                 backendRefs: [{name: echo, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:gw-redirect.map, pattern: 'default_one-pfx_0 302\|https\|new\.example\.com\|\|P\|4\|%2fz'}
+      - {type: contains, target: map:gw-redirect.map, pattern: 'h_default_one-pfx_0 302\|https\|new\.example\.com\|\|P\|4\|%2fz'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\('}
 
   test-gateway-mirror-mixed-percent-fallback:
@@ -197,12 +197,12 @@ validationTests:
                 backendRefs: [{name: echo, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_mirror_targets\) str\(http\|mix-a\.default\.svc\.cluster\.local:8081\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.gw_rule_id\) -m str "default_mix-route_0" \} \{ rand\(100\) -m int lt 10 \}'}
-      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_mirror_targets\) str\(http\|mix-b\.default\.svc\.cluster\.local:8082\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.gw_rule_id\) -m str "default_mix-route_0" \} \{ rand\(100\) -m int lt 90 \}'}
-      - {type: not_contains, target: map:gw-mirror.map, pattern: 'default_mix-route_0'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_mirror_targets\) str\(http\|mix-a\.default\.svc\.cluster\.local:8081\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.gw_rule_id\) -m str "h_default_mix-route_0" \} \{ rand\(100\) -m int lt 10 \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_mirror_targets\) str\(http\|mix-b\.default\.svc\.cluster\.local:8082\|2000\|0;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.gw_rule_id\) -m str "h_default_mix-route_0" \} \{ rand\(100\) -m int lt 90 \}'}
+      - {type: not_contains, target: map:gw-mirror.map, pattern: 'h_default_mix-route_0'}
       # Buffering still has to fire for the fallback rule, so every mirroring
       # rule lands in the percentage map even when its targets do not.
-      - {type: contains, target: map:gw-mirror-pct.map, pattern: 'default_mix-route_0 90'}
+      - {type: contains, target: map:gw-mirror-pct.map, pattern: 'h_default_mix-route_0 90'}
 
   test-gateway-redirect-status-code-rejected:
     requires: [httproutes]
@@ -353,7 +353,7 @@ validationTests:
                 backendRefs: [{name: echo, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\(3\) if \{ var\(txn\.gw_rule_id\) -m str "default_pq-route_0" \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.gw_pfxlen\) int\(3\) if \{ var\(txn\.gw_rule_id\) -m str "h_default_pq-route_0" \}'}
       - {type: not_contains, target: haproxy.cfg, pattern: "PFXPWNED"}
 
   test-gateway-multi-prefix-path-control-char-reconcile-warns-and-skips:
@@ -446,5 +446,5 @@ validationTests:
                 backendRefs: [{name: echo, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:gw-reqhdr.map, pattern: 'default_fa-route_0\|any 1'}
+      - {type: contains, target: map:gw-reqhdr.map, pattern: 'h_default_fa-route_0\|any 1'}
       - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.filters_applied\) str\(RequestHeaderModifier\) if \{ var\(txn\.gw_rule_id\),concat\(\|any\),map\([^)]*gw-reqhdr\.map\) -m found \}'}

@@ -52,6 +52,8 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `fail(msg)` | Abort rendering with an error message (surfaces in validation tests and webhooks) | `fail("missing required annotation")` |
 | `b64decode(s)` | Decode base64 strings (Secret `.data` values) | `{{ secret.data.password \| b64decode() }}` |
 | `b64encode(s)` | Encode a value as standard base64 | `{{ configmap.data.schema \| b64encode() }}` |
+| `parse_yaml(text)` | Decode one YAML document into a value plus an error; rejects duplicate keys and additional documents | `{% var value, err = parse_yaml(text) %}` |
+| `public_key_info(pem)` | Parse one RSA, ECDSA, or Ed25519 public key; returns a map with `algorithm`, `bits`, `curve`, and canonical `PUBLIC KEY` PEM in `pem`, plus an error. Private keys and extra PEM blocks are rejected | `{% var info, err = public_key_info(publicKey) %}` |
 | `untar_gz(archive)` | Expand a `.tar.gz` archive into a map of entry path to content. Returns `(map[string]string, error)`; any failure returns no files. Keeps regular files and their directory paths; select with `keys()` + `glob_match()`. Rejects path traversal and invalid compression checksums. Limits: 4096 entries, 8 MiB per file, 32 MiB of extracted content, and 64 MiB for the complete decompressed stream, including skipped entries and metadata | `{%- var files, err = untar_gz(archive) %}` |
 | `glob_match(items, pattern)` | Filter strings by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
 | `map_extract(items, keyPath)` | Pluck one field (dotted key path) from each item into a flat slice | `{{ routes \| map_extract("routeId") }}` |

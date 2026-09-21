@@ -1,59 +1,59 @@
 # Conformance suites
 
-Two upstream conformance suites run here against the chart-deployed cluster:
+Gateway API and Ingress conformance run as sibling containers on the test
+cluster's Docker network. Use `make test-gateway-conformance` and
+`make test-ingress-conformance` after cluster setup.
 
-- **Gateway API** — `gateway_conformance_test.go` (build tag `gateway_conformance`).
-- **Ingress** — `ingress_conformance_test.go` (kubernetes-sigs/ingress-controller-conformance wrapper).
+## Gateway API jobs
 
-Both run as a sibling container on the kind docker network; see
-`make test-gateway-conformance` / `make test-ingress-conformance` and the
-file-level doc comments.
+| Job | Execution | Purpose |
+| --- | --- | --- |
+| `test-gateway-conformance-smoke` | One deterministic shard on merge requests | Regression feedback |
+| `test-gateway-conformance` | Four shards on main and nightly pipelines | Full regression gate |
+| `gateway-conformance-report` | Manual, complete suite against a pipeline snapshot | Candidate report with provenance |
+| `release-gateway-conformance` | Complete suite against the published release image | Release report with provenance |
 
-## Gateway API: regression gate vs. submittable report
+Reports require all three Gateway profiles and reject run, skip, and short
+filters. The existing `BackendTLSPolicySANValidation` exception remains visible
+as partial extended coverage. Reports from separate shards cannot be combined.
 
-The Gateway API suite serves two purposes, with two CI jobs:
+## Generate local candidate evidence
 
-| Job | Shape | Purpose |
-|-----|-------|---------|
-| `test-gateway-conformance` | sharded 4× (`parallel: 4`), runs per MR | fast regression gate — fails on any conformance regression |
-| `gateway-conformance-report` | **unsharded**, single full run, **manual** | produces a submittable `ConformanceReport` artifact |
-
-The report can't be stitched from the shards: `cSuite.Report()` only knows about
-the tests the *running instance* executed, so a coherent report needs one process
-that runs the whole suite. That's why the report job is a separate, unsharded run.
-
-Test selection is driven by `SupportedFeatures` in both jobs; `ConformanceProfiles`
-and `ReportOutputPath` are **report-only** and are set only when
-`CONFORMANCE_REPORT_OUTPUT` is present, so the gate's behaviour is unchanged.
-
-## Generating the report
-
-In CI: trigger the **manual** `gateway-conformance-report` job. It runs the full
-suite with `CONFORMANCE_IMPL_VERSION` set from `VERSION`, writes the report inside
-the test container, `docker cp`s it out, and uploads `conformance-report.yaml` as
-a job artifact (`when: always`, so a partial report is captured even if some tests
-fail).
-
-Locally (after `make test-e2e` has left the `haptic-e2e` cluster up):
+From this checkout, use the project build and cluster setup targets:
 
 ```bash
-CONFORMANCE_KEEP_CONTAINER=1 \
-  CONFORMANCE_REPORT_OUTPUT=/conformance-report.yaml \
-  CONFORMANCE_IMPL_VERSION="$(cat VERSION)" \
-  TEST_RUN_PATTERN="" \
-  make test-gateway-conformance
-docker cp haptic-conformance-run:/conformance-report.yaml ./conformance-report.yaml
-docker rm -f haptic-conformance-run
+make docker-build-test
+HAPTIC_E2E_PROFILE=conformance TEST_RUN_PATTERN='^$' make test-e2e
+export CONFORMANCE_CONTROLLER_IMAGE=haptic:test
+export CONFORMANCE_IMPL_VERSION="$(docker run --rm --entrypoint /usr/local/bin/haptic haptic:test version | awk '/^[[:space:]]*Version:/ {print $2}')"
+export CONFORMANCE_ARTIFACT_DIR="$(mktemp -d /tmp/haptic-conformance-evidence.XXXXXX)"
+bash scripts/gateway-conformance-report.sh
 ```
 
-## Submitting upstream (separate, deliberate step)
+For an isolated cluster, preserve the same `HAPTIC_E2E_CLUSTER_NAME`,
+`HAPTIC_E2E_KUBECONFIG_PATH`, and Docker network across setup and testing. Set
+`CONFORMANCE_KIND_CLUSTER` and `CONFORMANCE_KIND_NETWORK` to that cluster and
+network. The script refuses to overwrite earlier evidence.
 
-To list HAPTIC on the [Gateway API implementations page](https://gateway-api.sigs.k8s.io/implementations/):
+The script retains the exact test exit code, validates the report, and records
+the source, image, binary, running controller, cluster, and suite identities.
+`report.yaml`, `provenance.json`, and `SHA256SUMS` are the only CI artifacts;
+credential-bearing test images and kubeconfigs aren't included.
 
-1. Download `conformance-report.yaml` from the manual job.
-2. Commit it into a PR against [kubernetes-sigs/gateway-api](https://github.com/kubernetes-sigs/gateway-api)
-   under `conformance/reports/v1.5.x/haproxy-haptic-haptic/` (the org-project
-   convention), alongside a short `README.md`.
+## Submit a release report upstream
 
-That upstream PR is **not** created automatically — open it intentionally once the
-report is reviewed.
+1. Download a passing `release-gateway-conformance` job's artifacts and verify
+   them using the [release evidence instructions](../../docs/site/docs/operations/gateway-conformance.md#release-artifacts).
+2. Copy the unmodified report into the upstream Gateway API repository under
+   `conformance/reports/v1.6/haproxy-haptic-haptic/` for the pinned 1.6 suite.
+3. Name the file `<channel>-<implementation-version>-<mode>-report.yaml`, using
+   the values in the report.
+4. Add a `README.md` table linking the report and HAPTIC release. Describe the
+   tested chart values and the release job used to reproduce it; link its
+   provenance artifact and disclose partial extended results.
+5. Open a pull request against `kubernetes-sigs/gateway-api` for upstream review.
+
+Follow the upstream
+[report format and submission rules](https://github.com/kubernetes-sigs/gateway-api/tree/main/conformance/reports).
+The CI job generates evidence; it doesn't submit reports or claim upstream
+acceptance.

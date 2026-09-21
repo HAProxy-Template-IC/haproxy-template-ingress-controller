@@ -2,6 +2,10 @@
 
 The Gateway API library compiles HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute resources into HAProxy routing configuration.
 
+Attach [HAProxyRoutePolicy](../route-policy.md) resources to HTTPRoute or GRPCRoute
+rules for authentication, shared rate limits, WAF inspection, and HTTP caching.
+See [Protect Gateway routes](../operations/gateway-policies.md).
+
 ## Overview
 
 The Gateway API library implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) specification, providing:
@@ -34,6 +38,9 @@ Watch an HTTPRoute compile down to HAProxy config live:
 
 </div>
 
+For release-specific core and extended coverage, see
+[Gateway API conformance evidence](../operations/gateway-conformance.md).
+
 ## Configuration
 
 ```yaml
@@ -64,7 +71,7 @@ The Gateway API library hooks into these extension points from base.yaml. Snippe
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-500-gateway` | Method, header, and query-parameter matchers |
 | `frontend-matchers-advanced-*` | `frontend-matchers-advanced-900-path-match` | Final path-match backend-selection logic |
 | `features-*` | `features-500-gateway-route-maps` | Builds every per-route filter map (headers, redirect, URL-rewrite, prefix-length) |
-| `frontend-filters-*` | `frontend-filters-495-gateway-route-filters` | Emits the static lines that read those maps: `RequestHeaderModifier`/`ResponseHeaderModifier`/`RequestRedirect`/`URLRewrite` (rule- and backendRef-level) and the per-match prefix length a multi-prefix `ReplacePrefixMatch` rule needs |
+| `frontend-filters-*` | `frontend-filters-495-gateway-route-filters` | Emits the static lines that read those maps: `RequestHeaderModifier`/`ResponseHeaderModifier`/`URLRewrite` (rule- and backendRef-level) and the per-match prefix length a multi-prefix `ReplacePrefixMatch` rule needs |
 | `http-bind-extra-*` | `http-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port>` per non-default Gateway HTTP listener port (skips chart-static `httpPort` and `httpsPort` to avoid duplicate-bind errors) |
 | `https-bind-extra-*` | `https-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port> ssl crt-list ...` per non-default Gateway HTTPS listener port (skips chart-static `httpsPort` and `httpPort` to avoid duplicate-bind errors); reuses `util-ssl-bind-options` so the SSL handshake matches the chart-static HTTPS bind |
 | `frontends-*` | `frontends-600-gateway-tls-listener` | One `mode tcp` frontend per Gateway TLS listener port — SNI dispatch for TLSRoutes, with an `ssl crt-list` bind for `Terminate` listeners |
@@ -192,9 +199,14 @@ Cross-namespace CA and server-certificate references require a covering
 in status; a listener without usable required client trust doesn't accept traffic.
 
 A BackendTLSPolicy's `validation.hostname` sets upstream SNI and the certificate
-name to verify. If `validation.subjectAltNames` contains Hostname entries, HAPTIC
-verifies the first one instead; URI entries and multiple alternative names aren't
-implemented. Supply trust through `validation.caCertificateRefs` or
+name to verify. If you set `validation.subjectAltNames`, it must contain one
+Hostname entry equal to `validation.hostname`. HAProxy uses
+[SNI for certificate verification](https://docs.haproxy.org/3.4/configuration.html#5.2-verifyhost),
+so it can't verify a different SAN independently. URI identities and multiple
+alternative names are also unsupported. Admission rejects these policies;
+existing policies report `Accepted=False` and block backend traffic.
+Supply trust through
+`validation.caCertificateRefs` or
 `validation.wellKnownCACertificates: System`. Policies apply to HTTPRoute,
 GRPCRoute, TCPRoute, and terminating TLSRoute backends. A policy with no usable
 CA blocks that backend rather than sending plaintext. Passthrough TLSRoute
@@ -832,7 +844,7 @@ Split the demo route's traffic and inspect the generated weight map:
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-`weighted-multi-backend.map` fills with 100 entries keyed `<0-99>:platform_api_0` — indexes 0–89 map to `gtw_platform_api_api_80` and 90–99 to `gtw_platform_api_api-canary_80`, the 90/10 split expanded one map entry per weight unit. A rule only produces these entries once it has more than one `backendRef`, in `map-weighted-backend-500-gateway`, which expands and emits one map entry per weight unit. A new `backend gtw_platform_api_api-canary_80` block also appears in the `haproxy.cfg` tab (empty of servers until an `api-canary` Service exists).
+`weighted-multi-backend.map` contains 100 entries keyed `<0-99>:h_platform_api_0`: indexes 0–89 select `gw_h_platform_api_api_80`, and 90–99 select `gw_h_platform_api_api-canary_80`. Only rules with multiple backend references need this weight map. The new `backend gw_h_platform_api_api-canary_80` block appears in the `haproxy.cfg` tab; it has no servers until an `api-canary` Service exists.
 
 </details>
 
@@ -1122,6 +1134,10 @@ EOF
 ```
 
 HAPTIC renders `frontend gateway-tcp-port-5432` (`mode tcp`, `bind *:5432`, `default_backend gtw_tcp_default_postgres_0`) with no ACLs — the whole port maps to this one route rule. A TCPRoute has no hostnames. Choose a listener port other than the chart-static `haproxy.ports.http` / `haproxy.ports.https` (default 80 / 443): a TCP listener on either is dropped to avoid a duplicate bind.
+
+A Gateway with only TCP listeners uses the shared HAProxy Service. HAPTIC adds
+its listener ports to that Service. A Gateway with HTTP or HTTPS listeners also
+gets a dedicated Service that includes its TCP ports.
 
 ### Attachment semantics
 

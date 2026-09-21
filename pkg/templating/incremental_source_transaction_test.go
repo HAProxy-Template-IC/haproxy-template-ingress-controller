@@ -16,8 +16,10 @@ package templating
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -465,5 +467,37 @@ func newIncrementalSourceTransactionTestInput(
 			}},
 		}},
 		Lifecycle: lifecycle,
+	}
+}
+
+func TestIncrementalSourceTransactionTopologyDigestEncoding(t *testing.T) {
+	for _, testCase := range []struct {
+		length int
+		digest string
+	}{
+		{length: 0, digest: "c2ee454930bb0092daa046de76b9b5e13a23a922728b12ea42a148a77ee3f673"},
+		{length: 1, digest: "90fe20d3bf22bc20635547a782126881c7c762d66133f9923b22909207f8925e"},
+		{length: 511, digest: "bdbb21e28d4d96d133ea4fae57875f930502d9b7d483835f954009901e645d02"},
+		{length: 512, digest: "72a516da6aa50163456848361f6d3df9a08669a7edf2f13c532f86ef2bf4006a"},
+		{length: 513, digest: "0f8cabff35f3d1fccfa5b639a541be5c3c69c100c86ea6097a0d914091673b7f"},
+		{length: 2049, digest: "32f77c205ad358943994eadf1ff883a85fe33059a332663d920310a77bd5e9d0"},
+	} {
+		name := strings.Repeat("a", testCase.length) + "\x00β"
+		prepared := &preparedIncrementalSourceTransactionsInput{
+			sourceStarts: []int{0}, sourceEnds: []int{1},
+			childStarts: []int{0}, childEnds: []int{2},
+			childIndexes: []int{0, 1}, childLanes: []int{0, 1},
+			templateNames: []string{"alpha", name},
+			shapes: []IncrementalComponentSourceTransactionWave{{
+				Transactions: []IncrementalComponentSourceTransaction{{
+					Children: []IncrementalComponentSourceTransactionChild{
+						{TemplateName: "alpha", Index: 0},
+						{TemplateName: name, Index: 1},
+					},
+				}},
+			}},
+		}
+		digest := incrementalSourceTransactionTopologyDigest(prepared)
+		assert.Equal(t, testCase.digest, hex.EncodeToString(digest[:]), "name length %d", testCase.length)
 	}
 }

@@ -28,7 +28,7 @@ templateSnippets:
       {%- if keySpec == "consumer" %}
       http-request set-var(txn.rl_dim) var(txn.haptic_consumer) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str consumer } { var(txn.haptic_consumer) -m found }{{ extraCond }}
       {%- end %}
-      http-request set-var(txn.rl_key) var(txn.resource_id),concat(|,txn.rl_dim) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} }{{ extraCond }}
+      http-request set-var(txn.rl_key) var(txn.rl_budget),concat(|,txn.rl_dim) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} }{{ extraCond }}
       http-request set-var(txn.rl_rule_invalid) bool(true) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.rl_dim),length gt 0 }{{ extraCond }}
       http-request set-var(txn.denied_by) str(rate_limit_shared_invalid) if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.rl_rule_invalid) -m bool }{{ extraCond }}
       http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } !{ var(txn.rl_allow) -m bool } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.rl_rule_invalid) -m bool }{{ extraCond }}
@@ -186,7 +186,11 @@ templateSnippets:
       {# One packed map keyed by resource_id -> "limit period burst mode
           keyspec". Routes without an annotation miss and skip all later
           rate-limit rules. #}
-      http-request set-var(txn.rl_cfg) var(txn.resource_id),map({{ pathResolver.GetPath("rate-limit.map", "map") }}) unless { var(txn.rl_cfg) -m found }
+      http-request set-var(txn.rl_identity) var(txn.resource_id)
+      http-request set-var(txn.rl_identity) var(txn.policy_id) if { var(txn.policy_id) -m found }
+      http-request set-var(txn.rl_cfg) var(txn.rl_identity),map({{ pathResolver.GetPath("rate-limit.map", "map") }}) unless { var(txn.rl_cfg) -m found }
+      http-request set-var(txn.rl_budget) var(txn.rl_identity) if { var(txn.rl_cfg) -m found }
+      http-request set-var(txn.rl_budget) var(txn.rl_cfg),field(6,' ') if { var(txn.rl_cfg),field(6,' '),length gt 0 }
       http-request set-var(txn.rl_limit) var(txn.rl_cfg),field(1,' ') if { var(txn.rl_cfg) -m found }
       http-request set-var(txn.rl_period) var(txn.rl_cfg),field(2,' ') if { var(txn.rl_cfg) -m found }
       http-request set-var(txn.rl_burst) var(txn.rl_cfg),field(3,' ') if { var(txn.rl_cfg) -m found }
@@ -277,9 +281,9 @@ templateSnippets:
           default-on; the first route reloads once, as does removing the last. #}
       {%- var wafRoutes = strip((render_glob "map-coraza-app-*") + (render_glob "map-haproxy-ingress-waf-*")) %}
       {%- if dispatchMode == "default-on" || wafRoutes != "" %}
-      http-request set-var(txn.coraza_app) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
-      http-request set-var(txn.coraza_mode) var(txn.resource_id),map({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
-      http-request set-var(txn.coraza_body_cfg) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-body.map", "map") }}) unless { var(txn.coraza_body_cfg) -m found }
+      http-request set-var(txn.coraza_app) var(txn.policy_id),map({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
+      http-request set-var(txn.coraza_mode) var(txn.policy_id),map({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
+      http-request set-var(txn.coraza_body_cfg) var(txn.policy_id),map({{ pathResolver.GetPath("coraza-body.map", "map") }}) unless { var(txn.coraza_body_cfg) -m found }
       http-request set-var(txn.coraza_body_policy) var(txn.coraza_body_cfg),field(1,' ') if { var(txn.coraza_body_cfg) -m found }
       http-request set-var(txn.coraza_content_policy) var(txn.coraza_body_cfg),field(2,' ') if { var(txn.coraza_body_cfg) -m found }
       http-request set-var(txn.coraza_max_body) var(txn.coraza_body_cfg),field(3,' ') if { var(txn.coraza_body_cfg) -m found }
@@ -288,7 +292,7 @@ templateSnippets:
       http-request set-var(txn.coraza_detect_only) bool(false)
       http-request set-var(txn.coraza_active) bool(false)
       {%- if dispatchMode == "default-on" %}
-      http-request set-var(txn.coraza_disabled) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-disabled.map", "map") }}) unless { var(txn.coraza_disabled) -m found }
+      http-request set-var(txn.coraza_disabled) var(txn.policy_id),map({{ pathResolver.GetPath("coraza-disabled.map", "map") }}) unless { var(txn.coraza_disabled) -m found }
       http-request set-var(txn.coraza_mode) str({{ defaultEnforcement }}) unless { var(txn.coraza_mode) -m found }
       http-request set-var(txn.coraza_active) bool(true) unless { var(txn.coraza_disabled) -m found }
       {%- else %}

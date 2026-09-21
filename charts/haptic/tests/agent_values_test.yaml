@@ -90,7 +90,7 @@ tests:
       haproxy.agent.loglevel: debug
     asserts:
       - failedTemplate:
-          errorMessage: 'haproxy.agent contains unknown field "loglevel". Valid fields: logLevel, service, resources, extraEnv.'
+          errorMessage: 'haproxy.agent contains unknown field "loglevel". Valid fields: logLevel, service, resources, extraEnv, tls.'
 
   # Both durations become agent flags; above 60s the agent exits at startup and
   # every HAProxy pod crash-loops.

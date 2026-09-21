@@ -39,12 +39,32 @@ Configuration:
   Credentials Secret: {{ include "haptic.dataplane.credentialsSecretName" . }}
 {{- if not .Values.credentials.dataplane.password }}
 
-  ⚠ Agent password: auto-generated (random) and stored in the Secret above.
+  ⚠ Bootstrap password: auto-generated (random) and stored in the Secret above.
     It is preserved across `helm upgrade` via cluster lookup.
     GitOps users (ArgoCD/Flux render without cluster lookup) MUST pin it:
     a blank password regenerates every sync and continuously rolls the
     controller AND HAProxy pods. Set an explicit value:
       credentials.dataplane.password: <your-secret>   # e.g. via a SealedSecret
+{{- end }}
+
+{{- if .Values.haproxy.agent.tls.enabled }}
+Agent mutual TLS:
+  Server identity Secret: {{ include "haptic.agentTLS.serverSecretName" . }}
+  Controller identity Secret: {{ include "haptic.agentTLS.clientSecretName" . }}
+{{- if .Values.haproxy.agent.tls.managed }}
+  Identity lifetime: {{ .Values.haproxy.agent.tls.certValidityDays }} days; automatic renewal is enabled.
+{{- if .Values.haproxy.agent.tls.certManager.enabled }}
+  Issuer: cert-manager. Monitor the Certificate resources for renewal failures.
+{{- else }}
+  Renewal CronJob: {{ include "haptic.agentTLS.renewalName" . }} (hourly).
+  Back up issuer Secret {{ include "haptic.agentTLS.issuerSecretName" . }} securely.
+{{- end }}
+  Persistent renewal failures can expire certificates and stop agent updates.
+  Check expiry and recovery procedures:
+    https://haproxy-haptic.org/docs/0.2.0-alpha.3/operations/agent-certificates/#check-expiry
+{{- else }}
+  Your certificate manager must renew both identities and maintain peer trust.
+{{- end }}
 {{- end }}
 
 Introspection Endpoint:

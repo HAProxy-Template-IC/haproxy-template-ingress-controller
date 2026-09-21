@@ -77,7 +77,9 @@ Debug NetworkPolicy:
 kubectl exec -n haptic <controller-pod> -- nslookup kubernetes.default
 
 # Check controller can reach HAProxy pod
-kubectl exec -n haptic <controller-pod> -- curl http://<haproxy-pod-ip>:5555/healthz
+HAPROXY_IP=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].status.podIP}')
+kubectl exec -n haptic deployment/haptic-controller -c controller -- \
+  haptic agent state --url "https://$HAPROXY_IP:5555"
 ```
 
 For NetworkPolicy configuration details, see [Networking](./operations/networking.md).
@@ -233,15 +235,14 @@ Two different gates sit behind this, depending on what you applied:
 
 ```bash
 HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
-kubectl port-forward -n haptic $HAPROXY_POD 5555:5555
-# Substitute your actual agent password; see spec.credentialsSecretRef
-curl -u admin:<password> http://localhost:5555/v1/state
+kubectl exec -n haptic "$HAPROXY_POD" -c agent -- haptic agent state
 ```
 
 `/v1/state` answers with the plan the pod applied, the plan its worker is
 running, the digest of every file it holds, and what it last did with an apply.
-`/healthz` needs no credentials, which is what the controller's connectivity
-check above uses.
+The local command uses the pod's read-only Unix socket. To test the encrypted
+network connection, run the controller-to-agent command above. For certificate
+errors, check [agent certificate management](./operations/agent-certificates.md).
 
 **Common Causes**:
 
@@ -473,19 +474,15 @@ watchedResources:
 ### Collect diagnostic information
 
 ```bash
-# Controller version
-kubectl get deployment -n haptic haptic-controller -o jsonpath='{.spec.template.spec.containers[0].image}'
-
-# Controller logs
-kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=500 > controller-logs.txt
-
-# Configuration — every object, plus the merged result the controller assembles
-kubectl get haproxytemplateconfig -n haptic -o yaml > config-objects.yaml
-haptic config view --input --namespace haptic > config-merged.yaml
-
-# HAProxy config (sanitize sensitive data!)
-kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.cfg
+haptic doctor --namespace haptic \
+  --bundle "haptic-support-$(date -u +%Y%m%dT%H%M%SZ).zip"
 ```
+
+The bundle includes validation, deployment comparisons, pod versions, and
+resource conditions. It omits Secret values, rendered configuration, and logs.
+Review its resource names and identifiers before sharing it. See
+[Diagnose a HAPTIC fleet](operations/diagnostics.md) for permissions, limits,
+custom installations, and deeper private investigation.
 
 ### Enable debug logging
 

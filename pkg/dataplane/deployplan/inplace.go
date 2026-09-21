@@ -59,8 +59,11 @@ func (b *builder) inPlaceOps() ([]api.Op, *renderplan.Plan) {
 	// pending, so the worker holds nothing this diff composed.
 	b.created = nil
 	ops := b.inPlaceServerOps(worker)
-	ops = append(ops, b.inPlaceMapOps(worker)...)
 	ops = append(ops, b.inPlaceCertOps(worker)...)
+	mapOps := b.inPlaceMapOps(worker)
+	if len(ops)+len(mapOps) <= api.MaxOpsPerApply {
+		ops = append(ops, mapOps...)
+	}
 	kept := ops[:0]
 	for i := range ops {
 		if inPlaceKinds[ops[i].Kind] && b.caps.executes(ops[i].Kind) {
@@ -230,12 +233,19 @@ func (b *builder) serverOpsAgainstWorker(running, next *renderplan.Backend) []ap
 	return ops
 }
 
-// inPlaceMapOps keeps only the map ops that stand alone: an in-place value
-// change and the deletion of a key the render dropped. The del half of a
-// replacement would unmap a key whose re-add is not allowed here.
+// Map updates wait together when any dependency needs the pending reload.
 func (b *builder) inPlaceMapOps(worker *renderplan.Plan) []api.Op {
-	var ops []api.Op
-	addsBackends := b.addsBackends(worker)
+	if b.addsBackends(worker) {
+		return nil
+	}
+	baseline := *b.baseline
+	baseline.Applied, baseline.Running = worker, worker
+	baseline.AppliedIndex, baseline.WorkerOps = nil, nil // Avoid composing another in-place batch.
+	baseline.ReloadPending = false
+	if DiffIndexed(b.next, b.nextIndex, &baseline).Verdict == VerdictReload {
+		return nil
+	}
+	var upserts, deletes []api.Op
 	for _, name := range sortedMapNames(b.next.Maps) {
 		next := b.next.Maps[name]
 		path := next.Path
@@ -243,7 +253,7 @@ func (b *builder) inPlaceMapOps(worker *renderplan.Plan) []api.Op {
 			path = name
 		}
 		if !slices.Contains(b.inventory.Maps, path) || !api.SafeToken(path) {
-			continue
+			return nil
 		}
 		prev := worker.Maps[name]
 		delta := unorderedMapOps(path, prev.Entries, next.Entries)
@@ -251,23 +261,20 @@ func (b *builder) inPlaceMapOps(worker *renderplan.Plan) []api.Op {
 			delta = orderedMapOps(path, prev.Entries, next.Entries)
 		}
 		if delta.whole {
-			continue
+			return nil
 		}
 		for i := range delta.upserts {
-			if delta.upserts[i].Kind == api.OpMapSet && !addsBackends {
-				ops = append(ops, delta.upserts[i])
+			if delta.upserts[i].Kind != api.OpMapSet {
+				return nil
 			}
 		}
-		ops = append(ops, delta.deletes...)
+		upserts = append(upserts, delta.upserts...)
+		deletes = append(deletes, delta.deletes...)
 	}
-	return ops
+	return append(upserts, deletes...)
 }
 
-// addsBackends reports whether the render has a backend the worker lacks. A
-// map value may route to such a backend through any number of map layers,
-// which nothing here can parse; pointing the worker at it before the reload
-// creates it sends those requests to the default backend. So no value change
-// runs in place while that holds: the map files the reload loads carry them.
+// Map values can reference new backends indirectly through other maps.
 func (b *builder) addsBackends(worker *renderplan.Plan) bool {
 	for name := range b.next.Backends {
 		if _, running := worker.Backends[name]; !running {

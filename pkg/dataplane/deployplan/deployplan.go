@@ -37,8 +37,8 @@ const (
 )
 
 const (
-	// MaxChunks is the number of fenced applies one decision may be split into.
-	MaxChunks = 8
+	// MaxChunks bounds execution batches within one agent transaction.
+	MaxChunks = api.MaxOpBatches
 	// MaxReasons caps the reason list, which ships in status and logs.
 	MaxReasons = 32
 	// removableTimeoutMs is the wait budget for one server or backend removal.
@@ -70,7 +70,7 @@ type Decision struct {
 	// WorkerPlan is what the worker holds once InPlace ran; its ID is the
 	// pod's next worker-ops baseline. Set exactly when InPlace is.
 	WorkerPlan *renderplan.Plan `json:"-"`
-	Chunks     int              `json:"chunks,omitempty"` // applies Ops is split into, >1 only past api.MaxOpsPerApply
+	Chunks     int              `json:"chunks,omitempty"` // execution batches, >1 only past api.MaxOpsPerApply
 	Reasons    []string         `json:"reasons,omitempty"`
 	Files      []api.File       `json:"files"`
 	Mode       string           `json:"mode"` // api.ModeAuto or api.ModeReload
@@ -111,10 +111,7 @@ func ComposedOps() []string {
 	return slices.Clone(composedOps)
 }
 
-// Chunk splits Ops into the applies the deployer sends, each an ordered prefix
-// of the remaining ops. The first apply carries the in-place batch as well and
-// the cap is on their sum, so that batch comes out of its budget — an apply
-// over the cap is refused before it is sent, and reaches no pod at all.
+// Chunk bounds execution batches; all batches belong to one agent apply.
 func (d *Decision) Chunk() [][]api.Op {
 	if len(d.Ops) == 0 {
 		return nil

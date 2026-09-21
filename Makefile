@@ -1,5 +1,5 @@
 .PHONY: help version lint lint-fix lint-chart lint-chart-ci audit check-all \
-        test test-integration test-agent-docker test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance test-helm-defaults build-integration-test \
+        test test-unit test-integration test-agent-docker test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance test-helm-defaults build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined bench bench-gateway-api \
         build check-source-hash docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check test-spoa-reload \
@@ -153,6 +153,7 @@ lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docke
 	@echo ""
 	@echo "Running kubeconform..."
 	helm template charts/haptic \
+		--kube-version $(KUBE_VERSION) \
 		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
 		--api-versions=gateway.networking.k8s.io/v1/TCPRoute \
 		| docker run --rm -i ghcr.io/yannh/kubeconform:$(KUBECONFORM_VERSION) \
@@ -184,6 +185,7 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 	@echo ""
 	@echo "Running kubeconform..."
 	helm template charts/haptic \
+		--kube-version $(KUBE_VERSION) \
 		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
 		--api-versions=gateway.networking.k8s.io/v1/TCPRoute \
 		| kubeconform \
@@ -290,8 +292,13 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
 	@echo "Running tests..."
 	bash scripts/tests/test_check_test_inventory.sh
+	bash scripts/tests/test_cluster_node_image.sh
 	python3 -m unittest \
+		scripts/tests/test_gitops_lifecycle.py \
+		scripts/tests/test_shard_go_tests.py \
 		scripts/tests/test_prepare_gateway_api_canary.py \
+		scripts/tests/test_validate_conformance_report.py \
+		scripts/tests/test_conformance_provenance.py \
 		scripts/tests/test_check_controller_output.py \
 		scripts/tests/test_check_image_pins.py \
 		scripts/tests/test_analyze_gateway_api_bench.py \
@@ -304,15 +311,18 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	bash scripts/tests/test_chart_spoa_image.sh
 	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
+	@$(MAKE) test-unit
+	@$(MAKE) test-playground
+	@$(MAKE) test-e2e-helpers
+
+test-unit: ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 	@# No coverage flags here: instrumenting the module for coverage costs a
 	@# further 3.2x on top of -race (measured on the renderer chart-scale
 	@# suite, 25.5s -> 82.1s). `make test-coverage` and the CI coverage job
 	@# produce the profile; a correctness run does not need it.
 	@# -timeout: pkg/controller/renderer's chart-scale suites run well past go
 	@# test's 10m default under -race, which fails the package on time alone.
-	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -timeout 45m $${PKG:-./...}
-	@$(MAKE) test-playground
-	@$(MAKE) test-e2e-helpers
+	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -timeout 45m $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") $${PKG:-./...}
 
 .PHONY: test-e2e-helpers
 test-e2e-helpers: ## Test e2e client and cluster helpers without creating a cluster
@@ -664,6 +674,17 @@ test-chart-upgrade: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Verify rele
 	@# schemas under any suite sharing the cluster.
 	bash scripts/test-chart-upgrade.sh $(if $(KEEP_CLUSTER),--keep,)
 
+GITOPS_PROVIDER ?= argo
+GITOPS_CERTIFICATES ?= external
+test-gitops-lifecycle: $(if $(GITOPS_IMAGE),,docker-build-test) ## Verify Argo CD or Flux installs, syncs, upgrades, rejection, and recovery
+	gitops_run_id="$${CI_JOB_ID:-$$(date +%s%N)}"; \
+	python3 scripts/test-gitops-lifecycle.py --provider "$(GITOPS_PROVIDER)" \
+		--certificates "$(GITOPS_CERTIFICATES)" \
+		--image "$(or $(GITOPS_IMAGE),haptic:test)" \
+		--cluster "$(or $(GITOPS_CLUSTER_NAME),haptic-gitops-$(GITOPS_PROVIDER)-$$gitops_run_id)" \
+		--artifacts "$(or $(GITOPS_ARTIFACT_DIR),$(CURDIR)/debug-logs/gitops/$(GITOPS_PROVIDER)-$(GITOPS_CERTIFICATES)/$$gitops_run_id)" \
+		$(if $(KEEP_CLUSTER),--keep,)
+
 build-integration-test: ## Build integration test binary (without running)
 	@echo "Building integration test binary..."
 	@mkdir -p bin
@@ -702,6 +723,10 @@ bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=Benchmar
 		-timeout=$${TIMEOUT:-5m} \
 		$${BENCHFLAGS} \
 		$${PKG:-./...}
+
+.PHONY: bench-render-comparison
+bench-render-comparison: ## Compare clean HEAD with BENCH_BASE_REF on the same host
+	bash scripts/bench-render-comparison.sh
 
 bench-gateway-api: ## Run pinned Gateway API benchmark programs against HAPTIC
 	bash scripts/bench-gateway-api.sh
@@ -761,7 +786,7 @@ extract-schemas: ## Extract CustomResourceDefinitions into $(SCHEMA_DIR) for off
 	@echo "  haptic validate -f config.yaml --schema-dir=$(SCHEMA_DIR)"
 	@echo "  HAPTIC_SCHEMA_DIR=$(SCHEMA_DIR) haptic validate -f config.yaml"
 
-validate-helm-libraries: build ## Render the chart and run `controller validate` against the merged HAProxyTemplateConfig (thin wrapper around scripts/test-templates.sh)
+validate-helm-libraries: build ## Render the chart and run `haptic validate` against the merged HAProxyTemplateConfig (thin wrapper around scripts/test-templates.sh)
 	@# Smoke-tests that the chart's bundled libraries merge cleanly and
 	@# that the resulting config passes the controller's offline
 	@# validate path — engine compile + chart validationTests. Used by

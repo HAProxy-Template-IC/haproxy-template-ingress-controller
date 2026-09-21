@@ -1,0 +1,229 @@
+templateSnippets:
+  gateway-policy-waf-settings-empty:
+    incremental:
+      bindingsTemplate: '{}'
+      group: gateway-policy-waf-settings
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  gateway-policy-waf-settings-policies:
+    requires: [routepolicies]
+    incremental:
+      bindingsTemplate: |-
+        {{- toJSON(map[string]any{"routepolicies": map[string]any{
+          "context": map[string]any{
+            "waf": dig(extraContext, "waf"),
+            "spoaHub": dig(extraContext, "spoaHub"),
+            "requestBodyInspection": dig(extraContext, "requestBodyInspection"),
+            "controllerNamespace": dig(extraContext, "controllerNamespace"),
+          },
+        }}) -}}
+      consumes: [haptic-waf-trusted-catalogs, haptic-waf-selfservice-catalogs, gateway-policy-waf-catalogs]
+      group: gateway-policy-waf-settings
+      effects: [publishValue]
+    template: |-
+      {%- import "util-policy-waf-catalog" for BuildWafCatalog -%}
+      {%- import "util-policy-waf-selection" for SelectWafPolicy -%}
+      {%- if dig(item, "spec", "waf") != nil -%}
+        {%%
+          var namespace = dig_string(item, "", "metadata", "namespace")
+          var name = dig_string(item, "", "metadata", "name")
+          var catalog = map[string]any{}
+          var records = map[string]any{}
+          for _, record := range shared.SelectValues("gateway-policy-waf-catalogs", "catalogs") {
+            records[dig_string(record, "", "scope")] = record
+          }
+          var selfServiceRecords = shared.SelectValues("haptic-waf-selfservice-catalogs", "catalogs")
+          for _, scope := range keys(records) { selfServiceRecords = append(selfServiceRecords, records[scope]) }
+          BuildWafCatalog(props["context"], shared.SelectValues("haptic-waf-trusted-catalogs", "catalogs"), selfServiceRecords, catalog)
+          var ref = dig(item, "spec", "waf", "catalogRef")
+          var scope = ""
+          if ref != nil { scope = namespace + "/" + dig_string(ref, "", "name") + "/" + dig_string(ref, "policies.yaml", "key") }
+          var result = map[string]any{}
+          SelectWafPolicy(catalog, scope, dig_string(item, "", "spec", "waf", "policy"), result)
+          if ref != nil {
+            result["dependencies"] = append(toSlice(result["dependencies"]), map[string]any{
+              "store": "configmaps", "namespace": namespace, "name": dig_string(ref, "", "name"),
+            })
+            for _, diagnostic := range toSlice(catalog["diagnostics"]) {
+              if dig_string(diagnostic, "", "scope") == scope {
+                result["error"] = dig_string(diagnostic, "", "message")
+                break
+              }
+            }
+            if catalog["selfServiceEnabled"] != true {
+              result["error"] = "WAF catalog references are disabled. Enable waf.policies.selfService.enabled."
+            }
+          }
+          show shared.Publish("policies", namespace + "/" + name, result)
+        %%}
+      {%- end -%}
+
+  features-002-gateway-waf-settings:
+    template: |-
+      {{- render_glob "gateway-policy-waf-catalogs-*" -}}
+      {{- render_glob "gateway-policy-waf-settings-*" -}}
+
+  gateway-policy-waf-apps-empty:
+    incremental:
+      bindingsTemplate: '{}'
+      group: gateway-policy-waf-apps
+      effects: [publishValue]
+    template: '{{- "" -}}'
+
+  util-waf-route-policy-coraza-scan:
+    template: |-
+      {{- render_glob "gateway-policy-waf-apps-*" -}}
+      {%- var _, _ = shared.ComputeIfAbsent("gatewayPolicyCorazaApplications", func() any {
+        var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} })
+        var gf = shared.Get("globalFeatures").(map[string]any)
+        var applications = map[string]any{}
+        for _, application := range toSlice(gf["sphCorazaApps"]) {
+          var name = dig_string(application, "", "appName")
+          if name == "" { name = dig_string(application, "", "ns") + "/" + dig_string(application, "", "name") }
+          applications[name] = application
+        }
+        for _, application := range incremental_values("gateway-policy-waf-apps", "applications") {
+          applications[dig_string(application, "", "appName")] = application
+        }
+        var sorted = []any{}
+        for _, name := range keys(applications) { sorted = append(sorted, applications[name]) }
+        gf["sphCorazaApps"] = sorted
+        return true
+      }) -%}
+
+  map-haproxy-ingress-waf-821-gateway-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-haproxy-ingress-waf-821-gateway" for GatewayWAFModeMap -%}
+      {{- GatewayWAFModeMap(item, "HTTPRoute") -}}
+
+  map-coraza-app-821-gateway-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-coraza-app-821-gateway" for GatewayWAFAppMap -%}
+      {{- GatewayWAFAppMap(item, "HTTPRoute") -}}
+
+  map-coraza-body-821-gateway-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-coraza-body-821-gateway" for GatewayWAFBodyMap -%}
+      {{- GatewayWAFBodyMap(item, "HTTPRoute") -}}
+
+  gateway-policy-waf-apps-http:
+    requires: [httproutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: httproutes
+      consumes: [gateway-policy-records]
+      group: gateway-policy-waf-apps
+      effects: [publishValue]
+    template: |-
+      {%- import "util-gateway-policy-waf-apps" for PublishGatewayWAFApps -%}
+      {{- PublishGatewayWAFApps(item, "HTTPRoute") -}}
+
+  map-haproxy-ingress-waf-821-gateway-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-haproxy-ingress-waf-821-gateway" for GatewayWAFModeMap -%}
+      {{- GatewayWAFModeMap(item, "GRPCRoute") -}}
+
+  map-coraza-app-821-gateway-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-coraza-app-821-gateway" for GatewayWAFAppMap -%}
+      {{- GatewayWAFAppMap(item, "GRPCRoute") -}}
+
+  map-coraza-body-821-gateway-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+    template: |-
+      {%- import "util-map-coraza-body-821-gateway" for GatewayWAFBodyMap -%}
+      {{- GatewayWAFBodyMap(item, "GRPCRoute") -}}
+
+  gateway-policy-waf-apps-grpc:
+    requires: [grpcroutes]
+    incremental:
+      whenAnyPathExists: ["spec.rules[*].filters", "spec.rules[*].backendRefs[*].filters"]
+      source: grpcroutes
+      consumes: [gateway-policy-records]
+      group: gateway-policy-waf-apps
+      effects: [publishValue]
+    template: |-
+      {%- import "util-gateway-policy-waf-apps" for PublishGatewayWAFApps -%}
+      {{- PublishGatewayWAFApps(item, "GRPCRoute") -}}
+
+  util-map-haproxy-ingress-waf-821-gateway:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro GatewayWAFModeMap(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "waf") != nil -%}
+            {{- "\n" + tostring(record["id"]) + " " + tostring(record["waf"].(map[string]any)["mode"]) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-map-coraza-app-821-gateway:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro GatewayWAFAppMap(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "waf") != nil -%}
+            {{- "\n" + tostring(record["id"]) + " " + tostring(record["waf"].(map[string]any)["appName"]) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-map-coraza-body-821-gateway:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro GatewayWAFBodyMap(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "waf") != nil -%}
+            {{- "\n" + tostring(record["id"]) + " " + dig_string(record, "", "waf", "bodyMode") + " " + dig_string(record, "", "waf", "contentMode") + " " + dig_string(record, "", "waf", "maxBodyBytes") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}
+
+  util-gateway-policy-waf-apps:
+    template: |-
+      {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- macro PublishGatewayWAFApps(route any, kind string) -%}
+        {%- for index, rule := range toSlice(dig(route, "spec", "rules")) -%}
+          {%- var record = map[string]any{} -%}
+          {{- GatewayPolicyDecision(route, kind, rule, index, record) -}}
+          {%- if record["attached"] == true && record["error"] == "" && dig(record, "waf") != nil -%}
+            {{- shared.Publish("applications", dig_string(record, "", "waf", "appName"), dig(record, "waf", "application")) -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end macro -%}

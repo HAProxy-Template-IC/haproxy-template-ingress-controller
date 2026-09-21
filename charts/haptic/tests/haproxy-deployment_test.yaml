@@ -40,11 +40,8 @@ tests:
       - isNull:
           path: spec.template.spec.initContainers[?(@.name=="agent")].startupProbe
       - equal:
-          path: spec.template.spec.initContainers[?(@.name=="agent")].livenessProbe.httpGet.path
-          value: /healthz
-      - equal:
-          path: spec.template.spec.initContainers[?(@.name=="agent")].livenessProbe.httpGet.port
-          value: dataplane
+          path: spec.template.spec.initContainers[?(@.name=="agent")].livenessProbe.exec.command
+          value: [haptic, agent, health, --base-dir=/etc/haproxy]
 
   - it: should point the agent at the tree and sockets the HAProxy container creates
     asserts:
@@ -57,6 +54,8 @@ tests:
             - --master-socket=haproxy-master.sock
             - --worker-socket=haproxy-worker.sock
             - --listen=:5555
+            - --tls-dir=/etc/haptic/agent-tls/..data
+            - --tls-client-name=RELEASE-NAME-haptic-controller-tls.NAMESPACE.svc
             - --metrics-listen=:5557
             - --drain-socket=haptic-drain.sock
             - --drain-quiet-period=2s
@@ -151,7 +150,13 @@ tests:
             emptyDir: {}
       - lengthEqual:
           path: spec.template.spec.initContainers[?(@.name=="agent")].volumeMounts
-          count: 2
+          count: 3
+      - contains:
+          path: spec.template.spec.initContainers[?(@.name=="agent")].volumeMounts
+          content:
+            name: agent-tls
+            mountPath: /etc/haptic/agent-tls
+            readOnly: true
 
   - it: should drop all capabilities for the agent container
     asserts:

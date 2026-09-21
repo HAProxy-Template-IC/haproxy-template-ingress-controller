@@ -46,3 +46,13 @@ func TestCachedNACKRequiresExactWorkDespiteDigestCollision(t *testing.T) {
 	assert.Nil(t, server.cachedNACK(digest, second))
 	assert.Nil(t, server.cachedNACK(digest, nil))
 }
+
+func TestWorkIdentityIncludesEveryOperationBatch(t *testing.T) {
+	manifest := api.Manifest{OpBatches: [][]api.Op{{{Kind: api.OpMapDel, Path: "maps/host.map", Key: "first"}}}}
+	first, err := workIdentity(&manifest)
+	require.NoError(t, err)
+	manifest.OpBatches[0][0].Key = "second"
+	second, err := workIdentity(&manifest)
+	require.NoError(t, err)
+	assert.NotEqual(t, first, second)
+}

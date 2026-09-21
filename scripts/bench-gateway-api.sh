@@ -565,7 +565,7 @@ scan_artifacts_for_live_secrets() {
             {schema_version: 1,
              pass: all(.[]; .pass == true),
              method: .[-1].method,
-             scan_count: ([.[].scan_count // 1] | add),
+             scan_count: (map(.scan_count // 1) | add),
              redacted: ([.[].redacted[]] |
                unique_by([.artifact, (.secrets | tojson)]))}
         ' "$report" "$scan_report" > "$merged" || {
@@ -676,6 +676,26 @@ best_effort_failure_capture() {
     printf '%d\n' "$capture_rc" > "${output}.exit-code.txt"
 }
 
+pod_failure_summary() {
+    jq -c '
+        def states: [.[]? | {
+            name, ready, restarts: .restartCount,
+            waiting: .state.waiting.reason,
+            terminated: .state.terminated.reason, exit_code: .state.terminated.exitCode,
+            previous_termination: .lastState.terminated.reason,
+            previous_exit_code: .lastState.terminated.exitCode
+        }];
+        [.items[] | {
+            name: .metadata.name, phase: .status.phase,
+            containers: (.status.containerStatuses | states),
+            init_containers: (.status.initContainerStatuses | states),
+            limits: [(.spec.initContainers[]?, .spec.containers[]?) | {
+                name, cpu: .resources.limits.cpu, memory: .resources.limits.memory
+            }]
+        }]
+    '
+}
+
 capture_failure_state() {
     local original_rc="$1"
     local output="${BENCH_OUTPUT_DIR}/failure"
@@ -783,6 +803,21 @@ finalize_runner_summary() {
     mv "$temporary" "$summary"
 }
 
+scan_cleanup_artifacts() {
+    local scan scan_rc
+    for scan in 1 2; do
+        scan_rc=0
+        scan_artifacts_for_live_secrets || scan_rc=$?
+        if [[ $scan_rc -eq 1 ]]; then
+            printf 'benchmark: error: benchmark artifacts contained a live Secret value; affected files were redacted\n' >&2
+            return 1
+        elif [[ $scan_rc -ne 0 ]]; then
+            printf 'benchmark: error: artifact Secret scan failed; artifacts are untrusted\n' >&2
+            return 1
+        fi
+    done
+}
+
 cleanup() {
     local rc=$?
     local original_rc=$rc
@@ -837,15 +872,7 @@ cleanup() {
     fi
     if [[ "$output_initialized" == "true" && "$live_secret_scan_ready" == "true" &&
         "$live_secret_capture_failed" == "false" && "$artifact_security_untrusted" == "false" ]]; then
-        local cleanup_scan_rc=0
-        scan_artifacts_for_live_secrets || cleanup_scan_rc=$?
-        if [[ $cleanup_scan_rc -eq 1 ]]; then
-            printf 'benchmark: error: benchmark artifacts contained a live Secret value; affected files were redacted\n' >&2
-            [[ $rc -ne 0 ]] || rc=1
-        elif [[ $cleanup_scan_rc -ne 0 ]]; then
-            printf 'benchmark: error: artifact Secret scan failed; artifacts are untrusted\n' >&2
-            [[ $rc -ne 0 ]] || rc=1
-        fi
+        scan_cleanup_artifacts || [[ $rc -ne 0 ]] || rc=1
     fi
 
     if [[ "$cluster_owned" == "true" && "$BENCH_KEEP_CLUSTER" != "true" ]]; then
@@ -1528,7 +1555,11 @@ bootstrap_cluster() {
                 HAPTIC_E2E_GWAPI_VERSION="$BENCH_GATEWAY_API_VERSION" \
                 HAPTIC_E2E_GWAPI_CHANNEL="$BENCH_GATEWAY_API_CHANNEL" \
                 TEST_RUN_PATTERN='^$' KEEP_CLUSTER=true make -C "$PROJECT_ROOT" test-e2e || bootstrap_rc=$?
-        [[ $bootstrap_rc -eq 0 ]] || die "isolated HAPTIC e2e bootstrap failed"
+        if [[ $bootstrap_rc -ne 0 ]]; then
+            kubectl get pods -n "$RELEASE_NAMESPACE" -o json 2>/dev/null | pod_failure_summary >&2 || \
+                printf 'benchmark: pod failure summary is unavailable\n' >&2
+            die "isolated HAPTIC e2e bootstrap failed"
+        fi
         cluster_state="$(kind_cluster_state "$CLUSTER_NAME")" || \
             die "could not verify the created kind cluster"
         [[ "$cluster_state" == "present" ]] || die "e2e bootstrap did not create ${CLUSTER_NAME}"

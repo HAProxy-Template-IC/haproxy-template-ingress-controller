@@ -109,7 +109,7 @@ func sealContent(root *contentRoot, final string) *Content {
 	content := &Content{
 		root:   root,
 		bytes:  len(final),
-		digest: sha256.Sum256([]byte(final)),
+		digest: digestString(final),
 	}
 	content.seal = content
 	content.auth = contentAuthentication{
@@ -119,6 +119,19 @@ func sealContent(root *contentRoot, final string) *Content {
 		digest: content.digest,
 	}
 	return content
+}
+
+func digestString(value string) [sha256.Size]byte {
+	hasher := sha256.New()
+	var buffer [4096]byte
+	for value != "" {
+		written := copy(buffer[:], value)
+		_, _ = hasher.Write(buffer[:written])
+		value = value[written:]
+	}
+	var digest [sha256.Size]byte
+	hasher.Sum(digest[:0])
+	return digest
 }
 
 // ValidateAuthentication verifies the exact immutable representation in constant time.

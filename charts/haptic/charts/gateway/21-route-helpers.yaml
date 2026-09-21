@@ -1,8 +1,38 @@
 templateSnippets:
+  util-gateway-route-identity:
+    template: |
+      {%- macro GatewayRoutePrefix(kind string, namespace string, name string) string -%}
+        {%- var prefix = "" -%}
+        {%- if kind == "HTTPRoute" -%}
+          {%- prefix = "h" -%}
+        {%- else if kind == "GRPCRoute" -%}
+          {%- prefix = "g" -%}
+        {%- else -%}
+          {{- fail("Route " + namespace + "/" + name + " cannot generate a rule ID. Set kind to HTTPRoute or GRPCRoute.") -}}
+        {%- end -%}
+        {{- prefix + "_" + namespace + "_" + name -}}
+      {%- end macro -%}
+      {%- macro GatewayRuleID(kind string, namespace string, name string, index int) string -%}
+        {{- GatewayRoutePrefix(kind, namespace, name) + "_" + tostring(index) -}}
+      {%- end macro -%}
+
   util-backend-name-gateway:
     template: |
       {%- macro BackendNameGateway(route any, backend any) string -%}
-      gtw_{{ route | dig("metadata", "namespace") | fallback("") }}_{{ route | dig("metadata", "name") | fallback("") }}_{{ backend | dig("name") | fallback("") }}_{{ backend | dig("port") | fallback("") }}
+        {%- var namespace = dig_string(route, "", "metadata", "namespace") -%}
+        {%- var kind = dig_string(route, "", "kind") -%}
+        {%- var name = dig_string(route, "", "metadata", "name") -%}
+        {%- if kind != "HTTPRoute" && kind != "GRPCRoute" -%}
+          {{- fail("Route " + namespace + "/" + name + " cannot generate an HTTP backend. Set kind to HTTPRoute or GRPCRoute.") -}}
+        {%- end -%}
+        {%- var targetNamespace = dig_string(backend, namespace, "namespace") -%}
+        {%- if targetNamespace == "" -%}{%- targetNamespace = namespace -%}{%- end -%}
+        {%- var prefix = "gw_h" -%}
+        {%- if kind == "GRPCRoute" -%}{%- prefix = "gw_g" -%}{%- end -%}
+        {%- var identity = prefix + "_" + namespace + "_" + name -%}
+        {%- if targetNamespace != namespace -%}{%- identity += "_" + targetNamespace -%}{%- end -%}
+        {{- identity + "_" + dig_string(backend, "", "name") + "_" +
+            dig_string(backend, "", "port") -}}
       {%- end macro -%}
 
   util-resource-helpers:

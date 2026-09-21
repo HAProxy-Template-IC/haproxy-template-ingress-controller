@@ -30,12 +30,13 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
 	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/podclient"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // DebugClient reaches the controller's loopback-only debug endpoints.
 type DebugClient struct {
-	loopback  *testutil.LoopbackPodClient
+	loopback  *podclient.Client
 	haptic    hapticclient.Interface
 	namespace string
 }
@@ -49,7 +50,7 @@ func NewDebugClient(config *rest.Config, clientset kubernetes.Interface, namespa
 		return nil, fmt.Errorf("create HAPTIC client: %w", err)
 	}
 	return &DebugClient{
-		loopback: testutil.NewLoopbackPodClient(
+		loopback: podclient.New(
 			config,
 			clientset,
 			namespace,

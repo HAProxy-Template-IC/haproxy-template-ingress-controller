@@ -45,13 +45,17 @@ their upgrade path was dropped two releases ago.
 
 ### Library Loading and Merging
 
+Helm helper definitions live in the unconditional `helm-helpers` library
+dependency. Helm packages this source but does not duplicate dependency source
+in its release Secret. Resource templates remain in the parent chart.
+
 The chart uses a library-based architecture where multiple YAML files become one
 effective configuration. **The chart no longer merges them.** It renders one
 `HAProxyTemplateLibrary` per enabled library plus a single
 `HAProxyTemplateConfig` for the operator's own config, and the controller merges
 the set at startup in the order that config's `spec.libraryRefs` declares (see
 ADR-0017). `CRD_NAME` carries one name and no ordering. Read the `$libraryFiles`
-list inside `haptic.prepareLibraries` (`templates/_libraries.tpl`) for the
+list inside `haptic.prepareLibraries` (`charts/helm-helpers/templates/_libraries.tpl`) for the
 canonical order:
 
 ```
@@ -60,22 +64,30 @@ Merge Order (lowest to highest priority):
  2. kubernetes-backends     - Kubernetes Service/EndpointSlice backend capability
  3. ssl                     - HTTPS frontend, TLS certs, SSL passthrough infra
  4. ingress                 - Kubernetes Ingress support
- 5. gateway                 - Gateway API (optional watches resolved at runtime)
- 6. ingress-annotations-compat - Shared scaffold for Ingress vendor annotation libraries (level 2.5)
- 7. governance              - Declarative constraints over any watched resource
- 8. haptic-annotations      - haproxy-haptic.org/* native vocabulary
- 9. haproxytech             - haproxy.org/* annotation compatibility
-10. haproxy-ingress         - haproxy-ingress.github.io/* annotation compatibility
-11. nginx-ingress           - nginx.ingress.kubernetes.io/* compat (disabled by default)
-12. spoa-hub                - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
-13. vector                  - Vector sidecar config (reads earlier libraries' decisions)
-14. controller.config.*     - User overrides from values.yaml (highest priority)
+ 5. http-policies           - Shared HTTP authentication, quota, cache, and WAF engines
+ 6. gateway                 - Gateway API (optional watches resolved at runtime)
+ 7. gateway-policies        - Authentication and traffic policies for Gateway routes
+ 8. ingress-annotations-compat - Shared scaffold for Ingress vendor annotation libraries
+ 9. governance              - Declarative constraints over any watched resource
+ 10. haptic-annotations      - haproxy-haptic.org/* native vocabulary
+11. haproxytech             - haproxy.org/* annotation compatibility
+12. haproxy-ingress         - haproxy-ingress.github.io/* annotation compatibility
+13. nginx-ingress           - nginx.ingress.kubernetes.io/* compat (disabled by default)
+14. spoa-hub                - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
+15. vector                  - Vector sidecar config (reads earlier libraries' decisions)
+16. controller.config.*     - User overrides from values.yaml (highest priority)
 ```
 
 Each entry is a subchart under `charts/haptic/charts/<name>/`, holding either a
 single `library.yaml` or an `_index.yaml` plus numbered fragments.
 
-Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false — a skipped library renders no object at all. The `spoa-hub` library is also auto-loaded whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 6-10 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `ingress-annotations-compat.yaml` (level 2.5) provides Ingress-scoped macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
+Library `_helm_load.enable` predicates select the emitted objects. Most use a
+`controller.templateLibraries.<name>.enabled` flag. `http-policies` loads when
+Gateway, native annotations, or the Ingress compatibility scaffold needs it;
+`spoa-hub` also loads when the sidecar is enabled. The shared HTTP engines consume
+normalized policy records. Resource adapters stay in their Gateway or annotation
+libraries. The Ingress compatibility scaffold provides Ingress-scoped macros for
+SSL passthrough and CIDR access control; see ADR-0003.
 
 Annotation libraries keep playground-only classification data under `_migrationCoverage`. The playground build extracts one asset per source directly from those declarations; the generic underscore-key strip ensures they never enter a config or library CR.
 
@@ -83,7 +95,7 @@ Library objects are named `<controller.configName>-<library slug>`, with the ope
 
 The frontend path-matching order is selected at base-load time by `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` (`default` or `last`). When `last`, the base library's `_helm_load` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before rendering so it never appears in the output.
 
-**Loader logic** (`templates/_libraries.tpl`, `define "haptic.prepareLibraries"`):
+**Loader logic** (`charts/helm-helpers/templates/_libraries.tpl`, `define "haptic.prepareLibraries"`):
 
 The loader iterates a fixed ordered list of library files. The order is a system property and lives in `_libraries.tpl`. Per-library loading rules — enable predicates and any chart-time mutations of the parsed YAML — live next to the resources they parameterize, in each library's top-level `_helm_load:` block. Every underscore-prefixed top-level key is stripped before rendering, so neither `_helm_load` nor `ssl.yaml`'s `_test_tls_*` YAML-anchor scratch values reach an object.
 

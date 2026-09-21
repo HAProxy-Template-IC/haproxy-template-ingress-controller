@@ -325,16 +325,16 @@ func validateDocumentPlanDeltaAlignment(
 	if err != nil {
 		return err
 	}
-	planChanges, err := planDelta.Changes()
+	planChanges, err := planDelta.SectionChanges()
 	if err != nil {
 		return err
 	}
-	if len(documentChanges) != len(planChanges.Sections) {
+	if len(documentChanges) != len(planChanges) {
 		return errors.New("planRegistry: document and plan section deltas are not aligned")
 	}
 	for index := range documentChanges {
 		documentChange := documentChanges[index]
-		planChange := planChanges.Sections[index]
+		planChange := planChanges[index]
 		beforePresent := documentChange.Before.ValidateAuthentication() == nil
 		afterPresent := documentChange.After.ValidateAuthentication() == nil
 		if documentChange.Index != planChange.Index ||

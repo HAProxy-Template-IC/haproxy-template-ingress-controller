@@ -94,6 +94,7 @@ type podOutcome struct {
 	// ran — a contract skew, a dropped baseline — ahead of the diff's reasons.
 	notes     []string
 	converged bool
+	observed  bool
 }
 
 // reasons are the notes and the diff's reasons, most significant first.
@@ -171,10 +172,12 @@ type podApply struct {
 	phases   events.DeployPhases
 }
 
-// applyOnce composes the decision for the pod's current state and sends every
-// chunk of it. Each chunk is fenced on what the previous one applied.
+// applyOnce sends the complete decision as one fenced agent transaction.
 func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutcome, error) {
 	authority := podKey(attempt.endpoint)
+	if outcome := c.observeReload(attempt, authority); outcome != nil {
+		return outcome, nil
+	}
 	diffStarted := time.Now()
 	decision := attempt.req.decisionFor(attempt.state, c.plans, authority)
 	attempt.phases.DiffMs += time.Since(diffStarted).Milliseconds()
@@ -182,46 +185,38 @@ func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutco
 		c.Logger().Debug("Reload required: this change cannot run as runtime ops",
 			"pod", attempt.endpoint.PodName, "reasons", decision.Reasons)
 	}
-	outcome := &podOutcome{decision: decision}
-	prev := fenceOf(attempt.state)
-	validated := attempt.req.validatedPlanFor(authority, attempt.state)
-
 	chunks := decision.Chunk()
+	if !attempt.full && len(chunks) > 1 && !slices.Contains(attempt.state.Features, api.FeatureRuntimeBatches) {
+		decision = deployplan.Decision{
+			Verdict: deployplan.VerdictReload, Mode: api.ModeReload, Files: decision.Files,
+			Reasons: []string{"agent does not support runtime batches in one transaction"},
+		}
+		chunks = nil
+	}
 	if attempt.full || len(chunks) == 0 {
 		chunks = [][]api.Op{nil}
 	}
-	// The blob rides the last chunk only. Every successful chunk gets a fresh
-	// agent role proof, so only the final chunk can bind the stored blob to the
-	// role the completed deployment reports.
+	outcome := &podOutcome{decision: decision}
+	prev := fenceOf(attempt.state)
+	validated := attempt.req.validatedPlanFor(authority, attempt.state)
+	manifest := attempt.req.manifest(&decision, chunks[0], &prev, attempt.full, validated)
+	manifest.OpBatches = chunks[1:]
 	blob := attempt.sendsPlanBlob(c.plans.Baseline(authority, attempt.state),
 		c.keeper.Delivers(attempt.endpoint) && decision.Verdict != deployplan.VerdictReload)
-	for i, ops := range chunks {
-		manifest := attempt.req.manifest(&decision, ops, &prev, attempt.full, validated)
-		if i > 0 {
-			manifest.InPlaceOps = nil
-		}
-		result, err := c.send(ctx, attempt, manifest, blob && i == len(chunks)-1)
-		if err != nil {
-			return nil, err
-		}
-		outcome.result = result
-		outcome.sent = append(outcome.sent, ops...)
-		if !result.OK {
-			return outcome, nil
-		}
-		if err := c.bindApplyResult(attempt, authority, &decision, result); err != nil {
-			return nil, err
-		}
-		if !blob && i == len(chunks)-1 && result.AppliedPlanID == attempt.req.planID {
-			c.keeper.Offer(attempt.endpoint, result.AppliedPlanID, result.AppliedPlanProof, attempt.req.blob)
-		}
-		prev = fence{
-			planID:         result.AppliedPlanID,
-			planProof:      result.AppliedPlanProof,
-			token:          result.AppliedToken,
-			workerOps:      result.WorkerOpsPlanID,
-			workerOpsProof: result.WorkerOpsPlanProof,
-		}
+	result, err := c.send(ctx, attempt, manifest, blob)
+	if err != nil {
+		return nil, err
+	}
+	outcome.result = result
+	outcome.sent = manifest.RuntimeOps()
+	if !result.OK {
+		return outcome, nil
+	}
+	if err := c.bindApplyResult(attempt, authority, &decision, result); err != nil {
+		return nil, err
+	}
+	if !blob && result.AppliedPlanID == attempt.req.planID {
+		c.keeper.Offer(attempt.endpoint, result.AppliedPlanID, result.AppliedPlanProof, attempt.req.blob)
 	}
 	outcome.converged = outcome.result.OK &&
 		outcome.result.AppliedPlanID == attempt.req.planID &&
@@ -465,7 +460,6 @@ func (r *deployRequest) manifest(
 	return manifest
 }
 
-// addApplyTiming sums the agent's split over the chunks of one apply.
 func addApplyTiming(sum, next api.ApplyTiming) api.ApplyTiming {
 	return api.ApplyTiming{
 		StageMs:  sum.StageMs + next.StageMs,

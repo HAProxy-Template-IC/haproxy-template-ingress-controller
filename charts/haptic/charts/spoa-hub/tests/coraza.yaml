@@ -282,7 +282,7 @@ validationTests:
     # fixture's nginx.ingress.kubernetes.io/* annotations are scanned only by
     # nginx-ingress's util-nginx-ingress-coraza-scan.
     _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
-    description: coraza-app.map carries one identity row per Ingress with a modsecurity-snippet, keyed by `<namespace>/<name>` (resource id). The frontend filter sets `txn.coraza_app` from `var(txn.resource_id),map(..
+    description: WAF dispatch uses the policy identity map.
     extraContext: *extracontextCoraza
     fixtures:
       services:

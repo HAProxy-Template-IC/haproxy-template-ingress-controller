@@ -1,0 +1,4 @@
+apiVersion: v2
+name: http-policies
+description: Shared HTTP authentication and policy enforcement.
+version: 0.1.0

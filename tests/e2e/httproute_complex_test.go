@@ -44,7 +44,7 @@ func TestHTTPRoutePrecedence(t *testing.T) {
 	t.Parallel()
 
 	host := "httproute-precedence.localdev.me"
-	var fwd GatewayForward
+	var fwd ServiceForward
 
 	feature := features.New("HTTPRoute: match precedence").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -86,14 +86,6 @@ func TestHTTPRoutePrecedence(t *testing.T) {
 				},
 			})
 
-			// Gate on the controller deploying THIS route to every HAProxy pod
-			// before asserting. The marker is route-gated (issue #71): the bare
-			// namespace already enters spec.Content via the Gateway's
-			// route-independent typed-access-smoke comment (rendered when the
-			// Gateway is created, before this route), so it would pass off a
-			// pre-route render and race the route's own throttled deploy. The
-			// fragment "gtw_<ns>_echo-precedence_" appears only once this route's
-			// backends render; <ns> is unique per test.
 			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-precedence")
 			return ctx
 		}).
@@ -138,7 +130,7 @@ func TestHTTPRouteCombined(t *testing.T) {
 	t.Parallel()
 
 	host := "httproute-combined.localdev.me"
-	var fwd GatewayForward
+	var fwd ServiceForward
 
 	feature := features.New("HTTPRoute: combined matchers (path + method + header + query regex)").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -169,14 +161,6 @@ func TestHTTPRouteCombined(t *testing.T) {
 				},
 			})
 
-			// Gate on the controller deploying THIS route to every HAProxy pod
-			// before asserting. The marker is route-gated (issue #71): the bare
-			// namespace already enters spec.Content via the Gateway's
-			// route-independent typed-access-smoke comment (rendered when the
-			// Gateway is created, before this route), so it would pass off a
-			// pre-route render and race the route's own throttled deploy. The
-			// fragment "gtw_<ns>_echo-combined_" appears only once this route's
-			// backends render; <ns> is unique per test.
 			waitForRouteDeployed(ctx, t, client, httpRouteGVR, ns, "echo-combined")
 			return ctx
 		}).

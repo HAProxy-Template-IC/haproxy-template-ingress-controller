@@ -1,0 +1,461 @@
+{
+  "schema_version": 1,
+  "measured_at": "2026-09-20",
+  "release_evidence": false,
+  "source": {
+    "commit": "d11b94d1bbe69b30623e829e2fad11638eca0cfe",
+    "source_hash": "eb26cc4a92f6",
+    "binary_sha256": "70028d28808ba08c3e332b9a89c5653a3e31c7e529e4c7f942872220301ded60",
+    "rollout_image_id": "sha256:b91f27f834acb8eea42f53ad9363b7caf303e3bab787256ac28c546866a6fd31",
+    "controller_runtime_image_ids": [
+      "sha256:0895a6360a788a1ce65c934286fd06946366c728411bbf3d110016c813730b4f"
+    ]
+  },
+  "upstream": {
+    "benchmark_repository": "https://github.com/howardjohn/gateway-api-bench.git",
+    "benchmark_commit": "e81292ed876472804e0a2245876a7c445ab80881",
+    "pilot_load_module": "github.com/howardjohn/pilot-load v0.1.5-0.20251027172835-53e11f0a9e0d h1:WCYUeRN9X4x7x3vlOXhTVBGCsq5A8R5WGj/Kqd0XulU=",
+    "gateway_api": {
+      "version": "v1.4.0",
+      "channel": "experimental",
+      "manifest": "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/experimental-install.yaml",
+      "published_comparison_version": "v1.4.0",
+      "chart_experimental_validation_required": true,
+      "published_bundle_inputs_match": true
+    }
+  },
+  "environment": {
+    "cpu": "AMD Ryzen 7 5700X3D",
+    "logical_cpus": 16,
+    "memory_gib": 31.26,
+    "kubernetes": "v1.33.0",
+    "haproxy": "3.4.4",
+    "provenance_class": "fresh-coscheduled-non-comparable",
+    "comparison": {
+      "public_comparison": "ballpark-only",
+      "published_workload_inputs_match": true,
+      "controlled_default_profile": false,
+      "scope": "selected scenarios using pinned upstream programs in an isolated HAPTIC run",
+      "profile_deviation_reasons": [
+        "co-scheduled Kind clusters explicitly allowed; CPU, memory, and latency are non-comparable"
+      ],
+      "methodology_limits": [
+        "public report results are joined multi-controller runs with shared status contention; this runner targets isolated HAPTIC",
+        "probe and routechange logs are parsed directly instead of imported through the public VictoriaMetrics report pipeline",
+        "probe and routechange pre-create the exact upstream backend and wait for a ready endpoint, so route 0 measures propagation rather than backend pod start-up",
+        "routechange adds a strict per-HAProxy backendRef ResponseHeaderModifier observer as a separate HAPTIC gate",
+        "scale substitutes the HAPTIC target and adds HAPTIC readiness proof before a runner-defined 10-minute steady analysis window"
+      ],
+      "defaults": {
+        "gateways": "haptic-bench/haptic",
+        "haproxy_version": "3.4",
+        "probe_routes": 3000,
+        "routechange": {
+          "iterations": 20,
+          "grace_period": "200ms"
+        },
+        "scale": {
+          "namespaces": 50,
+          "routes_per_namespace": 100,
+          "duration": "10m"
+        }
+      }
+    },
+    "timings": {
+      "requested": {
+        "min_deployment_interval": null,
+        "gateway_and_httproute_debounce": null
+      },
+      "product_defaults": {
+        "min_deployment_interval": "5s",
+        "watcher_debounce": "100ms"
+      },
+      "configured": {
+        "min_deployment_interval": "5s",
+        "gateway_debounce": null,
+        "httproute_debounce": null
+      },
+      "effective": {
+        "min_deployment_interval": "5s",
+        "gateway_debounce": "100ms",
+        "httproute_debounce": "100ms"
+      }
+    },
+    "resource_limit_methodology": "no container CPU or memory limits on measured HAPTIC pods",
+    "maintenance": {
+      "recorded_at": "2026-09-20T08:03:56.789288+00:00",
+      "phase": "probe",
+      "operations": [
+        "Removed superseded task image tags project-priorities-20260920d and project-priorities-20260920e after preserving their provenance and binaries",
+        "Removed ignored vendor dependency directories from two idle task worktrees",
+        "Moved ignored review/bin and combined/debug-logs directories to /tmp with symlinks preserving their original paths; no evidence removed.",
+        "During scale startup, targeted only private, unused BuildKit record 2xp24c1171yfhiinv7xy8a9cl from the task candidate F build at 2026-09-20 07:16:47 UTC; source inventory and cleanup output retained.",
+        "The initial additional boolean filters selected nothing. Exact-ID removal of record 2xp24c1171yfhiinv7xy8a9cl reclaimed a reported 1.747 GB of cache, leaving 593 MiB free on the compressed filesystem. Selected record t271yhpwk1xwy7h6iboujz1jc belongs to this benchmark build at 07:44:46 UTC and is also private/reclaimable; its exact-ID cleanup is retained separately.",
+        "The second exact-ID cleanup reclaimed a reported 1.747 GB; available filesystem space reached 1.2 GiB. Restored bin/ and debug-logs/ as ignored directories containing links to their preserved /tmp artifacts."
+      ],
+      "reason": "Host filesystem had less than 500 MiB available.",
+      "measurement_limit": "Host resource usage includes this maintenance; the run is already classified fresh-coscheduled-non-comparable."
+    }
+  },
+  "runner_summary": {
+    "schema_version": 1,
+    "finished_at": "2026-09-20T08:29:21.375498515Z",
+    "harness": {
+      "pass": false,
+      "status": "invalid",
+      "final_exit_code": 1,
+      "secret_inventory_trusted": true,
+      "process_exit_semantics": "nonzero means harness, provenance, or evidence invalid; measured gaps remain structured results"
+    },
+    "public_comparison": "ballpark-only",
+    "scenarios": [],
+    "measured_result": null
+  },
+  "secret_scan": {
+    "method": "bytewise raw-base64 and decoded captured sensitive Secret value scan; HAPTIC SSL path metadata excluded",
+    "pass": true,
+    "redacted": [],
+    "scan_count": 1,
+    "schema_version": 1
+  },
+  "probe": {
+    "pass": true,
+    "measurement_valid": true,
+    "observed": {
+      "duplicate_samples": 0,
+      "error_count": 0,
+      "gateways": 1,
+      "routes": 3000,
+      "sample_lines": 3000,
+      "samples": 3000
+    },
+    "gateways": {
+      "haptic-bench/haptic": {
+        "count": 3000,
+        "error_count": 0,
+        "latency_ns": {
+          "max": 260852666,
+          "mean": 82524625.65666667,
+          "median": 80886828.5,
+          "p90": 107252625,
+          "p95": 118061306,
+          "p99": 159022705
+        }
+      }
+    },
+    "upstream_program": {
+      "pass": true,
+      "exit_code": 0,
+      "evidence_complete": true
+    },
+    "resource_analysis": {
+      "artifact": "resources.json",
+      "status": "passed",
+      "gating": true,
+      "pass": true
+    },
+    "supervised_children_pass": true,
+    "lifecycle_outcomes_pass": true,
+    "resources": {
+      "pass": true,
+      "window": {
+        "end_unix_seconds": 1789891627.971,
+        "evaluation_step_seconds": 5,
+        "interval_count": 173,
+        "max_source_age_seconds": 20,
+        "requested_end_unix_seconds": 1789891632.52119,
+        "requested_start_unix_seconds": 1789890742.9711657,
+        "sample_count": 174,
+        "source_sample_boundary": "(start,end]",
+        "start_unix_seconds": 1789890762.971,
+        "window_seconds": 865
+      },
+      "upstream_compatible_pod_cgroups": {
+        "components": {
+          "controller": {
+            "cpu_cores": {
+              "counter_delta_seconds": 1986.597511,
+              "last": 4.9479936,
+              "max": 9.0134468,
+              "mean": 2.2966445213872833,
+              "normalized_cores": 2.2966445213872833,
+              "p95": 7.3015728,
+              "window_seconds": 865
+            },
+            "pod_count": 2,
+            "working_set_bytes": {
+              "last": 3578970112,
+              "max": 5454798848,
+              "mean": 3354513455.0804596,
+              "p95": 5347184640
+            }
+          },
+          "loadbalancer": {
+            "cpu_cores": {
+              "counter_delta_seconds": 699.573753,
+              "last": 0,
+              "max": 8.2181828,
+              "mean": 0.8087557838150289,
+              "normalized_cores": 0.8087557838150289,
+              "p95": 2.5346072,
+              "window_seconds": 865
+            },
+            "pod_count": 2,
+            "working_set_bytes": {
+              "last": 432353280,
+              "max": 506925056,
+              "mean": 445003776,
+              "p95": 500162560
+            }
+          }
+        },
+        "fleet": {
+          "cpu_cores": {
+            "counter_delta_seconds": 2686.171264,
+            "last": 4.9479936,
+            "max": 16.4079312,
+            "mean": 3.1054003052023122,
+            "normalized_cores": 3.1054003052023122,
+            "p95": 8.2582902,
+            "window_seconds": 865
+          },
+          "pod_count": 4,
+          "working_set_bytes": {
+            "last": 4011323392,
+            "max": 5961723904,
+            "mean": 3799517231.0804596,
+            "p95": 5841510400
+          }
+        },
+        "pods": [
+          {
+            "component": "controller",
+            "cpu_cores": {
+              "counter_delta_seconds": 1378.19295,
+              "last": 0,
+              "max": 8.1897484,
+              "mean": 1.5932866473988438,
+              "normalized_cores": 1.5932866473988438,
+              "p95": 6.324684,
+              "window_seconds": 865
+            },
+            "namespace": "haptic",
+            "pod": "haptic-controller-6c466d8b9b-5kf99",
+            "pod_uid": "8b0ae83a-1093-4397-a91a-33c9b12e0258",
+            "working_set_bytes": {
+              "last": 2510524416,
+              "max": 3544944640,
+              "mean": 2118862683.2183907,
+              "p95": 3484590080
+            }
+          },
+          {
+            "component": "controller",
+            "cpu_cores": {
+              "counter_delta_seconds": 608.404561,
+              "last": 4.9479936,
+              "max": 5.5214776,
+              "mean": 0.7033578739884393,
+              "normalized_cores": 0.7033578739884393,
+              "p95": 2.6224162,
+              "window_seconds": 865
+            },
+            "namespace": "haptic",
+            "pod": "haptic-controller-6c466d8b9b-6hngm",
+            "pod_uid": "da421303-ca39-43be-b201-f6aed6839fad",
+            "working_set_bytes": {
+              "last": 1068445696,
+              "max": 1970208768,
+              "mean": 1235650771.862069,
+              "p95": 1857122304
+            }
+          },
+          {
+            "component": "loadbalancer",
+            "cpu_cores": {
+              "counter_delta_seconds": 325.500761,
+              "last": 0,
+              "max": 4.529576,
+              "mean": 0.3763014578034682,
+              "normalized_cores": 0.3763014578034682,
+              "p95": 1.3666372,
+              "window_seconds": 865
+            },
+            "namespace": "haptic",
+            "pod": "haptic-haproxy-dd77cdf78-2nj24",
+            "pod_uid": "8dd6c4ce-8b64-4e93-9836-b114a13cf055",
+            "working_set_bytes": {
+              "last": 205197312,
+              "max": 240046080,
+              "mean": 208056932.04597703,
+              "p95": 233410560
+            }
+          },
+          {
+            "component": "loadbalancer",
+            "cpu_cores": {
+              "counter_delta_seconds": 374.072992,
+              "last": 0,
+              "max": 4.184447,
+              "mean": 0.4324543260115607,
+              "normalized_cores": 0.4324543260115607,
+              "p95": 1.5765892,
+              "window_seconds": 865
+            },
+            "namespace": "haptic",
+            "pod": "haptic-haproxy-dd77cdf78-rcjt6",
+            "pod_uid": "0068f7ac-ae75-4a8b-86c9-00a5a2c39600",
+            "working_set_bytes": {
+              "last": 227155968,
+              "max": 269398016,
+              "mean": 236946843.95402297,
+              "p95": 266878976
+            }
+          }
+        ],
+        "series_scope": "cAdvisor pod cgroups selected by container=\"\""
+      }
+    }
+  },
+  "scale": {
+    "status": "invalid",
+    "measurement_complete": false,
+    "steady_window_started": false,
+    "expected_routes": 5000,
+    "maximum_sampled_route_count": 4690,
+    "interruption": {
+      "time": "2026-09-20T08:26:35Z",
+      "cause": "Host earlyoom sent SIGTERM to the controller after available memory fell below its 10-percent threshold with swap full.",
+      "controller_resident_memory_mib_at_signal": 3725,
+      "kubernetes_exit_code": 0,
+      "controller_restarts": 1,
+      "host_journal_sha256": "a141a03473b04b68383b20a9538774be7280a2617036c69c2f224167f7cde775"
+    },
+    "capacity_claim": null
+  },
+  "methodology": [
+    "Probe latency begins after Kubernetes apply returns and excludes admission time.",
+    "The completed probe has its own passing evidence; the overall run is invalid because scale was interrupted by host memory pressure.",
+    "Probe resources cover the sampled create-through-cleanup window, not 3000-route steady state.",
+    "The 5000-route workload was not reduced and the 20-minute deadline was not extended. No scale steady-state resource figures were produced."
+  ],
+  "artifact_sha256": {
+    "metadata.json": "229806d944d419277876f0a858b2e1d82fcf7e68795dad5aacfa7f39b286e930",
+    "runner-summary.json": "52d1de48f225abe254dcda504f55ba32391ab51cacc5cfee956baeed626e5a1d",
+    "probe/upstream.log": "79e8bb20e7ffafefea762bfa37c1f32b7be525983f709f23d0a68e70f5aa20cf",
+    "probe/analysis.json": "977cc7f014c69311c3960352125f25836700cf5d86f07dafbf38db2308856bac",
+    "probe/resources.json": "bce90e49f4594bb88a83ee7e52313bfbb0bf2eb5e74991b74b3e34da96c74d33",
+    "scale/upstream.log": "b387b25be0ab5dd10a37cbc0a65dc88af79d8c51b2c5e12587f5a068affc4601",
+    "scale/route-counts.txt": "9dfe8211402eb72bbe9ff18567e7fa4cd5ab1d2d5ae637bad6f94d1a1c1748c0",
+    "cluster/controller-runtime/verified.json": "6d765516b2222a94116c40ca43ddda4dde493ad382f6ec8c3511771177d170c2",
+    "cluster/artifact-secret-scan.json": "7ceda144636023fd09ae024b44be1e10ae586cf72130b871d2f1f527d4e42e1a"
+  },
+  "routechange_followup": {
+    "fresh_cluster": true,
+    "provenance_class": "fresh-coscheduled-non-comparable",
+    "source": {
+      "source_hash": "eb26cc4a92f6",
+      "binary_sha256": "70028d28808ba08c3e332b9a89c5653a3e31c7e529e4c7f942872220301ded60",
+      "rollout_id": "sha256:fa1270923cb008c592636a8bd755165dbff79c7d5daf19f55404ba3bd953d91d"
+    },
+    "workload": {
+      "iterations": 20,
+      "grace_period": "200ms",
+      "timeout": "10m"
+    },
+    "timings": {
+      "requested": {
+        "min_deployment_interval": null,
+        "gateway_and_httproute_debounce": null
+      },
+      "product_defaults": {
+        "min_deployment_interval": "5s",
+        "watcher_debounce": "100ms"
+      },
+      "configured": {
+        "min_deployment_interval": "5s",
+        "gateway_debounce": null,
+        "httproute_debounce": null
+      },
+      "effective": {
+        "min_deployment_interval": "5s",
+        "gateway_debounce": "100ms",
+        "httproute_debounce": "100ms"
+      }
+    },
+    "harness": {
+      "pass": true,
+      "status": "passed",
+      "process_exit_semantics": "nonzero means harness, provenance, or evidence invalid; measured gaps remain structured results",
+      "final_exit_code": 0,
+      "secret_inventory_trusted": true
+    },
+    "measured_result": {
+      "pass": true,
+      "negative_scenarios": []
+    },
+    "analysis": {
+      "pass": true,
+      "measurement_valid": true,
+      "iterations": 20,
+      "grace_period": "200ms",
+      "upstream_program": {
+        "pass": true,
+        "exit_code": 0,
+        "unexpected_statuses": 0,
+        "request_failures": 0,
+        "observed_churn_changes": 20,
+        "terminal_report_complete": true
+      },
+      "haptic_non_vacuity": {
+        "pass": true,
+        "observer_exit_code": 0,
+        "proof_artifact": "live-dataplane-intermediate.json",
+        "exact_workload_semantics": "backendRef ResponseHeaderModifier",
+        "evidence_scope": "strict live-header observation proves the exact route update reached every HAProxy pod",
+        "product_gap_classification": null
+      },
+      "request_counts": {
+        "per_gateway": [
+          {
+            "gateway": "haptic-bench/haptic",
+            "requests": 20283
+          }
+        ],
+        "total_requests": 20283,
+        "expected_gateways": [
+          "haptic-bench/haptic"
+        ],
+        "terminal_report_lines": 1,
+        "pass": true
+      },
+      "workload_duration_seconds": 7.196944952,
+      "resource_analysis": {
+        "artifact": "resources.json",
+        "status": "not_gated",
+        "gating": false,
+        "pass": null
+      },
+      "reload_delta": 2
+    },
+    "supervised_children_pass": true,
+    "lifecycle_outcomes_pass": true,
+    "secret_scan": {
+      "method": "bytewise raw-base64 and decoded captured sensitive Secret value scan; HAPTIC SSL path metadata excluded",
+      "pass": true,
+      "redacted": [],
+      "scan_count": 1,
+      "schema_version": 1
+    },
+    "artifact_sha256": {
+      "metadata.json": "b4e50f39376d7b4cff1a9eaa80bec3141fe92d27f1898299a66ca128a428360f",
+      "runner-summary.json": "7ea534f8220fd583a23b791e47427cdc0f72fca00390bd67063aa30357cb93ae",
+      "routechange/upstream.log": "7afa64b3d38dd924ad9bb1d3dc4994256d58143900d5ee863ac2d10086209e7f",
+      "routechange/analysis.json": "bd39092ec7aff001ea1b6173de47081123d781761d70fc8d7e5db32a45fa861e",
+      "routechange/resources.json": "4d05f0211738ddd687403f6e49ecb7f6dc1488115753033517440cc7ef270e42",
+      "routechange/live-dataplane-intermediate.json": "d52e318a45c1ee383286d9f7b1251d7cbd7cc8affae4e6bef4475ed631e7416c",
+      "cluster/controller-runtime/verified.json": "c0d7fdf14ff257d788fab4452cf2fa125fb91b1465256bdbc870af282eae4d78",
+      "cluster/artifact-secret-scan.json": "7ceda144636023fd09ae024b44be1e10ae586cf72130b871d2f1f527d4e42e1a"
+    }
+  }
+}

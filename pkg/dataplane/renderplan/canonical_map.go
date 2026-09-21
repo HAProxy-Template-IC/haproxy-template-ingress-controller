@@ -101,8 +101,12 @@ func spliceCanonicalMapMember(
 	head, tail := commonEntryEdges(before.Entries, after.Entries)
 	middle := after.Entries[head : len(after.Entries)-tail]
 	tailStart := spans[len(before.Entries)-tail]
+	encoded, encodedSize, err := encodeMapEntries(middle)
+	if err != nil {
+		return canonicalMapFragment{}, false, err
+	}
 	fragment := canonicalMapFragment{
-		bytes: make([]byte, 0, len(previous)+len(middle)*48),
+		bytes: make([]byte, 0, spans[head]+encodedSize+len(middle)+1+len(previous)-tailStart),
 		spans: make([]int, 0, len(after.Entries)+1),
 	}
 	// The kept head ends with the bracket that opens the list, with the comma
@@ -120,11 +124,7 @@ func spliceCanonicalMapMember(
 			fragment.bytes = append(fragment.bytes, ',')
 		}
 		fragment.spans = append(fragment.spans, len(fragment.bytes))
-		encoded, err := json.Marshal(middle[index])
-		if err != nil {
-			return canonicalMapFragment{}, false, err
-		}
-		fragment.bytes = append(fragment.bytes, encoded...)
+		fragment.bytes = append(fragment.bytes, encoded[index]...)
 	}
 	if tail > 0 && len(middle) > 0 {
 		fragment.bytes = append(fragment.bytes, ',')
@@ -135,6 +135,19 @@ func spliceCanonicalMapMember(
 	}
 	fragment.bytes = append(fragment.bytes, previous[tailStart:]...)
 	return fragment, true, nil
+}
+
+func encodeMapEntries(entries []Entry) (encoded [][]byte, size int, err error) {
+	encoded = make([][]byte, len(entries))
+	for index := range entries {
+		value, err := json.Marshal(entries[index])
+		if err != nil {
+			return nil, 0, err
+		}
+		encoded[index] = value
+		size += len(value)
+	}
+	return encoded, size, nil
 }
 
 // commonEntryEdges counts the entries equal at the head and at the tail of

@@ -29,7 +29,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 
@@ -37,6 +36,7 @@ import (
 	controllerwebhook "gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
 )
 
 var (
@@ -48,6 +48,8 @@ var (
 	runDebugPort                       int
 	runKubeClientQPS                   float32
 	runKubeClientBurst                 int
+	runAgentTLSDirectory               string
+	runAgentTLSServerName              string
 )
 
 // runCmd represents the run command (controller main loop).
@@ -67,20 +69,24 @@ Configuration is loaded from:
 
 Example usage:
   # Run with default configuration
-  controller run
+  haptic run
 
   # Run with custom CRD name
-  controller run --crd-name my-haproxy-config
+  haptic run --crd-name my-haproxy-config
 
   # Run with kubeconfig (out-of-cluster development)
-  controller run --kubeconfig ~/.kube/config
+  haptic run --kubeconfig ~/.kube/config
 
   # Enable debug server
-  controller run --debug-port 6060`,
+  haptic run --debug-port 6060`,
 	RunE: runController,
 }
 
 func init() {
+	runCmd.Flags().StringVar(&runAgentTLSDirectory, "agent-tls-dir", "",
+		"Directory containing the controller TLS identity and agent CA (env: AGENT_TLS_DIR)")
+	runCmd.Flags().StringVar(&runAgentTLSServerName, "agent-tls-server-name", "",
+		"Required agent certificate DNS SAN (env: AGENT_TLS_SERVER_NAME)")
 	runCmd.Flags().StringVar(&runCRDName, "crd-name", "",
 		"Name of the HAProxyTemplateConfig holding controller configuration (env: CRD_NAME). Template library "+
 			"content is pulled in through its spec.libraryRefs.")
@@ -193,13 +199,7 @@ func runController(cmd *cobra.Command, _ []string) error {
 	// so it shares the same logfmt format and dynamic level as everything else.
 	klog.SetSlogLogger(logger)
 
-	// Set GOMEMLIMIT from the cgroup limit. Done here (not via automemlimit's
-	// blank-import init) so its "GOMEMLIMIT is updated" line goes through our
-	// slog handler instead of the stdlib default. Mirrors automemlimit's
-	// default options (FromCgroup provider, 0.9 ratio).
-	if _, err := memlimit.Set(memlimit.WithLogger(logger)); err != nil {
-		logger.Warn("Failed to set GOMEMLIMIT from cgroup", "error", err)
-	}
+	configureMemoryLimit(logger)
 
 	// Log detected resource limits for observability.
 	// GOGC: report the env override if set, otherwise "default" (Go's Green Tea
@@ -228,21 +228,18 @@ func runController(cmd *cobra.Command, _ []string) error {
 	// HAPROXY_MINOR is set by the haproxytech/haproxy-debian base image and contains
 	// the full semver of the bundled HAProxy (e.g. "3.2.11").
 	controller.SetBuildInfo(version, os.Getenv("HAPROXY_MINOR"))
+	directory := cmp.Or(runAgentTLSDirectory, os.Getenv("AGENT_TLS_DIR"))
+	peerName := cmp.Or(runAgentTLSServerName, os.Getenv("AGENT_TLS_SERVER_NAME"))
+	var agentTLS *transportsecurity.Source
+	if directory != "" || peerName != "" {
+		var err error
+		agentTLS, err = transportsecurity.NewSource(directory, peerName)
+		if err != nil {
+			return err
+		}
+	}
 
-	// Create Kubernetes client
-	kubeClientQPS, err := resolveFloat32Option(cmd.Flags().Changed("kube-client-qps"), runKubeClientQPS, "KUBE_CLIENT_QPS")
-	if err != nil {
-		return err
-	}
-	kubeClientBurst, err := resolveIntOption(cmd.Flags().Changed("kube-client-burst"), runKubeClientBurst, "KUBE_CLIENT_BURST")
-	if err != nil {
-		return err
-	}
-	k8sClient, err := client.New(client.Config{
-		Kubeconfig: runKubeconfig,
-		QPS:        kubeClientQPS,
-		Burst:      kubeClientBurst,
-	})
+	k8sClient, err := controllerKubernetesClient(cmd)
 	if err != nil {
 		return fmt.Errorf("creating Kubernetes client: %w", err)
 	}
@@ -265,11 +262,9 @@ func runController(cmd *cobra.Command, _ []string) error {
 			Resource: runWebhookResourceAdmissionTimeout,
 		},
 		runDebugPort,
-	); err != nil {
-		// Only return error if it's not a graceful shutdown
-		if ctx.Err() == nil {
-			return fmt.Errorf("controller failed: %w", err)
-		}
+		agentTLS,
+	); err != nil && ctx.Err() == nil {
+		return fmt.Errorf("controller failed: %w", err)
 	}
 
 	logger.Info("Controller shutdown complete")
@@ -302,4 +297,20 @@ func resolveDurationOption(flagValue time.Duration, envName string, defaultValue
 		return 0, fmt.Errorf("%s must not exceed %s", envName, controllerwebhook.MaximumAdmissionTimeout)
 	}
 	return d, nil
+}
+
+func controllerKubernetesClient(cmd *cobra.Command) (*client.Client, error) {
+	kubeClientQPS, err := resolveFloat32Option(cmd.Flags().Changed("kube-client-qps"), runKubeClientQPS, "KUBE_CLIENT_QPS")
+	if err != nil {
+		return nil, err
+	}
+	kubeClientBurst, err := resolveIntOption(cmd.Flags().Changed("kube-client-burst"), runKubeClientBurst, "KUBE_CLIENT_BURST")
+	if err != nil {
+		return nil, err
+	}
+	return client.New(client.Config{
+		Kubeconfig: runKubeconfig,
+		QPS:        kubeClientQPS,
+		Burst:      kubeClientBurst,
+	})
 }

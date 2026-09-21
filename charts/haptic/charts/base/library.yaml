@@ -1048,16 +1048,7 @@ templateSnippets:
       http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
       http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.resource_name)      var(txn.route_key),field(2,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      {# The Gateway branch reads txn.gw_rule_id (set by
-          frontend-matchers-advanced-500-gateway for every winning route rule,
-          shape <ns>_<name>_<ruleIdx>). It was `req.gw_rule_id` until MR !1412 —
-          a scope nobody ever writes — so the condition was always false and
-          Gateway requests fell through to the BACKEND branch above, which split
-          the `gtw_<ns>_<name>_<svc>_<port>` backend name and produced
-          resource_id="gtw/<ns>". Every per-resource feature map (WAF, auth,
-          rate limit, cache, schema validation) is keyed on resource_id. #}
-      http-request set-var(txn.resource_namespace) var(txn.gw_rule_id),field(1,_)   if { var(txn.gw_rule_id) -m found }
-      http-request set-var(txn.resource_name)      var(txn.gw_rule_id),field(2,_)   if { var(txn.gw_rule_id) -m found }
+      {{ render_glob "frontend-routing-owner-*" }}
       http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
 
   frontend-routing-logic:
@@ -3612,18 +3603,6 @@ validationTests:
           Untyped deliberately: `frontend status` and the cache-origin leg emit
           the same log-format without running the routing logic, so the variable
           is unset there and a typed item would put "" in a numeric JSON slot.
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'var\(req\.gw_rule_id\)'
-        description: >-
-          The owner-identity cascade reads txn.gw_rule_id. `req.gw_rule_id` is a
-          scope nothing ever writes, so that branch never fired and Gateway
-          requests fell through to the backend-name split, yielding
-          resource_id="gtw/<namespace>" — which every resource_id-keyed feature
-          map (WAF, auth, rate limit, cache, schema) is looked up with.
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.resource_namespace\) var\(txn\.gw_rule_id\),field\(1,_\)'
       - {type: contains, target: haproxy.cfg, pattern: '%\(denied_by\)\[var\(txn\.denied_by\)\]'}
       - type: contains
         target: haproxy.cfg
