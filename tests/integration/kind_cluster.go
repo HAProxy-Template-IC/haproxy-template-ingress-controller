@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -21,7 +22,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
-// KindClusterConfig holds configuration for creating a Kind cluster
+// KindClusterConfig holds configuration for creating a Kind cluster.
 type KindClusterConfig struct {
 	Name string
 	// Image is the Kind node image to use (e.g., "kindest/node:v1.32.0")
@@ -29,7 +30,7 @@ type KindClusterConfig struct {
 	Image string
 }
 
-// KindCluster represents a Kind (Kubernetes in Docker) cluster for testing
+// KindCluster represents a Kind (Kubernetes in Docker) cluster for testing.
 type KindCluster struct {
 	Name       string
 	Kubeconfig string
@@ -37,7 +38,7 @@ type KindCluster struct {
 	clientset  *kubernetes.Clientset
 }
 
-// SetupKindCluster creates or reuses a Kind cluster for integration testing
+// SetupKindCluster creates or reuses a Kind cluster for integration testing.
 func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 	provider := cluster.NewProvider(
 		cluster.ProviderWithLogger(cmd.NewLogger()),
@@ -49,57 +50,10 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 		return nil, fmt.Errorf("failed to list clusters: %w", err)
 	}
 
-	clusterExists := false
-	for _, c := range clusters {
-		if c == cfg.Name {
-			clusterExists = true
-			fmt.Printf("♻️  Reusing existing Kind cluster '%s'\n", cfg.Name)
-			break
-		}
-	}
-
-	// Only create if doesn't exist
-	if !clusterExists {
-		fmt.Printf("🆕 Creating new Kind cluster '%s'\n", cfg.Name)
-
-		// Determine node image to use
-		nodeImage := cfg.Image
-		if nodeImage == "" {
-			// Check environment variable (full image path like "kindest/node:v1.32.0")
-			nodeImage = os.Getenv("KIND_NODE_IMAGE")
-			// If env var is not set, use default known-working version
-			if nodeImage == "" {
-				nodeImage = "kindest/node:v1.32.0"
-			}
-		}
-
-		// Prepare cluster creation options
-		createOpts := []cluster.CreateOption{
-			cluster.CreateWithWaitForReady(5 * time.Minute),
-		}
-
-		// Add node image if specified
-		if nodeImage != "" {
-			createOpts = append(createOpts, cluster.CreateWithNodeImage(nodeImage))
-		}
-
-		// Use custom config for increased pod limits (500 vs default 110)
-		// This is required for parallel integration tests that create many namespaces
-		if kindutil.IsDockerInDocker() {
-			fmt.Printf("📦 Detected Docker-in-Docker environment, using dind-compatible config\n")
-			createOpts = append(createOpts, cluster.CreateWithRawConfig([]byte(kindutil.DindKindConfig)))
-		} else {
-			fmt.Printf("📦 Using base config with increased pod limits\n")
-			createOpts = append(createOpts, cluster.CreateWithRawConfig([]byte(kindutil.BaseKindConfig)))
-		}
-
-		// Create the cluster
-		if err := provider.Create(cfg.Name, createOpts...); err != nil {
-			return nil, fmt.Errorf("failed to create kind cluster: %w", err)
-		}
-		if err := kindutil.BlackholeSyntheticBackends(cfg.Name); err != nil {
-			return nil, err
-		}
+	if slices.Contains(clusters, cfg.Name) {
+		fmt.Printf("♻️  Reusing existing Kind cluster '%s'\n", cfg.Name)
+	} else if err := createKindCluster(provider, cfg); err != nil {
+		return nil, err
 	}
 
 	// Get kubeconfig
@@ -132,7 +86,7 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
-	cluster := &KindCluster{
+	kindCluster := &KindCluster{
 		Name:       cfg.Name,
 		Kubeconfig: kubeconfig,
 		provider:   provider,
@@ -149,9 +103,53 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 
 	// Trigger background cleanup of old test namespaces
 	// This runs asynchronously and doesn't block test execution
-	cluster.CleanupOldTestNamespacesAsync()
+	kindCluster.CleanupOldTestNamespacesAsync()
 
-	return cluster, nil
+	return kindCluster, nil
+}
+
+func createKindCluster(provider *cluster.Provider, cfg *KindClusterConfig) error {
+	fmt.Printf("🆕 Creating new Kind cluster '%s'\n", cfg.Name)
+
+	// Determine node image to use
+	nodeImage := cfg.Image
+	if nodeImage == "" {
+		// Check environment variable (full image path like "kindest/node:v1.32.0")
+		nodeImage = os.Getenv("KIND_NODE_IMAGE")
+		// If env var is not set, use default known-working version
+		if nodeImage == "" {
+			nodeImage = "kindest/node:v1.32.0"
+		}
+	}
+
+	// Prepare cluster creation options
+	createOpts := []cluster.CreateOption{
+		cluster.CreateWithWaitForReady(5 * time.Minute),
+	}
+
+	// Add node image if specified
+	if nodeImage != "" {
+		createOpts = append(createOpts, cluster.CreateWithNodeImage(nodeImage))
+	}
+
+	// Use custom config for increased pod limits (500 vs default 110)
+	// This is required for parallel integration tests that create many namespaces
+	if kindutil.IsDockerInDocker() {
+		fmt.Printf("📦 Detected Docker-in-Docker environment, using dind-compatible config\n")
+		createOpts = append(createOpts, cluster.CreateWithRawConfig([]byte(kindutil.DindKindConfig)))
+	} else {
+		fmt.Printf("📦 Using base config with increased pod limits\n")
+		createOpts = append(createOpts, cluster.CreateWithRawConfig([]byte(kindutil.BaseKindConfig)))
+	}
+
+	// Create the cluster
+	if err := provider.Create(cfg.Name, createOpts...); err != nil {
+		return fmt.Errorf("failed to create kind cluster: %w", err)
+	}
+	if err := kindutil.BlackholeSyntheticBackends(cfg.Name); err != nil {
+		return err
+	}
+	return nil
 }
 
 // waitForAPIServer polls the API server until it responds successfully or timeout occurs.
@@ -181,7 +179,7 @@ func waitForAPIServer(clientset *kubernetes.Clientset, timeout time.Duration) er
 	}
 }
 
-// CreateNamespace creates a new namespace in the cluster
+// CreateNamespace creates a new namespace in the cluster.
 func (k *KindCluster) CreateNamespace(name string) (*Namespace, error) {
 	ctx := context.Background()
 
@@ -253,7 +251,8 @@ func (k *KindCluster) CleanupOldTestNamespacesAsync() {
 
 		// Filter to old test namespaces (created more than 5 minutes ago)
 		var oldTestNamespaces []string
-		for _, ns := range namespaces.Items {
+		for i := range namespaces.Items {
+			ns := &namespaces.Items[i]
 			if len(ns.Name) >= 5 && ns.Name[:5] == "test-" {
 				age := now.Sub(ns.CreationTimestamp.Time)
 				if age > ageThreshold {
@@ -281,7 +280,7 @@ func (k *KindCluster) CleanupOldTestNamespacesAsync() {
 	}()
 }
 
-// Teardown destroys the Kind cluster
+// Teardown destroys the Kind cluster.
 func (k *KindCluster) Teardown() error {
 	if err := k.provider.Delete(k.Name, ""); err != nil {
 		return fmt.Errorf("failed to delete kind cluster: %w", err)
@@ -289,14 +288,14 @@ func (k *KindCluster) Teardown() error {
 	return nil
 }
 
-// Namespace represents a Kubernetes namespace for test isolation
+// Namespace represents a Kubernetes namespace for test isolation.
 type Namespace struct {
 	Name      string
 	cluster   *KindCluster
 	clientset *kubernetes.Clientset
 }
 
-// Delete removes the namespace from the cluster
+// Delete removes the namespace from the cluster.
 func (n *Namespace) Delete() error {
 	ctx := context.Background()
 	err := n.clientset.CoreV1().Namespaces().Delete(ctx, n.Name, metav1.DeleteOptions{})
@@ -306,7 +305,7 @@ func (n *Namespace) Delete() error {
 	return nil
 }
 
-// getRestConfig returns the REST config for the Kind cluster
+// getRestConfig returns the REST config for the Kind cluster.
 func (k *KindCluster) getRestConfig() (*rest.Config, error) {
 	config, err := clientcmd.RESTConfigFromKubeConfig([]byte(k.Kubeconfig))
 	if err != nil {
@@ -323,7 +322,7 @@ func (k *KindCluster) getRestConfig() (*rest.Config, error) {
 
 // ShouldKeepCluster returns whether the cluster should be kept after tests
 // based on the KEEP_CLUSTER environment variable.
-// Values: "" (default) - keep cluster for faster subsequent runs, "false" - always cleanup
+// Values: "" (default) - keep cluster for faster subsequent runs, "false" - always cleanup.
 func ShouldKeepCluster() string {
 	val := os.Getenv("KEEP_CLUSTER")
 	if val == "" {
@@ -338,8 +337,8 @@ func (k *KindCluster) LoadDockerImage(image string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "kind", "load", "docker-image", image, "--name", k.Name)
-	output, err := cmd.CombinedOutput()
+	load := exec.CommandContext(ctx, "kind", "load", "docker-image", image, "--name", k.Name)
+	output, err := load.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to load image: %w\nOutput: %s", err, output)
 	}

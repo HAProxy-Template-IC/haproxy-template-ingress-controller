@@ -77,6 +77,14 @@ cleanup() {
   local rc=$?
   if [ "$rc" -ne 0 ]; then
     dump_pod_diagnostics > "$ARTIFACTS/failure.log" 2>&1 || true
+    k logs -l app.kubernetes.io/component=controller --all-containers --prefix \
+      --tail=-1 > "$ARTIFACTS/failure-controller.log" 2>&1 || true
+    k get haproxytemplateconfig -o json | python3 -c '
+import json, sys
+for obj in json.load(sys.stdin)["items"]:
+    print(json.dumps({"name": obj["metadata"]["name"],
+                     "generation": obj["metadata"]["generation"], "status": obj.get("status", {})}))
+' > "$ARTIFACTS/failure-status.jsonl" 2>&1 || true
     cp "$WORK"/*.log "$ARTIFACTS/" 2>/dev/null || true
   fi
   rm -rf "$WORK"

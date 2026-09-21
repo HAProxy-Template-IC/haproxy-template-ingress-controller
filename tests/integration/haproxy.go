@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"testing"
@@ -33,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
+	"k8s.io/streaming/pkg/httpstream"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
@@ -82,22 +82,24 @@ func DefaultHAProxyConfig(image string) *HAProxyConfig {
 // HAProxyInstance represents a deployed HAProxy pod: the HAProxy container in
 // master-worker mode plus the agent container that owns its file tree.
 type HAProxyInstance struct {
-	Name      string
-	Namespace string
-	AgentPort int32
-	LocalPort int32 // port on localhost the agent API is forwarded to
-	AgentUser string
-	AgentPass string
-	pod       *corev1.Pod
-	namespace *Namespace
-	stopChan  chan struct{}
-	readyChan chan struct{}
+	Name        string
+	Namespace   string
+	AgentPort   int32
+	LocalPort   int32 // port on localhost the agent API is forwarded to
+	AgentUser   string
+	AgentPass   string
+	pod         *corev1.Pod
+	namespace   *Namespace
+	stopChan    chan struct{}
+	forwardDone chan struct{}
 }
 
 // bootstrapConfig is what the pod starts on before the first apply, matching
 // the chart's initialConfig: HAProxy parses it, binds the status frontend and
 // opens the worker stats socket the agent runs its commands on.
 const bootstrapConfig = `global
+    uid 0
+    chroot /
     log stdout format raw local0
     stats socket ` + WorkerSocketPath + ` mode 600 level admin
 
@@ -154,6 +156,7 @@ func DeployHAProxy(ns *Namespace, cfg *HAProxyConfig) (*HAProxyInstance, error) 
 		return nil, err
 	}
 	if err := instance.waitForAgent(60 * time.Second); err != nil {
+		instance.stopAgentForward()
 		return nil, fmt.Errorf("agent not responding: %w", err)
 	}
 	return instance, nil
@@ -184,7 +187,7 @@ func haproxyPod(name, namespace string, cfg *HAProxyConfig) *corev1.Pod {
 				Image:        cfg.Image,
 				Command:      []string{"/bin/sh", "-c"},
 				Args:         []string{initScript},
-				VolumeMounts: append(podMounts, corev1.VolumeMount{Name: "config", MountPath: "/config"}),
+				VolumeMounts: []corev1.VolumeMount{runtimeMount, generalMount, {Name: "config", MountPath: "/config"}},
 			}},
 			Containers: []corev1.Container{
 				{
@@ -275,62 +278,92 @@ func (h *HAProxyInstance) WaitReady(timeout time.Duration) error {
 	})
 
 	if err != nil {
-		pod, getErr := h.namespace.clientset.CoreV1().Pods(h.Namespace).Get(ctx, h.Name, metav1.GetOptions{})
-		if getErr == nil {
-			fmt.Printf("\nPod '%s' failed to become ready:\n", h.Name)
-			fmt.Printf("  Phase: %s\n", pod.Status.Phase)
-			fmt.Printf("  Conditions:\n")
-			for _, cond := range pod.Status.Conditions {
-				fmt.Printf("    %s: %s - %s\n", cond.Type, cond.Status, cond.Message)
-			}
-			fmt.Printf("  Container Statuses:\n")
-			for _, cs := range pod.Status.ContainerStatuses {
-				fmt.Printf("    %s: Ready=%v, RestartCount=%d\n", cs.Name, cs.Ready, cs.RestartCount)
-				if cs.State.Waiting != nil {
-					fmt.Printf("      Waiting: %s - %s\n", cs.State.Waiting.Reason, cs.State.Waiting.Message)
-				}
-				if cs.State.Terminated != nil {
-					fmt.Printf("      Terminated: %s (exit %d) - %s\n", cs.State.Terminated.Reason, cs.State.Terminated.ExitCode, cs.State.Terminated.Message)
-				}
-			}
-		}
+		h.dumpPodStatus(ctx)
 	}
 
 	return err
 }
 
-// forwardAgentPort forwards a free local port to the agent's API port. In
-// parallel runs another test can take the port between choosing and binding
-// it, so a collision is retried with a new one.
-func (h *HAProxyInstance) forwardAgentPort() error {
-	const maxPortRetries = 5
-	var lastErr error
-	for attempt := 1; attempt <= maxPortRetries; attempt++ {
-		localPort, err := getFreePort()
-		if err != nil {
-			return fmt.Errorf("failed to find free port: %w", err)
+func (h *HAProxyInstance) dumpPodStatus(ctx context.Context) {
+	pod, err := h.namespace.clientset.CoreV1().Pods(h.Namespace).Get(ctx, h.Name, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	fmt.Printf("\nPod '%s' failed to become ready:\n", h.Name)
+	fmt.Printf("  Phase: %s\n", pod.Status.Phase)
+	fmt.Printf("  Conditions:\n")
+	for _, cond := range pod.Status.Conditions {
+		fmt.Printf("    %s: %s - %s\n", cond.Type, cond.Status, cond.Message)
+	}
+	fmt.Printf("  Container Statuses:\n")
+	for i := range pod.Status.ContainerStatuses {
+		cs := &pod.Status.ContainerStatuses[i]
+		fmt.Printf("    %s: Ready=%v, RestartCount=%d\n", cs.Name, cs.Ready, cs.RestartCount)
+		if cs.State.Waiting != nil {
+			fmt.Printf("      Waiting: %s - %s\n", cs.State.Waiting.Reason, cs.State.Waiting.Message)
 		}
-
-		h.LocalPort = int32(localPort)
-		h.stopChan = make(chan struct{}, 1)
-		h.readyChan = make(chan struct{})
-
-		if err := h.setupPortForward(); err != nil {
-			lastErr = err
-			fmt.Printf("Port forward attempt %d failed: %v (retrying with new port)\n", attempt, err)
-			continue
-		}
-
-		select {
-		case <-h.readyChan:
-			return nil
-		case <-time.After(10 * time.Second):
-			close(h.stopChan)
-			lastErr = fmt.Errorf("port forwarding did not become ready in time (attempt %d)", attempt)
-			fmt.Printf("Port forward attempt %d timed out (retrying with new port)\n", attempt)
+		if cs.State.Terminated != nil {
+			fmt.Printf("      Terminated: %s (exit %d) - %s\n", cs.State.Terminated.Reason, cs.State.Terminated.ExitCode, cs.State.Terminated.Message)
 		}
 	}
-	return fmt.Errorf("failed to setup port forwarding after %d attempts: %w", maxPortRetries, lastErr)
+}
+
+// forwardAgentPort binds an allocated IPv4 loopback port to this pod.
+func (h *HAProxyInstance) forwardAgentPort() error {
+	dialer, err := h.agentDialer()
+	if err != nil {
+		return err
+	}
+	return h.startAgentForward(dialer)
+}
+
+func (h *HAProxyInstance) startAgentForward(dialer httpstream.Dialer) error {
+	h.stopChan = make(chan struct{})
+	ready := make(chan struct{})
+	ports := []string{fmt.Sprintf("0:%d", h.AgentPort)}
+	fw, err := portforward.NewOnAddressesForStreaming(dialer, []string{"127.0.0.1"}, ports, h.stopChan, ready, io.Discard, io.Discard)
+	if err != nil {
+		h.stopAgentForward()
+		return fmt.Errorf("create agent port forward: %w", err)
+	}
+	h.forwardDone = make(chan struct{})
+	var forwardErr error
+	go func() {
+		defer close(h.forwardDone)
+		forwardErr = fw.ForwardPorts()
+	}()
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			h.stopAgentForward()
+		}
+	}()
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ready:
+		bound, err := fw.GetPorts()
+		if err != nil {
+			return fmt.Errorf("read forwarded agent port: %w", err)
+		}
+		h.LocalPort = int32(bound[0].Local)
+		succeeded = true
+		return nil
+	case <-h.forwardDone:
+		return fmt.Errorf("start agent port forward: %w", forwardErr)
+	case <-timer.C:
+		return fmt.Errorf("agent port forward did not become ready within 10 seconds")
+	}
+}
+
+func (h *HAProxyInstance) stopAgentForward() {
+	if h.stopChan != nil {
+		close(h.stopChan)
+		if h.forwardDone != nil {
+			<-h.forwardDone
+		}
+		h.stopChan, h.forwardDone = nil, nil
+	}
 }
 
 // waitForAgent polls the agent's readiness endpoint through the forwarded
@@ -360,54 +393,35 @@ func (h *HAProxyInstance) waitForAgent(timeout time.Duration) error {
 
 // AgentURL is the base URL of this pod's agent through the forwarded port.
 func (h *HAProxyInstance) AgentURL() string {
-	return fmt.Sprintf("http://localhost:%d", h.LocalPort)
+	return fmt.Sprintf("http://127.0.0.1:%d", h.LocalPort)
 }
 
-// setupPortForward sets up port forwarding from localhost to the HAProxy pod.
-func (h *HAProxyInstance) setupPortForward() error {
+func (h *HAProxyInstance) agentDialer() (httpstream.Dialer, error) {
 	config, err := h.namespace.cluster.getRestConfig()
 	if err != nil {
-		return fmt.Errorf("failed to get rest config: %w", err)
+		return nil, fmt.Errorf("failed to get rest config: %w", err)
 	}
 
 	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", h.Namespace, h.Name)
 	serverURL, err := url.Parse(config.Host)
 	if err != nil {
-		return fmt.Errorf("failed to parse host: %w", err)
+		return nil, fmt.Errorf("failed to parse host: %w", err)
 	}
 	serverURL.Path = path
 
 	transport, upgrader, err := spdy.RoundTripperFor(config)
 	if err != nil {
-		return fmt.Errorf("failed to create round tripper: %w", err)
+		return nil, fmt.Errorf("failed to create round tripper: %w", err)
 	}
 
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", serverURL)
-
-	ports := []string{fmt.Sprintf("%d:%d", h.LocalPort, h.AgentPort)}
-	fw, err := portforward.New(dialer, ports, h.stopChan, h.readyChan, nil, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create port forwarder: %w", err)
-	}
-
-	go func() {
-		if err := fw.ForwardPorts(); err != nil {
-			// The test fails on the connection it cannot make; logging keeps
-			// the cause visible.
-			fmt.Printf("Port forwarding error: %v\n", err)
-		}
-	}()
-
-	return nil
+	return spdy.NewDialerForStreaming(upgrader, &http.Client{Transport: transport}, "POST", serverURL), nil
 }
 
 // Delete removes the HAProxy instance and associated resources.
 func (h *HAProxyInstance) Delete() error {
 	ctx := context.Background()
 
-	if h.stopChan != nil {
-		close(h.stopChan)
-	}
+	h.stopAgentForward()
 
 	err := h.namespace.clientset.CoreV1().Pods(h.Namespace).Delete(ctx, h.Name, metav1.DeleteOptions{})
 	if err != nil {
@@ -420,22 +434,6 @@ func (h *HAProxyInstance) Delete() error {
 	}
 
 	return nil
-}
-
-// getFreePort finds an available port on the local machine.
-func getFreePort() (int, error) {
-	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
-	if err != nil {
-		return 0, err
-	}
-
-	listener, err := net.ListenTCP("tcp", addr)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = listener.Close() }()
-
-	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 
 // GetContainerLogs fetches logs from the specified container in the HAProxy pod.
@@ -465,6 +463,7 @@ func (h *HAProxyInstance) GetContainerLogs(containerName string, tailLines int64
 // DumpLogsOnFailure prints container logs if the test has failed.
 // Call this in t.Cleanup() to capture logs on any failure.
 func (h *HAProxyInstance) DumpLogsOnFailure(t *testing.T) {
+	t.Helper()
 	if !t.Failed() {
 		return
 	}

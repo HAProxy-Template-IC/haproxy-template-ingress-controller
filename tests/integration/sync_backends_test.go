@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestSyncBackends runs table-driven synchronization tests for backend operations
+// TestSyncBackends runs table-driven synchronization tests for backend operations.
 func TestSyncBackends(t *testing.T) {
 	t.Parallel()
 	testCases := []syncTestCase{
@@ -189,10 +189,10 @@ func TestSyncBackends(t *testing.T) {
 	}
 
 	for _, tt := range testCases {
-		tt := tt // capture range variable
+		// capture range variable
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			runSyncTest(t, tt)
+			runSyncTest(t, &tt)
 		})
 	}
 }

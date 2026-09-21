@@ -56,7 +56,6 @@ func TestConfigSyncIdempotency(t *testing.T) {
 	}
 
 	for _, tt := range testCases {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			runIdempotencyTest(t, tt.configFile)
@@ -65,6 +64,7 @@ func TestConfigSyncIdempotency(t *testing.T) {
 }
 
 func runIdempotencyTest(t *testing.T, configFile string) {
+	t.Helper()
 	env := fixenv.New(t)
 	ctx := context.Background()
 	session := NewSession(t, env)

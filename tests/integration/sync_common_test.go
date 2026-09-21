@@ -32,7 +32,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
-// TestMain sets up package-scoped fixtures and runs tests
+// TestMain sets up package-scoped fixtures and runs tests.
 func TestMain(m *testing.M) {
 	var err error
 	runtimeImages, err = kindutil.LoadChartImages(os.Getenv("HAPROXY_VERSION"))
@@ -98,7 +98,8 @@ type syncTestCase struct {
 
 // runSyncTest applies the case's two file sets to a real HAProxy pod through
 // its agent and verifies the pod converged.
-func runSyncTest(t *testing.T, tc syncTestCase) {
+func runSyncTest(t *testing.T, tc *syncTestCase) {
+	t.Helper()
 	if tc.skipReason != "" {
 		t.Skip(tc.skipReason)
 	}

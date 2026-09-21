@@ -279,7 +279,7 @@ func (s *Session) Decide(ctx context.Context) deployplan.Decision {
 // Apply sends one decision and returns the pod's final verdict. An apply the
 // agent only scheduled — a reload inside the pacing window — is followed until
 // the pacer has run it, the way the deployer polls /v1/state at scheduled_at.
-func (s *Session) Apply(ctx context.Context, decision deployplan.Decision) *api.ApplyResult {
+func (s *Session) Apply(ctx context.Context, decision *deployplan.Decision) *api.ApplyResult {
 	s.t.Helper()
 	plan := s.Plan()
 	s.seq++
@@ -328,7 +328,8 @@ func (s *Session) Apply(ctx context.Context, decision deployplan.Decision) *api.
 func (s *Session) ApplyDesired(ctx context.Context) (deployplan.Decision, *api.ApplyResult) {
 	s.t.Helper()
 	decision := s.Decide(ctx)
-	return decision, s.Apply(ctx, decision)
+	result := s.Apply(ctx, &decision)
+	return decision, result
 }
 
 // MustApply applies the desired set and fails the test on a NACK.

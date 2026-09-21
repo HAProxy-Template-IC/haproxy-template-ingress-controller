@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestSyncGlobalDefaults runs table-driven synchronization tests for global and defaults sections
+// TestSyncGlobalDefaults runs table-driven synchronization tests for global and defaults sections.
 func TestSyncGlobalDefaults(t *testing.T) {
 	t.Parallel()
 	testCases := []syncTestCase{
@@ -30,10 +30,10 @@ func TestSyncGlobalDefaults(t *testing.T) {
 	}
 
 	for _, tt := range testCases {
-		tt := tt // capture range variable
+		// capture range variable
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			runSyncTest(t, tt)
+			runSyncTest(t, &tt)
 		})
 	}
 }

@@ -338,7 +338,8 @@ class Lifecycle:
 set -euo pipefail
 source scripts/lib/cluster.sh
 source scripts/lib/upgrade-traffic.sh
-k() { kubectl --context "$CTX" -n haptic "$@"; }
+NS=haptic
+k() { kubectl --context "$CTX" -n "$NS" "$@"; }
 fail() { echo "$*" >&2; exit 1; }
 info() { echo "$*"; }
 [ "$(wait_config_validated 180)" = True ]
