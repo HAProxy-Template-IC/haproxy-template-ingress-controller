@@ -614,8 +614,6 @@ github.com/yuin/goldmark v1.4.1/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 gitlab.com/bosi/decorder v0.4.2 h1:qbQaV3zgwnBZ4zPMhGLW4KZe7A7NwxEhJx39R3shffo=
 gitlab.com/bosi/decorder v0.4.2/go.mod h1:muuhHoaJkA9QLcYHq4Mj8FJUwDZ+EirSHRiaTcTf6T8=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260917214049-203cd43d5f70 h1:6H8UmI5vI4Lpz4WzYBt33SYyeAaKOceGr0TLQj+xVx0=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20260917214049-203cd43d5f70/go.mod h1:ChrvJYlA0H5Zb93bHroAnmyrdqIiiZTLiDyY8tS6wYg=
 gitlab.com/haproxy-haptic/scriggo v0.0.0-20260919234319-ed43c52829c5 h1:KmYWERjokrLwy4L3XnuiJyTXpOY03mRkBtWF6PuXfcs=
 gitlab.com/haproxy-haptic/scriggo v0.0.0-20260919234319-ed43c52829c5/go.mod h1:ChrvJYlA0H5Zb93bHroAnmyrdqIiiZTLiDyY8tS6wYg=
 go-simpler.org/assert v0.9.0 h1:PfpmcSvL7yAnWyChSjOz6Sp6m9j5lyK8Ok9pEL31YkQ=
