@@ -1,21 +1,22 @@
 ---
+search:
+  boost: 4
 description: "Get started with HAPTIC, the template-driven HAProxy ingress controller for Kubernetes. Install with Helm, deploy HAProxy, and verify your setup."
-hide:
-  - navigation
 ---
 
 # Getting started
 
-## Overview
+<a id="overview"></a>
 
-Install HAPTIC with Helm, then route traffic through an Ingress. The optional
-sample app lets you inspect the generated HAProxy configuration and test a request
-from your terminal.
+Install HAPTIC with Helm, then route your applications. The optional
+walkthrough creates a sample route you can test locally.
 
-Try the bundled Ingress configuration in your browser. Click **Run live**, then
-edit the sample Ingress resources to see the generated backends and routing maps.
+You can also try HAPTIC before installing it. This browser example turns sample
+Ingress resources into HAProxy configuration; it doesn't connect to a cluster.
 
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress resources become an HAProxy config" data-height="480">
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="maps" data-focus="host.map" data-controls="tabs,resources" data-input="resources" data-input-focus="shop.example.com" data-title="Turn an Ingress into HAProxy configuration" data-height="480">
+
+<p class="pg-task" markdown>In **Resources**, change `shop.example.com` to `store.example.com`. The **maps** output shows the new hostname in `host.map`.</p>
 
 </div>
 
@@ -25,71 +26,43 @@ edit the sample Ingress resources to see the generated backends and routing maps
 - `kubectl` configured to access the cluster
 - Helm 3.8 or newer
 
-!!! note "Webhook validation"
-    The admission webhook is enabled by default. It rejects Ingress, HTTPRoute, and GRPCRoute changes that fail validation. The chart issues its certificate; cert-manager is optional. For rotation and certificate alternatives, see [Webhook certificates](./ssl-certificates.md#webhook-certificates).
-
 ## Install with Helm
 
-Install the controller and HAProxy using Helm:
+The command below installs a released chart. Choose that version in the
+documentation menu when following other guides; `dev` includes unreleased
+features.
 
 ```bash
-# Install from OCI registry (deploys both controller and HAProxy pods)
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.2.0-alpha.3 \
   --namespace haptic --create-namespace
 ```
 
-The Helm chart deploys:
-
-- **Controller**: Watches Kubernetes resources and generates HAProxy configurations
-- **HAProxy pods**: Load balancers, each with the HAPTIC agent alongside (2 replicas by default)
-- **Resource permissions**: Access to the Kubernetes resources HAPTIC watches
-- **Configuration and libraries**: An `HAProxyTemplateConfig` and its referenced [template libraries](template-libraries.md), with Ingress and Gateway API support enabled
+The chart installs the controller, HAProxy, and routing templates. Admission
+validation checks proposed routing changes before Kubernetes accepts them.
 
 The chart creates a default HTTPS certificate. It uses cert-manager for issuance
 and renewal when available; otherwise, it creates a self-signed certificate.
 For your own domains, configure [SSL certificates](./ssl-certificates.md).
 
-Controller-to-agent authentication uses separate mutual TLS certificates. By
-default, HAPTIC renews their CA and both identities automatically before their
-365-day lifetime ends. Cert-manager is optional. See
-[Agent certificates](./operations/agent-certificates.md) for renewal monitoring
-and issuer selection.
-
-Verify both components are running:
-
-```bash
-# Check controller
-kubectl get pods -n haptic -l app.kubernetes.io/component=controller
-
-# Check HAProxy pods
-kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer
-```
-
-With the default values, you should see two controller pods and two HAProxy pods. Wait for both Deployments to become ready:
+Wait for the two controller replicas and two HAProxy replicas to become ready:
 
 ```bash
 kubectl -n haptic rollout status deployment/haptic-controller --timeout=180s
 kubectl -n haptic rollout status deployment/haptic-haproxy --timeout=180s
 ```
 
-The number of containers depends on the sidecars you enable.
+The chart creates IngressClass `haptic` and, when the Gateway API CRDs are
+available, GatewayClass `haptic`.
 
-!!! note "HAProxy version"
-    The chart defaults to HAProxy 3.4. To pin a different series, set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for the full list and support status.
-
-## HAPTIC is running
-
-The bundled libraries handle Ingress and Gateway API routing without custom templates:
-
-- **Ingress** — set `ingressClassName: haptic`. Use [native annotations](./libraries/haptic-annotations.md) for authentication, rate limits, redirects, and other route policies. When [migrating](./migrating.md), enable the library for your existing annotation prefix.
-- **Gateway API** — create a `Gateway` with `gatewayClassName: haptic` and attach `HTTPRoute` resources; see the [Gateway library](./libraries/gateway.md) and [GatewayClass setup](./gateway-class.md).
-
-Select HAPTIC's class on your routing resources and ensure their backend Services have ready endpoints. Install the Gateway API CRDs before creating Gateways or routes; see [GatewayClass setup](./gateway-class.md).
+For your own applications, use `ingressClassName: haptic` on an Ingress or
+`gatewayClassName: haptic` on a Gateway. See the [Ingress examples](libraries/ingress.md)
+or [Gateway routing guide](gateway-api.md#expose-a-service-through-a-gateway).
 
 ## Optional walkthrough: route a sample app
 
-The rest of this guide deploys a sample app and confirms routing end to end. Skip it if you'll use your own Ingress or Gateway resources.
+Follow this walkthrough to try a route, or continue with your own applications
+using the [routing guides](routing.md).
 
 ### Deploy a sample app
 
@@ -171,22 +144,20 @@ Save as `echo-ingress.yaml` and apply:
 kubectl apply -f echo-ingress.yaml
 ```
 
-The controller detects the Ingress, renders the HAProxy configuration, and deploys it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
-
-!!! tip "TLS for a host"
-    This Ingress serves HTTP and HTTPS. Without `spec.tls`, HTTPS uses the chart's [default certificate](./ssl-certificates.md). To use a certificate for your hostname, add a `spec.tls` entry referencing a `kubernetes.io/tls` Secret. See [TLS configuration](./libraries/ingress.md#tls-configuration) for certificate setup or HTTP-only routing.
+The route also serves HTTPS with the chart's default certificate. For your own
+hostname, follow [TLS certificate setup](ssl-certificates.md).
 
 ### Test the routing
 
-#### Port-forward to HAProxy
+<a id="port-forward-to-haproxy"></a>
 
-Use a port-forward to reach HAProxy locally:
+Forward a local port to HAProxy:
 
 ```bash
 kubectl port-forward -n haptic svc/haptic-haproxy 8080:80
 ```
 
-#### Test the endpoint
+<a id="test-the-endpoint"></a>
 
 In another terminal:
 
@@ -197,89 +168,30 @@ curl -H "Host: echo.example.local" http://localhost:8080/
 The response includes the request headers and the serving pod's `HOSTNAME`.
 Repeat the request to check that HAProxy distributes traffic across the echo pods.
 
-## Inspect the configuration (optional)
+<a id="inspect-the-configuration-optional"></a>
+<a id="check-the-controller-logs"></a>
+<a id="inspect-the-rendered-haproxy-configuration"></a>
 
-### Check the controller logs
-
-Watch the controller process the Ingress:
-
-```bash
-kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -c controller --tail=50
-```
-
-At the default `info` log level, each change produces a single consolidated `Reconciliation` summary line from the leader replica, for example:
-
-```text
-level=INFO msg=Reconciliation trigger=resource_change instances=2/2 reloads=2 ops=30 render_ms=1 validate_ms=1 deploy_ms=184 total_ms=289 backend_create=2 server_create=20 server_update=8 map_update=6
-```
-
-The summary reports the trigger, updated instances, reloads, runtime operations, and phase timings. For individual stages, [enable debug logging](./troubleshooting.md#enable-debug-logging).
-
-### Inspect the rendered HAProxy configuration
-
-Inspect the rendered configuration in the controller-managed `HAProxyCfg` resource:
-
-```bash
-kubectl describe haproxycfg -n haptic
-```
-
-You should see:
-
-- A frontend section with routing rules
-- A backend section referencing the echo service
-- Server entries pointing to the echo pod endpoints
-
-!!! note "Output vs input"
-    `HAProxyCfg` is controller output. To change the configuration durably, update `controller.config` in your Helm values and upgrade the release. Editing the output doesn't change the templates. The rendered config alone doesn't confirm that every pod has applied it; check deployment status and test the route.
-
-## What's happening behind the scenes
-
-The admission webhook validates the proposed Ingress before Kubernetes stores it. The controller then renders the templates and sends each HAProxy pod the changes it needs. The agent applies supported changes at runtime and reloads for structural changes. See the [Architecture Overview](./development/design/architecture-overview.md).
+To inspect what HAPTIC generated, see [configuration debugging](operations/debugging.md#inspect-the-generated-configuration).
 
 ## Next steps
 
-### Route with Ingress or Gateway API
+| What you want to do | Read next |
+| --- | --- |
+| Route your applications | [Ingress](libraries/ingress.md) or [Gateway API](gateway-api.md#expose-a-service-through-a-gateway) |
+| Replace another ingress controller | [Migration guide](migrating.md) |
+| Change chart settings | [Helm deployment](deploying-with-helm.md) and [values reference](reference.md) |
+| Add a custom annotation or routing rule | [Templating](templating.md) |
+| Use your own resource types | [Watching resources](watching-resources.md) |
+| Prepare for production traffic | [High availability](operations/high-availability.md), [security](operations/security.md), and [monitoring](operations/monitoring.md) |
 
-Use the [Ingress reference](./libraries/ingress.md) for path matching, TLS, and
-annotations. For Gateway API, follow [GatewayClass setup](./gateway-class.md),
-then consult the [Gateway reference](./libraries/gateway.md) for route types and
-listener options.
+<a id="troubleshooting"></a>
 
-### Replacing another Ingress controller?
-
-See [Migrating to HAPTIC](./migrating.md)
-for the cutover procedure and compatibility checks.
-
-### Customize the configuration
-
-Put configuration changes under `controller.config` in your Helm values and [upgrade the release](./deploying-with-helm.md#upgrading). The [CRD Reference](./crd-reference.md) documents the fields.
-
-### Watch additional resources
-
-Add watches for ConfigMaps or your own CRDs — see [Watching Resources](./watching-resources.md).
-
-### Extend with templates (advanced)
-
-Use the [templating guide](./templating.md) to add a custom annotation, read your
-own resource types, or emit an HAProxy directive the bundled libraries don't cover.
-
-### Run in production
-
-For replica placement, PodDisruptionBudgets, and leader election, see [High Availability](./operations/high-availability.md). For Prometheus metrics and dashboards, see [Monitoring](./operations/monitoring.md).
-
-## Troubleshooting
-
-Check the symptom that matches your setup:
-
-- **Controller not starting** -- check logs for missing HAProxyTemplateConfig, RBAC errors, or API connectivity issues
-- **HAProxy pods not updating** -- verify the agent container is running and credentials match
-- **Ingress not routing** -- ensure `ingressClassName: haptic` is set (or whatever you configured `ingressClass.name` to) and the backend Service has endpoints
-
-For detailed diagnosis steps, see the [Troubleshooting Guide](./troubleshooting.md).
+If installation or routing fails, follow [troubleshooting](troubleshooting.md).
 
 ## Clean up
 
-Remove the sample app if you deployed it:
+Stop port forwarding with **Ctrl+C**, then remove the sample app if you deployed it:
 
 ```bash
 kubectl delete ingress echo-ingress -n default
@@ -287,28 +199,5 @@ kubectl delete deployment echo -n default
 kubectl delete service echo -n default
 ```
 
-To remove the HAPTIC installation used in this guide:
-
-```bash
-helm uninstall haptic -n haptic
-```
-
-Delete the namespace only if it contains nothing else you need:
-
-```bash
-kubectl delete namespace haptic
-```
-
-Helm retains the CRDs. If no other HAPTIC installation uses them, you can remove
-them and all remaining instances of those resources:
-
-```bash
-kubectl delete crd \
-  haproxytemplateconfigs.haproxy-haptic.org \
-  haproxytemplatelibraries.haproxy-haptic.org \
-  haproxycfgs.haproxy-haptic.org \
-  haproxygeneralfiles.haproxy-haptic.org \
-  haproxycrtlistfiles.haproxy-haptic.org \
-  haproxymapfiles.haproxy-haptic.org \
-  haproxyroutepolicies.haproxy-haptic.org
-```
+HAPTIC remains installed for your own applications. To remove the controller and
+HAProxy too, follow [Uninstalling](deploying-with-helm.md#uninstalling).

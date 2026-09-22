@@ -493,9 +493,13 @@ func renderWarm(resourcesYAML []byte) (*renderResult, error) {
 	// The playground is a preview: render in the lenient reconcile mode so a
 	// cross-family conflict surfaces as a Warning Event in the events tab rather
 	// than aborting the whole preview render.
-	out, err := warm.svc.Render(context.Background(), provider, rendercontext.RenderModeReconcile)
+	rendered, err := warm.svc.Render(context.Background(), provider, rendercontext.RenderModeReconcile)
 	if err != nil {
 		return nil, fmt.Errorf("rendering: %s", dataplane.SimplifyRenderingError(err))
+	}
+	out, err := materializePreview(rendered)
+	if err != nil {
+		return nil, fmt.Errorf("preparing preview: %w", err)
 	}
 	// NOTE: no client-native validation of the output — it's too lenient to be a
 	// useful safety net (accepts arbitrary text; only rejects an empty string).
@@ -546,7 +550,7 @@ func renderWarm(resourcesYAML []byte) (*renderResult, error) {
 // render if set, otherwise the previous one) with deployplan.Diff — the same
 // decision layer the deployer runs per pod. It returns a JS-ready verdict, or
 // nil on the first render (no baseline). It also advances prevBaseline.
-func reloadImpact(out *renderer.RenderResult, ver *dataplane.Version) any {
+func reloadImpact(out *previewResult, ver *dataplane.Version) any {
 	baseline := pinnedBaseline
 	if baseline == nil {
 		baseline = prevBaseline
@@ -676,7 +680,7 @@ func migrationReport(coverage []migratecheck.CoverageSource, resourcesYAML []byt
 }
 
 // toRenderResult flattens the render output into the JS-boundary shape.
-func toRenderResult(out *renderer.RenderResult) *renderResult {
+func toRenderResult(out *previewResult) *renderResult {
 	rr := &renderResult{
 		HAProxyConfig: out.HAProxyConfig,
 		DurationMs:    out.DurationMs,

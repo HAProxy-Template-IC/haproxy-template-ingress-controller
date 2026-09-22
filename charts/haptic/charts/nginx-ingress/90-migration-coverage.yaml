@@ -155,7 +155,7 @@ _migrationCoverage:
       # --- HSTS ---
       nginx.ingress.kubernetes.io/hsts:
         status: different
-        note: By default the header is emitted only when the Ingress sets `hsts` to `"true"`, whereas ingress-nginx enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching ingress-nginx); a per-Ingress `hsts` annotation still overrides the value for its hosts.
+        note: By default the header is emitted only when the Ingress sets `hsts` to `"true"`, whereas ingress-nginx enables HSTS globally by default. Set extraContext.tls.hsts.enabled=true to send HSTS on all TLS hosts (matching ingress-nginx); a per-Ingress `hsts` annotation still overrides the value for its hosts.
         doc: annotation-support
       nginx.ingress.kubernetes.io/hsts-max-age:
         status: supported
@@ -376,21 +376,21 @@ _migrationCoverage:
         doc: annotation-support
       nginx.ingress.kubernetes.io/enable-opentelemetry:
         status: dropped
-        note: Requires the nginx OpenTelemetry module; no HAProxy-side tracing is wired.
+        note: This annotation requires the nginx OpenTelemetry module. Configure HAPTIC tracing through extraContext.tracing instead.
         doc: annotation-support
       nginx.ingress.kubernetes.io/opentelemetry-trust-incoming-span:
         status: dropped
-        note: Requires the nginx OpenTelemetry module; no HAProxy-side tracing is wired.
+        note: This annotation requires the nginx OpenTelemetry module. Configure HAPTIC tracing through extraContext.tracing instead.
         doc: annotation-support
       nginx.ingress.kubernetes.io/opentelemetry-operation-name:
         status: dropped
-        note: Requires the nginx OpenTelemetry module; no HAProxy-side tracing is wired.
+        note: This annotation requires the nginx OpenTelemetry module. Configure HAPTIC tracing through extraContext.tracing instead.
         doc: annotation-support
       nginx.ingress.kubernetes.io/enable-opentracing:
         status: dropped
-        note: Requires the nginx OpenTracing module; no HAProxy-side tracing is wired.
+        note: This annotation requires the nginx OpenTracing module. Configure HAPTIC tracing through extraContext.tracing instead.
         doc: annotation-support
       nginx.ingress.kubernetes.io/opentracing-trust-incoming-span:
         status: dropped
-        note: Requires the nginx OpenTracing module; no HAProxy-side tracing is wired.
+        note: This annotation requires the nginx OpenTracing module. Configure HAPTIC tracing through extraContext.tracing instead.
         doc: annotation-support

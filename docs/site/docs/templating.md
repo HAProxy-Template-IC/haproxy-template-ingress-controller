@@ -1,1483 +1,175 @@
-# Templating
+---
+search:
+  boost: 2
+---
 
-## Overview
+# Write your first template
 
-Write templates to add routing behavior the bundled [libraries](template-libraries.md)
-don't cover. HAPTIC uses [Scriggo](https://scriggo.com/), a Go template engine, to
-read Kubernetes resources and generate HAProxy configuration and related files.
+<a id="templating"></a>
+<a id="overview"></a>
 
-The controller renders after initial synchronization and relevant resource changes,
-and periodically checks for drift. The examples below introduce the language,
-resource access, and extension points.
+Extend the bundled configuration with a snippet when you need behavior the
+available settings don't cover. A snippet adds a small piece of HAProxy
+configuration at an [extension point](template-libraries.md#extension-points).
+You can also replace the complete configuration or read your own resource types.
 
-If you use a coding agent, install the [HAPTIC skill](agent-skill.md) to give it
-the customization workflow, examples, and validation commands.
+This walkthrough adds an `X-Team: storefront` response header to the shared
+HTTP routing frontend. It uses an existing Helm installation named `haptic` in
+the `haptic` namespace. [Install HAPTIC](getting-started.md#install-with-helm)
+first if needed. You can learn the [template syntax](template-language.md) in
+your browser without installing anything.
 
-<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.backends-500-ingress" data-tab="haproxy.cfg" data-title="See a template render — live" data-controls="tabs,provenance" data-height="480">
-</div>
+## 1. Add a snippet to your values
 
-Hit **Run live** above to render the bundled Ingress example entirely in your browser. Edit the template on the left and watch `haproxy.cfg` update on the right — then switch tabs to see the `maps`, `files`, and `status` it also produces. Click any output line to jump to the template line that produced it, or **Open in full playground** to bring your changes into the full editor.
-
-## What you can template
-
-| Template Type | Use When |
-|---------------|----------|
-| `haproxyConfig` | Main HAProxy configuration (frontends, backends, global settings) |
-| `maps` | HAProxy lookup tables for host/path routing decisions |
-| `files` | Auxiliary files like custom error pages |
-| `sslCertificates` | TLS certificate files assembled from Kubernetes Secrets |
-
-### HAProxy Configuration
-
-The main `haproxyConfig` template generates the complete HAProxy configuration file. This one loops over the watched Ingresses and emits a backend for each — run it, then add or edit an Ingress on the right and watch the backends change.
-
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="One backend per Ingress" data-height="480">
+Keep your existing settings and add this snippet to your
+[complete Helm values file](deploying-with-helm.md#change-settings),
+`haptic-values.yaml`:
 
 ```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: haproxy-config-demo
-spec:
-  watchedResources:
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
-      indexBy:
-        - metadata.name
-  maps:
-    host.map:
-      template: |
-        {%- for _, ingress := range resources.ingresses.List() %}
-        {%- for _, rule := range ingress.spec.rules %}
-        {{ rule.host }} {{ ingress.metadata.name }}
-        {%- end %}
-        {%- end %}
-  haproxyConfig:
-    template: |
-      global
-        log stdout len 4096 local0 info
-        daemon
-        maxconn 4096
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 50s
-        timeout server 50s
-      frontend http
-        bind *:80
-        use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
-      {%- for _, ingress := range resources.ingresses.List() %}
-      backend {{ ingress.metadata.name }}
-        balance roundrobin
-      {%- end %}
+controller:
+  config:
+    templateSnippets:
+      frontend-extra-400-team-header:
+        template: |
+          http-response set-header X-Team storefront
 ```
 
-```yaml
-apiVersion: v1
-kind: List
-items:
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: shop
-    spec:
-      rules:
-        - host: shop.example.com
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: shop
-                    port:
-                      number: 80
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: blog
-    spec:
-      rules:
-        - host: blog.example.com
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: blog
-                    port:
-                      number: 80
+The `frontend-extra-*` extension point includes matching snippets in the shared
+HTTP frontend. The rest of the bundled templates continue to generate routing,
+backends, and certificates. Snippets with the same name replace one another;
+choose a new name when adding behavior.
+
+## 2. Apply your values
+
+Upgrade with the complete file:
+
+```bash
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic \
+  -f haptic-values.yaml
 ```
 
-</div>
+The chart's validation hook checks the candidate before rollout. To run that
+check separately, follow [Validate before deploying](operations/validate-before-deploy.md).
+For ongoing customization, add [tests](validation-tests.md) for the behavior you expect.
 
-!!! important
-    Whenever your HAProxy config references a map file, error file, certificate, or crt-list, use `pathResolver.GetPath(filename, type)` instead of a hard-coded path. The controller deploys these files to a configurable directory (set in `spec.dataplane.mapsDir`, `sslCertsDir`, `generalStorageDir`) and `pathResolver` knows where they live, so the path stays correct even if you reconfigure those directories.
+## 3. Check the result
 
-Now that you've seen a config render, try editing one. This template has no loops — just a static `frontend` — so you can focus on the edit-and-run cycle.
+Inspect the generated configuration using the CLI already in a controller pod:
 
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="11" data-title="Your turn: add a response header" data-difficulty="1">
-
-<p class="pg-task" markdown>Add a line to the `frontend web` section so every response carries an `X-Example` header with the value `hello`, then hit **Run live** and watch line&nbsp;11 of the output. (Hint: HAProxy's `http-response set-header`.)</p>
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: hsts-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend web
-        bind *:80
-        # TODO(you): add a line so every response carries X-Example: hello
-        default_backend app
-      backend app
-        server s1 127.0.0.1:8080 check
+```bash
+kubectl exec --namespace haptic deployment/haptic-controller --container controller \
+  -- haptic config view --namespace haptic
 ```
 
-<details class="pg-solution" markdown>
-<summary>Peek at the solution</summary>
+Find `http-response set-header X-Team storefront` in the HTTP frontend. Then
+send a request through one of your Ingress routes and inspect its response
+headers. If you used the [sample application](getting-started.md#optional-walkthrough-route-a-sample-app),
+start port forwarding:
 
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: hsts-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend web
-        bind *:80
-        http-response set-header X-Example hello
-        default_backend app
-      backend app
-        server s1 127.0.0.1:8080 check
+```bash
+kubectl port-forward --namespace haptic svc/haptic-haproxy 8080:80
 ```
 
-</details>
-</div>
+In another terminal:
 
-!!! note "Named and multiple `defaults` sections"
-    Templates can emit multiple named `defaults` sections. A `frontend`, `backend`, or `listen` section selects one with `from <name>`. The bundled base library uses named profiles, including `haptic-base`; see [reload-free routing](libraries/reload-free.md) before changing profiles used by dynamic backends.
-
-### Map files
-
-Each `maps` entry renders one HAProxy lookup table. They're written to `spec.dataplane.mapsDir` (default `/etc/haproxy/maps/`) on the HAProxy pod. This template turns each Ingress host into a backend-name entry — switch to the **maps** tab to read the generated `host.map`.
-
-<div class="pg-embed" markdown data-tab="maps" data-controls="tabs,resources" data-title="A host → backend map" data-height="440">
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: map-demo
-spec:
-  watchedResources:
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
-      indexBy:
-        - metadata.name
-  maps:
-    host.map:
-      template: |
-        {%- for _, ingress := range resources.ingresses.List() %}
-        {%- for _, rule := range ingress.spec.rules %}
-        {%- if len(rule.http.paths) > 0 %}
-        {{ rule.host }} ing_{{ ingress.metadata.name }}
-        {%- end %}
-        {%- end %}
-        {%- end %}
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-        use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
+```bash
+curl -i -H 'Host: echo.example.local' http://localhost:8080/
 ```
 
-```yaml
-apiVersion: v1
-kind: List
-items:
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: shop
-    spec:
-      rules:
-        - host: shop.example.com
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: shop
-                    port:
-                      number: 80
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: blog
-    spec:
-      rules:
-        - host: blog.example.com
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: blog
-                    port:
-                      number: 80
-```
-
-</div>
-
-### General files
-
-Auxiliary files like custom error pages. Written to `spec.dataplane.generalStorageDir` (default `/etc/haproxy/general/`). The `errorfile` directive points HAProxy at the rendered file — open the **files** tab to see `503.http`.
-
-<div class="pg-embed" markdown data-tab="files" data-controls="tabs" data-title="A custom 503 error page" data-height="440">
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: files-demo
-spec:
-  files:
-    503.http:
-      template: |
-        HTTP/1.0 503 Service Unavailable
-        Cache-Control: no-cache
-        Connection: close
-        Content-Type: text/html
-
-        <html><body><h1>503 Service Unavailable</h1></body></html>
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-        errorfile 503 {{ pathResolver.GetPath("503.http", "file") }}
-        default_backend web
-      backend web
-        server s1 10.0.0.1:8080 check
-```
-
-</div>
-
-General-file changes trigger a reload by default. For a file consumed only by a
-sidecar that reloads its own configuration, set `reloadOnPush: false` to update
-the file without reloading HAProxy:
-
-```yaml
-spec:
-  files:
-    vector.yaml:
-      reloadOnPush: false
-      template: |
-        sources: {}
-```
-
-Registering the file at render time takes the same flag as a fourth argument:
-
-```scriggo
-{%- var _, err = fileRegistry.Register("file", "spoa-hub-config.toml", content, false) %}
-```
-
-### SSL certificates
-
-SSL/TLS certificate files are assembled from Kubernetes Secrets. Written to `spec.dataplane.sslCertsDir` (default `/etc/haproxy/ssl/`). This reads a TLS Secret and concatenates its certificate and key into one PEM — the **certs** tab shows the result.
-
-<div class="pg-embed" markdown data-tab="certs" data-controls="tabs,resources" data-title="A PEM assembled from a Secret" data-height="440">
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: cert-demo
-spec:
-  watchedResources:
-    secrets:
-      apiVersion: v1
-      resources: secrets
-      indexBy:
-        - metadata.namespace
-        - metadata.name
-  sslCertificates:
-    example-com.pem:
-      template: |
-        {%- var secret = resources.secrets.GetSingle("default", "example-com-tls") %}
-        {%- if secret != nil %}
-        {{ secret.data["tls.crt"] | b64decode() }}
-        {{ secret.data["tls.key"] | b64decode() }}
-        {%- end %}
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend web
-        bind *:443 ssl crt {{ pathResolver.GetPath("example-com.pem", "cert") }}
-        default_backend app
-      backend app
-        server s1 10.0.0.1:8080 check
-```
-
-```yaml
-apiVersion: v1
-kind: List
-items:
-  - apiVersion: v1
-    kind: Secret
-    type: kubernetes.io/tls
-    metadata:
-      name: example-com-tls
-      namespace: default
-    data:
-      tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURUekNDQWplZ0F3SUJBZ0lVV3ZyRGg3bVB5ck5rclB2N1FjeWQ1cXBZVFZFd0RRWUpLb1pJaHZjTkFRRUwKQlFBd056RVVNQklHQTFVRUF3d0xaWGhoYlhCc1pTNWpiMjB4SHpBZEJnTlZCQW9NRmtoQlVGUkpReUJRYkdGNQpaM0p2ZFc1a0lFUmxiVzh3SGhjTk1qWXdOekE1TWpNd056QTJXaGNOTXpZd056QTJNak13TnpBMldqQTNNUlF3CkVnWURWUVFEREF0bGVHRnRjR3hsTG1OdmJURWZNQjBHQTFVRUNnd1dTRUZRVkVsRElGQnNZWGxuY205MWJtUWcKUkdWdGJ6Q0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQUxtYXBnQlZTNERmQ29jcApNUk1ocnIxeG42M1RCL3plL2kxT3hQV1k5eUhmc0hOelZPakRUT054elE1SERVMVFBUFZXb2I0YmlKemZWbDF6Cm5qVCs4MkordXVUZWVCbWUxcFJhRUhyNjgvbWxCelAvM3V0NDBDNlJ1Y0xSbzVWYlVvd3d2WnpOVHJGbW1Jdk4KcDdXdVNsWDFhTFBSSENvRE0zYUtndU94MS9MdHl6TGw3eGtPdkRBa0ZoYmNWc0tVSUFzb01KaWliREYrdzBYZApXenJDUmZOSDdzMjNldTBDRDBnZk1lT0lTV3R5MU40SWRUT2NBcGU4aWpMNi80SkJYOG51NmFhOXMwd3JmMXhpCm9yeEhEV2dDMFpva21EMGlvZ0NYaWptNXFJUGZySnZ5NkMyNzgrRnErK2I3ZzR0dzlFdjlmS1YyeGJYUjdNVTQKTTNRaUZpVUNBd0VBQWFOVE1GRXdIUVlEVlIwT0JCWUVGSUQzOG51WmszaklHQVRVZWMzV3pwMi9tNmpxTUI4RwpBMVVkSXdRWU1CYUFGSUQzOG51WmszaklHQVRVZWMzV3pwMi9tNmpxTUE4R0ExVWRFd0VCL3dRRk1BTUJBZjh3CkRRWUpLb1pJaHZjTkFRRUxCUUFEZ2dFQkFHQmFYa1JhcTRReEoxTDl2WHdnemlyWjR1dzltRzBWL1gzVkNtUDUKVXhicnJrQ3JiZzZEYURYRWpUTEk5bm92VVFmK2NaMWhPRDI0TDN4d1dvUHZ2Z25BNlBlR240c2F1Q0Z0WFNrSwp5RzZOemFrWmdjdHY0OHUzQnNLUDRJenZmTVRhZENNWmlyb2xMV0MrWWlDc1doSVRSR1RSd3JnVXlwN3JiTVgzCk9uNXpEYlU3MjU4RXhiN01NYlBvMlpJRWZZcUErKzIzVlZ6alBQamR4Yy81NjhLZTFPZUhKenR3SG5ENmk3WVAKM3NaTyt0dC83OU5TQlBUNk5TcUg2eWdGWUpCMWpYOWhYKzA1VHJzb010UnVUMmFsU1duY2VVOHJRd2dYalFLVQpiZnUrVE4xdnBrVjk0ZFZERnVKRFhhWFIyQ0ptUmVTM1prWDlJYWxNc1cvTHpwWT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
-      tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRQzVtcVlBVlV1QTN3cUgKS1RFVElhNjljWit0MHdmODN2NHRUc1QxbVBjaDM3QnpjMVRvdzB6amNjME9SdzFOVUFEMVZxRytHNGljMzFaZApjNTQwL3ZOaWZycmszbmdabnRhVVdoQjYrdlA1cFFjei85N3JlTkF1a2JuQzBhT1ZXMUtNTUwyY3pVNnhacGlMCnphZTFya3BWOVdpejBSd3FBek4yaW9ManNkZnk3Y3N5NWU4WkRyd3dKQllXM0ZiQ2xDQUxLRENZb213eGZzTkYKM1ZzNndrWHpSKzdOdDNydEFnOUlIekhqaUVscmN0VGVDSFV6bkFLWHZJb3krditDUVYvSjd1bW12Yk5NSzM5YwpZcUs4Uncxb0F0R2FKSmc5SXFJQWw0bzV1YWlEMzZ5Yjh1Z3R1L1BoYXZ2bSs0T0xjUFJML1h5bGRzVzEwZXpGCk9ETjBJaFlsQWdNQkFBRUNnZ0VBRW4zcmN4WU1ienNKbi96RkpHeFRMaEcvZ0lDSmg3S3A3VmF2UGU3dkZHTm0KZjZJcWdBUlJTVW5oemIzYmYrdnNKSVZzbVBYQ1R5cmJQblZSK21LNldnSlpXWXNtdVJxL3Mwa2o0alRWa1BaVgp1T01SMFRFWXdNTUpHSFZ0a0dob1dZcFRvZWM4bzJVZTVyTG5OaTAydjhpekZWTk10SXpjR0QvbG1ZenpBSU53CkV0UFJRRHdsMks1NDFFckdZTjA1c2RyQmFWNkFFdjRFWHh4cldzVXJCK3k2cW1XQ1kvUDdSUHkwNzFCVHJnTmUKSkhYUnk5NnJOSE9DUHZYK1kzQWRYSGw4T01yMTV0M3IyMVVlMmpqVlltY29UT1pSTTVMSjN2emRRSEFESFV4ZQoyZUFORXJkWGNNdVgyUi9wK0IvNnBtUE1LVTJLT2JJeWlOK1p0Zm9ya3dLQmdRRHFLZ083Z1BqY0RIVGc4bEdaCk14Z282emErL1VaOUN2K2JMTzk2RzBzWlpkUEJpYjR0cStvMXRnSXlqWjZ5SHBzbTBpanRSZHhjZEtuQXlIcUcKNmRwU3pJbXlUQU9DV3JsbkFFY05XQitIeTR1cTVuMUY3M0VrSitiYi9saDRUbm94SmFSeEIweDM3QjJlRVhBcQppUkhjeGdyKzljOTU3ajVuSk5RWnJ2eE1id0tCZ1FESzZXZW9jcEdSeFoxM1ZUYUVrWERFL3ZQaVBpWVJBWEZjCmVQUmVrNnhZbVAxdmxDVUdpK2VPNGgyTW9ycEoxWVBlbDBzcHNDTCs2bk5ZV0Z2K3cyUjlsb0RqY1BOSnY0WGQKdkdGeFRzS0Zkdlp0ZkxodVpqeXljM01FeWRpckt3dmpuK2lieHo2NWZOdWtWcjFhSlExQnUvN2wycmJTSEsxbwpzSERiOENsNHF3S0JnQVhMb0dnRm15TW5FOFYxZWR1R3pqUkZEZ2ZRRU95TFZ5UXFDb3RGSGFpMVFuWnB5RkV0CkRoRGlQayt0L1oxKzhHd1hpM2ZENE41UTdOcWVtNW0zTS9ZVXBkdkowZFJxRm1pY015WDdabHhnQjBibGlYZ3YKb3VjNExaaUlSUHhGUlBUdWI1RjBrc250Q0JhZmE5MUJveldKbVVBU0tWNWxMUm8wYVNOeGwwRDFBb0dCQU1hVgpWV0J5OStwdE42WFJYTEN6VW1WSmkwL1JPUm9OaW05UTVRQW1rRmFKTEFkbU9qSkUrOU5Ia2xuUDdIZFVJbUhYCk9iVkw3NFFCMmU4TlVzTnJZTTdVVzhHOENpNFQ1YVJUdUIzWFVlS2l3WnYzb3R4UTdIaE5LclQyQWpuS3dERCsKai96ZEs1TUhFa0tzclZZcXl1V1pZbVo3L2M1MlNIUWJzZWhlQzRoUEFvR0FDNW9zY2NqQlpiK2xMOW9lMnp1WgpZQ0pDMjNzQnB2bnc2cmFBdXMzZXBFdDVXQnBxL0t0cmhEVjBvL1FaVU1JUEtOM3d3dUxyd01pM0VsMHNLand2CmtHNGxhRThhU1BGek16TjBVdTRXbEhCY01xT2N3UVpVUzIwM2o4eTl3SjVtdVllNU9FMzRUdndOQ3dtVFZXNkcKK3RkNElYaHgvMGpEbXZaSzNjRDd5V3M9Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K
-```
-
-</div>
-
-!!! note
-    Certificate data in Secrets is base64-encoded. Use the `b64decode` filter to decode it.
-
-### Template snippets
-
-Reusable template fragments are included via `{{ render "snippet-name" }}` — or `{{ render_glob "pattern" }}` to pull in every match at once. This config keeps each backend in its own snippet and stitches them into the config with `render_glob`, which renders matches in alphabetical order.
-
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs" data-title="Snippets assembled with render_glob" data-height="460">
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: snippet-demo
-spec:
-  templateSnippets:
-    backend-api:
-      template: |
-        backend api
-          server s1 10.0.1.5:9000 check
-    backend-web:
-      template: |
-        backend web
-          server s1 10.0.0.1:8080 check
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-        default_backend web
-      {{ render_glob "backend-*" }}
-```
-
-</div>
-
-Include a single snippet in a template:
-
-```go
-{{ render "backend-name" }}
-```
-
-Include all snippets matching a glob pattern (rendered in alphabetical order):
-
-```go
-{{ render_glob "backend-*" }}
-```
-
-Pass local variables to rendered snippets with `inherit_context`:
-
-```go
-{%- var service_name = "my-service" %}
-{{ render "backend-servers" inherit_context }}
-```
-
-Use an [incremental snippet](./crd-reference.md#incremental-snippets) when each
-watched object can produce an independently cached fragment. The reference
-describes bindings, tracked inputs, shared groups, and effects.
-
-### Post-processing
-
-The `haproxyConfig` section supports a `postProcessing` list that transforms the rendered output before deployment. Post-processors run sequentially on the rendered configuration.
-
-Available types:
-
-| Type | Description |
-|------|-------------|
-| `regex_replace` | Line-by-line regex find/replace (`pattern` and `replace` params) |
-| `template` | Scriggo template transformation with access to the rendered output via the `input` variable (`source` param) |
-
-The config below renders a `__REGION__` marker, then runs two post-processors in order: a `template` step rewrites the marker to a value, and a `regex_replace` step renames the header. The **haproxy.cfg** tab shows the final, post-processed output.
-
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs" data-title="Rewriting the output after render" data-height="460">
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: postproc-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-        http-response set-header X-Region __REGION__
-        default_backend web
-      backend web
-        server s1 10.0.0.1:8080 check
-    postProcessing:
-      - type: template
-        params:
-          source: |
-            {%- if strings_contains(input, "__REGION__") -%}
-            {{ replace(input, "__REGION__", "eu-west-1") }}
-            {%- else -%}
-            {{ input }}
-            {%- end -%}
-      - type: regex_replace
-        params:
-          pattern: "X-Region"
-          replace: "X-Deployment-Region"
-```
-
-</div>
-
-The `template` post-processor receives the fully rendered output as the `input` variable and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, etc.). Its output becomes the new rendered content.
-
-## Template syntax
-
-For complete syntax reference, see the [Scriggo documentation](https://scriggo.com/templates).
-
-### Control structures
-
-```go
-{# Loops #}
-{% for _, ingress := range resources.ingresses.List() %}
-  backend {{ ingress.metadata.name }}
-{% end %}
-
-{# Conditionals #}
-{% if ingress.spec.tls != nil %}
-  bind *:443 ssl crt {{ pathResolver.GetPath(ingress.metadata.name + ".pem", "cert") }}
-{% end %}
-
-{# Variables #}
-{% var service_name = path.backend.service.name %}
-{% var port = fallback(path.backend.service.port.number, 80) %}
-
-{# Comments #}
-{# This is a comment #}
-```
-
-!!! warning "Reserved identifiers"
-    Scriggo uses Go's grammar, so you can't use Go's keywords as variable names: `break`, `case`, `chan`, `const`, `continue`, `default`, `defer`, `else`, `fallthrough`, `for`, `func`, `go`, `goto`, `if`, `import`, `interface`, `map`, `package`, `range`, `return`, `select`, `struct`, `switch`, `type`, and `var`. Writing `{% var type = … %}` or `{% var range = … %}` produces a parse error. In template mode, these words are also reserved: `and`, `contains`, `end`, `extends`, `in`, `macro`, `not`, `or`, `raw`, `render`, `render_glob`, `inherit_context`, `show`, and `using`. This is why the nil-default helper is `fallback`, not `default`.
-
-### Helper functions
-
-Beyond Scriggo's built-ins, HAPTIC adds helpers for the patterns ingress templates need: nil-safe navigation (`dig`, `fallback`, `toSlice`), string and map utilities, deduplication (`first_seen`), sorting (`sort_by`), and version gates (`semver_gte`). The [Template Reference](./template-reference.md#functions-and-filters) lists every function with its calling styles and an example each.
-
-Try the helpers live in a pure Scriggo scratchpad — no config, no resources, just
-the template language and every function from the reference. Edit it and watch the output.
-
-<div class="pg-embed" markdown data-scriggo data-title="Scriggo scratchpad — try the helpers" data-height="360">
-
-```go
-{# Every helper from the Template Reference is available here. Edit freely. #}
-{%- var envs = []any{"prod", "dev", "staging"} %}
-{%- var sorted = envs | sort_by([]string{"$"}) %}
-{%- for _, e := range sorted %}
-backend {{ e }}
-  server app {{ toLower(tostring(e)) }}.svc:80
-{%- end %}
-```
-
-</div>
-
-Ready for a challenge? Sort a list of backends heaviest-first, breaking ties by
-name. Edit the template to fix the sort — or peek at the solution.
-
-<div class="pg-embed" markdown data-scriggo data-title="Challenge: sort by two keys" data-difficulty="2" data-height="380">
-
-<p class="pg-task" markdown>List the backends heaviest-first, breaking ties by name. Fix the `sorted` line with `sort_by`, then hit **Run live**.</p>
-
-```go
-{# Challenge: list the backends heaviest-first, ties broken by name.
-   sort_by(items, criteria) sorts a []any by criteria like "$.field:desc". #}
-{%- var backends = []any{
-    map[string]any{"name": "web", "weight": 10},
-    map[string]any{"name": "api", "weight": 30},
-    map[string]any{"name": "cache", "weight": 30},
-} %}
-{#- TODO: sort by weight (desc), then name (asc). Fix the next line. -#}
-{%- var sorted = backends %}
-{%- for _, be := range sorted %}
-server {{ be["name"] }} weight {{ be["weight"] }}
-{%- end %}
-```
-
-<details class="pg-solution" markdown>
-<summary>Solution</summary>
-
-`$.weight:desc` sorts by weight descending; `$.name` breaks ties alphabetically.
-
-```go
-{%- var backends = []any{
-    map[string]any{"name": "web", "weight": 10},
-    map[string]any{"name": "api", "weight": 30},
-    map[string]any{"name": "cache", "weight": 30},
-} %}
-{%- var sorted = backends | sort_by([]string{"$.weight:desc", "$.name"}) %}
-{%- for _, be := range sorted %}
-server {{ be["name"] }} weight {{ be["weight"] }}
-{%- end %}
-```
-
-</details>
-
-</div>
-
-Next, use `first_seen` to collapse duplicates — a real pattern when several
-routes point at the same backend and you must emit each `backend` block exactly
-once.
-
-<div class="pg-embed" markdown data-scriggo data-title="Challenge: emit each backend only once" data-difficulty="3" data-height="380">
-
-<p class="pg-task" markdown>Several routes share a service; emit one `backend` line per unique service instead of one per route.</p>
-
-```go
-{%- var routes = []any{
-    map[string]any{"host": "a.example.com", "service": "api"},
-    map[string]any{"host": "b.example.com", "service": "api"},
-    map[string]any{"host": "c.example.com", "service": "web"},
-} -%}
-{% for _, r := range routes -%}
-{%- var svc = r | dig("service") | fallback("") -%}
-{#- TODO: a service can back many hosts — emit each backend only once -#}
-backend {{ svc }}
-{% end -%}
-```
-
-<details class="pg-solution" markdown>
-<summary>Peek at the solution</summary>
-
-Gate the emit on `first_seen("backend", svc)` — it returns `true` only the first time it sees each service key, so the repeat is skipped.
-
-```go
-{%- var routes = []any{
-    map[string]any{"host": "a.example.com", "service": "api"},
-    map[string]any{"host": "b.example.com", "service": "api"},
-    map[string]any{"host": "c.example.com", "service": "web"},
-} -%}
-{% for _, r := range routes -%}
-{%- var svc = r | dig("service") | fallback("") -%}
-{% if first_seen("backend", svc) -%}
-backend {{ svc }}
-{% end -%}
-{% end -%}
-```
-
-</details>
-
-</div>
-
-### Path resolution
-
-`pathResolver.GetPath(filename, type)` returns the path HAProxy should use to reference a rendered auxiliary file — `type` is one of `"map"`, `"file"`, `"cert"`, or `"crt-list"`. Use it instead of writing paths by hand so the controller and HAProxy agree on where files live. The [Template Reference](./template-reference.md#pathresolver) shows one example per file type and explains how the returned paths resolve against HAProxy's `default-path` directive (and what to keep if you replace the chart's base library).
-
-## Available template data
-
-### Context variables
-
-Templates receive a set of top-level variables: `resources` (the watched-resource stores), `pathResolver`, `capabilities` (HAProxy feature flags), `currentConfig` (the servers the running config has), `shared` (a compute-once cache), `extraContext`, and more. The [Template Reference](./template-reference.md#context-variables) documents each one. The one you'll use constantly is `resources`, covered next.
-
-### The `resources` variable
-
-Templates access watched resources through the `resources` variable. Each store provides `List()`, `Fetch()`, and `GetSingle()` methods.
-
-!!! note
-    The keys available under `resources.*` are determined by the `watchedResources` configuration. See [Watching Resources](./watching-resources.md) to add resource types beyond the defaults.
-
-```go
-{# List all resources #}
-{% for _, ingress := range resources.ingresses.List() %}
-
-{# Fetch by index keys (parameters match indexBy configuration) #}
-{% for _, ingress := range resources.ingresses.Fetch("default", "my-ingress") %}
-
-{# Get single resource or nil #}
-{% var secret = resources.secrets.GetSingle("default", "my-secret") %}
-```
-
-### Typed resource access
-
-When a schema is loaded for a watched resource (live in production, or via `--schema-dir` offline), both the `resources.<name>` store wrapper **and** a top-level global named `<name>` return typed pointers instead of `map[string]any`. Field access goes through the strongly typed struct, so a misspelled field is a compile-time error rather than a silently-`nil` `dig()`.
-
-Both `gw.metadata.name` and `gw.Metadata.Name` access the same typed field.
-The engine accepts the JSON field name or its generated Go name. Examples below
-use both forms.
-
-```go
-{# Typed access — fields resolve at engine compile time #}
-{%- for _, gw := range resources.gateways.List() %}
-  # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}: {{ len(gw.Spec.Listeners) }} listeners
-{%- end %}
-
-{# Identical behaviour via the typed top-level global #}
-{%- for _, gw := range gateways %}
-  # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}
-{%- end %}
-```
-
-**Typed return types.** With a schema loaded, every store method returns typed pointers:
-
-| Call | Return type |
-|------|-------------|
-| `resources.<name>.List()` | `[]*resources.<name>.T` |
-| `resources.<name>.Fetch(keys...)` | `[]*resources.<name>.T` |
-| `resources.<name>.GetSingle(keys...)` | `*resources.<name>.T` (nil if not found) |
-| `resources.<name>.APIVersion()` | `string`, with or without a schema — the group/version this resource is actually watched at — the candidate the effective config resolved to |
-
-Without a schema (for example, `haptic validate` without `--schema-dir`), the same calls fall back to `[]any` / `map[string]any` exactly as before. The chart's `dig()`-based snippets work in either mode.
-
-**`<name>.T` is a usable type expression.** Macros, var declarations, type assertions, slice types, and type-switch case clauses all accept it:
-
-```go
-{# Macro parameter typed against one kind #}
-{% macro RenderGateway(gw *resources.gateways.T) %}
-  # gw.Metadata.Name is statically typed here
-  # {{ gw.Metadata.Name }}
-{% end %}
-
-{# Type-switch dispatch across multiple kinds (polymorphic `any` boundary) #}
-{%- switch r := routeInfo["route"].(type) %}
-{%- case *resources.httproutes.T %}
-  # r is statically *resources.httproutes.T inside this branch
-  # {{ r.Metadata.Name }}: {{ len(r.Spec.Rules) }} rules
-{%- case *resources.grpcroutes.T %}
-  # {{ r.Metadata.Name }} (gRPC)
-{%- case *resources.tlsroutes.T %}
-  # {{ r.Metadata.Name }} (TLS passthrough)
-{%- end %}
-
-{# Slice type for sharded parallel rendering #}
-{% var shard []*resources.gateways.T = shard_slice(allGateways, i, n) %}
-```
-
-Use a type switch when a helper receives an `any` value and needs typed access. `shard_slice` is type-preserving: when its input is a typed slice, the result is the same typed slice (not `[]any`), so the downstream loop variable stays statically typed.
-
-Nested shapes have names too, derived from the field path, so you can write the type of a value found *inside* a resource:
-
-```scriggo
-{% type Listener = resources.gateways.SpecListeners %}
-{% type EP = resources.endpoints.Endpoints %}
-```
-
-### Collection pipelines
-
-When you're filtering, flattening, or deduplicating watched resources, chain type-preserving helpers instead of nesting loops around a `map[string]bool{}` you maintain yourself:
-
-```scriggo
-{%%
-  var addresses = resources.endpoints.List() |
-    flat_map(s => s.Endpoints) |
-    reject(e => e.TargetRef.Name == "") |
-    flat_map(e => e.Addresses) |
-    unique()
-%%}
-```
-
-The helpers are `map`, `filter`, `reject`, `flat_map`, `unique`, `unique_by`, `group_by` and `sort_by`. Each preserves the element type, so `e.TargetRef.Name` still resolves after four stages — and a typo in a field name fails the config load rather than rendering an empty file.
-
-#### `x => expr`
-
-`s => s.Endpoints` is a function of one argument returning one expression. You don't write either type: the parameter is the element type of whatever is piped in, and the result is whatever the expression evaluates to. Both are still checked — `reject(e => e.Adresses)` fails the load with an unknown-field error, and a predicate that doesn't return `bool` is rejected at the same point.
-
-The long form stays valid, and you need it when the body is more than one expression:
-
-```scriggo
-{%- var names = pods | map(func(p *resources.pods.T) string {
-    if p.Metadata.Labels["app"] != "" { return p.Metadata.Labels["app"] }
-    return p.Metadata.Name
-  }) %}
-```
-
-An arrow works anywhere a function is expected, not only in a pipeline — including your own helpers:
-
-```scriggo
-{%- var Where = func(ps []*resources.pods.T, pred func(*resources.pods.T) bool) []*resources.pods.T {
-    return ps | filter(pred)
-  } %}
-{%- var ready = Where(pods, p => p.Status.Phase == "Running") %}
-```
-
-Closure predicates let the compiler check field names. For untyped data,
-`unique_by` and `group_by` also accept an attribute path such as `unique_by("host")`.
-
-**Macros compose with chains from either end, but not in the middle.** A macro returns text, so it can consume a chain (`… | map(p => p.Name) | Render()`) or act as a stage closure (`… | map(Label)`) — it can't pass a collection onward. A shared helper that returns a *collection* is an exported `var` holding a function; it imports exactly like a macro and its return type is unrestricted:
-
-```scriggo
-{# in a snippet #}
-{% var EndpointAddresses = func(namespace, svc string) []string {
-     return resources.endpoints.Fetch(namespace, svc) | flat_map(s => s.Endpoints) |
-       reject(e => e.TargetRef.Name == "") | flat_map(e => e.Addresses)
-   } %}
-
-{# in another #}
-{% import "util-endpoints" for EndpointAddresses %}
-{%- for _, addr := range EndpointAddresses("default", "api") %}
-```
-
-Four rules the compiler enforces:
-
-- Put the pipe at the **end** of a line, not the start — Go's semicolon insertion ends the statement otherwise.
-- Write chains inside `{%% %%}`, not `{{ }}`; a `{{ }}` expression can't span lines.
-- `sort_by` returns a value *and* an error. As a pipe stage that's fine — the pipe keeps only the first result, so `x | sort_by(…)` assigns to one variable. A *direct* call can't sit in single-value context: write `var rows, sortErr = sort_by(items, criteria)` and check `sortErr`.
-- `map` keeps one output per input. Reach for `flat_map` when the closure returns a slice you want flattened in.
-
-Reach for a `{%% %%}` loop instead of a pipeline when the body has side effects — `fail()`, registering a file, recording an Event — or needs `break`.
-
-#### Asking whether an optional field was set
-
-A struct is falsy when every field is its zero value, so the question needs no helper:
-
-```scriggo
-{%- if ingress.Spec.DefaultBackend.Service %}   {# set #}
-{%- if not gateway.Spec.Tls.Frontend %}         {# absent or empty #}
-```
-
-Use `not` / `and` / `or` rather than `!` / `&&` / `||` when an operand is a struct — the Go operators need a `bool`, these coerce any value. That works inside a pipeline predicate too: `filter(o => not o.Spec.Tls.Frontend)`.
-
-Prefer this to a `dig()` probe like `dig(ingress, "spec", "defaultBackend") != nil`: same answer, and the field path is checked when the config loads.
-
-An omitted optional object and an explicitly empty object both arrive as the
-zero value of the struct. Typed access doesn't distinguish them.
-
-**Field name convention:** The generated Go name capitalizes the first rune of
-the JSON field name and leaves the rest unchanged. Use `ApiVersion` for
-`apiVersion` and `LoadBalancerIP` for `loadBalancerIP`.
-
-| JSON tag (source YAML)   | Typed field          |
-|--------------------------|----------------------|
-| `metadata`               | `Metadata`           |
-| `spec`                   | `Spec`               |
-| `apiVersion`             | `ApiVersion`         |
-| `tls`                    | `Tls`                |
-| `ingressClassName`       | `IngressClassName`   |
-| `matchLabels`            | `MatchLabels`        |
-| `clusterIP`              | `ClusterIP`          |
-| `loadBalancerIP`         | `LoadBalancerIP`     |
-| `kubernetes.io/foo`      | `Kubernetes_io_foo` (non-letter/digit → `_`) |
-
-Templates write `gw.ApiVersion`, not `gw.APIVersion`. The naming rule is covered in [Typed Access Internals](./template-reference.md#typed-access-internals).
-
-**Use direct field access in a typed scope**, such as a typed loop or macro
-parameter. Use `dig()` for untyped maps, values passed as `any`, or resources
-without a schema. It also accepts typed structs by JSON field name, so typed and
-untyped snippets can share helpers.
-
-**Iterate an optional typed slice directly.** An absent (nil) optional typed slice ranges zero times, so `for _, r := range ingress.spec.rules` is panic-free with no guard. Don't wrap a typed slice in `fallback(x, []any{})`: `fallback` returns `any`, which erases the element type and makes the following typed field access (such as `r.host`) fail to compile. When you need to branch on emptiness, test `len(x.field) > 0` (as in the map-file example earlier on this page), not a `dig(...) | toSlice()` guard.
-
-**`dig()` returns nil for empty optional fields.** For fields omitted from the
-`required` list in the schema, `dig()` converts zero values such as `""`, `0`, `false`,
-and empty slices to nil. This lets `fallback()` supply a default. Required fields
-retain their zero values.
-
-**Schema source.** Typed shapes are generated from each resource's OpenAPI v3 schema:
-
-- **Production:** the controller fetches schemas live from the kube-apiserver — CRDs via their embedded `openAPIV3Schema`, Kubernetes core resources via the apiserver's OpenAPI v3 endpoint.
-- **Offline (`haptic validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from a directory passed via `--schema-dir` (or `HAPTIC_SCHEMA_DIR` env var). The directory accepts full CRD YAMLs (`kubectl get crd X -o yaml` output) and bare OpenAPI v3 `spec.Schema` files with an `x-kubernetes-group-version-kind` extension. Without `--schema-dir`, no resources receive typed support; templates that reach for typed access in that case fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
-
-This repo's `tests/schemas/` bundles schemas for both the Gateway API CRDs / haptic CRDs *and* the Kubernetes built-ins the chart watches (Namespace, Service, Secret, EndpointSlice, Ingress). All built-ins are CRD-wrapped so the offline GVK resolver picks up the (`apiVersion`, plural) mapping — `haptic validate --schema-dir tests/schemas` therefore unlocks typed access for every chart-watched resource, not just the CRDs. The chart-test script auto-wires this directory; copy it into your own project's schema-dir if you reuse the bundled libraries. To refresh from a running cluster, run `scripts/fetch-k8s-openapi-schemas.sh` (queries `kubectl get --raw '/openapi/v3/...'`, inlines `$ref`s, emits CRD-wrapped YAML).
-
-### Index Configuration
-
-The `indexBy` field on a `watchedResources` entry determines what parameters `Fetch()` expects — see [Watching Resources — Indexing](./watching-resources.md#indexing-indexby) for index shapes, prefix scans, and the dot-escaping rule for label keys.
+The response includes `X-Team: storefront`. If the generated directive exists
+but the response doesn't include the header, check [deployment status](operations/diagnostics.md)
+and confirm that the request reaches this installation.
+
+To remove the example, delete `frontend-extra-400-team-header` from your values
+and run the same upgrade command.
 
 ## Custom template variables
 
-Add custom variables via `templatingSettings.extraContext`:
+To let the same template use different settings in each environment, supply
+values through `templatingSettings.extraContext`. Replace the first example with
+this version to choose the team name in your values file:
 
 ```yaml
-spec:
-  templatingSettings:
-    extraContext:
-      environment: production
-      limits:
-        maxConn: 10000
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        team: storefront
+    templateSnippets:
+      frontend-extra-400-team-header:
+        template: |
+          http-response set-header X-Team {{ extraContext.team }}
 ```
 
-Access in templates:
-
-```go
-{% if extraContext.environment == "production" %}
-  http-response set-header X-Environment production
-{% end %}
-
-global
-  maxconn {{ extraContext.limits.maxConn }}
-```
-
-## Common patterns
-
-### Reading a custom annotation
-
-Custom annotations are the usual way to let application teams opt individual Ingresses into behavior your templates control, without a controller fork or a new release. Read the annotation off the resource and branch on its value.
-
-The config below defines the `haptic.example.com/balance` annotation: when an Ingress carries it, its backend uses that load-balancing algorithm; otherwise it falls back to `roundrobin`. The `shop` Ingress sets `leastconn`; `blog` sets nothing. Run it, then edit either Ingress's annotation in the **Resources** panel and watch the `balance` line follow.
-
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="A custom annotation drives the balance algorithm" data-height="480">
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: custom-annotation-demo
-spec:
-  watchedResources:
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
-      indexBy: ["metadata.namespace", "metadata.name"]
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      {%- for _, ingress := range resources.ingresses.List() %}
-      backend {{ ingress.metadata.name }}
-        {%- var algo = ingress.metadata.annotations["haptic.example.com/balance"] %}
-        {%- if algo != "" && algo != "roundrobin" && algo != "leastconn" %}
-        {%- fail("haptic.example.com/balance must be roundrobin or leastconn") %}
-        {%- end %}
-        {%- if algo != "" %}
-        balance {{ algo }}
-        {%- else %}
-        balance roundrobin
-        {%- end %}
-        server app 127.0.0.1:8080 check
-      {%- end %}
-```
-
-```yaml
-apiVersion: v1
-kind: List
-items:
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: shop
-      namespace: default
-      annotations:
-        haptic.example.com/balance: leastconn
-    spec:
-      rules:
-        - host: shop.example.com
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: shop
-                    port:
-                      number: 80
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: blog
-      namespace: default
-    spec:
-      rules:
-        - host: blog.example.com
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: blog
-                    port:
-                      number: 80
-```
-
-</div>
-
-`ingress.metadata.annotations` is a typed `map[string]string`, so indexing an absent key returns `""` — the `algo != ""` check covers both a missing annotation and an empty one. Pick an annotation prefix you own (here `haptic.example.com/`) so it can't collide with another controller's. The same read-and-branch pattern drives rate limits, header rewrites, custom ACLs — anything HAProxy can express. In the chart, place the snippet under a `features-*` or `backend-directives-*` extension point so the bundled libraries pick it up (see [Template Libraries](template-libraries.md#injecting-custom-configuration)).
-
-### Servers named after their pods (avoid reloads)
-
-This loop emits one server line per endpoint. Add an endpoint and run it again:
-
-<div class="pg-embed" markdown data-scriggo data-title="Servers named after pods" data-height="360">
-
-```go
-{%- var active_endpoints = []any{
-    map[string]any{"pod": "echo-pod-1", "address": "10.244.1.10", "port": 8080},
-    map[string]any{"pod": "echo-pod-2", "address": "10.244.2.11", "port": 8080},
-} %}
-default-server check
-{%- for _, ep := range active_endpoints %}
-server {{ ep["pod"] }} {{ ep["address"] }}:{{ ep["port"] }}
-{%- end %}
-```
-
-</div>
-
-Plain text demonstrates the output but doesn't describe runtime operations to
-HAPTIC. For reload-free updates, use the bundled `BackendServers` and `Backend`
-macros: they record server identities and options as well as emitting text.
-See [Reload-free routing](libraries/reload-free.md).
-
-Put shared server options on `default-server` to avoid repeating them. HAPTIC
-copies those options into runtime server-creation commands because HAProxy
-doesn't inherit them during `add server`. Changing an existing server's options,
-such as `check` or `proto`, still requires a reload; address, port, weight, and
-maintenance-state changes can use the Runtime API.
-
-### Cross-Resource Lookups
-
-Use an Ingress's namespace and backend Service name to find its EndpointSlices.
-Both keys matter: different namespaces can have Services with the same name.
-This example prints the matching addresses as comments in the output; the
-[Ingress library](libraries/ingress.md) handles production backend generation.
-
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → EndpointSlice lookup" data-height="460">
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: cross-resource-demo
-spec:
-  watchedResources:
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
-      indexBy: ["metadata.namespace", "metadata.name"]
-    endpoints:
-      apiVersion: discovery.k8s.io/v1
-      resources: endpointslices
-      indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      {%- for _, ing := range resources.ingresses.List() %}
-      {%- for _, rule := range ing.spec.rules %}
-      {%- for _, path := range rule.http.paths %}
-      {%- var svc = path.backend.service.name %}
-      # Ingress {{ ing.metadata.namespace }}/{{ ing.metadata.name }}, Service {{ svc }}
-        {%- for _, es := range resources.endpoints.Fetch(ing.metadata.namespace, svc) %}
-        {%- for _, ep := range es.endpoints %}
-        {%- for _, addr := range ep.addresses %}
-        # Endpoint address: {{ addr }}
-        {%- end %}
-        {%- end %}
-        {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-```
-
-```yaml
-apiVersion: v1
-kind: List
-items:
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: shop
-      namespace: storefront
-    spec:
-      rules:
-        - host: shop.example.com
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: shop
-                    port:
-                      number: 80
-  - apiVersion: discovery.k8s.io/v1
-    kind: EndpointSlice
-    metadata:
-      name: shop-a1b2
-      namespace: storefront
-      labels:
-        kubernetes.io/service-name: shop
-    addressType: IPv4
-    endpoints:
-      - addresses: [10.244.1.10]
-        targetRef: {name: shop-pod-1}
-        conditions: {ready: true}
-      - addresses: [10.244.2.11]
-        targetRef: {name: shop-pod-2}
-        conditions: {ready: true}
-```
-
-</div>
-
-`Fetch(namespace, serviceName)` returns the EndpointSlices for that Service in
-that namespace. The argument order matches `indexBy`; dots in label keys need
-escaping. See [watch indexing](./watching-resources.md#indexing-indexby).
-
-### Safe Iteration
-
-With untyped `map[string]any` data (no schema loaded), wrap every field access in `dig(...) | toSlice()` so a missing field yields an empty range instead of a panic. With typed access, skip this — range optional typed slices directly (see [Typed resource access](#typed-resource-access)). The second endpoint below has no `addresses`, so it's skipped rather than breaking the render:
-
-<div class="pg-embed" markdown data-scriggo data-title="Safe iteration over missing fields" data-height="320">
-
-```go
-{# dig()+toSlice() never panics on a missing field, so the endpoint with
-   no addresses is skipped instead of breaking the render. #}
-{%- var endpoints = []any{
-    map[string]any{"addresses": []any{"10.0.0.1"}},
-    map[string]any{},
-} %}
-{%- for _, ep := range endpoints %}
-{%- for _, addr := range ep | dig("addresses") | toSlice() %}
-server srv {{ addr }}:80
-{%- end %}
-{%- end %}
-```
-
-</div>
-
-### Filtering with conditionals
-
-Test a field before you use it to skip resources that lack it. Only the rule with an `http` section produces a backend line; the bare TCP host is filtered out:
-
-<div class="pg-embed" markdown data-scriggo data-title="Filter by field presence" data-height="320">
-
-```go
-{# Only rules that have an http section become backends. #}
-{%- var rules = []any{
-    map[string]any{"host": "web.example.com", "http": map[string]any{"paths": []any{}}},
-    map[string]any{"host": "tcp.example.com"},
-} %}
-{%- for _, rule := range rules %}
-{%- if dig(rule, "http") != nil %}
-backend {{ dig(rule, "host") | tostring() }}
-{%- end %}
-{%- end %}
-```
-
-</div>
-
-### Challenge: Add health checks
-
-Put the loop-and-`dig` pattern to work:
-
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="13-16" data-title="Challenge: give every server a health check" data-difficulty="1">
-
-<p class="pg-task" markdown>This config renders two backends from an inline list, but the generated `server` lines have no health checking — HAProxy keeps routing to a pod even after it dies. Add `check` to the generated `server` line so every server gets an active health check.</p>
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: health-check-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-        default_backend web
-      {%- var backends = []any{
-        map[string]any{"name": "web", "servers": []any{"10.0.0.1:8080", "10.0.0.2:8080"}},
-        map[string]any{"name": "api", "servers": []any{"10.0.1.5:9000"}},
-      } %}
-      {%- for _, be := range backends %}
-      backend {{ be | dig("name") | tostring() }}
-      {%- for i, addr := range be | dig("servers") | toSlice() %}
-        server srv{{ i }} {{ addr | tostring() }}
-      {%- end %}
-      {%- end %}
-```
-
-<details class="pg-solution" markdown>
-<summary>Peek at the solution</summary>
-
-Append `check` to the `server` line inside the loop so HAProxy health-checks each pod and stops sending traffic to unhealthy ones.
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: health-check-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-        default_backend web
-      {%- var backends = []any{
-        map[string]any{"name": "web", "servers": []any{"10.0.0.1:8080", "10.0.0.2:8080"}},
-        map[string]any{"name": "api", "servers": []any{"10.0.1.5:9000"}},
-      } %}
-      {%- for _, be := range backends %}
-      backend {{ be | dig("name") | tostring() }}
-      {%- for i, addr := range be | dig("servers") | toSlice() %}
-        server srv{{ i }} {{ addr | tostring() }} check
-      {%- end %}
-      {%- end %}
-```
-
-</details>
-
-</div>
-
-### Challenge: Default a missing port
-
-Combine `dig()` with `fallback()` to supply a default when a field is absent:
-
-<div class="pg-embed" markdown data-scriggo data-title="Challenge: default a missing port to 80" data-difficulty="2" data-height="380">
-
-<p class="pg-task" markdown>One service omits `spec.port`; give every `server` line a port, defaulting to 80 when the field is absent.</p>
-
-```go
-{%- var services = []any{
-    map[string]any{"name": "api",   "spec": map[string]any{"port": 8080}},
-    map[string]any{"name": "web",   "spec": map[string]any{"port": 3000}},
-    map[string]any{"name": "cache", "spec": map[string]any{}},
-} -%}
-{% for _, svc := range services -%}
-{%- var name = svc | dig("name") | fallback("") -%}
-{#- TODO: cache has no spec.port — dig() returns nil and the port comes out blank -#}
-{%- var port = svc | dig("spec", "port") -%}
-server {{ name }} {{ name }}.svc:{{ port }}
-{% end -%}
-```
-
-<details class="pg-solution" markdown>
-<summary>Peek at the solution</summary>
-
-Keep the raw `dig` result, pipe it through `fallback(80)`, and use a `nil` check to flag the line that was defaulted.
-
-```go
-{%- var services = []any{
-    map[string]any{"name": "api",   "spec": map[string]any{"port": 8080}},
-    map[string]any{"name": "web",   "spec": map[string]any{"port": 3000}},
-    map[string]any{"name": "cache", "spec": map[string]any{}},
-} -%}
-{% for _, svc := range services -%}
-{%- var name = svc | dig("name") | fallback("") -%}
-{%- var portVal = svc | dig("spec", "port") -%}
-{%- var port = portVal | fallback(80) -%}
-server {{ name }} {{ name }}.svc:{{ port }}{% if portVal == nil %}  # default port{% end %}
-{% end -%}
-```
-
-</details>
-
-</div>
-
-### Mutable variables
-
-Accumulate values across nested loops with `append`, then emit the collected result. This flattens every endpoint address into one numbered server list:
-
-<div class="pg-embed" markdown data-scriggo data-title="Accumulate with append" data-height="360">
-
-```go
-{# Collect every address across nested loops, then emit them with a
-   running index. #}
-{%- var addresses = []any{} %}
-{%- var slices = []any{
-    map[string]any{"endpoints": []any{
-        map[string]any{"addresses": []any{"10.0.0.1"}},
-        map[string]any{"addresses": []any{"10.0.0.2"}},
-    }},
-    map[string]any{"endpoints": []any{
-        map[string]any{"addresses": []any{"10.0.0.3"}},
-    }},
-} %}
-{%- for _, es := range slices %}
-{%- for _, ep := range es | dig("endpoints") | toSlice() %}
-{%- for _, addr := range ep | dig("addresses") | toSlice() %}
-{%- addresses = append(addresses, addr) %}
-{%- end %}
-{%- end %}
-{%- end %}
-{%- for i, addr := range addresses %}
-server srv{{ i + 1 }} {{ addr }}:80
-{%- end %}
-```
-
-</div>
-
-### Whitespace control
-
-Add `-` inside a tag to trim adjacent whitespace: `{%-` strips whitespace before the tag, `-%}` strips whitespace after it.
-
-```go
-{%- for _, item := range items %}   {# Strip before #}
-{% for _, item := range items -%}   {# Strip after #}
-{%- for _, item := range items -%}  {# Strip both #}
-```
-
-The stripped loop below renders one clean line per environment. Delete a dash and re-run to see the blank lines it was removing:
-
-<div class="pg-embed" markdown data-scriggo data-title="Whitespace control" data-height="300">
-
-```go
-{# `{%-` strips the newline before the tag and `-%}` strips the one after,
-   so this loop renders tight lines instead of a gap-filled block. #}
-{%- var envs = []any{"prod", "staging", "dev"} %}
-{%- for _, env := range envs %}
-server {{ env }}.svc:80
-{%- end %}
-```
-
-</div>
-
-## Status patches
-
-Templates can register status patches for Kubernetes resources using the `statusPatch()` function. The controller applies these patches to the `/status` subresource via Server-Side Apply (SSA) after each reconciliation phase.
-
-Use status patches to report results on the original resource, such as a
-Gateway's `Accepted` condition or an Ingress's load balancer address. Templates
-define the status shape for each resource type.
-
-### `statusPatch()`
-
-Registers a status patch for a Kubernetes resource with outcome-keyed variants. Pass the resource object itself; `statusPatch()` reads its `apiVersion`, `kind`, `metadata.namespace`, `metadata.name`, `metadata.uid`, and `metadata.resourceVersion` without assuming a resource type. Each variant's value is the resource's `.status` content directly (for example, `conditions`, `loadBalancer`) — the controller writes it under `.status` via SSA, so don't wrap it in another `status` key:
-
-```go
-{% statusPatch(resource, map[string]any{
-    "deployed": map[string]any{
-        "conditions": []any{
-            condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(dig(resource, "status", "conditions"), "Accepted", "True")),
-        },
-    },
-    "deployFailed": map[string]any{
-        "conditions": []any{
-            condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(dig(resource, "status", "conditions"), "Accepted", "True")),
-            condition("Programmed", "False", "AddressNotAssigned", "No address available", generation, transitionTime(dig(resource, "status", "conditions"), "Programmed", "False")),
-        },
-    },
-}) %}
-```
-
-Templates render all variants upfront; the controller selects the variant matching the pipeline outcome (`rendered`, `deployed`, `renderFailed`, or `deployFailed`). The UID and resource version bind cached output to the exact resource revision that produced it. Offline and legacy objects without those fields still produce a patch, but their missing lineage can't establish that a later apply is redundant. The [Template Reference](./template-reference.md#statuspatch) lists the parameters and when each variant applies.
-
-### `condition()`
-
-Creates a `metav1.Condition`-compatible map. Run it — `toJSON` makes the returned map visible:
-
-<div class="pg-embed" markdown data-scriggo data-title="condition() builds a status condition" data-height="220">
-
-```go
-{# condition() returns a metav1.Condition-shaped map; pipe it through toJSON to see it. #}
-{{ condition("Accepted", "True", "Accepted", "Resource is accepted", 1, "2024-01-01T00:00:00Z") | toJSON() }}
-```
-
-</div>
-
-The parameter list is in the [Template Reference](./template-reference.md#condition).
-
-### `transitionTime()`
-
-Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet. The first argument is the resource's existing conditions list — navigate to it yourself with `dig(resource, "status", "conditions")`, so the helper stays agnostic to where a given resource keeps its conditions. Run the demo with a literal conditions list:
-
-<div class="pg-embed" markdown data-scriggo data-title="transitionTime() keeps or refreshes a timestamp" data-height="320">
-
-```go
-{# In a real template you'd navigate to the existing conditions with
-   dig(resource, "status", "conditions"); here it's a literal so the demo runs. #}
-{%- var existing = []any{
-    map[string]any{"type": "Accepted", "status": "True", "lastTransitionTime": "2024-01-01T00:00:00Z"},
-} %}
-{# Status still "True" -> the existing 2024 timestamp is preserved: #}
-unchanged: {{ transitionTime(existing, "Accepted", "True") }}
-{# Status flipped to "False" -> a fresh current timestamp is returned: #}
-changed:   {{ transitionTime(existing, "Accepted", "False") }}
-```
-
-</div>
-
-For resources with nested condition arrays (for example, Gateway API Route `parents[]`), navigate to the parent's conditions first — see the [Template Reference](./template-reference.md#transitiontime) for the pattern.
-
-### Using status patches in custom templates
-
-In the chart, status patch snippets should use the `status-patches-*` extension point (priority 200). This renders after feature analysis but before complex config generation, ensuring patches are captured even if later rendering fails.
-
-The example below registers a Gateway condition. Run it and open the **status**
-tab to inspect the proposed patch. A resource's API schema must support the status
-fields you write; Ingress, for example, has no `status.conditions` field.
-
-<div class="pg-embed" markdown data-tab="status" data-controls="tabs,resources" data-title="Emit a status patch" data-height="440">
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: status-patch-demo
-spec:
-  watchedResources:
-    gateways:
-      apiVersion: gateway.networking.k8s.io/v1
-      resources: gateways
-      indexBy: ["metadata.namespace", "metadata.name"]
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend web
-        bind :80
-        default_backend app
-      backend app
-        server s1 127.0.0.1:8080 check
-      {%- for _, gateway := range resources.gateways.List() %}
-      {%%
-        var gen = fallback(gateway.metadata.generation, 0)
-        var existing = dig(gateway, "status", "conditions")
-        statusPatch(gateway, map[string]any{
-          "deployed": map[string]any{
-            "conditions": []any{
-              condition("Programmed", "True", "Programmed", "Configuration deployed", gen, transitionTime(existing, "Programmed", "True")),
-            },
-          },
-        })
-      %%}
-      {%- end %}
-```
-
-```yaml
-apiVersion: v1
-kind: List
-items:
-  - apiVersion: gateway.networking.k8s.io/v1
-    kind: Gateway
-    metadata:
-      name: demo
-      namespace: shop
-      generation: 3
-    spec:
-      gatewayClassName: haptic
-      listeners:
-        - name: http
-          protocol: HTTP
-          port: 80
-```
-
-</div>
-
-The built-in Ingress and Gateway API libraries already include status patch snippets. You only need custom status patches for resources not covered by the default libraries.
-
-## Complete example
-
-The bundled Ingress library resolves Service ports, selects EndpointSlices in
-the correct namespace, and excludes unready endpoints from traffic. Use it as the
-starting point for a full routing configuration:
-
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Complete Ingress routing configuration" data-height="560">
-
-<p class="pg-task" markdown>Run the example and open the **maps** tab to see host and path routing. In **Resources**, change a backend endpoint's address and run it again. Find the updated server in **haproxy.cfg**.</p>
-
-</div>
-
-For custom resource libraries, use [`Backend()` and `BackendServers()`](libraries/reload-free.md#the-macros)
-to reuse backend generation. The [custom-CRD example](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd)
-shows how to connect your own routing resource to these helpers.
-
-## See also
-
-- [Template Reference](./template-reference.md) — context variables, functions and filters, `pathResolver`, status-patch parameters
-- [Validation Tests](./validation-tests.md) — assert on rendered output before it reaches a cluster
-- [Watching Resources](./watching-resources.md) — stores, indexing, selectors, and debounce
-- [Template Engine Reference](https://gitlab.com/haproxy-haptic/haptic/blob/main/pkg/templating/README.md)
-- [Scriggo Documentation](https://scriggo.com/templates)
-- [HAProxy Configuration Manual](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)
+Use `extraContext` for settings you control. Validate values from other users before
+inserting them into HAProxy directives; see [annotation helpers](libraries/ingress-annotations-compat.md#other-exported-macros).
+
+## Continue with your use case
+
+<a id="what-you-can-template"></a>
+<a id="haproxy-configuration"></a>
+<a id="map-files"></a>
+<a id="general-files"></a>
+<a id="ssl-certificates"></a>
+<a id="template-snippets"></a>
+<a id="post-processing"></a>
+
+### Generate configuration and files
+
+Follow the examples in [Generate configuration and files](template-files.md) to
+create a complete HAProxy configuration, maps, error pages, or certificates.
+
+<a id="template-syntax"></a>
+<a id="control-structures"></a>
+<a id="helper-functions"></a>
+<a id="mutable-variables"></a>
+<a id="whitespace-control"></a>
+
+### Learn the syntax
+
+Learn expressions, loops, helper functions, and whitespace control with the
+interactive examples in [Template syntax](template-language.md).
+
+<a id="available-template-data"></a>
+<a id="context-variables"></a>
+<a id="the-resources-variable"></a>
+<a id="typed-resource-access"></a>
+<a id="collection-pipelines"></a>
+<a id="x-expr"></a>
+<a id="asking-whether-an-optional-field-was-set"></a>
+<a id="index-configuration"></a>
+<a id="common-patterns"></a>
+<a id="reading-a-custom-annotation"></a>
+<a id="servers-named-after-their-pods-avoid-reloads"></a>
+<a id="cross-resource-lookups"></a>
+<a id="safe-iteration"></a>
+<a id="filtering-with-conditionals"></a>
+<a id="challenge-add-health-checks"></a>
+<a id="challenge-default-a-missing-port"></a>
+
+### Read Kubernetes resources
+
+Use [Kubernetes resources](template-resources.md) in your templates: access typed
+fields, read annotations, and look up related resources.
+
+<a id="statuspatch"></a>
+<a id="condition"></a>
+<a id="transitiontime"></a>
+<a id="using-status-patches-in-custom-templates"></a>
+
+### Report resource status
+
+[Report resource status](template-status.md) with patches and conditions for the
+resources your templates manage.
+
+<a id="path-resolution"></a>
+<a id="status-patches"></a>
+<a id="complete-example"></a>
+<a id="see-also"></a>
+
+For a complete resource-driven routing implementation, see the
+[Ingress library](libraries/ingress.md) and the
+[custom-resource example](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd).
+Use the [template reference](template-reference.md) to look up functions and
+[template libraries](template-libraries.md) to share your changes.

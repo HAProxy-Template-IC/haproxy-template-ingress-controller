@@ -54,7 +54,7 @@ def on_post_build(config):
         "",
         f"- [HAPTIC skill]({base}agent-skills/haptic/SKILL.md): "
         "Workflow for Scriggo customization, resource access, and validation.",
-        f"- [Install the skill]({base}agent-skill/index.md): "
+        f"- [Install the skill]({base}development/agent-skill/index.md): "
         "Installation, downloads, and example prompts.",
         "",
         "## Documentation",

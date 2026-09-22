@@ -1,0 +1,216 @@
+haproxy:
+  # Restart pods when spiffe-helper or other sidecar configs change
+  podSpec:
+    podAnnotations:
+      checksum/extra-config: '{{ toJson .Values.extraDeploy | sha256sum }}'
+
+  # Create cert directory before spiffe-helper starts
+  initContainers:
+    - name: create-spiffe-dir
+      image: busybox:1.37
+      command: ["mkdir", "-p", "/etc/haproxy/spiffe"]
+      volumeMounts:
+        - name: haproxy-runtime
+          mountPath: /etc/haproxy
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 16Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        runAsUser: 99
+        runAsNonRoot: true
+
+  sidecars:
+    - name: spiffe-helper
+      image: ghcr.io/spiffe/spiffe-helper:0.11.0
+      args: ["-config", "/etc/spiffe-helper/helper.conf"]
+      volumeMounts:
+        - name: spiffe-workload-api
+          mountPath: /spiffe-workload-api
+          readOnly: true
+        - name: haproxy-runtime
+          mountPath: /etc/haproxy
+        - name: spiffe-helper-config
+          mountPath: /etc/spiffe-helper
+          readOnly: true
+      livenessProbe:
+        httpGet:
+          path: /live
+          port: 8081
+        initialDelaySeconds: 5
+        periodSeconds: 15
+      readinessProbe:
+        httpGet:
+          path: /ready
+          port: 8081
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 64Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        # Must match HAProxy UID (99) for file ownership
+        runAsUser: 99
+        runAsNonRoot: true
+    - name: cert-reloader
+      image: haproxytech/haproxy-debian:3.4
+      command: ["sh", "-c"]
+      args:
+        - |
+          CERT=/etc/haproxy/spiffe/svid.pem
+          KEY=/etc/haproxy/spiffe/svid.pem.key
+          BUNDLE=/etc/haproxy/spiffe/bundle.pem
+          SOCK=/etc/haproxy/haproxy-master.sock
+          previous_digest=""
+          runtime_command() {
+            printf '%s\n\n' "$1" | socat -t 5 - "unix-connect:$SOCK"
+          }
+          install_pem() {
+            kind=$1
+            path=$2
+            pem=$3
+            command=$(printf '@1 set ssl %s %s <<\n%s' "$kind" "$path" "$pem")
+            response=$(runtime_command "$command") || return 1
+            if ! printf '%s' "$response" | grep -qi transaction; then
+              runtime_command "@1 abort ssl $kind $path" >/dev/null
+              return 1
+            fi
+            response=$(runtime_command "@1 commit ssl $kind $path") || return 1
+            if ! printf '%s' "$response" | grep -q 'Success!'; then
+              runtime_command "@1 abort ssl $kind $path" >/dev/null
+              return 1
+            fi
+          }
+          echo "cert-reloader: polling for cert changes"
+          while true; do
+            sleep 5
+            [ -f "$CERT" ] && [ -f "$KEY" ] && [ -f "$BUNDLE" ] || continue
+            digest=$(sha256sum "$CERT" "$KEY" "$BUNDLE") || continue
+            [ "$digest" = "$previous_digest" ] && continue
+            cert_pem=$(cat "$CERT" "$KEY") || continue
+            ca_pem=$(cat "$BUNDLE") || continue
+            [ "$digest" = "$(sha256sum "$CERT" "$KEY" "$BUNDLE")" ] || continue
+            if install_pem cert "$CERT" "$cert_pem" &&
+               install_pem ca-file "$BUNDLE" "$ca_pem"; then
+              previous_digest=$digest
+              echo "cert-reloader: certificates updated via runtime API"
+            else
+              echo "cert-reloader: update failed; retrying in 5 seconds" >&2
+            fi
+          done
+      volumeMounts:
+        - name: haproxy-runtime
+          mountPath: /etc/haproxy
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 32Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        runAsUser: 99
+        runAsNonRoot: true
+
+  extraVolumes:
+    - name: spiffe-workload-api
+      csi:
+        driver: csi.spiffe.io
+        readOnly: true
+    - name: spiffe-helper-config
+      configMap:
+        name: '{{ include "haptic.fullname" . }}-spiffe-helper-config'
+
+extraDeploy:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: '{{ include "haptic.fullname" . }}-spiffe-helper-config'
+      labels:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        app.kubernetes.io/component: spiffe-helper
+    data:
+      helper.conf: |
+        agent_address = "/spiffe-workload-api/spire-agent.sock"
+        cert_dir = "/etc/haproxy/spiffe"
+        svid_file_name = "svid.pem"
+        svid_key_file_name = "svid.pem.key"
+        svid_bundle_file_name = "bundle.pem"
+        daemon_mode = true
+
+        health_checks {
+          listener_enabled = true
+          bind_port = "8081"
+          liveness_path = "/live"
+          readiness_path = "/ready"
+        }
+
+controller:
+  config:
+    templateSnippets:
+      backend-directives-800-server-mtls-spire:
+        template: |
+          {%- if ingress != nil %}
+            {%- var spireMtls = ingress | dig("metadata", "annotations",
+                "example.com/server-mtls-spire") | fallback("") | tostring() %}
+            {%- if spireMtls == "true" %}
+              {%- var ns = ingress | dig("metadata", "namespace")
+                  | fallback("") | tostring() %}
+              {%- var name = ingress | dig("metadata", "name")
+                  | fallback("") | tostring() %}
+              {%- var key = ns + "/" + name %}
+
+              {#- Conflict detection -#}
+              {%- var serverSsl = ingress | dig("metadata", "annotations",
+                  "haproxy.org/server-ssl") | fallback("") | tostring() %}
+              {%- var serverCrt = ingress | dig("metadata", "annotations",
+                  "haproxy.org/server-crt") | fallback("") | tostring() %}
+              {%- var serverCa = ingress | dig("metadata", "annotations",
+                  "haproxy.org/server-ca") | fallback("") | tostring() %}
+              {%- if serverSsl == "true" %}
+                {{- fail("Ingress '" + key +
+                    "': server-mtls-spire conflicts with server-ssl") -}}
+              {%- end %}
+              {%- if serverCrt != "" %}
+                {{- fail("Ingress '" + key +
+                    "': server-mtls-spire conflicts with server-crt") -}}
+              {%- end %}
+              {%- if serverCa != "" %}
+                {{- fail("Ingress '" + key +
+                    "': server-mtls-spire conflicts with server-ca") -}}
+              {%- end %}
+
+              {#- Add SPIRE mTLS flags to default-server -#}
+              {%- var serviceDns = tostring(svcName) + "." +
+                  tostring(ns) + ".svc" %}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any),
+                  "ssl verify required " +
+                  "ca-file /etc/haproxy/spiffe/bundle.pem " +
+                  "crt /etc/haproxy/spiffe/svid.pem " +
+                  "sni str(" + serviceDns + ")") %}
+            {%- end %}
+          {%- end %}
+
+  extraVolumes:
+    - name: spiffe-validation-certs
+      configMap:
+        name: spiffe-validation-certs
+
+  extraVolumeMounts:
+    - name: spiffe-validation-certs
+      mountPath: /etc/haproxy/spiffe
+      readOnly: true

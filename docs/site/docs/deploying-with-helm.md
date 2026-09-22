@@ -7,7 +7,7 @@ description: "Helm chart for deploying HAPTIC, a template-driven HAProxy ingress
 Install HAPTIC with the Helm chart. It deploys the controller, two HAProxy
 replicas, custom resource definitions (CRDs), and the [template libraries](template-libraries.md)
 for Ingress and Gateway API. Configure the installation through Helm values.
-For a first installation with a sample app, follow [Getting started](getting-started.md).
+For a first installation and an optional sample route, follow [Getting started](getting-started.md).
 
 ## Prerequisites
 
@@ -20,59 +20,65 @@ For a first installation with a sample app, follow [Getting started](getting-sta
 ## Installation
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.2.0-alpha.3 --namespace haptic --create-namespace
 ```
 
 With custom values:
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.2.0-alpha.3 --namespace haptic --create-namespace \
-  -f my-values.yaml
+  -f haptic-values.yaml
 ```
 
-## Where to go next
+## Check the installation
 
-Jump to what you need:
+Wait for the controller and HAProxy Deployments to become ready:
 
-| Task | See |
-|------------|-----|
-| Configure or filter the ingress class | [IngressClass](./ingress-class.md) |
-| Set up TLS/HTTPS | [SSL Certificates](./ssl-certificates.md) |
-| Use Ingress annotations (auth, rate limiting, etc.) | [Annotations](./annotations.md) |
-| Budget CPU and memory | [Resource sizing](./operations/performance.md) |
-| Configure HAProxy replicas or service type | [HAProxy Deployment](./haproxy-deployment.md) |
-| Enable or disable template libraries | [Template Libraries](./template-libraries.md) |
-| Run multiple controller replicas | [High Availability](./operations/high-availability.md) |
-| Set up Prometheus scraping | [Monitoring](./operations/monitoring.md) |
-| Restrict network access with NetworkPolicy | [Networking](./operations/networking.md) |
-| Diagnose problems | [Troubleshooting](./troubleshooting.md) |
+```bash
+kubectl rollout status deployment/haptic-controller --namespace haptic --timeout=180s
+kubectl rollout status deployment/haptic-haproxy --namespace haptic --timeout=180s
+```
 
-## What's in this chart
+These names use the release and namespace from the install command. For a
+failed rollout, follow [installation troubleshooting](troubleshooting.md#install-issues).
 
-The chart deploys:
+## Change settings
 
-- **Controller Deployment** -- the controller that watches resources and generates configurations
-- **HAProxy Deployment** (optional, on by default) -- the load balancers that serve your traffic, each with the HAPTIC agent alongside
-- **CRDs** -- seven resource types for configuration, libraries, and rendered output; see the [CRD reference](./crd-reference.md). Helm preserves these definitions during uninstall.
-- **`HAProxyTemplateConfig` custom resource** -- built from `controller.config`, listing the enabled libraries in merge order via `spec.libraryRefs`
-- **`HAProxyTemplateLibrary` custom resources** -- one per enabled `controller.templateLibraries.*` entry, each carrying that library's snippets, templating settings, maps, files, and tests
-- **IngressClass** and **GatewayClass** -- routing API integration for Ingress and Gateway API resources
-- **RBAC**, **NetworkPolicy**, and **ServiceAccount** -- permissions and network security
-- **Vector sidecar** (on by default) -- processes access logs and exposes request and SPOA hub metrics
-- **Pre-rollout validation hook** and **CRD upgrade hook** (both on by default) -- `pre-install`/`pre-upgrade` Jobs that run `haptic preflight` against your values and server-side apply the bundled CRDs, so a bad configuration or a stale CRD schema fails the release instead of the running fleet
-- Optional **ServiceMonitor** and **PodMonitors** -- Prometheus integration for the controller and the HAProxy pods
-- **Admission webhook** (on by default) -- checks proposed changes to watched resources before Kubernetes accepts them
+Keep your custom settings in `haptic-values.yaml`. Add the values shown in these
+guides to that file, then pass the complete file when you install or upgrade.
+
+If you already have a values file for this release, use it. If you don't, export
+the values from your installed release before making changes:
+
+```bash
+helm get values haptic --namespace haptic --output yaml > haptic-values.yaml
+if [ "$(cat haptic-values.yaml)" = null ]; then
+  printf '{}\n' > haptic-values.yaml
+fi
+```
+
+This includes settings supplied with `--set`. Keep them when adding a new setting;
+passing only the new setting to `helm upgrade` can restore other settings to their
+chart defaults. Use the [upgrade command](#upgrading) to apply the edited file.
+
+<a id="whats-in-this-chart"></a>
+
+The chart manages the controller, HAProxy pods, configuration, permissions, and
+validation hooks. See [HAProxy deployment settings](haproxy-deployment.md) to
+change the pod and Service settings, or the [values reference](reference.md)
+for all options.
 
 ## Running multiple HAPTIC instances in one cluster
 
-To run separate HAPTIC installations for different teams or routing resources,
-give each release distinct names and controller identifiers:
+The example below gives a second HAPTIC release its own namespace, classes, and
+controller identifiers. This separates its configuration and HAProxy fleet from
+the first installation:
 
-| Setting | Values key | Why it must differ |
+| Setting | Values key | Purpose |
 |---------|-----------|--------------------|
-| Release name and namespace | `helm install <name> --namespace <ns>` | Scopes every Kubernetes object the chart creates, and the leader-election lease |
+| Release name and namespace | `helm install <name> --namespace <ns>` | Separates workloads, configuration, Secrets, and the leader-election lease |
 | Ingress class | `ingressClass.name` | The controller watches only Ingresses whose `spec.ingressClassName` equals this value. Two releases sharing it would both process the same Ingresses |
 | Gateway class | `gatewayClass.name` | The controller watches only Gateways whose `spec.gatewayClassName` equals this value |
 | Controller identifier | `ingressClass.controllerName` and `gatewayClass.controllerName` | The `GatewayClass` watch is filtered to `spec.controllerName`; two releases sharing it would fight over the same GatewayClasses' status. Default: `haproxy-haptic.org/controller` |
@@ -80,7 +86,11 @@ give each release distinct names and controller identifiers:
 The chart derives watch filters from `ingressClass.name` and `gatewayClass.name`.
 Set the class names in values; the chart updates the filters to match.
 
-The leader-election lease name (`controller.config.controller.leaderElection.leaseName`) defaults to the release's full name, so distinct release names already produce distinct leases. Set it explicitly only if you deliberately reuse a name.
+The leader-election lease name defaults to the release's full name. The
+configuration name defaults to `haptic-config`, independently of the release name.
+If you place releases in the same namespace, give each a distinct
+`controller.configName` and ensure they don't share managed Secrets. Separate
+namespaces avoid those ownership conflicts.
 
 Example values for a second release with its own classes:
 
@@ -105,30 +115,58 @@ Ingress and Gateway authors then select this release with `ingressClassName: hap
 
 ## Upgrading
 
-For an upgrade from 0.1.0 or a 0.2.0 alpha, read the [0.2 upgrade guide](upgrading-to-0.2.md) before applying your values.
+For an upgrade from 0.1.0 or a 0.2.0 alpha, read the [0.2 upgrade notes](upgrade-notes.md#upgrading-to-02) before applying your values.
 
-If you installed with a values file, re-pass it so your custom values survive the upgrade:
+Pass your complete values file when upgrading. If you configured the release with
+`--set` and have no saved file, [export its values first](#change-settings):
 
 ```bash
-helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.2.0-alpha.3 --namespace haptic \
-  -f my-values.yaml
+  -f haptic-values.yaml
 ```
 
-Otherwise, upgrade without it:
+For an installation with no custom settings, you can upgrade without a values file:
 
 ```bash
-helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.2.0-alpha.3 --namespace haptic
 ```
+
+[Check the Deployments](#check-the-installation) after an upgrade.
 
 !!! warning "The chart owns the `HAProxyTemplateConfig`"
     Put persistent configuration changes under `controller.config` in your values file. Edits made with `kubectl edit` or `kubectl patch` take effect immediately, but a later `helm upgrade` can overwrite them. Helm also owns the library objects it creates.
 
+### Recover a failed upgrade
+
+Check the release status and validation Job for the default installation:
+
+```bash
+helm status haptic --namespace haptic
+kubectl get jobs --namespace haptic
+kubectl logs --namespace haptic job/haptic-haptic-pre-rollout
+```
+
+If pre-rollout validation fails, fix the reported values or templates and repeat
+the [upgrade command](#upgrading) with your complete values file. Existing
+HAProxy workers keep their last configuration while this check blocks rollout.
+Earlier hooks may already have updated CRDs or certificates; a failed upgrade
+doesn't mean every resource is unchanged.
+
+If validation passed but a Deployment doesn't become ready, follow
+[installation troubleshooting](troubleshooting.md#install-issues). Keep hooks
+and validation enabled when retrying.
+
+Helm rollback doesn't reverse CRD changes or run the chart's pre-upgrade
+validation. HAPTIC doesn't guarantee downgrades across configuration API
+changes. Recover with corrected values or a corrected forward release, and
+check the [upgrade notes](upgrade-notes.md) for version-specific migrations.
+
 ## Uninstalling
 
 ```bash
-helm uninstall my-controller --namespace haptic
+helm uninstall haptic --namespace haptic
 ```
 
 Use the release name and namespace from installation. Uninstall removes the
@@ -150,3 +188,10 @@ kubectl delete crd \
   haproxymapfiles.haproxy-haptic.org \
   haproxyroutepolicies.haproxy-haptic.org
 ```
+
+## Where to go next
+
+- [Route traffic](routing.md) to your applications.
+- [Configure HAProxy pods and access](haproxy-deployment.md), including replicas and Service type.
+- [Validate a change before rollout](operations/validate-before-deploy.md).
+- [Set up monitoring](operations/monitoring.md) and [high availability](operations/high-availability.md).

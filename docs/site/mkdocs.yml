@@ -40,14 +40,12 @@ theme:
     - navigation.tabs
     - navigation.tabs.sticky
     - navigation.sections
-    - navigation.expand
     - navigation.top
     - navigation.indexes
     - search.highlight
     - search.suggest
     - content.code.copy
     - content.tabs.link
-    - content.action.edit
     - toc.follow
 
 extra_css:
@@ -78,61 +76,81 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
-  - Migrating: migrating.md
-  - Using HAPTIC:
-    - Templating: templating.md
-    - Customize with an AI agent: agent-skill.md
-    - Template Reference: template-reference.md
-    - Watching Resources: watching-resources.md
-    - CRD Reference: crd-reference.md
-    - Validation Tests: validation-tests.md
-    - Supported Configuration: supported-configuration.md
-  - Deploying with Helm:
-    - Overview: deploying-with-helm.md
-    - Upgrading to 0.2: upgrading-to-0.2.md
+  - Get started:
+    - Install and try HAPTIC: getting-started.md
+    - Migrate from another controller: migrating.md
+    - Install the CLI: cli.md
+  - Route traffic:
+    - Choose a routing guide: routing.md
+    - Ingress routing: libraries/ingress.md
+    - Try Gateway API: gateway-api.md
+    - Ingress annotations: annotations.md
+    - TLS certificates: ssl-certificates.md
+    - Gateway route policies: operations/gateway-policies.md
+    - WAF policies: operations/waf-policies.md
+    - Tune WAF rules: operations/waf-tuning.md
+    - Response caching: operations/response-cache.md
+    - Traffic processing plugins: operations/spoa-hub.md
+    - Backend mTLS with SPIFFE/SPIRE: operations/spiffe-mtls.md
+  - Write templates:
+    - Write your first template: templating.md
+    - Template syntax: template-language.md
+    - Read resources: template-resources.md
+    - Watch resources: watching-resources.md
+    - Generate configuration and files: template-files.md
+    - Report resource status: template-status.md
+    - Test templates: validation-tests.md
+    - Share and extend libraries: template-libraries.md
+  - Operate HAPTIC:
+    - Overview: operations/index.md
+    - Install and update:
+      - Install and upgrade with Helm: deploying-with-helm.md
+      - Upgrade notes: upgrade-notes.md
+      - GitOps: operations/gitops.md
+      - Validate before deploying: operations/validate-before-deploy.md
+      - Configure HAProxy pods and access: haproxy-deployment.md
+      - High availability: operations/high-availability.md
+      - Resource sizing: operations/performance.md
+      - Networking: operations/networking.md
+    - Observe and troubleshoot:
+      - Fleet diagnostics: operations/diagnostics.md
+      - Access logging: operations/access-logging.md
+      - Metrics, alerts, and dashboards: operations/monitoring.md
+      - Debugging: operations/debugging.md
+      - Troubleshooting: troubleshooting.md
+    - Protect the installation:
+      - Security: operations/security.md
+      - Agent certificates: operations/agent-certificates.md
+      - Webhook certificates: operations/webhook-certificates.md
+      - Enforce routing policies: operations/governance.md
+      - Validate generated files: operations/pluggable-validators.md
+  - Reference:
+    - Controller and agent metrics: operations/metrics-reference.md
+    - Chart values: reference.md
     - IngressClass: ingress-class.md
     - GatewayClass: gateway-class.md
-    - HAProxyRoutePolicy: route-policy.md
-    - SSL Certificates: ssl-certificates.md
-    - HAProxy Deployment: haproxy-deployment.md
-    - Chart Values Reference: reference.md
-  - Template Libraries:
-    - Overview: template-libraries.md
-    - Base: libraries/base.md
-    - Reload-free routing: libraries/reload-free.md
-    - SSL: libraries/ssl.md
-    - Ingress: libraries/ingress.md
     - Gateway API: libraries/gateway.md
-    - ingress-annotations-compat (internals): libraries/ingress-annotations-compat.md
-    - Annotations: annotations.md
-    - haptic-annotations (haproxy-haptic.org/*): libraries/haptic-annotations.md
-    - haproxytech (haproxy.org/*): libraries/haproxytech.md
-    - haproxy-ingress (haproxy-ingress.github.io/*): libraries/haproxy-ingress.md
-    - nginx-ingress (nginx.ingress.kubernetes.io/*): libraries/nginx-ingress.md
-  - Operations:
-    - GitOps: operations/gitops.md
-    - High Availability: operations/high-availability.md
-    - Monitoring: operations/monitoring.md
-    - Security: operations/security.md
-    - Agent certificates: operations/agent-certificates.md
-    - Governance guardrails: operations/governance.md
-    - Response caching: operations/response-cache.md
-    - WAF policies: operations/waf-policies.md
-    - Networking: operations/networking.md
-    - Resource sizing: operations/performance.md
-    - Validate before deploying: operations/validate-before-deploy.md
-    - Fleet diagnostics: operations/diagnostics.md
-    - Debugging: operations/debugging.md
-    - Troubleshooting: troubleshooting.md
-    - HAProxy Versions: operations/haproxy-versions.md
-    - Kubernetes Versions: operations/kubernetes-versions.md
-    - Gateway route policies: operations/gateway-policies.md
-    - Gateway API conformance: operations/gateway-conformance.md
-    - SPOA Hub: operations/spoa-hub.md
-    - Pluggable Validators: operations/pluggable-validators.md
-    - SPIFFE/SPIRE mTLS: operations/spiffe-mtls.md
+    - HAProxyRoutePolicy: route-policy.md
+    - Native Ingress annotations: libraries/haptic-annotations.md
+    - Migration annotations:
+      - Compatibility overview: annotation-compatibility.md
+      - HAProxy Technologies: libraries/haproxytech.md
+      - haproxy-ingress: libraries/haproxy-ingress.md
+      - ingress-nginx: libraries/nginx-ingress.md
+    - Templates:
+      - Functions and variables: template-reference.md
+      - Configuration CRDs: crd-reference.md
+      - Validation tests: validation-reference.md
+      - Base extension points: libraries/base.md
+      - TLS extension points: libraries/ssl.md
+      - Reload-free routing: libraries/reload-free.md
+      - Supported HAProxy configuration: supported-configuration.md
+    - Compatibility:
+      - HAProxy versions: operations/haproxy-versions.md
+      - Kubernetes versions: operations/kubernetes-versions.md
+      - Gateway API conformance: operations/gateway-conformance.md
   - Development:
+    - Annotation library internals: libraries/ingress-annotations-compat.md
     - Design Overview: development/design.md
     - Architecture:
       - Overview: development/design/architecture-overview.md
@@ -144,6 +162,8 @@ nav:
       - Leader Election: development/design/leader-election.md
       - Introspection: development/design/introspection.md
     - HAPTIC Agent: development/agent.md
+    - AI agent skill: development/agent-skill.md
+    - Debug endpoints and profiles: development/debug-endpoints.md
     - CRD Validation: development/crd-validation-design.md
     - Design Decisions: development/design/design-decisions.md
     - Linting: development/linting.md
@@ -157,9 +177,14 @@ nav:
 hooks:
   - hooks/changelog.py
   - hooks/adrs.py
+  - hooks/search.py
   - hooks/agent_skills.py
   - hooks/llms.py
   - hooks/redirects.py
+
+extra:
+  version:
+    provider: mike
 
 plugins:
   - search

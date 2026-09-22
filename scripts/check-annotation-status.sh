@@ -19,11 +19,10 @@
 # especially misleading — it's grouped with "dropped" on the not-acted-on side.)
 # The supported-vs-different distinction is intentionally not gated here: both
 # mean the chart acts on the annotation, and the behavioural difference from the
-# source controller is surfaced in the generated migrating.md tables.
+# source controller is surfaced in the generated annotation-compatibility.md tables.
 #
-# Only annotations documented with an individual heading + **Status** line are
-# checked; family-table annotations (no per-annotation label) are covered by
-# check-annotation-docs.sh's presence gate.
+# An individual annotation entry implies support unless its Status says otherwise.
+# Family-table entries are covered by check-annotation-docs.sh's presence gate.
 #
 # Wired into `make lint` (after check-annotation-docs.sh).
 set -euo pipefail
@@ -81,6 +80,7 @@ def doc_status(path, prefix):
         m = head.match(line)
         if m:
             curkey = m.group(1)
+            out[curkey] = "Supported"
             continue
         if re.match(r'^#{1,6}\s', line):
             curkey = None
@@ -120,7 +120,7 @@ for name, prefix, cov_path, doc_path in VENDORS:
         for c in contradictions:
             print(f"    {c}")
     else:
-        print(f"OK [{name}]: {len(docs)} labelled annotations agree with _migrationCoverage")
+        print(f"OK [{name}]: {len(docs)} annotation entries agree with _migrationCoverage")
 
 if failed:
     print()

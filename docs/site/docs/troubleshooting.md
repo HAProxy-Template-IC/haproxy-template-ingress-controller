@@ -2,8 +2,24 @@
 
 Find your symptom in the quick reference below, then follow its diagnosis and fix.
 
-!!! note "Namespace"
-    All `kubectl` commands below assume the default installation namespace `haptic`. Replace `-n haptic` with your namespace if you installed elsewhere.
+The commands use Helm release `haptic`. Set its namespace once for this shell:
+
+```bash
+HAPTIC_NAMESPACE=haptic
+```
+
+For an installed release, start with pod status and controller logs:
+
+```bash
+kubectl get pods --namespace "$HAPTIC_NAMESPACE" \
+  --selector app.kubernetes.io/instance=haptic
+kubectl logs --namespace "$HAPTIC_NAMESPACE" deployment/haptic-controller \
+  --container controller --tail=100
+```
+
+Builds after `0.2.0-alpha.3` also provide [fleet diagnostics](operations/diagnostics.md)
+with `haptic doctor`. That command isn't available in `0.2.0-alpha.3` or earlier.
+For a specific symptom, use the table below.
 
 ## Quick symptom reference
 
@@ -18,7 +34,7 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 | "template rendering failed" in logs | [Invalid Template Syntax](#invalid-template-syntax) |
 | "validation failed" / HAProxy errors | [Configuration Validation Failures](#configuration-validation-failures) |
 | `kubectl apply` denied by an admission webhook | [Admission webhook denied the apply](#admission-webhook-denied-the-apply) |
-| "connection refused" to an HAProxy pod | [Can't reach the agent](#cannot-reach-the-agent) |
+| "connection refused" to an HAProxy pod | [Can't reach the agent](#cant-reach-the-agent) |
 | Controller reports success but HAProxy unchanged | [Configuration Not Updating](#configuration-not-updating) |
 | 503 errors / no servers in HAProxy stats | [Requests Not Reaching Backend](#requests-not-reaching-backend) |
 | 404 for a host or path that should route | [404: no route matched](#404-no-route-matched) |
@@ -27,7 +43,7 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 | OOMKilled / gradual memory growth | [High Memory Usage](#high-memory-usage) |
 | "shm-stats-file-max-objects" / reload failures | [Shared Memory Stats Limit](#shared-memory-stats-limit) |
 
-## Install Issues
+## Install issues
 
 Problems that surface while the Helm chart installs, before the controller does any work.
 
@@ -36,13 +52,13 @@ Problems that surface while the Helm chart installs, before the controller does 
 If pods are stuck in `ImagePullBackOff`:
 
 ```bash
-kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic
+kubectl describe pod -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/name=haptic
 ```
 
 Verify the `haproxyVersion` value matches an available image tag:
 
 ```bash
-helm get values haptic -n haptic | grep haproxyVersion
+helm get values haptic -n "$HAPTIC_NAMESPACE" --all | grep haproxyVersion
 ```
 
 The controller image tag is derived from both the chart `version` and `haproxyVersion`. If pulling from a private registry, configure `controller.podSpec.imagePullSecrets` (and `haproxy.podSpec.imagePullSecrets` if the chart's HAProxy pods need the same registry).
@@ -55,14 +71,16 @@ If the controller fails with "no kind HAProxyTemplateConfig is registered":
 kubectl get crd haproxytemplateconfigs.haproxy-haptic.org
 ```
 
-CRDs are installed by the chart. If missing, reinstall the chart at the version you run:
+The chart installs its CRDs through a hook. Inspect the installation Jobs for a
+failed CRD update, then retry the [installation or upgrade](deploying-with-helm.md)
+with your pinned chart version and complete values:
 
 ```bash
-helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 --namespace haptic
+kubectl get jobs --namespace "$HAPTIC_NAMESPACE"
+helm status haptic --namespace "$HAPTIC_NAMESPACE"
 ```
 
-### NetworkPolicy Issues in kind
+### NetworkPolicy issues in kind
 
 Kind's default network doesn't enforce NetworkPolicy. If you installed a network
 plugin that does, such as Calico or Cilium, check that DNS is allowed and
@@ -73,135 +91,110 @@ Debug NetworkPolicy:
 
 ```bash
 # Check controller can resolve DNS
-kubectl exec -n haptic <controller-pod> -- nslookup kubernetes.default
+kubectl exec -n "$HAPTIC_NAMESPACE" deployment/haptic-controller -c controller -- \
+  nslookup kubernetes.default
 
 # Check controller can reach HAProxy pod
-HAPROXY_IP=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].status.podIP}')
-kubectl exec -n haptic deployment/haptic-controller -c controller -- \
+HAPROXY_IP=$(kubectl get pods -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].status.podIP}')
+kubectl exec -n "$HAPTIC_NAMESPACE" deployment/haptic-controller -c controller -- \
   haptic agent state --url "https://$HAPROXY_IP:5555"
 ```
 
-For NetworkPolicy configuration details, see [Networking](./operations/networking.md).
-
-## Controller Issues
+## Controller issues
 
 ### Controller not starting
 
-**Symptoms**: CrashLoopBackOff, repeated restarts, initialization errors
-
-**Diagnosis**:
+For repeated restarts or initialization errors, inspect the pod and its logs:
 
 ```bash
-kubectl get pods -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
-kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=100
-kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
+kubectl get pods -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller
+kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller --tail=100
+kubectl describe pod -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller
 ```
-
-**Common Causes**:
 
 | Cause | Check | Solution |
 |-------|-------|----------|
-| Missing HAProxyTemplateConfig | `kubectl get haproxytemplateconfig,haproxytemplatelibrary -n haptic` — a Helm install creates one `HAProxyTemplateLibrary` per enabled template library plus a single `HAProxyTemplateConfig` (the name in the Deployment's `CRD_NAME`); the controller waits for that config **and every library its `spec.libraryRefs` names, at the revision it names**, before it starts | Reinstall Helm chart |
-| Invalid credentials Secret | `kubectl describe secret -n haptic haptic-credentials` shows key names and sizes without values | Recreate secret with correct keys |
-| RBAC permissions | `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:<ns>:<sa>` | Verify ClusterRole/ClusterRoleBinding |
+| Missing configuration or library | `kubectl get haproxytemplateconfig,haproxytemplatelibrary -n "$HAPTIC_NAMESPACE"` | Check failed Helm or GitOps Jobs; restore the configuration through the release workflow. |
+| Invalid credentials | Controller logs name a missing Secret or key | Restore the Secret from your credential source; don't generate a replacement password independently of the agent. |
+| Permission denied | Logs name a verb and resource | Compare your ServiceAccount grants with the [required permissions](operations/security.md#rbac). |
 
 ### Pods stuck not ready
 
-**Symptoms**: A pod shows fewer ready containers than it has (a default install expects `2/2` for the controller and `4/4` for HAProxy) and never reaches full readiness, but it isn't in `CrashLoopBackOff` or `ImagePullBackOff`.
-
-First branch on the pod's actual state — "not Ready" is a readiness-probe outcome, not a single cause:
+A running container can still fail its readiness probe. Inspect the pod Events
+and per-container state:
 
 ```bash
-kubectl get pods -n haptic -o wide
-kubectl describe pod -n haptic <pod>   # read the Events and per-container State
+kubectl get pods -n "$HAPTIC_NAMESPACE" -o wide
+kubectl describe pods -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/instance=haptic
 ```
 
-- **A container is in `Waiting` with `CrashLoopBackOff` or `ImagePullBackOff`**: the pod never starts, so it can't be Ready. Follow [Controller not starting](#controller-not-starting) for crashes, or [Image pull errors](#image-pull-errors) for pull failures.
-- **Every container is `Running` but the pod stays not Ready**: a readiness probe is failing. Branch by which pod:
-    - **Controller pod** (`1/2`): the readiness probe hits `/healthz` on `controller.ports.healthz` (`8080` by default), which returns ready only once the controller has loaded a valid `HAProxyTemplateConfig` and rendered its first config. A render or config-load failure keeps it not Ready — check `kubectl logs -n haptic <pod>` for template or validation errors and follow [Invalid template syntax](#invalid-template-syntax). `/healthz` shares the `/debug/*` listener and is required by the probe (see [Debugging](./operations/debugging.md)).
-    - **HAProxy pod** (`3/4` on a default install, fewer with sidecars disabled): HAProxy's `/ready` probe is failing, which means no rendered configuration is running — the pod is still on the bootstrap config that answers 503. Inspect the HAProxy logs and the activated config. The agent's own readiness never gates this probe: it reports that the agent can accept applies, and stays true after one it rejected. SPOA hub and Vector child health doesn't gate it either; their supervisors log child failures. If configuration can't converge, follow [Can't reach the agent](#cannot-reach-the-agent).
+| Container | Next check |
+| --- | --- |
+| Controller | Logs for configuration-load, template, or validation errors; the controller must load a valid configuration before it can become ready. |
+| HAProxy | Agent and HAProxy logs for a failed first deployment. The bootstrap configuration returns `503` on `/ready` until a rendered configuration runs. |
+| Validator | Its logs and socket configuration; see [custom validators](operations/pluggable-validators.md#troubleshooting). |
+| Custom sidecar | Its own readiness probe, logs, resource limits, and mounts. |
+
+For a stopped or repeatedly restarted container, use the image-pull or startup
+checks above. See [pod readiness](haproxy-deployment.md#pod-readiness-and-restarts)
+for the chart's probe behavior.
 
 ### Controller running but not processing
 
-**Symptoms**: Pods running, no reconciliation activity
-
-**Diagnosis**:
+Check whether the controller has synchronized its watched resources:
 
 ```bash
-kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "watch\|sync complete"
+kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller | grep -i "watch\|sync complete"
 ```
-
-**Common Causes**:
 
 | Cause | Check | Solution |
 |-------|-------|----------|
 | Informers not syncing | Logs show "timeout waiting for cache sync" | Check API server connectivity, network policies |
-| No matching resources | `kubectl get ingresses -A` | Verify resources exist in watched namespaces |
-| Ingress class mismatch | `kubectl get ingress <name> -o jsonpath='{.spec.ingressClassName}'` | The Ingress must reference the class the chart created; also check any `watchedResources.*.fieldSelector` namespace filter |
-| Leader election (HA) | `kubectl get lease -n haptic` (the Lease is named after the Helm release) | Ensure one pod shows `is_leader=1` |
+| No matching resources | `kubectl get ingresses -A` | Check the watch's namespace, label, and class filters |
+| Ingress class mismatch | `kubectl get ingress --all-namespaces` | The Ingress must reference the class the chart created; also check watch namespace restrictions and `watchedResources.*.fieldSelector` |
+| Leader election (HA) | `kubectl get lease -n "$HAPTIC_NAMESPACE"` (the Lease is named after the Helm release) | Ensure one pod shows `is_leader=1` |
 
-## Configuration Issues
+## Configuration issues
 
 ### Invalid template syntax
 
-**Symptoms**: "template rendering failed" errors
-
-**Diagnosis**:
+Find the failing template and line in the controller logs:
 
 ```bash
-kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "template\|render"
+kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller | grep -i "template\|render"
 ```
 
-**Solution**:
+Fix the named template in your Helm values or configuration source. Use the
+[debugging guide](operations/debugging.md#resolve-a-rejected-configuration)
+to inspect rejected output and [validate the template](validation-tests.md)
+before applying the fix.
 
-1. Read the render error in the controller logs — it names the failing template and line — then open that template in your HAProxyTemplateConfig
-2. Inspect the last rendered output via the debug server — port-forward first (see [Debugging Guide](./operations/debugging.md)):
-
-    ```bash
-    kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
-    ```
-
-    In another terminal:
-
-    ```bash
-    curl http://localhost:8080/debug/vars/rendered
-    ```
-
-3. See [Templating Guide](./templating.md)
-
-!!! note "Live traffic keeps flowing"
-    HAPTIC keeps the last valid configuration when rendering or validation fails.
-    New routing and endpoint changes wait until the error is fixed. Existing
-    traffic still depends on the backends in that retained configuration. Check
-    the controller logs and `haptic_reconciliation_errors_total` for failures.
+HAPTIC retains the last valid configuration when rendering or validation fails.
+New routing and endpoint changes wait until the error is fixed; traffic depends
+on the backends in that retained configuration.
 
 ### Configuration validation failures
 
-**Symptoms**: `validation failed`, HAProxy errors
-
-**Common Errors**:
-
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `backend expects <name>` | Invalid HAProxy syntax | Fix template, test with `haproxy -c -f config.cfg` |
-| `unable to load file` | Missing map/cert file | Define in `maps` section, use `pathResolver.GetPath()` |
+| `backend expects <name>` | Invalid HAProxy syntax | Fix the template and run [template validation](validation-tests.md) with its files and fixtures |
+| `unable to load file` | Missing map/cert file | Check the matching map, file, or certificate declaration and `pathResolver.GetPath()` |
 | `invalid address` | Bad server address | Verify EndpointSlices exist, check service names |
 
 ### Validation test failures
 
-**Symptoms**: `haptic validate` fails
-
-**Quick Debugging**:
+Prepare [offline schemas](validation-tests.md#prepare-schemas), then inspect
+the failing test:
 
 ```bash
 # Step 1: Run with verbose output
-haptic validate -f config.yaml --verbose
+haptic validate -f config.yaml --schema-dir ./schemas --verbose
 
 # Step 2: See full rendered content
-haptic validate -f config.yaml --dump-rendered
+haptic validate -f config.yaml --schema-dir ./schemas --dump-rendered
 
 # Step 3: Check template execution
-haptic validate -f config.yaml --trace-templates
+haptic validate -f config.yaml --schema-dir ./schemas --trace-templates
 ```
 
 See [Validation Tests](./validation-tests.md#debugging-failed-tests) for detailed debugging.
@@ -225,24 +218,29 @@ uses your live resources. Local `haptic validate` runs the fixtures in your
 validation tests, so it only reproduces the problem if those fixtures include
 the triggering resource and its dependencies. See [validation tests](validation-tests.md).
 
-Two different gates sit behind this, depending on what you applied:
+If the webhook is unreachable rather than rejecting the content, inspect the
+controller pods, network access, and [webhook certificate](operations/webhook-certificates.md).
+Keep admission validation enabled while repairing it.
 
-- **Watched resources** (Ingress, Gateway, and every other `watchedResources` entry with `enableValidationWebhook: true`) go through the admission webhook, which uses `failurePolicy: Fail` — a render-breaking apply is rejected, and if the webhook itself is unreachable the apply is blocked.
-- **The `HAProxyTemplateConfig` itself** has no admission webhook, so a bad config is *accepted* by the apiserver and caught afterwards: the controller refuses to load it, keeps serving the last-good one, and increments `haptic_config_rejected_total` (see [Monitoring](./operations/monitoring.md#alerting-rules)). The reason lands on the object — `kubectl describe htplcfg <name>` shows the `Validated` condition with reason `ConfigInvalid`. On a fresh or upgraded pod the same failure is fatal: the pod crash-loops with reason `LoadGateFailed` rather than serving untested config, which leaves the old pods running. Catch it before the apply with [`haptic preflight`](./operations/validate-before-deploy.md).
+A `HAProxyTemplateConfig` is checked when the controller loads it. Kubernetes
+can store an invalid configuration, but the controller refuses to use it. Inspect
+the object's `Validated` condition and controller logs. Use
+[preflight validation](operations/validate-before-deploy.md) before changing Helm
+values.
 
-## HAProxy Pod Issues
+## HAProxy pod issues
+
+<a id="can't-reach-the-agent"></a>
 
 <a id="cannot-reach-the-agent"></a>
 
 ### Can't reach the agent
 
-**Symptoms**: `connection refused`, `timeout`, deployment failures
-
-**Diagnosis**:
+For connection failures or timeouts, first check the agent locally:
 
 ```bash
-HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
-kubectl exec -n haptic "$HAPROXY_POD" -c agent -- haptic agent state
+HAPROXY_POD=$(kubectl get pods -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n "$HAPTIC_NAMESPACE" "$HAPROXY_POD" -c agent -- haptic agent state
 ```
 
 `/v1/state` answers with the plan the pod applied, the plan its worker is
@@ -251,44 +249,35 @@ The local command uses the pod's read-only Unix socket. To test the encrypted
 network connection, run the controller-to-agent command above. For certificate
 errors, check [agent certificate management](./operations/agent-certificates.md).
 
-**Common Causes**:
-
 | Cause | Check | Solution |
 |-------|-------|----------|
-| Agent not running | `kubectl logs $HAPROXY_POD -c agent` | Verify the container started, check port conflicts |
+| Agent not running | `kubectl logs -n "$HAPTIC_NAMESPACE" "$HAPROXY_POD" -c agent` | Verify the container started, check port conflicts |
 | Certificate rejected or expired | Inspect the controller and agent logs for TLS errors | Check [certificate expiry and renewal Jobs](operations/agent-certificates.md#check-expiry); repaired identities reload automatically |
-| Network policy | `kubectl get networkpolicy` | Update egress rules for controller → HAProxy |
+| Network policy | `kubectl get networkpolicy -n "$HAPTIC_NAMESPACE"` | Update egress rules for controller → HAProxy |
 
 ### Configuration not updating
 
-**Symptoms**: Controller shows success but HAProxy has old config
-
-**Diagnosis**:
+Inspect configuration conditions for rejected output or failed deployments:
 
 ```bash
-HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
-kubectl exec -n haptic $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
-kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "deployment.*succeeded"
+kubectl get haproxycfg --namespace "$HAPTIC_NAMESPACE" -o yaml
 ```
 
-**Common Causes**:
+With a build that supports it, `haptic doctor` compares the desired configuration
+with every pod. See [fleet diagnostics](operations/diagnostics.md). A successful
+attempt on one pod doesn't establish that every pod applied the change.
 
-| Cause | Check | Solution |
-|-------|-------|----------|
-| Volume mount issue | `kubectl get pod $HAPROXY_POD -o yaml \| grep -A5 volumeMounts` | Ensure both containers share config volume |
-| HAProxy not reloading | `kubectl logs $HAPROXY_POD -c agent` | The agent logs the reload it asked for and HAProxy's answer; check master socket access |
+For a specific pod, [agent state](operations/debugging.md#common-recipes) reports
+its applied files, running plan, and pending reload. File timestamps alone don't
+show what HAProxy is serving; supported changes can apply without a reload.
 
 ### Shared memory stats limit
 
-!!! note "Opt-in feature"
-    This only applies when `haproxy.shmStats.enabled: true` is set in Helm values (the default is `false`) and HAProxy is 3.3+ — the shm-stats file is gated by `semver_gte` in the chart templates. If you're on the default config you won't see these errors; this section is for operators who turned shm-stats on for performance.
-
-**Symptoms**: 100% deployment error rate, HAProxy reload failures with `shm-stats-file-max-objects` errors
-
-**Diagnosis**:
+This applies to HAProxy 3.3+ with `haproxy.shmStats.enabled: true` (off by
+default). Look for `shm-stats-file-max-objects` errors when a reload fails:
 
 ```bash
-kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep "shm-stats"
+kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller | grep "shm-stats"
 ```
 
 Look for:
@@ -299,15 +288,6 @@ Cannot add additional object to '/dev/shm/haproxy-stats' file,
 maximum number already reached (50000).
 ```
 
-**Common Causes**:
-
-| Cause | Check | Solution |
-|-------|-------|----------|
-| Too many HAProxy objects for the configured limit | Count ingresses/services: `kubectl get ingresses -A --no-headers \| wc -l` | Increase `haproxy.shmStats.maxObjects` in Helm values |
-| Cluster grew beyond initial sizing | Compare object count to `maxObjects` value | Recalculate using the formula below |
-
-**Solution**:
-
 Each HAProxy frontend, backend, and server directive counts as one shm-stats object. The file is fixed-size and can't be resized on reload. Increase `haproxy.shmStats.maxObjects` in your Helm values:
 
 ```yaml
@@ -317,140 +297,108 @@ haproxy:
     maxObjects: 100000  # default: 50000
 ```
 
-**Sizing formula**: `(number of frontends + number of backends + number of servers) × 1.2 safety margin`. Each object uses ~4KiB of shared memory. For example, 100,000 objects require ~390Mi in `/dev/shm`, which counts against the pod's memory limit.
+Size for `(frontends + backends + servers) × 1.2`. Each object uses about
+4 KiB; 100,000 objects need about 390 MiB in `/dev/shm`.
 
 !!! warning
     After changing `maxObjects`, verify that `haproxy.resources.limits.memory` is large enough to accommodate the increased `/dev/shm` usage. The shm volume is memory-backed and counts against the pod's memory limit.
 
-## Routing Issues
+## Routing issues
 
 ### Requests not reaching backend
 
-**Symptoms**: 503 errors, timeouts, no servers in HAProxy stats
+Start with the [access log](operations/access-logging.md). Check the selected
+backend, `denied_by`, and termination state. A `503` can mean no ready endpoints,
+a policy failure, or an application response; status alone doesn't distinguish them.
 
-**Diagnosis**:
+Inspect the Service and its EndpointSlices. Enter the application's namespace
+and Service name:
 
 ```bash
-HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
-kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg | grep -A10 "backend"
-kubectl get endpointslices -l kubernetes.io/service-name=<service>
+read -r -p "Application namespace: " app_namespace
+read -r -p "Service name: " service_name
+kubectl get service "$service_name" --namespace "$app_namespace" -o yaml
+kubectl get endpointslices --namespace "$app_namespace" \
+  --selector "kubernetes.io/service-name=$service_name" -o yaml
 ```
 
-**Common Causes**:
-
-| Cause | Check | Solution |
-|-------|-------|----------|
-| No endpoints | `kubectl get endpointslices` | Verify backend pods running and ready |
-| Backend not created | Controller logs for backend errors | Review template logic, check Ingress references |
-| Routing not matching | Test with `curl -H "Host: ..."` | Verify Host header, check ACLs and map files |
+Check that the route refers to an existing Service port and that its
+EndpointSlices contain ready backend addresses. Correct Service selectors or
+unready application pods when those are the cause. For policy denials, follow
+the Event or condition that names the rejected policy.
 
 ### 404: No route matched
 
-**Symptoms**: HAProxy answers `404 Not Found` (not `503`) for a host or path you expect to route.
+HAPTIC's default backend returns `404` for an unmatched HTTP request and
+gRPC status `12` for an unmatched gRPC request. Applications can return these
+codes too; use the access log to establish where the response came from.
 
-HAPTIC's default backend returns `404` for unmatched HTTP requests and `grpc-status: 12` (Unimplemented) for unmatched gRPC requests. A matched route with no ready servers commonly returns `503`; see [Requests not reaching backend](#requests-not-reaching-backend). Status alone doesn't identify the cause: applications and custom rules can return the same codes. Check the access log's backend and termination state.
+Check the route's class, host, path, and attachment:
 
-Check the three things that stop a route from matching:
+| Route type | Check |
+| --- | --- |
+| Ingress | `spec.ingressClassName` matches HAPTIC's class, and the resource passes any custom watch filters. A legacy class annotation alone doesn't match the default filter. |
+| Gateway API | The route's parent conditions report `Accepted=True` and `ResolvedRefs=True`; use the [Gateway's Service](gateway-api.md#step-4-test-the-routing) when testing. |
+| Either | The request hostname and path match the declared route. An `Exact` path doesn't match paths below it; `Prefix` matches path segments. |
 
-- **The Ingress was never adopted.** HAPTIC only serves Ingresses whose `ingressClassName` (or the legacy `kubernetes.io/ingress.class` annotation) references the class the chart created. An Ingress with a different class produces no HAProxy route at all.
-
-    ```bash
-    kubectl get ingress <name> -o jsonpath='{.spec.ingressClassName}'
-    # Compare against the class HAPTIC created:
-    kubectl get ingressclass
-    ```
-
-    See [Migrating — Existing Ingresses aren't being routed](./migrating.md#troubleshooting).
-
-- **The Host header doesn't match a rule host.** Routing keys on the request's `Host`. Send the exact host the Ingress declares:
-
-    ```bash
-    HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
-    kubectl port-forward -n haptic $HAPROXY_POD 8080:80 &
-    curl -i -H "Host: app.example.com" http://localhost:8080/
-    ```
-
-- **The path or `pathType` doesn't match.** An `Exact` path matches only the exact request path; `Prefix` matches path segments. Confirm the request path falls under a declared path, and inspect the generated routing maps:
-
-    ```bash
-    kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/maps/host.map
-    ```
-
-### SSL/TLS Issues
-
-**Symptoms**: SSL handshake failures, certificate errors
-
-**Diagnosis**:
+For an Ingress, bypass the external load balancer with a local port forward:
 
 ```bash
-HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
-kubectl exec -n haptic $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/ssl/
-
-# Port-forward HAProxy's HTTPS port, then probe the handshake.
-# Stop the forward with `kill %1` (or Ctrl+C) when done.
-kubectl port-forward -n haptic $HAPROXY_POD 443:443 &
-openssl s_client -connect localhost:443 -servername your-host.example.com < /dev/null
+kubectl port-forward --namespace "$HAPTIC_NAMESPACE" service/haptic-haproxy 8080:80
 ```
 
-**Common Causes**:
-
-| Cause | Check | Solution |
-|-------|-------|----------|
-| Certificate not deployed | Check `sslCertificates` section | Define template, watch secret, use `b64decode` |
-| Wrong cert path | `grep "bind.*ssl.*crt" haproxy.cfg` | Use `pathResolver.GetPath("cert.pem", "cert")` |
-
-**"Secret not found" errors:**
-
-Check that the Secret exists in the correct namespace:
+In another terminal, enter the hostname and path declared by the route:
 
 ```bash
-kubectl get secret default-ssl-cert -n haptic
+read -r -p "Route hostname: " route_hostname
+read -r -p "Request path, starting with /: " request_path
+curl -i --header "Host: $route_hostname" "http://127.0.0.1:8080$request_path"
 ```
 
-**HAProxy fails to start with SSL errors:**
+Stop the forward when finished. If this works but the public address fails,
+check DNS, load-balancer forwarding, and network access.
 
-Verify the certificate and key are valid:
+### SSL/TLS issues
+
+For an Ingress, forward HTTPS to an unprivileged local port:
 
 ```bash
-# Extract and verify certificate
-kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -text -noout
-
-# Verify key
-kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.key}' | base64 -d | openssl pkey -check -noout
+kubectl port-forward --namespace "$HAPTIC_NAMESPACE" service/haptic-haproxy 8443:443
 ```
 
-**Certificate not being updated:**
+In another terminal, inspect the certificate offered for your hostname:
 
-The controller watches the Secret and deploys certificate changes automatically within seconds. If HAProxy keeps serving the old certificate, check the controller logs for render or deployment errors.
+```bash
+read -r -p "TLS hostname: " tls_hostname
+openssl s_client -connect 127.0.0.1:8443 -servername "$tls_hostname" < /dev/null
+```
 
-By default the chart watches Secrets with an **on-demand** store (`controller.config.watchedResources.secrets.store: on-demand`), so cert bodies aren't kept resident in memory. Override it to `full` if you'd rather hold Secrets in the in-memory store.
+For a Gateway, use its [dedicated Service](gateway-api.md#step-4-test-the-routing)
+instead. Stop the forward after the check.
 
-For certificate provisioning and rotation (cert-manager, manual Secrets, the chart-generated default), see [SSL Certificates](./ssl-certificates.md).
+| Symptom | Next check |
+| --- | --- |
+| Wrong certificate | The route's hostname, TLS Secret reference, and certificate DNS names. |
+| Secret missing | The Secret's name and namespace; check cert-manager's Certificate conditions if it owns the Secret. |
+| Expired certificate | The certificate issuer's renewal status; follow [certificate rotation](ssl-certificates.md#certificate-rotation). |
+| Updated Secret but old certificate still served | Controller validation and deployment errors, then fleet convergence. |
+| Backend TLS handshake fails | The backend CA, server name, and client-certificate settings; frontend certificates don't configure backend TLS. |
 
-## Performance Issues
+See [certificate setup](ssl-certificates.md) for cert-manager, manual Secrets,
+and the chart's default certificate.
+
+## Performance issues
 
 ### Slow reconciliation
 
-**Symptoms**: Changes take minutes, high CPU
+Compare controller CPU and memory with the [sizing guide](operations/performance.md).
+Check reconciliation duration, queue wait, and fleet convergence in the
+[monitoring dashboard](operations/monitoring.md). A delayed render and a failed
+deployment need different fixes.
 
-**Diagnosis**:
-
-```bash
-kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
-```
-
-In another terminal:
-
-```bash
-curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
-```
-
-**Solutions**:
-
-- Use namespace restrictions in `watchedResources`
-- Add label selectors to filter resources
-- Use cached store for large resources
-- Optimize templates: cache values with `{% var %}`, reduce nested loops
+For custom templates, use [template tracing](operations/performance.md#template-debugging)
+to find expensive snippets. Narrow watches only when the removed resources
+aren't needed for routing.
 
 ### Frequent renders without configuration changes
 
@@ -483,8 +431,11 @@ The chart already fetches Secret contents on demand.
 
 ### Collect diagnostic information
 
+This command requires a build after `0.2.0-alpha.3`. With an older release,
+collect the pod status and logs described at the top of this page.
+
 ```bash
-haptic doctor --namespace haptic \
+haptic doctor --namespace "$HAPTIC_NAMESPACE" \
   --bundle "haptic-support-$(date -u +%Y%m%dT%H%M%SZ).zip"
 ```
 
@@ -496,50 +447,25 @@ custom installations, and deeper private investigation.
 
 ### Enable debug logging
 
-The controller supports multiple log levels via the `LOG_LEVEL` environment variable (case-insensitive):
-
-| Level | Description |
-|-------|-------------|
-| `ERROR` | Errors only |
-| `WARN` (or `WARNING`) | Warnings and errors |
-| `INFO` | Important state changes (default) |
-| DEBUG | Detailed debugging information |
-| TRACE | Very verbose, per-item iteration logs |
-
-```bash
-# Enable debug logging
-kubectl set env -n haptic deployment/haptic-controller LOG_LEVEL=DEBUG
-
-# Enable trace logging (very verbose)
-kubectl set env -n haptic deployment/haptic-controller LOG_LEVEL=TRACE
-```
-
-The log level can also be configured via the HAProxyTemplateConfig CRD's `spec.logging.level` field. When set, the CRD value takes precedence over the `LOG_LEVEL` environment variable, and changes take effect without a pod restart:
+Set the runtime level through your Helm values:
 
 ```yaml
-# In values.yaml
 controller:
-  logLevel: INFO  # Initial LOG_LEVEL env var (used until the CRD is loaded)
   config:
     logging:
-      level: DEBUG  # Written to spec.logging.level — overrides env var at runtime
+      level: DEBUG
 ```
 
-!!! note
-    TRACE level produces extremely verbose output, including per-resource iteration logs, HTTP fetch retries, and test runner details. Enable it only for short, targeted sessions and set the level back to `INFO` afterwards — TRACE volume drowns everything else.
+Apply your [complete values file](deploying-with-helm.md#change-settings).
+The level changes without a pod restart and takes precedence over the startup
+`LOG_LEVEL` environment variable. Use `TRACE` only for a short investigation;
+restore `INFO` afterward to reduce log volume.
 
 ### Access the debug server
 
-The Helm chart enables the debug server on port `8080` by default (same port as `/healthz`). Port-forward to reach it:
-
-```bash
-kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
-```
-
-The listener is configured by `controller.ports.healthz` and also serves
-`/healthz`, so it's required by the liveness/readiness probes. Restrict access
-through RBAC permissions for `pods/portforward` and `pods/exec`. See the [Debugging Guide](./operations/debugging.md)
-for the endpoint catalogue and usage.
+Follow the [debugging guide](operations/debugging.md) to inspect configuration,
+compare pods, or investigate a rejected update. Debug output can include
+credentials; restrict `pods/portforward` and `pods/exec` permissions.
 
 ## See also
 

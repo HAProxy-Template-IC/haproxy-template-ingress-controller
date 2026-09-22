@@ -1,29 +1,30 @@
-# Ingress library
+# Route with Ingress
 
-The Ingress library turns `networking.k8s.io/v1` Ingress resources into HAProxy routing configuration.
+<a id="ingress-library"></a>
 
-## Overview
+Route requests by hostname and path using Kubernetes Ingress resources. The
+library is enabled by default and watches Ingresses with `ingressClassName: haptic`.
+HAPTIC discovers backend endpoints from Services and EndpointSlices.
 
-The Ingress library enables HAProxy to route traffic based on Kubernetes Ingress resources:
+With the chart defaults, every Ingress also serves HTTPS with the default certificate. Add `spec.tls`
+for your own host certificates, or see [TLS configuration](#tls-configuration)
+for HTTP-only routing. To change authentication, timeouts, or other route
+behavior, use [Ingress annotations](../annotations.md).
 
-- Path-based routing with Exact, Prefix, and ImplementationSpecific path types
-- Host-based routing via Ingress rules
-- TLS termination — every Ingress is served over HTTPS with the default certificate by default, plus per-host certificates via `spec.tls`
-- Backend generation with automatic endpoint discovery
-- IngressClass filtering (default: `haptic`)
+<a id="overview"></a>
 
-This library is enabled by default.
+Try adding a hostname to the sample Ingress:
 
-See the Ingress preset render a full HAProxy config live:
-
-<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.map-host-500-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → HAProxy config" data-height="440">
+<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.map-host-500-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-input="resources" data-input-focus="shop.example.com" data-title="Ingress → HAProxy config" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, add a second host to the `shop` Ingress — copy its existing rule and change the host to `www.shop.example.com`. Then open the **maps** tab and watch `www.shop.example.com` join `host.map` and `path-prefix.map`, both routing to the existing `storefront_shop_svc_shop_http` backend.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-`map-host-500-ingress` adds `www.shop.example.com www.shop.example.com` to `host.map`, and `map-path-prefix-500-ingress` adds `www.shop.example.com/ BACKEND:storefront_shop_svc_shop_http` to `path-prefix.map`. The **haproxy.cfg** tab still shows a single `backend storefront_shop_svc_shop_http`: both rules point at the same Service and port, so `backends-500-ingress` deduplicates them — its `first_seen("ingress_backend", ns, name, svcName, portId)` guard emits one backend per unique `(namespace, ingress, service, port)`, no matter how many hosts route to it.
+The new hostname appears in `host.map` and `path-prefix.map`. Both hosts point
+to `storefront_shop_svc_shop_http`, so the **haproxy.cfg** output still has one
+backend for the shop Service.
 
 </details>
 
@@ -40,43 +41,12 @@ controller:
 
 ### Ingress class filtering
 
-By default, only Ingresses with `spec.ingressClassName: haptic` are processed. This is configured via field selector in the library's watched resources. Override `ingressClass.name` to match an incumbent controller's class (often `haproxy`) when replacing one in-place.
+The chart creates IngressClass `haptic` and selects Ingresses that name it.
+See [class selection](../ingress-class.md) for a different name or filter. When
+replacing another controller, follow the [migration guide](../migrating.md) to
+transfer class ownership and traffic.
 
-## Extension points
-
-The Ingress library hooks into these extension points from base.yaml. Snippet names match what's emitted in `charts/haptic/charts/ingress/library.yaml`.
-
-| Extension Point | Snippet | What It Generates |
-|-----------------|---------|-------------------|
-| `features-*` | `features-100-ingress-bind` | Sets `gf["bindHTTPDefault"]` / `gf["needHTTPFrontend"]`; by default (or for Ingresses with `spec.tls`) also sets `gf["bindHTTPSDefault"]`, `gf["needHTTPSFrontend"]`, `gf["needHTTPSTermination"]` — see [HTTPS on by default](#https-on-by-default) |
-| `features-*` | `features-100-ingress-tls` | Registers TLS Secrets from `ingress.spec.tls[]` into `gf["tlsCertificates"]` for the SSL library's CRT-list |
-| `backends-*` | `backends-500-ingress` | Backend blocks per unique `(namespace, ingress, service, port)` referenced by an Ingress |
-| `map-host-*` | `map-host-500-ingress` | Host → group entries derived from `ingress.spec.rules[].host` |
-| `map-path-exact-*` | `map-path-exact-500-ingress` | Entries for `pathType: Exact` paths |
-| `map-pfxexact-*` | `map-pfxexact-500-ingress` | Prefix-exact entries emitted when `pathType: Prefix` paths need to match their exact boundary |
-| `map-path-prefix-*` | `map-path-prefix-500-ingress` | Prefix entries for `pathType: Prefix` paths |
-| `features-*` | `features-105-ingress-ssl-redirect` | Registers each HTTPS-served host in `gf["sslRedirectHosts"]` when `extraContext.ingressDefaultSSLRedirect` is on — see [Redirect HTTP to HTTPS](#redirect-http-to-https) |
-| `map-path-prefix-*` | `map-path-prefix-501-ingress-default` | The catch-all prefix entry for an Ingress rule with no explicit path |
-| `status-patches-*` | `status-patches-200-ingress` | Patches the LoadBalancer status on each matched Ingress |
-
-Regex-path matching isn't emitted by this library directly — it comes from the default-enabled [haptic-annotations](haptic-annotations.md) library, whose `map-path-regex-800-haptic-path-type` snippet handles `haproxy-haptic.org/path-type: regex`. The opt-in `haproxy-ingress` library provides the equivalent `haproxy-ingress.github.io/path-type: regex`.
-
-### Injecting custom configuration
-
-You can extend Ingress support by adding snippets with the right extension-point prefix and a priority that places them correctly alongside the built-in 500-range entries:
-
-```yaml
-controller:
-  config:
-    templateSnippets:
-      # Runs alongside the built-in 500-range exact-path entries
-      map-path-exact-700-custom:
-        template: |
-          # Custom exact path routing
-          api.example.com/v1/health BACKEND:custom_health_backend
-```
-
-## Features
+## Routing rules {#features}
 
 ### Host-based routing
 
@@ -117,7 +87,11 @@ A rule with no `host` matches every hostname (the catch-all listener).
 
 #### Wildcard hosts
 
-A single-label wildcard host — `*.example.com` — is supported. HAPTIC normalizes it to `.example.com` (dropping the `*`), and HAProxy strips the request's leading label before the map lookup. So `*.example.com` matches `shop.example.com` and `admin.example.com`, but not the apex `example.com` or a deeper `a.b.example.com` — a Kubernetes wildcard host matches exactly one label. To match more than one label, add the `haproxy-ingress.github.io/server-alias-regex` annotation, which routes matching hostnames through `host-regex.map`. See [Frontend routing logic](base.md#frontend-routing-logic) for the full host-match cascade.
+A wildcard matches exactly one hostname label. For example, `*.example.com`
+matches `shop.example.com` and `admin.example.com`, but not `example.com` or
+`a.b.example.com`. For other patterns, use the native
+[`haproxy-haptic.org/host-alias-regex`](haptic-annotations.md#path-and-host-matching)
+annotation.
 
 ```yaml
 spec:
@@ -139,11 +113,11 @@ spec:
 
 The Ingress library supports all standard Kubernetes Ingress path types:
 
-| Path Type | HAProxy Matcher | Description |
-|-----------|-----------------|-------------|
-| `Exact` | `map()` | Path must match exactly |
-| `Prefix` | `map_beg()` | Path must start with value |
-| `ImplementationSpecific` | `map_beg()` | Treated as Prefix by default |
+| Path type | Matching behavior |
+| --- | --- |
+| `Exact` | `/shop` matches `/shop`, but not `/shop/` or `/shop/cart` |
+| `Prefix` | `/shop` matches `/shop`, `/shop/`, and `/shop/cart`, but not `/shopping` |
+| `ImplementationSpecific` | Uses prefix matching unless a [path-type annotation](haptic-annotations.md#path-and-host-matching) selects another behavior |
 
 !!! note "Path match precedence"
     When more than one path could match a request, HAProxy evaluates the path maps in a fixed order: Exact, then Regex, then Prefix-exact, then Prefix. Host matching runs first (exact host, then single-label wildcard, then host regex). Set `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last` to move regex evaluation after the prefix matchers (Exact > Prefix-exact > Prefix > Regex). See [Frontend routing logic](base.md#frontend-routing-logic) for the complete cascade.
@@ -199,11 +173,12 @@ All three route to the same `storefront_shop_svc_shop_http` backend: they share 
 
 ### Conflicting routes: the oldest Ingress wins
 
-A host and path can be routed to only one backend. When two Ingresses declare the same host, path, and path type, the controller resolves the collision deterministically: the **older** Ingress — by `creationTimestamp`, with the namespace and name as a tiebreaker — keeps the route, and the newer Ingress's conflicting route is dropped. This matches ingress-nginx's behavior, so an Ingress that was there first is never hijacked by a later conflicting one.
+A host and path can be routed to only one backend. When two Ingresses declare the same host, path, and path type, the controller resolves the collision deterministically: the **older** Ingress — by `creationTimestamp`, with the namespace and name as a tiebreaker — keeps the route, and the newer Ingress's conflicting route is dropped.
 
 `Prefix` and `ImplementationSpecific` paths share the same routing slot, so a `Prefix` path on one Ingress and an `ImplementationSpecific` path with the same host and path on another still collide and are resolved together. `Exact` paths match separately and never collide with prefix paths.
 
-Because the timestamp is the Ingress object's creation time, editing an Ingress doesn't change who wins — a route stays with the Ingress that first claimed it, regardless of later edits.
+The comparison uses object creation time, not the time a path was added. An
+older Ingress can therefore take precedence when edited to add a conflicting path.
 
 The controller records a `Warning` Event with reason `RouteConflict` on the Ingress that lost the route, naming the winner, so the dropped route is visible without reading the controller logs:
 
@@ -259,7 +234,7 @@ HAPTIC honours `spec.defaultBackend` in three shapes:
 - **Alongside rules** — a request that matches the Ingress's host but none of its paths falls through to the default backend; requests to other hosts aren't caught.
 - **Newest wins per host** — when several Ingresses declare a default backend for the same host, the most recently created one wins, so a rollout switches the fallback deterministically.
 
-To serve a custom page for unmatched requests — a branded 404 or a maintenance notice — point `spec.defaultBackend` at a small Service that returns it. For HAProxy's own error responses (for example the 503 shown when a backend has no ready endpoints), render the page as a file and wire it with an `errorfile` directive instead; see [Auxiliary files](../templating.md#general-files) for the `files` and `errorfile` pattern.
+To serve a custom page for unmatched requests — a branded 404 or a maintenance notice — point `spec.defaultBackend` at a small Service that returns it. For HAProxy's own error responses (for example the 503 shown when a backend has no ready endpoints), render the page as a file and wire it with an `errorfile` directive instead; see [Auxiliary files](../template-files.md#general-files) for the `files` and `errorfile` pattern.
 
 ### TLS Configuration
 
@@ -287,22 +262,18 @@ spec:
               service:
                 name: secure-service
                 port:
-                  number: 443
+                  number: 80
 ```
 
-The referenced Secret must be of type `kubernetes.io/tls`:
+Create the `kubernetes.io/tls` Secret in the same namespace as the Ingress.
+With your certificate chain in `tls.crt` and private key in `tls.key`:
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: tls-secret
-  namespace: default
-type: kubernetes.io/tls
-data:
-  tls.crt: <base64-encoded-certificate>
-  tls.key: <base64-encoded-key>
+```bash
+kubectl create secret tls tls-secret --namespace default --cert=tls.crt --key=tls.key
 ```
+
+This configures TLS from clients to HAProxy. For TLS from HAProxy to the
+application, also configure [backend TLS](haptic-annotations.md#backend-tls-to-the-upstream).
 
 !!! warning "Check the certificate served for your hostname"
     If a TLS Secret is missing or lacks `tls.crt` or `tls.key`, HAPTIC skips it
@@ -349,7 +320,8 @@ controller:
 | `ingressDefaultSSLRedirect` | `false` | Redirect every HTTPS-served Ingress host from HTTP to HTTPS. Opt-in. |
 | `ingressDefaultSSLRedirectCode` | `"308"` | HTTP status code for the redirect — one of `301`, `302`, `303`, `307`, `308`. |
 
-The global toggle redirects all HTTPS-served Ingress hosts at once. For per-host control, leave it off and use the vendor `ssl-redirect` / `force-ssl-redirect` annotations, which register hosts individually and keep working alongside the global toggle.
+The global toggle redirects all HTTPS-served Ingress hosts at once. For per-host control, leave it off and use the native [`haproxy-haptic.org/https-redirect`](haptic-annotations.md#redirects-hsts-passthrough-and-config-injection)
+annotation on selected Ingresses.
 
 ### Backend generation
 
@@ -360,24 +332,9 @@ Backends are generated with:
 - Round-robin load balancing
 - Backend deduplication (multiple paths to same service share one backend)
 
-**Generated backend naming convention:**
-
-```
-<namespace>_<ingress-name>_svc_<service-name>_<port-name>
-```
-
-`<port-name>` is the Service port's name when the port is named (for example `http`, `https`). When the Service port is unnamed — or the Service isn't yet in the controller's store — it falls back to the numeric port number (for example `..._svc_shop_80`).
-
-**Example generated configuration:**
-
-```haproxy
-backend default_my-app_svc_api-service_http
-    default-server check
-    server api-pod-1 10.0.0.1:8080 guid srv:default_my-app_svc_api-service_http:api-pod-1  # Pod: api-pod-1
-    server api-pod-2 10.0.0.2:8080 guid srv:default_my-app_svc_api-service_http:api-pod-2  # Pod: api-pod-2
-```
-
-Each server is named after its pod (ADR-0011) and carries a stable `guid`, so a rolling update is an add/remove of named servers over the runtime API — no reload and no reserved slot pool. `check` lives on `default-server`, not on individual server lines. Not-ready and terminating endpoints carry `disabled`. With no usable servers, HAProxy returns 503; with no endpoint addresses at all, the backend has no server lines.
+Not-ready and terminating endpoints are disabled. With no usable endpoints,
+HAProxy returns `503`; check the Service and EndpointSlices before changing the
+routing template.
 
 #### Backend namespace scope
 
@@ -388,13 +345,14 @@ An Ingress backend references a Service by name only — the Kubernetes API has 
 WebSocket backends work without extra configuration. HAProxy tunnels the `Upgrade` handshake, so an Ingress routing to a WebSocket service needs no special annotation. Long-lived connections are bounded by HAProxy's `timeout tunnel`. Raise it per-backend with `haproxy-haptic.org/timeout-tunnel` when a connection must stay open longer:
 
 ```yaml
-annotations:
-  haproxy-haptic.org/timeout-tunnel: "1h"
+metadata:
+  annotations:
+    haproxy-haptic.org/timeout-tunnel: "1h"
 ```
 
 ### gRPC backends
 
-gRPC runs over HTTP/2. Tell HAPTIC to speak HTTP/2 to a cleartext (h2c) backend with the native `haproxy-haptic.org/backend-protocol: h2` annotation:
+gRPC runs over HTTP/2. Tell HAPTIC to speak HTTP/2 to a cleartext (h2c) backend with the native `haproxy-haptic.org/backend-protocol: grpc` annotation:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -403,7 +361,7 @@ metadata:
   name: grpc-app
   namespace: default
   annotations:
-    haproxy-haptic.org/backend-protocol: h2
+    haproxy-haptic.org/backend-protocol: grpc
 spec:
   ingressClassName: haptic
   rules:
@@ -419,7 +377,12 @@ spec:
                   number: 50051
 ```
 
-For a TLS backend, use `haproxy-haptic.org/backend-protocol: h2-ssl` (or `grpcs`) instead. The native [haptic-annotations](haptic-annotations.md) library is enabled by default; the opt-in vendor libraries name the same thing as `haproxy-ingress.github.io/backend-protocol: h2-ssl` or `nginx.ingress.kubernetes.io/backend-protocol: GRPC`/`GRPCS`. On the client side, HAProxy detects HTTP/2 cleartext prior-knowledge on the plaintext listener, so gRPC clients that dial insecurely still reach the backend.
+For a TLS backend, use `haproxy-haptic.org/backend-protocol: grpcs` and configure
+[backend certificate verification](haptic-annotations.md#backend-tls-to-the-upstream).
+Use these gRPC-specific values so HAPTIC can also detect incompatible
+[body-inspection policies](../operations/waf-policies.md#waf-and-grpc-streaming).
+Clients can connect through HTTPS or use HTTP/2 cleartext prior knowledge on
+the HTTP listener.
 
 ### Backend config snippet
 
@@ -432,64 +395,48 @@ The equivalent `haproxy.org/backend-config-snippet` requires the opt-in
 
 The Ingress library automatically propagates LoadBalancer addresses to Ingress `.status.loadBalancer` fields. This enables DNS controllers (like external-dns) and `kubectl get ingress` to display the correct external address.
 
-Addresses are discovered from the controller's LoadBalancer Service. Once an address is available, each Ingress processed by the controller receives its `status.loadBalancer.ingress` entries. If deployment fails, the status is cleared to empty.
+Addresses are discovered from the HAProxy LoadBalancer Service. Once an address is available, each Ingress processed by the controller receives its `status.loadBalancer.ingress` entries. If deployment fails, the status is cleared to empty.
 
 ### Degraded backend events
 
-An Ingress backend that references its Service port **by name** can arrive before
-its Service reaches the controller's store. The `kubernetes-backends` library
-preserves the requested name so an EndpointSlice can resolve it independently.
-Until either source resolves the port and supplies endpoints, the backend has no
-server lines and serves 503. The render continues so a propagation race doesn't
-block other routes. A permanent Service-name typo produces the same symptom.
-
-If the Service is present but lacks the requested port name, rendering fails and
-the error lists the available ports. Numeric references use the supplied number;
-an absent or invalid port reference fails. Resolution never silently substitutes
-port 80. Correct the reference to match the Service's declared port.
-
-To make the difference visible, the controller emits a `Warning` Event (reason `BackendUnresolved`) on each affected Ingress, in the Ingress's namespace. The Event names every unresolvable Service and port name, so a typo shows up in:
+A backend whose named Service port can't be resolved has no usable servers and
+returns `503`. Check the `BackendUnresolved` Event for the Service and port name:
 
 ```bash
 kubectl describe ingress <name>
 kubectl get events --field-selector reason=BackendUnresolved -A
 ```
 
-The Event exists only while the backend stays unresolved:
+If the Service hasn't arrived yet, HAPTIC can resolve the named port from an
+EndpointSlice. The warning disappears once that lookup succeeds. If the Service
+exists but doesn't declare the requested port name, the render fails with the
+available port names; correct the Ingress reference.
 
-- When the Service appears (or an EndpointSlice that carries the named port arrives), the Event is deleted on the next reconcile.
-- Backends that already found real endpoints through an EndpointSlice never get an Event, even if the Service itself hasn't reached the store yet.
-- By-number port references are trusted without Service validation and never produce this Event. Gateway API routes carry the equivalent signal in their own status instead (`ResolvedRefs: False`, reason `BackendNotFound`).
+Numeric port references don't produce `BackendUnresolved` Events. For those,
+check endpoints and the [routing troubleshooting guide](../troubleshooting.md#routing-issues).
+Gateway API routes report reference problems in their route conditions.
 
-The Event's `metadata.creationTimestamp` tells you when the controller first observed the degradation. Kubernetes expires Events after the apiserver's `--event-ttl` (default 1 hour); the controller periodically refreshes the Event while the degradation persists, but the refresh rides on reconciliations — in a cluster with no resource changes at all for over an hour, the Event can lapse until the next reconcile re-creates it.
+<a id="watched-resources"></a>
+<a id="field-selector"></a>
+<a id="generated-map-files"></a>
 
-## Watched Resources
+For custom watches and routing maps, see [watching resources](../watching-resources.md)
+and the [base extension points](base.md#extension-points).
 
-| Resource | API Version | Purpose |
-|----------|-------------|---------|
-| Ingresses | `networking.k8s.io/v1` | Traffic routing rules |
-| Services | v1 | Service discovery |
-| EndpointSlices | `discovery.k8s.io/v1` | Backend endpoint discovery |
+<a id="extension-points"></a>
+<a id="injecting-custom-configuration"></a>
 
-### Field selector
+## Extend Ingress routing
 
-The library watches and processes only Ingresses with `spec.ingressClassName: haptic`.
-
-## Generated map files
-
-The Ingress library contributes to these map files:
-
-| Map File | Content |
-|----------|---------|
-| host.map | `hostname hostname` entries for each Ingress host |
-| path-exact.map | `hostpath BACKEND:backendname` for Exact paths |
-| path-prefix-exact.map | `hostpath BACKEND:backendname` for Prefix paths (exact match) |
-| path-prefix.map | `hostpath/ BACKEND:backendname` for Prefix paths (prefix match) |
+Start with [native annotations](haptic-annotations.md) for common routing
+settings. To add an annotation or routing rule of your own, follow the
+[template customization guide](../templating.md) and
+[extension-point reference](base.md#extension-points).
 
 ## See also
 
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [Base Library](base.md) - Extension points and routing infrastructure
 - [SSL Library](ssl.md) - TLS certificate management
-- [haproxytech library](haproxytech.md) - Additional Ingress annotations
-- [haproxy-ingress library](haproxy-ingress.md) - Regex path type support
+- [Native annotations](haptic-annotations.md) - Authentication, timeouts, redirects, and other route settings
+- [Migration libraries](../migrating.md) - Annotation compatibility with other controllers

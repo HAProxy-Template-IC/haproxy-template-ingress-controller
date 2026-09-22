@@ -1,7 +1,7 @@
 /* Interactive HAPTIC playground embeds for the docs sites.
  *
  * Turns a `.pg-embed` block into a facade (title + the shown config + a "Run
- * live" button); clicking swaps in an <iframe> of the playground in ?embed=1
+ * live" button); clicking opens an <iframe> in a viewport dialog, using the playground in ?embed=1
  * mode. The wasm only downloads when the reader clicks, so page load stays
  * cheap. The scenario is encoded client-side into the same #s= fragment the
  * Share button produces (JSON {c,r,v,s,p} -> gzip -> base64url), so what the
@@ -25,6 +25,9 @@
  *   data-tab        output tab to open on
  *                   (haproxy.cfg|maps|files|certs|status|applied|resources|trace|tests|migration)
  *                   — "tests" auto-runs the config's spec.validationTests on load
+ *   data-input      initial editor: templates (default) or resources
+ *   data-input-focus text to scroll to in the initial editor
+ *   data-output-focus text to highlight in the initial output
  *   data-focus      [file:]start-end | file — highlight/scroll to the important lines
  *   data-facade     for scenario embeds: show a section of the bundled config
  *                   as the pre-run facade instead of the bare placeholder.
@@ -34,8 +37,6 @@
  *                   section is fetched live from the bundle, so it never
  *                   drifts from what Run shows.
  *   data-controls   comma list re-enabling controls in the embed (tabs,resources,tools,nav,max,reload,provenance,dots)
- *   data-height     minimum running-iframe height in px (default 460); the running
- *                   embed breaks out of the article column and grows to ~76vh
  *   data-title      header label
  *   data-difficulty 1-3 -> shown as stars
  *
@@ -133,6 +134,9 @@
       if (el.dataset.controls) qs.push('controls=' + encodeURIComponent(el.dataset.controls));
       if (el.dataset.tab) qs.push('tab=' + encodeURIComponent(el.dataset.tab));
       if (el.dataset.focus) qs.push('focus=' + encodeURIComponent(el.dataset.focus));
+      if (el.dataset.input) qs.push('input=' + encodeURIComponent(el.dataset.input));
+      if (el.dataset.inputFocus) qs.push('input-focus=' + encodeURIComponent(el.dataset.inputFocus));
+      if (el.dataset.outputFocus) qs.push('output-focus=' + encodeURIComponent(el.dataset.outputFocus));
     }
     return embedBase(el) + '?' + qs.join('&') + frag;
   }
@@ -152,11 +156,108 @@
     return { config: config, resources: resources };
   }
 
+  var activeExample = null;
+
+  function closeExample(el) {
+    if (!el._dialog || !el._dialog.open) return;
+    el._dialog.close();
+    el._details.forEach(function (item) { item.placeholder.replaceWith(item.node); });
+    el._details = [];
+    el.appendChild(el._loading);
+    document.documentElement.classList.remove('pg-modal-open');
+    el._runBtn.disabled = false;
+    el._runBtn.textContent = '▶ Run live';
+    el._runBtn.focus({ preventScroll: true });
+    activeExample = null;
+  }
+
+  function openExample(el) {
+    if (el._dialog && el._dialog.open) return;
+    if (activeExample) closeExample(activeExample);
+    if (!el._dialog) {
+      var dialog = document.createElement('dialog');
+      dialog.className = 'pg-dialog md-typeset';
+      dialog.setAttribute('aria-label', el.dataset.title || 'Live template example');
+      dialog.addEventListener('cancel', function (event) {
+        event.preventDefault();
+        closeExample(el);
+      });
+      dialog.addEventListener('click', function (event) {
+        if (event.target === dialog) closeExample(el);
+      });
+      var panel = document.createElement('div');
+      panel.className = 'pg-embed pg-running';
+      var head = el._head.cloneNode(true);
+      head.querySelector('.pg-btn-play').remove();
+      var close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'pg-btn pg-btn-close';
+      close.textContent = '✕ Back to guide';
+      close.addEventListener('click', function () { closeExample(el); });
+      head.appendChild(close);
+      panel.appendChild(head);
+      panel.appendChild(addGuide(el));
+      dialog.appendChild(panel);
+      document.body.appendChild(dialog);
+      dialog._source = el;
+      el._dialog = dialog;
+      el._live = panel;
+      el._modalClose = close;
+    }
+    el._details = [];
+    el.querySelectorAll('details.pg-hint, details.pg-solution').forEach(function (details) {
+      var placeholder = document.createComment('example details');
+      details.before(placeholder);
+      el._details.push({ node: details, placeholder: placeholder });
+      el._live.insertBefore(details, el._frame || null);
+    });
+    el._live.insertBefore(el._loading, el._frame || null);
+    activeExample = el;
+    document.documentElement.classList.add('pg-modal-open');
+    el._dialog.showModal();
+    el._modalClose.focus();
+  }
+
+  function addGuide(el) {
+    var guide = document.createElement('div');
+    guide.className = 'pg-guide';
+    var intro = document.createElement('p');
+    if ('scriggo' in el.dataset) {
+      intro.textContent = 'Edit the template; the output shows the text it generates. Changes render automatically.';
+    } else if (el.dataset.tab === 'migration') {
+      intro.textContent = 'The migration report shows which annotations work unchanged, behave differently, or need replacing. Open Resources to edit the sample Ingress and check its report before moving a real route.';
+    } else if (el.dataset.input === 'resources') {
+      intro.textContent = 'Edit the sample Kubernetes resources to update the HAProxy configuration. Select Templates to change the routing logic.';
+    } else if (el.dataset.tab === 'tests') {
+      intro.textContent = 'The Templates panel contains a template and its tests. The tests tab checks the generated configuration against each assertion. After editing, select Run validation tests to check again.';
+    } else {
+      intro.textContent = 'Edit Templates to change how sample resources become HAProxy configuration. The output updates automatically.';
+    }
+    guide.appendChild(intro);
+    var task = el.querySelector('.pg-task');
+    if (task) {
+      guide.appendChild(task.cloneNode(true));
+    } else {
+      task = document.createElement('p');
+      task.className = 'pg-first-edit';
+      task.textContent = el.dataset.scenario && (el.dataset.controls || '').split(',').includes('resources')
+        ? 'Start with Resources: edit a sample hostname, then select maps in the output to find the new routing entry.'
+        : 'Start by changing a value in the template and finding it in the output. You can close and reopen this example without losing your edits.';
+      guide.appendChild(task);
+    }
+    var scope = document.createElement('p');
+    scope.className = 'pg-guide-scope';
+    scope.textContent = 'This runs in your browser and makes no changes to your cluster.';
+    guide.appendChild(scope);
+    return guide;
+  }
+
   async function run(el, configOverride) {
-    var frame = el.querySelector('.pg-frame');
-    var loading = el.querySelector('.pg-loading');
-    if (loading) loading.hidden = false;
-    el.classList.add('pg-running');
+    var frame = el._frame;
+    var loading = el._loading;
+    if (loading) { loading.hidden = false; loading.textContent = 'Loading the example…'; }
+    el._pending = true;
+    openExample(el);
     try {
       var sc = await resolveScenario(el, configOverride);
       var src = await buildSrc(el, sc.config, sc.resources);
@@ -167,24 +268,32 @@
       if (!frame) {
         frame = document.createElement('iframe');
         frame.className = 'pg-frame';
-        frame.setAttribute('loading', 'lazy');
         frame.setAttribute('title', el.dataset.title || 'HAPTIC playground');
-        // Height comes from CSS: max(--pg-hmin, min(76vh, 880px)) — the author's
-        // data-height is only the minimum (see .pg-embed.pg-running .pg-frame).
-        el.appendChild(frame);
+        frame.addEventListener('load', function () {
+          // Keyboard events inside the same-origin iframe don't reach the dialog.
+          try {
+            frame.contentDocument.addEventListener('keydown', function (event) {
+              if (event.key === 'Escape' && !frame.contentDocument.querySelector('.modal:not([hidden]), main[data-max], #prov:not([hidden])')) {
+                event.preventDefault();
+                closeExample(el);
+              }
+            }, true);
+          } catch (e) { /* A custom data-base can point to another origin. */ }
+        });
+        el._live.appendChild(frame);
+        el._frame = frame;
       }
       frame.src = src;
     } catch (e) {
-      el.classList.remove('pg-running');
+      closeExample(el);
       if (loading) { loading.hidden = false; loading.textContent = 'Could not load the playground: ' + e.message; }
       if (el._runBtn) { el._runBtn.disabled = false; el._runBtn.textContent = '▶ Run live'; }  // let them retry
       return false;
+    } finally {
+      el._pending = false;
     }
     if (loading) loading.hidden = true;
-    if (el._runBtn) el._runBtn.hidden = true;   // the iframe is the content now
-    if (el._closeBtn) el._closeBtn.hidden = false;
     el._loaded = true;                          // Close keeps the iframe; reopening is instant
-    el.scrollIntoView({ block: 'nearest' });    // the box just grew — keep its header on screen
     return true;
   }
 
@@ -197,13 +306,10 @@
   async function compareSolution(el, solution) {
     if (!el._loaded) {
       if (!(await run(el))) return;
-    } else if (!el.classList.contains('pg-running')) {
-      el.classList.add('pg-running');
-      if (el._runBtn) el._runBtn.hidden = true;
-      if (el._closeBtn) el._closeBtn.hidden = false;
+    } else {
+      openExample(el);
     }
-    el.scrollIntoView({ block: 'nearest' });
-    var frame = el.querySelector('.pg-frame');
+    var frame = el._frame;
     var t0 = Date.now();
     (function poll() {
       var api = null;
@@ -217,7 +323,7 @@
       }
       if (Date.now() - t0 < 20000) { setTimeout(poll, 250); return; }
       // Timed out: tell the reader instead of dead-ending silently.
-      var loading = el.querySelector('.pg-loading');
+      var loading = el._loading;
       if (loading) {
         loading.hidden = false;
         loading.textContent = 'could not open the comparison — try again once the playground has rendered';
@@ -350,41 +456,24 @@
     runBtn.className = 'pg-btn pg-btn-play';
     runBtn.textContent = '▶ Run live';
     runBtn.addEventListener('click', function () {
-      if (el._loaded) {           // already ran once: reopen the live iframe instantly
-        el.classList.add('pg-running');
-        runBtn.hidden = true;
-        if (el._closeBtn) el._closeBtn.hidden = false;
-        el.scrollIntoView({ block: 'nearest' });
+      if (el._loaded || el._pending) {
+        openExample(el);
         return;
       }
       runBtn.disabled = true; runBtn.textContent = 'Loading…'; run(el);
     });
     head.appendChild(runBtn);
-    el._runBtn = runBtn;   // run() restores it on failure, hides it once the iframe is up
-    // "Close" collapses the running playground back to the clean static example.
-    var closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.className = 'pg-btn pg-btn-close';
-    closeBtn.textContent = '✕ Close';
-    closeBtn.hidden = true;
-    closeBtn.addEventListener('click', function () {
-      el.classList.remove('pg-running');
-      closeBtn.hidden = true;
-      runBtn.hidden = false; runBtn.disabled = false; runBtn.textContent = '▶ Run live';
-      el.scrollIntoView({ block: 'nearest' });
-    });
-    head.appendChild(closeBtn);
-    el._closeBtn = closeBtn;
-    // The author's data-height becomes the running iframe's MINIMUM height (CSS
-    // grows it to working size — see .pg-embed.pg-running .pg-frame).
-    el.style.setProperty('--pg-hmin', (parseInt(el.dataset.height, 10) || 460) + 'px');
+    el._runBtn = runBtn;
     el.insertBefore(head, el.firstChild);
+    el._head = head;
 
     // A hidden loading line for the iframe stage.
     var loading = document.createElement('div');
     loading.className = 'pg-loading';
+    loading.setAttribute('role', 'status');
+    el._loading = loading;
     loading.hidden = true;
-    loading.textContent = 'booting the render engine…';
+    loading.textContent = 'Loading the example…';
     el.appendChild(loading);
 
     // Challenge: a "Compare with solution" button inside a <details class="pg-solution">.
@@ -406,7 +495,13 @@
   }
 
   function init() {
-    [].forEach.call(document.querySelectorAll('.pg-embed'), enhance);
+    document.querySelectorAll('.pg-dialog').forEach(function (dialog) {
+      if (!dialog._source.isConnected) {
+        closeExample(dialog._source);
+        dialog.remove();
+      }
+    });
+    [].forEach.call(document.querySelectorAll('.pg-embed:not(.pg-running)'), enhance);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

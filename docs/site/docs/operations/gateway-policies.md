@@ -79,6 +79,9 @@ HTTPS Gateway named `public` and a Service named `api` on port 8080 in namespace
     kubectl get httproute api -n apps -o jsonpath='{.status.parents[*].conditions}'
     ```
 
+    For the `public` parent, check that `Accepted` and `ResolvedRefs` are `True`.
+    If either is `False`, read its message before testing requests.
+
 6. Test authentication through the Gateway's HTTPS address.
 
     DNS for `api.example.com` must point to the Gateway, and its certificate must

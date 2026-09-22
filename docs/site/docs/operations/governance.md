@@ -1,4 +1,4 @@
-# Governance guardrails
+# Set defaults and enforce routing policies
 
 Use governance rules to require annotations, supply defaults, or constrain values
 on watched resources. Define named rules under
@@ -6,24 +6,23 @@ on watched resources. Define named rules under
 Your rules merge with those supplied by libraries; disable one by setting its
 `enabled` field to `false`.
 
-This guide shows how to roll a guardrail out safely. For every rule field and its exact meaning, see [Policy guardrails (governance)](../reference.md#policy-guardrails-governance) in the Chart Values Reference.
+Start in audit mode to find affected resources, then enable rejection when those
+resources meet your policy. The [rule reference](../reference.md#policy-guardrails-governance)
+lists the available checks.
 
 ## How a rule behaves
 
-Each rule targets one watched resource by name and, per matching resource, does one of two things:
+Each rule names an entry in `watchedResources` and applies to its matching objects:
 
-- **Inject** — when the value at `path` is absent and the rule sets a `default`, HAPTIC writes the default into that render, so downstream config is generated as if the resource had set it. The live resource is never modified.
-- **Validate** — when the value is present (or `required`), HAPTIC checks it against the rule (`required`, `min`/`max`, `allowed`, `pattern`, `anyOf`, `satisfiedBy`).
+- **Supply a default:** If `path` is absent, use the rule's `default` when generating configuration. This doesn't modify the Kubernetes object.
+- **Check a value:** Apply the rule's constraints, such as a required annotation, an allowed list, or a numeric range.
 
 A rule's `enforcement` controls what a *violation* does:
 
 - `audit` — records a `GovernanceViolation` Warning Event on the resource and keeps serving. Nothing is blocked.
 - `reject` — denies a **new or edited** violating resource at the admission webhook. An already-present violator isn't blocked; it records the same Warning Event and keeps serving.
 
-Enforcement is scoped to the offending resource's own admission, so one pre-existing violator never blocks an unrelated `kubectl apply`, and a violation on a live reconcile never aborts the render.
-
-!!! tip "Always start in audit"
-    The daemon runs its bundled validation tests on every config load, and enforcement never blocks existing traffic — but a `reject` rule *will* deny future edits to any resource that violates it. Roll out in `audit` first, read the events, fix or exempt the resources they name, and only then switch to `reject`.
+An existing violation doesn't block changes to other resources.
 
 ## Require a WAF policy on every Ingress
 
@@ -32,10 +31,11 @@ policy. First [define a WAF policy](waf-policies.md) that your Ingresses can sel
 
 ### 1. Turn the rule on in audit mode
 
-Add the rule to your values and apply it:
+Merge the rule into your [complete values file](../deploying-with-helm.md#change-settings)
+and apply it. These commands use release `haptic` in namespace `haptic`:
 
 ```yaml
-# values.yaml
+# haptic-values.yaml
 controller:
   config:
     templatingSettings:
@@ -52,11 +52,11 @@ controller:
 ```
 
 ```bash
-helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --namespace haptic -f values.yaml
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic --values haptic-values.yaml
 ```
 
-Substitute your own release name and namespace. If you deploy with GitOps, commit the values change and let your sync apply it.
+If you deploy with GitOps, commit the values change and let your controller apply it.
 
 ### 2. See which resources violate
 
@@ -73,16 +73,21 @@ Each event names one Ingress that has no `haproxy-haptic.org/waf-policy` annotat
 For each flagged Ingress, either add the annotation:
 
 ```bash
-kubectl annotate ingress <name> --namespace <ns> \
-  haproxy-haptic.org/waf-policy=<your-policy>
+read -r -p "Ingress namespace: " ingress_namespace
+read -r -p "Ingress name: " ingress_name
+read -r -p "WAF policy name: " waf_policy
+kubectl annotate ingress "$ingress_name" --namespace "$ingress_namespace" \
+  "haproxy-haptic.org/waf-policy=$waf_policy" --overwrite
 ```
 
 or exempt its namespace from the guardrail (see [Exempt namespaces](#exempt-namespaces) below).
 
-When `kubectl get events` no longer reports new violations, switch the rule to `reject` and apply:
+Once you have corrected or exempted the reported resources, switch the rule to
+`reject` and apply. Events expire, so an empty Event list alone doesn't prove
+that every resource complies:
 
 ```yaml
-# values.yaml — same rule, now enforcing
+# haptic-values.yaml — same rule, now enforcing
 controller:
   config:
     templatingSettings:
@@ -99,8 +104,8 @@ controller:
 ```
 
 ```bash
-helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --namespace haptic -f values.yaml
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic --values haptic-values.yaml
 ```
 
 ### 4. Confirm enforcement
@@ -127,14 +132,15 @@ spec:
 EOF
 ```
 
-The webhook denies the request with the rule's message. Add a `haproxy-haptic.org/waf-policy` annotation and the same dry-run is admitted.
+The webhook should deny the request with a message naming the governance rule.
+If it reports a different problem, resolve that first and repeat the check.
 
 ## Inject a safe default instead of requiring
 
 Rather than reject Ingresses that lack a policy, give them one automatically. This rule injects a detect-mode WAF policy on every Ingress that doesn't already select one; Ingresses that already have a policy keep theirs.
 
 ```yaml
-# values.yaml
+# haptic-values.yaml
 controller:
   config:
     templatingSettings:
@@ -179,7 +185,8 @@ controller:
 
 ## Clamp a value to a ceiling
 
-`min`/`max` bound a numeric annotation. With `onViolation: clamp`, an out-of-range value is rewritten to the nearest bound for that render instead of being rejected — so a team can't set a per-source rate limit above the ceiling you allow, and nothing breaks if they try.
+`min`/`max` bound a numeric annotation. With `onViolation: clamp`, an out-of-range value is rewritten to the nearest bound for that render instead of being rejected. The Kubernetes object keeps its original value; the generated configuration
+uses the bounded value.
 
 ```yaml
 controller:
@@ -240,9 +247,6 @@ One governance rule is enabled out of the box: `haptic-compress-enable` injects
 Change the rule's `default` to `"true"` to enable it across Ingresses that don't
 choose their own value.
 
-An Ingress that sets the annotation itself keeps its own value, `"true"` or
-`"false"` alike, because an injection only fills a path that's absent.
-
 ## Switch off a single rule
 
 Set `enabled: false` on a named rule to disable it while preserving the other
@@ -259,8 +263,7 @@ controller:
               enabled: false
 ```
 
-`enabled` is required on every rule. An entry that omits it fails the render
-naming the rule, rather than sitting inert and enforcing nothing.
+Every rule must set `enabled`; omitting it causes rendering to fail.
 
 ## See also
 

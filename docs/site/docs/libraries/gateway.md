@@ -1,38 +1,29 @@
 # Gateway API library
 
-The Gateway API library compiles HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute resources into HAProxy routing configuration.
+Route HTTP, gRPC, TLS, and TCP traffic with Gateway API resources. This library
+is enabled by default; HAPTIC activates the route types whose CRDs are installed
+and detects newly installed types without a restart.
 
-Attach [HAProxyRoutePolicy](../route-policy.md) resources to HTTPRoute or GRPCRoute
-rules for authentication, shared rate limits, WAF inspection, and HTTP caching.
-See [Protect Gateway routes](../operations/gateway-policies.md).
+For your first route, follow [Expose a Service through a Gateway](../gateway-api.md#expose-a-service-through-a-gateway).
+Use this reference for request matching, weighted backends, header changes,
+rewrites, redirects, and TLS settings. [Gateway route policies](../operations/gateway-policies.md)
+add authentication, shared rate limits, web application firewall (WAF) inspection,
+and HTTP caching.
 
-## Overview
+<a id="overview"></a>
 
-The Gateway API library implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) specification, providing:
+Try adding a hostname to the sample HTTPRoute:
 
-- HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute support
-- Advanced request matching (method, headers, query parameters)
-- Traffic splitting with weighted backends
-- Request/response header modification
-- URL rewrites and redirects
-- TLS termination, passthrough, backend TLS, and frontend client-certificate authentication
-- ListenerSet delegation, request mirroring, retries, and cookie persistence
-
-This library is **enabled by default**. For a runnable end-to-end walkthrough (a Gateway with an HTTP listener, an HTTPRoute, and a backend Service), see [Expose a Service through a Gateway](../gateway-class.md#expose-a-service-through-a-gateway).
-
-!!! note "Gateway API CRDs are resolved at runtime"
-    The library is merged whenever it's enabled. HAPTIC activates features for the CRDs installed in your cluster and detects newly installed CRDs without a controller redeploy.
-
-Watch an HTTPRoute compile down to HAProxy config live:
-
-<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.map-host-500-gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Gateway API → HAProxy config" data-height="440">
+<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.map-host-500-gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-input="resources" data-input-focus="api.example.com" data-title="Gateway API → HAProxy config" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, add `- www.example.com` under the `api` HTTPRoute's `spec.hostnames`, then open the **maps** tab and watch `host.map` gain a second entry.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-`host.map`'s provenance comment goes from `# HTTPRoute: platform/api (1 hosts)` to `(2 hosts)`, and a second `www.example.com…` line appears next to the `api.example.com…` one — the gateway library writes one entry per effective hostname. It derives them from `spec.hostnames` in `map-host-500-gateway`, emitting one `<hostKey> <hostKey>` line per host. Each key carries a `:<port>` suffix because the demo Gateway's HTTP listener is a catch-all with no hostname, which scopes its routes to that Gateway's own bind port.
+The output gains a `www.example.com` entry alongside `api.example.com`. Both
+route through the same Gateway. The map keys include a port suffix because
+this example's listener accepts any hostname on its port.
 
 </details>
 
@@ -50,53 +41,13 @@ controller:
       enabled: true  # Enabled by default
 ```
 
-## Extension points
+## Available resource types
 
-The Gateway API library hooks into these extension points from base.yaml. Snippet names encode their priority via a numeric prefix (see [Template Libraries → Snippet Priority](../template-libraries.md#snippet-priority)).
+<a id="watched-resources"></a>
 
-| Extension Point | Snippet | What It Generates |
-|-----------------|---------|-------------------|
-| `features-*` | `features-100-gateway-ssl-passthrough` | Populates `gf["sslPassthroughBackends"]` from HTTPRoutes annotated for SNI passthrough |
-| `features-*` | `features-100-gateway-tls` | Registers TLS certificates from Gateway listeners into `gf["tlsCertificates"]` |
-| `backends-*` | `backends-500-gateway` | HTTP backend blocks for every unique `(namespace, service, port)` touched by an HTTPRoute or GRPCRoute |
-| `backends-*` | `backends-501-gateway-ssl-passthrough` | TCP-mode backends for SSL-passthrough HTTPRoutes and for TLSRoute rules (`gtw_tls_*`) |
-| `backends-*` | `backends-502-gateway-tcproute` | TCP-mode backends for TCPRoute rules (`gtw_tcp_*`), with weighted server pools when a rule has several `backendRefs` |
-| `map-host-*` | `map-host-500-gateway` | Host → group mapping entries derived from `spec.hostnames` |
-| `map-path-exact-*` | `map-path-exact-500-gateway` | Entries for `path.type: Exact` matches |
-| `map-pfxexact-*` | `map-pfxexact-500-gateway` | Prefix-exact entries (for example matching `/foo` but not `/foobar`) |
-| `map-path-prefix-*` | `map-path-prefix-500-gateway` | Entries for `path.type: PathPrefix` matches |
-| `map-path-regex-*` | `map-path-regex-500-gateway` | Entries for `path.type: RegularExpression` matches |
-| `map-weighted-backend-*` | `map-weighted-backend-500-gateway` | Weighted-multi-backend entries for traffic-split `backendRefs[].weight` |
-| `frontend-matchers-advanced-*` | `frontend-matchers-advanced-010-route-id-setup` | Sets up per-request route-ID variables before the 500-range matchers run |
-| `frontend-matchers-advanced-*` | `frontend-matchers-advanced-500-gateway` | Method, header, and query-parameter matchers |
-| `frontend-matchers-advanced-*` | `frontend-matchers-advanced-900-path-match` | Final path-match backend-selection logic |
-| `features-*` | `features-500-gateway-route-maps` | Builds every per-route filter map (headers, redirect, URL-rewrite, prefix-length) |
-| `frontend-filters-*` | `frontend-filters-495-gateway-route-filters` | Emits the static lines that read those maps: `RequestHeaderModifier`/`ResponseHeaderModifier`/`URLRewrite` (rule- and backendRef-level) and the per-match prefix length a multi-prefix `ReplacePrefixMatch` rule needs |
-| `http-bind-extra-*` | `http-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port>` per non-default Gateway HTTP listener port (skips chart-static `httpPort` and `httpsPort` to avoid duplicate-bind errors) |
-| `https-bind-extra-*` | `https-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port> ssl crt-list ...` per non-default Gateway HTTPS listener port (skips chart-static `httpsPort` and `httpPort` to avoid duplicate-bind errors); reuses `util-ssl-bind-options` so the SSL handshake matches the chart-static HTTPS bind |
-| `frontends-*` | `frontends-600-gateway-tls-listener` | One `mode tcp` frontend per Gateway TLS listener port — SNI dispatch for TLSRoutes, with an `ssl crt-list` bind for `Terminate` listeners |
-| `frontends-*` | `frontends-700-gateway-tcp-listener` | One `mode tcp` frontend per TCPRoute-claimed TCP listener port |
-| `status-patches-*` | `status-patches-200-gateway` | Patches Gateway / HTTPRoute / GRPCRoute `status` (Accepted, ResolvedRefs, `attachedRoutes`, addresses) |
-| `status-patches-*` | `status-patches-205-gateway-tlsroute` | Patches TLSRoute `status` (Accepted, ResolvedRefs) |
-| `status-patches-*` | `status-patches-210-gateway-tcproute` | Patches TCPRoute `status` (Accepted, ResolvedRefs) |
-
-### Injecting custom configuration
-
-Use [HAProxyRoutePolicy](../operations/gateway-policies.md) for authentication,
-rate limits, WAF inspection, and caching.
-
-For other behavior, use the [template extension points](../template-libraries.md#extension-points).
-
-## Watched Resources
-
-The gateway library declares these resources in its `watchedResources`:
-
-Every Gateway API kind is an **optional** watched resource with an ordered
-`apiVersions` candidate list. At startup — and again whenever a relevant CRD
-is installed, upgraded, or removed — the controller resolves each entry to
-the first candidate the cluster serves and strips the features of kinds it
-doesn't serve at any candidate version. You don't redeploy the chart when
-you install or upgrade Gateway API; support activates by itself.
+HAPTIC uses the first API version available for each kind and watches for CRD
+changes. Kinds that aren't installed remain inactive; installing them later
+doesn't require a chart upgrade.
 
 | Resource | API version candidates (preferred first) | Purpose |
 |----------|-------------------------------------------|---------|
@@ -115,15 +66,14 @@ you install or upgrade Gateway API; support activates by itself.
 
 Features whose *fields* don't exist in an older release's schemas (for
 example the HTTPRoute Cross-Origin Resource Sharing (CORS) filter before Gateway API v1.6, or Gateway
-frontend mTLS) stay inactive on that release; everything else works. The
-per-release expectations are pinned by `tests/schemas-ga-*` and
-`scripts/test-templates.sh`.
-
-TLS Secrets are watched by the SSL library (not gateway), and controller-service address discovery for status patches is owned by base.yaml. See [SSL Library](ssl.md) and [Base Library](base.md).
+frontend mTLS) stay inactive on that release. TLS certificates come from
+Kubernetes Secrets; see [certificate configuration](../ssl-certificates.md).
 
 ## Supported Gateway API versions and channels
 
-HAPTIC targets the Gateway API `v1` API group. Each kind is an optional watched resource with an ordered `apiVersions` candidate list (see [Watched Resources](#watched-resources)); the controller resolves each kind to the first version the cluster serves and activates its features at runtime, so installing or upgrading the Gateway API needs no chart redeploy. The per-release behavior is pinned by tests against Gateway API v1.1, v1.4, and v1.5, plus a no-CRD baseline.
+Check both the Gateway API release and installation channel when choosing
+features. See [conformance coverage](../operations/gateway-conformance.md) for
+the versions and profiles tested with HAPTIC.
 
 Which kinds a Gateway API install provides depends on its **channel**. The standard channel (`standard-install.yaml`) covers most kinds; a few graduated from the experimental channel (`experimental-install.yaml`) only in recent releases:
 
@@ -145,20 +95,7 @@ The word "experimental" describes two independent things, which don't gate each 
 - **Channel** — which route *kinds* (CRDs) a Gateway API install ships, shown in the table above.
 - **The `controller.templateLibraries.gateway.experimentalChannel` value** — a separate switch that tells HAPTIC's `validationTests` the experimental **HTTPRoute schema** is installed, so tests exercising experimental HTTPRoute *fields* (`retry` per GEP-1731, `sessionPersistence` per GEP-1619) run. HAPTIC emits those directives whenever the fields are present, regardless of the flag; see the [Chart Values Reference](../reference.md). This value gates no route kind.
 
-## Architecture
-
-The `gateway/` library:
-
-- Declares the Gateway API resource set as watched resources — `httproutes`, `grpcroutes`, `tlsroutes`, `tcproutes`, plus `gateways`, `gatewayclasses`, `referencegrants`, and the other supporting kinds (see the table above)
-- Implements backend generation for Gateway routes
-- Adds routing rules to HAProxy map files
-- Plugs into extension points defined in `base.yaml`
-
-This architecture allows the controller to remain resource-agnostic while the chart provides specific resource support.
-
----
-
-**Status legend:** ✅ Supported · ⚠️ Partial or untested · ❌ Not implemented
+<a id="architecture"></a>
 
 ## `ListenerSet` delegation
 
@@ -206,24 +143,27 @@ connections retain the client's TLS session.
 
 ## HTTPRoute support
 
+The `spec:` examples below show the fields to add to an existing route. Keep its
+`parentRefs` so it stays attached to your Gateway. The named backend Services must
+exist and expose the listed ports. For complete manifests and a test request, use
+the [Gateway tutorial](../gateway-api.md).
+
 ### spec.parentRefs
 
-| Field | Status | Notes |
-|-------|--------|-------|
-| `parentRefs[].name` | ✅ Supported | Gateway or ListenerSet reference; set `kind: ListenerSet` for a ListenerSet |
-| `parentRefs[].namespace` | ✅ Supported | Parent namespace; attachment must satisfy the listener's `allowedRoutes` |
-| `parentRefs[].sectionName` | ✅ Supported | Selects a named listener for attachment, routing, and status |
-| `parentRefs[].port` | ✅ Supported | Pins the route to Gateway listeners on the named port (attachment selection per spec); a route only attaches to listeners whose port matches |
+| Field | Notes |
+| ------- | ------- |
+| `parentRefs[].name` | Gateway or ListenerSet reference; set `kind: ListenerSet` for a ListenerSet |
+| `parentRefs[].namespace` | Parent namespace; attachment must satisfy the listener's `allowedRoutes` |
+| `parentRefs[].sectionName` | Selects a named listener for attachment, routing, and status |
+| `parentRefs[].port` | Pins the route to Gateway listeners on the named port (attachment selection per spec); a route only attaches to listeners whose port matches |
 
 ### spec.hostnames
 
 | Field | Status | Notes |
 |-------|--------|-------|
-| `hostnames[]` | ✅ Supported | Multiple hostnames per route |
-| Wildcard hostnames (for example `*.example.com`) | ⚠️ Untested | Regex host-map support exists; not pinned by a `validationTest` |
-| Empty hostnames list | ✅ Supported | Matches all hosts |
-
-**Example:**
+| `hostnames[]` | Supported | Multiple hostnames per route |
+| Wildcard hostnames (for example `*.example.com`) | Untested | Wildcard matching is implemented but lacks a dedicated validation test |
+| Empty hostnames list | Supported | Matches all hosts |
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -231,6 +171,8 @@ kind: HTTPRoute
 metadata:
   name: example
 spec:
+  parentRefs:
+    - name: edge
   hostnames:
     - "example.com"
     - "www.example.com"
@@ -242,15 +184,15 @@ spec:
 
 ### `spec.rules[].matches` - path matching
 
-| Field | Status | Notes |
-|-------|--------|-------|
-| `matches[].path.type: Exact` | ✅ Supported | Exact path match using HAProxy map |
-| `matches[].path.type: PathPrefix` | ✅ Supported | Prefix match using HAProxy `map_beg` |
-| `matches[].path.type: RegularExpression` | ✅ Supported | Regex match using HAProxy `map_reg` |
-| `matches[].path.value` | ✅ Supported | Path value used in matching |
-| Empty matches list | ✅ Supported | Defaults to PathPrefix `/` |
+| Field | Notes |
+| ------- | ------- |
+| `matches[].path.type: Exact` | Matches the whole path |
+| `matches[].path.type: PathPrefix` | Matches the path prefix at a segment boundary |
+| `matches[].path.type: RegularExpression` | Matches a regular expression |
+| `matches[].path.value` | Path value used in matching |
+| Empty matches list | Defaults to PathPrefix `/` |
 
-**Path Match Priority:** Exact > Regex > Prefix-exact > Prefix (configurable via libraries)
+**Path priority:** Exact > Regex > Prefix-exact > Prefix. See [change path matching order](../template-libraries.md#path-matching-order).
 
 **Example - Path matching:**
 
@@ -302,21 +244,21 @@ With `PathPrefix`, the route's entry (`api.example.com…/ GW_ROUTE_ID:http:plat
 
 ### `spec.rules[].matches` - method, header, and query matching
 
-| Field | Status | Notes |
-|-------|--------|-------|
-| `matches[].method` | ✅ Supported | HTTP method matching (GET, POST, etc.) |
-| `matches[].headers[]` | ✅ Supported | Header-based routing with exact and regex matching |
-| `matches[].headers[].type: Exact` | ✅ Supported | Exact header value matching |
-| `matches[].headers[].type: RegularExpression` | ✅ Supported | Regex header value matching |
-| `matches[].headers[].name` | ✅ Supported | Case-insensitive header name |
-| `matches[].headers[].value` | ✅ Supported | Header value to match |
-| `matches[].queryParams[]` | ✅ Supported | Query parameter matching |
-| `matches[].queryParams[].type: Exact` | ✅ Supported | Exact query parameter value matching |
-| `matches[].queryParams[].type: RegularExpression` | ✅ Supported | Regex query parameter matching |
-| `matches[].queryParams[].name` | ✅ Supported | Query parameter name |
-| `matches[].queryParams[].value` | ✅ Supported | Query parameter value to match |
+| Field | Notes |
+| ------- | ------- |
+| `matches[].method` | HTTP method matching (GET, POST, etc.) |
+| `matches[].headers[]` | Header-based routing with exact and regex matching |
+| `matches[].headers[].type: Exact` | Exact header value matching |
+| `matches[].headers[].type: RegularExpression` | Regex header value matching |
+| `matches[].headers[].name` | Case-insensitive header name |
+| `matches[].headers[].value` | Header value to match |
+| `matches[].queryParams[]` | Query parameter matching |
+| `matches[].queryParams[].type: Exact` | Exact query parameter value matching |
+| `matches[].queryParams[].type: RegularExpression` | Regex query parameter matching |
+| `matches[].queryParams[].name` | Query parameter name |
+| `matches[].queryParams[].value` | Query parameter value to match |
 
-**Match Precedence (Gateway API v1 spec):**
+**Match precedence in HAPTIC:**
 
 When multiple routes match the same request, ties are broken in the following order:
 
@@ -473,26 +415,19 @@ exist. A new header name or filter type can add a rule and require a reload;
 CORS and advanced matchers also change configuration text. See
 [reload constraints](#known-limitations).
 
-Map values are URL-encoded and decoded at request time with `url_dec(1)`. That's
-what makes a value carrying a space, a `;`, or a `%` safe: the runtime CLI splits a
-map value at the first space, and HAProxy re-reads an inlined header value as a
-log-format string, where a `%` would fetch request state.
-
 | Filter Type | Conformance | Status | Notes |
 |-------------|-------------|--------|-------|
-| `RequestHeaderModifier` | Core | ✅ Supported | Add/Set/Remove request headers |
-| `ResponseHeaderModifier` | Extended | ✅ Supported | Add/Set/Remove response headers |
-| `RequestRedirect` | Core | ✅ Supported | HTTP redirects with scheme/hostname/port/path/statusCode |
-| `URLRewrite` | Extended | ✅ Supported | Path and hostname rewriting |
-| `RequestMirror` | Extended | ✅ Supported | Per-route request mirroring via the bundled spoa-hub `mirror` plugin (enable `spoaHub.plugins.mirror`); supports percent/fraction sampling and multiple mirrors per rule |
-| `CORS` | Extended (GEP-1767) | ✅ Supported | HTTPRoute only, via `frontend-filters-450-gateway-cors`. Honours `allowOrigins` (exact values, a bare `*`, and `*.`-prefixed wildcards compiled to a regex against the request `Origin`), `allowMethods`, `allowHeaders`, `exposeHeaders`, `allowCredentials`, and `maxAge` |
-| `ExtensionRef` | Implementation-specific | ⚠️ Partial | Supports `HAProxyRoutePolicy` for route policies and `SSLPassthrough` for TLS passthrough; other kinds are unsupported |
+| `RequestHeaderModifier` | Core | Supported | Add/Set/Remove request headers |
+| `ResponseHeaderModifier` | Extended | Supported | Add/Set/Remove response headers |
+| `RequestRedirect` | Core | Supported | HTTP redirects with scheme/hostname/port/path/statusCode |
+| `URLRewrite` | Extended | Supported | Path and hostname rewriting |
+| `RequestMirror` | Extended | Supported | Enable `spoaHub.plugins.mirror`; supports percentage or fraction sampling and multiple mirrors per rule |
+| `CORS` | Extended (GEP-1767) | Supported | HTTPRoute only. Supports `allowOrigins` (exact values, a bare `*`, and `*.`-prefixed wildcards compiled to a regex against the request `Origin`), `allowMethods`, `allowHeaders`, `exposeHeaders`, `allowCredentials`, and `maxAge` |
+| `ExtensionRef` | Implementation-specific | Partial | Supports `HAProxyRoutePolicy` for route policies and `SSLPassthrough` for TLS passthrough; other kinds are unsupported |
 
 #### `RequestHeaderModifier` filter
 
-The `RequestHeaderModifier` filter modifies HTTP request headers before forwarding to backends. Supports set (replace), add (append), and remove operations.
-
-**Supported Operations:**
+Modify request headers before forwarding to backends:
 
 - `set` - Sets a header value, replacing any existing values
 - `add` - Adds a header value, appending to existing values
@@ -523,35 +458,9 @@ spec:
           port: 8080
 ```
 
-**HAProxy Implementation:**
-
-The values land in `gw-reqhdr.map`, keyed `<rule id>|<operation>|<header name>`:
-
-```
-default_api-route_0|set|x-api-version v2
-default_api-route_0|add|x-deployment canary
-default_api-route_0|del|authorization 1
-```
-
-The configuration holds one line per distinct header name per operation, whatever
-the number of routes using it:
-
-```haproxy
-http-request set-header X-API-Version %[var(txn.gw_rule_id),concat(|set|x-api-version),map(<gw-reqhdr.map>),url_dec(1)] if { var(txn.gw_rule_id),concat(|set|x-api-version),map(<gw-reqhdr.map>) -m found }
-http-request add-header X-Deployment %[var(txn.gw_rule_id),concat(|add|x-deployment),map(<gw-reqhdr.map>),url_dec(1)] if { var(txn.gw_rule_id),concat(|add|x-deployment),map(<gw-reqhdr.map>) -m found }
-http-request del-header Authorization if { var(txn.gw_rule_id),concat(|del|authorization),map(<gw-reqhdr.map>) -m found }
-```
-
-Header names are case-insensitive, so the map key uses the lower-case name and two
-routes spelling one header differently share a line. The line spells the header the
-lexicographically smallest of the spellings in use. A name outside the HTTP token charset, or
-one containing `|`, `%`, `#`, a quote or a backtick, is rejected: it would otherwise become
-part of a map key, where `|` is the delimiter.
-
-A `backendRef`-level header modifier uses the same maps with the key
-`<rule id>|<backend name>|<operation>|<header name>`, and its block is emitted
-after the rule-level one, so it overrides a rule-level modifier for the same
-header as the specification requires.
+Header names are case-insensitive. A modifier on a `backendRef` runs after the
+rule-level modifier and takes precedence for the same header. HAPTIC rejects
+invalid header names during validation.
 
 #### `ResponseHeaderModifier` filter
 
@@ -583,18 +492,6 @@ spec:
       backendRefs:
         - name: web-svc
           port: 80
-```
-
-**HAProxy Implementation:**
-
-The same shape as `RequestHeaderModifier`, against `gw-reshdr.map`:
-
-```
-default_api-route_0|set|strict-transport-security max-age%3D31536000%3B%20includeSubDomains
-```
-
-```haproxy
-http-response set-header Strict-Transport-Security %[var(txn.gw_rule_id),concat(|set|strict-transport-security),map(<gw-reshdr.map>),url_dec(1)] if { var(txn.gw_rule_id),concat(|set|strict-transport-security),map(<gw-reshdr.map>) -m found }
 ```
 
 #### `RequestRedirect` filter
@@ -645,32 +542,8 @@ spec:
             statusCode: 308
 ```
 
-**HAProxy Implementation:**
-
-`gw-redirect.map` carries the whole redirect per rule id, as
-`<code>|<scheme>|<host>|<port>|<path mode>|<prefix length>|<path>`:
-
-```
-default_api-route_0 301|https|example.com||P|7|%2fapi%2fv2
-```
-
-An empty scheme keeps the request's own scheme, an empty host keeps the request's
-Host, and `L` in the port field means the Gateway listener's own port, resolved per
-request because one route can serve several listeners. The path mode is `F` for
-`ReplaceFullPath`, `P` for `ReplacePrefixMatch` (whose remainder starts at the
-prefix length) and empty when the path is unchanged.
-
-One static block decodes those fields into `txn.gw_redir_*` variables, and the
-status code — which HAProxy insists is a literal — gets one line per allowed
-value (301, 302, 303, 307, 308), whatever the routes actually use:
-
-```haproxy
-http-request redirect location "%[var(txn.gw_redir_scheme)]://%[var(txn.gw_redir_host)]%[var(txn.gw_redir_port)]%[var(txn.gw_redir_path)]%[var(txn.gw_redir_query)]" code 301 if { var(txn.gw_redir),field(1,|) -m str 301 }
-http-request redirect location "%[var(txn.gw_redir_scheme)]://%[var(txn.gw_redir_host)]%[var(txn.gw_redir_port)]%[var(txn.gw_redir_path)]%[var(txn.gw_redir_query)]" code 302 if { var(txn.gw_redir),field(1,|) -m str 302 }
-```
-
-The redirect keeps the query string the request arrived with. Any other
-`statusCode` is rejected at render time.
+Redirects preserve the request's query string. Supported status codes are
+`301`, `302`, `303`, `307`, and `308`.
 
 #### `URLRewrite` filter
 
@@ -724,32 +597,15 @@ spec:
           port: 8080
 ```
 
-**HAProxy Implementation:**
-
-`gw-urlrewrite.map` carries `<host>|<path mode>|<prefix length>|<path>` per rule id:
-
-```
-default_api-route_0 internal-api.example.svc.cluster.local|P|7|%2fv2
-```
-
-```haproxy
-http-request set-header Host %[var(txn.gw_rw),field(1,|),url_dec(1)] if { var(txn.gw_rw) -m found } !{ var(txn.gw_rw),field(1,|) -m len 0 }
-http-request set-var(txn.gw_rw_rest) path,bytes(txn.gw_pfxlen) if { var(txn.gw_rw),field(2,|) -m str P }
-http-request set-path %[var(txn.gw_rw_path)] if { var(txn.gw_rw_path) -m found }
-```
-
-A `ReplacePrefixMatch` takes the remainder of the path from the prefix length
-rather than a per-route regex, so it no longer mangles a rewrite against the `/`
-prefix. It needs a `PathPrefix` match to take that length from: combined with a
-`RegularExpression` match — which Gateway API leaves undefined — the rewrite is
-refused rather than stripping the regex source's byte count off the path.
+`ReplacePrefixMatch` requires a `PathPrefix` match. HAPTIC rejects it with a
+`RegularExpression` match because the replacement prefix length is undefined.
 
 **Difference from RequestRedirect:**
 
 - **URLRewrite** rewrites the request and forwards to backend (transparent to client)
 - **RequestRedirect** sends HTTP redirect response to client (client sees new URL)
 
-Attach a filter to the demo route and watch both halves compile — the map entry that carries the value and the one static line that reads it:
+Add a header modifier to the demo route and inspect its generated configuration:
 
 <div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.frontend-filters-495-gateway-route-filters" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Filter → http-request directive" data-height="440">
 
@@ -776,23 +632,18 @@ deploy without a reload.
 
 | Field | Status | Notes |
 |-------|--------|-------|
-| `backendRefs[].name` | ✅ Supported | Service name |
-| `backendRefs[].namespace` | ✅ Supported | Defaults to the route namespace; cross-namespace Services require a covering [ReferenceGrant](#cross-namespace-routes-referencegrant) |
-| `backendRefs[].port` | ✅ Supported | Service port number |
-| `backendRefs[].weight` | ✅ Supported | Traffic splitting with weighted distribution |
-| `backendRefs[].filters[]` | ⚠️ Partial | `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite` emitted per-backend (keyed by `gw_rule_id` and backend name); `RequestMirror` and `ExtensionRef` not handled at the `backendRef` level |
-| Multiple backends | ✅ Supported | Weighted traffic splitting using MULTIBACKEND qualifier |
-| Single backend | ✅ Supported | Optimized with BACKEND qualifier (avoids weighted logic) |
-| Omitted weight | ✅ Supported | Defaults to weight 1 |
-| Explicit `weight: 0` | ✅ Supported | Valid ref that receives no traffic: it contributes zero weighted-map entries, but its backend block is still rendered (per Gateway API) |
+| `backendRefs[].name` | Supported | Service name |
+| `backendRefs[].namespace` | Supported | Defaults to the route namespace; cross-namespace Services require a covering [ReferenceGrant](#cross-namespace-routes-referencegrant) |
+| `backendRefs[].port` | Supported | Service port number |
+| `backendRefs[].weight` | Supported | Traffic splitting with weighted distribution |
+| `backendRefs[].filters[]` | Partial | Supports `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite`. `RequestMirror` and `ExtensionRef` are unsupported here |
+| Multiple backends | Supported | Traffic splits according to weights |
+| Single backend | Supported | All matching traffic goes to this backend |
+| Omitted weight | Supported | Defaults to weight 1 |
+| Explicit `weight: 0` | Supported | The backend remains configured but receives no traffic |
 
-**Weighted Backend Implementation:**
-
-The gateway library uses HAProxy's `rand()` function and map-based selection for O(1) weighted routing:
-
-- Weights are pre-expanded into map entries (for example 70/30 split = 100 map entries)
-- Entry 0-69 map to backend 1, entries 70-99 map to backend 2
-- HAProxy generates random number % `total_weight` and looks up backend in map
+Weights express relative shares: `70` and `30` send about 70% and 30% of requests
+to the two Services. Omitted weights default to `1`; a weight of `0` receives no traffic.
 
 **Example - Weighted traffic splitting:**
 
@@ -862,19 +713,14 @@ rules in one route reference it, the first rule declaring the relevant retry or
 cookie policy wins. Changing that policy changes the backend profile and can
 require a reload.
 
-### Advanced features
+<a id="advanced-features"></a>
 
-**Backend Deduplication:**
-
-Rules within one route reuse the backend for the same Service and port. Separate routes have separate backends, so their backend policies can differ.
-
-**Route Key Generation:**
-
-Internal route identifiers use the format `namespace_routename_ruleindex` to ensure uniqueness across namespaces and rules.
+Rules within one route reuse a backend for the same Service and port. Separate
+routes have separate backends, so their backend policies can differ.
 
 ### Misdirected requests on HTTPS listeners
 
-When a Gateway has multiple HTTPS listeners with distinct hostnames, HAPTIC enforces RFC 9110 listener isolation. If a request's TLS SNI selects one HTTPS listener but its `Host` header canonically belongs to a *different* HTTPS listener on the Gateway, HAPTIC returns `421 Misdirected Request` (Gateway API conformance test `HTTPRouteHTTPSListenerDetectMisdirectedRequests`).
+When a Gateway has multiple HTTPS listeners with distinct hostnames, HAPTIC enforces RFC 9110 listener isolation. If a request's TLS SNI selects one HTTPS listener but its `Host` header canonically belongs to a *different* HTTPS listener on the Gateway, HAPTIC returns `421 Misdirected Request`.
 
 The check applies only to HTTPS connections that carry an SNI. Plain-HTTP requests are unaffected.
 
@@ -886,27 +732,27 @@ The check applies only to HTTPS connections that carry an SNI. Plain-HTTP reques
 
 | Field | Status | Notes |
 |-------|--------|-------|
-| All fields | ⚠️ Similar to HTTPRoute | Same template pattern and limitations |
+| All fields | Similar to HTTPRoute | Same template pattern and limitations |
 
 ### spec.hostnames
 
-| Field | Status | Notes |
-|-------|--------|-------|
-| `hostnames[]` | ✅ Supported | Multiple hostnames per route |
+| Field | Notes |
+| ------- | ------- |
+| `hostnames[]` | Multiple hostnames per route |
 
 ### `spec.rules[].matches`
 
-| Field | Status | Notes |
-|-------|--------|-------|
-| `matches[].method.type: Exact` | ✅ Supported | Exact match for gRPC service/method |
-| `matches[].method.type: RegularExpression` | ✅ Supported | Regex match for gRPC service/method |
-| `matches[].method.service` | ✅ Supported | gRPC service name (for example `com.example.User`) |
-| `matches[].method.method` | ✅ Supported | gRPC method name (for example `GetUser`) |
-| `matches[].headers[]` | ✅ Supported | Header matching (same as HTTPRoute) |
+| Field | Notes |
+| ------- | ------- |
+| `matches[].method.type: Exact` | Exact match for gRPC service/method |
+| `matches[].method.type: RegularExpression` | Regex match for gRPC service/method |
+| `matches[].method.service` | gRPC service name (for example `com.example.User`) |
+| `matches[].method.method` | gRPC method name (for example `GetUser`) |
+| `matches[].headers[]` | Header matching (same as HTTPRoute) |
 
 **gRPC Method Routing:**
 
-The gateway library now supports routing based on gRPC service and method names. The gRPC path format `/package.Service/Method` is used for matching.
+Match gRPC calls by service and method, using their `/package.Service/Method` path.
 
 **Example - gRPC method routing:**
 
@@ -916,6 +762,8 @@ kind: GRPCRoute
 metadata:
   name: grpc-users
 spec:
+  parentRefs:
+    - name: edge
   hostnames:
     - "api.example.com"
   rules:
@@ -954,19 +802,19 @@ spec:
 
 | Filter Type | Conformance | Status | Notes |
 |-------------|-------------|--------|-------|
-| `RequestHeaderModifier` | Core | ✅ Supported | Same implementation as HTTPRoute |
-| `ResponseHeaderModifier` | Extended | ✅ Supported | Same implementation as HTTPRoute |
+| `RequestHeaderModifier` | Core | Supported | Same behavior as HTTPRoute |
+| `ResponseHeaderModifier` | Extended | Supported | Same behavior as HTTPRoute |
 | `RequestRedirect` | Core | N/A | HTTPRoute only - not applicable to gRPC |
 | `URLRewrite` | Extended | N/A | HTTPRoute only - not applicable to gRPC |
-| `RequestMirror` | Extended | ✅ Supported | Per-route request mirroring via the bundled spoa-hub `mirror` plugin (enable `spoaHub.plugins.mirror`); supports percent/fraction sampling and multiple mirrors per rule |
-| `ExtensionRef` | Implementation-specific | ⚠️ Partial | Supports `HAProxyRoutePolicy`; other kinds are unsupported |
+| `RequestMirror` | Extended | Supported | Enable `spoaHub.plugins.mirror`; supports percentage or fraction sampling and multiple mirrors per rule |
+| `ExtensionRef` | Implementation-specific | Partial | Supports `HAProxyRoutePolicy`; other kinds are unsupported |
 
 ### `spec.rules[].backendRefs`
 
-| Field | Status | Notes |
-|-------|--------|-------|
-| All `backendRefs` fields | ✅ Supported | Same implementation as HTTPRoute |
-| HTTP/2 protocol | ✅ Supported | Backends generated with `proto h2` flag |
+| Field | Notes |
+| ------- | ------- |
+| All `backendRefs` fields | Same behavior as HTTPRoute |
+| HTTP/2 protocol | Backends generated with `proto h2` flag |
 
 **Example - GRPCRoute:**
 
@@ -976,6 +824,8 @@ kind: GRPCRoute
 metadata:
   name: grpc-example
 spec:
+  parentRefs:
+    - name: edge
   hostnames:
     - "grpc.example.com"
   rules:
@@ -1038,7 +888,10 @@ spec:
 EOF
 ```
 
-HAPTIC renders a dedicated `frontend gateway-tls-port-6443` in `mode tcp` that reads the SNI from the buffered ClientHello and dispatches `secure.example.com` to backend `gtw_tls_default_secure-app_0`, forwarding the still-encrypted bytes to `secure-app:8443`. On the chart's HTTPS port (default 443), passthrough uses the shared SNI frontend; other ports get a dedicated TCP frontend (see [Forwarding behavior](#forwarding-behavior)). Each rule needs at least one `spec.hostnames` entry, and traffic goes to the rule's first `backendRef` — `weight` isn't honored for TLSRoute.
+The `secure-app` Service must exist in `default` and accept TLS on port `8443`.
+Clients connect to listener port `6443` with SNI `secure.example.com`; the backend
+terminates their TLS sessions. Each TLSRoute needs a hostname and uses the first
+backend in each rule. See [TLSRoute limitations](#tlsroute-limitations).
 
 ### Attachment semantics
 
@@ -1057,11 +910,11 @@ A TLSRoute attaches to a Gateway listener when every check in this table passes:
 
 ### Forwarding behavior
 
-- **Passthrough on the chart-static HTTPS port**: the route's SNIs join the shared `ssl-tcp` frontend alongside Ingress SSL-passthrough entries, dispatched with `use_backend ... if { req_ssl_sni -m str <host> }`.
-- **TLS listeners on other ports**: each port gets a dedicated `mode tcp` frontend (`frontend gateway-tls-port-<port>`). `Terminate` listeners bind with `ssl crt-list` and dispatch on `ssl_fc_sni` (the SNI HAProxy consumed during the handshake); `Passthrough` listeners bind plain and dispatch on `req_ssl_sni` read from the buffered ClientHello. Wildcard SNIs (`*.example.com`) match by suffix.
-- **Reject by default**: an SNI no attached TLSRoute claims is rejected at the TCP level. A rule whose `backendRefs` don't all resolve still claims its SNIs, so connections to them are refused rather than silently passed through — the behavior the upstream `TLSRouteInvalidBackendRef*` conformance tests mandate.
-- **Backends**: one `mode tcp` backend per route rule, named `gtw_tls_<namespace>_<route>_<ruleIndex>`; all SNIs of a rule share it. A rule attached to both a `Terminate` and a `Passthrough` listener gets one backend per mode (`…_terminate`, `…_passthrough`), so only the Terminate leg re-encrypts through a BackendTLSPolicy. Traffic goes to the rule's **first** `backendRef` (default port 443).
-- Use a separate port for a `Terminate` TLS listener when the chart already binds its HTTPS port. Passthrough on the shared HTTPS port uses the SNI frontend described above.
+- Passthrough routes can share the chart's HTTPS port with Ingress passthrough routes.
+- Use a separate port for a terminating TLS listener when the chart already uses its HTTPS port.
+- Wildcard server names such as `*.example.com` match by suffix.
+- Connections with an unclaimed server name or unresolved backend are rejected.
+- Each rule sends traffic to its **first** `backendRef`, using port 443 if omitted. BackendTLSPolicy can re-encrypt traffic after termination; it doesn't affect passthrough traffic.
 
 ### TLSRoute status
 
@@ -1082,7 +935,8 @@ TLSRoutes count toward `attachedRoutes` on TLS listeners only; listeners on a mi
 
 ## TCPRoute support
 
-TCPRoute forwards raw TCP: each claimed listener port becomes a dedicated `mode tcp` frontend whose `default_backend` is the route's backend. There is no per-connection matching — TCP carries no hostname or SNI, so a port forwards to exactly one backend.
+TCPRoute forwards connections from a listener port to a rule's backend Services.
+A port belongs to one rule; TCPRoute doesn't match hostnames or paths.
 
 !!! note "TCPRoute needs Gateway API v1.6 standard channel (or the experimental channel)"
     TCPRoute is in the Gateway API standard channel (`standard-install.yaml`) since v1.6. On v1.5 and earlier, install it from the experimental channel (`experimental-install.yaml`). HAPTIC activates TCPRoute support automatically once the CRD is served — no chart redeploy. See [Supported Gateway API versions and channels](#supported-gateway-api-versions-and-channels).
@@ -1125,7 +979,9 @@ spec:
 EOF
 ```
 
-HAPTIC renders `frontend gateway-tcp-port-5432` (`mode tcp`, `bind *:5432`, `default_backend gtw_tcp_default_postgres_0`) with no ACLs — the whole port maps to this one route rule. A TCPRoute has no hostnames. Choose a listener port other than the chart-static `haproxy.ports.http` / `haproxy.ports.https` (default 80 / 443): a TCP listener on either is dropped to avoid a duplicate bind.
+The `postgres` Service must exist in `default` and expose port `5432`.
+Choose a listener port other than `haproxy.ports.http` or `haproxy.ports.https`
+(default `80` and `443`); HAPTIC ignores TCP listeners that collide with those ports.
 
 A Gateway with only TCP listeners uses the shared HAProxy Service. HAPTIC adds
 its listener ports to that Service. A Gateway with HTTP or HTTPS listeners also
@@ -1173,7 +1029,9 @@ Cross-namespace routing has two independent gates, and both apply to every route
 - **Listener attachment** — a Gateway listener's `allowedRoutes.namespaces.from` decides which namespaces' routes may attach. HAPTIC honors `Same` (the default — routes in the Gateway's own namespace), `All` (routes in any namespace), and `Selector` (routes in namespaces matching `matchLabels`; `matchExpressions` isn't supported). Attaching a route to a Gateway in another namespace needs no ReferenceGrant — only a permissive `allowedRoutes`.
 - **Backend references** — a rule's `backendRef.namespace` pointing at a Service in another namespace is permitted only by a ReferenceGrant in the **target** (Service) namespace whose `from` clause names the route's group, kind, and namespace and whose `to` clause names the Service group and kind. Without a matching grant, the route's `ResolvedRefs` condition turns `False` with reason `RefNotPermitted` and the backend isn't served.
 
-The example below runs a Gateway in the `infra` namespace that accepts routes from any namespace, an HTTPRoute in `store-a` whose backend Service lives in `store-b`, and the ReferenceGrant in `store-b` that permits it:
+The following resources attach a route in `store-a` to a Gateway in `infra`, and
+allow it to reach the `shop` Service on port `80` in `store-b`. Create those
+namespaces and the backend Service before applying this example:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -1222,10 +1080,12 @@ spec:
   to:
     - group: ""
       kind: Service
+      name: shop
 EOF
 ```
 
-The `to` clause omits `name`, so it permits references to any Service in `store-b`; add `name: shop` to scope the grant to one Service. To permit a different route kind, set `from[].kind` to `GRPCRoute`, `TLSRoute`, or `TCPRoute`. Cross-namespace Gateway certificate references (a listener's `tls.certificateRefs` pointing at a Secret in another namespace) follow the same rule with a `to` clause of `group: "", kind: Secret`.
+The grant permits references only to the `shop` Service. Omitting `to[].name`
+would permit references to every Service in `store-b`. To permit a different route kind, set `from[].kind` to `GRPCRoute`, `TLSRoute`, or `TCPRoute`. Cross-namespace Gateway certificate references (a listener's `tls.certificateRefs` pointing at a Secret in another namespace) follow the same rule with a `to` clause of `group: "", kind: Secret`.
 
 ---
 
@@ -1249,33 +1109,31 @@ controller:
 - `X-Gateway-Matched-Route` - The namespace/name of the matched HTTPRoute or GRPCRoute
 - `X-Gateway-Match-Reason` - Additional information about why the route was selected (for example `method match`, `header match`)
 
-These headers are useful for:
-
-- Verifying which route handled a request
-- Understanding precedence when multiple routes match
-- Debugging complex routing configurations
-
-Debug mode also sets `txn.filters_applied` to the name of the first filter that
-fired, which the `X-Gateway-Filters-Applied` response header carries. A filter that doesn't fire is nearly always
-a missing map entry: `txn.gw_rule_id` names the rule the request matched, and
-every filter map is keyed by it, so
-`echo "show map maps/gw-reqhdr.map" | socat stdio /etc/haproxy/haproxy-worker.sock`
-on the HAProxy pod tells you whether the entry the request needed is there.
-
----
+`X-Gateway-Filters-Applied` identifies the first filter that ran. If an expected
+filter is absent, check the matched route and its filter configuration.
 
 ## Per-Gateway Kubernetes Resources
 
-Two Gateway-API features cause the gateway library to emit additional Kubernetes resources alongside the chart's main HAProxy Service. Both flow through the controller CRD's top-level `spec.k8sResources` map (sibling of `templateSnippets`, `maps`, `files`, `sslCertificates`); the controller renderer parses the rendered YAML and the resourceapplier reconciles each emitted resource via Server-Side Apply with field manager `haptic` and a `controller=true` `OwnerReference` to the `HAProxyTemplateConfig` CR (so cascade-delete / `helm uninstall` GCs them).
+HAPTIC creates Services for Gateways as well as the chart's shared HAProxy
+Service. HTTP and HTTPS Gateways get separate listening addresses while using
+the same HAProxy pods:
 
-| Template name | Triggered when | Emits |
-|---------------|----------------|-------|
-| `gateway-static-addresses` | A Gateway's `spec.addresses[]` lists at least one valid `IPAddress` entry — `SupportGatewayStaticAddresses` (Extended). | One `LoadBalancer` Service **per requested IP** in the controller's namespace, named `gw-<gateway-namespace>-<gateway-name>-<ip-with-dashes>` (names over 63 characters are truncated with a hash suffix). Each Service carries its single IP via the `metallb.universe.tf/loadBalancerIPs` annotation and selects the chart's shared HAProxy pods, so the per-Gateway IP routes to the same data plane the rest of the cluster uses. |
-| `gateway-infrastructure-propagation` | A Gateway sets `spec.infrastructure` labels or annotations — `SupportGatewayInfrastructurePropagation` (Extended). | One headless `ClusterIP` Service in the Gateway's namespace, named `gw-<gateway-namespace>-<gateway-name>`. The Service has a placeholder `marker` port and an empty selector — its only purpose is to surface the propagated `spec.infrastructure` labels and annotations on a discoverable Kubernetes object. |
+| Gateway configuration | Generated Service |
+| --- | --- |
+| HTTP or HTTPS listeners, without `spec.addresses` | A `LoadBalancer` Service named `gw-<gateway-namespace>-<gateway-name>` in the controller namespace. It maps public listener ports to dedicated pod ports that isolate the Gateway's routes. |
+| `spec.addresses` with `IPAddress` entries | One `LoadBalancer` Service per requested IP, named `gw-<gateway-namespace>-<gateway-name>-<ip-with-dashes>` in the controller namespace. The MetalLB annotation requests that IP. HTTP and HTTPS ports use the same listener isolation as dynamically assigned addresses. |
+| `spec.infrastructure` labels or annotations | A headless Service in the Gateway namespace with the propagated metadata. It has a placeholder port and no pod selector; it doesn't carry application traffic. |
+
+Names over 63 characters are shortened with a hash suffix. For local HTTP or
+HTTPS testing, [port-forward to the Gateway's Service](../gateway-api.md#step-4-test-the-routing)
+so the connection reaches its isolated listener. Use a load-balancer
+implementation in your cluster for external access.
 
 ### Request a static IP for a Gateway
 
-Set `spec.addresses` on a Gateway to pin it to a fixed IP:
+Set `spec.addresses` to an IP from your MetalLB address pool. This example uses
+`203.0.113.5` and an existing `platform` namespace; choose an address allocated to
+your cluster before applying it:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -1305,73 +1163,50 @@ HAPTIC emits a `LoadBalancer` Service named `gw-platform-edge-203-0-113-5` in th
 kubectl get svc -n haptic -l gateway.networking.k8s.io/gateway-name=edge
 ```
 
-A Gateway name longer than 63 bytes doesn't fit a label value, so the label then holds the first 54 bytes of the name, a hyphen, and the first 8 hex characters of the name's SHA-256.
-
 Use MetalLB with an address pool containing the requested IPs. Once MetalLB allocates the IP, it appears in the Gateway's `status.addresses`. Listing several `spec.addresses[]` entries emits one Service per IP; an IP that can't be allocated is left out of `status.addresses` while the usable ones still bind.
 
-## Features summary
-
-| Feature | Support | Notes |
-|---------|---------|-------|
-| HTTPRoute | Supported | Path, method, header, and query matching; filter limits are listed below |
-| GRPCRoute | Supported | HTTP/2 routing, header filters, and cookie persistence |
-| TLSRoute | Supported | SNI routing on TLS listeners, `Passthrough` and `Terminate`; first `backendRef` takes traffic |
-| TCPRoute | Supported | One frontend per claimed TCP listener port; weighted `backendRefs` |
-| Path Matching | Exact, PathPrefix, RegularExpression | |
-| Method Matching | Full | GET, POST, etc. |
-| Header Matching | Exact, RegularExpression | Request headers |
-| Query Param Matching | Exact, RegularExpression | URL parameters |
-| RequestHeaderModifier | Full | Add, set, remove headers |
-| ResponseHeaderModifier | Full | Add, set, remove headers |
-| RequestRedirect | Full | HTTP redirects |
-| URLRewrite | Full | Path and hostname rewrite |
-| RequestMirror | Rule-level | Multiple targets and percentage/fraction sampling |
-| ListenerSet | Supported | Delegated listeners with namespace and route-attachment controls |
-| BackendTLSPolicy | Supported | Upstream CA and hostname verification |
-| Frontend client authentication | Supported | Gateway defaults and per-port overrides |
-| Session persistence | Cookie | HTTPRoute and GRPCRoute; no header-based persistence |
-| Retry policy | Attempts and codes | HTTPRoute; no configurable backoff |
-| Traffic Splitting | Full | Weighted backends |
-| SSL Passthrough | Full | Via annotation |
-
----
+<a id="features-summary"></a>
 
 ## Status reporting
 
 The Gateway library reports processing results in the status of GatewayClass,
 Gateway, ListenerSet, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and BackendTLSPolicy
-resources. It applies status with phase-specific Server-Side Apply field managers.
+resources.
 TLSRoute and TCPRoute conditions are described in their sections above.
 
 ### Gateway status
 
 Each Gateway receives:
 
-- **Conditions**: `Accepted` (True after template rendering) and `Programmed` (True after successful HAProxy deployment, False if deployment fails)
-- **Addresses**: LoadBalancer addresses from the controller Service, converted to Gateway API format (`IPAddress` or `Hostname`)
+- **Conditions**: `Accepted` reports whether HAPTIC can handle the Gateway. `Programmed` reports whether its configuration has reached HAProxy; invalid listeners or unusable requested addresses can keep it false.
+- **Addresses**: Addresses from the Gateway's dedicated Service, or the shared HAProxy Service for Gateways without HTTP or HTTPS listeners. Explicit `spec.addresses` reports only requested IPs that have been allocated.
 - **Listener status**: Per-listener conditions (`Accepted`, `Programmed`, `ResolvedRefs`, `Conflicted`), `supportedKinds` based on protocol, and `attachedRoutes` count
 
 ### HTTPRoute and GRPCRoute status
 
 Each route receives a `parents[]` entry for each `parentRef` that matches a Gateway managed by this controller:
 
-- **Accepted**: True if the parentRef references a known Gateway
-- **ResolvedRefs**: True if all backend Service references can be resolved; False with reason `BackendNotFound` if a referenced Service doesn't exist
+- **Accepted**: Whether the route can attach to the selected parent listener, including hostname, route-kind, and namespace checks
+- **ResolvedRefs**: Whether backend and other references resolve and are permitted; the reason identifies missing resources, unsupported kinds, or missing cross-namespace permission
 
 The `controllerName` in route status is set from `gatewayClass.controllerName` in the Helm values — see [GatewayClass](../gateway-class.md) for the class configuration and ownership rules.
 
 ### Address discovery
 
-Addresses are automatically discovered from the controller's LoadBalancer Service. If no address is assigned yet, Gateway addresses and Ingress status aren't populated. Once an address becomes available, subsequent reconciliations update all resource statuses.
+HAPTIC watches the generated Services and updates Gateway addresses when the
+load balancer assigns them. An HTTP or HTTPS Gateway whose dedicated Service
+has no external address reports an empty address list. It doesn't borrow the
+shared HAProxy Service's address, because that would reach a different listener.
 
 ### Phase-aware status
 
-Status patches use outcome-keyed variants:
+HAPTIC updates status as each stage finishes:
 
 | Phase | Gateway | Routes |
 |-------|---------|--------|
-| `deployed` | Programmed=True, addresses populated | Accepted=True, ResolvedRefs checked |
-| `deployFailed` | Programmed=False, empty addresses | Same as deployed (route acceptance is deployment-independent) |
+| Rendered | Acceptance, reference checks, listener details, and discovered addresses | Parent attachment and reference checks |
+| Deployed | `Programmed` reflects the deployed listener configuration | Attachment and reference results remain independent of deployment |
+| Deployment failed | `Programmed=False` | Attachment and reference results remain independent of deployment |
 
 TLSRoute and TCPRoute status is written on the `deployed` outcome only (see their sections above).
 
@@ -1407,10 +1242,20 @@ TLSRoute- and TCPRoute-specific limitations are listed in their sections above. 
 
 ## Access-log fields
 
-The library contributes `gw_route` to the [structured access log](../haproxy-deployment.md#access-logging)
+The library contributes `gw_route` to the [structured access log](../operations/access-logging.md)
 when at least one Gateway exists. It carries `<namespace>_<name>_<ruleIndex>` of
 the HTTPRoute rule that won, which answers "which rule of this route matched?" —
 the core `resource` field already names the route itself.
+
+<a id="extension-points"></a>
+<a id="injecting-custom-configuration"></a>
+
+## Extend Gateway routing
+
+Use [HAProxyRoutePolicy](../operations/gateway-policies.md) for authentication,
+rate limits, WAF inspection, and caching. For behavior beyond the bundled
+settings, add [custom templates](../templating.md) through the
+[base library's extension points](base.md#extension-points).
 
 ## See also
 

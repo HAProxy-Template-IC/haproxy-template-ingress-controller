@@ -1,44 +1,28 @@
-# HAProxy Deployment
+# Configure HAProxy pods and access
 
-## Overview
+<a id="overview"></a>
 
 The chart deploys two HAProxy replicas by default. Configure [Service access](#haproxy-service),
 [replicas and autoscaling](#replicas-and-autoscaling), and [resource budgets](#resource-limits)
 through Helm values. Use `haproxy.podSpec` for scheduling, volumes, and other pod
-settings. You can also [manage the pods separately](#haproxy-pod-requirements).
-
-Each pod runs HAProxy in master-worker mode plus the HAPTIC agent, which owns
-the pod's file tree and its runtime sockets. The chart supervises the SPOA hub
-and Vector processes inside their sidecar containers: a child exit or repeated
-failed health check leaves HAProxy running while the supervisor restarts only
-that child, with a backoff capped at 30 seconds.
-
-HAProxy's `/ready` endpoint controls pod readiness. It returns `503` while the
-bootstrap configuration is active and `200` once a rendered configuration runs.
-The agent, SPOA hub, and Vector run as native sidecars: Kubernetes starts them
-before HAProxy and stops them after HAProxy exits, preserving dependencies during
-connection draining.
-
-The agent's `/readyz` endpoint reports whether it can accept configuration updates;
-a rejected update doesn't make it unready. Its liveness probe uses the local Unix
-socket. A stopped container or a failing probe on a custom sidecar can still make
-the pod unready.
-
-The watchdog uses `/usr/bin/bash` and `timeout`, which the default images provide.
-With a custom sidecar image missing either command, the supervisor logs a warning
-and still restarts child processes that exit.
+settings. Add settings to your [complete Helm values file](deploying-with-helm.md#change-settings).
+You can also [manage the pods separately](#haproxy-pod-requirements).
 
 ## Resource limits
 
 Use the [resource sizing guide](operations/performance.md#controller-resource-sizing) to budget the installation. Set HAProxy resources with `haproxy.resources` and agent resources with `haproxy.agent.resources`.
 
-## Service Architecture
+<a id="service-architecture"></a>
+
+## Expose traffic and management ports
 
 Separate Services expose controller health and metrics, the admission webhook, HAProxy traffic and stats, and the HAPTIC agent.
 
 ### Controller Service
 
-A single `ClusterIP` Service named after the chart's `fullname` (for example `<release>-haptic`) that exposes the controller's ports defined in `controller.ports`:
+The controller's `ClusterIP` Service exposes health and metrics ports. For a
+release named `haptic`, the Service is also named `haptic`. Other release names
+use the chart's `fullname`, usually `<release>-haptic`:
 
 | Name | Container port | Values key | Purpose |
 |------|----------------|------------|---------|
@@ -58,7 +42,9 @@ controller:
 
 ### HAProxy Service
 
-A Service (`<fullname>-haproxy`, for example `<release>-haptic-haproxy`, `NodePort` by default) that fronts the HAProxy pods. Port structure comes from `haproxy.service.*` and container ports from `haproxy.ports.*`:
+The `<fullname>-haproxy` Service sends traffic to HAProxy pods. For a release
+named `haptic`, it's `haptic-haproxy`. It uses `NodePort` by default; configure
+its ports through `haproxy.service.*` and pod ports through `haproxy.ports.*`:
 
 | Name | Service port | Container port | nodePort default |
 |------|--------------|----------------|------------------|
@@ -76,7 +62,9 @@ kubectl port-forward -n haptic service/haptic-haproxy 8080:80
 ```
 
 In another terminal, send requests to `http://localhost:8080` with the hostname
-configured on your Ingress or Gateway route. NodePort access from the host also
+configured on your Ingress. HTTP and HTTPS Gateways use
+[their own Services](gateway-api.md#step-4-test-the-routing); port-forward to
+the Gateway's Service to reach its listeners. NodePort access from the host also
 requires a reachable node address or matching kind port mappings.
 
 **LoadBalancer access** requires a load-balancer implementation in your cluster.
@@ -198,436 +186,65 @@ KEDA must be installed in the cluster, and `haproxy.keda.triggers` must list at 
 
 ## Initial bootstrap config
 
-When the chart manages HAProxy, the pod boots with a minimal `haproxy.cfg` rendered from `haproxy.initialConfig` into the `<release>-haptic-haproxy-config` ConfigMap. The controller replaces it on its first apply, so the bootstrap only matters during the seconds between pod start and controller handoff.
+New HAProxy pods start with a minimal configuration from `haproxy.initialConfig`,
+stored in the `<fullname>-haproxy-config` ConfigMap. For the default release name,
+that's `haptic-haproxy-config`. The controller replaces it with your rendered
+configuration.
 
 The default keeps `/healthz` returning 200 on the stats port and `/ready` returning 503 ("waiting for controller config"), so the pod stays NotReady until the controller applies its first real config.
 
-Here is what a fresh pod does, step by step:
+Once the agent receives and successfully loads the rendered configuration,
+`/ready` returns `200` and Kubernetes adds the pod to the Service. If that first
+apply fails, the agent restores the bootstrap files and the pod stays unready.
 
-1. The kubelet starts the sidecars, then the HAProxy container copies the bootstrap config and starts the master process. `/ready` answers 503, so the pod takes no traffic.
-2. The agent waits for the sockets, hashes the tree, loads its state file and builds its inventory, then serves `/readyz`.
-3. The controller's discovery admits the pod once `GET /v1/state` answers, and sends the complete file set with a reload — the pod has no baseline it could diff against.
-4. The agent writes every auxiliary file, the configuration last, and reloads. The master reports success only once the new worker has parsed the config and bound its listeners.
-5. The new worker serves `/ready` with 200, the kubelet's next probe sees it, and the pod joins the Service.
+On a later container restart, HAProxy reuses the configuration on disk if it
+passes `haproxy -c`. It falls back to the bootstrap configuration only if the
+file is missing or invalid.
 
-If that first apply fails, the agent restores the bootstrap files and the bootstrap worker keeps answering 503: the pod never becomes Ready, and the rejection carries HAProxy's own message into the pod's status. A broken configuration can't make a pod Ready.
-
-If the HAProxy container restarts later, its start script runs `haproxy -c` against the configuration already on disk and copies the bootstrap only when that check fails or the file is gone — so a restart normally resumes on the last applied configuration with no unready window and without waiting for the controller. To customise (for example, to add cluster-internal ACLs, an extra logging directive, or pre-bind a port the controller doesn't manage), copy the default from `values.yaml` into your own values file and edit it:
-
-```yaml
-haproxy:
-  initialConfig: |
-    global
-        log stdout len 4096 local0 info
-        stats socket /etc/haproxy/haproxy-worker.sock mode 660 level admin
-        {{- with include "haptic.haproxy.nbthread" . }}
-        nbthread {{ . }}
-        {{- end }}
-    defaults
-        mode http
-        timeout connect 5s
-    frontend status
-        bind *:{{ .Values.haproxy.ports.stats }}
-        http-request return status 200 content-type text/plain string "OK" if { path /healthz }
-        http-request return status 503 content-type text/plain string "Not ready" if { path /ready }
-    frontend http_frontend
-        bind *:{{ .Values.haproxy.ports.http }}
-        default_backend default_backend
-    backend default_backend
-        http-request return status 404
-```
-
-The string is processed through Helm's `tpl`, so chart helpers and `.Values` references are available. Editing this value bumps the bootstrap-config checksum on the HAProxy Deployment, which rolls HAProxy pods on the next `helm upgrade`.
-
-!!! warning "Keep /ready returning 503 until the controller takes over"
-    Keep the worker socket and return `503` on `/ready` until a rendered
-    configuration runs. Returning `200` admits the bootstrap pod to the Service
-    before application routes exist.
+If you replace `haproxy.initialConfig`, preserve the worker socket, `/healthz`,
+and a `/ready` response of `503`. Returning `200` would send application traffic
+to a pod before its routes exist. The value supports Helm template expressions;
+changing it rolls the HAProxy pods on the next upgrade.
 
 ## Access logging
 
-By default the access log goes to the Vector sidecar, which prints it to its own
-stdout — so `kubectl logs` shows it on the `vector` container. With
-`vector.enabled=false` the records go to the `haproxy` container's stdout instead:
-
-```bash
-# Default install (vector.enabled=true)
-kubectl logs -n haptic -l app.kubernetes.io/component=loadbalancer -c vector
-
-# With vector.enabled=false
-kubectl logs -n haptic -l app.kubernetes.io/component=loadbalancer -c haproxy
-```
-
-Every frontend emits one JSON object per request (or per connection, for the
-TCP-mode frontends), using HAProxy's native JSON log encoding:
-
-```json
-{"ts":"2026-07-25T19:05:19.615Z","req_id":"019f9ae9-3a61-7814-8601-774735249ecd","trace_id":"","client_ip":"10.244.0.1","frontend":"https","backend":"default_echo_echo_80","server":"echo-7c9d8b6f5-2xk9p","method":"GET","host":"echo.example.com","listener_port":"443","path":"/api/v1","http_version":"HTTP/1.1","status":200,"bytes":73,"request_time_ms":0,"queue_time_ms":0,"connect_time_ms":1,"response_time_ms":3,"total_time_ms":4,"retries":0,"term":"----","resource":"default/echo","denied_by":"","tls_version":"TLSv1.3","tls_sni":"echo.example.com"}
-```
-
-The log target is `log /run/vector/haproxy.sock len 16384 format raw local0 info`
-by default, and `log stdout len 16384 format raw local0 info` with
-`vector.enabled=false`. `format raw`
-means records carry no syslog prefix, so a collector parses lines directly; each
-record carries its own `ts` instead.
-
-Two kinds of line on that stream are **not** JSON, so configure your collector to
-tolerate them: HAProxy's own process and health-check messages, and the few lines
-the HAProxy pod emits from its bootstrap config before the controller's first
-render.
-
-### Core fields
-
-| Field | Meaning |
-|-------|---------|
-| `ts` | Request accept time, Coordinated Universal Time (UTC), with milliseconds |
-| `req_id` | Identifies **one request through this proxy**. HAPTIC generates it and forwards it upstream as `X-Request-ID`, so it's the join key to your application's own logs. Always present. See [Request IDs](#request-ids) |
-| `server_pod` | Name of the backend **pod** that served the request. Servers are named after their pods (ADR-0011), so this is the server name itself — the same value as `server`. Empty when HAProxy answered the request itself. Pods are added and removed over the runtime API, so pod churn doesn't reload HAProxy |
-| `namespace` | Namespace of the Kubernetes Service behind the chosen backend. Separate from `service` so both read like `server_pod`, matching OpenTelemetry and Elastic Common Schema (ECS) conventions. A cross-namespace Gateway API route makes this differ from the routing resource's namespace, which `resource` carries |
-| `service` | The Kubernetes Service behind the chosen backend, as a bare name. Set by the backend that served the request, so it never depends on the backend *name* — a generated identifier that Ingress and Gateway API build differently. Empty when HAProxy answered the request itself |
-| `destination_ip` | The address the client connected **to** — which entry point served the request. What it resolves to depends on how traffic reaches the pod: the LoadBalancer's virtual IP address with MetalLB-style routing, the node IP behind `externalTrafficPolicy: Local`, the pod IP behind a load balancer that rewrites the destination |
-| `instance_pod`, `instance_node` | Which HAPTIC pod and node served the request. Read once at startup from the downward API into a process-scoped variable, so it costs nothing per request. Empty if you run HAProxy without those environment variables |
-| `trace_id` | Identifies **one distributed transaction across every service**, taken from an inbound W3C `traceparent`; empty when the client sends none. It's deliberately *not* a substitute for `req_id`: every hop and every service in a trace shares one `trace_id`, so it can't identify a single request — and `req_id` doesn't exist in your tracing backend, so it can't open a trace. Keep both if you run tracing. If you don't and never plan to, `trace_id` costs about 14 bytes per record, and you can drop it by overriding `log-fields-100-core` through `controller.config.templateSnippets` |
-| `client_ip` | Client address, after any `src-ip-header` rewrite |
-| `frontend`, `backend`, `server` | Which listener served it, where it went, which pod |
-| `method`, `host`, `path`, `http_version` | Request identity. `path` excludes the query string |
-| `listener_port` | The port the routing lookup was keyed on, as a string. Host and path map keys are scoped by it (`<host>:<port>`), so it distinguishes a request that matched no route from one that matched the wrong listener's routes. For a Gateway listener this is the per-Gateway pod port the chart allocated, not the Gateway's `spec.listeners[].port`. Empty on frontends that run no routing logic (`status`, the cache-origin leg) |
-| `status`, `bytes` | Response status and bytes sent to the client (JSON numbers) |
-| `request_time_ms`, `queue_time_ms`, `connect_time_ms`, `response_time_ms`, `total_time_ms` | Timers in **milliseconds** — the `_ms` suffix is part of the name because other proxies report seconds. In order: receiving the request, waiting in the queue, establishing the backend connection, the backend's response, and the total. A timer is **`-1`** when its phase never happened, which is HAProxy's own convention: `connect_time_ms: -1` means the connection was never established, so a `-1` is a signal, not a bad reading. `total_time_ms` excludes idle time between keep-alive requests on HTTP frontends, and is the whole session duration on TCP frontends |
-| `retries` | Connection retries, which `option redispatch` makes routine during a rolling update |
-| `term` | HAProxy's 4-character termination state — separates a client abort from a server abort, a timeout, and a response HAProxy generated itself |
-| `resource` | `<namespace>/<name>` of the Ingress, HTTPRoute or custom resource that owns the matched route — the join key back to Kubernetes |
-| `denied_by` | Which gate blocked the request; empty when the backend answered |
-| `cache_degraded`, `rate_limit_degraded`, `waf_degraded`, `schema_degraded` | These mark a dependency-degraded cache, limiter, WAF, or schema-validation path. A strict policy can set both its degraded field and `denied_by`. Emitted on every record; empty when nothing was degraded |
-| `route` | The matched route **key** — the path template an operator wrote, host included, with a prefix match marked `*` (`echo.example.com/api/*`). Unlike `path` it's bounded by the number of rules, which is what makes it usable as a metric label. Present when tracing is on, or when [request metrics](operations/monitoring.md#request-metrics) use it for their `path` label; it costs a four-step map-lookup cascade per request, so it's absent when neither wants it |
-| `bytes_in` | Request **body** bytes from the client (`%U`) — no request line or headers, which HAProxy doesn't count. Present only when the `request_size` request metric is enabled, since nothing else reads it |
-
-Template libraries add fields for the features you configure, each only when
-that feature is in use: `waf_action`, `waf_rule_id` and `waf_score`;
-`rate_limit_allowed` and `rate_limit_remaining`; `cache` (`HIT`/`MISS`/`STALE`) and
-`app_backend`; `auth_status` and `consumer`; `schema_outcome`; `tls_version`,
-`tls_sni` and `tls_resumed`; `mtls_verify` and `mtls_cn`; `gw_route`;
-`captured_headers`; `client_ip_peer`.
-
-`denied_by` names the gate rather than leaving you to guess from a status code —
-six mechanisms can produce a 401, three a 403, and three a 429. Values include
-`rate_limit_local`, `rate_limit_shared`, `rate_limit_shared_unavailable`, `waf`,
-`jwt_signature`, `jwt_expired`, `api_key`, `hmac`, `basic_auth`,
-`consumer_groups`, `body_too_large`, `schema_invalid` and the `*_unavailable`
-fail-closed variants.
-
-### Add your own fields
-
-```yaml
-controller:
-  config:
-    templatingSettings:
-      extraContext:
-        accessLog:
-          fields:
-            tenant: req.hdr(X-Tenant)
-            region: str(prod-eu)
-```
-
-Each value is one HAProxy sample expression, captured into a transaction variable
-at request time and emitted as a JSON string. Use `str(<value>)` for a constant
-label. Field names must match `^[A-Za-z_][A-Za-z0-9_]{0,39}$` and must not
-collide with a built-in field; expressions must not contain whitespace, `#`, `"`
-or a backslash. A violation fails the render with a message naming the field.
-
-Because the capture happens at request time, a value that doesn't exist yet reads
-empty — a WAF verdict, a cache status, an auth outcome, or anything else a
-[SPOA hub](operations/spoa-hub.md) message produces later in the transaction. For
-those, contribute a [`log-fields-*` snippet](#contribute-a-field-from-your-own-library)
-instead: its items are evaluated when the line is written, after every filter has
-run.
-
-To log the query string, opt in with `query: query` — it's excluded by default
-because query strings are a common accidental carrier of tokens and session ids.
-
-Raise `accessLog.maxLineBytes` (default `16384`, accepted range 1024–65535) if
-custom fields or captured request headers push records past it: HAProxy truncates
-a longer line mid-byte, which makes the record unparseable. A value outside the
-range fails the render rather than silently truncating every record.
-
-### Where the logs go
-
-By default records go to the [Vector sidecar](#vector-sidecar), which prints them
-to its own stdout — so `kubectl logs <pod> -c vector` shows the access log, and
-`kubectl logs <pod> -c haproxy` shows only HAProxy's startup and error output. With
-`vector.enabled=false` the records go to the HAProxy container's stdout instead.
-
-Either way stdout is convenient, but in a typical cluster it's scraped into a
-general-purpose log store — and the access log carries `client_ip`, which is
-personal data. `accessLog.targets` routes the access log somewhere
-access-controlled instead:
-
-```yaml
-controller:
-  config:
-    templatingSettings:
-      extraContext:
-        accessLog:
-          targets:
-            shipper:                      # a name you choose; it keys the target
-              ring:
-                name: accesslog
-                address: 127.0.0.1:6514   # a log-shipper sidecar on loopback
-```
-
-**HAProxy's own process and alert messages aren't affected.** They keep a
-separate stdout target, so `kubectl logs` stays useful for on-call while only the
-personal-data-bearing stream moves. That split is why the access-log target lives
-in the `defaults` section and the process-log target in `global`.
-
-### The access log is lossy under back-pressure
-
-HAProxy reaches the Vector sidecar over a Unix **datagram** socket. Datagram
-delivery is fire-and-forget: HAProxy hands the record to the kernel and moves on.
-If Vector stops draining that socket, its receive queue fills and HAProxy
-**discards** further records rather than blocking.
-
-That trade-off is deliberate — the alternative is stalling request processing
-behind a slow log consumer — but it means **the access log isn't a guaranteed
-record of traffic**. Requests are served normally while records vanish.
-
-A stalled or CPU-starved collector can exhaust the socket queue. Monitor dropped
-logs if you rely on them for traffic analysis.
-
-**Loss is exact and observable.** HAProxy counts every discarded record:
-
-```
-haproxy_process_dropped_logs_total    # HAProxy's Prometheus endpoint
-DroppedLogs                           # `show info` on the stats socket
-```
-
-The chart ships an alert on it (`HAProxyAccessLogRecordsDropped`, enabled with
-`controller.monitoring.prometheusRule`). Watch it: a gap in the access log is
-least welcome during an incident, which is exactly when load is highest. If it
-fires, give Vector more CPU or cut log volume with `accessLog.suppress`.
-
-Each entry renders one HAProxy `log` line, so several entries fan out — which is
-what you want while migrating from one collector to another:
-
-| Field | Meaning |
-|-------|---------|
-| `address` | `stdout`, `stderr`, `fd@<n>`, `<host>:<port>` (UDP), `[<ipv6>]:<port>`, an absolute socket path, or `ring@<name>` |
-| `format` | `raw`, `rfc3164`, `rfc5424`, `local`, `priority`, `short`, `timed`, `iso`. Defaults to `raw` for stdout/stderr and `rfc5424` otherwise |
-| `facility`, `level` | Syslog facility (default `local0`) and level, either `info` (default) or `debug` |
-| `ring` | Send through a buffered TCP ring instead of a bare address |
-
-`level` is a *maximum* severity filter, and HAProxy emits access records at
-`info`. Anything stricter — `notice`, `warning`, `err` — therefore drops every
-record while `haproxy -c` still reports the config as valid, so the chart accepts
-only the two levels that deliver.
-
-An `address` of `ring@<name>` must name a ring some target in this list declares.
-HAProxy accepts a dangling reference at config check and then refuses to start
-with `unknown ring named`, so the render rejects it instead.
-
-#### Why a ring for a sidecar
-
-A `ring` is a buffered TCP client: records queue in memory when the collector is
-unavailable and flush when it reconnects, up to the configured buffer capacity.
-A plain `<host>:<port>` target uses UDP and provides no replay buffer.
-
-Configure each ring with these fields:
-
-- `name` and `address`: a host and port, such as `collector:514` or `[::1]:514`.
-  HAProxy 3.4 doesn't accept a Unix socket as a ring server; use a plain-path
-  logging target for a Unix-socket collector.
-- `size`: buffer bytes, default `65536`. Keep it at least 256 bytes larger than
-  `maxLineBytes` to avoid truncating records into invalid JSON.
-- `logProto`: `legacy` for newline-delimited RFC 6587, or `octet-count`.
-- `connectTimeout` and `serverTimeout`: connection and server timeouts.
-- `serverOptions`: additional HAProxy server keywords, inserted verbatim, such
-  as TLS settings.
-
-A collector reads this as ordinary syslog carrying a JSON payload. In Vector, a
-`syslog` source parses the envelope and one `remap` recovers the record:
-
-```yaml
-sources:
-  haproxy_access:
-    type: syslog
-    mode: tcp
-    address: 0.0.0.0:6514
-transforms:
-  parsed:
-    type: remap
-    inputs: [haproxy_access]
-    source: |
-      . = parse_json!(string!(.message))
-```
-
-Keep these constraints in mind:
-
-- **A ring server's address is resolved when the config is parsed.** A Service DNS
-  name that doesn't resolve at that moment fails the render. Use a loopback
-  sidecar address or a literal IP, or pass `resolvers`/`init-addr` through
-  `serverOptions`.
-- **Any file referenced from `serverOptions`** (a `ca-file`, a client `crt`) must
-  exist wherever the config is validated — the controller pod — not only in the
-  HAProxy pod. Deliver such material through the chart's file mechanism so both
-  see it.
-- **A plain-path (Unix socket) target does no buffering.** It's the way to reach a
-  collector on a socket, since HAProxy 3.4 rejects a Unix socket as a ring server.
-  If the socket is absent, HAProxy continues serving and reports log-delivery
-  errors. Those records are lost; use a ring when you need bounded buffering.
-
-Redirecting the stream changes who can read the records, not what they contain.
-
-#### Dropping records you don't need
-
-To reduce log volume, suppress successful HTTP requests:
-
-```yaml
-controller:
-  config:
-    templatingSettings:
-      extraContext:
-        accessLog:
-          suppress:
-            successful: true
-```
-
-Suppression drops 2xx/3xx records only when no gate denied the request. Denials,
-4xx, and 5xx remain eligible for logging, subject to the transport's
-[loss behavior](#the-access-log-is-lossy-under-back-pressure).
-
-The default retains successful requests because they help diagnose retries and
-intermittent failures. Suppression also removes those requests from log-derived
-metrics and traces. Choose retention and access controls for the data you log;
-this setting doesn't remove sensitive fields from the records you keep.
-
-The rule runs after HTTP responses, including responses HAProxy generates
-itself. TCP-mode frontends are unaffected. The internal TCP frontend already
-uses `option dontlog-normal`; TLS passthrough logs each connection.
-
-### Vector sidecar
-
-Every HAProxy pod runs a [Vector](https://vector.dev) container by default
-(`vector.enabled`). It does three jobs.
-
-**It receives the access log.** HAProxy writes records to a Unix datagram socket
-(`vector.socketPath`, default `/run/vector/haproxy.sock`) on a volume shared with
-the HAProxy container, and Vector prints them to stdout. To send them somewhere
-else, override the rendered config as shown in
-[Change the destination or the whole format](#change-the-destination-or-the-whole-format).
-
-**It derives per-request metrics from the log.** One counter and six histograms,
-dimensioned by route rather than request URI, with the upstream call split into
-connect, headers and full response — signals HAProxy's own exporter doesn't offer.
-See [Request metrics](operations/monitoring.md#request-metrics). They're exported
-on `vector.metricsPort` (default `9598`) together with Vector's own series; the
-two byte-size histograms go to a second port (`vector.sizeMetricsPort`, default
-`9599`), because Vector's exporter takes one set of histogram buckets per sink and
-bytes and seconds are different domains. That port exists only while a size
-family is enabled.
-
-**It re-exports the SPOA hub's metrics.** Vector scrapes the hub over loopback
-from inside the pod and serves its `spoa_*` series on the same `9598` endpoint, so
-the hub can keep its loopback bind (`spoaHub.hub.metricsAddr: auto` resolves to
-`127.0.0.1:9095` while the sidecar is on, `0.0.0.0:9095` when it's off).
-
-HAProxy's own Prometheus exporter is **not** re-exported: Prometheus scrapes it
-directly on the `stats` port (`8404`), where HAProxy applies the chart's
-exclusion policy itself — see [Where to scrape](operations/monitoring.md#where-to-scrape).
-
-One `PodMonitor` covers every endpoint on the pod:
-
-```yaml
-haproxy:
-  monitoring:
-    podMonitor:
-      enabled: true
-```
-
-| Endpoint | `vector.enabled=true` | `vector.enabled=false` |
-|---|---|---|
-| HAProxy `/metrics` (`stats`, `8404`) | scraped directly | scraped directly |
-| Vector (`9598`, plus `9599` while a size family is on) | scraped | absent |
-| Hub `/metrics` (`spoaHub.hub.metricsAddr: auto`) | via Vector, hub stays on `127.0.0.1:9095` | scraped directly on `0.0.0.0:9095` |
-
-Set `vector.enabled=false` to remove the sidecar: HAProxy logs to its own stdout
-and Prometheus scrapes HAProxy and the hub directly.
-
-#### How the config reaches it
-
-The same path the SPOA hub's config takes. HAPTIC renders the Vector config and
-the agent writes it into the shared general-storage volume, where Vector's file
-watch picks it up and reloads without a restart. A bootstrap
-ConfigMap seeds the file before HAProxy starts, so Vector doesn't wait for the
-first configuration push. The native sidecar starts first, but HAProxy doesn't
-wait for Vector to bind its socket; early access records can therefore be lost.
-
-Vector runs under a supervisor as process 1 without a readiness probe. If the Vector
-process exits or its metrics endpoint fails three consecutive health checks, the
-supervisor keeps the container running and restarts only Vector, with a backoff
-capped at 30 seconds. Access-log and merged-metric export stop during that
-interval, but a healthy HAProxy remains in the Service. A failure of the container
-itself, including an out-of-memory termination, still restarts the container and
-can affect pod readiness.
-
-### Request IDs
-
-`req_id` is an RFC 9562 **UUIDv7** (`unique-id-format %[uuid(7)]`): opaque, but
-time-ordered, which sorts and indexes better in a log store than a random UUIDv4.
-
-The ID contains no client or load-balancer address. Using `%ci` or `%fi` in an
-ID would copy those addresses into upstream headers, responses, and application
-logs; removing a separate `client_ip` field wouldn't remove them from the ID.
-
-For UUIDv4 instead, override the directive through a `defaults-settings-*`
-snippet with a band above 150:
-
-```yaml
-controller:
-  config:
-    templateSnippets:
-      defaults-settings-160-request-id:
-        template: |
-          unique-id-format %[uuid()]
-```
-
-With tracing disabled, `trace_id` records a valid inbound `traceparent` for log
-correlation; HAPTIC creates no trace context. With
-[`extraContext.tracing.enabled`](reference.md#logging-and-templating), HAPTIC
-adopts valid inbound context or creates a new trace, then propagates it to the
-backend. Trace-context propagation is separate from the
-[`haproxy-haptic.org/request-id`](libraries/haptic-annotations.md) annotation,
-which forwards the request ID in a header.
-
-### Contribute a field from your own library
-
-`log-fields-*` is the extension point. Use it instead of
-[`accessLog.fields`](#add-your-own-fields) when the value only exists at log time,
-or when a template library should contribute the field for every install that
-enables the feature. A snippet emits named log-format items and nothing else:
-
-```yaml
-controller:
-  config:
-    templateSnippets:
-      log-fields-900-my-feature:
-        template: |
-          %(my_field)[var(txn.my_var)]
-```
-
-Only items available at log time are legal. HAProxy rejects `path`, `pathq`,
-`req.hdr()`, `res.hdr()` and `req.ssl_sni` inside a `log-format`, so materialise
-anything request- or response-scoped into a transaction variable first
-(`http-request set-var(txn.my_var) req.hdr(X-Thing)`). Type an item (`:sint`,
-`:bool`) only when its fetch always resolves — an unresolved typed item renders
-`""` into a numeric slot.
-
-### Change the destination or the whole format
-
-Override `global-settings-100-logging` to change the log destination or facility.
-To replace the line format wholesale, override `util-log-format-http` (HTTP-mode
-frontends) or `util-log-format-tcp` (TCP-mode frontends). Note that a
-`defaults`-section `log-format` can't reference HTTP-scoped fetches at all,
-which is why the format is emitted per frontend.
+<a id="core-fields"></a>
+<a id="add-your-own-fields"></a>
+<a id="where-the-logs-go"></a>
+<a id="the-access-log-is-lossy-under-back-pressure"></a>
+<a id="why-a-ring-for-a-sidecar"></a>
+<a id="dropping-records-you-dont-need"></a>
+<a id="vector-sidecar"></a>
+<a id="how-the-config-reaches-it"></a>
+<a id="request-ids"></a>
+<a id="contribute-a-field-from-your-own-library"></a>
+<a id="change-the-destination-or-the-whole-format"></a>
+
+Read, customize, and forward request logs with the [access logging guide](operations/access-logging.md).
+It also covers request IDs, the Vector sidecar, and monitoring dropped records.
+
+## Pod readiness and restarts
+
+Each pod runs HAProxy in master-worker mode plus the HAPTIC agent, which owns
+the pod's file tree and its runtime sockets. The chart supervises the SPOA hub
+and Vector processes inside their sidecar containers: a child exit or repeated
+failed health check leaves HAProxy running while the supervisor restarts only
+that child, with a backoff capped at 30 seconds.
+
+HAProxy's `/ready` endpoint controls pod readiness. It returns `503` while the
+bootstrap configuration is active and `200` once a rendered configuration runs.
+The agent, SPOA hub, and Vector run as native sidecars: Kubernetes starts them
+before HAProxy and stops them after HAProxy exits, preserving dependencies during
+connection draining.
+
+The agent's `/readyz` endpoint reports whether it can accept configuration updates;
+a rejected update doesn't make it unready. Its liveness probe uses the local Unix
+socket. A stopped container or a failing probe on a custom sidecar can still make
+the pod unready.
+
+The watchdog uses `/usr/bin/bash` and `timeout`, which the default images provide.
+With a custom sidecar image missing either command, the supervisor logs a warning
+and still restarts child processes that exit.
 
 ## HAProxy Pod requirements
 
@@ -640,7 +257,7 @@ controller:
       matchLabels:
         app.kubernetes.io/component: loadbalancer
         app.kubernetes.io/name: haptic        # set dynamically by the chart
-        app.kubernetes.io/instance: <release> # set dynamically by the chart
+        app.kubernetes.io/instance: haptic  # your Helm release name
 ```
 
 If your existing HAProxy pods don't have those exact labels, either relabel them or override `controller.config.podSelector.matchLabels` to match.

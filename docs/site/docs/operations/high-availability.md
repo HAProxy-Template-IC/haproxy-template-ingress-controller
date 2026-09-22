@@ -5,7 +5,9 @@ Spread each pair across nodes so a node failure leaves a working controller and
 proxy; see [anti-affinity](#anti-affinity). Each controller needs the full
 [controller resource budget](performance.md#controller-resource-sizing).
 
-## Overview
+<a id="overview"></a>
+
+## What happens when a controller fails
 
 Leader election uses a Kubernetes Lease to choose the replica that deploys
 configuration. Every replica watches resources, renders changes, and serves
@@ -14,12 +16,15 @@ admission requests. Followers keep their caches and render state ready for takeo
 If the leader fails, a follower acquires the lease and renders the current state
 before deploying. A voluntary handoff releases the lease without waiting for it
 to expire. HAProxy continues serving its existing configuration during election.
-Spread replicas across nodes or zones to tolerate a node failure; see
-[anti-affinity](#anti-affinity).
 
 ## Configuration
 
-### Enable leader election
+Add settings to your [complete Helm values file](../deploying-with-helm.md#change-settings)
+and apply it with `helm upgrade`.
+
+<a id="enable-leader-election"></a>
+
+### Leader election defaults
 
 Leader election is **enabled by default** in the Helm chart:
 
@@ -42,7 +47,9 @@ controller:
 
 ### Disable leader election
 
-For development or single-replica deployments:
+A single replica can keep leader election enabled. If you choose to disable it,
+keep `controller.replicaCount: 1` and autoscaling off so two controllers can't
+deploy independently:
 
 ```yaml
 # values.yaml
@@ -54,7 +61,7 @@ controller:
         enabled: false
 ```
 
-### Timing Parameters
+### Timing parameters
 
 The timing parameters control failover speed and tolerance:
 
@@ -76,13 +83,8 @@ current configuration while a new leader is elected.
 
 ### Standard high-availability Deployment
 
-A new installation uses two controller replicas:
-
-```bash
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 --namespace haptic --create-namespace \
-  --set controller.replicaCount=2
-```
+The [default Helm installation](../getting-started.md#install-with-helm) already
+enables leader election and starts two controller replicas.
 
 ### Scaling
 
@@ -115,17 +117,9 @@ standbys. Each replica renders, but only the leader deploys; replicas don't divi
 one rendering workload between them. To increase traffic capacity, scale HAProxy
 with `haproxy.keda` or `haproxy.replicaCount`.
 
-### RBAC requirements
+<a id="rbac-requirements"></a>
 
-The controller requires these additional permissions for leader election:
-
-```yaml
-apiGroups: ["coordination.k8s.io"]
-resources: ["leases"]
-verbs: ["get", "create", "update"]
-```
-
-The Helm chart grants these permissions through a Role in the release namespace.
+The chart grants the Lease permissions needed for leader election.
 
 ## Monitoring leadership
 
@@ -170,195 +164,83 @@ In another terminal:
 curl http://localhost:9090/metrics | grep leader_election
 ```
 
-**Key metrics:**
+For a Prometheus setup that adds the Kubernetes `namespace` label, query the
+default installation:
 
 ```promql
 # Current leader (should be 1 across all replicas)
-sum(haptic_leader_election_is_leader)
+sum(haptic_leader_election_is_leader{namespace="haptic"})
 
 # Identify which pod is leader
-haptic_leader_election_is_leader{pod=~".*"} == 1
+haptic_leader_election_is_leader{namespace="haptic"} == 1
 
 # Leadership transition rate (should be low)
-rate(haptic_leader_election_transitions_total[1h])
+rate(haptic_leader_election_transitions_total{namespace="haptic"}[1h])
 ```
 
 ## Troubleshooting
 
-Check these dependencies when leader election fails:
-
-1. **RBAC permissions** -- service account missing lease permissions
-2. **Environment variables** -- `POD_NAME` / `POD_NAMESPACE` not injected
-3. **API server connectivity** -- network policies or firewall blocking access
-4. **Clock skew** -- NTP not configured or excessive drift between nodes
-
-### No leader elected
-
-**Symptoms:**
-
-- No deployments happening
-- All replicas show `is_leader=0`
-- Logs show constant election failures
-
-**Common causes:**
-
-1. **Missing RBAC permissions:**
-
-    The controller's ServiceAccount name is the Helm release `fullname` (unless you overrode `controller.serviceAccount.name`):
-
-    ```bash
-    SA=$(kubectl get deployment haptic-controller -n haptic -o jsonpath='{.spec.template.spec.serviceAccountName}')
-    kubectl auth can-i get leases -n haptic --as=system:serviceaccount:haptic:$SA
-    kubectl auth can-i create leases -n haptic --as=system:serviceaccount:haptic:$SA
-    kubectl auth can-i update leases -n haptic --as=system:serviceaccount:haptic:$SA
-    ```
-
-2. **Missing environment variables:**
-
-    ```bash
-    kubectl get pod <pod-name> -o yaml | grep -A2 "POD_NAME\|POD_NAMESPACE"
-
-    # Should show:
-    # - name: POD_NAME
-    #   valueFrom:
-    #     fieldRef:
-    #       fieldPath: metadata.name
-    ```
-
-3. **API server connectivity:**
-
-    ```bash
-    kubectl logs <pod-name> | grep "connection refused\|timeout"
-    ```
-
-### Multiple leaders (split-brain)
-
-**Symptoms:**
-
-- `sum(haptic_leader_election_is_leader) > 1`
-- Multiple pods deploying configs simultaneously
-- Conflicting deployments in HAProxy
-
-First restrict the metric query to one HAPTIC release; separate releases each have a leader. If multiple replicas of the same release report leadership, check that they use the same lease name and namespace, then inspect clock stability and API connectivity:
-
-1. Check for severe clock skew between nodes:
-
-    ```bash
-    # On each node
-    timedatectl status
-    ```
-
-2. Verify Kubernetes API server health:
-
-    ```bash
-    kubectl get --raw /healthz
-    ```
-
-3. Restart all controller pods:
-
-    ```bash
-    kubectl rollout restart deployment haptic-controller -n haptic
-    ```
-
-### Frequent leadership changes
-
-**Symptoms:**
-
-- `increase(haptic_leader_election_transitions_total[1h]) > 5`
-- Logs show frequent "Lost leadership" / "Became leader" messages
-- Deployments failing intermittently
-
-**Common causes:**
-
-1. **Resource contention** - Leader pod can't renew lease in time:
-
-    ```bash
-    kubectl top pods -n haptic
-    kubectl describe pod <leader-pod> | grep -A10 "Limits\|Requests"
-    ```
-
-    **Action:** Check CPU throttling and memory pressure. Increase CPU requests or memory requests and limits when the pod lacks resources; see [resource sizing](performance.md).
-
-2. **Network issues** - API server communication delays:
-
-    ```bash
-    kubectl logs -n haptic <pod-name> | grep "lease renew\|deadline"
-    ```
-
-    **Solution:** Increase `leaseDuration` and `renewDeadline`
-
-3. **Node issues** - Leader pod node experiencing problems:
-
-    ```bash
-    kubectl describe node <node-name>
-    ```
-
-    **Solution:** Drain and investigate node
-
-<a id="leader-not-deploying"></a>
-
-### Leader isn't deploying
-
-**Symptoms:**
-
-- One replica shows `is_leader=1`
-- No deployment errors in logs
-- HAProxy configs not updating
-
-**Diagnosis:**
+Start with [fleet diagnostics](diagnostics.md) to identify the controller or
+HAProxy pod that needs attention:
 
 ```bash
-# Check leader logs for deployment activity
-kubectl logs -n haptic <leader-pod> | grep -i "deploy"
-
-# Verify leader-only components started (requires debug log level)
-kubectl logs -n haptic <leader-pod> | grep -i "deployer starting\|deployment scheduler starting\|starting deployment components"
+haptic doctor --namespace haptic
 ```
 
-**Common causes:**
+<a id="no-leader-elected"></a>
+<a id="multiple-leaders-split-brain"></a>
+<a id="frequent-leadership-changes"></a>
+<a id="leader-not-deploying"></a>
+<a id="leader-isnt-deploying"></a>
 
-- Deployment components failed to start (check logs for errors)
-- Deployment pacing delaying structural changes (check `minDeploymentInterval`)
-- HAProxy instances unreachable (check network connectivity)
+| Symptom | Check next |
+| --- | --- |
+| No leader and no new configurations deploying | Read controller logs for Lease permission errors, API connectivity failures, or missing pod identity. The chart supplies permissions and identity by default. |
+| More than one reported leader | Restrict the metric query to one release. Its controller replicas must use the same Lease name and namespace. Separate releases each have a leader. |
+| Frequent leadership changes | Check CPU throttling, memory pressure, node health, and API latency. Adjust lease timings only after identifying why renewal fails. |
+| One leader, but HAProxy isn't updating | Check validation and deployment findings in `haptic doctor`; inspect agent connectivity and `minDeploymentInterval` if structural changes are waiting. |
+
+Read recent logs from all controller replicas in the default release:
+
+```bash
+kubectl logs --namespace haptic \
+  --selector app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller \
+  --container controller --tail=100
+```
+
+For resource pressure, use the [sizing guide](performance.md). For rejected
+configuration or failed deployment, follow [troubleshooting](../troubleshooting.md).
 
 ## Best practices
 
 ### Replica count
 
-**Development:**
+Keep at least two controller replicas when you need failover. A single replica
+is sufficient when you can tolerate a controller outage; HAProxy continues
+serving its last configuration during that outage.
 
-- 1 replica with `leaderElection.enabled: false`
+The chart creates a PodDisruptionBudget with `minAvailable: 1` when
+`controller.replicaCount > 1`. It limits voluntary disruption, such as a node
+drain; it doesn't prevent an unexpected node failure. Configure it with:
 
-**Staging:**
-
-- 2 replicas with leader election enabled
-
-**Production:**
-
-- 2-3 replicas across multiple availability zones
-- A `PodDisruptionBudget` (`minAvailable: 1`) is created automatically once `controller.replicaCount > 1` — no action needed. Tune or disable it via:
-
-    ```yaml
-    controller:
-      podDisruptionBudget:
-        enabled: true
-        minAvailable: 1
-    ```
+```yaml
+controller:
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+```
 
 ### Resource allocation
 
 Every replica renders changes and holds resource and render caches. The leader
 also deploys configuration and writes status. Give all replicas enough CPU and
-memory to handle peak load after election:
-
-Use the [resource sizing guide](./performance.md#controller-resource-sizing) for
+memory to handle peak load after election. Use the [resource sizing guide](./performance.md#controller-resource-sizing) for
 starting requests and limits. Apply the same budget to every replica.
 
 ### Anti-affinity
 
-This preference spreads controllers from the `haptic` release across nodes.
-Change the instance label for another release. Apply an equivalent preference
-under `haproxy.podSpec.affinity` with component `loadbalancer` for the proxy pods:
+Prefer separate nodes for the controller replicas and for the HAProxy replicas.
+This example targets the `haptic` release:
 
 ```yaml
 controller:
@@ -374,6 +256,27 @@ controller:
                   app.kubernetes.io/instance: haptic
                   app.kubernetes.io/component: controller
               topologyKey: kubernetes.io/hostname
+haproxy:
+  podSpec:
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: haptic
+                  app.kubernetes.io/instance: haptic
+                  app.kubernetes.io/component: loadbalancer
+              topologyKey: kubernetes.io/hostname
+```
+
+This is a scheduling preference, so it doesn't guarantee separate nodes when
+capacity is limited. After rollout, check the `NODE` column and confirm that
+each pair spans more than one node:
+
+```bash
+kubectl get pods --namespace haptic --selector app.kubernetes.io/instance=haptic -o wide
 ```
 
 ### Monitoring and alerts
@@ -383,36 +286,41 @@ through the [monitoring setup](./monitoring.md#enable-the-bundled-monitoring).
 
 ## Migration from single-replica
 
-To migrate an existing single-replica deployment to HA:
+Keep your complete settings in [haptic-values.yaml](../deploying-with-helm.md#change-settings).
+The chart already grants the Lease permissions needed for leader election.
 
-1. **Verify RBAC permissions** (Helm chart updates this automatically)
-
-2. **Update values.yaml:**
+1. If you previously disabled leader election, enable it while keeping one
+   replica, then apply the values and wait for the rollout before scaling:
 
     ```yaml
     controller:
-      replicaCount: 2
+      replicaCount: 1
       config:
         controller:
           leaderElection:
             enabled: true
     ```
 
-3. **Upgrade with Helm:**
+    ```bash
+    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      --version 0.2.0-alpha.3 --namespace haptic --values haptic-values.yaml
+    kubectl rollout status deployment/haptic-controller -n haptic
+    ```
+
+2. Set `controller.replicaCount: 2` in the same values file and apply it:
 
     ```bash
     helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-      -n haptic --reuse-values \
-      -f values.yaml
+      --version 0.2.0-alpha.3 --namespace haptic --values haptic-values.yaml
     ```
 
-4. **Confirm the controller rollout:**
+3. Wait for both controller replicas to become ready:
 
     ```bash
     kubectl rollout status deployment/haptic-controller -n haptic
     ```
 
-5. **Read the active leader from the Lease:**
+4. Confirm that the Lease names an active leader:
 
     ```bash
     kubectl get lease haptic -n haptic -o jsonpath='{.spec.holderIdentity}{"\n"}'
@@ -420,7 +328,6 @@ To migrate an existing single-replica deployment to HA:
 
 ## See also
 
-- [Leader Election Design](../development/design/leader-election.md) - Architecture and implementation details
 - [Monitoring Guide](./monitoring.md) - Prometheus metrics and alerting
 - [Debugging Guide](./debugging.md) - Runtime introspection and troubleshooting
 - [Security Guide](./security.md) - RBAC and security best practices

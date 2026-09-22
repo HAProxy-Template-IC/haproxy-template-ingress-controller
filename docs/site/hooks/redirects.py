@@ -13,6 +13,8 @@ paths relative to the site root, optionally with a ``#fragment``.
 from pathlib import Path
 
 REDIRECTS = {
+    "agent-skill.md": "development/agent-skill/",
+    "upgrading-to-0.2.md": "upgrade-notes/#upgrading-to-02",
     "configuration.md": "deploying-with-helm/",
     "operations/troubleshooting.md": "troubleshooting/#install-issues",
     "development/design/considerations.md": (

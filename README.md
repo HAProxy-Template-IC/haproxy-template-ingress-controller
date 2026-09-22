@@ -45,20 +45,9 @@ The chart ships with [template libraries](https://haproxy-haptic.org/docs/dev/te
 
 For complete setup instructions including HAProxy pod deployment, see the [Getting Started](https://haproxy-haptic.org/docs/dev/getting-started/) guide.
 
-## Customize with an AI agent
-
-Install the [HAPTIC skill](https://haproxy-haptic.org/docs/dev/agent-skill/) in your
-configuration project for Scriggo customization, resource watches, and validation:
-
-```bash
-npx skills add https://haproxy-haptic.org --skill haptic
-```
-
-The installer supports multiple coding agents. The guide also provides a ZIP
-download and example prompts; the [skill source](skills/haptic/SKILL.md) is in this
-repository.
-
 ## Development
+
+For AI-assisted configuration, see the [agent skill guide](https://haproxy-haptic.org/docs/dev/development/agent-skill/).
 
 ### Build and Test
 

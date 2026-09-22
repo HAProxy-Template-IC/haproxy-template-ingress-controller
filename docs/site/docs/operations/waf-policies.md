@@ -19,7 +19,8 @@ For individual route settings, see the [WAF annotations](../libraries/haptic-ann
 
 ## Configure a trusted catalog
 
-Add an exact ConfigMap reference to your Helm values:
+Add this reference to your [complete Helm values file](../deploying-with-helm.md#change-settings).
+Create the referenced ConfigMap before applying the values:
 
 ```yaml
 controller:
@@ -35,8 +36,13 @@ controller:
                 key: policies.yaml
 ```
 
-Create that ConfigMap in the `security` namespace, creating the namespace first
-if it doesn't exist:
+Create the `security` namespace if it doesn't exist:
+
+```bash
+kubectl create namespace security --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Save the following as `haptic-waf-policies.yaml`:
 
 ```yaml
 apiVersion: v1
@@ -57,14 +63,20 @@ data:
       enforcement: deny
 ```
 
-Apply the ConfigMap before [upgrading HAPTIC](../deploying-with-helm.md) with
-these Helm values.
+Apply the ConfigMap:
+
+```bash
+kubectl apply -f haptic-waf-policies.yaml
+```
+
+Then [apply your Helm values](../deploying-with-helm.md#change-settings).
 
 Configuring a catalog activates Coraza and the Ingress permission checks. By
 default, Ingress authors can select a policy but can't disable inspection,
 change enforcement, or inject custom WAF or HAProxy rules. Protect the ConfigMap
 with Kubernetes RBAC: anyone who can edit it can change the approved policies.
-For administrator-owned policies, use `policies.inline` instead of a ConfigMap.
+To keep the trusted catalog in your Helm values, use `policies.inline` instead
+of a ConfigMap.
 
 The default dispatch mode, `opt-in`, inspects annotated routes. Set
 `waf.dispatch.mode: default-on` to inspect every route; its
@@ -106,11 +118,9 @@ ruleExclusions:
     excludeTarget: "ARGS:q"
 ```
 
-Policies compile once and are shared by the routes that select them. HAPTIC
-applies policy tuning around the CRS include and appends its body-safety rules
-last; policy authors can't override those rules. Per-Ingress
-[nginx-compatible custom rules](../libraries/nginx-ingress.md) create separate
-Coraza applications, subject to `waf.customRules.limits` even without a catalog.
+Policy authors can't override HAPTIC's body-safety rules. Per-Ingress
+[nginx-compatible custom rules](../libraries/nginx-ingress.md) are subject to
+`waf.customRules.limits`, including when no catalog is configured.
 
 ## Choose request-body inspection
 

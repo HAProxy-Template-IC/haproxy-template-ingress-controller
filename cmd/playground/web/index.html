@@ -512,7 +512,7 @@
     body[data-embed] > header { display: none; }
     body[data-embed] > footer.privacy { display: none; }
     body[data-embed] #embed-bar {
-      display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex: 0 0 auto;
       padding: 5px 12px; background: var(--surface); border-bottom: 1px solid var(--border-strong);
       font: 12px/1 var(--sans);
     }
@@ -523,9 +523,10 @@
     #embed-bar .eb-btn:hover { color: var(--accent); border-color: var(--accent); }
     #embed-bar .eb-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
     #embed-bar .eb-open { color: var(--accent); }
-    /* two-pane: config | rail | output. Hide resources + its gutter until toggled. */
-    body[data-embed]:not([data-embed-res]) main { grid-template-columns: 1fr var(--rail-w) minmax(0, 1.1fr); }
-    body[data-embed]:not([data-embed-res]) main > #gutter1,
+    /* Embedded examples show one editable input beside the output. */
+    body[data-embed] main:not([data-max]) { grid-template-columns: 1fr var(--rail-w) minmax(0, 1.1fr); }
+    body[data-embed] main > #gutter1,
+    body[data-embed][data-embed-res] main > .col.config,
     body[data-embed]:not([data-embed-res]) main > .col.res { display: none; }
     /* Minimal by default: every non-essential control is hidden unless the
        embedder opts in via ?controls=<comma list> — tokens: tabs, resources,
@@ -535,10 +536,13 @@
     body[data-embed]:not([data-ctl~="nav"]) .bar .nav-tools { display: none !important; }
     /* Maximize is always available in embeds — a small pane badly needs it. */
     body[data-embed]:not([data-ctl~="tools"]) .bar .out-tools { display: none !important; }
+    #more-outputs { display: none; }
+    body[data-embed][data-ctl~="tabs"] #more-outputs { display: inline-block; }
     body[data-embed]:not([data-ctl~="tabs"]) .tabs { display: none !important; }
     body[data-embed]:not([data-ctl~="reload"]) #reload { display: none !important; }
     body[data-embed]:not([data-ctl~="provenance"]) #outhint { display: none !important; }
-    body[data-embed]:not([data-ctl~="resources"]) #eb-res { display: none !important; }
+    body[data-embed]:not([data-ctl~="resources"]) #eb-res,
+    body[data-embed]:not([data-ctl~="resources"]) #eb-template { display: none !important; }
 
     /* focus highlight: draw the reader's eye to the important output lines */
     .code .ln.focus { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
@@ -555,8 +559,7 @@
          must be re-stacked here explicitly or it stays multi-column and overflows
          a phone. Both embed states collapse to one column (config / rail / output
          become rows). */
-      body[data-embed]:not([data-embed-res]) main,
-      body[data-embed][data-embed-res] main { grid-template-columns: 1fr; }
+      body[data-embed] main:not([data-max]) { grid-template-columns: 1fr; }
       .gutter { display: none; }
       .col { border-right: 0; border-bottom: 1px solid var(--term-border); min-height: 46vh; }
       .col.out { min-height: 60vh; }
@@ -568,6 +571,7 @@
       .rail .tick { writing-mode: horizontal-tb; }
     }
     @media (max-width: 560px) {
+      #embed-bar .eb-mark { display: none; }
       .ctrl label { display: none; }
       .wordmark small { display: none; }
     }
@@ -600,6 +604,7 @@
   <!-- Slim toolbar shown only in ?embed=1 mode (docs iframes) -->
   <div id="embed-bar">
     <span class="eb-mark"><span class="eb-glyph">{%%}</span> HAPTIC</span>
+    <button id="eb-template" class="eb-btn" type="button" aria-pressed="true">Templates</button>
     <button id="eb-res" class="eb-btn" type="button" aria-pressed="false" title="Show the Kubernetes resources this example renders">Resources</button>
     <span class="eb-spacer"></span>
     <a id="eb-open" class="eb-btn eb-open" href="./" target="_blank" rel="noopener" title="Open this exact example in the full playground">Open in full playground <span aria-hidden="true">↗</span></a>
@@ -626,7 +631,7 @@
     </section>
     <div class="rail" id="rail" title="Drag to resize · double-click to reset" role="separator" aria-orientation="vertical"><div class="pulse" aria-hidden="true"></div><div class="tick" id="tick" aria-hidden="true">idle</div></div>
     <section class="col out">
-      <h2 class="bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Rendered output<span class="out-tools"><button id="wrapbtn" class="toolbtn" type="button" title="Toggle word wrap" aria-pressed="false">wrap</button><button id="copybtn" class="toolbtn" type="button" title="Copy this tab">copy</button><button id="dlbtn" class="toolbtn" type="button" title="Download this tab">download</button></span><button class="maxbtn" data-panel="out" type="button" title="Maximize panel" aria-label="Maximize output panel" aria-pressed="false">⤢</button></h2>
+      <h2 class="bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Rendered output<button id="more-outputs" class="toolbtn" type="button" aria-expanded="false" aria-controls="tabs">More outputs</button><span class="out-tools"><button id="wrapbtn" class="toolbtn" type="button" title="Toggle word wrap" aria-pressed="false">wrap</button><button id="copybtn" class="toolbtn" type="button" title="Copy this tab">copy</button><button id="dlbtn" class="toolbtn" type="button" title="Download this tab">download</button></span><button class="maxbtn" data-panel="out" type="button" title="Maximize panel" aria-label="Maximize output panel" aria-pressed="false">⤢</button></h2>
       <div class="stale" id="stale" role="status">showing last working render — fix the error to update</div>
       <div class="banner" id="banner" role="alert"><span class="k" id="bk"></span><span class="m" id="bm"></span></div>
       <div class="schemawarn" id="schemawarn" role="status"><span class="k">schema</span><span class="m" id="swm"></span><span class="scope">HAProxy per-field validation — a subset of <code>haproxy -c</code>; it won't catch undefined backends, unknown keywords, or global/defaults errors.</span></div>
@@ -771,11 +776,12 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     const isScriggo = EMBED.get('scriggo') === '1';
     const isEmbed = EMBED.get('embed') === '1' || isScriggo;
     let embedFocusDone = false;
+    let allEmbedOutputs = false;
     if (isScriggo) {
       document.body.dataset.scriggo = '';
       const code = document.querySelector('.col.config .bar code');
       if (code) {
-        code.textContent = 'Scriggo template';
+        code.textContent = 'Template';
         if (code.previousSibling && code.previousSibling.nodeType === 3) code.previousSibling.textContent = '';
       }
     }
@@ -784,11 +790,17 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       // Opt-in controls: ?controls=tabs,resources,tools,nav,max,reload,provenance,dots
       // (scriggo shows none — just the template and its output).
       document.body.dataset.ctl = isScriggo ? '' : (EMBED.get('controls') || '').split(',').map((s) => s.trim()).filter(Boolean).join(' ');
-      const res = $('eb-res'), open = $('eb-open');
-      res.addEventListener('click', () => {
-        const on = document.body.toggleAttribute('data-embed-res');
-        res.setAttribute('aria-pressed', String(on));
-      });
+      const res = $('eb-res'), template = $('eb-template'), open = $('eb-open');
+      function selectInput(resources) {
+        const maximized = document.querySelector('main').dataset.max;
+        if (maximized) toggleMax(maximized);
+        document.body.toggleAttribute('data-embed-res', resources);
+        res.setAttribute('aria-pressed', String(resources));
+        template.setAttribute('aria-pressed', String(!resources));
+      }
+      res.addEventListener('click', () => selectInput(true));
+      template.addEventListener('click', () => selectInput(false));
+      selectInput(EMBED.get('input') === 'resources' && document.body.dataset.ctl.split(' ').includes('resources'));
       // Pop out to the full playground carrying the reader's CURRENT edits (fresh #s=),
       // falling back to the original scenario hash if the engine isn't ready yet.
       open.addEventListener('click', async (e) => {
@@ -816,8 +828,19 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       // A tests-focused embed auto-runs so the reader lands on green/red results,
       // not a "Run tests" button they have to notice and click.
       if (activeTab === 'tests' && !lastTestRes && !testRunning) doRunTests();
+      const inputFocus = EMBED.get('input-focus');
+      if (inputFocus) {
+        const editor = document.body.hasAttribute('data-embed-res') ? editors.res : editors.config;
+        const line = editor.get().split('\n').findIndex(text => text.includes(inputFocus));
+        if (line >= 0) editor.goto(line + 1, 1);
+      }
       const spec = EMBED.get('focus');
       if (spec) requestAnimationFrame(() => focusOutput(spec));
+      const outputFocus = EMBED.get('output-focus');
+      if (outputFocus) requestAnimationFrame(() => {
+        const line = [...$('output').querySelectorAll('.ln')].find(el => el.textContent.includes(outputFocus));
+        if (line) { line.classList.add('focus'); line.scrollIntoView({ block: 'center' }); }
+      });
     }
     function focusOutput(spec) {
       let file = null, range = null;
@@ -999,6 +1022,8 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (!tabEnabled(activeTab, tabs, counts)) activeTab = 'haproxy.cfg';
       const strip = $('tabs'); strip.innerHTML = '';
       for (const key of TAB_KEYS) {
+        if (isEmbed && !allEmbedOutputs && !['haproxy.cfg', 'maps', EMBED.get('tab'), activeTab].includes(key)
+          && !(key === 'events' && counts.events) && !(key === 'resources' && drops)) continue;
         const enabled = tabEnabled(key, tabs, counts);
         const b = document.createElement('button');
         b.className = 'tab'; b.id = 'tab-' + key; b.type = 'button';
@@ -1015,6 +1040,16 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       }
       $('output').setAttribute('aria-labelledby', 'tab-' + activeTab);
     }
+
+    $('more-outputs').addEventListener('click', () => {
+      allEmbedOutputs = !allEmbedOutputs;
+      $('more-outputs').setAttribute('aria-expanded', String(allEmbedOutputs));
+      $('more-outputs').textContent = allEmbedOutputs ? 'Fewer outputs' : 'More outputs';
+      if (lastRes) {
+        const { tabs, counts, drops, migWarn } = tabsFrom(lastRes);
+        renderTabs(tabs, counts, drops, migWarn);
+      }
+    });
 
     // Roving-tabindex arrow-key nav across enabled tabs (WAI-ARIA tabs pattern).
     $('tabs').addEventListener('keydown', (e) => {

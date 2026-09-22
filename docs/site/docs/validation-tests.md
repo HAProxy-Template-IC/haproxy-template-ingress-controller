@@ -1,33 +1,44 @@
-# Validation tests
+# Test your templates
 
-## Overview
+<a id="validation-tests"></a>
 
-Validation tests render templates against fixture resources and check the output. Define them in `HAProxyTemplateConfig` or its libraries, run them locally with `haptic validate`, and let the controller repeat them when loading configuration. A passing suite covers its fixtures; it doesn't prove every possible live resource state.
+<a id="overview"></a>
 
-!!! note "Automatic validation"
-    The controller runs these tests when loading configuration at startup and after
-    configuration changes. A failed live change leaves the last working configuration
-    in place and increments `haptic_config_rejected_total{validator="validationtests"}`.
-    A failed startup load prevents the pod from becoming ready and sets the
-    `Validated` condition's reason to `LoadGateFailed`.
+Check that a template produces the configuration you intend before using it for
+live traffic. Each validation test supplies sample resources, called fixtures,
+and assertions about the output: for example, that an Ingress creates a backend
+or that an invalid annotation is rejected.
 
-    To check the complete configuration and library set before applying it, run
-    [`haptic preflight`](operations/validate-before-deploy.md). The admission webhook
-    doesn't validate individual `HAProxyTemplateConfig` objects. All these checks
-    use the same test runner; reproduce HAProxy versions, validators, and inputs
-    when comparing results.
+Define tests in `HAProxyTemplateConfig` or its libraries and run them with
+`haptic validate`. The controller repeats them when loading configuration.
+Tests cover the cases you supply, so include missing and invalid inputs as well
+as a working route.
 
-## Quick start
+A failed configuration change leaves the previous configuration in place. A
+failed startup load prevents the controller from becoming ready. To validate
+Helm values and libraries together before rollout, use [preflight](operations/validate-before-deploy.md).
 
-Install the `haptic` binary from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases)
-and a matching HAProxy binary. Use the same HAPTIC and HAProxy versions as your
-installation, with `kubectl` access to that cluster.
+## Run the installed tests
 
-Export the installed configuration and run its bundled tests:
+[Install the CLI](cli.md) and a matching HAProxy binary, or use the
+[container command](cli.md#use-a-container-on-macos-windows-or-linux).
+Use the same HAPTIC and HAProxy versions as your installation, with `kubectl`
+access to that cluster. Prepare a
+[schema directory](#prepare-schemas) for typed resource access.
+
+Export the installed configuration:
 
 ```bash
-haptic config view --input --namespace haptic > /tmp/haptic-config.yaml
-haptic validate -f /tmp/haptic-config.yaml
+umask 077
+kubectl exec --namespace haptic deployment/haptic-controller --container controller \
+  -- haptic config view --input --namespace haptic > config.yaml
+```
+
+Run its bundled tests with the local CLI, or use the
+[container command](cli.md#use-a-container-on-macos-windows-or-linux):
+
+```bash
+haptic validate -f config.yaml --schema-dir ./schemas
 ```
 
 `config view --input` merges the configuration and its referenced libraries.
@@ -36,7 +47,13 @@ tests under `spec.validationTests` in the exported file and run the same command
 again. To keep those tests across upgrades, put them under
 `controller.config.validationTests` in your Helm values.
 
-Or run tests right here — this is a complete config with a `validationTests` block. Press **Run live**, then open the **tests** tab to see each assertion pass or fail:
+<a id="quick-start"></a>
+
+## Write a test in the browser
+
+This example generates one backend for each Service. The test supplies a sample
+Service and checks that its backend appears exactly once. Press **Run live**
+to inspect the assertions in **tests**; no cluster or local binaries are needed:
 
 <div class="pg-embed" markdown data-tab="tests" data-controls="tabs" data-title="Validation tests, live" data-height="560">
 
@@ -99,283 +116,83 @@ validationTests:
         description: Exactly two backends (shop + not-found)
 ```
 
-<p class="pg-task" markdown>Add a second Service to the <code>fixtures</code> block, then bump the <code>match_count</code> assertion's <code>expected</code> to <code>"3"</code> and re-run — watch it stay green. Set it back to <code>"2"</code> to see the assertion turn red.</p>
+<p class="pg-task" markdown>Add a second Service with a different name to `fixtures.services`. Run the tests and inspect the failed count assertion. Change `expected` from `"2"` to `"3"` and run again to match the two Services plus the fallback backend.</p>
 
-<details class="pg-hint" markdown>
-<summary>What to expect</summary>
-
-The **tests** tab auto-runs on load: all three assertions pass (green). In the browser, `haproxy_valid` runs the pure-Go syntax + schema check — it's tagged **syntax + schema** because the `haproxy -c` binary can't run in a browser. Editing the config and pressing **↻ Re-run tests** re-evaluates every assertion.
-
-</details>
+The browser checks syntax and schema. It can't run `haproxy -c`; run the tests
+locally before deploying. Use **Re-run tests** after editing.
 
 </div>
 
-## Test structure
+<a id="test-structure"></a>
+<a id="fixtures"></a>
+<a id="http-fixtures"></a>
+<a id="current-servers"></a>
+<a id="fixture-keys"></a>
+<a id="the-reserved-_global-entry"></a>
+<a id="conditional-tests-requires-and-requiresfields"></a>
+<a id="assertion-types"></a>
+<a id="assertion-targets"></a>
+<a id="haproxy_valid"></a>
+<a id="contains"></a>
+<a id="not_contains"></a>
+<a id="equals"></a>
+<a id="jsonpath"></a>
+<a id="match_count"></a>
+<a id="match_order"></a>
+<a id="deterministic"></a>
 
-Each test consists of:
+## Fixture and assertion reference
 
-| Component | Description |
-|-----------|-------------|
-| **Name** | Unique identifier (kebab-case, for example `test-ingress-tls-routing`) |
-| **Description** | What the test verifies |
-| **Fixtures** | Simulated Kubernetes resources |
-| **Assertions** | Checks on rendered output |
-| **HTTP fixtures** (`httpResources`) | Optional — mocked responses for `http.Fetch()` URLs (see [HTTP Fixtures](#http-fixtures)) |
-| **Min HAProxy version** (`minHAProxyVersion`) | Optional — skip the test unless the HAProxy version under test is at least this (for version-gated features) |
-| **Extra context** (`extraContext`) | Optional — per-test values deep-merged into the global `templatingSettings.extraContext`: nested maps merge key by key with per-test leaves winning, so overriding one key keeps its siblings. Pin every value your assertions depend on — a sibling you leave unset keeps its deployment-configured value. To pin an exact key set instead of merging, give the nested map `__replace__: true`: it replaces the deployment's map at that key wholesale, and the sentinel is stripped from the result |
-| **Current servers** (`currentServers`) | Optional — the servers a previous deployment had, keyed by backend and server name, exposed to templates as `currentConfig.ServerIndex`; use it to exercise slot-preservation logic (see [Current servers](#current-servers)) |
-| **Current config** (`currentConfig`) | Deprecated — a raw `haproxy.cfg` the runner parses down to the same server index. Use `currentServers` |
-| **Current files** (`currentFiles`) | Optional — filename → content of the general files already deployed, exposed to templates as `currentFiles`; use it for templates that read their own prior output, such as self-rotating TLS session-ticket keys |
-| **Requires** (`requires` / `requiresFields`) | Optional — strip the test when a watched resource or schema field is unavailable (see [Conditional Tests](#conditional-tests-requires-and-requiresfields)) |
+Use the [test reference](validation-reference.md) to look up fixture fields,
+shared fixtures, conditional tests, output targets, and assertion types.
 
-### Fixtures
+## Prepare schemas
 
-Fixtures simulate Kubernetes resources:
+`haptic validate` reads schemas from a directory; it doesn't fetch them from
+your cluster. Supply them when templates use typed resource access, including
+the bundled chart templates.
 
-```yaml
-fixtures:
-  services:
-    - apiVersion: v1
-      kind: Service
-      metadata:
-        name: api
-        namespace: production
-      spec:
-        ports:
-          - port: 80
-  ingresses:
-    - apiVersion: networking.k8s.io/v1
-      kind: Ingress
-      metadata:
-        name: main
-        namespace: production
-      spec:
-        rules:
-          - host: api.example.com
-            http:
-              paths:
-                - path: /
-                  pathType: Prefix
-                  backend:
-                    service:
-                      name: api
-                      port:
-                        number: 80
+The [source repository](https://gitlab.com/haproxy-haptic/haptic) includes
+`tests/schemas` for Kubernetes resources, Gateway API, and HAPTIC's custom resources.
+Copy the bundle for your release into a new working directory. This method
+requires Git and Bash; enter the release version without a leading `v`:
+
+```bash
+read -r -p "HAPTIC release version: " haptic_version
+git clone --depth 1 --branch "v${haptic_version}" \
+  https://gitlab.com/haproxy-haptic/haptic.git haptic-source
+cp -R haptic-source/tests/schemas ./schemas
 ```
 
-### HTTP fixtures
+If you already have the matching source checkout, copy its `tests/schemas`
+directory instead. Use a bundle that matches the release and API schemas you
+intend to support; newer schema fields can make a local test pass for a feature
+that an older cluster doesn't provide.
 
-Mock HTTP responses for templates using `http.Fetch()`:
-
-```yaml
-httpResources:
-  - url: "http://blocklist.example.com/list.txt"
-    content: |
-      blocked-value-1
-      blocked-value-2
-```
-
-Templates calling `http.Fetch()` for unmocked URLs fail with an error. Define shared HTTP fixtures in the `_global` test to make them available to all tests.
-
-### Current servers
-
-Use `currentServers` to simulate a previous deployment. Key entries by backend
-name, then server name. Templates read this data through `currentConfig.ServerIndex`.
-For example, test that existing pods retain their server names during a rollout:
-
-```yaml
-currentServers:
-  default_api_svc_api_80:
-    api-pod-1: {address: 10.0.0.1, port: 8080}
-    api-pod-2: {address: 10.0.0.2, port: 8080}
-```
-
-Without `currentServers`, `currentConfig` is nil — the first-deployment case.
-
-The deprecated `currentConfig` fixture field accepts a raw `haproxy.cfg` and
-extracts its server index. Use `currentServers` for new tests. Setting both fields
-fails the test.
-
-### Fixture keys
-
-Fixture keys name `watchedResources` entries, with one reserved exception: `haproxy-pods` populates the auto-injected HAProxy pod store that templates read as `controller.haproxy_pods`. Its entries default to `apiVersion: v1` / `kind: Pod` and are indexed by namespace and name. Any other key fails the test with `resource type "<key>" in fixtures not found in watched resources`.
-
-### The reserved `_global` entry
-
-Put shared `fixtures`, `httpResources`, and `extraContext` in an entry named
-`_global`. They apply to every test; assertions on `_global` don't run. Multiple
-libraries can contribute to this entry. All other test names must be unique
-across the merged configuration.
-
-### Conditional Tests (`requires` and `requiresFields`)
-
-`requires` lists `watchedResources` keys the test depends on. When an optional
-watched resource named there is unavailable (no candidate API version served
-by the cluster), the test is stripped from the effective configuration at load
-time — the same mechanism `templateSnippets` use.
-
-`requiresFields` goes one level deeper: a list of schema field paths in the
-form `<watchedResourceKey>.<field.path>`:
-
-```yaml
-validationTests:
-  test-httproute-cors-filter:
-    requires: [httproutes]
-    requiresFields: [httproutes.spec.rules.filters.cors]
-    # ...
-```
-
-When any listed field is absent from the resolved schema generation of its
-watched resource, the test is stripped at load time. This covers clusters
-that serve the resource at the same API version as newer releases but with
-an older schema generation lacking the field (for example, Gateway API v1.1
-serves `httproutes` at `v1` without the Cross-Origin Resource Sharing (CORS) filter — the apiserver prunes
-the field from fixtures, the feature never activates, and without stripping
-the test would fail the fail-closed load gate). The first dot-segment must
-name a `watchedResources` key; array levels in the remaining path are
-descended transparently (`spec.rules.filters.cors` matches the field inside
-the `rules[]` / `filters[]` items). The current stripping outcome is visible
-at `/debug/vars/effectiveConfigResolution`.
-
-## Assertion types
-
-### Assertion Targets
-
-The `contains`, `not_contains`, `match_count`, `equals`, and `match_order` assertion types share a `target` field selecting which rendered output to check (resolved by `pkg/controller/testrunner/assertion_helpers.go`):
-
-| Target | What's checked |
-|--------|----------------|
-| `haproxy.cfg` (or empty) | The rendered main HAProxy configuration |
-| `map:<name>` | A rendered map file. `<name>` matches against either the full path or the basename |
-| `file:<name>` | A rendered general file (error pages, etc.), matched by filename |
-| `cert:<name>` | A rendered SSL certificate, matched by basename |
-| `crt-list:<name>` | A rendered crt-list file (registered by a template via `fileRegistry.Register("crt-list", …)`), matched by basename |
-| `k8s:<template-name>` | The rendered YAML of a `spec.k8sResources` template (potentially multi-doc with `---`), so you can assert on emitted Kubernetes resources |
-| `status:<ns>/<name>:<phase>` | The JSON status payload a `statusPatch()` call emitted for resource `<ns>/<name>` in the given pipeline phase (`rendered`, `deployed`, `renderFailed`, or `deployFailed`) — the way to test status-patch templates |
-| `events` | The Kubernetes Events the templates recorded via `recordEvent()`, one per line as `<Type> <Reason> <apiVersion> <Kind> <ns>/<name>: <message>` |
-| `rendering_error` | The simplified render error string, populated only when the render itself failed. Use this on negative tests where you expect rendering to be rejected |
-
-!!! warning "Unknown targets fall back to `haproxy.cfg` silently"
-    Typos in `target:` won't error — they'll just match the wrong content. Sanity-check via `--dump-rendered` if an assertion behaves unexpectedly.
-
-### `haproxy_valid`
-
-Validates HAProxy configuration syntax using the HAProxy binary:
-
-```yaml
-- type: haproxy_valid
-  description: Configuration must be syntactically valid
-```
-
-Include this assertion when the test expects valid HAProxy output. Tests that
-expect a render error instead assert that error; they can't also assert valid output.
-
-### `contains`
-
-Verifies target content matches a regex pattern:
-
-```yaml
-- type: contains
-  target: haproxy.cfg
-  pattern: "backend api-production"
-  description: Must create backend for API service
-```
-
-### `not_contains`
-
-Verifies target content **doesn't** match a pattern:
-
-```yaml
-- type: not_contains
-  target: haproxy.cfg
-  pattern: "ssl-verify none"
-  description: Must not disable SSL verification
-```
-
-### `equals`
-
-Checks entire content matches exactly:
-
-```yaml
-- type: equals
-  target: map:hostnames.map
-  expected: |
-    api.example.com backend-api
-    www.example.com backend-web
-  description: Hostname map must match exactly
-```
-
-Use for small, deterministic files. Not recommended for large configs.
-
-### `jsonpath`
-
-Evaluates a JSONPath expression against the template rendering context and compares the single result to `expected`. JSONPath reads plain values from the context — it can't invoke the store methods templates use (`resources.services.List()`), so it fits scalar context values (for example a `spec.templatingSettings.extraContext` key, which is injected into the context by name):
-
-```yaml
-- type: jsonpath
-  jsonpath: "{.environment}"     # set via spec.templatingSettings.extraContext.environment
-  expected: "production"
-  description: extraContext.environment is wired through
-```
-
-To assert on watched resources or rendered output, use `contains`, `match_count`, or `equals` against `haproxy.cfg` (or a `map:` / `file:` target) instead.
-
-### `match_count`
-
-Asserts that a regex pattern matches an exact number of times in the target. Useful for catching duplicate or missing entries:
-
-```yaml
-- type: match_count
-  target: haproxy.cfg
-  pattern: "(?m)^backend "
-  expected: "3"          # string — parsed as integer
-  description: Exactly 3 backends must be generated
-```
-
-### `match_order`
-
-Asserts that multiple patterns appear in the target in the listed order. Critical for HAProxy first-match-wins constructs (Gateway API route precedence, ordering of ACLs):
-
-```yaml
-- type: match_order
-  target: map:path-prefix.map
-  patterns:
-    - "^/api/v2/users"   # must come before /api/v2
-    - "^/api/v2"         # must come before /api
-    - "^/api"
-  description: Path map entries must be sorted most-specific-first
-```
-
-### `deterministic`
-
-Renders the templates a second time with the same inputs and asserts the output is byte-for-byte identical. Catches unstable map ordering, time-dependent values, and other sources of non-determinism:
-
-```yaml
-- type: deterministic
-  description: Repeated renders must produce identical output
-```
-
-The check covers `haproxy.cfg` and every auxiliary file the template produced; no `target` or `pattern` is needed.
+For your own resource types, the directory also accepts full CRD YAML files and
+OpenAPI v3 schemas. A full CRD includes the resource name, group, and versions
+HAPTIC needs to resolve a watch. For checking Helm values against the target
+cluster's live schemas, use [preflight](operations/validate-before-deploy.md).
 
 ## Running tests
 
+The commands below assume `config.yaml` contains your configuration and
+`./schemas` contains its schemas:
+
 ```bash
 # Run all tests
-haptic validate -f config.yaml
+haptic validate -f config.yaml --schema-dir ./schemas
 
 # Run specific test
-haptic validate -f config.yaml --test test-basic-routing
+haptic validate -f config.yaml --schema-dir ./schemas --test test-basic-routing
 
 # Output formats
-haptic validate -f config.yaml --output json
-haptic validate -f config.yaml --output yaml
+haptic validate -f config.yaml --schema-dir ./schemas --output json
+haptic validate -f config.yaml --schema-dir ./schemas --output yaml
 
 # Explicit parallelism (0=automatic CPU and memory budget, 1=sequential)
-haptic validate -f config.yaml --workers 4
+haptic validate -f config.yaml --schema-dir ./schemas --workers 4
 
-# Typed watched-resource access — point at a directory of schemas
-haptic validate -f config.yaml --schema-dir tests/schemas
-# Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic validate ...
 ```
 
 HAPTIC chooses validation parallelism from the available CPU and memory.
@@ -386,7 +203,8 @@ uses it to detect the version and run `haproxy_valid` assertions; validation fai
 if the binary is missing. To test a specific HAProxy version, use the matching
 controller image, which includes both binaries.
 
-Templates that use typed watched-resource access need `--schema-dir` (or `HAPTIC_SCHEMA_DIR`); without it they fail at engine compile time with a "no schema for X" error, while untyped `dig()`-based templates validate fine — see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for where schemas come from and what the repo's bundled `tests/schemas/` directory covers.
+You can set `HAPTIC_SCHEMA_DIR` instead of passing `--schema-dir` each time.
+Without schemas, templates must use untyped resource access such as `dig()`.
 
 Exit code 0 means all tests passed.
 
@@ -394,7 +212,8 @@ Exit code 0 means all tests passed.
 
 Add `haptic validate` to your pipeline and let a nonzero exit status fail the job.
 Use the [controller image](operations/haproxy-versions.md) whose HAProxy version
-matches your deployment.
+matches your deployment. Commit `config.yaml` and the matching `schemas/` directory
+to the repository so the job has both inputs.
 
 GitLab CI (`.gitlab-ci.yml`) — override the image entrypoint so the job's `script` shell runs:
 
@@ -404,7 +223,7 @@ validate-haptic-config:
     name: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.3-haproxy3.4
     entrypoint: [""]
   script:
-    - haptic validate -f config.yaml
+    - haptic validate -f config.yaml --schema-dir ./schemas
 ```
 
 GitHub Actions (`.github/workflows/validate.yml`):
@@ -417,7 +236,7 @@ jobs:
       image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.3-haproxy3.4
     steps:
       - uses: actions/checkout@v4
-      - run: haptic validate -f config.yaml
+      - run: haptic validate -f config.yaml --schema-dir ./schemas
 ```
 
 ### Output example
@@ -441,7 +260,7 @@ Tests: 1 passed, 1 failed, 2 total (0.214s)
 Shows content preview for failed assertions:
 
 ```bash
-haptic validate -f config.yaml --verbose
+haptic validate -f config.yaml --schema-dir ./schemas --verbose
 ```
 
 ```
@@ -457,7 +276,7 @@ haptic validate -f config.yaml --verbose
 Shows all rendered content after test results:
 
 ```bash
-haptic validate -f config.yaml --dump-rendered
+haptic validate -f config.yaml --schema-dir ./schemas --dump-rendered
 ```
 
 ### `--trace-templates`
@@ -465,7 +284,7 @@ haptic validate -f config.yaml --dump-rendered
 Shows top-level template execution order and timing:
 
 ```bash
-haptic validate -f config.yaml --trace-templates
+haptic validate -f config.yaml --schema-dir ./schemas --trace-templates
 ```
 
 ```
@@ -475,20 +294,12 @@ Rendering: path-prefix.map
 Completed: path-prefix.map (3.347ms)
 ```
 
-!!! note
-    This shows only top-level template renders. To see the full call tree including
-    `render_glob`, `render`, and macro invocations, combine with `--profile-includes`:
-
-    ```bash
-    haptic validate -f config.yaml --trace-templates --profile-includes
-    ```
-
 ### `--profile-includes`
 
-Lists the slowest 20 `render` / `render_glob` / macro invocations with cumulative timing — useful when `--trace-templates` shows a slow top-level template and you need to find which include is responsible:
+Lists the 20 slowest includes and macro calls with cumulative timings:
 
 ```bash
-haptic validate -f config.yaml --profile-includes
+haptic validate -f config.yaml --schema-dir ./schemas --profile-includes
 ```
 
 ### `--debug-filters`
@@ -496,44 +307,20 @@ haptic validate -f config.yaml --profile-includes
 Logs every comparison made by sort filters (`sort_by`) and similar operations, with the input types and the comparison result. Useful when route precedence or map ordering doesn't match what you expected:
 
 ```bash
-haptic validate -f config.yaml --debug-filters
+haptic validate -f config.yaml --schema-dir ./schemas --debug-filters
 ```
 
-### Combining flags
+<a id="combining-flags"></a>
 
-```bash
-# Comprehensive end-to-end debugging
-haptic validate -f config.yaml --verbose --dump-rendered --trace-templates --profile-includes
-```
+## Test failure cases and files
 
-Start with `--verbose` to identify a failed assertion. Add `--dump-rendered` to
-inspect its input, `--trace-templates` and `--profile-includes` to investigate
-render time, or `--debug-filters` to investigate sorting.
+<a id="testing-strategies"></a>
 
-## Testing strategies
-
-### Test organization
-
-Group tests by feature:
-
-```yaml
-validationTests:
-  # Basic functionality
-  test-basic-http-routing:
-    description: HTTP routing for simple service
-
-  # TLS/SSL
-  test-tls-termination:
-    description: TLS termination with certificate
-
-  # Edge cases
-  test-empty-services:
-    description: Handle case with no backend services
-```
+<a id="test-organization"></a>
 
 ### Testing template errors
 
-A negative test passes when the render fails *as expected*. Assert on the `rendering_error` target (see [Assertion Targets](#assertion-targets)) so the deliberate `fail()` is treated as the pass condition — without it, the failed render marks the whole test red:
+A negative test passes when the render fails *as expected*. Assert on the `rendering_error` target (see [Assertion Targets](validation-reference.md#assertion-targets)) so the deliberate `fail()` is treated as the pass condition — without it, the failed render marks the whole test red:
 
 ```yaml
 test-no-services-error:
@@ -567,22 +354,18 @@ test-hostname-map:
       pattern: "api.example.com"
 ```
 
-## Best practices
+<a id="best-practices"></a>
 
-1. **Test early**: Add tests as you develop templates
-2. **Keep tests fast**: Use minimal fixtures
-3. **Be descriptive**: Name each test after the behaviour it checks and write the description as the requirement being verified
-4. **Test edge cases**: Empty inputs, many inputs, invalid data
+## Choose useful test cases
 
-```yaml
-# Good
-test-ingress-tls-routing:
-  description: Ingress with TLS should create HTTPS frontend
+For a custom annotation, test a resource with the annotation, one without it,
+and one with an invalid value. Check both the output you expect and directives
+that must be absent. For a resource lookup, include a missing reference and an
+empty result.
 
-# Bad
-test1:
-  description: Test
-```
+Keep fixtures focused on the behavior under test. Name each test after that
+behavior, such as `ingress-with-tls-creates-https-frontend`, so a failure tells
+you which requirement stopped working.
 
 ## Troubleshooting
 
@@ -593,110 +376,13 @@ test1:
 | Pattern not matching | Escape regex chars, check whitespace, use simpler patterns |
 | JSONPath returns no results | Check the path; `jsonpath` reads scalar context values (for example `extraContext` keys), not the resource stores — assert on resources with `contains` / `match_count` |
 
-## Complete example
+<a id="complete-example"></a>
 
-A full Ingress → Service routing config with its tests. Press **Run live**, then open the **tests** tab to watch every assertion evaluate:
-
-<div class="pg-embed" markdown data-tab="tests" data-controls="tabs" data-title="Ingress routing with validation tests" data-height="560">
-
-```yaml
-watchedResources:
-  services:
-    apiVersion: v1
-    resources: services
-    indexBy: ["metadata.namespace", "metadata.name"]
-  ingresses:
-    apiVersion: networking.k8s.io/v1
-    resources: ingresses
-    indexBy: ["metadata.namespace", "metadata.name"]
-
-haproxyConfig:
-  template: |
-    global
-      daemon
-
-    defaults
-      mode http
-      timeout connect 5s
-      timeout client 30s
-      timeout server 30s
-
-    frontend http
-      bind :80
-      {% for _, ingress := range resources.ingresses.List() %}
-      {% for _, rule := range ingress.spec.rules %}
-      acl host_{{ replace(rule.host, ".", "_") }} hdr(host) -i {{ rule.host }}
-      use_backend {{ replace(rule.host, ".", "_") }}_backend if host_{{ replace(rule.host, ".", "_") }}
-      {% end %}
-      {% end %}
-
-    {% for _, ingress := range resources.ingresses.List() %}
-    {% for _, rule := range ingress.spec.rules %}
-    backend {{ replace(rule.host, ".", "_") }}_backend
-      balance roundrobin
-      {% var svc_name = rule.http.paths[0].backend.service.name %}
-      {% var svc = resources.services.GetSingle(ingress.metadata.namespace, svc_name) %}
-      {% if svc != nil %}
-      server svc1 {{ svc.spec.clusterIP }}:{{ svc.spec.ports[0].port }} check
-      {% end %}
-    {% end %}
-    {% end %}
-
-validationTests:
-  test-single-ingress:
-    description: Single ingress should create frontend ACL and backend
-    fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            name: api
-            namespace: default
-          spec:
-            clusterIP: 10.0.0.100
-            ports:
-              - port: 80
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: main
-            namespace: default
-          spec:
-            rules:
-              - host: api.example.com
-                http:
-                  paths:
-                    - path: /
-                      backend:
-                        service:
-                          name: api
-                          port:
-                            number: 80
-    assertions:
-      - type: haproxy_valid
-        description: Configuration must be valid
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: "acl host_api_example_com hdr\\(host\\) -i api.example.com"
-        description: Must have ACL for api.example.com
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: "backend api_example_com_backend"
-        description: Must have backend for api.example.com
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: "server svc1 10.0.0.100:80 check"
-        description: Must have server pointing to service ClusterIP
-```
-
-</div>
+Use the [resource lookup examples](template-resources.md#cross-resource-lookups)
+when writing tests that involve more than one resource type.
 
 ## See also
 
-- [Templating Guide](./templating.md) - Template syntax
+- [Template syntax](template-language.md) — expressions, loops, and conditions
 - [Supported Configuration](./supported-configuration.md) - HAProxy directives
 - [Troubleshooting](./troubleshooting.md) - Common issues
