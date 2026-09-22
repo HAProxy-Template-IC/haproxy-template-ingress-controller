@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 Changes since 0.1.0, including the 0.2.0 alpha series. Follow the
-[upgrade guide](./docs/site/docs/upgrading-to-0.2.md) to migrate existing
+[upgrade guide](./docs/site/docs/upgrade-notes.md#upgrading-to-02) to migrate existing
 installations and custom templates.
 
 ### Added
@@ -25,7 +25,7 @@ installations and custom templates.
 - Runtime discovery of watched API versions and schemas, including automatic adaptation when watched CRDs are installed, upgraded, or removed.
 - Pluggable output validators and enforcement of embedded validation tests whenever configuration loads or changes.
 - `haptic preflight` validates chart values before deployment, `haptic diff` predicts reloads, and `haptic agent state` inspects a pod's deployed configuration.
-- A browser playground and editable documentation examples for trying templates without a cluster.
+- A browser playground and editable documentation examples with a full-window editor and first-edit guidance for trying templates without a cluster.
 - A portable agent skill for Scriggo customization, resource watches, and validation, with installation instructions and versioned downloads.
 
 ### Changed
@@ -36,6 +36,8 @@ installations and custom templates.
 - Controller metrics now cover agent operations and fleet convergence; update dashboards using the [metric migration table](./docs/site/docs/operations/monitoring.md#where-the-old-metrics-went).
 
 ### Fixed
+
+- Restore routing maps, status, events, applied resources, and reload previews in the browser playground.
 
 - Leadership handover preserves the validated configuration result when startup events arrive out of order, allowing stale upgrade validation failures to clear.
 - Pending reload follow-ups observe already accepted configurations without resending updates that can collide with the reload.

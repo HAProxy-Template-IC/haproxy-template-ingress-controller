@@ -38,7 +38,7 @@ type provFrame struct {
 // by output identity ("haproxy.cfg" for the main config, otherwise the
 // map/file/cert path). base maps each aux template id to its block line so the
 // "# <name>" header shown in the named tabs can jump too.
-func buildProvenance(configYAML []byte, sms map[string]renderer.TemplateSourceMap, out *renderer.RenderResult) (map[string][][]provFrame, map[string]int) {
+func buildProvenance(configYAML []byte, sms map[string]renderer.TemplateSourceMap, out *previewResult) (map[string][][]provFrame, map[string]int) {
 	blockBase := templateBlockBases(configYAML)
 	prov := map[string][][]provFrame{}
 	base := map[string]int{}

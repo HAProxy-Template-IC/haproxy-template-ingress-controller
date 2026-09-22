@@ -1,6 +1,6 @@
 # Customize HAPTIC with an AI agent
 
-Install the HAPTIC skill to give your coding agent instructions for Scriggo
+Install the HAPTIC skill to give your coding agent instructions for
 templates, Helm customization, resource watches, and validation. It includes
 runnable examples and links to HAPTIC's documentation.
 
@@ -42,10 +42,10 @@ npx skills add https://gitlab.com/haproxy-haptic/haptic --skill haptic
 
 ### Download the skill
 
-Download [haptic.zip](agent-skills/haptic.zip). It contains `SKILL.md`,
+Download [haptic.zip](../agent-skills/haptic.zip). It contains `SKILL.md`,
 reference files, YAML examples, and the license. Keep these files together.
-You can inspect the [skill instructions](agent-skills/haptic/SKILL.md)
-before installing; a [SHA-256 checksum](agent-skills/haptic.zip.sha256) is also available.
+You can inspect the [skill instructions](../agent-skills/haptic/SKILL.md)
+before installing; a [SHA-256 checksum](../agent-skills/haptic.zip.sha256) is also available.
 
 From your configuration repository, extract the downloaded archive into your
 agent's project skills directory. These commands assume `haptic.zip` is in the
@@ -97,15 +97,15 @@ For a custom resource:
 ```text
 Use the haptic skill. Our MaintenancePolicy CRD is in schemas/ and sample
 objects are in fixtures/. Make HAPTIC return 503 when the apps/public policy
-is enabled. Use typed Scriggo access and test enabled, disabled, absent,
+is enabled. Use typed resource access and test enabled, disabled, absent,
 and other-namespace policies.
 ```
 
 The skill provides instructions. Your agent still needs access to your files
 and the tools required for the task. Native validation needs `haptic` and a
 matching `haproxy` binary; chart preflight also needs the chart and schemas. Follow
-[validation tests](validation-tests.md) and
-[validate before deploying](operations/validate-before-deploy.md) to set those up.
+[validation tests](../validation-tests.md) and
+[validate before deploying](../operations/validate-before-deploy.md) to set those up.
 
 Review the generated changes and validation results before deploying. Installing
 the skill doesn't connect to a cluster or change a HAPTIC installation.
@@ -142,7 +142,7 @@ them to your project.
 
 ## Agents without skill support
 
-Give the agent the [HAPTIC skill instructions](agent-skills/haptic/SKILL.md) and
+Give the agent the [HAPTIC skill instructions](../agent-skills/haptic/SKILL.md) and
 ask it to read the linked references for your task. This supplies context for
 that conversation; it doesn't enable automatic skill discovery.
 

@@ -36,10 +36,7 @@ helm upgrade --install haptic ./chart --namespace haptic --create-namespace \
   --values ./haptic-values.yaml
 ```
 
-!!! note "Helm runs preflight automatically"
-    The chart enables this check during installation and upgrades. Running it
-    separately helps you find errors earlier in a delivery pipeline. Keep
-    `preRolloutValidation.enabled: true` so deployment also checks the final values.
+Keep `preRolloutValidation.enabled: true` so deployment also checks the final values.
 
 ### What it checks
 
@@ -48,10 +45,6 @@ helm upgrade --install haptic ./chart --namespace haptic --create-namespace \
 | Structural validation and the bundled `validationTests`, including `haproxy -c` | A configuration the controller would refuse to load |
 | `vector validate` on the rendered sidecar config | A malformed document **or** a broken transform that would keep the supervised Vector child unavailable |
 | `varnishd -C` on the rendered Varnish Configuration Language (VCL) | A VCL that doesn't compile, which leaves the cache pod in `CrashLoopBackOff` |
-
-The last two run the real Vector and Varnish binaries in containers, so they
-need a container runtime. Without one they're skipped with a warning; the load
-gate always runs.
 
 ### Command-line flags
 
@@ -64,7 +57,7 @@ gate always runs.
 | `--kubeconfig` | `$KUBECONFIG`, then in-cluster | Which cluster to read API schemas from — see [Schemas](#schemas) |
 | `--schema-dir` | `$HAPTIC_SCHEMA_DIR` | Read schemas from a directory instead of the cluster, for running fully offline |
 | `--api-versions` | — | Extra API versions your cluster serves. The Gateway API `GatewayClass` version is always declared, so the Gateway library renders the same way it does in the cluster |
-| `--expect-chart-version` | `$HAPTIC_EXPECT_CHART_VERSION` | Fail unless the chart being rendered carries exactly this version. Set it to the version you're about to install, so a drifted controller image tag fails loudly instead of validating the wrong chart |
+| `--expect-chart-version` | `$HAPTIC_EXPECT_CHART_VERSION` | Fail unless the chart being rendered carries exactly this version. Set it to the version you plan to install |
 
 Set `HAPTIC_CONTAINER_RUNTIME` to choose a runtime (default: `docker`, then
 `podman`). Preflight selects Vector's image from the rendered Helm workload
@@ -96,9 +89,8 @@ haptic preflight --values ./haptic-values.yaml --chart ./chart --schema-dir ./sc
 
 ## Getting the binary and chart
 
-The [release downloads](https://gitlab.com/haproxy-haptic/haptic/-/releases) provide
-`haptic` binaries. Install one matching the release you plan to deploy and install
-the matching HAProxy series on the same host. The check runs `haproxy -c` locally.
+[Install the CLI](../cli.md) for the release you plan to deploy and install the
+matching HAProxy series on the same host. The check runs `haproxy -c` locally.
 
 In a working directory without an existing `chart` directory, download the
 matching chart. For example, for `0.2.0-alpha.3`:
@@ -128,14 +120,12 @@ For that, keep the admission webhook enabled — it validates each watched
 resource as it's applied, and rejects one that would break the rendered
 configuration.
 
-It also doesn't say what deploying the configuration does to a running pod.
-`haptic diff` does: it compares your candidate with what a pod runs and prints
-`runtime`, `file_only` or `reload`, with a reason for every change that can't
-run at runtime.
+To check whether a change needs a reload, compare it with a running pod:
 
 ```bash
-haptic diff -f candidate.yaml
+haptic diff -f candidate.yaml --schema-dir ./schemas
 ```
 
-See [Debugging — Common recipes](./debugging.md#common-recipes) for the
-pod-to-file and file-to-file forms.
+Use [offline schemas](../validation-tests.md#prepare-schemas) when the candidate
+uses typed resources. See [configuration comparison](./debugging.md#check-whether-a-change-needs-a-reload)
+for output meanings and file-to-file comparison.

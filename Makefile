@@ -70,7 +70,7 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	./scripts/check-annotation-docs.sh
 	@echo "Checking vendor annotation docs Status matches _migrationCoverage..."
 	./scripts/check-annotation-status.sh
-	@echo "Checking migrating.md generated tables are up-to-date..."
+	@echo "Checking annotation compatibility tables are up-to-date..."
 	./scripts/gen-migration-docs.sh --check
 	@echo "Checking chart values docs coverage..."
 	./scripts/check-values-docs.sh

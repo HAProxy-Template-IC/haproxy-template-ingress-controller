@@ -1,4 +1,11 @@
-# Upgrade to HAPTIC 0.2
+# Upgrade notes
+
+Check the notes for every version between your installed version and the version
+you plan to deploy. Each section lists configuration changes and the steps needed
+to keep your existing routes working. For routine chart upgrades, see
+[Upgrading with Helm](deploying-with-helm.md#upgrading).
+
+## Upgrading to 0.2
 
 Use this guide to upgrade from 0.1.0 or a 0.2.0 alpha to 0.2.0. The controller
 and chart share one version. The chart replaces the HAProxy Data Plane API with
@@ -8,7 +15,7 @@ Confirm that 0.2.0 is available on the [releases page](https://gitlab.com/haprox
 before running the upgrade commands. Development documentation can describe a
 release before its artifacts are published.
 
-## Check requirements
+### Check requirements
 
 - Kubernetes 1.33 or newer. The HAProxy pod uses native sidecars to keep its
   agent, Stream Processing Offload Agent (SPOA) hub, and log collector running
@@ -23,7 +30,7 @@ The chart supports HAProxy 3.0–3.4. Keep your selected `haproxyVersion` unless
 you intend to change it; the default is 3.4. See
 [HAProxy versions](operations/haproxy-versions.md) for runtime-update coverage.
 
-## Save your values
+### Save your values
 
 Set the installed Helm release and namespace:
 
@@ -35,6 +42,7 @@ HAPTIC_NAMESPACE=haptic
 Export the values you supplied to Helm:
 
 ```bash
+umask 077
 helm get values "$HAPTIC_RELEASE" --namespace "$HAPTIC_NAMESPACE" \
   --output yaml > haptic-values-before.yaml
 ```
@@ -56,7 +64,7 @@ fi
 
 Keep `haptic-values-before.yaml` as the record of your previous configuration.
 
-## Migrate 0.1.0 values
+### Migrate 0.1.0 values
 
 For an alpha installation, some migrations may already be applied. Check the
 values you use against the table and review the changed defaults before validation.
@@ -99,7 +107,7 @@ Remove `spoaHub.plugins.otel`. Configure tracing through
 The chart rejects legacy paths with their replacements. Run the validation step
 below to find remaining paths, including renamed `extraContext` settings.
 
-## Review changed defaults and integrations
+### Review changed defaults and integrations
 
 The default IngressClass and GatewayClass names change from `haproxy` to
 `haptic`. To preserve routes that use the 0.1.0 defaults, add these values:
@@ -131,7 +139,7 @@ The native `haproxy-haptic.org/*` library remains enabled by default.
 Review these behavior changes before upgrading:
 
 - Access logs use JSON. Adapt custom log parsers or override the log-format
-  snippets; see [monitoring](operations/monitoring.md).
+  snippets; see [access logging](operations/access-logging.md).
 - Ingress serves HTTPS using the default certificate. Set
   `controller.config.templatingSettings.extraContext.ingressDefaultHTTPS: false`
   if you require plaintext-only Ingress without an explicit TLS declaration.
@@ -157,7 +165,7 @@ to avoid conflicting with the old cert-manager-owned Secret.
 
 Update integrations that invoke `haptic-controller` to invoke `haptic`. Replace
 Data Plane API integrations with the [agent interface](development/agent.md)
-and update dashboards using the [metric migration table](operations/monitoring.md#where-the-old-metrics-went).
+and update dashboards using the [metric migration table](operations/metrics-reference.md#where-the-old-metrics-went).
 
 If you maintain custom templates, replace reads of parsed `currentConfig`
 sections with `currentConfig.ServerIndex` for previous servers, and use
@@ -171,13 +179,16 @@ referenced `HAProxyTemplateLibrary` objects. `haptic config view --input` merges
 them for inspection. Helm owns these objects; put persistent overrides in your
 values file.
 
-## Validate the candidate
+### Validate the candidate
 
 Use the 0.2.0 `haptic` binary and its chart to run
 [preflight validation](operations/validate-before-deploy.md):
 
 ```bash
+helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0 --untar --untardir ./haptic-0.2-chart
 haptic preflight --values ./haptic-values-0.2.yaml \
+  --chart ./haptic-0.2-chart/haptic --expect-chart-version 0.2.0 \
   --namespace "$HAPTIC_NAMESPACE" --release "$HAPTIC_RELEASE"
 ```
 
@@ -192,7 +203,7 @@ helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
 GitOps diff tools can need these CRDs before they can map the new library
 resources, because diff runs before Helm's hooks.
 
-## Upgrade the release
+### Upgrade the release
 
 Pass the migrated values explicitly:
 
@@ -204,9 +215,10 @@ helm upgrade "$HAPTIC_RELEASE" \
 ```
 
 If validation rejects the candidate, fix the reported value or template and
-repeat the upgrade. Keep validation enabled.
+repeat the upgrade. Keep validation enabled. For rollout failures and rollback
+limitations, see [Recover a failed upgrade](deploying-with-helm.md#recover-a-failed-upgrade).
 
-## Verify the deployment
+### Verify the deployment
 
 Wait for both controller and HAProxy deployments:
 
@@ -218,7 +230,9 @@ while read -r deployment; do
 done
 ```
 
-Inspect configuration validation and per-pod deployment status:
+Inspect configuration validation and per-pod deployment status. The
+`HAProxyTemplateConfig` should report `Validated=True`; check any `False`
+condition on `HAProxyCfg` for a rejected configuration or failed deployment:
 
 ```bash
 kubectl --namespace "$HAPTIC_NAMESPACE" get haproxytemplateconfig,haproxycfg -o yaml

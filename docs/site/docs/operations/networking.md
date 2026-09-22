@@ -1,24 +1,32 @@
 # Networking
 
-## Overview
+<a id="overview"></a>
 
-This page covers the chart's `NetworkPolicy` configuration: what the default policies allow, how to harden them, and how to replace them with your own. For exposing HAProxy traffic to the outside world (Services, ports, LoadBalancer setup), see [HAProxy Deployment](../haproxy-deployment.md).
+Use NetworkPolicy to control which services the controller and HAProxy pods can
+reach, and which clients can reach them. The chart creates policies by default;
+review the allowed destinations below before restricting access further.
 
-The controller requires network access to the Kubernetes API, HAProxy pods, and DNS. For all NetworkPolicy-related Helm values, see the [Configuration Reference](../reference.md); for the security rationale behind these policies, see [Security — Network Exposure](./security.md#network-exposure).
+To expose application traffic through a Service or external load balancer, see
+[HAProxy access](../haproxy-deployment.md#haproxy-service).
+
+Add the values below to your [complete Helm values file](../deploying-with-helm.md#change-settings)
+and apply it with Helm. Your cluster needs a network plugin that enforces
+NetworkPolicy.
 
 ## Default configuration
 
-By default, the NetworkPolicy allows egress to four targets:
+The controller policy allows:
 
-- **DNS** (kube-system namespace): lets the controller resolve hostnames, for example `http.Fetch()` targets in templates.
-- **Kubernetes API** (`0.0.0.0/0` and `::/0`, adjust for production): Required for watching Ingress, Gateway, Secret, and other configured resources. The default ships both an IPv4 and an IPv6 catch-all so the controller can reach an apiserver dialed over either family.
-- **HAProxy pods** (release namespace, label-matched): The controller reaches the agent and stats ports on every pod whose labels match `controller.networkPolicy.egress.haproxyPods.podSelector`. With the default empty `controller.networkPolicy.egress.haproxyPods.namespaceSelector: {}`, no namespace selector is emitted, which in NetworkPolicy semantics restricts the rule to the policy's own namespace — set a non-empty selector to reach HAProxy pods in other namespaces.
-- **All in-cluster pods**: `controller.networkPolicy.egress.additionalRules` ships a default rule allowing egress to every pod in every namespace on any port, so template helpers like `http.Fetch()` reach cluster services out of the box.
+- DNS in `kube-system`.
+- Kubernetes API ports `443` and `6443` at any IPv4 or IPv6 address.
+- HAProxy agent and stats ports on pods selected by
+  `controller.networkPolicy.egress.haproxyPods.podSelector`. An empty
+  `namespaceSelector` limits this rule to the release namespace.
+- All ports on all cluster pods, through `egress.additionalRules`, so templates
+  can fetch in-cluster HTTP resources.
 
-Helm replaces list values wholesale rather than merging them. When you override `kubernetesApi`, you restate the entire list — every `cidr` entry and its `ports` array — because your value fully replaces the default.
-
-When an auxiliary edge tier is enabled, the chart adds a separate default-on
-policy for that tier:
+When you enable a shared cache or rate-limit store, the chart also creates
+policies for those pods:
 
 - `cache.varnish.networkPolicy.enabled` admits port 6081 only from
   the same release's HAProxy pods. Varnish egress is limited to cluster DNS and
@@ -37,9 +45,7 @@ policy for that tier:
   quorum, and failover traffic.
 
 These policies select release-scoped labels, so two HAPTIC releases in one
-namespace don't gain access to each other's cache or limiter tiers. As with all
-Kubernetes NetworkPolicies, enforcement requires a compatible Container Network
-Interface (CNI) plugin.
+namespace don't gain access to each other's cache or limiter tiers.
 
 ## Production hardening
 
@@ -80,9 +86,6 @@ templates use `http.Fetch()`, add rules for those destinations under
 
 <a id="kind-cluster-specifics"></a>
 
-The defaults allow API ports `443` and `6443` over IPv4 and IPv6, including local
-Kind clusters. You don't need a separate Kind-specific values file.
-
 ## Replacing the shipped policies
 
 To supply your own policies, disable the corresponding chart policy:
@@ -114,7 +117,9 @@ for policy semantics.
 
 ## Allowing Prometheus scraping
 
-If using NetworkPolicy with [monitoring](./monitoring.md), allow Prometheus to scrape metrics:
+Controller metrics ingress is closed by default. For [Prometheus monitoring](./monitoring.md),
+allow the namespace and pod labels used by your Prometheus installation. This
+example selects pods labelled `app: prometheus` in namespace `monitoring`:
 
 ```yaml
 controller:

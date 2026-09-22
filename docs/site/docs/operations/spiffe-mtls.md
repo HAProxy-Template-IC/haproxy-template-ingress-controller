@@ -2,17 +2,14 @@
 
 Use [SPIFFE/SPIRE](https://spiffe.io/) to give HAProxy automatic mutual TLS (mTLS) to backend services: SPIRE issues and rotates short-lived X.509 certificates, and HAPTIC wires them into the backend configuration.
 
-## Overview
+<a id="overview"></a>
 
-[SPIFFE](https://spiffe.io/docs/latest/spiffe-about/overview/) (Secure Production Identity Framework for Everyone) is a set of standards for securely identifying workloads in dynamic environments. [SPIRE](https://spiffe.io/docs/latest/spire-about/spire-concepts/) is the reference implementation that issues and manages SPIFFE Verifiable Identity Documents (SVIDs) — short-lived X.509 certificates that serve as workload identity.
+## How certificates reach HAProxy
 
-This integration delivers certificates to HAProxy without storing them in
-Kubernetes Secrets:
-
-- **Automatic identity** — SPIRE attests HAProxy pods and issues X.509-SVIDs based on Kubernetes service account identity
-- **Short-lived certificates** — each SPIFFE Verifiable Identity Document (SVID) is automatically rotated at half of its TTL (for example every 12 hours with a `24h` TTL), reducing the impact of credential compromise
-- **Pod-local files** — spiffe-helper writes the certificate, private key, and trust bundle to the HAProxy pod's shared volume
-- **Runtime rotation** — the cert-reloader sidecar updates loaded certificates through `set ssl cert` and `set ssl ca-file`
+SPIRE issues and rotates workload certificates. In this example, `spiffe-helper`
+writes HAProxy's identity and trust bundle into a shared pod volume. A second
+sidecar updates the certificates loaded by HAProxy when those files change.
+The credentials don't pass through Kubernetes Secrets.
 
 ## Prerequisites
 
@@ -21,288 +18,35 @@ Before following this guide, ensure:
 - **SPIRE server and agents** are deployed in your cluster
 - **SPIRE Container Storage Interface (CSI) driver** (`csi.spiffe.io`) is installed for exposing the Workload API socket to pods
 - **Workload registration** exists for the HAProxy pod's service account and namespace
-- A HAPTIC installation you can update through [Helm values](../deploying-with-helm.md)
+- A Community Edition HAPTIC installation you can update through [Helm values](../deploying-with-helm.md). The example uses UID `99`, matching its HAProxy image.
+- Backend applications that require a client certificate and trust your SPIRE issuer. Their certificates must include the Service DNS name; see [DNS SAN configuration](#dns-san-configuration).
+- Bash, `kubectl`, and OpenSSL for the validation fixtures and checks below.
 
-## Configuration
+## Configure the integration {#configuration}
 
-### HAProxy Pod setup
+<a id="haproxy-pod-setup"></a>
+<a id="spiffe-helper-configuration"></a>
+<a id="backend-mtls-via-custom-annotation"></a>
 
-Add the following sections to your existing Helm values. Combine entries under
-the same `controller`, `haproxy`, and `extraDeploy` keys; duplicate YAML keys
-would replace earlier sections. Keep any sidecars or volumes you already use.
+Download the [complete example values](../examples/spiffe-values.yaml) as
+`spiffe-values.yaml`. The file combines:
 
-```yaml
-haproxy:
-  # Restart pods when spiffe-helper or other sidecar configs change
-  podSpec:
-    podAnnotations:
-      checksum/extra-config: '{{ toJson .Values.extraDeploy | sha256sum }}'
+- `spiffe-helper` and `cert-reloader` sidecars, with their shared volumes.
+- The helper's configuration in a ConfigMap.
+- A template snippet for the `example.com/server-mtls-spire` annotation.
+- Controller-only mounts for the validation fixtures created below.
 
-  # Create cert directory before spiffe-helper starts
-  initContainers:
-    - name: create-spiffe-dir
-      image: busybox:1.37
-      command: ["mkdir", "-p", "/etc/haproxy/spiffe"]
-      volumeMounts:
-        - name: haproxy-runtime
-          mountPath: /etc/haproxy
-      resources:
-        requests:
-          cpu: 10m
-          memory: 16Mi
-        limits:
-          memory: 16Mi
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: [ALL]
-        runAsUser: 99
-        runAsNonRoot: true
+Keep these settings alongside your normal `haptic-values.yaml`. If you already
+configure sidecars, init containers, volumes, mounts, or `extraDeploy`, combine
+those list entries in the example file before applying it; Helm replaces lists.
 
-  sidecars:
-    - name: spiffe-helper
-      image: ghcr.io/spiffe/spiffe-helper:0.11.0
-      args: ["-config", "/etc/spiffe-helper/helper.conf"]
-      volumeMounts:
-        - name: spiffe-workload-api
-          mountPath: /spiffe-workload-api
-          readOnly: true
-        - name: haproxy-runtime
-          mountPath: /etc/haproxy
-        - name: spiffe-helper-config
-          mountPath: /etc/spiffe-helper
-          readOnly: true
-      livenessProbe:
-        httpGet:
-          path: /live
-          port: 8081
-        initialDelaySeconds: 5
-        periodSeconds: 15
-      readinessProbe:
-        httpGet:
-          path: /ready
-          port: 8081
-        initialDelaySeconds: 5
-        periodSeconds: 10
-      resources:
-        requests:
-          cpu: 10m
-          memory: 32Mi
-        limits:
-          memory: 64Mi
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: [ALL]
-        # Must match HAProxy UID (99) for file ownership
-        runAsUser: 99
-        runAsNonRoot: true
-    - name: cert-reloader
-      image: haproxytech/haproxy-debian:3.4
-      command: ["sh", "-c"]
-      args:
-        - |
-          CERT=/etc/haproxy/spiffe/svid.pem
-          KEY=/etc/haproxy/spiffe/svid.pem.key
-          BUNDLE=/etc/haproxy/spiffe/bundle.pem
-          SOCK=/etc/haproxy/haproxy-master.sock
-          previous_digest=""
-          runtime_command() {
-            printf '%s\n\n' "$1" | socat -t 5 - "unix-connect:$SOCK"
-          }
-          install_pem() {
-            kind=$1
-            path=$2
-            pem=$3
-            command=$(printf '@1 set ssl %s %s <<\n%s' "$kind" "$path" "$pem")
-            response=$(runtime_command "$command") || return 1
-            if ! printf '%s' "$response" | grep -qi transaction; then
-              runtime_command "@1 abort ssl $kind $path" >/dev/null
-              return 1
-            fi
-            response=$(runtime_command "@1 commit ssl $kind $path") || return 1
-            if ! printf '%s' "$response" | grep -q 'Success!'; then
-              runtime_command "@1 abort ssl $kind $path" >/dev/null
-              return 1
-            fi
-          }
-          echo "cert-reloader: polling for cert changes"
-          while true; do
-            sleep 5
-            [ -f "$CERT" ] && [ -f "$KEY" ] && [ -f "$BUNDLE" ] || continue
-            digest=$(sha256sum "$CERT" "$KEY" "$BUNDLE") || continue
-            [ "$digest" = "$previous_digest" ] && continue
-            cert_pem=$(cat "$CERT" "$KEY") || continue
-            ca_pem=$(cat "$BUNDLE") || continue
-            [ "$digest" = "$(sha256sum "$CERT" "$KEY" "$BUNDLE")" ] || continue
-            if install_pem cert "$CERT" "$cert_pem" &&
-               install_pem ca-file "$BUNDLE" "$ca_pem"; then
-              previous_digest=$digest
-              echo "cert-reloader: certificates updated via runtime API"
-            else
-              echo "cert-reloader: update failed; retrying in 5 seconds" >&2
-            fi
-          done
-      volumeMounts:
-        - name: haproxy-runtime
-          mountPath: /etc/haproxy
-      resources:
-        requests:
-          cpu: 10m
-          memory: 16Mi
-        limits:
-          memory: 32Mi
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: [ALL]
-        runAsUser: 99
-        runAsNonRoot: true
+The snippet requires verified backend TLS and sends `<service>.<namespace>.svc`
+as the TLS server name. It rejects combinations with `haproxy.org/server-ssl`,
+`haproxy.org/server-crt`, or `haproxy.org/server-ca`, which configure the same
+connection through a different certificate source.
 
-  extraVolumes:
-    - name: spiffe-workload-api
-      csi:
-        driver: csi.spiffe.io
-        readOnly: true
-    - name: spiffe-helper-config
-      configMap:
-        name: '{{ include "haptic.fullname" . }}-spiffe-helper-config'
-```
-
-!!! note
-    Both spiffe-helper and cert-reloader must run as **UID 99** (matching HAProxy) so that certificate files have the correct ownership.
-
-!!! note
-    The spiffe-helper container image tags do **not** use a `v` prefix — use `0.11.0`, not `v0.11.0`.
-
-The cert-reloader sidecar reuses the `haproxytech/haproxy-debian` image, which includes `socat` and `sha256sum`. Use the same image tag as your HAProxy container if you want both containers to share the downloaded image. It uses the `@1` prefix to route Runtime API commands to the current HAProxy worker process via the master socket. It checks HAProxy's responses and retries failed updates, including the first update after startup. Until an Ingress uses the certificate, HAProxy has no certificate store to update and the sidecar reports retries.
-
-### `spiffe-helper` configuration
-
-Create a ConfigMap with the spiffe-helper configuration using `extraDeploy`. The configuration format is [HashiCorp Configuration Language (HCL)](https://github.com/hashicorp/hcl) (not TOML or `.ini` syntax):
-
-```yaml
-extraDeploy:
-  - apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: '{{ include "haptic.fullname" . }}-spiffe-helper-config'
-      labels:
-        app.kubernetes.io/name: haptic
-        app.kubernetes.io/instance: '{{ .Release.Name }}'
-        app.kubernetes.io/component: spiffe-helper
-    data:
-      helper.conf: |
-        agent_address = "/spiffe-workload-api/spire-agent.sock"
-        cert_dir = "/etc/haproxy/spiffe"
-        svid_file_name = "svid.pem"
-        svid_key_file_name = "svid.pem.key"
-        svid_bundle_file_name = "bundle.pem"
-        daemon_mode = true
-
-        health_checks {
-          listener_enabled = true
-          bind_port = "8081"
-          liveness_path = "/live"
-          readiness_path = "/ready"
-        }
-```
-
-!!! warning
-    The `health_checks` block uses **HCL block syntax** (`health_checks { ... }`), not TOML section syntax (`[health_checks]`). Using the wrong format causes a parse error.
-
-### Backend mTLS via custom annotation
-
-To enable per-Ingress backend mTLS using the SPIRE certificates, add a custom `templateSnippet` that processes an annotation (for example, `example.com/server-mtls-spire`):
-
-```yaml
-controller:
-  config:
-    templateSnippets:
-      backend-directives-800-server-mtls-spire:
-        template: |
-          {%- if ingress != nil %}
-            {%- var spireMtls = ingress | dig("metadata", "annotations",
-                "example.com/server-mtls-spire") | fallback("") | tostring() %}
-            {%- if spireMtls == "true" %}
-              {%- var ns = ingress | dig("metadata", "namespace")
-                  | fallback("") | tostring() %}
-              {%- var name = ingress | dig("metadata", "name")
-                  | fallback("") | tostring() %}
-              {%- var key = ns + "/" + name %}
-
-              {#- Conflict detection -#}
-              {%- var serverSsl = ingress | dig("metadata", "annotations",
-                  "haproxy.org/server-ssl") | fallback("") | tostring() %}
-              {%- var serverCrt = ingress | dig("metadata", "annotations",
-                  "haproxy.org/server-crt") | fallback("") | tostring() %}
-              {%- var serverCa = ingress | dig("metadata", "annotations",
-                  "haproxy.org/server-ca") | fallback("") | tostring() %}
-              {%- if serverSsl == "true" %}
-                {{- fail("Ingress '" + key +
-                    "': server-mtls-spire conflicts with server-ssl") -}}
-              {%- end %}
-              {%- if serverCrt != "" %}
-                {{- fail("Ingress '" + key +
-                    "': server-mtls-spire conflicts with server-crt") -}}
-              {%- end %}
-              {%- if serverCa != "" %}
-                {{- fail("Ingress '" + key +
-                    "': server-mtls-spire conflicts with server-ca") -}}
-              {%- end %}
-
-              {#- Add SPIRE mTLS flags to default-server -#}
-              {%- var serviceDns = tostring(svcName) + "." +
-                  tostring(ns) + ".svc" %}
-              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any),
-                  "ssl verify required " +
-                  "ca-file /etc/haproxy/spiffe/bundle.pem " +
-                  "crt /etc/haproxy/spiffe/svid.pem " +
-                  "sni str(" + serviceDns + ")") %}
-            {%- end %}
-          {%- end %}
-```
-
-This snippet:
-
-- Runs at **priority 800** (before `backend-directives-900-haproxytech-advanced`), so conflicts are detected before the built-in annotations are processed
-- Uses **absolute paths** for the certificate files because HAProxy's `crt-base` directive points to the `ssl/` directory, and the SPIRE certs are in `/etc/haproxy/spiffe/`. HAProxy auto-discovers the private key at `<certfile>.key` (here `svid.pem.key`), so no explicit `key` keyword is needed
-- **Fails the render** if the annotation is used together with `haproxy.org/server-ssl`, `haproxy.org/server-crt`, or `haproxy.org/server-ca`, since these configure conflicting SSL modes
-- Sets **`sni str(<service>.<namespace>.svc)`** to send the Kubernetes service DNS name as SNI, enabling hostname verification against DNS Subject Alternative Name (SAN) entries populated by SPIRE's `autoPopulateDNSNames` (see [DNS SAN configuration](#dns-san-configuration) below)
-
-!!! note "Why explicit SNI matters"
-    HAProxy 3.3+ automatically sends the server address as SNI (`sni-auto`). In Kubernetes, backends are addressed by pod IP, so the verify callback tries to match the IP against DNS-type SANs — which SPIFFE certificates don't have. Setting `sni str(...)` explicitly overrides `sni-auto` on all HAProxy versions and provides proper hostname verification via the service DNS name.
-
-To use it, annotate your Ingress:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-backend
-  annotations:
-    example.com/server-mtls-spire: "true"
-spec:
-  ingressClassName: haptic
-  rules:
-    - host: my-backend.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: my-backend
-                port:
-                  number: 443
-```
-
-This produces the following `default-server` line in the generated HAProxy config:
-
-```haproxy
-backend default_my-backend_svc_my-backend_https
-    default-server check ssl verify required ca-file /etc/haproxy/spiffe/bundle.pem crt /etc/haproxy/spiffe/svid.pem sni str(my-backend.default.svc)
-```
+Continue with the backend DNS names and controller validation fixtures before
+applying these values.
 
 ### DNS SAN configuration
 
@@ -329,29 +73,15 @@ spire-server:
           autoPopulateDNSNames: true
 ```
 
-!!! note
-    `autoPopulateDNSNames` populates DNS SANs based on the Kubernetes services each pod is an endpoint of. Both HAProxy and backend pods receive DNS SANs for their respective services. Since certificate updates are pushed via the Runtime API without process restarts, using the default SVID TTL (typically `1h`) is fine.
+`autoPopulateDNSNames` uses the Services each pod belongs to. Certificates
+update without restarting HAProxy, so short lifetimes such as `1h` are supported.
 
 ## Controller validation
 
 The HAPTIC controller checks rendered configuration with its local `haproxy -c` binary. Since the SPIRE certificates only exist on the HAProxy pods (managed by spiffe-helper), the controller pod needs placeholder files at the same absolute paths so that validation passes.
 
-Mount a ConfigMap with dummy PEM files on the **controller** pod:
-
-```yaml
-# Dummy certs for controller-side "haproxy -c" validation
-# (not real secrets — see ConfigMap below)
-controller:
-  extraVolumes:
-    - name: spiffe-validation-certs
-      configMap:
-        name: spiffe-validation-certs
-
-  extraVolumeMounts:
-    - name: spiffe-validation-certs
-      mountPath: /etc/haproxy/spiffe
-      readOnly: true
-```
+The example values mount a `spiffe-validation-certs` ConfigMap on the controller
+at the same paths used by HAProxy.
 
 Create the validation ConfigMap before applying those Helm values. These files
 are validation fixtures, never credentials for backend connections; mount them
@@ -372,9 +102,35 @@ kubectl create configmap spiffe-validation-certs --namespace haptic \
 rm -r "$HAPTIC_VALIDATION_DIR"
 ```
 
-The controller's `extraVolumes` and `extraVolumeMounts` are separate from
-`haproxy.extraVolumes`. Apply the combined Helm values through your release
-workflow, keeping pre-rollout and admission validation enabled.
+## Apply the values
+
+For release `haptic` in namespace `haptic`, apply both values files:
+
+```bash
+helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.3 --namespace haptic \
+  --values haptic-values.yaml --values spiffe-values.yaml
+kubectl rollout status deployment/haptic-controller --namespace haptic
+kubectl rollout status deployment/haptic-haproxy --namespace haptic
+```
+
+Keep pre-rollout and admission validation enabled. The helper must obtain its
+first identity before the HAProxy pod becomes ready.
+
+## Enable backend mTLS for an Ingress
+
+This example assumes an existing Ingress `my-backend` in namespace `default`,
+pointing to a backend that serves TLS. Add the annotation:
+
+```bash
+kubectl annotate ingress my-backend --namespace default \
+  example.com/server-mtls-spire=true --overwrite
+```
+
+For a Service named `my-backend`, HAProxy verifies the server certificate against
+`my-backend.default.svc` and presents its SPIRE client identity. Until an annotated
+route loads these certificates, the certificate reload sidecar has no certificate store to update
+and may log retries.
 
 ## Verification
 
@@ -422,6 +178,8 @@ kubectl -n haptic logs deployment/haptic-haproxy -c cert-reloader
 
 ## Troubleshooting
 
+<a id="spiffe-helper-can't-connect-to-spire-agent"></a>
+
 <a id="spiffe-helper-cannot-connect-to-spire-agent"></a>
 
 ### `spiffe-helper` can't connect to SPIRE agent
@@ -444,7 +202,7 @@ Update `agent_address` in your spiffe-helper config to match.
 failed to parse configuration ... got: LBRACK
 ```
 
-spiffe-helper uses **HCL** syntax, not TOML. Replace `[section]` with `section { ... }`:
+spiffe-helper uses HashiCorp Configuration Language (HCL) syntax, not TOML. Replace `[section]` with `section { ... }`:
 
 ```hcl
 # Wrong (TOML)
@@ -465,7 +223,7 @@ health_checks {
 Unable to dump bundle ... open /etc/haproxy/spiffe/svid.pem: no such file or directory
 ```
 
-The `haproxy-runtime` emptyDir doesn't include the `spiffe/` subdirectory by default. Ensure the init container is configured to create it before spiffe-helper starts. The example init container above already sets `resources.requests` and `resources.limits`; keep them in place if you customized it, so the init container isn't rejected by a namespace ResourceQuota.
+The `haproxy-runtime` emptyDir doesn't include the `spiffe/` subdirectory by default. Ensure the init container is configured to create it before spiffe-helper starts. The example values file already sets `resources.requests` and `resources.limits`; keep them in place if you customized it, so the init container isn't rejected by a namespace ResourceQuota.
 
 ### `ImagePullBackOff` for `spiffe-helper`
 
@@ -480,7 +238,7 @@ The spiffe-helper container image uses tags **without** the `v` prefix. Use `0.1
 If the controller logs show validation failures referencing `/etc/haproxy/spiffe/*.pem`, the validation placeholder ConfigMap isn't mounted on the controller pod. Verify:
 
 ```bash
-kubectl -n haptic exec <controller-pod> -- ls /etc/haproxy/spiffe/
+kubectl -n haptic exec deployment/haptic-controller -c controller -- ls /etc/haproxy/spiffe/
 # Should list: bundle.pem  svid.pem  svid.pem.key
 ```
 

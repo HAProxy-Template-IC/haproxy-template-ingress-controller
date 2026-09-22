@@ -1,8 +1,9 @@
 # HAProxyRoutePolicy reference
 
-`haproxy-haptic.org/v1alpha1`, kind `HAProxyRoutePolicy`, configures enforcement for
-one or more HTTPRoute or GRPCRoute rules. The chart installs its CRD. Interpretation
-and enforcement live in the Gateway and shared HTTP policy template libraries.
+Use `HAProxyRoutePolicy` to configure authentication, shared rate limits, a web
+application firewall (WAF), or HTTP caching for HTTPRoute and GRPCRoute rules.
+The chart installs the CRD at API version `haproxy-haptic.org/v1alpha1`.
+For a worked example, see [Protect Gateway routes](operations/gateway-policies.md).
 
 ## Attachment
 

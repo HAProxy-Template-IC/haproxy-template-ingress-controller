@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gen-migration-docs.sh — render the per-source annotation-support tables in
-# docs/site/docs/migrating.md FROM the vendor libraries' _migrationCoverage
+# docs/site/docs/annotation-compatibility.md FROM the vendor libraries' _migrationCoverage
 # declarations, so the migration guide can never drift from the template code
 # (whose reads are in turn pinned to the coverage by check-migration-coverage.sh).
 #
@@ -12,13 +12,13 @@
 #
 # Modes:
 #   (no args)  regenerate the blocks in place.
-#   --check    fail (exit 1) if regeneration would change migrating.md — used by
+#   --check    fail (exit 1) if regeneration would change annotation-compatibility.md — used by
 #              `make lint` to pin the doc against the coverage data.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-DOC=docs/site/docs/migrating.md
+DOC=docs/site/docs/annotation-compatibility.md
 CHARTS=charts/haptic/charts
 
 CHECK=0
@@ -145,11 +145,11 @@ for source in SOURCE_ORDER:
 if check:
     if new_doc != doc:
         sys.stderr.write(
-            "migrating.md is out of date with _migrationCoverage.\n"
+            "annotation-compatibility.md is out of date with _migrationCoverage.\n"
             "Run scripts/gen-migration-docs.sh and commit the result.\n"
         )
         sys.exit(1)
-    print("migrating.md generated tables are up-to-date.")
+    print("annotation-compatibility.md generated tables are up-to-date.")
 else:
     if new_doc != doc:
         with open(doc_path, "w", encoding="utf-8") as fh:

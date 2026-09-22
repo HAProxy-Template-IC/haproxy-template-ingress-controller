@@ -1,14 +1,15 @@
 # HAProxy versions
 
-## Overview
+<a id="overview"></a>
 
 Set `haproxyVersion` to select the HAProxy series for your installation. The chart
 uses it for both images:
 
-- The **controller image** tag suffix (for example `-haproxy3.2`) — must match a version built by CI
+- The **controller image** tag suffix (for example `-haproxy3.2`) — selects the matching configuration validator
 - The **HAProxy pod image** tag — defaults to the latest tested patch for that series
 
-The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.x`) because CI builds one image per supported series. Patch versions within a series are API-compatible with the controller.
+Keep the controller and HAProxy on the same series. Use `haproxyVersion` to
+change both; use `haproxy.image.tag` only to pin a patch within that series.
 
 ## Supported versions
 
@@ -22,15 +23,8 @@ The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.x`) 
 
 HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of support; odd-numbered series (3.1, 3.3) get a shorter maintenance window. This chart defaults to 3.4. HAProxy 3.1 remains in HAPTIC's build matrix but no longer receives upstream maintenance; check [HAProxy's maintenance table](https://www.haproxy.org/) when choosing a series.
 
-!!! note "One version, both images"
-    `haproxyVersion` selects matching HAProxy and controller images so
-    `haproxy -c` validates against the deployed series. Each agent reports the
-    runtime commands its own HAProxy release supports.
-
-    During a rolling upgrade the fleet can briefly run two series. HAPTIC renders
-    for the lowest version it sees, and a pod whose agent it cannot compose ops
-    for gets the complete file set plus a reload. That reload still has to pass
-    the pod's HAProxy checks.
+During a rolling upgrade, HAPTIC renders for the lowest HAProxy series in the
+fleet. A pod reloads for changes its version can't apply at runtime.
 
 ## Feature version requirements
 
@@ -49,29 +43,19 @@ Runtime server creation works on every supported series. Runtime backend creatio
 
 ## Selecting a version
 
-Set `haproxyVersion` to your desired series. The chart defaults to `3.4`:
-
-```bash
-# Use HAProxy 3.0 LTS
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --namespace haptic --create-namespace \
-  --set haproxyVersion=3.0
-
-# Use HAProxy 3.3
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --namespace haptic --create-namespace \
-  --set haproxyVersion=3.3
-```
-
-Or in your values file:
+Set `haproxyVersion` in your [complete Helm values file](../deploying-with-helm.md#change-settings).
+For example, to select the 3.2 series:
 
 ```yaml
-haproxyVersion: "3.0"
+haproxyVersion: "3.2"
 ```
+
+Use these values when installing HAPTIC. For an existing release, follow
+[upgrading to a new series](#upgrading-to-a-new-series) below.
 
 ## Patch version pinning
 
-By default, the HAProxy pod image is pinned to the latest patch version tested with the chart, looked up from the `haproxyPatchVersions` map in [`charts/haptic/values.yaml`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/haptic/values.yaml). For example, with `haproxyVersion: "3.2"`, the pod uses whichever 3.2.x patch the chart currently pins (for example `haproxytech/haproxy-debian:3.2.16`). The pin moves forward over time as Renovate updates the chart.
+By default, the HAProxy pod image is pinned to the latest patch version tested with the chart, looked up from the `haproxyPatchVersions` map in [`charts/haptic/values.yaml`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/haptic/values.yaml). An installed release keeps that image until you upgrade it.
 
 To pin a specific patch version yourself, set `haproxy.image.tag`:
 
@@ -79,44 +63,15 @@ To pin a specific patch version yourself, set `haproxy.image.tag`:
 haproxyVersion: "3.2"
 haproxy:
   image:
-    tag: "3.2.10"  # Pin to a specific patch
+    tag: "3.2.16"  # Pin to a specific patch
 ```
 
 ## Keeping patches up to date
 
-Renovate maintains the chart's `haproxyPatchVersions` map. Unless you override `haproxy.image.tag`, a chart upgrade adopts the patch pinned by that chart version. An installed release keeps its current image until you upgrade it.
+A chart upgrade adopts its tested HAProxy patch unless you override `haproxy.image.tag`.
 
-If you pin `haproxy.image.tag` yourself in a GitOps repository and want Renovate to track patches **within the pinned series**, add a regex custom manager to your `renovate.json`. The trick is to extract the major.minor from the current value and bake it back into the versioning regex so Renovate stays inside the series:
-
-```json
-{
-  "customManagers": [
-    {
-      "customType": "regex",
-      "fileMatch": ["values\\.ya?ml$"],
-      "matchStrings": [
-        "# renovate:\\s*datasource=docker\\s+depName=haproxytech/haproxy-debian[^\\n]*\\n\\s*tag:\\s*\"(?<currentValue>(?<seriesMajor>\\d+)\\.(?<seriesMinor>\\d+)\\.\\d+)\""
-      ],
-      "datasourceTemplate": "docker",
-      "depNameTemplate": "haproxy-debian {{{seriesMajor}}}.{{{seriesMinor}}}.x",
-      "packageNameTemplate": "haproxytech/haproxy-debian",
-      "versioningTemplate": "regex:^(?<major>{{{seriesMajor}}})\\.(?<minor>{{{seriesMinor}}})\\.(?<patch>\\d+)$"
-    }
-  ]
-}
-```
-
-And annotate the override in your values file so the manager can find it:
-
-```yaml
-haproxyVersion: "3.2"
-haproxy:
-  image:
-    # renovate: datasource=docker depName=haproxytech/haproxy-debian
-    tag: "3.2.10"
-```
-
-The chart's own `renovate.json` ([source](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/renovate.json)) uses the same pattern against `haproxyPatchVersions` — it's the working reference if you need a more elaborate setup (for example handling multiple series in one file).
+If you override `haproxy.image.tag`, update that pin yourself or through your
+image-update automation. A chart upgrade won't replace an explicit tag.
 
 ## HAProxy Enterprise
 
@@ -124,7 +79,7 @@ Enterprise deployments require:
 
 1. Setting `haproxy.enterprise.enabled: true`
 2. Configuring `haproxy.podSpec.imagePullSecrets` with your registry credentials
-3. Building your own controller image and pointing `controller.image.repository` (and optionally `controller.image.tag`) at it — the HAPTIC project doesn't distribute enterprise controller images (see the note below)
+3. Building your own controller image and pointing `controller.image.repository` (and optionally `controller.image.tag`) at it — the HAPTIC project doesn't distribute enterprise controller images
 
 ```yaml
 haproxyVersion: "3.2"
@@ -151,9 +106,6 @@ haproxy:
 ```
 
 Check [HAProxy Enterprise release notes](https://www.haproxy.com/documentation/haproxy-enterprise/release-notes/) for available revisions.
-
-!!! note "Building the controller"
-    Enterprise controller images aren't distributed by the HAPTIC project. You must build the controller yourself and push it to your own registry, then set `controller.image.repository` and optionally `controller.image.tag` accordingly.
 
 ## Upgrading to a new series
 

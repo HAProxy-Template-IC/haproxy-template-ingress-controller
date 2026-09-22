@@ -9,7 +9,7 @@ it. Cache contents are divided among Varnish pods by a hash of the cache key.
 The default cache adds two Varnish pods, reserving **200m CPU and 768 MiB of
 memory** in total. Set `cache.varnish.resources` to adjust that budget.
 
-Add this to your Helm values:
+Add this to your [complete Helm values file](../deploying-with-helm.md#change-settings):
 
 ```yaml
 cache:
@@ -108,6 +108,8 @@ Budget `cache.varnish.resources.limits.memory` for `cache.varnish.malloc`, the
 shared-log buffer (80 MiB with the default image), compiled configuration, and
 process overhead. The working directory is an executable, memory-backed
 `emptyDir`; its memory also counts toward the container limit.
+
+### Prevent the shared log from being swapped
 
 The working directory must remain resident in memory. Use a verified `noswap`
 mount, container swap prohibition, or nodes without swap; `tmpfs` alone doesn't

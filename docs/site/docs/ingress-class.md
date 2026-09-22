@@ -2,9 +2,13 @@
 
 Use an IngressClass to select which Ingresses HAPTIC manages. The [Helm chart](deploying-with-helm.md)
 creates the `haptic` class by default and configures the controller to watch
-Ingresses that name it.
+Ingresses that name it. You only need the settings below to change that default
+or run more than one controller.
 
 ## Configuration
+
+Add these settings to your [Helm values file](deploying-with-helm.md#change-settings)
+and apply the complete file when you upgrade. The example shows the defaults:
 
 ```yaml
 ingressClass:
@@ -14,25 +18,24 @@ ingressClass:
   controllerName: haproxy-haptic.org/controller
 ```
 
-The default class name is `haptic`. During a migration, you can retain existing
-Ingress class references by setting `ingressClass.name` to match them. Follow the
-[migration procedure](migrating.md) to transfer traffic and class ownership.
+For an existing controller's class name, follow the [migration procedure](migrating.md)
+to transfer traffic and class ownership.
 
 ## Ingress class filtering
 
-By default, the controller watches only Ingress resources with `spec.ingressClassName: haptic`.
-
 ### Changing the class name
 
-Set `ingressClass.name` to change both the IngressClass name and the controller's
-watch filter. Install or upgrade with the class you want:
+Add the class name to your existing Helm values:
 
-```bash
-helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 \
-  --namespace haptic --create-namespace \
-  --set ingressClass.name=haproxy
+```yaml
+ingressClass:
+  name: haproxy
 ```
+
+[Apply the complete values file](deploying-with-helm.md#change-settings) to preserve
+your other settings. This changes both the class name and HAPTIC's watch filter.
+Existing Ingresses keep their previous `spec.ingressClassName`; update them when
+you're ready to move their routes to the new class.
 
 Your Ingresses then opt in with `spec.ingressClassName: haproxy`.
 
@@ -50,20 +53,22 @@ controller:
 
 A `controller.config.watchedResources.ingresses.fieldSelector` value takes precedence over the filter derived from `ingressClass.name`, but it changes only the watch filter — the created IngressClass keeps the name from `ingressClass.name` (default `haptic`). Prefer `ingressClass.name` unless you need a filter that isn't a plain class-name match.
 
-The `fieldSelector` here is client-side JSONPath filtering (it can match any field), not Kubernetes' server-side field selector; for the cheaper server-side option, filter with `labelSelector` on the same entry. See [Watching Resources → Narrowing the Watch](watching-resources.md#narrowing-the-watch).
+For field and label filtering, see [watch selectors](watching-resources.md#narrowing-the-watch).
 
 ### Ingresses without a class
 
 An Ingress that omits `spec.ingressClassName` doesn't match the default `spec.ingressClassName=haptic` filter, so the controller doesn't watch it — its rules never reach HAProxy.
 
-To make HAPTIC adopt class-less Ingresses, mark its IngressClass as the cluster default:
+To select HAPTIC automatically for new Ingresses that omit a class, mark its
+IngressClass as the cluster default:
 
 ```yaml
 ingressClass:
   default: true
 ```
 
-This adds the `ingressclass.kubernetes.io/is-default-class: "true"` annotation to the IngressClass. The Kubernetes API server then stamps the class name (`haptic` by default, or whatever you set as `ingressClass.name`) into `spec.ingressClassName` on any Ingress **created** without a class — at creation time only. Ingresses that already exist without a class aren't rewritten, so the controller keeps ignoring them; set their `spec.ingressClassName` explicitly to adopt them. Mark only one IngressClass as the cluster default.
+Kubernetes assigns this class to new Ingresses that omit `spec.ingressClassName`.
+It doesn't rewrite existing Ingresses. Mark only one IngressClass as the cluster default.
 
 To adopt an existing class-less Ingress named `my-app` in namespace `default`:
 
@@ -79,9 +84,6 @@ IngressClass is created only when both of the following are true:
 1. `ingressClass.enabled: true` (default)
 2. `controller.templateLibraries.ingress.enabled: true` (default)
 
-The chart also checks that the IngressClass API exists. Supported Kubernetes
-versions provide it.
-
 ## Multi-controller environments
 
 Give each controller its own IngressClass. An Ingress selects one class with
@@ -91,16 +93,7 @@ For two HAPTIC installations, configure distinct class names and controller
 identifiers using [Running multiple HAPTIC instances](deploying-with-helm.md#running-multiple-haptic-instances-in-one-cluster).
 For another controller, use that controller's chart settings to create its class.
 
-## Using IngressClass
-
-Ingress resources opt in to HAPTIC by referencing the class via `spec.ingressClassName`:
-
-```yaml
-spec:
-  ingressClassName: haptic  # References IngressClass.metadata.name
-```
-
-For a complete Ingress walkthrough, see [Getting Started](./getting-started.md#create-an-ingress).
+<a id="using-ingressclass"></a>
 
 ## Disabling IngressClass creation
 
@@ -113,5 +106,5 @@ ingressClass:
 
 ## See also
 
-- [Annotations](./annotations.md) — per-Ingress behavior via vendor annotation libraries
+- [Annotations](./annotations.md) — native annotations and migration compatibility libraries
 - [Migrating to HAPTIC](./migrating.md) — matching the incumbent controller's class during cutover

@@ -1,12 +1,19 @@
-# Watching Resources
+# Watching resources
 
-Use `spec.watchedResources` to select the Kubernetes resources your templates can
-read. Each entry defines a resource type, filters, indexes, and storage mode. For
-field types and defaults, see the [CRD reference](./crd-reference.md#watchedresources).
+Make a Kubernetes resource available to your templates by adding it to
+`watchedResources`. The bundled libraries already watch the types they need;
+add a watch when your templates need another type, such as your own custom resource.
 
-Edit an Ingress below to see how a watched resource changes the generated configuration:
+With Helm, put watches under `controller.config.watchedResources`. In an
+`HAProxyTemplateConfig`, use `spec.watchedResources`. The examples below show
+individual entries; the [CRD reference](./crd-reference.md#watchedresources)
+lists every field and default.
 
-<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.watchedResources" data-tab="haproxy.cfg" data-controls="tabs" data-title="A watched Ingress rendered to haproxy.cfg" data-height="440">
+The example below loads an Ingress watch and sample resources.
+
+<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.watchedResources" data-tab="haproxy.cfg" data-controls="tabs,resources" data-input="resources" data-input-focus="name: shop" data-title="Read an Ingress from a resource watch" data-height="440">
+
+<p class="pg-task">Change the sample Ingress name, then find the renamed backend in the generated configuration.</p>
 
 </div>
 
@@ -14,24 +21,26 @@ With a schema, read resource fields directly, such as `ing.spec.rules`. The
 controller loads schemas from the Kubernetes API server; offline tools use a
 schema directory. For untyped maps or resources without a schema, use `dig()` and
 supply missing-value defaults with `fallback()`. See [typed access](#typed-access-in-templates)
-and [safe iteration](./templating.md#safe-iteration) for examples.
+and [safe iteration](./template-resources.md#safe-iteration) for examples.
 
 ## Anatomy of an entry
 
 ```yaml
 watchedResources:
-  ingresses:                                # arbitrary key — appears in templates as resources.ingresses
-    apiVersion: networking.k8s.io/v1        # GroupVersion of the watched resource
-    resources: ingresses                    # plural name as it appears in the REST API
-    indexBy:                                # JSONPaths that form the composite lookup key
+  ingresses:
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
+    indexBy:
       - metadata.namespace
       - metadata.name
-    labelSelector: ""                       # "app=myapp" — string, not matchLabels object
-    enableValidationWebhook: false          # include this kind in the webhook fan-out
-    store: full                             # "full" (default) or "on-demand"
-    debounceInterval: ""                    # Go duration string; empty / invalid uses the 100ms default
-    ignoreFields: []                        # JSONPath expressions dropped from this resource, added to watchedResourcesIgnoreFields
+    labelSelector: "app=shop"
 ```
+
+The key `ingresses` makes the selected objects available as `resources.ingresses`
+in templates. `apiVersion` and `resources` identify the Kubernetes type;
+`indexBy` defines the keys you can use to look up one object. This example only
+includes objects labeled `app=shop`. Omit `labelSelector` to watch all objects
+of the selected type.
 
 `labelSelector` accepts an equality-based selector string, such as `"app=shop"`; it doesn't accept a `matchLabels`/`matchExpressions` object. `fieldSelector` uses JSONPath equality syntax. See [Narrowing the watch](#narrowing-the-watch).
 
@@ -43,16 +52,19 @@ and narrow watches to the resources your templates need; see [watch optimization
 
 Every entry uses one of two store backends. The choice controls memory footprint and rendering latency.
 
-### `store: full` (default) — `MemoryStore`
+### Keep resources in memory {#store-full-default-memorystore}
+
+Use `store: full` (the default):
 
 - Keeps the full resource object in-process after trimming fields listed in `watchedResourcesIgnoreFields`.
 - `.List()`, `.Fetch(...)`, `.GetSingle(...)` all resolve from memory with no API hit.
 - Right for anything the templates iterate over (Ingresses, Services, EndpointSlices, small ConfigMaps).
 
-### `store: on-demand` — `CachedStore`
+### Fetch resources when needed {#store-on-demand-cachedstore}
+
+Use `store: on-demand`:
 
 - Stores only the index keys in-process; fetches the full object lazily on `.Fetch()` / `.GetSingle()` and caches the result.
-- Cache TTL is auto-derived from `dataplane.driftPreventionInterval` (× 2.2) — it's **not** a user-configurable field.
 - Right for large, rarely touched resources — TLS Secrets with 20 kB certificate bodies, ConfigMaps used only for a handful of entries.
 - `.List()` on a cached store forces a fetch for every reference; avoid it.
 
@@ -60,20 +72,19 @@ Use a mix: `store: full` for everything the templates iterate, `store: on-demand
 
 ## Typed access in templates
 
-Every entry is exposed to templates **two equivalent ways** when a schema is loaded for the resource:
+With a schema available, read fields using their Kubernetes JSON names:
 
-1. As a store under `resources.<key>` — `.List()`, `.Fetch(...)`, and `.GetSingle(...)` return typed pointers (`[]*resources.<key>.T` / `*resources.<key>.T`).
-2. As a typed top-level global named `<key>` — a typed slice of the same shape (`[]*resources.<key>.T`).
+```go
+{% for _, ingress := range resources.ingresses.List() %}
+# {{ ingress.metadata.namespace }}/{{ ingress.metadata.name }}
+{% end %}
+```
 
-Both surfaces share the same typed pointer; iterating either way yields `*resources.<key>.T` with typed field access such as `.metadata.namespace` and `.spec.rules`. Without a schema, both surfaces fall back to `[]any` / `map[string]any` and the chart's `dig()`-based snippets work unchanged.
-
-The typed shape comes from the resource's OpenAPI v3 schema — fetched live from the kube-apiserver in production, or from `--schema-dir` when running offline; see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for the full schema-source story and the repo's bundled `tests/schemas/` directory.
-
-The template compiler rejects misspelled fields when loading configuration or
-running `validate` with a schema directory. Use `<key>.T` in macro signatures,
-type switches, and slice declarations when you need the resource's type.
-
-See [Typed Resource Access](./templating.md#typed-resource-access) for the field-name convention, type-switch dispatch pattern, when to prefer typed vs untyped access, and the worked-example snippet.
+The compiler catches misspelled field names when it loads the configuration.
+The controller reads schemas from your API server; offline validation needs a
+[schema directory](validation-tests.md#prepare-schemas). See
+[reading resources](template-resources.md) for lookups, optional fields, and
+resources without a schema.
 
 ## Indexing (`indexBy`)
 
@@ -291,9 +302,15 @@ Keep any existing entries for this watch: Helm replaces lists. These entries add
 
 ## HTTP Resources
 
-Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts, auth)` template function — a separate mechanism from Kubernetes watching. The first fetch is synchronous, but its response stays local to that render until the complete HAProxy output passes every configured validator. HAPTIC then accepts every new HTTP input from that render atomically and starts each `interval` timer. A failed or canceled render accepts none of them, so the next live reconciliation fetches them again. Later checks are conditional (`If-None-Match` / `If-Modified-Since`), so unchanged content costs one 304 and triggers no re-render. Every controller replica fetches and refreshes on its own, because followers render too. `Fetch` returns the response body as a string.
+Use `http.Fetch(url, options, authentication)` to read a response body into a
+template. For example, you can maintain an IP blocklist separately from your
+routing resources.
 
-Admission validation never replaces a live URL's credentials, accepted body, or refresh timer. It reuses matching cached content and fetches a changed or new declaration only for that validation render. The next live reconciliation makes an admitted declaration authoritative.
+The first request waits for a response. Set `interval` to refresh the content;
+HAPTIC uses conditional requests and renders again when the content changes.
+Each controller replica fetches its own copy. New content becomes the accepted
+input only after the complete rendered configuration passes validation.
+Admission checks don't replace the content used by the running configuration.
 
 ### Fetch parameters
 
@@ -301,7 +318,7 @@ The second argument is an options map. All keys are optional:
 
 | Key | Type | Default | Effect |
 |-----|------|---------|--------|
-| `interval` | Go duration string | none | How often the content is re-checked. The first fetch is synchronous regardless — this only governs what happens afterwards. Omit it (or set `"0"`) to fetch once and never re-check. Also accepted as `delay`, the original spelling, which reads like a wait before fetching and never was one; set one or the other, not both. |
+| `interval` | Go duration string | none | Refresh interval after the first fetch. Omit it or set `"0"` to fetch once. `delay` is an alias; don't set both. |
 | `timeout` | Go duration string | `30s` | Per-request timeout. |
 | `retries` | integer | 2 | Retry attempts on a failed request, with a growing delay between attempts. |
 | `critical` | boolean | `false` | Failure mode. With `false`, a failed fetch returns an empty string and rendering continues (a warning is logged). With `true`, a failed fetch aborts the render with an error, like [`fail()`](./template-reference.md#functions-and-filters). |
@@ -310,13 +327,18 @@ Set `critical: true` only when an empty body would produce a dangerously wrong c
 
 A third optional argument supplies authentication: `{"type": "bearer", "token": "..."}`, `{"type": "basic", "username": "...", "password": "..."}`, or `{"type": "header", "headers": {"X-API-Key": "..."}}`. Unknown authentication types fail the render before any request is sent, regardless of `critical`.
 
-Use one set of options and authentication settings for each URL in a render. Two calls for the same URL with different declarations fail the render instead of sharing ambiguous cached content. Calls that repeat the same declaration in one render reuse its exact response. On a later render, changing either declaration invalidates the old accepted body and timer, then fetches a new render-local response. A successful complete validation accepts that response and applies its interval; a failure leaves no accepted body or timer, so the next live reconciliation fetches it again.
+Use the same options and authentication for every call to a URL within one
+render. Conflicting declarations fail the render. Changing a declaration on a
+later render triggers a fresh request; failed validation prevents that response
+from becoming the accepted input.
 
 Response bodies are capped at 10 MiB. A larger response fails the fetch with `response body exceeds maximum size of N bytes` — it isn't truncated — and the limit is fixed with no per-call override. A failed fetch is then handled per the `critical` setting above.
 
 ### Example
 
-This backend denies client IPs in a remotely hosted blocklist. The list refreshes every 5 minutes. `critical: true` stops a failed fetch from silently removing the blocklist:
+This configuration fragment denies client IPs from a blocklist and refreshes it
+every five minutes. Supply your blocklist URL and application backend before
+using it. `critical: true` prevents a failed fetch from removing the blocklist:
 
 ```yaml
 spec:
@@ -342,20 +364,31 @@ spec:
         server s1 10.0.0.1:8080 check
 ```
 
-The playground can't reach external URLs, so this example doesn't run there — deploy it to a cluster to see the fetched content. For fixture-based mocking during validation tests, set per-test `httpResources` directly on the test (`spec.validationTests[].httpResources`, sibling to `fixtures` — not nested inside it); see [CRD Reference](./crd-reference.md). There is no top-level `spec.httpResources` field.
+You can test this without contacting the URL: supply a mocked response in the
+test's `httpResources` field, alongside `fixtures`. See
+[HTTP response fixtures](validation-reference.md#test-structure). There is no
+top-level `spec.httpResources` field.
 
 ## Validating webhook scope
 
-Setting `enableValidationWebhook: true` on an entry registers that kind with the admission webhook, so creates and updates are rendered against overlay stores before being accepted. The controller maps the request's Kubernetes group, version, and kind back to every configured `watchedResources` key for that group, version, and resource tuple. The map key can differ from the Kubernetes plural, and multiple filtered aliases can watch the same tuple. Each alias receives the same selector transition its watcher applies: entering a selector adds the object, leaving it removes the object, and remaining inside updates it.
+Set `enableValidationWebhook: true` on a watch to validate creates and updates
+before Kubernetes accepts them. HAPTIC renders the proposed change against the
+current resources and rejects it if validation fails.
 
-Set the flag only on the kinds you want validated in-band. The default is off to avoid dragging unrelated kinds, such as EndpointSlice churn, through the webhook path. If any alias for a group, version, and resource tuple enables validation, the proposed object is overlaid on every alias for that tuple because all of those stores observe the same API write.
+If several watch entries select the same Kubernetes resource type, HAPTIC applies
+the proposed change to all of them during validation. It adds the object to
+entries whose selectors it now matches and removes it from entries it no longer
+matches. The map keys can differ from the Kubernetes resource's plural name.
+
+The flag defaults to `false`. Enable it for types whose changes you need to
+validate during admission. If any alias enables it, validation includes every
+alias for that resource type.
 
 ## Debounce override
 
-Watchers coalesce change notifications for `100ms` by default. The Reconciler
-adds no timer, but the coordinator combines triggers that arrive while a render
-is running. The deployer's `minDeploymentInterval` separately paces reloads; see
-the [architecture overview](./development/design/architecture-overview.md).
+HAPTIC batches watched-resource changes for `100ms` by default. A render
+already in progress can delay the next change. Reload pacing adds a separate
+delay when HAProxy needs a reload; see [deployment pacing](operations/performance.md#deployment-pacing).
 
 Set `debounceInterval` per watched resource when delayed updates are acceptable.
 For example, coalesce updates to a custom ConfigMap watch for half a second:
@@ -380,7 +413,7 @@ validation error, so check the spelling if the observed delay differs from your 
 
 | Symptom | Likely cause |
 |---------|--------------|
-| `.List()` returns empty | Controller hasn't finished initial sync — check `haptic_reconciliation_total` or `kubectl logs … \| grep "initial sync"` |
+| `.List()` returns empty | Check the watch's resource type and selectors; no matching objects are available to this template |
 | `.Fetch(ns, name)` returns empty for a resource that exists | `indexBy` doesn't match what you passed, or `labelSelector` / `fieldSelector` is filtering it out |
 | OOMKilled on controller | Check [resource sizing](operations/performance.md#controller-resource-sizing) first; then narrow unnecessary watches or use `store: on-demand` for large, rarely read objects |
 | Template rendering slow, many API logs | You're calling `.List()` on an `on-demand` store, or `.Fetch()` consistently missing the cache — profile with `/debug/pprof/profile`, consider `store: full` if the total size is modest |
@@ -390,6 +423,5 @@ validation error, so check the spelling if the observed delay differs from your 
 
 - [Bring-your-own-CRD example](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd) — a runnable, self-validating example: watch a custom CRD, route on it, and write status back, with no Go
 - [CRD Reference](./crd-reference.md#watchedresources) — field-level documentation
-- [Templating Guide — The `resources` Variable](./templating.md#the-resources-variable) — `.List()` / `.Fetch()` / `.GetSingle()` semantics from the template side
+- [Templating Guide — The `resources` Variable](./template-resources.md#the-resources-variable) — `.List()` / `.Fetch()` / `.GetSingle()` semantics from the template side
 - [Performance](./operations/performance.md) — deciding when to narrow the watch versus scale the controller
-- `pkg/k8s` README — store implementation details

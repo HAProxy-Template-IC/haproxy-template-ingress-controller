@@ -12,20 +12,69 @@ All templates have access to the following top-level variables:
 | `resources` | map of stores | Kubernetes resources indexed per `watchedResources` config — entries are wrappers exposing `.List()` / `.Fetch(keys...)` / `.GetSingle(keys...)` / `.APIVersion()` (the group/version this resource is actually watched at), plus the type-carrying `.T` |
 | `controller` | map of stores | Controller-managed stores; currently only `controller.haproxy_pods` for the discovered HAProxy pod set |
 | `pathResolver` | object | Resolves filenames to HAProxy paths — see [`pathResolver`](#pathresolver) |
-| `capabilities` | map (bool values) | HAProxy feature flags, `snake_case` keys (for example `capabilities.supports_crt_list`). Derived from the **lowest HAProxy version in the fleet**, as each pod's agent reports it, so a render is never ahead of the pod that would refuse it. Before the first pod is discovered they come from the controller image's own HAProxy binary, which the chart pins to the same `haproxyVersion`. Use for `{% if capabilities.supports_crt_list %}…{% end %}` branches — a mistyped key is silently falsy, not an error. |
-| `currentConfig` | server index (or nil) | The servers the running configuration has: `currentConfig.ServerIndex["<backend>"]["<server>"].Address` and `.Port` (a pointer — check it for nil before you read it). **Nil on first deployment** — guard with `{% if !isNil(currentConfig) %}`. Used for slot-preserving updates. |
-| `currentFiles` | `map[string]string` | The last successfully validated map, general-file, and crt-list output, keyed by base filename. Reconciliation advances it synchronously after validation; admission and other all-replica validation use the latest completely committed `HAProxyCfg` auxiliary reference set, including set metadata on referenced certificate Secrets. Secret data isn't exposed. If a legacy publication changes without a set ID, rendering fails until a complete set is committed, including on a leader with locally accepted output. After a set-ID publication is accepted, a missing set ID also fails instead of restoring legacy mode. Within a render the map is always non-nil (empty on first deployment), so index it without a guard and branch on `len(currentFiles) == 0`. Controller-set; `extraContext.currentFiles` can't override it. |
+| `capabilities` | map (bool values) | Feature flags for the lowest HAProxy version in the fleet. See [version checks](#check-haproxy-features). |
+| `currentConfig` | server index (or nil) | The servers the running configuration has: `currentConfig.ServerIndex["<backend>"]["<server>"].Address` and `.Port` (a pointer — check it for nil before you read it). **Nil on first deployment** — guard with `{% if !isNil(currentConfig) %}`. |
+| `currentFiles` | `map[string]string` | Last validated map, general-file, and crt-list contents, keyed by base filename. Empty on first deployment; excludes Secret data. See [previous output](#read-previous-output). |
 | `dataplane` | `config.Dataplane` block | The CRD's `spec.dataplane` block — the agent port, timeouts, and the auxiliary paths |
 | `shared` | `*SharedContext` | Thread-safe compute-once cache for expensive computations (`shared.ComputeIfAbsent(key, factory)` + `shared.Get(key)`; no `Set` — prevents racy check-then-act patterns) |
 | `templateSnippets` | list | Names of all available template snippets — useful for dynamic `render_glob` patterns |
 | `runtimeEnvironment` | object | Runtime info exposed by the controller (for example `runtimeEnvironment.GOMAXPROCS`) |
-| `fileRegistry` | object | Lets templates dynamically register auxiliary files at render time via `fileRegistry.Register("file"/"cert"/"map"/"crt-list"/"ca-file", filename, content)`; returns the resolved path. Used by the SSL, haproxytech, and haproxy-ingress libraries to materialise CA bundles, client certs, and SSL crt-lists from Secrets. A `"file"` registration takes an optional fourth argument `reloadOnPush` (default `true`); pass `false` for a file only a sidecar reads, so a content change deploys without reloading HAProxy. |
+| `fileRegistry` | object | Register generated files and get their deployed paths. See [file registration](#register-generated-files). |
 | `http` | object | HTTP fetcher for `http.Fetch("https://example.com/...")` — see [Watching Resources — HTTP Resources](./watching-resources.md#http-resources) for the auto-registration and refresh mechanism |
 | `extraContext` | map | The full `templatingSettings.extraContext` map. Read a key with `extraContext.key` or `extraContext["key"]` — see [Custom Template Variables](./templating.md#custom-template-variables). |
-| `renderMode` | string | Why this render is running: `"admission"` for a webhook dry-run of a *proposed* change, or `"reconcile"` for the live config of already-present state (also the value the daemon load gate and `haptic validate` use). Branch on it so a validation check can `fail()` a proposed change under the webhook but only warn (via [`recordEvent()`](#recordevent)) during a live reconcile — a `fail()` on live state aborts the whole config render. The controller always sets it; a user's `extraContext.renderMode` can't override it. |
-| `admissionSubject` | map | The watched object under admission review: `{"store": "<key>", "stores": {"<key>": true}, "namespace": ..., "name": ...}`, or an empty map on reconcile renders, config-proposal renders, and bulk overlays. `stores` contains every `watchedResources` alias whose contents the request changes; `store` is set only when that set has one entry. Match an alias with `admissionSubject \| dig("stores", alias) \| fallback(false)`. Combine with `renderMode` to `fail()` only for the admitted object, so one existing bad resource can't deny unrelated admissions. Controller-set; a user's `extraContext.admissionSubject` can't override it. |
+| `renderMode` | string | `"admission"` for a proposed resource change; `"reconcile"` for live state, config loading, and `haptic validate`. See [admission checks](#limit-a-check-to-the-admitted-resource). |
+| `admissionSubject` | map | Identifies the watched resource under admission review. Empty outside single-resource admission. See [admission checks](#limit-a-check-to-the-admitted-resource). |
 
-Note: the controller doesn't inject a `haproxyVersion` variable on its own. The Helm chart populates `templatingSettings.extraContext.haproxyVersion` from its `haproxyVersion` value, so chart-deployed templates read it as `{{ extraContext.haproxyVersion }}`. If you bypass the chart, set the value yourself in `templatingSettings.extraContext.haproxyVersion`. For feature checks prefer `capabilities.*` flags, which follow the fleet's lowest HAProxy version rather than a value the chart happens to set.
+### Check HAProxy features
+
+Use `capabilities` for feature checks, for example
+`{% if capabilities.supports_crt_list %}…{% end %}`. Keys use `snake_case`;
+a misspelled key evaluates to false rather than raising an error.
+
+The flags reflect the lowest HAProxy version reported by the fleet. Before pod
+discovery, they reflect the controller image's HAProxy binary. The chart selects
+matching controller and HAProxy versions through `haproxyVersion`.
+
+The chart also sets `extraContext.haproxyVersion`. If you deploy without the
+chart, set that value yourself when your templates need it. Prefer `capabilities`
+for feature checks, since a fleet can temporarily contain mixed versions.
+
+### Read previous output
+
+Use `currentFiles["filename"]` to read a previously validated auxiliary file.
+The map is always non-nil; `len(currentFiles) == 0` covers the first deployment.
+The controller sets this variable; `extraContext.currentFiles` can't override it.
+
+The files come from the last complete, validated configuration. If that
+published set is incomplete, rendering fails until it's available.
+
+### Register generated files
+
+`fileRegistry.Register(kind, filename, content)` registers a file during rendering
+and returns `(path, error)`. Handle the error before using the path. `kind` can be `"file"`, `"cert"`, `"map"`,
+`"crt-list"`, or `"ca-file"`. For example, the bundled libraries use it to
+assemble CA bundles and client certificates from Secrets.
+
+For `"file"`, an optional fourth argument, `reloadOnPush`, defaults to `true`.
+Pass `false` only for a file read by a sidecar rather than HAProxy; a content
+change then deploys without reloading HAProxy.
+
+### Limit a check to the admitted resource
+
+Combine `renderMode` with `admissionSubject` when a rule should reject only the
+resource being created or edited. A `fail()` against live state aborts the whole
+render and can prevent unrelated changes from deploying. Use
+[`recordEvent()`](#recordevent) when you need to report a live violation without
+blocking the render.
+
+`admissionSubject` contains `namespace`, `name`, and a `stores` map of affected
+`watchedResources` aliases. Check an alias with
+`admissionSubject | dig("stores", alias) | fallback(false)`. The `store` field
+is set only when exactly one alias is affected.
+
+The map is empty during reconciliation, configuration proposals, and bulk overlays.
+Both `admissionSubject` and `renderMode` are controller-set variables;
+`extraContext` can't override them.
 
 ## Functions and filters
 
@@ -33,10 +82,10 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 
 | Function | Purpose | Example |
 |----------|---------|---------|
-| `fallback(value, default)` | Return `default` if `value` is nil. Empty strings and zeroes pass through — only `dig()` on optional typed fields normalises zero values to nil first | `fallback(svc.port.number, 80)` |
+| `fallback(value, default)` | Return `default` if `value` is nil. Empty strings and zeroes pass through — only `dig()` on optional typed fields normalises zero values to nil first | `fallback(dig(settings, "port"), 80)` |
 | `dig(obj, "k1", "k2", ...)` | Walk a nested map / typed struct without nil-checking each level (navigates JSON tags on typed structs) | `dig(ing, "metadata", "annotations")` |
-| `toSlice(v)` | Coerce `any` to `[]any` (safe to range over even if nil) | `for _, r := range toSlice(ing.spec.rules)` |
-| `to_str_map(v)` | Copy a string-keyed map to `map[string]string`; each value must be a deterministic scalar | `for k, v := range route.Metadata.Labels \| to_str_map()` |
+| `toSlice(v)` | Coerce `any` to `[]any` (safe to range over even if nil) | `for _, r := range toSlice(dig(item, "rules"))` |
+| `to_str_map(v)` | Copy a string-keyed map to `map[string]string`; each value must be a deterministic scalar | `for k, v := range route.metadata.labels \| to_str_map()` |
 | `shard_slice(items, idx, n)` | Type-preserving split of a slice into `n` shards, returning shard `idx` — input element type is kept | `shard_slice(gateways, i, totalShards)` |
 | `tostring(v)` | Convert nil, a boolean, a finite number, a string, or a pointer to one of those scalars to text. Composite values and custom formatting methods fail the render; use field access or `toJSON()` instead | `name = tostring(dynamicName)` |
 | `toint(v)`, `tofloat(v)` | Numeric conversions from `any` | `port = toint(annotation)` |
@@ -45,7 +94,7 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `merge(a, b)` | New map combining `a` and `b` (b wins on conflict) | `merge(defaults, overrides)` |
 | `toLower(s)` / `toUpper(s)` | Case conversion | `host = toLower(rule.host)` |
 | `replace(s, old, new)`, `split(s, sep)`, `join(slice, sep)`, `strip(s)`, `trim(s, cutset)`, `hasPrefix(s, p)`, `hasSuffix(s, p)` | String operations (`strip` trims whitespace; `trim` takes an explicit cutset) | `join(items, ", ")` |
-| `first_seen(prefix, keys...)` | Returns `true` only the first time the key tuple is seen — for deduplicating | `if first_seen("backend", svc.namespace, svc.name)` |
+| `first_seen(prefix, keys...)` | Returns `true` only the first time the key tuple is seen — for deduplicating | `if first_seen("backend", svc.metadata.namespace, svc.metadata.name)` |
 | `sanitize_regex(s)` | Escape regex metacharacters in user input | `sanitize_regex(annotation)` |
 | `regex_search(s, pattern)` | True when the RE2 pattern matches anywhere in the string. Both arguments are coerced with `tostring()` first, and a pattern that doesn't compile aborts the render | `{% if regex_search(name, "ssl.*passthrough") %}` |
 | `semver_gte(version, "3.3")` | Compare a semver string (major.minor) against a target | `if semver_gte(extraContext.haproxyVersion, "3.3")` (the chart auto-populates `extraContext.haproxyVersion`; outside the chart, set it yourself via `templatingSettings.extraContext.haproxyVersion` — see [Custom Template Variables](./templating.md#custom-template-variables)) |
@@ -60,7 +109,7 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `indent(s, n)` | Indent lines by N spaces (first and blank lines excluded) | `{{ render "snippet" \| indent(4) }}` |
 | `debug(v, label)` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
 | `toJSON(v)` | Convert a value to JSON; an unsupported value fails the render | `{{ myMap \| toJSON() }}` |
-| `basename(path)` | Filename portion of a path, like Unix `basename` | `{%- var p, _ = fileRegistry.Register("map", n, c) %}{{ basename(p) }}` |
+| `basename(path)` | Filename portion of a path, like Unix `basename` | `basename("/etc/haproxy/maps/hosts.map")` |
 | `namespace(init)` | Mutable `map[string]any` for accumulating state across loop iterations | `{%- var acc = namespace(map[string]any{"n": 0}) %}` |
 | `isNil(v)` | Nil check that also catches a typed nil pointer boxed in an `any` | `{% if !isNil(currentConfig) %}` |
 | `coalesce(value, default)` | First non-nil of the two — the plain-call spelling of `fallback` | `coalesce(annotation, "default")` |
@@ -86,27 +135,24 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 
 ### Collection pipelines
 
-Type-preserving stages, chained with `|`. Each keeps its input's element type, so typed field access still resolves at the last stage and a misspelled field fails the config load instead of rendering an empty file. Predicates are closures — write them long-hand (`func(e T) bool { … }`) or as `x => expr` with both types inferred. See [Templating — Collection pipelines](./templating.md#collection-pipelines) for the guided version.
+Type-preserving stages, chained with `|`. Each stage retains type information for its result, so typed field access works in later stages and misspelled fields fail compilation. Predicates are closures — write them long-hand (`func(e T) bool { … }`) or as `x => expr` with both types inferred. See [Templating — Collection pipelines](./template-resources.md#collection-pipelines) for the guided version.
 
 | Function | Purpose | Example |
 |----------|---------|---------|
-| `map(items, fn)` | One output per input | `pods \| map(p => p.Metadata.Name)` |
-| `filter(items, pred)` | Keep the elements the predicate accepts | `routes \| filter(r => r.Spec.Tls)` |
-| `reject(items, pred)` | Drop them instead, so the call site reads as a positive statement | `eps \| reject(e => e.TargetRef.Name == "")` |
-| `flat_map(items, fn)` | Map to slices and concatenate, flattening exactly one level | `slices \| flat_map(s => s.Endpoints)` |
+| `map(items, fn)` | One output per input | `pods \| map(p => p.metadata.name)` |
+| `filter(items, pred)` | Keep the elements the predicate accepts | `ingresses \| filter(i => len(i.spec.tls) > 0)` |
+| `reject(items, pred)` | Drop them instead, so the call site reads as a positive statement | `eps \| reject(e => e.targetRef.name == "")` |
+| `flat_map(items, fn)` | Map to slices and concatenate, flattening exactly one level | `slices \| flat_map(s => s.endpoints)` |
 | `unique(items)` | First occurrence of each distinct element, input order preserved | `hosts \| unique()` |
-| `unique_by(items, key)` | First element per key. `key` is a closure, or an attribute path for `any`-shaped data | `eps \| unique_by(e => e.Addr)` |
+| `unique_by(items, key)` | First element per key. `key` is a closure, or an attribute path for `any`-shaped data | `hosts \| unique_by(h => toLower(h))` |
 | `group_by(items, key)` | Bucket by string key, input order preserved within each bucket. Same two key forms. Iterate the result through `keys()` — Go map order isn't stable, and a reordered render reads as a change to the controller | `ingresses \| group_by("metadata.namespace")` |
 | `sort_by(items, criteria)` | Sort by JSONPath expressions — see [`sort_by` modifiers](#sort_by-modifiers) | `routes \| sort_by([]string{"$.priority:desc"})` |
 | `sort_by(items, cmp)` | Sort with a `func(a, b T) int` comparator (Go's `cmp` convention: negative when `a` sorts first), for orderings the criteria language can't state. Stable, like the criteria form | `routes \| sort_by(func(a, b Route) int { return a.Rank - b.Rank })` |
 
 `sort_by` is the one stage that returns `(value, error)`. As a pipe stage that's invisible — the pipe keeps only the first result, so `x | sort_by(…)` assigns to one variable. A **direct** call returns both and needs two: `var rows, err = sort_by(items, criteria)`.
 
-Unlike the Scriggo builtins they replace, the attribute-path form of `unique_by` and `group_by` splits a dotted path into separate `dig` keys, so `"spec.hostname"` navigates two levels instead of looking for one key literally named `spec.hostname`.
-
-The compiler converts chains of `map`, `filter`, `reject`, and `flat_map` into
-loops. Other stages call back into the template engine for each element; compare
-them with an explicit loop when processing large collections.
+The attribute-path form of `unique_by` and `group_by` navigates dotted paths:
+`"metadata.namespace"` reads the `namespace` field inside `metadata`.
 
 ### Governance helpers
 
@@ -196,16 +242,13 @@ HAPTIC has two regex surfaces, and they use different engines:
 
 ### Emitting warnings
 
-There is no `warn()` function. `fail(msg)` is the only helper that interrupts a render, and it aborts outright — the message surfaces in validation tests and admission webhooks. To emit a non-fatal warning, write an HAProxy comment line yourself and let the render continue:
+Use [`recordEvent()`](#recordevent) to publish a Kubernetes Warning Event
+without aborting the render. Use `fail(message)` when invalid input must stop
+configuration generation.
 
-```go
-{%- var region = ingress.metadata.annotations["haptic.example.com/region"] %}
-{%- if region == "" %}
-# WARNING: {{ ingress.metadata.name }} has no haptic.example.com/region annotation; using default
-{%- end %}
-```
-
-The comment travels into the deployed config, where it stays visible in the rendered `HAProxyCfg` resource and HAProxy's own config dump. `debug(value, label)` is the other non-fatal option — it renders a value as a JSON comment for troubleshooting.
+For troubleshooting a template value, `debug(value, label)` writes a JSON
+comment into the generated configuration. The comment is visible in the
+rendered `HAProxyCfg`, so don't use it for secrets.
 
 ## `pathResolver`
 
@@ -217,21 +260,27 @@ The comment travels into the deployed config, where it stays visible in the rend
 {# Map files — resolves to maps/host.map #}
 use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
 
-{# General files — resolves to general/504.http (chart default GeneralStorageDir basename) #}
+{# General files — resolves to general/504.http #}
 errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
 
 {# SSL certificates — resolves to ssl/example_com.pem (dots in cert/crt-list names are sanitized to _) #}
 bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 
-{# crt-list files — resolves to general/cert-list.txt (CRTListDir defaults to GeneralStorageDir basename) #}
+{# crt-list files — resolves to general/cert-list.txt #}
 bind *:443 ssl crt-list {{ pathResolver.GetPath("cert-list.txt", "crt-list") }}
 ```
 
-By default `GetPath` returns paths *relative* to HAProxy's `default-path` directive. The chart's `base` template library renders `default-path origin {{ pathResolver.GetBaseDir() }}` in the global section (for example `default-path origin /etc/haproxy` in production), which tells HAProxy to resolve relative paths against that explicit base directory. The controller writes maps, certs, and general files under the same base, so the relative paths line up at runtime; the validation pipeline rewrites just the `default-path origin` argument to a per-call temp directory so the same rendered config validates against a sandbox tree of identical shape. If you replace the base library, keep that directive (or render an absolute path yourself) — without it HAProxy resolves the relative paths from its own working directory and the file lookups fail.
+`GetPath` returns paths relative to HAProxy's `default-path`. The bundled base
+library sets this automatically. If you replace that library, include the
+following directive in your `global` section so HAProxy can locate the files:
+
+```go
+default-path origin {{ pathResolver.GetBaseDir() }}
+```
 
 ## Status-patch functions
 
-Templates register status patches with `statusPatch()`; the controller applies them to the resource's `/status` subresource via Server-Side Apply (SSA) after each reconciliation phase. The [Templating Guide — Status Patches](./templating.md#status-patches) walks through the pattern with runnable examples.
+Templates register status patches with `statusPatch()`; the controller applies them to the resource's `/status` subresource via Server-Side Apply (SSA) after each reconciliation phase. The [Templating Guide — Status Patches](./template-status.md) walks through the pattern with runnable examples.
 
 ### `statusPatch()`
 
@@ -253,7 +302,8 @@ Registers a status patch for a Kubernetes resource with outcome-keyed variants. 
 | `renderFailed` | When a later rendering phase fails |
 | `deployFailed` | When HAProxy deployment fails |
 
-Templates render all variants upfront. The controller selects the appropriate variant based on the pipeline outcome. UID and resource version prevent cached status from one resource revision from standing in for another. Offline and legacy objects may omit them; the patch remains valid, but missing lineage can't prove a reapply is redundant.
+Templates render all variants upfront. The controller selects the variant for
+the current outcome; pass the original watched resource to preserve its identity.
 
 ### `condition()`
 
@@ -269,7 +319,7 @@ Creates a `metav1.Condition`-compatible map.
 
 Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet.
 
-**Parameters:** `existingConditions` (the resource's existing conditions list — navigate to it yourself with `dig(resource, "status", "conditions")`, so the helper stays agnostic to where a given resource keeps its conditions), `type`, `status`.
+**Parameters:** `existingConditions` (the resource's existing conditions list), `type`, `status`.
 
 For resources with nested condition arrays (for example, Gateway API Route `parents[]`), navigate to the parent's conditions first:
 
@@ -296,18 +346,33 @@ object and inspect the resulting Event with `kubectl describe <kind> <name>` or
 
 ```go
 {% recordEvent(ingress,
-    "RouteConflict", "host \"" + rule.Host + "\" path \"" + path.Path + "\" is already served by another Ingress") %}
+    "RouteConflict", "host \"" + rule.host + "\" path \"" + path.path + "\" is already served by another Ingress") %}
 ```
 
 The Event is a side-effect only — the call renders nothing. Identical `(resource, reason, message)` tuples emitted during one render collapse into a single Event. The controller re-emits on every reconcile while the condition holds, so the standard Kubernetes Event aggregation keeps it fresh and it ages out (default TTL ~1 hour) once the template stops recording it. The bundled Ingress library uses this to surface [route conflicts](./libraries/ingress.md#conflicting-routes-the-oldest-ingress-wins) on the losing Ingress.
 
-## Typed access internals
+<a id="typed-access-internals"></a>
 
-!!! note "Background"
-    This section documents how typed field names are generated — background for chart authors and contributors. Day-to-day usage, including the field-name table and the typed-vs-untyped decision rule, lives in [Templating — Typed Resource Access](./templating.md#typed-resource-access).
+## Typed resource types
 
-`GoFieldName` in `pkg/k8s/typegen/converter.go` capitalizes the first rune of the
-JSON field name and leaves the rest unchanged. For example, `apiVersion` becomes
-`ApiVersion`, not `APIVersion`.
+With a schema loaded, `resources.<name>.List()` and `.Fetch()` return
+`[]*resources.<name>.T`; `.GetSingle()` returns `*resources.<name>.T` or `nil`.
+A top-level variable named `<name>` also exposes the typed resource list.
+Use these types in macros, functions, slices, or type switches:
 
-See the architecture decision record [`ADR-0010` — Typed Watched Resources](development/adr/0010-typed-watched-resources.md) for the design rationale and the alternatives considered.
+```scriggo
+{% macro GatewayName(gateway *resources.gateways.T) %}
+{{ gateway.metadata.name }}
+{% end %}
+```
+
+Nested types use the field path: `resources.gateways.SpecListeners` is the
+listener type and `resources.endpoints.endpoints` is the EndpointSlice endpoint
+type. The watch must have a schema defining that path.
+
+JSON field names and generated Go names both work: `gateway.metadata.name`
+and `gateway.Metadata.Name`. Generated names capitalize the first character;
+`apiVersion` becomes `ApiVersion`, not `APIVersion`. Non-letter/digit characters
+become underscores. Prefer JSON field names in your templates.
+
+For examples and schema setup, see [Read resources in templates](template-resources.md).

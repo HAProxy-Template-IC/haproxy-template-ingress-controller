@@ -403,7 +403,7 @@ They live in `pkg/dataplane/agent/api/limits.go` and are asserted at both ends.
 
 The agent exports its own metrics on `--metrics-listen`, scraped by the chart's
 PodMonitor. The controller's own view of the same applies is in
-[Monitoring](../operations/monitoring.md#deployment-metrics); these are the
+[Monitoring](../operations/metrics-reference.md#deployment-metrics); these are the
 per-pod facts it can't see.
 
 | Metric | Labels | Meaning |

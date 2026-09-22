@@ -237,7 +237,7 @@ _migrationCoverage:
       # --- HSTS ---
       haproxy-ingress.github.io/hsts:
         status: different
-        note: By default the header is emitted only when the Ingress sets `hsts` to `"true"`, whereas jcmoraisjr/haproxy-ingress enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching that default); a per-Ingress `hsts` annotation still overrides the value for its hosts.
+        note: By default the header is emitted only when the Ingress sets `hsts` to `"true"`, whereas jcmoraisjr/haproxy-ingress enables HSTS globally by default. Set extraContext.tls.hsts.enabled=true to send HSTS on all TLS hosts (matching that default); a per-Ingress `hsts` annotation still overrides the value for its hosts.
         doc: annotation-support
       haproxy-ingress.github.io/hsts-max-age:
         status: supported

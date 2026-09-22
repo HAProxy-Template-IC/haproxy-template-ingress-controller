@@ -1,10 +1,4 @@
-/* Interactive HAPTIC playground embeds for the docs sites.
- *
- * A ".pg-embed" block renders as a facade (title + the shown config + a "Run
- * live" button); clicking swaps in an <iframe> of the playground in ?embed=1
- * mode, lazy-loaded so the wasm only downloads when the reader engages. Paired
- * with playground-embed.js. Styling stays theme-aware (mkdocs-material
- * light/dark) via var(--md-*) tokens with sensible fallbacks. */
+/* Documentation example previews and their live editor dialogs. */
 
 .pg-embed {
   border: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
@@ -252,31 +246,58 @@
   background: var(--md-code-bg-color, #0d1117);
 }
 .pg-embed:not(.pg-running) .pg-frame { display: none; }
-.pg-embed.pg-running .pg-embed-code { display: none; }
+.pg-embed.pg-running .pg-embed-code,
+.pg-embed.pg-running .pg-embed-placeholder { display: none; }
 
-/* Running: break the embed out of the article column. The playground's phone
- * breakpoint is 900px and the docs column is ~700-750px, so an in-column iframe
- * renders the stacked phone layout squeezed into the data-height box — tiny
- * editors, double scrolling. Growing to min(96vw, 1240px) puts the iframe above
- * that breakpoint (proper side-by-side editor | output), and the height grows
- * to working size (the author's data-height acts as a minimum via --pg-hmin).
- * Centered on the viewport with the full-bleed margin trick; z-index above the
- * mkdocs sidebars but below the sticky header (4), so scrolling stays sane. */
-.pg-embed.pg-running {
-  position: relative;
-  width: min(96vw, 1240px);
-  margin-left: calc(50% - min(48vw, 620px));
-  z-index: 3;
-  box-shadow: 0 18px 48px -18px rgba(0, 0, 0, 0.35);
+/* Keep the editor in the browser's top layer, independent of article layout. */
+.pg-dialog {
+  box-sizing: border-box;
+  position: fixed;
+  inset: 2vh 2vw;
+  width: 96vw;
+  height: 96vh;
+  height: 96dvh;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  margin: auto;
+  border: 1px solid #444c56;
+  border-radius: 8px;
+  background: #22272e;
+  color: #adbac7;
 }
-.pg-embed.pg-running .pg-frame {
-  height: max(var(--pg-hmin, 460px), min(76vh, 880px));
+.pg-dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+.pg-modal-open { overflow: hidden; }
+.pg-dialog .pg-embed.pg-running {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  background: #22272e;
+  overflow: auto;
 }
-@media (max-width: 960px) {
-  /* Below the playground's own breakpoint the panes stack regardless, so give
-     them room in the only dimension left: height. */
-  .pg-embed.pg-running { width: 100%; margin-left: 0; }
-  .pg-embed.pg-running .pg-frame { height: max(var(--pg-hmin, 460px), 84vh); }
+.pg-dialog .pg-embed-head { flex: 0 0 auto; }
+.pg-dialog .pg-frame { flex: 1 0 45%; min-height: 0; }
+.pg-dialog .pg-guide {
+  flex: 0 0 auto;
+  padding: .55rem .9rem;
+  font-size: .72rem;
+  line-height: 1.5;
+}
+.pg-dialog .pg-guide p { margin: .25rem 0; }
+.pg-dialog .pg-guide .pg-task { padding: 0; border: 0; background: none; color: inherit; }
+.pg-dialog .pg-guide-scope { color: #9da7b3; font-size: .65rem; }
+.pg-dialog .pg-guide strong { color: #fff; }
+.pg-dialog details { flex: 0 0 auto; }
+@media (max-width: 600px) {
+  .pg-dialog { inset: 0; width: 100vw; height: 100dvh; border-radius: 0; }
+  .pg-dialog .pg-embed-head { flex-wrap: wrap; }
+  .pg-dialog .pg-embed-mark,
+  .pg-dialog .pg-embed-diff,
+  .pg-dialog .pg-embed-head::before { display: none; }
+  .pg-dialog .pg-embed-title { flex: 1 1 50%; font-size: .7rem; }
+  .pg-dialog .pg-embed-spacer { display: none; }
 }
 
 /* "Close" returns from the running playground to the clean static example. */

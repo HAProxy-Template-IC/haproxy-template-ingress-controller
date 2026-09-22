@@ -1,18 +1,15 @@
 # Supported HAProxy configuration
 
-HAPTIC renders HAProxy configuration as text and deploys it through the HAPTIC
-agent in each HAProxy pod. Your templates can emit directives supported by the
-HAProxy version you run. Admission and config loading run `haproxy -c` synchronously. During reconciliation,
-auxiliary-file validators run before dispatch, while the HAProxy render check
-runs alongside deployment. The pod's own HAProxy binary must accept a reload.
-See [Render validation](./operations/debugging.md#haproxy-refused-the-config-the-fleet-was-given-configvalidatedfalse)
-for refusal and recovery behavior.
+Your templates can generate any directive supported by the HAProxy version you
+run. How a change reaches the running proxy depends on the directive: some
+changes use the Runtime API, while others require a reload. Use the tables below
+to check what to expect. To preview a specific change, use
+[`haptic diff`](operations/debugging.md#common-recipes).
 
-The bundled libraries describe backends, servers, maps, and certificates to the
-controller so it can update them through the HAProxy Runtime API. Configuration
-written outside those helpers still deploys, but changes to it require a reload.
-See [Reload-free routing](./libraries/reload-free.md) when writing your own
-libraries.
+The bundled libraries describe backends, servers, maps, and certificates to
+HAPTIC so it can update them at runtime. Custom templates can use the same
+[helpers](libraries/reload-free.md). Configuration written outside those helpers
+still deploys, but changes to it require a reload.
 
 ## Reload behavior
 
@@ -105,6 +102,11 @@ Templates can emit `listen` sections. The bundled libraries use separate
 Changes to a `listen` section require a reload.
 
 ## HAProxy versions and validation
+
+Admission and configuration loading run `haproxy -c` before accepting a change.
+During reconciliation, auxiliary-file validators run before deployment, while
+the HAProxy render check runs alongside it. The pod's own HAProxy binary must
+accept a reload. See [validation failures and recovery](operations/debugging.md#haproxy-refused-the-config-the-fleet-was-given-configvalidatedfalse).
 
 Use matching HAProxy versions for the validator and the deployed pods. The chart's
 `haproxyVersion` value selects both. Directives unavailable in that version fail

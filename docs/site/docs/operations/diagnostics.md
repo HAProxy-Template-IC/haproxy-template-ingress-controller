@@ -1,8 +1,12 @@
 # Diagnose a HAPTIC fleet
 
+`haptic doctor` is available in development builds after `0.2.0-alpha.3`;
+it isn't included in that release or earlier versions. For those installations,
+use the [pod and log checks](../troubleshooting.md).
+
 Run `haptic doctor` from a machine with cluster access to check configuration
 validation, controller phases, and deployment state on every current HAProxy pod.
-Use a HAPTIC binary from the same release as the controller.
+[Install the CLI](../cli.md) from the same release or development build as the controller.
 
 ## Collect a report
 
@@ -12,9 +16,8 @@ Use a HAPTIC binary from the same release as the controller.
    haptic doctor --namespace haptic
    ```
 
-   The command discovers the controller debug port and reads each agent's local
-   state with file verification. It exits with status 1 when a check fails or
-   required evidence is unavailable. Historical failure events remain in the
+   An exit status of 0 means the required checks passed. Status 1 means a check
+   failed or required evidence was unavailable. Historical failure events remain in the
    report even after recovery; they don't make the current fleet unhealthy.
 
 2. Save a support bundle:
@@ -39,8 +42,7 @@ Use a HAPTIC binary from the same release as the controller.
    IDs. These identifiers can reveal information about your infrastructure.
    Reports omit Secret values, rendered configuration, templates, logs, event
    payloads, arbitrary error messages, environment variables, and kubeconfig
-   credentials. Collection reads configuration and agent responses in memory;
-   only the listed fields reach the report or bundle.
+   credentials.
 
 ## Select another installation
 
@@ -64,13 +66,8 @@ and desired-versus-deployed checksums and plan IDs. `complete` records whether
 all required observations were available. Missing permissions, endpoints, or
 library revisions produce an incomplete report; they don't imply health.
 
-The published checksum covers the complete rendered configuration and auxiliary
-files. Agent file digests describe individual files. The command compares the
-published checksum with deployment status and compares each pod's UID and plan
-IDs with that agent's state.
-
-Collection isn't an atomic snapshot. A reconciliation or rolling update can
-change state between reads. For a mismatch, wait for reconciliation to finish,
+A reconciliation or rolling update can change state while the report is
+collected. For a mismatch, wait for reconciliation to finish,
 then rerun the command. Persistent findings identify the pod and a next action.
 
 Agent protocol or operation mismatches appear as warnings when the controller
@@ -108,7 +105,7 @@ haptic doctor --namespace haptic --timeout 5m \
 ## Investigate private details
 
 Use the reported pod and correlation ID with the
-[debug server](debugging.md#event-search-debugevents), or inspect that pod's logs
+[debug server](../development/debug-endpoints.md#event-search-debugevents), or inspect that pod's logs
 and `haptic agent state --verify` output. These sources can contain configuration
 contents, internal addresses, and application data. Keep them private and review
 specific excerpts before sharing them.

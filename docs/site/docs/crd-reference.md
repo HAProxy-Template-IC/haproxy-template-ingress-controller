@@ -1,11 +1,13 @@
 # HAProxyTemplateConfig CRD reference
 
-## Overview
+<a id="overview"></a>
 
 An `HAProxyTemplateConfig` defines the watched resources, templates, deployment
 settings, and validation tests for one controller. Reference reusable content
 through [`libraryRefs`](#libraryrefs) to [`HAProxyTemplateLibrary`](#haproxytemplatelibrary)
-objects. The Helm chart uses one library object per enabled template library.
+objects. The Helm chart creates these resources for you. Put persistent changes in
+`controller.config` in your Helm values; use this reference to look up the fields
+inside that configuration.
 
 **API Group**: `haproxy-haptic.org`
 **API Version**: `v1alpha1`
@@ -14,11 +16,14 @@ objects. The Helm chart uses one library object per enabled template library.
 
 Templates can read any configured resource type, including your own custom resources.
 
-▶ [Open the custom-CRD example in the playground](/playground/?preset=crd){target=_blank} — HAPTIC templating any resource, not just Ingress.
+[Try the custom-resource example](/playground/?preset=crd){target=_blank} to generate
+a configuration from your own resource types.
 
 ## Basic example
 
-Run the whole custom resource in your browser to watch it render to a minimal haproxy.cfg.
+This minimal configuration shows how watches and a template fit together.
+Click **Run live** to edit it and inspect `haproxy.cfg`; it doesn't define a route
+to an application.
 
 <div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs" data-title="A minimal HAProxyTemplateConfig" data-height="440">
 
@@ -58,7 +63,9 @@ spec:
 
 ## Spec fields
 
-The three fields the apiserver requires come first (`podSelector`, `watchedResources`, and a `haproxyConfig` — inline or supplied by a `libraryRefs` entry), followed by `credentialsSecretRef`, the template entries, and the operational tuning fields.
+The API server requires `podSelector`, at least one `watchedResources` entry,
+and `haproxyConfig` supplied inline or through `libraryRefs`. Other fields
+control credentials, output files, validation, and deployment behavior.
 
 ### `credentialsSecretRef`
 
@@ -67,14 +74,14 @@ Names the Secret holding the agent credentials. **Optional** — the schema does
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `name` | string | Yes | — |
-| `namespace` | string | No | The config's namespace |
+| `namespace` | string | No | Unused; the controller uses its configured Secret namespace |
 
 ```yaml
 credentialsSecretRef:
   name: haproxy-credentials
 ```
 
-The Secret contains `dataplane_username` and `dataplane_password` for the explicit
+The referenced Secret contains `dataplane_username` and `dataplane_password` for the explicit
 legacy HTTP transport. The default controller-to-agent connection uses separate
 mutual TLS identities. See [credentials](./operations/security.md#credentials).
 
@@ -106,7 +113,7 @@ More than one key can target the same Kubernetes group, version, and resource tu
 | `apiVersions` | `[]string` | Exactly one of `apiVersion` / `apiVersions` | — |
 | `optional` | bool | No | `false` |
 | `resources` | string | Yes | — |
-| `indexBy` | `[]string` | Optional in the schema, required in practice | — (at least one expression; `config.ValidateStructure` rejects a merged config whose watched resource declares none, so an empty list is refused at config load rather than at `kubectl apply`) |
+| `indexBy` | `[]string` | Required at config load | At least one indexing expression |
 | `labelSelector` | string | No | `""` (equality-only, `"k=v[,k=v]"`; set-based syntax not supported) |
 | `fieldSelector` | string | No | `""` (client-side JSONPath equality, `"field.path=value"`; matches any field) |
 | `store` | string (`full` / `on-demand`) | No | `full` |
@@ -146,10 +153,10 @@ watchedResources:
 Rules:
 
 - `apiVersion` and `apiVersions` are mutually exclusive; exactly one must be set.
-- A **required** entry (no `optional`) whose candidates are all unserved fails
+- A **required** entry (no `optional`) whose candidate versions are all unavailable fails
   startup with an error naming the resource — the controller retries and
   converges when the CRD appears.
-- An **optional** entry whose candidates are all unserved is dropped, and every
+- An **optional** entry whose candidate versions are all unavailable is dropped, and every
   `templateSnippets` / `validationTests` entry whose `requires` names it gets
   stripped from the effective configuration.
 - Templates read the resolved version via `resources.<name>.APIVersion()`.
@@ -198,7 +205,7 @@ haproxyConfig:
         use_backend %[req.hdr(host),map({{ pathResolver.GetPath("host.map", "map") }})]
 ```
 
-See the [Templating Guide](./templating.md) for syntax, loops, and helper functions.
+See [Template syntax](template-language.md) for loops and expressions.
 
 ### `libraryRefs`
 
@@ -244,18 +251,14 @@ resource named there is unavailable, the snippet is stripped from the effective
 configuration. A snippet that must survive stripping may reach a stripped
 resource only through compile-safe seams — `render "..." default ""`,
 `render_glob` extension points, or shared state — never a direct typed
-`resources.<name>` reference. See [Templating — Template Snippets](./templating.md#template-snippets).
+`resources.<name>` reference. See [Templating — Template Snippets](./template-files.md#template-snippets).
 
 #### Incremental snippets
 
-Set `incremental` when a snippet can render independently for each watched
-object. While exact store history remains available, the controller retains
-each object's fragment and re-executes only components whose explicit inputs or
-dynamically tracked reads changed. Store replacement, journal loss, or an
-unidentified change runs a pinned cold graph instead of reusing an unprovable
-result. Every exposed watched and controller store and the configured HTTP store
-must provide immutable snapshots and exact commit proofs; otherwise, the live
-render fails before component execution.
+Set `incremental` when a snippet renders independently for each watched object.
+HAPTIC reuses its output until the object or another resource it reads changes.
+The bundled libraries already use this feature; you don't need to configure it
+for ordinary snippet overrides.
 
 ```yaml
 templateSnippets:
@@ -280,23 +283,23 @@ incremental:
     }) }}
 ```
 
-The binding planner receives detached, immutable `extraContext`, `capabilities`,
+Binding templates can read `extraContext`, `capabilities`,
 `currentConfig`, `currentFiles`, `pathResolver`, `runtimeEnvironment`, and
-`templateSnippets` values plus approved pure helpers. It can't read watched or
+`templateSnippets` and pure helper functions. It can't read watched or
 controller resources, HTTP content, admission state, or shared state. Only the
 values it emits become component props, so changing an unselected ambient value
 doesn't execute the component.
 
-In the default Scriggo mode, exactly one of `source` and `bindingsTemplate` is
+In the default template mode, exactly one of `source` and `bindingsTemplate` is
 required. A component receives `source`, `item`, `props`, `renderSubject`,
 `resources`, `controller`, `http`, and `shared`. Reads through watched resources,
 controller resources, and HTTP content are tracked dynamically, including
-missing objects and missing HTTP content. `requires` still controls
+lookups that found nothing. `requires` still controls
 optional-resource stripping; it isn't a dependency declaration or an access
 allowlist.
 
 Set `mode: resourceProjection` to publish one exactly indexed watched object
-without running the snippet's Scriggo template. The binding template must select
+without running the snippet's template. The binding template must select
 the watched-resource alias and emit a canonical projection descriptor:
 
 ```yaml
@@ -326,19 +329,11 @@ read it with `incremental_values`.
 
 A resource projection requires `bindingsTemplate` and exactly the
 `publishValue` effect. It forbids `source`, `whenAnyPathExists`, `root`,
-`consumes`, and `optionalConsumes`. Unknown descriptor fields, non-canonical
-JSON, empty keys, and corrupted provenance fail closed. The renderer evaluates
-the projection group and its `consumes` dependents only when a root requests
-that chain. Replacement, deletion, recreation, and away-and-back transitions
-use the same exact store observations as Scriggo components. The protocol is
-resource-agnostic: the source alias and key shape come from configuration, not
-a Go resource type.
+`consumes`, and `optionalConsumes`. The descriptor accepts only `cell`, `key`,
+`keys`, and optional `rank`.
 
-`root` optionally groups components under one authenticated Scriggo runner.
-Members keep separate bindings, tracked reads, effects, groups, and cached
-results. The renderer batches only members for the same source object and
-dependency wave; a root name never widens a member's dependency or effect
-authority.
+`root` groups components for execution. Each member retains its own bindings,
+inputs, effects, and cached output.
 
 `item` is one immutable object-valued prop. While a component is active, any
 semantic change to that object executes the component; selected store and HTTP
@@ -461,19 +456,9 @@ and deduplicated, and every referenced publication must exist in the component
 result. Publications from every component in the group participate, including
 components without `backendPlan`. Cells in different groups never compete.
 
-Every non-empty winning backend profile must have a matching `Profile`
-declaration. Profile declarations are resolved globally by name and replayed
-once, even when the matching local backend lost arbitration. Cached output
-stores logical references, so every render registers the winner in its fresh
-plan registry and emits a fresh token. An integrity digest covers the complete
-declaration, condition, publication, ownership, and logical-output payload
-before it enters the cache.
-
-The renderer commits fragments, dependencies, derived views, HTTP observations,
-and logical effects together only after the complete render succeeds.
-The pipeline creates Kubernetes Events after validation and transaction commit.
-Admission renders use scratch state and never publish their cache or derived
-resources.
+Every non-empty winning backend profile needs a matching `Profile` declaration.
+A render must succeed completely before HAPTIC retains its output. Admission
+checks don't change the live configuration or publish Kubernetes Events.
 
 ### `maps`
 
@@ -501,7 +486,7 @@ Set `ordered: false` when the configuration reads the map with `map_str`, `map_b
 
 Keep the default `true` for `map_reg`, `map_sub`, `map_dom`, `map_dir` and `map_end`. HAProxy evaluates those as a list and takes the first match, so an entry has to land in its intended position — appending it to the end would silently never match.
 
-See [Templating — Map Files](./templating.md#map-files).
+See [Templating — Map Files](./template-files.md#map-files).
 
 ### `files`
 
@@ -530,7 +515,7 @@ Removing a file also reloads HAProxy when that file was declared with
 removed without a reload. Remove references from the HAProxy configuration when
 you remove a file it uses.
 
-See [Templating — General Files](./templating.md#general-files).
+See [Templating — General Files](./template-files.md#general-files).
 
 ### `sslCertificates`
 
@@ -550,7 +535,7 @@ sslCertificates:
       {{ b64decode(secret.data["tls.key"]) }}
 ```
 
-See [Templating — SSL Certificates](./templating.md#ssl-certificates).
+See [Templating — SSL Certificates](./template-files.md#ssl-certificates).
 
 ### `k8sResources`
 
@@ -649,7 +634,7 @@ Params per type:
 | Type | Params |
 |------|--------|
 | `regex_replace` | `pattern` (regular expression), `replace` (replacement string) — applied line by line |
-| `template` | `source` (a Scriggo template; the rendered output is available as the `input` variable) |
+| `template` | `source` (a template; the rendered output is available as the `input` variable) |
 
 ```yaml
 haproxyConfig:
@@ -665,7 +650,7 @@ haproxyConfig:
         source: "{{ replace(input, \"__REGION__\", \"eu-west-1\") }}"
 ```
 
-See [Templating — Post-Processing](./templating.md#post-processing) for a runnable example.
+See [Templating — Post-Processing](./template-files.md#post-processing) for a runnable example.
 
 ### `templatingSettings`
 
@@ -692,7 +677,7 @@ Custom variables are exposed to templates as the `extraContext` map. Read a key 
 {% end %}
 ```
 
-See [Templating — Custom Template Variables](./templating.md#custom-template-variables) for detailed examples.
+See [Custom template variables](templating.md#custom-template-variables) for detailed examples.
 
 ### `validationTests`
 
@@ -712,40 +697,9 @@ Embedded validation tests (optional; run by the pre-rollout validation Job, the 
 | `requires` | `[]string` | No | — (strip the test when a named optional watched resource is unavailable) |
 | `requiresFields` | `[]string` | No | — (strip the test when a schema field path is absent) |
 
-```yaml
-validationTests:
-  test-basic-ingress:
-    description: Validate basic ingress routing
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: test-ingress
-            namespace: default
-          spec:
-            rules:
-              - host: example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: test-service
-                          port:
-                            number: 80
-    assertions:
-      - type: haproxy_valid
-        description: Generated config must be valid
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: "example.com"
-        description: Config must include host
-```
-
-See [Validation Tests](./validation-tests.md) for the full test-framework reference — fixtures, assertion types, CLI usage, and the [`requires` / `requiresFields` stripping semantics](./validation-tests.md#conditional-tests-requires-and-requiresfields) — and [CRD & Validation Design](./development/crd-validation-design.md) for the design rationale.
+See [Write validation tests](validation-tests.md) for a complete example and local
+commands, and the [test reference](validation-reference.md) for fixture and
+assertion fields.
 
 ### `validators`
 
@@ -769,12 +723,12 @@ validators:
   - name: spoa-hub
     socketPath: /var/run/haptic-validators/spoa-hub.sock
     files:
-      - "/etc/haproxy-spoa-hub/*.toml"
+      - "general/spoa-hub-config.toml"
     dataFiles:
-      - "/etc/haproxy/general/*.conf"
+      - "general/*.conf"
 ```
 
-See [Pluggable Validators](./operations/pluggable-validators.md) for the wire protocol, sidecar wiring, and routing examples.
+See [Pluggable Validators](./operations/pluggable-validators.md) to add a sidecar and connect it to generated files.
 
 ### `controller`
 
@@ -799,9 +753,6 @@ controller:
 
 !!! note
     There is no reconciler-level debounce knob. The Reconciler fires immediately on every resource/HTTP event; batching is per-watcher (`spec.watchedResources.<name>.debounceInterval`, default `100ms`) and reload throttling is the deployer's `spec.dataplane.minDeploymentInterval`.
-
-!!! note
-    These are the controller's built-in defaults from `pkg/core/config/defaults.go` — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (`15s`/`10s`/`2s`), so the leader rides out multi-second API-server or CPU starvation stalls without losing the lease. The Helm chart sets the same values; setting any of these fields on the CRD only matters if you need different values (for example faster crash-failover, or clusters with significant clock skew).
 
 See [High Availability](./operations/high-availability.md) for leader election details.
 
@@ -838,7 +789,7 @@ logging:
 
 ### `dataplane`
 
-Connection and pacing settings for the agent in each HAProxy pod. The block keeps its name: it configures the endpoint the controller applies to, which is now the HAPTIC agent.
+Connection and update settings for the agent in each HAProxy pod.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -919,7 +870,9 @@ The controller publishes the rendered configuration as an `HAProxyCfg` resource 
 
 ## `HAProxyTemplateLibrary`
 
-A second kind carrying template-library *content* only, referenced from a config's [`libraryRefs`](#libraryrefs). It exists because `templateSnippets` and `validationTests` are ~94% of a full configuration's bulk, which puts a single object against etcd's per-object limit.
+A reusable collection of templates and tests. Reference a library from one or
+more configurations through [`libraryRefs`](#libraryrefs). The Helm chart creates
+one object for each enabled bundled library.
 
 **API Group**: `haproxy-haptic.org`
 **API Version**: `v1alpha1`
@@ -965,77 +918,33 @@ Names must be unique across the merged set for `validationTests`. See [ADR-0017]
 
 ## Command-line management
 
-### View Configurations
+List configurations and libraries across namespaces:
 
 ```bash
-# List all configs
-kubectl get haproxytemplateconfig
-kubectl get htplcfg  # Short name
-
-# View specific config
-kubectl get htplcfg haproxy-config -o yaml
-
-# Watch for changes
-kubectl get htplcfg -w
+kubectl get htplcfg,htpllib -A
 ```
 
-A Helm install creates exactly one of these — `<configName>`, built from your own
-`controller.config`. Every enabled template library ships as a separate
-[`HAProxyTemplateLibrary`](#haproxytemplatelibrary) object named
-`<configName>-<library>`, and the config's [`libraryRefs`](#libraryrefs) declares
-which of them are pulled in and in what order: later entries win, and the
-config's own inline content wins last. `CRD_NAME` on the controller Deployment
-names that single config and nothing else.
-
-Only `<configName>` is yours to edit. The library objects are chart output and
-`helm upgrade` overwrites them; to change what a library emits, override the
-snippet by name under `controller.config.templateSnippets` instead.
-
-To see what the controller actually assembles from the whole set:
+Print the complete input used by a Helm-installed controller:
 
 ```bash
 haptic config view --input --namespace haptic
 ```
 
-Validation status is reported on `<configName>` only — it represents the merged
-set. Offline, `haptic validate -f <file>` accepts the flag repeatedly
-and accepts multi-document files, so you can validate a whole rendered set:
+For persistent changes to a Helm release, update your values file and
+[upgrade the release](deploying-with-helm.md#change-settings).
+Direct edits to chart-generated objects are overwritten on the next upgrade.
+
+<a id="validate-before-applying"></a>
+<a id="view-configurations"></a>
+<a id="edit-configuration"></a>
+
+To validate an exported configuration, prepare the
+[offline schemas](validation-tests.md#prepare-schemas), export the complete
+configuration, and run its tests:
 
 ```bash
-helm template charts/haptic > all.yaml   # validate keeps the config + library docs and ignores the rest
-haptic validate -f all.yaml
-haptic validate -f all.yaml --dump-merged   # print the merged spec
-```
-
-Applying a single hand-written `HAProxyTemplateConfig` — without Helm — still
-works exactly as before: point `--crd-name` at it and it's the whole config.
-
-### Validate before applying
-
-```bash
-# Validate local file
-haptic validate -f haproxy-config.yaml
-
-# Validate deployed config
-kubectl get htplcfg -n haptic haproxy-config -o yaml > /tmp/haproxy-config.yaml
-haptic validate -f /tmp/haproxy-config.yaml
-```
-
-### Edit Configuration
-
-```bash
-# Interactive edit
-kubectl edit htplcfg haproxy-config
-
-# Apply from file
-kubectl apply -f haproxy-config.yaml
-
-# Patch specific fields
-kubectl patch htplcfg haproxy-config --type=merge -p '
-spec:
-  logging:
-    level: DEBUG
-'
+haptic config view --input --namespace haptic > haptic-config.yaml
+haptic validate -f haptic-config.yaml --schema-dir ./schemas
 ```
 
 ## Validation
@@ -1055,33 +964,7 @@ Additional validation occurs when:
 3. **Live config change** - the same suite re-runs on every config change; a failure is refused and the last-good config keeps serving
 4. **CLI command** - `haptic validate` runs tests locally
 
-## Best practices
-
-**Security:**
-
-- Never include credentials in the CRD - use credentialsSecretRef
-- Restrict RBAC access to HAProxyTemplateConfig resources
-- Keep the controller and its configuration in the same release namespace; restrict who can edit that configuration
-
-**Organization:**
-
-- One HAProxyTemplateConfig per controller instance
-- Use descriptive names that indicate purpose or environment
-- Label configs for filtering: `environment: production`
-
-**Testing:**
-
-- Include validation tests for critical routing paths
-- Test with realistic fixtures, not toy examples
-- Run `haptic validate` before applying changes
-- Use CI/CD to validate configs in pull requests
-
-**Templates:**
-
-- Use `templateSnippets` for reusable logic
-- Keep `haproxyConfig` template focused on structure
-- Comment complex template logic
-- Test templates with various resource combinations
+<a id="best-practices"></a>
 
 ## See also
 

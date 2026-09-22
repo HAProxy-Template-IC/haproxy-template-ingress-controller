@@ -154,7 +154,7 @@ not deploy to HAProxy.
 
 <div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.backends-500-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Backend() and RegisterMap() in one render" data-height="480">
 
-<p class="pg-task" markdown>Press **Run live**. In the **haproxy.cfg** tab, find the `backend storefront_shop_svc_shop_http` section that `Backend()` assembled from the `shop` Ingress, with one pod-named `server` line per endpoint. Switch to the **maps** tab to see the `host.map` and `path-prefix.map` entries that `RegisterMap()` wrote to route to it. Then, in the **Resources** panel, change the `shop` Ingress's host to `store.example.com` and Run again — the map entry changes while the backend stays the same. HAPTIC can apply that map change without reloading a running HAProxy.</p>
+<p class="pg-task" markdown>Open **Resources** and change the `shop` Ingress's hostname to `store.example.com`. The **maps** output updates, while the shop backend in **haproxy.cfg** stays the same. HAPTIC can apply this map change without reloading HAProxy.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>

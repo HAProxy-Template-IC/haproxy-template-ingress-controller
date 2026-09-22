@@ -146,7 +146,7 @@ type NewLeaderObservedEvent struct {
 
 `Timestamp()` is supplied by the embedded `timestamped` mixin, not by an exported field — so `evt.Timestamp` in code is a method call, not a struct read. There is no `PreviousLeader` field on `NewLeaderObservedEvent`; the adapter only knows the *new* leader's identity.
 
-The Commentator logs all transitions, Metrics tracks leadership duration and transition count (`haptic_leader_election_is_leader`, `haptic_leader_election_transitions_total`, `haptic_leader_election_time_as_leader_seconds_total` — reference and alerting in [Monitoring](../../operations/monitoring.md#leader-election-metrics)), and the debug server exposes lease status under `/debug/vars`.
+The Commentator logs all transitions, Metrics tracks leadership duration and transition count (`haptic_leader_election_is_leader`, `haptic_leader_election_transitions_total`, `haptic_leader_election_time_as_leader_seconds_total` — reference and alerting in [Monitoring](../../operations/metrics-reference.md#leader-election-metrics)), and the debug server exposes lease status under `/debug/vars`.
 
 ## Startup and leadership transitions
 

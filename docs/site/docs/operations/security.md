@@ -19,7 +19,7 @@ The **ClusterRole** grants:
 | Watched resources with `statusPatch: true`, via `/status` | patch | Publish routing and policy conditions |
 | `customresourcedefinitions` | get, list, watch | Load schemas and detect CRD changes |
 | `events` | create, update, patch, delete | Publish template-generated Kubernetes Events |
-| `services` | get, list, watch, create, update, patch, delete | Gateway library only: manage Services in Gateway namespaces |
+| `services` | get, list, watch, create, update, patch, delete | Gateway library only: manage Services for Gateway listeners |
 | `gatewayclasses` | create, update, patch, delete | Gateway library only: manage the configured GatewayClass |
 
 The **namespace Role** grants:
@@ -54,21 +54,11 @@ checks its peer's certificate authority and distinct DNS subject alternative nam
 Agent control requests require the controller identity; a Basic-auth password
 doesn't grant access in TLS mode. Both peers require TLS 1.3.
 
-A bootstrap Job and hourly CronJob manage the default 365-day CA and identity
-lifetimes, renewing 30 days before expiry. The renewal ServiceAccount can create
-Secrets in the namespace and get or update only the three named certificate
-Secrets; Kubernetes RBAC can't restrict creation by resource name. The issuer
-Secret contains the private CA key and must be backed up securely. It isn't
-mounted in application pods. See [Agent certificates](./agent-certificates.md)
-for cert-manager selection, expiry monitoring, and failed-renewal recovery.
-
-Set `haproxy.agent.tls.managed: false` to use externally managed Secrets.
-
-The controller mounts only its client identity; the agent mounts only its server
-identity. The CA private key isn't stored in either Secret. Mounted certificate
-updates take effect without restarting the controller or agent. Old CA trust
-requires an explicit expiry, at most 24 hours away. Removing that trust revokes
-old clients on their next request, including on an existing connection.
+The chart renews its agent certificates automatically. Monitor renewal failures
+and protect the issuer Secret, which contains the private certificate-authority
+key. To supply your own certificates, set `haproxy.agent.tls.managed: false` and
+manage their renewal yourself. See [agent certificates](agent-certificates.md)
+for Secret formats, rotation, and recovery.
 
 The chart still creates the Secret named by `--secret-name` or `SECRET_NAME` for
 controller bootstrap compatibility. Its `dataplane_username` and
@@ -84,9 +74,9 @@ updates to a mixed fleet.
     secret management. Agent TLS identities are generated at runtime and remain
     stable across offline renders.
 
-`/debug/vars/credentials` returns the credential version and `has_dataplane_creds`, without credential values. Other debug endpoints expose configuration and rendered files. See [Debugging](./debugging.md#accessing-the-server) for access controls.
-
-Watcher logs record resource identities, versions, and index-key counts. Resource contents and index values stay out of those logs. HTTP source logs and errors omit URL user information, query strings, and fragments, which can contain credentials.
+Debug endpoints expose configuration and rendered files, which can contain
+credentials. Limit `pods/portforward` access to trusted operators. See
+[accessing diagnostics](debugging.md#accessing-the-server).
 
 ## Pod hardening
 
@@ -124,13 +114,13 @@ The HAProxy pods the chart deploys also run restricted: `runAsNonRoot: true`, `a
 
 ## Network exposure
 
-The controller pod exposes three HTTP ports (all chart defaults):
+The controller pod exposes these ports by default:
 
 | Port | Endpoint | Notes |
 |------|----------|-------|
 | `8080` | `/healthz`, `/debug/vars`, `/debug/events`, `/debug/pprof/` | `controller.ports.healthz` configures the process, pod, Service, probes, and policy together. `/healthz` serves probes; `/debug/*` accepts loopback connections only. Restrict `pods/portforward` with RBAC |
 | `9090` | `/metrics` | `controller.ports.metrics` configures the process, pod, Service, and monitors together; set it to `0` to disable metrics |
-| `9443` | Validating webhook | Required when the webhook is enabled |
+| `9443` | Validating webhook over HTTPS | Required when the webhook is enabled |
 
 Outbound, the controller talks to the Kubernetes API server and to the agent on
 each HAProxy pod (default port `5555`). Mutual TLS protects deployment requests,
@@ -138,25 +128,30 @@ including the TLS private keys carried as auxiliary files. Disabling agent TLS
 requires equivalent network encryption, such as an encrypted Container Network
 Interface (CNI) or service mesh.
 
-Agent liveness probes use the local Unix socket, so certificate expiry doesn't
-restart the agent. Remote control endpoints still require a valid certificate. `haptic agent state` inside the agent container uses a local
-Unix socket that exposes state without accepting deployments.
+NetworkPolicies are enabled by default. Two defaults need attention when you
+restrict access:
 
-NetworkPolicies are enabled by default for the controller and HAProxy pods.
-Managed Varnish and Valkey tiers also receive release-scoped policies when
-enabled. Review their allowed traffic:
+- Controller egress allows connections to all cluster pods. Replace
+  `controller.networkPolicy.egress.additionalRules` with the destinations your
+  templates need.
+- `haproxy.networkPolicy.allowExternal: true` allows ingress on all HAProxy pod
+  ports, including dynamically configured Gateway listeners.
 
-- The controller policy restricts ingress to the exposed ports (metrics ingress only opens when `controller.networkPolicy.ingress.monitoring.enabled: true` — it's off by default, so enable it for Prometheus). Egress covers DNS, the Kubernetes API server, and the HAProxy agent/stats ports, **plus a default `controller.networkPolicy.egress.additionalRules` entry allowing every in-cluster pod** (so template helpers like `http.Fetch()` work) — set it to `[]` to lock egress down (see [Networking](./networking.md#production-hardening)).
-- The HAProxy policy defaults to `allowExternal: true`, which renders a permissive all-port ingress rule — deliberate, because Gateway listeners bind dynamic ports.
-- The Varnish policy admits only same-release HAProxy cache requests and permits egress only to DNS and the same HAProxy HTTP origin. The managed Valkey/Sentinel policy admits only same-release HAProxy/SPOA and store-internal traffic.
-
-To tighten, replace, or debug these policies — including the required traffic and selectors — see [Networking](./networking.md#replacing-the-shipped-policies). NetworkPolicy doesn't grant remote access to loopback-only diagnostics. Use `kubectl port-forward` and restrict that permission with RBAC.
+Controller metrics ingress is disabled until you set
+`controller.networkPolicy.ingress.monitoring.enabled: true`. See
+[network access](networking.md) for complete rules, cache and rate-limit store
+policies, and Prometheus selectors.
 
 ## Secrets in templates
 
-Templates read watched Secrets like any other resource. Decode with `b64decode` (values in `.data` are base64-encoded by Kubernetes):
+Templates can read Secrets included in your watches. Decode `.data` values with
+`b64decode`. This example reads a password hash into an HAProxy userlist; it
+doesn't enable authentication on a route by itself. For that, use the
+[basic-auth setup](../annotations.md#quick-start-basic-authentication).
 
 <div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-focus="20" data-title="Watched Secret → userlist" data-height="480">
+
+<p class="pg-task">Run the example and find the decoded password hash in the generated userlist.</p>
 
 ```yaml
 apiVersion: haproxy-haptic.org/v1alpha1
@@ -232,24 +227,38 @@ arbitrary future changes to live resources. For checks during reconciliation, se
 
 ## Audit trail
 
-A minimal audit policy that records who touched `HAProxyTemplateConfig` and which Secrets the controller reads:
+Kubernetes audit logs can record who changes HAPTIC configuration and which
+Secrets the controller reads. A cluster administrator must add these rules to
+the API server's [audit policy](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/);
+this isn't a resource you apply with `kubectl`.
+
+The following policy uses `Metadata` to record identities and operations without
+recording configuration or Secret contents. It targets the default `haptic`
+release in namespace `haptic`:
 
 ```yaml
 apiVersion: audit.k8s.io/v1
 kind: Policy
 rules:
-  - level: RequestResponse
+  - level: Metadata
     resources:
       - group: haproxy-haptic.org
-        resources: ["haproxytemplateconfigs"]
+        resources: ["haproxytemplateconfigs", "haproxytemplatelibraries"]
   - level: Metadata
-    users: ["system:serviceaccount:<namespace>:<release>-haptic"]
+    users: ["system:serviceaccount:haptic:haptic"]
     resources:
       - group: ""
         resources: ["secrets"]
 ```
 
-Replace `<namespace>`/`<release>` with your Helm release. The SA name is the release `fullname` `<release>-haptic` (collapsing to `<release>` only when the release name already contains `haptic`) unless you overrode `controller.serviceAccount.name` — get the exact value with `kubectl -n <namespace> get sa`. A rule keyed on the wrong SA name silently never matches, so the controller's Secret reads go unaudited.
+Put these rules before broader rules in an existing policy: Kubernetes uses the
+first matching rule. If you use a different release name or ServiceAccount,
+check the account used by the controller and update the `users` entry:
+
+```bash
+kubectl get deployment haptic-controller --namespace haptic \
+  -o jsonpath='{.spec.template.spec.serviceAccountName}{"\n"}'
+```
 
 ## Checklist
 
@@ -261,7 +270,6 @@ Before exposing a HAPTIC deployment to production traffic:
 - [ ] Release namespace labelled with `pod-security.kubernetes.io/enforce=restricted`.
 - [ ] NetworkPolicy allowing DNS, Kubernetes API, agent traffic, and any configured HTTP resources.
 - [ ] Audit policy in place for `HAProxyTemplateConfig` changes.
-- [ ] Image signature verification (`cosign verify …`) wired into your admission policy — see [Releasing](../development/releasing.md#supply-chain-security).
 
 ## See also
 

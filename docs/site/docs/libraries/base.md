@@ -1,21 +1,17 @@
 # Base library
 
-The base library supplies `haproxyConfig` and shared extension points for routing libraries and custom snippets.
+The base library provides the main HAProxy configuration and the places where
+you can add your own snippets. Use it to change global settings, add a frontend,
+or extend routing without replacing the complete configuration.
 
-## Overview
+It's enabled by default. The routing libraries use its frontends, maps, error
+pages, and shared template functions.
 
-Enabled by default, it provides:
-
-- Core HAProxy configuration structure (global, defaults, frontends, backends)
-- The plugin pattern via extension points for other libraries to inject content
-- Frontend routing logic with path matching and backend selection
-- Utility macros for template development
-- Error page templates
-- Map file infrastructure for routing decisions
+<a id="overview"></a>
 
 The Ingress preset uses base to assemble its configuration:
 
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Base library underpinning a render" data-height="440">
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Add a global HAProxy setting" data-height="440">
 
 <p class="pg-task" markdown>In the **Templates** pane, add a `global-settings-500-tuning` snippet under `spec.templateSnippets` (the YAML is in the hint), then watch `maxconn 10000` appear inside the `global` section of the `haproxy.cfg` tab.</p>
 
@@ -32,13 +28,7 @@ global-settings-500-tuning:
     maxconn 10000
 ```
 
-Its `maxconn 10000` line lands in `global` after the built-in path and
-process settings. The bundled chart deliberately doesn't emit
-`tune.ssl.default-dh-param`: the supported community images use AWS-LC, where
-HAProxy doesn't support this setting and warns that the directive was ignored.
-An OpenSSL-based deployment that needs finite-field Diffie-Hellman can add its
-own `global-settings-*` snippet or, preferably, an explicit
-`ssl-dh-param-file`.
+The `global` section gains `maxconn 10000` after the built-in settings.
 
 </details>
 
@@ -87,6 +77,11 @@ Map iteration order is unspecified. These independent header directives work in 
 
 </div>
 
+The bundled community images use AWS-LC and don't support
+`tune.ssl.default-dh-param`. If you use an OpenSSL-based image and need
+finite-field Diffie-Hellman, add `ssl-dh-param-file` in a `global-settings-*`
+snippet.
+
 ## Configuration
 
 Keep base enabled when using its extension points. To disable it, supply your own `haproxyConfig` and the snippets required by any libraries you retain.
@@ -120,7 +115,7 @@ This table is the authoritative registry of every `render_glob` extension point 
 | Frontend Matchers | `frontend-matchers-advanced-*` | Within frontend routing logic | Advanced request matching (method, headers, query params) |
 | Frontend Filters | `frontend-filters-*` | HTTP frontend, after routing | Request/response filters (header modification, redirects) |
 | Frontend Switching | `frontend-switching-*` | HTTP/HTTPS frontend, after filters and before the default backend selection | Conditional `use_backend` rules, including canary splits |
-| Access Log Fields | `log-fields-*` | Inside the per-frontend `log-format` line | Named JSON fields contributed to the [structured access log](../haproxy-deployment.md#access-logging) |
+| Access Log Fields | `log-fields-*` | Inside the per-frontend `log-format` line | Named JSON fields contributed to the [structured access log](../operations/access-logging.md) |
 | Custom Frontends | `frontends-*` | After HTTP frontend | Additional frontend definitions |
 | Custom Backends | `backends-*` | Before `default_backend` | Backend definitions from resource libraries |
 | Host Map | `map-host-*` | host.map file | Host-to-group mapping entries |
@@ -148,11 +143,7 @@ Further extension points are defined by other bundled libraries, not by the base
 - `backend-directives-*` — invoked by the Ingress library's `backends-500-ingress` snippet (with `inherit_context`) so per-backend annotation libraries can extend each Ingress backend block; see [haproxytech library](haproxytech.md) for the producer side. Templates outside the ingress backend loop won't see it.
 - `spoe-agents-*`, `frontend-spoe-filters-*`, `frontend-spoe-set-pass-headers-*`, `frontend-spoe-set-fail-headers-*` — defined by the auto-loaded spoa-hub library; see [SPOA Hub](../operations/spoa-hub.md).
 
-### How extension points work
-
-1. Base library uses `render_glob "prefix-*"` to render all snippets matching the pattern
-2. Other libraries (or user config) define snippets with matching prefixes
-3. At render time, all matching snippets are rendered in **alphabetical order** — numeric prefixes in snippet names (for example `backends-500-ingress`) control execution order
+<a id="how-extension-points-work"></a>
 
 ### Injecting custom configuration
 
@@ -177,12 +168,6 @@ controller:
           http-request deny if { path_beg /admin } !{ src 10.0.0.0/8 }
           http-request deny if { path_beg /.env }
 
-      # Add a custom userlist
-      global-top-custom-userlist:
-        template: |
-          userlist api_users
-            user apiuser password $2y$05$...
-
       # Add custom backend
       backends-custom-maintenance:
         template: |
@@ -194,18 +179,9 @@ controller:
 
 Snippets within a `render_glob` pattern execute in **alphabetical order**. Encode priority in the snippet name via a numeric prefix (lower numbers run first):
 
-```yaml
-templateSnippets:
-  # Runs early — sorts before the 500-range
-  features-050-ssl-initialization:
-    template: |
-      {# Initialize SSL infrastructure #}
-
-  # Runs later — sorts after the 100-range certificate registration
-  features-150-ssl-crtlist:
-    template: |
-      {# Generate certificate list #}
-```
+For example, `frontend-filters-050-headers` renders before
+`frontend-filters-500-auth`. Use the prefix of the extension point you need;
+priorities only order snippets within that prefix.
 
 See [Template Libraries → Snippet Priority](../template-libraries.md#snippet-priority) for the reserved range conventions used by the built-in libraries.
 
@@ -225,25 +201,18 @@ The base library implements the routing system using HAProxy maps and transactio
 | 4 | `host-regex.map` | Regex hostnames. |
 | 5 | `host:listener_port` / `:listener_port` | Per-listener-port fallback when no hostname matched (Gateway listeners on dedicated ports). |
 
-`txn.host_match` is seeded to `''` first so every step can use `-m len 0` ("not matched yet") consistently — `-m found` would be true after a lookup that yielded an empty string, blocking the rest of the cascade.
-
 **Listener-port translation.** `txn.listener_port` is the user-facing port the request arrived on. For chart-static binds it equals `dst_port`. Resource libraries that map a pod-port to a different listener port (for example Gateway API per-Gateway HTTPS binds listening on an allocated pod port like `18002` while the map keys use the original `8443`) plug a translation into the `frontend-routing-listener-port-*` extension point. With no such library, `dst_port` passes through unchanged.
 
 **2. Path matching** — evaluated in order Exact > Regex > Prefix-exact > Prefix:
 
-```haproxy
-http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(maps/path-exact.map)
-http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg(maps/path-regex.map) if !{ var(txn.path_match) -m found }
-http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(maps/path-prefix-exact.map) if !{ var(txn.path_match) -m found }
-http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg(maps/path-prefix.map) if !{ var(txn.path_match) -m found }
-```
+Set `controller.config.templatingSettings.extraContext.routing.regexMatchOrder`
+to `last` to try prefix matches before regex matches. This changes which route
+wins when both match; see [path matching order](../template-libraries.md#path-matching-order).
 
-!!! note "Overriding Path Match Order"
-    Setting `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last` swaps in the alternate `frontend-routing-logic-regex-last` variant of this snippet at Helm load time, producing performance-first ordering (Exact > Prefix-exact > Prefix > Regex). Faster matchers run first and regex matching is only evaluated as a fallback. The variant snippet is unset before the merged config is rendered; the effective setting remains visible in `extraContext`.
-
-**3. Qualifier system** — the first `:`-separated field of `path_match` selects the routing mode: `BACKEND:<name>` routes directly, `MULTIBACKEND:<weight>:<key>` selects a weighted backend via random draw. Advanced matchers (method / header / query, contributed by the gateway library through `frontend-matchers-advanced-*`) may rewrite `path_match`, so the qualifier is re-parsed after they run.
-
-**Owner-resource identity.** `txn.resource_id` (`<namespace>/<name>`) is derived from the qualifier value the routing chain already produced — no extra map lookup — and keys the per-resource feature maps (auth, the Coraza web application firewall, body-size, header rewrites). Backend names use `_` as the separator (`<ns>_<name>_svc_<svc>_<port>` for Ingress, `<ns>_<name>_<ruleIdx>` for Gateway weighted routing); Kubernetes names disallow `_`, so splitting on `_` is collision-free.
+Custom matching snippets use `txn.path_match` to select a backend:
+`BACKEND:<name>` selects one backend; `MULTIBACKEND:<weight>:<key>` selects a
+weighted group. Use the `frontend-matchers-advanced-*` extension point to add
+matching conditions.
 
 ### Connection reliability and timeouts
 
@@ -281,17 +250,15 @@ can safely process replayed requests.
 
 ### `h2c` cleartext detection
 
-The plaintext HTTP entry point is an outer `mode tcp` frontend that inspects the first wire bytes and routes to one of two unix-socket-bound inner `mode http` frontends, preserving the original client IP via PROXY-protocol v2 across the hop. Both inner frontends share the same routing logic, so any HTTP-level snippet lands in both protocol paths.
-
-The outer TCP frontend distinguishes cleartext HTTP/2 (h2c) by its 24-byte
-prior-knowledge connection preface, then forwards it to the HTTP/2 frontend.
-HTTP/1.1 uses the other frontend. This path supports clients that send the HTTP/2
-preface directly, such as gRPC clients; it doesn't implement an `Upgrade: h2c`
-handshake in the outer TCP frontend.
+The HTTP listener accepts both HTTP/1.1 and cleartext HTTP/2 clients that send
+the HTTP/2 connection preface directly, including gRPC clients. It doesn't
+support the HTTP/1.1 `Upgrade: h2c` handshake. Both protocols use the same routing
+rules and frontend snippets.
 
 ### gRPC request handling
 
-The `default_backend` returns a gRPC-aware fallback for unmatched requests. For `application/grpc` requests it returns a trailers-only response (`grpc-status: 12`, Unimplemented) instead of a plain 404 — without a valid `content-type`, grpc-go reports "malformed header: missing HTTP content-type" and tears down the whole HTTP/2 connection, cancelling every multiplexed stream on it. Because HAProxy's `http-request return` strips `content-type` from its header arguments, the base library re-adds it with `http-after-response set-header`, which runs on responses produced by the `return` action. Non-gRPC requests get a plain `404`.
+Unmatched gRPC requests receive `grpc-status: 12` (Unimplemented). Other unmatched
+HTTP requests receive `404`.
 
 ### Request buffering
 
@@ -326,7 +293,8 @@ Buffering a bidirectional stream can prevent progress: the client waits for a
 response while HAProxy waits for more request data. Excluding requests without
 `Content-Length` lets HAProxy forward them without waiting for a complete body.
 
-gRPC sends neither `Content-Length` nor `Transfer-Encoding` — for unary and streaming calls alike — so no gRPC request is ever buffered. Chunked HTTP/1.1 uploads are excluded on the same rule, which also covers long-poll and command-channel patterns where the server answers before the request body ends.
+Chunked HTTP/1.1 uploads and gRPC clients that omit `Content-Length` bypass this
+step. The decision depends on the header, not the application protocol.
 
 Use `off` for a route whose clients declare a `Content-Length` but expect a
 response before the body ends, such as a resumable-upload endpoint.
@@ -335,14 +303,14 @@ response before the body ends, such as a resumable-upload endpoint.
 
 #### `render_glob` (operator)
 
-Renders all snippets matching a glob pattern. This is a built-in Scriggo operator, not a macro — no import is needed:
+Renders all snippets matching a glob pattern. No import is needed:
 
 ```scriggo
 {{ render_glob "backends-*" }}
 {{ render_glob "map-host-*" inherit_context }}
 ```
 
-See the [Scriggo template guide](../templating.md) for details.
+See the [templating guide](../templating.md) for details.
 
 #### `sanitize_regex` (function)
 
@@ -431,7 +399,7 @@ own `servers` list instead of calling `BackendServers()`.
 
 The `util-backend-servers` snippet resolves endpoints into server records:
 
-- One `server` per endpoint, named after its pod (`server <pod> <ip>:<port>`) — no slot pool, no placeholders. The rendered file always equals the current pod set, so a rolling update is an add/remove of named servers over the runtime API (see [ADR-0011](https://github.com/haproxy-haptic/haptic/blob/main/docs/adr/0011-no-haproxy-server-state-file.md)).
+- One `server` per endpoint, named after its pod (`server <pod> <ip>:<port>`). Rolling updates add and remove servers through the Runtime API when supported.
 - Not-ready and terminating endpoints render as `disabled` servers (they take no traffic), so a readiness flip is a runtime `set server state` rather than a del+add.
 - Per-server options (`maxconn`, SSL, weight, health-check params) via `serverOpts` / the server record's `extra`.
 
@@ -527,7 +495,7 @@ assembled format string is shared by every frontend, a snippet must not branch o
 which frontend is rendering — that's what keeps one schema across the whole log
 stream.
 
-See [Access logging](../haproxy-deployment.md#access-logging) for the field
+See [Access logging](../operations/access-logging.md) for the field
 reference, the `denied_by` values, request-id and trace-context behaviour, and
 how to replace the format wholesale.
 
@@ -562,11 +530,13 @@ When `shmStats` is enabled, the chart automatically adds a `/dev/shm` emptyDir v
 
 ### Address discovery
 
-The base library watches controller LoadBalancer Services and discovers external addresses for status reporting. Addresses are aggregated from **all** matching services and deduplicated, then stored in `gf["addresses"]`. This supports multi-service setups where HAProxy is exposed via both internal and public LoadBalancers.
+HAPTIC publishes addresses from the matching HAProxy Services to Ingress and
+Gateway status. It combines and deduplicates their LoadBalancer addresses. If
+none are assigned, it uses their cluster IPs; these aren't public addresses.
 
-Controller Services are discovered via label selector (`app.kubernetes.io/name=<name>,app.kubernetes.io/component=loadbalancer`). If no Service has LoadBalancer addresses assigned yet, the library falls back to the Services' own `spec.clusterIPs` (skipping the headless `None` sentinel), so status still carries an address on NodePort and ClusterIP installs. While status patches are enabled, `gf["addresses"]` is always set — to an empty list if nothing is discoverable — because every `status-patches-*` snippet gates on it being non-nil, and leaving it nil would suppress conditions the Gateway API requires regardless of addressing (such as `Accepted=True`).
-
-Address discovery can be disabled via `controller.config.templatingSettings.extraContext.statusPatches.enabled: false`. When disabled, `gf["addresses"]` is never set, which prevents all `status-patches-*` snippets from writing to Ingress or Gateway status. This is useful during migration from another ingress controller to avoid premature DNS cutover when tools like external-dns watch status fields.
+Set `controller.config.templatingSettings.extraContext.statusPatches.enabled: false`
+to stop status updates for all managed routes, for example while controlling a
+[DNS cutover](../migrating.md#control-the-dns-cutover).
 
 ### Status-patch extension point
 
@@ -574,48 +544,21 @@ The `status-patches-*` extension point renders at priority 200 — after feature
 
 Status patch snippets produce no HAProxy configuration output. They call `statusPatch()` as a side effect to register patches for later application by the controller.
 
-### Declarative Kubernetes Resources (`k8sResources.haproxy-service`)
+<a id="declarative-kubernetes-resources-k8sresourceshaproxy-service"></a>
 
-The base library declares the user-facing HAProxy LoadBalancer Service under the controller CRD's top-level `spec.k8sResources` map (sibling of `templateSnippets`, `maps`, `files`, `sslCertificates`). The controller's renderer parses the rendered YAML and applies the resulting Service via Server-Side Apply with field manager `haptic`; an `OwnerReference` to the `HAProxyTemplateConfig` CR is injected automatically (controller=true, blockOwnerDeletion=true) so cascade-delete (for example `helm uninstall`) garbage-collects the Service.
+### HAProxy Service
 
-This replaces the chart-static `templates/haproxy-service.yaml` main-Service block, which was emitted by Helm at install time with a fixed port set. Two operational consequences operators should be aware of:
+HAPTIC creates the user-facing HAProxy Service after its first successful render.
+The Service is removed when its owning configuration is deleted, including on
+`helm uninstall`.
 
-- **First-render delay**: when the chart is installed for the first time, the Service doesn't exist until the controller renders once (typically a few seconds). External tools (cert-manager, external-dns) that look up the Service immediately after `helm install` should expect a brief absence. The internal `<release>-haproxy-dataplane` Service — the one that fronts the agent — remains chart-static and is created at install time as before.
-- **`helm uninstall` cleans up via cascade-GC**: the `OwnerReference` ties the Service's lifecycle to the CR. When `helm uninstall` removes the CR, the Service goes with it; no extra cleanup hook is required.
+Use [`haproxy.service`](../reference.md#haproxy-service) values to change the
+Service type, addresses, and ports. Set a default port to `0` to remove it, or
+add ports under `haproxy.service.extraPorts` for your own frontends. Declaring a
+Service port alone doesn't create a listening HAProxy frontend.
 
-The Service port set is a single list assembled by the chart at install / upgrade time. There is no static / dynamic split inside the Scriggo template — `templates/haproxytemplateconfig.yaml` builds the list and hands it to the renderer via `extraContext.haproxyService.ports`. Two stages contribute:
-
-1. **Chart-time defaults + extras (Helm)**. The chart reads `haproxy.service.{http,https,stats}.{port,nodePort}` and assembles three default entries (`http`, `https`, `stats`), then appends every entry in `haproxy.service.extraPorts`. The result is a flat list of `corev1.ServicePort`-shaped objects.
-
-    ```yaml
-    haproxy:
-      service:
-        # Defaults — change the port number / nodePort here, or set
-        # port: 0 to drop the entry from the rendered Service:
-        http:
-          port: 80
-          nodePort: 30080
-        https:
-          port: 443
-          nodePort: 30443
-        stats:
-          port: 8404
-          nodePort: 30404
-
-        # Add your own ports — same shape as corev1.ServicePort:
-        extraPorts:
-          - name: postgres
-            port: 5432
-            targetPort: 5432
-            protocol: TCP
-            nodePort: 30432   # only honored when service.type is NodePort/LoadBalancer
-    ```
-
-    `name` and `port` are required; `targetPort` defaults to `port`; `protocol` defaults to `TCP`; `appProtocol` is plumbed through verbatim when set. Names must be RFC 1123 labels and unique across all Service ports (including the Gateway-derived `gw-*` entries below). To drop one of the defaults entirely, set the matching `haproxy.service.<name>.port` to `0` — the chart filters zero-port entries out at render time.
-
-2. **Render-time Gateway-derived ports (Scriggo)**. For each non-default Gateway / admitted ListenerSet listener port, the `k8sResources.haproxy-service` template appends a `gw-<port>-<proto-letter>` entry (for example `gw-9090-h` for an HTTPS listener on port 9090). Listener ports that already exist in the chart-time list (because their port number matches `http` / `https` / `stats` or one of the operator's `extraPorts` entries) are skipped — first writer wins. Skipped entirely for Gateways that set `spec.addresses` (those get a dedicated per-Gateway Service via `k8sResources.gateway-static-addresses`).
-
-Chart values consumed by the merged spec: `haproxy.service.type`, `haproxy.service.annotations`, `haproxy.service.loadBalancerIP`, `haproxy.service.loadBalancerClass`, `haproxy.service.loadBalancerSourceRanges`, `haproxy.service.externalTrafficPolicy`, `haproxy.service.internalTrafficPolicy`, `haproxy.service.healthCheckNodePort`, `haproxy.service.publishNotReadyAddresses`. All are plumbed into `extraContext.haproxyService` by `templates/haproxytemplateconfig.yaml`.
+Gateway listeners add their ports automatically. Gateways with `spec.addresses`
+receive a dedicated Service; see [Gateway address handling](gateway.md).
 
 ## Map files
 
@@ -720,83 +663,12 @@ spelling to emit, already deduplicated by lower-case name — the key always use
 the lower-case form, because HTTP header names are case-insensitive and two
 resources spelling one header differently must share a line.
 
-## HAProxy configuration structure
+<a id="haproxy-configuration-structure"></a>
 
-The base library generates this configuration structure. The `global` and `defaults` sections are composed from individually overridable snippets:
-
-```haproxy
-global
-    # global-settings-100-logging — `format raw` so JSON records carry no
-    # syslog prefix; len from extraContext.accessLog.maxLineBytes
-    log stdout len 16384 format raw local0 info
-    # global-settings-200-process
-    daemon
-    # nbthread is omitted by default (no CPU limit) so HAProxy auto-detects all
-    # node cores; when haproxy.resources.limits.cpu is set it renders ceil(limit)
-    # global-settings-250-shm-stats (when haproxy.shmStats.enabled=true and HAProxy >= 3.3)
-    shm-stats-file /dev/shm/haproxy-stats
-    shm-stats-file-max-objects 50000  # configurable via haproxy.shmStats.maxObjects
-    # global-settings-300-paths — emits the BaseDir from pathResolver (chart default /etc/haproxy)
-    default-path origin /etc/haproxy
-    crt-base ssl/                              # relative to default-path origin
-defaults
-    # defaults-settings-100-options
-    mode http
-    log stdout len 16384 format raw local0 info   # one line per extraContext.accessLog.targets entry
-    option httplog          # unreachable fallback: every frontend sets its own
-                            # log-format, and this keeps HAProxy from warning if
-                            # one ever doesn't
-    option dontlognull
-    option log-health-checks
-    # defaults-settings-150-access-log-request-id
-    unique-id-format %[uuid(7)]
-    # defaults-settings-200-balance
-    balance roundrobin
-    # defaults-settings-300-timeouts
-    timeout connect 100
-    timeout client 50000
-    timeout server 50000
-    # defaults-settings-400-errorfiles — relative paths resolved via default-path origin
-    errorfile 400 general/400.http
-    # ... other error files
-
-# global-top-* snippets here (userlists, etc.)
-
-frontend status
-    mode http
-    bind *:8404
-    option dontlog-normal
-    log-format "%{+json}o ..."   # util-log-format-http (every HTTP frontend)
-    # Health check endpoints
-
-frontend http-tcp
-    mode tcp
-    option dontlog-normal        # the inner HTTP frontend logs the request
-    log-format "%{+json}o ..."   # util-log-format-tcp (every TCP frontend)
-    bind *:80                    # extraContext.httpPort — the port bind lives
-                                 # on this outer h2c demultiplexer
-    # http-bind-extra-* snippets (extra Gateway HTTP listener ports)
-
-frontend http_frontend
-    mode http
-    option forwardfor
-    bind unix@/etc/haproxy/http-h1-frontend.sock mode 660 accept-proxy
-    # frontend-extra-* snippets (options, captures, ACLs)
-    # Routing logic
-    # frontend-matchers-advanced-* snippets
-    # frontend-filters-* snippets
-    use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
-    default_backend default_backend
-
-# frontends-* snippets (HTTPS, TCP, etc.)
-
-# backends-* snippets (resource-specific backends)
-
-backend default_backend
-    http-request return status 404
-```
-
-Each `global-settings-*` and `defaults-settings-*` snippet can be individually overridden or extended via `controller.config.templateSnippets` in your values.yaml. For example, to customize timeouts, override `defaults-settings-300-timeouts` with your own values. To add new global directives, create a `global-settings-500-tuning` snippet (or any name matching the pattern).
+To inspect the complete generated configuration, run
+`haptic config view --namespace haptic`, or open the example at the top of this page.
+Use the [extension-point table](#available-extension-points) to locate where your
+snippet belongs.
 
 ## See also
 

@@ -9,6 +9,11 @@ The commands use release `haptic` in namespace `haptic`. Checking renewal Jobs
 requires `kubectl` and permission to read Jobs and their logs.
 For the authentication model, see [Security](./security.md#credentials).
 
+!!! note "Development chart"
+    Automatic renewal was added after 0.2.0-alpha.3. Until the next release,
+    use a matching snapshot chart and controller image for the default-renewal
+    procedure below.
+
 ## Default renewal
 
 The bootstrap Job creates certificates after chart preflight validation. An
@@ -369,7 +374,7 @@ Update each `tls.crt`/`tls.key` pair atomically and wait for its projected files
 3. Verify the authenticated controller-to-agent connection.
 
     ```bash
-    HAPROXY_IP=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].status.podIP}')
+    HAPROXY_IP=$(kubectl get pods -n haptic -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].status.podIP}')
     kubectl exec -n haptic deployment/haptic-controller -c controller -- \
       haptic agent state --url "https://$HAPROXY_IP:5555"
     ```

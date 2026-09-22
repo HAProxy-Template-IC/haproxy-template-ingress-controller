@@ -24,7 +24,9 @@ These are starting estimates, not capacity limits.
 Many endpoints per Service, large certificates, custom templates, and frequent
 configuration changes can need more resources at the same route count.
 
-For an installation with hundreds of routes, start with these Helm values:
+For an installation with hundreds of routes, start with these Helm values.
+Merge them into your [complete values file](../deploying-with-helm.md#change-settings)
+and apply it with Helm:
 
 ```yaml
 controller:
@@ -162,9 +164,9 @@ See [watching resources](../watching-resources.md) for settings and examples.
 ### Template debugging
 
 If a custom template makes configuration changes slow, use
-`haptic validate --file config.yaml --trace-templates` to identify expensive
+`haptic validate --file config.yaml --schema-dir ./schemas --trace-templates` to identify expensive
 snippets. This needs your complete configuration and the
-[validation tools](validate-before-deploy.md). For a running installation,
+[schemas for offline validation](../validation-tests.md#prepare-schemas). For a running installation,
 start with [fleet diagnostics](diagnostics.md).
 
 ## Reconciliation tuning

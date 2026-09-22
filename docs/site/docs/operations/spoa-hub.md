@@ -1,6 +1,8 @@
-# SPOA hub
+# Add request-processing plugins
 
-## Overview
+<a id="spoa-hub"></a>
+
+<a id="overview"></a>
 
 The SPOA hub runs beside HAProxy and handles request processing through plugins:
 Web Application Firewall (WAF) inspection, authentication, rate limits, mirroring, geolocation, and TLS
@@ -8,16 +10,18 @@ fingerprinting. HAPTIC's `spoa-hub` image includes
 [haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) and the plugin
 libraries listed below.
 
-SPOA means Stream Processing Offload Agent. HAProxy sends work to the hub over a
-shared Unix socket using the [Stream Processing Offload Protocol](https://docs.haproxy.org/spoe.html) (SPOP).
-HAProxy's side of that connection is the Stream Processing Offload Engine (SPOE).
+SPOA means Stream Processing Offload Agent. HAProxy sends requests to this
+sidecar for processing and uses the result to allow, reject, or modify them.
 
 Use this reference to enable plugins, inspect their versions and health, and
 configure HAProxy's connection to the hub.
 
 ## Enabling the hub
 
-The sidecar renders whenever at least one plugin is enabled: with the default `spoaHub.enabled: null`, the chart derives the master switch from the per-plugin `spoaHub.plugins.<name>.enabled` values. To enable fingerprinting, add this to your Helm values:
+Enable a plugin under `spoaHub.plugins` in your
+[complete Helm values file](../deploying-with-helm.md#change-settings), then apply
+the values. The chart starts the hub when at least one plugin is enabled. For
+example, to make TLS fingerprinting available:
 
 ```yaml
 spoaHub:
@@ -26,7 +30,7 @@ spoaHub:
       enabled: true
 ```
 
-Some plugins auto-enable with the template library that consumes them — each per-plugin `enabled` default is a chart-evaluated template string:
+Some features enable their plugins automatically:
 
 - **api-gateway** follows `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled`,
 - **coraza** follows a non-empty WAF policy catalog, `waf.dispatch.mode=default-on`, `controller.templateLibraries.nginxIngress.enabled`, or `controller.templateLibraries.haproxyIngress.enabled`,
@@ -34,9 +38,9 @@ Some plugins auto-enable with the template library that consumes them — each p
 - **mirror** follows `controller.templateLibraries.gateway.enabled`,
 - **rate-limit** follows `rateLimit.shared.enabled`.
 
-The gateway library is on by default and auto-enables the `mirror` plugin, so a default install already runs the hub with `mirror`. The `coraza` plugin auto-enables when you turn on the opt-in haproxy-ingress or nginx-ingress annotation library, and `external-auth` when you turn on nginx-ingress; `fingerprinting`, `maxmind`, and `sso-auth` stay off until you enable them.
+A default installation runs the hub with `mirror`. Enable `fingerprinting`, `maxmind`, and `sso-auth` explicitly if you need them.
 
-Adding an inline policy, a trusted ConfigMap reference, or a default policy auto-enables Coraza; no redundant policy enable flag is required. All template behavior—dispatch, policy catalogs, permissions, body contracts, and custom-rule bounds—shares the structured `extraContext.waf` tree documented in the [native annotation reference](../libraries/haptic-annotations.md#reusable-waf-policies). Coraza execution belongs only to `spoaHub.plugins.coraza`: `timeoutMs`, `maxConcurrency`, `maxQueue`, directives, and plugin parameters have no feature-level aliases.
+Configure [WAF policies](waf-policies.md) under `extraContext.waf`. Set Coraza timeouts, concurrency limits, and plugin parameters under `spoaHub.plugins.coraza`.
 
 An explicit boolean on `spoaHub.enabled` always wins: `false` forces the sidecar off even with plugins enabled; `true` renders it with none. See the [Chart Values Reference](../reference.md#spoa-hub-sidecar) for every `spoaHub.*` value.
 
@@ -62,8 +66,6 @@ Plugin `.so` files target glibc `2.36` (Debian bookworm).
 
 <!-- END: spoa-hub-bundle -->
 
-The table is generated from `versions-spoa.env` at the repository root. CI fails if the rendered output drifts from the source of truth.
-
 ### Reload and upgrade behavior
 
 Plugin configuration changes reload in place while in-flight work drains.
@@ -78,10 +80,11 @@ HAProxy replicas available during an upgrade.
 - **fingerprinting** — computes JA3, JA3N, and JA4 TLS fingerprints from the ClientHello.
 - **maxmind** — performs in-memory MaxMind MMDB lookups against operator-provided database files: City, Country, Autonomous System Number (ASN), and so on.
 - **mirror** — mirrors HTTP requests to a secondary backend for traffic shadowing; used by the gateway library to implement the Gateway API `HTTPRouteFilter` of type `RequestMirror`.
-- **rate-limit** — enforces shared request-rate budgets for native `haproxy-haptic.org/rate-limit-*` annotations. By default, `rateLimit.shared.managedStore.enabled=true` deploys a chart-managed HA Valkey store: three StatefulSet pods, one writable primary, replicas, Sentinel failover, a PodDisruptionBudget, and a store NetworkPolicy. You can instead configure one bring-your-own HA Redis/Valkey/Sentinel/Cluster endpoint through `rateLimit.shared.externalStore.urls`. Shared mode requires a store; HAPTIC fails the render rather than silently using a per-pod budget during normal operation. When Valkey can't answer, both algorithms use an independent, bounded limiter in each sidecar and mark the request `rate_limit_degraded`. Each emergency bucket starts with its configured burst and refills at the configured rate; lease mode can also spend tokens it obtained before the outage. If the hub/plugin itself can't answer, HAProxy allows and records the request. Set `rateLimit.shared.failClosed=true` to deny either failure instead; an existing lease remains usable until it drains. The managed store is HA but intentionally fixed-size; use bring-your-own infrastructure for horizontal Valkey scaling.
+- **rate-limit** — enforces a shared request budget across HAProxy replicas. It uses the [managed Valkey store or your existing store](#managed-shared-rate-limit-store); choose how requests behave during store or plugin failures there.
 - **sso-auth** — handles OpenID Connect (OIDC) and Security Assertion Markup Language (SAML) 2.0 single sign-on flows with encrypted session cookies.
 
-When several plugins are enabled, cheap source-IP shared rate limiting runs first (`025`) so rejected floods don't consume WAF CPU. Coraza follows (`050`), then external auth (`100`), then JSON request validation (`200`). Authenticated-consumer rate limits run in the selected backend after native authentication establishes the consumer identity.
+Source-IP rate limits run before WAF, external authentication, and JSON request
+validation. Consumer rate limits run after authentication establishes the identity.
 
 ## Update the WAF rule set
 
@@ -105,28 +108,17 @@ The URL must be `https://`. The ruleset decides what the WAF blocks, so a
 plaintext fetch could be replaced in transit and the substituted rules would
 still validate.
 
-HAPTIC fetches the archive, expands it, and writes the rule files to the HAProxy
-pods' general storage. The `.conf` files are prefixed `crs-`; the `.data` files
-keep their exact upstream names, because rules reference them by bare name
-(`@pmFromFile lfi-os-files.data`). Your `spoaHub.plugins.coraza.directives` are
-left alone apart from the two embedded-CRS includes, which are replaced by an
-include of the fetched files — so the rest of the block, including the order of
-`SecRuleEngine` and any `SecRule` you added, keeps working as written.
+HAPTIC deploys the fetched rule files alongside your configuration. Your custom
+Coraza directives remain in place; only the bundled CRS includes are replaced.
 
 ### What a refresh costs
 
-A ruleset refresh doesn't reload HAProxy or the SPOA hub. A changed ruleset
-requires Coraza to compile a new copy before replacing the active one:
+HAPTIC checks the URL at `waf.crs.refreshInterval` (default `1h`). Unchanged
+content causes no update. Coraza compiles changed rules before activating them;
+requests in progress finish with the previous rules. A refresh doesn't reload
+HAProxy or the SPOA hub.
 
-1. HAPTIC re-fetches on `waf.crs.refreshInterval` (default `1h`) with a
-   conditional request. An unchanged ruleset answers `304` and stops there — no
-   re-render, no push, no recompile.
-2. A changed ruleset is pushed to the HAProxy pods as general files. Those files
-   carry `reloadOnPush: false`, because HAProxy itself never reads them.
-3. The Coraza plugin notices the new files, rebuilds its rules in place, and
-   swaps them in. Requests in flight finish against the rules they started with.
-
-Step 3 needs coraza plugin v0.10.0 or later, which is what this HAPTIC version
+Automatic rule refresh needs Coraza plugin v0.10.0 or later, which is what this HAPTIC version
 bundles. If you pin an older SPOA hub bundle through `spoaHub.image`, the files
 arrive but nothing rebuilds, and the WAF keeps running the previous rules until
 something else reloads the hub.
@@ -151,213 +143,30 @@ kubectl -n haptic exec deploy/haptic-haproxy -c haproxy -- ls /etc/haproxy/gener
 ```
 
 `plugin_coraza_rule_reloads_total{result="failed"}` counts refreshes that didn't
-compile. It should be `0`; anything else means the WAF is still serving the
-previous ruleset — see below.
+compile. New increments mean a refresh failed and the previous rules remained active.
+A later successful refresh doesn't reset this counter.
 
 ### If the ruleset can't be obtained
 
-The WAF is never left without rules. HAPTIC falls back in order:
+If a download or archive expansion fails, HAPTIC keeps the last deployed ruleset,
+even after a controller restart. If none is available, it uses the plugin's
+embedded rules. A download failure doesn't block unrelated configuration changes.
 
-1. **The fetched ruleset**, when the fetch and expansion both succeed.
-2. **The ruleset already deployed to the fleet**, read back from the published
-   file resources. This survives a controller restart while the upstream is
-   down, which an in-memory cache wouldn't.
-3. **The plugin's embedded ruleset.** Older than upstream, but it's in the
-   binary and can't be absent.
-
-A failed fetch never fails the render, so an upstream outage can't block
-unrelated configuration changes. It also can't pass unnoticed: an archive that
-downloads but contains no `.conf` rule files is rejected outright, because a WAF
-compiling zero rules looks healthy while blocking nothing.
-
-The same rule applies at the last step. If a refreshed ruleset reaches the pods
-but doesn't compile, the plugin keeps the rules it's already running and counts
-the failure rather than dropping to an unarmed WAF.
+HAPTIC rejects archives with no `.conf` rule files. If new rules reach the pods
+but fail to compile, Coraza keeps the active rules and increments
+`plugin_coraza_rule_reloads_total{result="failed"}`.
 
 ## Tune a WAF policy from detect to deny
 
-Start policy tuning with `enforcement: detect`: the full ruleset runs and records what it *would* block, but nothing is denied. The workflow below uses the OWASP Core Rule Set (CRS) blocking-evaluation rules as the would-block signal and shows how to confirm a clean baseline from data and then flip the policy to `deny`.
+<a id="read-the-per-rule-hit-metrics"></a>
+<a id="identify-would-block-rules"></a>
+<a id="classify-hits-from-the-access-log"></a>
+<a id="see-the-value-a-rule-matched-on"></a>
+<a id="last-resort-the-coraza-audit-log"></a>
+<a id="flip-to-deny"></a>
 
-### Read the per-rule hit metrics
-
-The hub serves Prometheus metrics on `spoaHub.hub.metricsAddr` (default `127.0.0.1:9095` inside the HAProxy pod). The coraza plugin (v0.7.0+) exports:
-
-| Metric | Labels | Meaning |
-| ------ | ------ | ------- |
-| `plugin_coraza_rule_hits_total` | `phase`, `rule_id`, `severity`, `app` | Every rule that matched, on every evaluation — including traffic that was allowed. This is the detect-mode signal. |
-| `plugin_coraza_denials_total` | `phase`, `rule_id`, `app` | Requests denied, labeled with the single interrupting rule. Stays flat in detect mode. |
-| `plugin_coraza_evaluations_total` | `phase`, `action`, `app` | All evaluations by outcome. |
-
-The `app` label is the Coraza application: `policy:<name>` for a trusted-catalog policy, `policy:<namespace>/<name>` for a self-service policy, and `<namespace>/<name>` for route-local rules. Rules that declare no severity (the ruleset's administrative and reporting rules) carry `severity="none"`.
-
-With the default Vector sidecar, the hub listens on loopback. Vector re-exports
-its metrics on port `9598`; the [bundled PodMonitor](monitoring.md#enable-the-bundled-monitoring)
-scrapes that endpoint. If Vector is disabled, the hub exposes port `9095` for
-direct scraping. To inspect the default loopback endpoint from the pod:
-
-```console
-kubectl exec -n <namespace> <haproxy-pod> -c haproxy -- \
-  sh -c 'command -v curl >/dev/null && curl -s 127.0.0.1:9095/metrics || wget -qO- 127.0.0.1:9095/metrics' \
-  | grep plugin_coraza_rule_hits_total
-```
-
-### Identify would-block rules
-
-In detect mode, a request is "would block" when its accumulated anomaly score crosses the ruleset's threshold — visible as hits on the blocking-evaluation rules `949110`/`949111`. Over a representative traffic window (a week that includes your batch jobs and deploys is a good default):
-
-```promql
-# How often would this policy have blocked?
-sum by (app) (increase(plugin_coraza_rule_hits_total{rule_id=~"94911[01]"}[7d]))
-
-# Which rules fired at all, worst first?
-sort_desc(sum by (rule_id, severity) (
-  increase(plugin_coraza_rule_hits_total{app="policy:my-policy", severity!="none"}[7d])
-))
-```
-
-Zero `949110`/`949111` hits over a representative window is your clean baseline: flip `enforcement: detect` to `deny` and you're done. Nonzero hits need classification first.
-
-### Classify hits from the access log
-
-Rule-hit metrics tell you *which* rules fire. To tie a rule hit to one request, read HAProxy's JSON access log — every request already carries the WAF verdict, correlated with `req_id`:
-
-| Field | Answers |
-| ----- | ------- |
-| `waf_rule_id` | which CRS rule interrupted, for the one 403 a user complained about |
-| `waf_score` | the anomaly score, so you can see how far from the threshold this request sat |
-| `waf_rules_hit` | how many rules matched on this request — one noisy rule, or twenty |
-| `waf_matched_var` | **which request fields** the rules matched on, as names: `ARGS_GET:id,REQUEST_LINE`. Never the values |
-| `waf_action` | `allow` or `deny`, so detect-mode traffic is distinguishable |
-| `denied_by` | `waf` when the WAF blocked, so a 403 from the WAF is distinguishable from the five other gates that also return 403 |
-
-Those fields cost nothing extra: they're on by default whenever the coraza plugin is enabled, and the access log can be routed to an access-controlled destination instead of the container's stdout. See [Access logging](../haproxy-deployment.md#access-logging).
-
-`waf_matched_var` closes the loop: it names the request fields the rules matched on, so `waf_rule_id` tells you *which rule* and `waf_matched_var` tells you *on what*. That's everything a scoped `ruleExclusions` entry needs, from the access log alone.
-
-The names are ordered with the reported rule's own targets first, then the rest most-severe-first, deduplicated and capped at five. Only request-derived variables appear (`ARGS*`, `REQUEST_*`, `QUERY_STRING`, `PATH_INFO`, `FILES*`, `MULTIPART*`, `XML`, `JSON`) — Coraza's internal `TX:*` scoring collection is filtered out, since it names nothing an exclusion can target. Requires coraza plugin v0.8.0 or later.
-
-```json
-{"waf_action":"deny","waf_rule_id":942100,"waf_score":5,"waf_rules_hit":3,
- "waf_matched_var":"ARGS_GET:id,REQUEST_LINE","denied_by":"waf"}
-```
-
-Read that as: rule 942100 fired on the `id` query argument. The exclusion follows directly:
-
-```yaml
-my-policy:
-  ruleExclusions:
-    - rules: [942100]
-      excludeTarget: "ARGS:id"
-```
-
-### See the value a rule matched on
-
-You rarely need this — the field name is what an exclusion targets. When you do, prefer a hash over the raw value. Set `rule_match_log` with `matched_data_log = "hash"` and the plugin logs one rule-match line per match carrying a hash of the matched value — enough to recognize the same false positive recurring across requests, with no request content recorded anywhere. Reproduce the whole `params` block, because your value replaces it:
-
-```yaml
-spoaHub:
-  plugins:
-    coraza:
-      params: |
-        detect_only = false
-        transaction_ttl_ms = 10000
-        max_cached_transactions = 1024
-        rule_match_log = true
-        matched_data_log = "hash"
-        expose_matched_data = false
-```
-
-The line carries `sha256:<hex>` in place of the value, plus the rule id and the rule's own message.
-
-!!! warning "Don't use `matched_data_log = \"truncate\"` to work around a hash you can't read"
-    `truncate` logs the matched bytes themselves — up to `matched_data_max_bytes`, at `WARN`, on the sidecar's stdout. The plugin's own source calls this out: `MatchedRule.Data` may contain credentials or arbitrary request bodies. A hash you can group by is almost always the answer; when you genuinely need the value, use the SPOE route below so it lands in the access log, whose destination you control.
-
-When you need the literal value, return it through SPOE rather than logging it in the hub. Set `expose_matched_data = true` (the value is capped by `matched_data_max_bytes`, default 128 bytes) and the plugin hands the matched data back to HAProxy in `txn.hub.coraza.data`:
-
-```yaml
-spoaHub:
-  plugins:
-    coraza:
-      params: |
-        detect_only = false
-        transaction_ttl_ms = 10000
-        max_cached_transactions = 1024
-        rule_match_log = false
-        matched_data_log = "none"
-        expose_matched_data = true
-```
-
-Then add it to the access log with a `log-fields-*` snippet. Contribute it as a snippet rather than through `accessLog.fields`, because a log-format item is evaluated when the line is written — after the WAF has run — while `accessLog.fields` captures at request time:
-
-```yaml
-controller:
-  config:
-    templateSnippets:
-      log-fields-900-waf-matched-data:
-        template: |-
-          %(waf_data)[var(txn.hub.coraza.data)]
-```
-
-This puts the matched value in the access log, which you can route away from stdout — so the sensitive field lands in the one stream whose destination you control.
-
-### Last resort: the Coraza audit log
-
-When you need the full transaction — every matched rule with its target and the request metadata together — enable Coraza's own audit engine through the trusted policy's `secLang`. A self-service catalog can't: ask the administrator to adopt the policy, or to enable the log in the shared directives.
-
-Nothing is written today: the audit engine is enabled by Coraza's recommended configuration, but `SecAuditLog` has no target, so the writer is a no-op. Setting a target is what turns the stream on — and **set `SecAuditLogParts` in the same breath.** Coraza's default part set is `ABIJDEFHZ`, which includes the request body (`I`) and the response body (`E`); the narrower set below deliberately leaves both out.
-
-```yaml
-my-policy:
-  enforcement: detect
-  secLang: |
-    SecAuditEngine RelevantOnly
-    SecAuditLogParts ABFHKZ
-    SecAuditLog /dev/stdout
-    SecAuditLogFormat JSON
-```
-
-Records land on the spoa-hub container's stdout as JSON, one per request that matched a rule:
-
-```console
-kubectl logs -n <namespace> <haproxy-pod> -c spoa-hub | grep '"transaction"'
-```
-
-Understand what you're turning on. With parts `ABFHKZ` each record carries the client IP and ports (`A`), the full request line **including the query string** and every request header — `Cookie` and `Authorization` among them (`B`), and per matched rule the bytes that matched (`K`). The request body (`C`) isn't included, which is the one thing this set leaves out.
-
-Two properties make this the last resort rather than the default. These records are personal data, in volume. And Coraza's audit writer opens its target directly, so it bypasses the hub's and the plugin's log configuration completely: no log level, and no `accessLog.targets`-style routing, applies to it. `SecAuditLog` accepts a file path, so you can point it at a mounted volume instead of `/dev/stdout` if you need the detail without your general log pipeline collecting it.
-
-Turn it off once the policy is tuned.
-
-You have two structured, self-service-safe ways to tune a false positive: `ruleExclusions` for exclusions and `allowedMethods` for method-driven hits.
-
-`ruleExclusions` covers the full range from a whole attack category down to a single rule on a single path. You supply only rule IDs or CRS tags, an exact target variable, and a literal path; the chart writes the CRS directive:
-
-```yaml
-my-policy:
-  enforcement: detect
-  ruleExclusions:
-    # drop a request field from a whole attack category (a search box
-    # tripping SQL-injection and XSS):
-    - tags: [attack-sqli, attack-xss]
-      excludeTarget: "ARGS:q"
-    # disable one rule only on matching paths (a git host, where CRS rule
-    # 930130 fires on every .git/ git-over-HTTP URL):
-    - rules: [930130]
-      onPathContains: ".git/"        # or onPathPrefix / onPathExact / onPathSuffix
-    # drop one parameter from a single rule (optionally path-scoped):
-    - rules: [941320]
-      excludeTarget: "ARGS:wp_post"
-    # disable a rule everywhere in this app:
-    - rules: [913100]
-```
-
-`ruleExclusions` works in a self-service catalog without any administrator grant. The chart reserves the CRS setup, anomaly scoring, and correlation rules (900000-901999, 949xxx, 959xxx, 980xxx, 990xxx+) so an exclusion can silence an attack rule that false-positives but can't disable the scoring rule that makes the block decision — you can't turn off your own enforcement through an exclusion. Regex collection keys (`ARGS:/regex/`) are rejected; only exact variable names are allowed.
-
-Widen the method allowlist when a whole class of hits comes from a method the app legitimately uses (`PUT`, `PATCH`, `DELETE` on an HTTP API) — set the policy's `allowedMethods` instead of excluding rule targets one by one.
-
-### Flip to deny
-
-After the exclusions have been in place for another observation window with zero would-block hits, set `enforcement: deny`. Watch `plugin_coraza_denials_total` for the first days — it now counts real blocks — and use the access log's `waf_rule_id` and `denied_by` to justify any individual one. If you turned the audit log on to classify hits, turn it off again here.
+Use the [WAF tuning guide](waf-tuning.md) to inspect rule matches, address false
+positives, and move a policy from observation to blocking.
 
 ## Correlating hub logs with the access log
 
@@ -367,10 +176,10 @@ the request that caused it can be joined on one key:
 
 ```console
 # the access-log record
-kubectl logs -n <namespace> <haproxy-pod> -c vector | jq 'select(.req_id=="019f9e64-e9de-7d1b-88c9-76644f0e9b86")'
+kubectl logs -n haptic deployment/haptic-haproxy -c vector | jq 'select(.req_id=="019f9e64-e9de-7d1b-88c9-76644f0e9b86")'
 
 # and anything the hub said about the same request
-kubectl logs -n <namespace> <haproxy-pod> -c spoa-hub | jq 'select(.["span.req_id"]=="019f9e64-e9de-7d1b-88c9-76644f0e9b86")'
+kubectl logs -n haptic deployment/haptic-haproxy -c spoa-hub | jq 'select(.["span.req_id"]=="019f9e64-e9de-7d1b-88c9-76644f0e9b86")'
 ```
 
 The chart sends HAProxy's own `unique-id` on every SPOE message, and the hub adopts
@@ -381,10 +190,6 @@ the argument and logs its own internal id instead.
 `adopted`, `generated`, or `rejected`. **Alert on `rejected`**: it means the hub
 replaced a supplied id, so its logs and the access log name every request
 differently, and no other signal shows that.
-
-The id is a correlation label. Don't build anything that treats it as unique — it
-comes off the wire, so a plugin keying state on it could serve one request's state
-to another.
 
 ## Managed shared rate-limit store
 
@@ -416,7 +221,8 @@ HAPTIC renders a fixed-size HA Valkey topology:
 - a PodDisruptionBudget with `maxUnavailable: 1`;
 - a NetworkPolicy that admits HAProxy/SPOA traffic plus store-internal Valkey/Sentinel traffic.
 
-This gives automatic failover for the default shared limiter store without adding a HAPTIC-owned Valkey operator. It's deliberately not an automatically horizontally scaled Valkey Cluster. A hot limiter key still maps to one writable primary, so DoS-facing protection relies on bounded local state and a bounded background refresh queue.
+The managed store provides failover at a fixed size. Use your own Redis or
+Valkey infrastructure if you need horizontal store scaling.
 
 When Valkey can't answer, the default policy enforces an emergency token bucket in each SPOA sidecar. Lease mode spends any tokens it already leased before using that emergency budget. Exact mode switches to the same local tier after the store-operation timeout. This bounds each process, not the fleet: during an outage, each pod can admit its emergency burst plus tokens refilled at the configured rate, in addition to outstanding lease tokens. If the local registry is full or the hub returns no verdict, the request is allowed and marked degraded. A sidecar restart loses its emergency state and starts a new process budget. Set `rateLimit.shared.failClosed=true` when denial is safer than any of those outage grants.
 
@@ -433,7 +239,9 @@ rateLimit:
         - "redis-sentinel://valkey-sentinel.data.svc:26379/0?sentinelServiceName=mymaster"
 ```
 
-Configure the external store with a non-evicting memory policy. The chart rejects multiple URLs because the bundled plugin shares one circuit breaker across its shards, so one failed shard would disable healthy shards too. It generates `store_url` itself and rejects a manual `store_url`/`store_urls` inside `spoaHub.plugins.rate-limit.params`.
+Configure the external store with a non-evicting memory policy. Supply one URL
+through `externalStore.urls`; the chart rejects multiple URLs and manual
+`store_url` or `store_urls` entries in the plugin's `params`.
 
 Configure the hub-side plugin budget and store-operation budget together:
 
@@ -449,7 +257,7 @@ spoaHub:
 
 ## Geolocation lookups
 
-The `maxmind` plugin resolves the client IP against a MaxMind MMDB database and hands the result back to HAProxy as a transaction variable you reference in ACLs, headers, or map keys. Unlike `coraza` and `mirror`, no template library dispatches it for you, so the recipe has two operator-owned halves: configure the plugin (enable, database, lookup), then dispatch the lookup in a frontend snippet and consume the result.
+The `maxmind` plugin looks up client IP addresses in a MaxMind MMDB database. Enable the plugin, mount your database, and add a template snippet to use the result. This example adds an `X-Country` request header.
 
 ### 1. Enable the plugin and declare the lookup
 
@@ -478,7 +286,18 @@ spoaHub:
 
 The database file lives in the HAProxy pod, where the `spoa-hub` sidecar runs. Declare a pod volume with `haproxy.extraVolumes` and mount it into the sidecar with `spoaHub.extraVolumeMounts` at the path your `params:` references (`/data` above).
 
-MMDB files exceed the 1 MiB `ConfigMap`/`Secret` size limit (GeoLite2-Country alone is several MB), so don't try to mount one from a `Secret`. Use a `PersistentVolumeClaim`, or — as below — an `emptyDir` populated by an init container that downloads the database. The init container needs your MaxMind license key; this example reads it from a `Secret` you create separately:
+MMDB files exceed the 1 MiB `ConfigMap`/`Secret` size limit (GeoLite2-Country alone is several MB), so don't try to mount one from a `Secret`. Use a `PersistentVolumeClaim`, or — as below — an `emptyDir` populated by an init container that downloads the database. The init container needs your MaxMind license key. Create its Secret in the
+release namespace:
+
+```bash
+read -r -s -p "MaxMind license key: " maxmind_license
+printf '%s' "$maxmind_license" |
+  kubectl create secret generic maxmind-license --namespace haptic \
+    --from-file=license_key=/dev/stdin --dry-run=client -o yaml | kubectl apply -f -
+unset maxmind_license
+```
+
+Then add the download container and volume to your Helm values:
 
 ```yaml
 # values.yaml
@@ -492,9 +311,11 @@ haproxy:
       command:
         - sh
         - -c
-        - >
-          curl -fsSL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=$LICENSE_KEY&suffix=tar.gz"
-          | tar -xz --strip-components=1 -C /data
+        - |
+          set -eu
+          curl -fsSL -o /tmp/maxmind.tar.gz \
+            "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=$LICENSE_KEY&suffix=tar.gz"
+          tar -xzf /tmp/maxmind.tar.gz --strip-components=1 -C /data
       env:
         - name: LICENSE_KEY
           valueFrom:
@@ -514,9 +335,9 @@ spoaHub:
 
 ### 3. Dispatch the lookup and use the result
 
-When the plugin is enabled, the chart emits the SPOE plumbing automatically: a `[[plugins]]` block, a `spoe-message geoip-enrich` (sending the client IP as `args ip=src`), and a `spoe-group geoip-enrich-group`. The SPOE agent runs with `option var-prefix hub`, so an `output_var` of `geo_country` lands in HAProxy as `txn.hub.maxmind.geo_country` — the `txn.hub.<plugin>.<output_var>` convention shared by every hub plugin.
-
-The one piece the chart can't infer is *when* to run the lookup and *what* to do with the result. Add a `frontend-spoe-filters-*` snippet through `controller.config.templateSnippets`. The chart creates one engine per message, named `spoa-hub-<message>`, so the GeoIP group runs in `spoa-hub-geoip-enrich`:
+Add a `frontend-spoe-filters-*` snippet to run the lookup and set the header.
+The engine and group names below match the `geoip-enrich` message configured
+in step 1. The result is available as `txn.hub.maxmind.geo_country`.
 
 ```yaml
 # values.yaml
@@ -526,13 +347,12 @@ controller:
       frontend-spoe-filters-300-geoip:
         template: |
           http-request send-spoe-group spoa-hub-geoip-enrich geoip-enrich-group
-          # Pass the country to backends as a header...
           http-request set-header X-Country %[var(txn.hub.maxmind.geo_country)]
-          # ...or block selected countries at the edge:
-          http-request deny deny_status 403 if { var(txn.hub.maxmind.geo_country) -m str RU KP }
 ```
 
-The snippet name's `300` orders it after the bundled `frontend-spoe-filters-050-coraza` and `-100-external-auth` dispatchers; pick any number that slots it where you want in the request pipeline.
+Apply the combined values, then send a request through one of your routes.
+Check the application's received `X-Country` header. Addresses absent from the
+database, including private cluster addresses, don't produce a country code.
 
 ## Verifying the published image
 
@@ -540,35 +360,41 @@ The image is signed by digest with cosign keyless via GitLab OIDC. The CycloneDX
 
 ```bash
 # Image signature
-cosign verify registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<version> \
+read -r -p "HAPTIC image version: " haptic_version
+cosign verify "registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:$haptic_version" \
   --certificate-identity-regexp '^https://gitlab\.com/haproxy-haptic/haptic//\.gitlab-ci\.yml@refs/tags/.*$' \
   --certificate-oidc-issuer 'https://gitlab.com'
 
 # CycloneDX SBOM
-cosign verify-attestation registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<version> \
+cosign verify-attestation "registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:$haptic_version" \
   --type cyclonedx \
   --certificate-identity-regexp '^https://gitlab\.com/haproxy-haptic/haptic//\.gitlab-ci\.yml@refs/tags/.*$' \
   --certificate-oidc-issuer 'https://gitlab.com'
 ```
 
-Each upstream `.so` was independently `sha256sum`-checked and `cosign verify-blob`-ed against its source project's tag identity at image-build time. The SBOM enumerates Rust dependencies via the [`cargo-auditable`](https://github.com/rust-secure-code/cargo-auditable) metadata embedded in every plugin binary.
-
 ## Performance tuning
 
-The chart's `spoaHub.haproxy.*` values map directly to HAProxy directives in `backend spoa-hub` and the per-message agents in `spoe.conf`. Every agent uses the same local socket, but owns its own processing deadline. `option spop-check` removes an unhealthy hub from service after a real SPOP handshake fails without affecting HAProxy readiness.
+HAProxy communicates with the hub through a shared Unix socket using the
+[Stream Processing Offload Protocol](https://docs.haproxy.org/spoe.html) (SPOP).
+HAProxy's side of that connection is the Stream Processing Offload Engine (SPOE).
 
-| Values key                          | HAProxy directive                                                  | Default              | When to change                                                                                                        |
-| ----------------------------------- | ------------------------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `spoaHub.haproxy.socketPath`        | `server hub <path>` in `backend spoa-hub`                          | `/run/spoa/hub.sock` | Match a different bind path the sidecar listens on (for example when `securityContext.runAsUser` blocks `/run/spoa`).        |
-| `spoaHub.haproxy.modeSpop`          | `mode` line in `backend spoa-hub` — `mode spop` (true) or `mode tcp` (false); the `filter spoe engine` directive on the frontend is emitted either way | `true`               | Auto-falls back to `mode tcp` on HAProxy 3.0 (`mode spop` was introduced in 3.1). Set `false` to force `mode tcp` on 3.1+ as well — rare, mostly compat testing.                                           |
-| `spoaHub.haproxy.timeoutHello`      | `timeout hello` on `spoe-agent`                                    | `2s`                 | Raise if the hub regularly logs `HELLO` timeouts under cold-start (for example heavy plugin init like MaxMind DB load).        |
-| `spoaHub.haproxy.timeoutIdle`       | `timeout idle` on `spoe-agent` and `timeout server` on the backend | `5m`                 | Lower to free pooled connections faster in low-traffic clusters; raise to match upstream auth-service idle budgets.   |
-| `spoaHub.haproxy.timeoutProcessing` | `timeout processing` on `spoe-agent`                               | each message budget + `100ms` | Leave null to derive each message engine's deadline, including sequential dependency stages. Plugins on unrelated messages don't inflate one another. An explicit value applies to every engine and must cover every enabled message's budget. |
-| `spoaHub.haproxy.timeoutProcessingMarginMs` | derivation margin                                         | `100`                | Scheduling and serialization margin in milliseconds between each message's plugin budget and its HAProxy deadline. |
-| `spoaHub.haproxy.poolMaxConn`       | `pool-max-conn` on the `server hub` line                           | `100`                | Tune to peak concurrent in-flight SPOE messages — usually `request-rate × p99-processing-latency`.                    |
-| `spoaHub.haproxy.poolPurgeDelay`    | `pool-purge-delay` on the `server hub` line                        | `30s`                | Lower to release idle pooled connections sooner during traffic dips.                                                  |
+An unhealthy hub is removed from service without affecting HAProxy readiness.
+Use these settings to adjust the connection and processing deadlines:
 
-`spoaHub.plugins.<name>.timeoutMs` bounds plugin work inside the hub. The chart combines sequential plugin stages for each message, then adds `timeoutProcessingMarginMs` to derive that message's HAProxy `timeout processing` deadline.
+| Values key | Default | When to change |
+| ---------- | ------- | -------------- |
+| `spoaHub.haproxy.socketPath` | `/run/spoa/hub.sock` | Match a different socket path configured for the sidecar. |
+| `spoaHub.haproxy.modeSpop` | `true` | Set `false` to use TCP mode on HAProxy 3.1+. HAProxy 3.0 uses TCP mode automatically. |
+| `spoaHub.haproxy.timeoutHello` | `2s` | Raise if plugin initialization causes handshake timeouts. |
+| `spoaHub.haproxy.timeoutIdle` | `5m` | Lower to release idle connections sooner. |
+| `spoaHub.haproxy.timeoutProcessing` | Each message's budget + `100ms` | Leave unset for automatic deadlines. An explicit value applies to every message and must cover the longest processing budget. |
+| `spoaHub.haproxy.timeoutProcessingMarginMs` | `100` | Allow more scheduling and serialization time beyond plugin processing budgets. |
+| `spoaHub.haproxy.poolMaxConn` | `100` | Match peak concurrent messages; estimate with request rate × p99 processing latency. |
+| `spoaHub.haproxy.poolPurgeDelay` | `30s` | Lower to release idle pooled connections sooner during traffic dips. |
+
+Set each plugin's processing limit with `spoaHub.plugins.<name>.timeoutMs`.
+Automatic HAProxy deadlines include sequential plugin stages plus
+`timeoutProcessingMarginMs`.
 
 ## See also
 

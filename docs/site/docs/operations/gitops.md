@@ -1,6 +1,8 @@
 # Install and operate HAPTIC with GitOps
 
-Use stable credential and certificate Secrets, and keep the chart's hooks enabled.
+Manage HAPTIC through Argo CD or Flux with the examples below. Stable Secrets
+preserve credentials across reconciliations, and the chart's validation hooks
+check configuration before rollout. Keep these hooks enabled.
 Argo CD maps the CRD, validation, and agent-certificate bootstrap hooks to
 `PreSync`. Flux runs them as Helm hooks. Both stop before applying the release's
 configuration if preflight validation fails.
@@ -266,7 +268,6 @@ request immediate reconciliation with the Argo CD or Flux CLI:
     ```
 
 Don't use `--no-hooks`, selective sync, or disabled validation to force the bad
-release through. Helm rollback doesn't reverse CRD evolution and bypasses these
-pre-upgrade hooks. HAPTIC doesn't claim compatibility for downgrades across its
-configuration API changes; recover with a corrected forward release. See
-[the 0.2 upgrade contract](../upgrading-to-0.2.md).
+release through. Check the [rollback limitations](../deploying-with-helm.md#recover-a-failed-upgrade)
+before changing versions; recover across configuration API changes with a
+corrected forward release.
