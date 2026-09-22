@@ -56,6 +56,8 @@ version: ## Display version information
 
 lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	@$(MAKE) test-ci-rules
+	@echo "Checking go.mod/go.sum are tidy..."
+	@$(GO) mod tidy -diff || { echo "go.mod/go.sum are not tidy, so the next snapshot or release publish fails its source-hash check. Run 'go mod tidy' and commit the result."; exit 1; }
 	@echo "Checking test inventory (every test must run somewhere)..."
 	./scripts/check-test-inventory.sh
 	@echo "Checking template libraries parse as YAML..."
