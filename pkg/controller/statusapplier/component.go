@@ -682,6 +682,9 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 		return patchFailed
 	}
 
+	if patch.ListOwnership != "" {
+		payloadBytes = append([]byte(patch.ListOwnership+"\x00"), payloadBytes...)
+	}
 	cacheKey := fmt.Sprintf("%s/%s/%s", patch.Namespace, patch.Name, gvrStr)
 	applyLock := &c.applyLocks[statusApplyLockIndex(cacheKey)]
 	applyLock.Lock()
@@ -694,19 +697,7 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 		return patchSkipped
 	}
 
-	ssaBytes, err := encodeStatusApplyPayload(patch, statusPayload, exactLineage, expectedResourceVersion)
-	if err != nil {
-		c.Logger().Error("Failed to marshal SSA payload",
-			"namespace", patch.Namespace,
-			"name", patch.Name,
-			"error", err)
-		return patchFailed
-	}
-
-	applied, err := c.applyStatus(ctx, gvr, patch, phaseKey, ssaBytes)
-	if err != nil && exactLineage && apierrors.IsConflict(err) {
-		applied, err = c.retryStatusAtCurrentResourceVersion(ctx, gvr, patch, phaseKey, statusPayload, err)
-	}
+	applied, err := c.applyStatusPayload(ctx, gvr, patch, phaseKey, statusPayload, exactLineage, expectedResourceVersion)
 	if err != nil {
 		// The resource was deleted between render and apply — a benign
 		// race that is common under churn (the store snapshot still had

@@ -292,6 +292,7 @@ Registers a status patch for a Kubernetes resource with outcome-keyed variants. 
 |-----------|------|-------------|
 | `resource` | resource object | The watched resource to patch — a typed resource or an unstructured resource map |
 | `variants` | `map[string]any` | Status payloads keyed by pipeline phase |
+| `ownedLists` (optional) | `map[string]any` | JSON pointers within `.status`, mapped to selectors identifying the list entries your template owns |
 
 **Variants:**
 
@@ -304,6 +305,22 @@ Registers a status patch for a Kubernetes resource with outcome-keyed variants. 
 
 Templates render all variants upfront. The controller selects the variant for
 the current outcome; pass the original watched resource to preserve its identity.
+
+If another controller writes entries to the same list, declare which entries you
+own. HAPTIC replaces matching entries and preserves the others, rereading the
+resource if a concurrent update causes a conflict.
+
+```go
+{{ statusPatch(resource, map[string]any{
+  "deployed": map[string]any{
+    "entries": []any{map[string]any{"writer": "my-controller", "ready": true}},
+  },
+}, map[string]any{"/entries": map[string]any{"writer": "my-controller"}}) }}
+```
+
+Each selector must be a nonempty object. Every entry you supply for that list
+must match it. Pass an empty list to remove your entries while retaining other
+writers' entries. Omitting the list from a variant leaves it out of that patch.
 
 ### `condition()`
 
@@ -321,12 +338,10 @@ Returns the correct `lastTransitionTime` for a condition: preserves the existing
 
 **Parameters:** `existingConditions` (the resource's existing conditions list), `type`, `status`.
 
-For resources with nested condition arrays (for example, Gateway API Route `parents[]`), navigate to the parent's conditions first:
-
-```go
-{%- var parents = dig(resource, "status", "parents") | toSlice() %}
-{{ transitionTime(dig(parents[parentIndex], "conditions"), "Accepted", "True") }}
-```
+For nested conditions, find the entry by its identity and owner before calling
+`transitionTime()`. Its position in a list can change when other controllers
+write status. For Gateway API routes, match `controllerName` and `parentRef`,
+then pass that entry's `conditions` list.
 
 ## Event functions
 

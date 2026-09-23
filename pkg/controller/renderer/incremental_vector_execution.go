@@ -1250,6 +1250,7 @@ func (r *incrementalVectorStatusRecorder) RecordStatusPatch(
 	variants map[string]map[string]any,
 	sourceTemplate string,
 	sourceLine int,
+	listOwnership ...string,
 ) error {
 	state, err := r.execution.enterDirect(r.index, "component capability")
 	if err != nil {
@@ -1258,7 +1259,7 @@ func (r *incrementalVectorStatusRecorder) RecordStatusPatch(
 	defer r.execution.leaveDirect()
 	return state.recorder.recordStatusPatch(
 		namespace, name, apiVersion, kind, uid, resourceVersion,
-		variants, sourceTemplate, sourceLine,
+		variants, sourceTemplate, sourceLine, listOwnership...,
 	)
 }
 

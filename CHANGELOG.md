@@ -10,45 +10,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Changes since 0.1.0, including the 0.2.0 alpha series. Follow the
-[upgrade guide](./docs/site/docs/upgrade-notes.md#upgrading-to-02) to migrate existing
-installations and custom templates.
+Changes since 0.1.0, including the 0.2.0 alpha series.
+
+HAPTIC 0.2 expands Gateway API routing and application policies, adds checks
+before deployment and fleet diagnostics, and applies more routing changes
+without reloading HAProxy. You can try custom templates in the browser before
+installing the controller.
+
+**Before upgrading:** Kubernetes 1.33 or newer is required. Migrate Helm values,
+custom templates, and monitoring integrations using the
+[upgrade notes](./docs/site/docs/upgrade-notes.md#upgrading-to-02). Preserve your
+existing routing class names and explicitly enable any vendor annotation
+libraries you use. Read the
+[rollback limits](./docs/site/docs/deploying-with-helm.md#recover-a-failed-upgrade)
+before changing the chart's resource schemas.
 
 ### Added
 
+- Custom status templates can declare ownership of list entries, preserving entries written by other controllers.
 - Templates can inspect PEM public keys with `public_key_info` and parse one YAML document with `parse_yaml`.
-
 - `haptic doctor` checks live fleet state and creates diagnostic bundles without Secret values or rendered configuration.
-
 - HAProxy 3.4 support, including runtime addition and removal of eligible backends without a reload.
 - Typed watched-resource access and collection pipelines for custom templates, reusable `HAProxyTemplateLibrary` resources, and template-defined Kubernetes resources.
 - Runtime discovery of watched API versions and schemas, including automatic adaptation when watched CRDs are installed, upgraded, or removed.
 - Pluggable output validators and enforcement of embedded validation tests whenever configuration loads or changes.
 - `haptic preflight` validates chart values before deployment, `haptic diff` predicts reloads, and `haptic agent state` inspects a pod's deployed configuration.
 - A browser playground and editable documentation examples with a full-window editor and first-edit guidance for trying templates without a cluster.
-- A portable agent skill for Scriggo customization, resource watches, and validation, with installation instructions and versioned downloads.
+- A portable agent skill for template customization, resource watches, and validation, with installation instructions and versioned downloads.
 
 ### Changed
 
 - **BREAKING:** The `haptic` binary and per-pod HAPTIC agent replace `haptic-controller` and the HAProxy Data Plane API. Eligible map, certificate, and server updates apply at runtime; rejected reloads restore the last working files.
 - **BREAKING:** Custom templates use `currentConfig.ServerIndex`, validation fixtures use `currentServers`, and `statusPatch` takes the resource object. Use `toJSON` for composite values instead of implicit string conversion.
 - Incremental rendering, smaller resource caches, and warm follower replicas reduce repeated work, memory use, and leadership-transition delays.
-- Controller metrics now cover agent operations and fleet convergence; update dashboards using the [metric migration table](./docs/site/docs/operations/monitoring.md#where-the-old-metrics-went).
+- Controller metrics now cover agent operations and fleet convergence; update dashboards using the [metric migration table](./docs/site/docs/operations/metrics-reference.md#where-the-old-metrics-went).
 
 ### Fixed
 
 - Restore routing maps, status, events, applied resources, and reload previews in the browser playground.
-
 - Leadership handover preserves the validated configuration result when startup events arrive out of order, allowing stale upgrade validation failures to clear.
 - Pending reload follow-ups observe already accepted configurations without resending updates that can collide with the reload.
 - Large runtime updates complete all operation batches before map read-back and plan publication, avoiding false divergence and fallback reloads during bulk route removal.
-
 - Validation worker concurrency accounts for the memory limit, preventing parallel HAProxy checks from exhausting preflight containers on large nodes.
-- Incremental rendering batches dependency updates and reduces map copies, cache-identity allocations, and admission bookkeeping allocations.
 - Incremental templates read optional scalar fields consistently, including explicit false and zero values.
 - Optional HTTP fetch failures can publish validated output without poisoning the incremental cache.
-
-- Nested template closures retain native variable identity when taking addresses.
+- Templates that take variable addresses inside nested functions now keep references to the correct values.
 
 ### Security
 
@@ -57,18 +63,15 @@ installations and custom templates.
 - Controller-to-agent mutual TLS supports live certificate replacement and bounded CA trust overlap; agent diagnostics use a local read-only socket.
 - Admission requests have payload limits; HTTP redirects and diagnostics no longer expose credentials or auxiliary-file contents.
 
-### Known issues
+### Known limitations
 
-The intermittent output mismatch in [#213](https://gitlab.com/haproxy-haptic/haptic/-/issues/213)
-has no confirmed root cause. It was closed as not reproducible; the controller
-still rejects mismatched output before publication.
+- Backend TLS certificate verification uses the configured SNI hostname; independent certificate SAN matching is unsupported. See [Gateway API coverage](./docs/site/docs/operations/gateway-conformance.md#coverage).
 
 ### Helm chart
 
 #### Added
 
 - `HAProxyRoutePolicy` attaches JWT/API-key authentication, shared rate limits, WAF catalogs, and private HTTP caching to Gateway route rules; credential and catalog rotation use validated references to immutable objects.
-
 - `credentials.existingSecret` uses externally managed credentials without generating random values during GitOps rendering.
 - Gateway API TLSRoute, TCPRoute, ListenerSet, backend TLS, frontend client-certificate authentication, and request mirroring.
 - Native `haproxy-haptic.org/*` annotations for API-key, JWT, and HMAC authentication, shared rate limiting, Varnish caching, opt-in response compression, request-schema validation, and reusable WAF policies.
@@ -89,12 +92,13 @@ still rejects mismatched output before publication.
 
 #### Fixed
 
+- Gateway route and backend TLS policy status updates preserve entries owned by other controllers, including concurrent updates.
+- Gateway route status retains explicitly selected parent ports and each parent's condition timestamps.
 - Gateway routes without filters avoid policy-template execution; compact route and backend names retain route-kind and cross-namespace identity.
 - Ingress and Gateway JWT authentication accept the same normalized PEM public keys when sharing a Secret.
 - Admission webhook names support watch keys containing underscores or uppercase letters.
 - Gateway policy credentials use immutable Secrets; rotation validates the replacement through a policy reference update.
 - Gateway policy validation preserves credential errors when a GRPCRoute also requests unsupported caching.
-
 - Gateway rule filters and backends keep route kinds and target namespaces distinct when resource names match.
 - Named Service ports resolve correctly, and exact Ingress paths preserve trailing slashes.
 

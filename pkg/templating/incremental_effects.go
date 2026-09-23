@@ -54,6 +54,7 @@ type IncrementalStatusPatchRecorder interface {
 		variants map[string]map[string]any,
 		sourceTemplate string,
 		sourceLine int,
+		listOwnership ...string,
 	) error
 }
 
@@ -259,6 +260,7 @@ func incrementalStatusPatch(
 	env native.Env,
 	resource any,
 	variants map[string]any,
+	ownedLists ...map[string]any,
 ) string {
 	ctx := env.Context()
 	if ctx == nil {
@@ -281,6 +283,11 @@ func incrementalStatusPatch(
 		incrementalStop(env, FuncStatusPatch, err)
 		return ""
 	}
+	ownership, err := encodeStatusListOwnership(typedVariants, ownedLists)
+	if err != nil {
+		incrementalStop(env, FuncStatusPatch, err)
+		return ""
+	}
 	identity, err := incrementalStatusPatchIdentityOf(resource)
 	if err != nil {
 		incrementalStop(env, FuncStatusPatch, err)
@@ -289,7 +296,7 @@ func incrementalStatusPatch(
 	if err := recorder.RecordStatusPatch(
 		identity.namespace, identity.name, identity.apiVersion, identity.kind,
 		identity.uid, identity.resourceVersion,
-		typedVariants, env.CallPath(), env.CallLine(),
+		typedVariants, env.CallPath(), env.CallLine(), ownership,
 	); err != nil {
 		incrementalStop(env, FuncStatusPatch, err)
 	}

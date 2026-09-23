@@ -74,6 +74,7 @@ func (*incrementalComponentContextTestStatusRecorder) RecordStatusPatch(
 	map[string]map[string]any,
 	string,
 	int,
+	...string,
 ) error {
 	return nil
 }

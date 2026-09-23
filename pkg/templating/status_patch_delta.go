@@ -72,7 +72,7 @@ func (c *StatusPatchCollector) materializeChangedLocked(
 		}
 		// Unchanged patches retain their frozen predecessor's authenticated digests.
 		if patch.sourceDigest != statusPatchSourceDigest(patch.SourceTemplate, patch.SourceLine) ||
-			patch.lineageDigest != statusPatchLineageDigest(patch.UID, patch.ResourceVersion) {
+			patch.lineageDigest != statusPatchLineageDigest(patch.UID, patch.ResourceVersion, patch.ListOwnership) {
 			return nil, fmt.Errorf("statusPatch: patch %d has invalid provenance", index)
 		}
 		changed[key] = true
@@ -147,7 +147,7 @@ func (c *StatusPatchCollector) materializeKeysLocked(
 		}
 		result = append(result, StatusPatch{
 			Namespace: patch.Namespace, Name: patch.Name, APIVersion: patch.APIVersion, Kind: patch.Kind,
-			UID: patch.UID, ResourceVersion: patch.ResourceVersion,
+			UID: patch.UID, ResourceVersion: patch.ResourceVersion, ListOwnership: patch.ListOwnership,
 			Variants: variants, SourceTemplate: patch.SourceTemplate, SourceLine: patch.SourceLine,
 		})
 	}
@@ -194,7 +194,7 @@ func sameFrozenCollectedStatusPatch(
 	rightOwner *StatusPatchCollector,
 ) bool {
 	if left.UID == "" || left.ResourceVersion == "" || right.owner != rightOwner ||
-		left.UID != right.UID || left.ResourceVersion != right.ResourceVersion ||
+		left.UID != right.UID || left.ResourceVersion != right.ResourceVersion || left.ListOwnership != right.ListOwnership ||
 		left.SourceTemplate != right.SourceTemplate || left.SourceLine != right.SourceLine ||
 		left.sourceDigest != right.sourceDigest || left.lineageDigest != right.lineageDigest ||
 		len(left.Variants) != len(right.Variants) {

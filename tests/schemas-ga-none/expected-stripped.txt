@@ -133,6 +133,7 @@ test-grpcroute-https-listener-alpn-h2
 test-grpcroute-method-regex
 test-grpcroute-multi-hostname-map-newlines
 test-grpcroute-multiple-headers
+test-grpcroute-status-parent-ports
 test-grpcroute-status-patches
 test-http-demultiplexer-extension-listener
 test-http-demultiplexer-grpc-without-listener
@@ -210,6 +211,7 @@ test-httproute-same-path-matcher-precedence
 test-httproute-same-route-conflicts
 test-httproute-single-backend
 test-httproute-status-backend-not-found
+test-httproute-status-parent-ports
 test-httproute-status-patches
 test-httproute-url-rewrite
 test-httproute-urlrewrite-replacefullpath-injection-admission-rejected
@@ -243,6 +245,7 @@ test-tcproute-cross-namespace-backend-without-referencegrant-not-routed
 test-tcproute-multi-listener-single-backend
 test-tcproute-oldest-route-wins-port
 test-tcproute-orphan-sibling-does-not-drop-others
+test-tcproute-status-parent-ports
 test-tcproute-unattached-no-frontend
 test-tcproute-weighted-routing
 test-tlsroute-cross-namespace-backend-without-referencegrant-rejected
@@ -257,6 +260,7 @@ test-tlsroute-passthrough-basic
 test-tlsroute-passthrough-nondefault-port-frontend
 test-tlsroute-same-sni-on-two-passthrough-ports
 test-tlsroute-section-name-no-match
+test-tlsroute-status-parent-ports
 test-tlsroute-terminate-nondefault-port-frontend
 test-tlsroute-terminate-on-chart-static-httpsport
 test-tlsroute-wildcard-listener-exact-route

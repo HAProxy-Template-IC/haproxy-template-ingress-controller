@@ -1,0 +1,134 @@
+_fx:
+  services: &parentPortServices
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: app-svc, namespace: default}
+      spec: {ports: [{port: 80}]}
+  routeSpec: &parentPortRouteSpec
+    parentRefs:
+      - {name: port-gateway, port: 18080}
+      - {name: port-gateway, port: 18081}
+    rules:
+      - backendRefs: [{name: app-svc, port: 80}]
+  routeStatus: &parentPortRouteStatus
+    parents:
+      - parentRef: {group: gateway.networking.k8s.io, kind: Gateway, name: port-gateway, port: 18080}
+        controllerName: example.com/other-controller
+        conditions:
+          - {type: Accepted, status: "True", reason: Accepted, message: Other, observedGeneration: 1, lastTransitionTime: "2022-09-09T09:09:09Z"}
+      - parentRef: {group: gateway.networking.k8s.io, kind: Gateway, name: port-gateway, port: 18081}
+        controllerName: haproxy-haptic.org/controller
+        conditions:
+          - {type: Accepted, status: "True", reason: Accepted, message: Accepted, observedGeneration: 1, lastTransitionTime: "2021-03-04T05:06:08Z"}
+          - {type: ResolvedRefs, status: "True", reason: ResolvedRefs, message: Resolved, observedGeneration: 1, lastTransitionTime: "2021-03-04T05:06:08Z"}
+      - parentRef: {group: gateway.networking.k8s.io, kind: Gateway, name: port-gateway, port: 18080}
+        controllerName: haproxy-haptic.org/controller
+        conditions:
+          - {type: Accepted, status: "True", reason: Accepted, message: Accepted, observedGeneration: 1, lastTransitionTime: "2021-03-04T05:06:07Z"}
+          - {type: ResolvedRefs, status: "True", reason: ResolvedRefs, message: Resolved, observedGeneration: 1, lastTransitionTime: "2021-03-04T05:06:07Z"}
+  assertions: &parentPortAssertions
+    - type: haproxy_valid
+    - type: match_count
+      target: "status:default/port-route:deployed"
+      pattern: '"lastTransitionTime":"2021-03-04T05:06:07Z"'
+      expected: "2"
+    - type: match_count
+      target: "status:default/port-route:deployed"
+      pattern: '"lastTransitionTime":"2021-03-04T05:06:08Z"'
+      expected: "2"
+    - type: contains
+      target: "status:default/port-route:deployed"
+      pattern: '"lastTransitionTime":"2021-03-04T05:06:07Z"[^\]]*\],"controllerName":"haproxy-haptic.org/controller","parentRef":\{[^}]*"port":18080\}'
+    - type: contains
+      target: "status:default/port-route:deployed"
+      pattern: '"lastTransitionTime":"2021-03-04T05:06:08Z"[^\]]*\],"controllerName":"haproxy-haptic.org/controller","parentRef":\{[^}]*"port":18081\}'
+    - type: not_contains
+      target: "status:default/port-route:deployed"
+      pattern: '"lastTransitionTime":"2022-09-09T09:09:09Z"'
+
+validationTests:
+  test-httproute-status-parent-ports:
+    requires: [gateways, httproutes]
+    description: Parent ports retain distinct condition timestamps despite reordered and foreign status entries.
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      services: *parentPortServices
+      gateways: &parentPortHTTPGateways
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: port-gateway, namespace: default}
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - {name: first, protocol: HTTP, port: 18080}
+              - {name: second, protocol: HTTP, port: 18081}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: port-route, namespace: default, generation: 2}
+          spec: *parentPortRouteSpec
+          status: *parentPortRouteStatus
+    assertions: *parentPortAssertions
+
+  test-grpcroute-status-parent-ports:
+    requires: [gateways, grpcroutes]
+    description: GRPCRoute parent ports retain their own status and timestamps.
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      services: *parentPortServices
+      gateways: *parentPortHTTPGateways
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata: {name: port-route, namespace: default, generation: 2}
+          spec: *parentPortRouteSpec
+          status: *parentPortRouteStatus
+    assertions: *parentPortAssertions
+
+  test-tlsroute-status-parent-ports:
+    requires: [gateways, tlsroutes]
+    description: TLSRoute parent ports retain their own status and timestamps.
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      services: *parentPortServices
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: port-gateway, namespace: default}
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - {name: first, protocol: TLS, port: 18080, tls: {mode: Passthrough}}
+              - {name: second, protocol: TLS, port: 18081, tls: {mode: Passthrough}}
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata: {name: port-route, namespace: default, generation: 2}
+          spec:
+            <<: *parentPortRouteSpec
+            hostnames: [app.example.com]
+          status: *parentPortRouteStatus
+    assertions: *parentPortAssertions
+
+  test-tcproute-status-parent-ports:
+    requires: [gateways, tcproutes]
+    description: TCPRoute parent ports retain their own status and timestamps.
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      services: *parentPortServices
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: port-gateway, namespace: default}
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - {name: first, protocol: TCP, port: 18080}
+              - {name: second, protocol: TCP, port: 18081}
+      tcproutes:
+        - apiVersion: gateway.networking.k8s.io/v1alpha2
+          kind: TCPRoute
+          metadata: {name: port-route, namespace: default, generation: 2}
+          spec: *parentPortRouteSpec
+          status: *parentPortRouteStatus
+    assertions: *parentPortAssertions

@@ -52,6 +52,7 @@ type incrementalStatusPatchCall struct {
 	Kind            string          `json:"kind"`
 	UID             string          `json:"uid,omitempty"`
 	ResourceVersion string          `json:"resourceVersion,omitempty"`
+	ListOwnership   string          `json:"listOwnership,omitempty"`
 	Variants        json.RawMessage `json:"variants"`
 	SourceTemplate  string          `json:"sourceTemplate,omitempty"`
 	SourceLine      int             `json:"sourceLine,omitempty"`
@@ -470,6 +471,7 @@ func (r *incrementalRecorder) RecordStatusPatch(
 	variants map[string]map[string]any,
 	sourceTemplate string,
 	sourceLine int,
+	listOwnership ...string,
 ) error {
 	if r == nil {
 		return errors.New("incremental status patch recorder is nil")
@@ -481,7 +483,7 @@ func (r *incrementalRecorder) RecordStatusPatch(
 	}
 	defer release()
 	return r.recordStatusPatch(
-		namespace, name, apiVersion, kind, uid, resourceVersion, variants, sourceTemplate, sourceLine,
+		namespace, name, apiVersion, kind, uid, resourceVersion, variants, sourceTemplate, sourceLine, listOwnership...,
 	)
 }
 
@@ -490,11 +492,16 @@ func (r *incrementalRecorder) recordStatusPatch(
 	variants map[string]map[string]any,
 	sourceTemplate string,
 	sourceLine int,
+	listOwnership ...string,
 ) error {
 	collector := templating.NewStatusPatchCollector()
 	if err := collector.RegisterWithLineage(
-		namespace, name, apiVersion, kind, uid, resourceVersion, variants,
+		namespace, name, apiVersion, kind, uid, resourceVersion, variants, listOwnership...,
 	); err != nil {
+		return err
+	}
+	patches, err := collector.Patches()
+	if err != nil {
 		return err
 	}
 	encoded, err := encodeIncrementalStatusPatchVariants(variants)
@@ -508,7 +515,7 @@ func (r *incrementalRecorder) recordStatusPatch(
 	}
 	r.patches = append(r.patches, incrementalStatusPatchCall{
 		Namespace: namespace, Name: name, APIVersion: apiVersion, Kind: kind,
-		UID: uid, ResourceVersion: resourceVersion,
+		UID: uid, ResourceVersion: resourceVersion, ListOwnership: patches[0].ListOwnership,
 		Variants: slices.Clone(encoded), SourceTemplate: sourceTemplate, SourceLine: sourceLine,
 	})
 	return nil
@@ -545,9 +552,10 @@ func (r *incrementalPreflightRecorder) RecordStatusPatch(
 	variants map[string]map[string]any,
 	sourceTemplate string,
 	sourceLine int,
+	listOwnership ...string,
 ) error {
 	return r.recorder.recordStatusPatch(
-		namespace, name, apiVersion, kind, uid, resourceVersion, variants, sourceTemplate, sourceLine,
+		namespace, name, apiVersion, kind, uid, resourceVersion, variants, sourceTemplate, sourceLine, listOwnership...,
 	)
 }
 
@@ -890,7 +898,7 @@ func decodeIncrementalStatusPatchCall(call *incrementalStatusPatchCall) (templat
 	}
 	collector := templating.NewStatusPatchCollector()
 	if err := collector.RegisterWithLineage(
-		call.Namespace, call.Name, call.APIVersion, call.Kind, call.UID, call.ResourceVersion, variants,
+		call.Namespace, call.Name, call.APIVersion, call.Kind, call.UID, call.ResourceVersion, variants, call.ListOwnership,
 	); err != nil {
 		return templating.StatusPatch{}, err
 	}

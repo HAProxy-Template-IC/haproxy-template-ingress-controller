@@ -107,6 +107,10 @@ annotations:
   # Release highlights; full notes are in the root CHANGELOG.md.
   artifacthub.io/changes: |
     - kind: added
+      description: Agent certificates renew automatically, externally managed credentials support GitOps, and haptic doctor checks the live fleet
+    - kind: fixed
+      description: Gateway route and backend TLS policy status updates preserve other controllers' entries during concurrent updates
+    - kind: added
       description: The HAPTIC agent applies eligible routing and certificate changes at runtime, including dynamic backends on HAProxy 3.4
     - kind: added
       description: Pre-rollout validation checks the complete configuration before applying release objects

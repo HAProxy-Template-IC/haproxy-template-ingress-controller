@@ -78,7 +78,7 @@ func scriggoRecordEvent(env native.Env, resource any, reason, message string) st
 //	            "conditions": conditions,
 //	        },
 //	    }) %}
-func scriggoStatusPatch(env native.Env, resource any, variants map[string]any) string {
+func scriggoStatusPatch(env native.Env, resource any, variants map[string]any, ownedLists ...map[string]any) string {
 	collector := getStatusPatchCollector(env)
 	if collector == nil {
 		env.Stop(errors.New("statusPatch: statusPatchCollector not available in render context"))
@@ -96,6 +96,11 @@ func scriggoStatusPatch(env native.Env, resource any, variants map[string]any) s
 		typedVariants[phase] = statusMap
 	}
 
+	ownership, err := encodeStatusListOwnership(typedVariants, ownedLists)
+	if err != nil {
+		env.Stop(err)
+		return ""
+	}
 	namespace := scriggoDigString(resource, "", "metadata", "namespace")
 	name := scriggoDigString(resource, "", "metadata", "name")
 	apiVersion := scriggoDigString(resource, "", "apiVersion")
@@ -103,7 +108,7 @@ func scriggoStatusPatch(env native.Env, resource any, variants map[string]any) s
 	uid := scriggoDigString(resource, "", "metadata", "uid")
 	resourceVersion := scriggoDigString(resource, "", "metadata", "resourceVersion")
 	if err := collector.RegisterWithLineage(
-		namespace, name, apiVersion, kind, uid, resourceVersion, typedVariants,
+		namespace, name, apiVersion, kind, uid, resourceVersion, typedVariants, ownership,
 	); err != nil {
 		env.Stop(fmt.Errorf("statusPatch: %w", err))
 		return ""

@@ -49,6 +49,7 @@ type StatusPatchProjectionClaim struct {
 	Kind            string
 	UID             string
 	ResourceVersion string
+	ListOwnership   string
 	Phase           string
 }
 
@@ -64,9 +65,12 @@ func NewStatusPatchProjection(calls []StatusPatch) (*StatusPatchProjection, erro
 				return nil, fmt.Errorf("statusPatch call %d: %w", index, err)
 			}
 		}
+		if _, err := statusListOwnershipArgument([]string{call.ListOwnership}, call.Variants); err != nil {
+			return nil, err
+		}
 		inputs[index] = projection.InputPatch{
 			Namespace: call.Namespace, Name: call.Name, APIVersion: call.APIVersion, Kind: call.Kind,
-			UID: call.UID, ResourceVersion: call.ResourceVersion, Variants: call.Variants,
+			UID: call.UID, ResourceVersion: call.ResourceVersion, ListOwnership: call.ListOwnership, Variants: call.Variants,
 			SourceTemplate: call.SourceTemplate, SourceLine: call.SourceLine,
 		}
 	}
@@ -177,7 +181,7 @@ func (r *StatusPatchProjectionReplay) VisitClaims(visit func(StatusPatchProjecti
 			}
 			return visit(StatusPatchProjectionClaim{
 				Namespace: metadata.Namespace, Name: metadata.Name, APIVersion: metadata.APIVersion,
-				Kind: metadata.Kind, UID: metadata.UID, ResourceVersion: metadata.ResourceVersion,
+				Kind: metadata.Kind, UID: metadata.UID, ResourceVersion: metadata.ResourceVersion, ListOwnership: metadata.ListOwnership,
 				Phase: phaseName,
 			})
 		})
@@ -202,14 +206,15 @@ func (c *StatusPatchCollector) ReplayProjections(replays []*StatusPatchProjectio
 	type lineage struct {
 		uid             string
 		resourceVersion string
+		listOwnership   string
 	}
 	lineages := make(map[statusPatchIdentity]lineage, len(c.patches))
 	for key, patch := range c.patches {
 		if patch == nil || patch.owner != c ||
-			patch.lineageDigest != statusPatchLineageDigest(patch.UID, patch.ResourceVersion) {
+			patch.lineageDigest != statusPatchLineageDigest(patch.UID, patch.ResourceVersion, patch.ListOwnership) {
 			return errors.New("statusPatch: existing patch has invalid provenance")
 		}
-		lineages[key] = lineage{uid: patch.UID, resourceVersion: patch.ResourceVersion}
+		lineages[key] = lineage{uid: patch.UID, resourceVersion: patch.ResourceVersion, listOwnership: patch.ListOwnership}
 	}
 	for _, replay := range replays {
 		if err := replay.projection.visitPatches(func(_ *StatusPatchProjection, projected projection.PatchView) error {
@@ -218,7 +223,7 @@ func (c *StatusPatchCollector) ReplayProjections(replays []*StatusPatchProjectio
 				return err
 			}
 			key := newStatusPatchIdentity(metadata.Namespace, metadata.Name, metadata.APIVersion, metadata.Kind)
-			candidate := lineage{uid: metadata.UID, resourceVersion: metadata.ResourceVersion}
+			candidate := lineage{uid: metadata.UID, resourceVersion: metadata.ResourceVersion, listOwnership: metadata.ListOwnership}
 			if existing, found := lineages[key]; found && existing != candidate {
 				return fmt.Errorf("statusPatch: %s/%s has conflicting source lineage", metadata.Namespace, metadata.Name)
 			}
@@ -257,7 +262,7 @@ func (c *StatusPatchCollector) ReplayProjectionPlan(replay *StatusPatchProjectio
 		if patch == nil || patch.owner != c ||
 			patch.Namespace != key.namespace || patch.Name != key.name ||
 			patch.APIVersion != key.apiVersion || patch.Kind != key.kind ||
-			patch.lineageDigest != statusPatchLineageDigest(patch.UID, patch.ResourceVersion) {
+			patch.lineageDigest != statusPatchLineageDigest(patch.UID, patch.ResourceVersion, patch.ListOwnership) {
 			return errors.New("statusPatch: existing patch has invalid provenance")
 		}
 		if err := replay.validateLineage(patch); err != nil {
@@ -281,11 +286,11 @@ func (c *StatusPatchCollector) replayPatch(
 	if patch == nil {
 		patch = &collectedStatusPatch{
 			Namespace: metadata.Namespace, Name: metadata.Name, APIVersion: metadata.APIVersion, Kind: metadata.Kind,
-			UID: metadata.UID, ResourceVersion: metadata.ResourceVersion,
+			UID: metadata.UID, ResourceVersion: metadata.ResourceVersion, ListOwnership: metadata.ListOwnership,
 			Variants: make(map[string]collectedStatusPatchVariant), owner: c,
 		}
 		patch.sourceDigest = statusPatchSourceDigest("", 0)
-		patch.lineageDigest = statusPatchLineageDigest(metadata.UID, metadata.ResourceVersion)
+		patch.lineageDigest = statusPatchLineageDigest(metadata.UID, metadata.ResourceVersion, metadata.ListOwnership)
 		c.patches[key] = patch
 		c.order = append(c.order, key)
 	}

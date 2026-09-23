@@ -22,5 +22,6 @@ test-tcproute-cross-namespace-backend-without-referencegrant-not-routed
 test-tcproute-multi-listener-single-backend
 test-tcproute-oldest-route-wins-port
 test-tcproute-orphan-sibling-does-not-drop-others
+test-tcproute-status-parent-ports
 test-tcproute-unattached-no-frontend
 test-tcproute-weighted-routing

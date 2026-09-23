@@ -61,12 +61,17 @@ func (r *incrementalEffectTestRecorder) RecordStatusPatch(
 	variants map[string]map[string]any,
 	sourceTemplate string,
 	sourceLine int,
+	listOwnership ...string,
 ) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	ownership, err := statusListOwnershipArgument(listOwnership, variants)
+	if err != nil {
+		return err
+	}
 	r.patches = append(r.patches, StatusPatch{
 		Namespace: namespace, Name: name, APIVersion: apiVersion, Kind: kind,
-		UID: uid, ResourceVersion: resourceVersion,
+		UID: uid, ResourceVersion: resourceVersion, ListOwnership: ownership,
 		Variants: variants, SourceTemplate: sourceTemplate, SourceLine: sourceLine,
 	})
 	return nil

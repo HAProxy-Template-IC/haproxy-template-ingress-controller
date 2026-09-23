@@ -9,10 +9,10 @@ The commands use release `haptic` in namespace `haptic`. Checking renewal Jobs
 requires `kubectl` and permission to read Jobs and their logs.
 For the authentication model, see [Security](./security.md#credentials).
 
-!!! note "Development chart"
-    Automatic renewal was added after 0.2.0-alpha.3. Until the next release,
-    use a matching snapshot chart and controller image for the default-renewal
-    procedure below.
+!!! note "Version requirement"
+    Automatic renewal requires HAPTIC 0.2.0 or a development build containing
+    this feature. It isn't included in 0.2.0-alpha.3 or earlier. Use matching
+    chart and controller versions.
 
 ## Default renewal
 

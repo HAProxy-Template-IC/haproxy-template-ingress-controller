@@ -71,7 +71,7 @@ func samePlanLineage(left, right *planLineage) bool {
 	if left == right {
 		return true
 	}
-	if left.uid != right.uid || left.resourceVersion != right.resourceVersion || left.groups.Len() != right.groups.Len() {
+	if left.uid != right.uid || left.resourceVersion != right.resourceVersion || left.listOwnership != right.listOwnership || left.groups.Len() != right.groups.Len() {
 		return false
 	}
 	different := false
@@ -122,7 +122,7 @@ func visitPlanGroupTarget(group *planGroup, key string, lineage *planLineage, vi
 		return errors.New("plan target index has invalid provenance")
 	}
 	claim := &group.lineages[index]
-	if claim.metadata.UID != lineage.uid || claim.metadata.ResourceVersion != lineage.resourceVersion ||
+	if claim.metadata.UID != lineage.uid || claim.metadata.ResourceVersion != lineage.resourceVersion || claim.metadata.ListOwnership != lineage.listOwnership ||
 		string(planTuple(claim.metadata.Namespace, claim.metadata.Name, claim.metadata.APIVersion, claim.metadata.Kind)) != key {
 		return errors.New("plan target lineage has invalid provenance")
 	}
@@ -133,7 +133,7 @@ func visitPlanGroupTarget(group *planGroup, key string, lineage *planLineage, vi
 		}
 		if metadata.Namespace != claim.metadata.Namespace || metadata.Name != claim.metadata.Name ||
 			metadata.APIVersion != claim.metadata.APIVersion || metadata.Kind != claim.metadata.Kind ||
-			metadata.UID != claim.metadata.UID || metadata.ResourceVersion != claim.metadata.ResourceVersion {
+			metadata.UID != claim.metadata.UID || metadata.ResourceVersion != claim.metadata.ResourceVersion || metadata.ListOwnership != claim.metadata.ListOwnership {
 			return errors.New("plan target patch has invalid provenance")
 		}
 		return visit(PlanPatch{
