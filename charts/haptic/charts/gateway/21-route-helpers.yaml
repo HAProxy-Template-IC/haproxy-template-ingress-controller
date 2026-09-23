@@ -136,12 +136,24 @@ templateSnippets:
       {{- transitionTime(found, conditionType, newStatus) -}}
       {%- end macro -%}
 
-      {%- macro RouteParentTransitionTime(route any, parentIdx int, conditionType string, newStatus string) string -%}
-      {%- var parents = dig(route, "status", "parents") | toSlice() -%}
-      {%- var found []any = nil -%}
-      {%- if parentIdx >= 0 && parentIdx < len(parents) -%}
-        {%- found = dig(parents[parentIdx], "conditions") | toSlice() -%}
-      {%- end -%}
+      {%- macro RouteParentTransitionTime(route any, parentRef map[string]any, controllerName string, conditionType string, newStatus string) string -%}
+      {%%
+        var found []any = nil
+        for _, parent := range toSlice(dig(route, "status", "parents")) {
+          if dig_string(parent, "", "controllerName") != controllerName { continue }
+          var matches = true
+          for _, field := range []string{"group", "kind", "name", "namespace", "sectionName", "port"} {
+            if dig_string(parent, "", "parentRef", field) != dig_string(parentRef, "", field) {
+              matches = false
+              break
+            }
+          }
+          if matches {
+            found = toSlice(dig(parent, "conditions"))
+            break
+          }
+        }
+      %%}
       {{- transitionTime(found, conditionType, newStatus) -}}
       {%- end macro -%}
 

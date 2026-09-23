@@ -463,11 +463,20 @@ func TestIncrementalStatusPatchCallPreservesLineageAcrossBothDecoders(t *testing
 	)
 	require.Len(t, result.StatusPatches, 1)
 	call := &result.StatusPatches[0]
+	call.ListOwnership = `{"/entries":{"writer":"ours"}}`
+	encoded, err := encodeIncrementalStatusPatchVariants(map[string]map[string]any{
+		"rendered": {"entries": []any{map[string]any{"writer": "ours", "ready": true}}},
+	})
+	require.NoError(t, err)
+	call.Variants = encoded
+	result.StatusPatchDigest, err = digestIncrementalStatusPatchCalls(result.StatusPatches)
+	require.NoError(t, err)
 
 	decoded, err := decodeIncrementalStatusPatchCall(call)
 	require.NoError(t, err)
 	assert.Equal(t, "uid-route", decoded.UID)
 	assert.Equal(t, "rv-17", decoded.ResourceVersion)
+	assert.Equal(t, call.ListOwnership, decoded.ListOwnership)
 	projected, err := decodeIncrementalStatusPatchProjectionCall(call)
 	require.NoError(t, err)
 	assert.Equal(t, decoded, projected)

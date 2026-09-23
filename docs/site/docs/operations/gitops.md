@@ -11,10 +11,10 @@ These examples install release `haptic` in namespace `haptic`. Use one GitOps
 controller for the release. Adopting a release already managed by another tool
 requires transferring ownership; that migration isn't covered here.
 
-!!! note "Development chart"
-    `credentials.existingSecret` and automatic agent-certificate renewal were
-    added after 0.2.0-alpha.3. Until the next release, use a matching snapshot
-    chart and controller image containing these changes.
+!!! note "Version requirement"
+    These procedures require HAPTIC 0.2.0 or a matching development build.
+    The `credentials.existingSecret` setting and automatic agent-certificate
+    renewal aren't included in 0.2.0-alpha.3 or earlier.
 
 ## Prepare stable Secrets
 

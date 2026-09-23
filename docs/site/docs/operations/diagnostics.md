@@ -1,8 +1,8 @@
 # Diagnose a HAPTIC fleet
 
-`haptic doctor` is available in development builds after `0.2.0-alpha.3`;
-it isn't included in that release or earlier versions. For those installations,
-use the [pod and log checks](../troubleshooting.md).
+`haptic doctor` requires HAPTIC 0.2.0 or a development build containing the
+command. For 0.2.0-alpha.3 or earlier, use the
+[pod and log checks](../troubleshooting.md).
 
 Run `haptic doctor` from a machine with cluster access to check configuration
 validation, controller phases, and deployment state on every current HAProxy pod.

@@ -63,6 +63,7 @@ type planPhaseOwner struct {
 type planLineage struct {
 	uid             string
 	resourceVersion string
+	listOwnership   string
 	groups          *iradix.Tree[*planGroup]
 	groupsRoot      *iradix.Node[*planGroup]
 	seal            *planLineage
@@ -146,6 +147,7 @@ type planPhaseBuild struct {
 type planLineageBuild struct {
 	uid             string
 	resourceVersion string
+	listOwnership   string
 	groups          []*planGroup
 }
 
@@ -176,10 +178,10 @@ func buildPlanFromGroups(owner any, groups []*planGroup) (*PlanRoot, error) {
 			build := lineageBuilds[claim.key]
 			if build == nil {
 				build = &planLineageBuild{
-					uid: claim.metadata.UID, resourceVersion: claim.metadata.ResourceVersion,
+					uid: claim.metadata.UID, resourceVersion: claim.metadata.ResourceVersion, listOwnership: claim.metadata.ListOwnership,
 				}
 				lineageBuilds[claim.key] = build
-			} else if build.uid != claim.metadata.UID || build.resourceVersion != claim.metadata.ResourceVersion {
+			} else if build.uid != claim.metadata.UID || build.resourceVersion != claim.metadata.ResourceVersion || build.listOwnership != claim.metadata.ListOwnership {
 				return nil, fmt.Errorf("%s/%s has conflicting source lineage", claim.metadata.Namespace, claim.metadata.Name)
 			}
 			build.groups = append(build.groups, group)
@@ -203,7 +205,7 @@ func buildPlanFromGroups(owner any, groups []*planGroup) (*PlanRoot, error) {
 		build := lineageBuilds[key]
 		owners := buildPlanGroupOwners(build.groups)
 		lineage := &planLineage{
-			uid: build.uid, resourceVersion: build.resourceVersion, groups: owners, groupsRoot: owners.Root(),
+			uid: build.uid, resourceVersion: build.resourceVersion, listOwnership: build.listOwnership, groups: owners, groupsRoot: owners.Root(),
 		}
 		lineage.seal = lineage
 		lineageEntries = append(lineageEntries, persistenttree.Entry[*planLineage]{Key: key, Value: lineage})
@@ -382,6 +384,7 @@ func (p *PlanRoot) ContainsTarget(owner any, namespace, name, apiVersion, kind s
 func (p *PlanRoot) ValidateLineage(
 	owner any,
 	namespace, name, apiVersion, kind, uid, resourceVersion string,
+	listOwnership ...string,
 ) error {
 	if err := p.Validate(owner); err != nil {
 		return err
@@ -394,7 +397,11 @@ func (p *PlanRoot) ValidateLineage(
 	if err := validatePlanLineage(lineage); err != nil {
 		return err
 	}
-	if lineage.uid != uid || lineage.resourceVersion != resourceVersion {
+	ownership := ""
+	if len(listOwnership) > 0 {
+		ownership = listOwnership[0]
+	}
+	if lineage.uid != uid || lineage.resourceVersion != resourceVersion || lineage.listOwnership != ownership {
 		return fmt.Errorf("%s/%s has conflicting source lineage", namespace, name)
 	}
 	return nil
@@ -449,7 +456,7 @@ func appendPlanGroupLineage(group *planGroup, lineages map[string]int, metadata 
 	key := string(planTuple(metadata.Namespace, metadata.Name, metadata.APIVersion, metadata.Kind))
 	if index, found := lineages[key]; found {
 		previous := &group.lineages[index]
-		if previous.metadata.UID != metadata.UID || previous.metadata.ResourceVersion != metadata.ResourceVersion {
+		if previous.metadata.UID != metadata.UID || previous.metadata.ResourceVersion != metadata.ResourceVersion || previous.metadata.ListOwnership != metadata.ListOwnership {
 			return fmt.Errorf("plan group %q: %s/%s has conflicting source lineage", group.name, metadata.Namespace, metadata.Name)
 		}
 		previous.others = append(previous.others, indexed)
@@ -507,7 +514,7 @@ func validatePlanGroupLineageClaims(group *planGroup, lineages *persistenttree.T
 			if err := validatePlanLineage(existing); err != nil {
 				return err
 			}
-			if existing.uid != claim.metadata.UID || existing.resourceVersion != claim.metadata.ResourceVersion {
+			if existing.uid != claim.metadata.UID || existing.resourceVersion != claim.metadata.ResourceVersion || existing.listOwnership != claim.metadata.ListOwnership {
 				return fmt.Errorf("%s/%s has conflicting source lineage", claim.metadata.Namespace, claim.metadata.Name)
 			}
 		}
@@ -545,7 +552,7 @@ func insertPlanGroupLineages(group *planGroup, lineages *persistenttree.Txn[*pla
 		ownerTxn := owners.Txn()
 		ownerTxn.Insert([]byte(group.key), group)
 		lineage := &planLineage{
-			uid: claim.metadata.UID, resourceVersion: claim.metadata.ResourceVersion,
+			uid: claim.metadata.UID, resourceVersion: claim.metadata.ResourceVersion, listOwnership: claim.metadata.ListOwnership,
 			groups: ownerTxn.Commit(),
 		}
 		lineage.groupsRoot = lineage.groups.Root()
@@ -621,7 +628,7 @@ func removePlanGroupLineages(group *planGroup, lineages *persistenttree.Txn[*pla
 			continue
 		}
 		replacement := &planLineage{
-			uid: lineage.uid, resourceVersion: lineage.resourceVersion, groups: owners, groupsRoot: owners.Root(),
+			uid: lineage.uid, resourceVersion: lineage.resourceVersion, listOwnership: lineage.listOwnership, groups: owners, groupsRoot: owners.Root(),
 		}
 		replacement.seal = replacement
 		lineages.Insert([]byte(claim.key), replacement)

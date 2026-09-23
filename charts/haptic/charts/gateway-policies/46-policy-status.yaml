@@ -29,7 +29,7 @@ templateSnippets:
           result["partiallyInvalid"] = invalid > 0 && invalid < len(rules)
         %%}
       {%- end macro -%}
-      {%- macro ApplyGatewayPolicyConditions(route any, parentIndex int, summary map[string]any, result map[string]any) -%}
+      {%- macro ApplyGatewayPolicyConditions(route any, parentRef map[string]any, controllerName string, summary map[string]any, result map[string]any) -%}
         {%%
           var conditions = result["conditions"].([]any)
           var generation = toint(dig(route, "metadata", "generation"))
@@ -38,11 +38,11 @@ templateSnippets:
             var kind = tostring(current["type"])
             if kind == "Accepted" && current["status"] == "True" && summary["allInvalid"] == true {
               conditions[index] = condition("Accepted", "False", tostring(summary["reason"]), tostring(summary["error"]),
-                generation, RouteParentTransitionTime(route, parentIndex, "Accepted", "False"))
+                generation, RouteParentTransitionTime(route, parentRef, controllerName, "Accepted", "False"))
             }
             if kind == "ResolvedRefs" && current["status"] == "True" && summary["resolvedReason"] != "" {
               conditions[index] = condition("ResolvedRefs", "False", tostring(summary["resolvedReason"]), tostring(summary["resolvedError"]),
-                generation, RouteParentTransitionTime(route, parentIndex, "ResolvedRefs", "False"))
+                generation, RouteParentTransitionTime(route, parentRef, controllerName, "ResolvedRefs", "False"))
             }
           }
           var previous = false
@@ -64,7 +64,7 @@ templateSnippets:
               message = tostring(summary["error"])
             }
             conditions = append(conditions, condition("PartiallyInvalid", status, reason, message, generation,
-              RouteParentTransitionTime(route, parentIndex, "PartiallyInvalid", status)))
+              RouteParentTransitionTime(route, parentRef, controllerName, "PartiallyInvalid", status)))
           }
           result["conditions"] = conditions
         %%}

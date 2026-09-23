@@ -201,6 +201,17 @@ validationTests:
               - matches: *matchesPathprefixRoot
                 backendRefs:
                   - {name: app-svc, port: 80}
+          status:
+            parents:
+              - parentRef: {group: gateway.networking.k8s.io, kind: Gateway, name: my-gateway}
+                controllerName: example.com/other-controller
+                conditions:
+                  - {type: Accepted, status: "True", reason: Accepted, message: Other, observedGeneration: 1, lastTransitionTime: "2022-09-09T09:09:09Z"}
+              - parentRef: {group: gateway.networking.k8s.io, kind: Gateway, name: my-gateway}
+                controllerName: haproxy-haptic.org/controller
+                conditions:
+                  - {type: Accepted, status: "True", reason: Accepted, message: Accepted, observedGeneration: 1, lastTransitionTime: "2021-03-04T05:06:07Z"}
+                  - {type: ResolvedRefs, status: "True", reason: ResolvedRefs, message: Resolved, observedGeneration: 1, lastTransitionTime: "2021-03-04T05:06:07Z"}
       services:
         - apiVersion: v1
           kind: Service
@@ -209,6 +220,13 @@ validationTests:
             ports:
               - port: 80
     assertions:
+      - type: match_count
+        target: "status:default/app-route:deployed"
+        pattern: '"lastTransitionTime":"2021-03-04T05:06:07Z"'
+        expected: "2"
+      - type: not_contains
+        target: "status:default/app-route:deployed"
+        pattern: '"lastTransitionTime":"2022-09-09T09:09:09Z"'
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "backend gw_h_default_app-route"}
       # Backend Service exists → ResolvedRefs stays True, no BackendNotFound.

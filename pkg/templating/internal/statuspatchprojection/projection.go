@@ -79,6 +79,7 @@ type patch struct {
 	kind            string
 	uid             string
 	resourceVersion string
+	listOwnership   string
 	phases          []phase
 	sourceTemplate  string
 	sourceLine      int
@@ -97,6 +98,7 @@ type InputPatch struct {
 	Kind            string
 	UID             string
 	ResourceVersion string
+	ListOwnership   string
 	Variants        map[string]map[string]any
 	SourceTemplate  string
 	SourceLine      int
@@ -116,6 +118,7 @@ type Metadata struct {
 	Kind            string
 	UID             string
 	ResourceVersion string
+	ListOwnership   string
 	SourceTemplate  string
 	SourceLine      int
 }
@@ -221,11 +224,11 @@ func (b *builder) add(call *InputPatch) error {
 		b.byKey[key] = patchIndex
 		b.patches = append(b.patches, patch{
 			namespace: call.Namespace, name: call.Name, apiVersion: call.APIVersion, kind: call.Kind,
-			uid: call.UID, resourceVersion: call.ResourceVersion,
+			uid: call.UID, resourceVersion: call.ResourceVersion, listOwnership: call.ListOwnership,
 		})
 	}
 	projectedPatch := &b.patches[patchIndex]
-	if projectedPatch.uid != call.UID || projectedPatch.resourceVersion != call.ResourceVersion {
+	if projectedPatch.uid != call.UID || projectedPatch.resourceVersion != call.ResourceVersion || projectedPatch.listOwnership != call.ListOwnership {
 		return fmt.Errorf("%s/%s has conflicting source lineage", call.Namespace, call.Name)
 	}
 	if projectedPatch.sourceTemplate == "" && call.SourceTemplate != "" {
@@ -310,7 +313,7 @@ func (v PatchView) Metadata() (Metadata, error) {
 	return Metadata{
 		Namespace: projectedPatch.namespace, Name: projectedPatch.name,
 		APIVersion: projectedPatch.apiVersion, Kind: projectedPatch.kind,
-		UID: projectedPatch.uid, ResourceVersion: projectedPatch.resourceVersion,
+		UID: projectedPatch.uid, ResourceVersion: projectedPatch.resourceVersion, ListOwnership: projectedPatch.listOwnership,
 		SourceTemplate: projectedPatch.sourceTemplate, SourceLine: projectedPatch.sourceLine,
 	}, nil
 }

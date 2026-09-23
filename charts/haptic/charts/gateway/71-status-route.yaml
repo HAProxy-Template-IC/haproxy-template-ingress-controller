@@ -98,7 +98,6 @@ templateSnippets:
 
             // Build parents array
             var parents = []any{}
-            var parentIdx = 0
             for _, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
               var gwGroup = dig_string(parentRef, "", "group")
               if gwGroup == "" { gwGroup = "gateway.networking.k8s.io" }
@@ -146,6 +145,7 @@ templateSnippets:
                     parentRefStatus["sectionName"] = sectionNameStr
                   }
                   var parentPort = toint(dig(parentRef, "port") | fallback(0))
+                  if parentPort != 0 { parentRefStatus["port"] = parentPort }
 
                   // Evaluate Accepted-by-listener for this parentRef.
                   // listenerOwner stays polymorphic: a Gateway and a
@@ -272,11 +272,11 @@ templateSnippets:
 
                   var policyConditions = map[string]any{"conditions": []any{
                     condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                      generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                      generation, RouteParentTransitionTime(route, parentRefStatus, controllerName, "Accepted", acceptedStatus)),
                     condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
-                      generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
+                      generation, RouteParentTransitionTime(route, parentRefStatus, controllerName, "ResolvedRefs", resolvedStatus)),
                   }}
-                  ApplyGatewayPolicyConditions(route, parentIdx, policyStatus, policyConditions)
+                  ApplyGatewayPolicyConditions(route, parentRefStatus, controllerName, policyStatus, policyConditions)
                   parents = append(parents, map[string]any{
                     "parentRef": parentRefStatus,
                     "controllerName": controllerName,
@@ -284,7 +284,6 @@ templateSnippets:
                   })
                 }
               }
-              parentIdx = parentIdx + 1
             }
 
             if len(parents) > 0 {
@@ -295,7 +294,7 @@ templateSnippets:
                   "deployed": map[string]interface{}{
                     "parents": parents,
                   },
-                })
+                }, map[string]any{"/parents": map[string]any{"controllerName": controllerName}})
             }
           %%}
       {% end %}
@@ -381,7 +380,6 @@ templateSnippets:
             }
 
             var parents = []any{}
-            var parentIdx = 0
             for _, parentRef := range route.Spec.ParentRefs {
               var gwGroup = parentRef.Group
               if gwGroup == "" { gwGroup = "gateway.networking.k8s.io" }
@@ -423,6 +421,7 @@ templateSnippets:
                     parentRefStatus["sectionName"] = sectionNameStr
                   }
                   var parentPort = toint(parentRef.Port)
+                  if parentPort != 0 { parentRefStatus["port"] = parentPort }
 
                   var listenerOwner any = gw
                   if gwKind == "ListenerSet" {
@@ -539,11 +538,11 @@ templateSnippets:
 
                   var policyConditions = map[string]any{"conditions": []any{
                     condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                      generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                      generation, RouteParentTransitionTime(route, parentRefStatus, controllerName, "Accepted", acceptedStatus)),
                     condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
-                      generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
+                      generation, RouteParentTransitionTime(route, parentRefStatus, controllerName, "ResolvedRefs", resolvedStatus)),
                   }}
-                  ApplyGatewayPolicyConditions(route, parentIdx, policyStatus, policyConditions)
+                  ApplyGatewayPolicyConditions(route, parentRefStatus, controllerName, policyStatus, policyConditions)
                   parents = append(parents, map[string]any{
                     "parentRef": parentRefStatus,
                     "controllerName": controllerName,
@@ -551,7 +550,6 @@ templateSnippets:
                   })
                 }
               }
-              parentIdx = parentIdx + 1
             }
 
             if len(parents) > 0 {
@@ -559,7 +557,7 @@ templateSnippets:
                   "deployed": map[string]interface{}{
                     "parents": parents,
                   },
-                })
+                }, map[string]any{"/parents": map[string]any{"controllerName": controllerName}})
             }
           %%}
       {% end %}
@@ -679,7 +677,6 @@ templateSnippets:
             }
 
             var parents = []any{}
-            var parentIdx = 0
             for _, parentRef := range route.Spec.ParentRefs {
               var gwGroup = parentRef.Group
               if gwGroup == "" { gwGroup = "gateway.networking.k8s.io" }
@@ -714,6 +711,7 @@ templateSnippets:
                     parentRefStatus["sectionName"] = sectionNameStr
                   }
                   var parentPort = toint(parentRef.Port)
+                  if parentPort != 0 { parentRefStatus["port"] = parentPort }
 
                   // Pre-compute mixed-mode map so we can flag listeners
                   // that ProtocolConflict applies to.
@@ -871,14 +869,13 @@ templateSnippets:
                     "controllerName": controllerName,
                     "conditions": []any{
                       condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                        generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                        generation, RouteParentTransitionTime(route, parentRefStatus, controllerName, "Accepted", acceptedStatus)),
                       condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
-                        generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
+                        generation, RouteParentTransitionTime(route, parentRefStatus, controllerName, "ResolvedRefs", resolvedStatus)),
                     },
                   })
                 }
               }
-              parentIdx = parentIdx + 1
             }
 
             if len(parents) > 0 {
@@ -887,15 +884,6 @@ templateSnippets:
               // reloads with the new TLSRoute, so the test's dial sees
               // a routable backend instead of falling through to
               // default_backend.
-              // Use the per-parent loop index for RouteParentTransitionTime —
-              // parentIdx (the outer accumulator) sits at len(parents) by the
-              // time we get here, so passing parentIdx-1 to the lookup hands
-              // every rendered parent the LAST parent's transition time. With
-              // multiple parentRefs that means every "Accepted=False/Pending"
-              // condition we emit during the rendered phase carries the wrong
-              // lastTransitionTime — only the last parent gets a stable value,
-              // every other parent gets the wrong stamp on each render. (Gitar
-              // caught this; tracking the loop index is the fix.)
               // Rendered parents = deployed parents (byte-identical). See
               // the analogous comment in 70-status-gateway.yaml — the
               // Route conditions (Accepted, ResolvedRefs per parent) are
@@ -923,7 +911,7 @@ templateSnippets:
                   "deployed": map[string]interface{}{
                     "parents": parents,
                   },
-                })
+                }, map[string]any{"/parents": map[string]any{"controllerName": controllerName}})
             }
           %%}
       {% end %}
@@ -1000,7 +988,6 @@ templateSnippets:
             }
 
             var parents = []any{}
-            var parentIdx = 0
             for _, parentRef := range route.Spec.ParentRefs {
               var gwGroup = parentRef.Group
               if gwGroup == "" { gwGroup = "gateway.networking.k8s.io" }
@@ -1027,6 +1014,7 @@ templateSnippets:
                     parentRefStatus["sectionName"] = sectionNameStr
                   }
                   var parentPort = toint(parentRef.Port)
+                  if parentPort != 0 { parentRefStatus["port"] = parentPort }
                   var acceptedStatus = "False"
                   var acceptedReason = "NotAllowedByListeners"
                   var acceptedMsg = "No listener accepts this route"
@@ -1124,14 +1112,13 @@ templateSnippets:
                     "controllerName": controllerName,
                     "conditions": []any{
                       condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                        generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                        generation, RouteParentTransitionTime(route, parentRefStatus, controllerName, "Accepted", acceptedStatus)),
                       condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
-                        generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
+                        generation, RouteParentTransitionTime(route, parentRefStatus, controllerName, "ResolvedRefs", resolvedStatus)),
                     },
                   })
                 }
               }
-              parentIdx = parentIdx + 1
             }
 
             if len(parents) > 0 {
@@ -1139,7 +1126,7 @@ templateSnippets:
                   "deployed": map[string]interface{}{
                     "parents": parents,
                   },
-                })
+                }, map[string]any{"/parents": map[string]any{"controllerName": controllerName}})
             }
           %%}
       {% end %}

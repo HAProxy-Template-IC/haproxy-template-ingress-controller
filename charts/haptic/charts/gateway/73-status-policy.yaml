@@ -294,7 +294,7 @@ templateSnippets:
           if len(ancestors) > 0 {
             statusPatch(policy, map[string]interface{}{
                 "rendered": map[string]interface{}{"ancestors": ancestors},
-              })
+              }, map[string]any{"/ancestors": map[string]any{"controllerName": controllerName}})
           }
         %%}
       {% end %}

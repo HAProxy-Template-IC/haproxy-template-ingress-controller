@@ -113,6 +113,14 @@ field manager across phases breaks this — the
 `fieldManagerPrefix` constant doc-comment in `component.go` has the long
 explanation.
 
+## Shared status lists
+
+Templates can supply `statusPatch` with ownership selectors keyed by JSON
+pointers within status. The applier reads the current resource, replaces matching
+entries, and retains the other entries. Each write carries the current
+resourceVersion and the render's UID; a conflict retries the read and merge.
+Resource-specific paths and selectors belong in templates.
+
 ## Exact-lineage Cache
 
 `Component.statusCache` maps `"namespace/name/gvr"` to the exact UID,

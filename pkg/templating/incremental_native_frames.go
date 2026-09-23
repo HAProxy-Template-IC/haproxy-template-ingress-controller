@@ -234,6 +234,15 @@ func makeIncrementalAnyInputSignatureFrameTrampoline(function any) *native.Funct
 				native.FunctionCallFrameArg[map[string]any](frame, 2),
 			))
 		})
+	case func(native.Env, any, map[string]any, ...map[string]any) string:
+		return makeIncrementalFunctionFrameTrampoline(function, func(frame native.FunctionCallFrame) {
+			frame.SetResultString(0, function(
+				frame.ArgEnv(0),
+				native.FunctionCallFrameArg[any](frame, 1),
+				native.FunctionCallFrameArg[map[string]any](frame, 2),
+				incrementalFrameVariadicMaps(frame, 3)...,
+			))
+		})
 	case func(native.Env, any) string:
 		return makeIncrementalFunctionFrameTrampoline(function, func(frame native.FunctionCallFrame) {
 			frame.SetResultString(0, function(
@@ -785,4 +794,16 @@ func makeIncrementalStringParserFrameTrampoline[T any](function func(string) (T,
 		frame.SetResultValue(0, incrementalFrameValue(value))
 		incrementalFrameSetError(frame, err)
 	})
+}
+
+func incrementalFrameVariadicMaps(frame native.FunctionCallFrame, index int) []map[string]any {
+	count := frame.VariadicLen()
+	if count < 0 {
+		return native.FunctionCallFrameArg[[]map[string]any](frame, index)
+	}
+	values := make([]map[string]any, count)
+	for valueIndex := range count {
+		values[valueIndex] = native.FunctionCallFrameVariadicArg[map[string]any](frame, valueIndex)
+	}
+	return values
 }

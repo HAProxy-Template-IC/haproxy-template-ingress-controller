@@ -213,6 +213,7 @@ type incrementalPreparedStatusPatchCall struct {
 	kind            string
 	uid             string
 	resourceVersion string
+	listOwnership   string
 	variants        string
 	sourceTemplate  string
 	sourceLine      int
@@ -239,7 +240,7 @@ func newIncrementalPreparedStatusPatchCall(
 	prepared := &incrementalPreparedStatusPatchCall{
 		authority: authority, location: location,
 		namespace: call.Namespace, name: call.Name, apiVersion: call.APIVersion, kind: call.Kind,
-		uid: call.UID, resourceVersion: call.ResourceVersion,
+		uid: call.UID, resourceVersion: call.ResourceVersion, listOwnership: call.ListOwnership,
 		variants: string(call.Variants), sourceTemplate: call.SourceTemplate, sourceLine: call.SourceLine,
 		projection: projection,
 	}
@@ -268,7 +269,7 @@ func incrementalPreparedStatusPatchCallMatches(
 ) bool {
 	return prepared != nil && call != nil && prepared.namespace == call.Namespace && prepared.name == call.Name &&
 		prepared.apiVersion == call.APIVersion && prepared.kind == call.Kind &&
-		prepared.uid == call.UID && prepared.resourceVersion == call.ResourceVersion &&
+		prepared.uid == call.UID && prepared.resourceVersion == call.ResourceVersion && prepared.listOwnership == call.ListOwnership &&
 		stringBytesEqual(prepared.variants, call.Variants) && prepared.sourceTemplate == call.SourceTemplate &&
 		prepared.sourceLine == call.SourceLine
 }
@@ -276,7 +277,7 @@ func incrementalPreparedStatusPatchCallMatches(
 func (p *incrementalPreparedStatusPatchCall) call() incrementalStatusPatchCall {
 	return incrementalStatusPatchCall{
 		Namespace: p.namespace, Name: p.name, APIVersion: p.apiVersion, Kind: p.kind,
-		UID: p.uid, ResourceVersion: p.resourceVersion,
+		UID: p.uid, ResourceVersion: p.resourceVersion, ListOwnership: p.listOwnership,
 		Variants: []byte(p.variants), SourceTemplate: p.sourceTemplate, SourceLine: p.sourceLine,
 	}
 }
@@ -408,7 +409,7 @@ func decodeIncrementalStatusPatchProjectionCall(call *incrementalStatusPatchCall
 	}
 	return templating.StatusPatch{
 		Namespace: call.Namespace, Name: call.Name, APIVersion: call.APIVersion, Kind: call.Kind,
-		UID: call.UID, ResourceVersion: call.ResourceVersion,
+		UID: call.UID, ResourceVersion: call.ResourceVersion, ListOwnership: call.ListOwnership,
 		Variants: variants, SourceTemplate: call.SourceTemplate, SourceLine: call.SourceLine,
 	}, nil
 }

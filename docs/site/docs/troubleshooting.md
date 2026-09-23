@@ -17,8 +17,8 @@ kubectl logs --namespace "$HAPTIC_NAMESPACE" deployment/haptic-controller \
   --container controller --tail=100
 ```
 
-Builds after `0.2.0-alpha.3` also provide [fleet diagnostics](operations/diagnostics.md)
-with `haptic doctor`. That command isn't available in `0.2.0-alpha.3` or earlier.
+HAPTIC 0.2.0 also provides [fleet diagnostics](operations/diagnostics.md) with
+`haptic doctor`. That command isn't available in `0.2.0-alpha.3` or earlier.
 For a specific symptom, use the table below.
 
 ## Quick symptom reference
@@ -431,7 +431,7 @@ The chart already fetches Secret contents on demand.
 
 ### Collect diagnostic information
 
-This command requires a build after `0.2.0-alpha.3`. With an older release,
+This command requires HAPTIC 0.2.0 or a development build containing it. With an older release,
 collect the pod status and logs described at the top of this page.
 
 ```bash

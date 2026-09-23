@@ -119,7 +119,7 @@ func exactCollectedStatusPatch(
 	if !collectedStatusPatchDigestsValid(left) || !collectedStatusPatchDigestsValid(right) {
 		return false
 	}
-	if left.UID != right.UID || left.ResourceVersion != right.ResourceVersion ||
+	if left.UID != right.UID || left.ResourceVersion != right.ResourceVersion || left.ListOwnership != right.ListOwnership ||
 		left.SourceTemplate != right.SourceTemplate || left.SourceLine != right.SourceLine ||
 		left.sourceDigest != right.sourceDigest ||
 		left.lineageDigest != right.lineageDigest ||
@@ -142,7 +142,7 @@ func collectedStatusPatchMatchesKey(patch *collectedStatusPatch, key statusPatch
 }
 
 func collectedStatusPatchDigestsValid(patch *collectedStatusPatch) bool {
-	return patch.lineageDigest == statusPatchLineageDigest(patch.UID, patch.ResourceVersion) &&
+	return patch.lineageDigest == statusPatchLineageDigest(patch.UID, patch.ResourceVersion, patch.ListOwnership) &&
 		patch.sourceDigest == statusPatchSourceDigest(patch.SourceTemplate, patch.SourceLine)
 }
 

@@ -54,6 +54,9 @@ type StatusPatch struct {
 	// ResourceVersion identifies the exact source resource revision. Empty for offline and legacy inputs.
 	ResourceVersion string
 
+	// ListOwnership encodes status-relative JSON pointers and entry selectors. Empty replaces complete lists.
+	ListOwnership string
+
 	// Variants maps pipeline phase names to desired status payloads.
 	// Keys are phase names: "rendered", "deployed", "renderFailed", "deployFailed".
 	// Values are the desired .status content for that phase.
@@ -110,6 +113,7 @@ type collectedStatusPatch struct {
 	Kind            string
 	UID             string
 	ResourceVersion string
+	ListOwnership   string
 	Variants        map[string]collectedStatusPatchVariant
 	SourceTemplate  string
 	SourceLine      int
@@ -152,6 +156,7 @@ func (c *StatusPatchCollector) Register(namespace, name, apiVersion, kind string
 func (c *StatusPatchCollector) RegisterWithLineage(
 	namespace, name, apiVersion, kind, uid, resourceVersion string,
 	variants map[string]map[string]any,
+	listOwnership ...string,
 ) error {
 	// Namespace is intentionally optional: cluster-scoped resources
 	// (GatewayClass, ClusterRole, etc.) have no namespace. The applier
@@ -179,6 +184,10 @@ func (c *StatusPatchCollector) RegisterWithLineage(
 		return err
 	}
 
+	ownership, err := statusListOwnershipArgument(listOwnership, variants)
+	if err != nil {
+		return err
+	}
 	key := newStatusPatchIdentity(namespace, name, apiVersion, kind)
 
 	c.mu.Lock()
@@ -194,18 +203,18 @@ func (c *StatusPatchCollector) RegisterWithLineage(
 	if !exists {
 		existing = &collectedStatusPatch{
 			Namespace: namespace, Name: name, APIVersion: apiVersion, Kind: kind,
-			UID: uid, ResourceVersion: resourceVersion,
+			UID: uid, ResourceVersion: resourceVersion, ListOwnership: ownership,
 			Variants: make(map[string]collectedStatusPatchVariant, len(detachedVariants)), owner: c,
 		}
 		existing.sourceDigest = statusPatchSourceDigest("", 0)
-		existing.lineageDigest = statusPatchLineageDigest(uid, resourceVersion)
+		existing.lineageDigest = statusPatchLineageDigest(uid, resourceVersion, ownership)
 		c.patches[key] = existing
 		c.order = append(c.order, key)
 	} else {
-		if existing.owner != c || existing.lineageDigest != statusPatchLineageDigest(existing.UID, existing.ResourceVersion) {
+		if existing.owner != c || existing.lineageDigest != statusPatchLineageDigest(existing.UID, existing.ResourceVersion, existing.ListOwnership) {
 			return errors.New("statusPatch: existing patch has invalid provenance")
 		}
-		if existing.UID != uid || existing.ResourceVersion != resourceVersion {
+		if existing.UID != uid || existing.ResourceVersion != resourceVersion || existing.ListOwnership != ownership {
 			return fmt.Errorf("statusPatch: %s/%s has conflicting source lineage", namespace, name)
 		}
 	}
@@ -265,7 +274,7 @@ func (c *StatusPatchCollector) materializeLocked(phase string) ([]StatusPatch, e
 		if patch == nil || patch.Namespace != key.namespace || patch.Name != key.name ||
 			patch.APIVersion != key.apiVersion || patch.Kind != key.kind || patch.owner != c ||
 			patch.sourceDigest != statusPatchSourceDigest(patch.SourceTemplate, patch.SourceLine) ||
-			patch.lineageDigest != statusPatchLineageDigest(patch.UID, patch.ResourceVersion) {
+			patch.lineageDigest != statusPatchLineageDigest(patch.UID, patch.ResourceVersion, patch.ListOwnership) {
 			return nil, fmt.Errorf("statusPatch: patch %d has invalid provenance", index)
 		}
 		variants, err := c.materializePatchVariantsLocked(key, patch, phase)
@@ -277,7 +286,7 @@ func (c *StatusPatchCollector) materializeLocked(phase string) ([]StatusPatch, e
 		}
 		result = append(result, StatusPatch{
 			Namespace: patch.Namespace, Name: patch.Name, APIVersion: patch.APIVersion, Kind: patch.Kind,
-			UID: patch.UID, ResourceVersion: patch.ResourceVersion,
+			UID: patch.UID, ResourceVersion: patch.ResourceVersion, ListOwnership: patch.ListOwnership,
 			Variants: variants, SourceTemplate: patch.SourceTemplate, SourceLine: patch.SourceLine,
 		})
 	}
@@ -355,7 +364,7 @@ func (c *StatusPatchCollector) materializeVariantLocked(
 			metadata.APIVersion != key.apiVersion ||
 			metadata.Kind != key.kind ||
 			metadata.UID != patch.UID ||
-			metadata.ResourceVersion != patch.ResourceVersion {
+			metadata.ResourceVersion != patch.ResourceVersion || metadata.ListOwnership != patch.ListOwnership {
 			return nil, errors.New("projected variant has invalid provenance")
 		}
 		return variant.projected.Materialize()
@@ -405,7 +414,7 @@ func mergeProjectedStatusPatch(
 	index, exists := resultByKey[key]
 	if exists {
 		patch := &result[index]
-		if patch.UID != metadata.UID || patch.ResourceVersion != metadata.ResourceVersion {
+		if patch.UID != metadata.UID || patch.ResourceVersion != metadata.ResourceVersion || patch.ListOwnership != metadata.ListOwnership {
 			return result, fmt.Errorf("statusPatch: %s/%s has conflicting source lineage", metadata.Namespace, metadata.Name)
 		}
 	}
@@ -422,7 +431,7 @@ func mergeProjectedStatusPatch(
 		result = append(result, StatusPatch{
 			Namespace: metadata.Namespace, Name: metadata.Name,
 			APIVersion: metadata.APIVersion, Kind: metadata.Kind,
-			UID: metadata.UID, ResourceVersion: metadata.ResourceVersion,
+			UID: metadata.UID, ResourceVersion: metadata.ResourceVersion, ListOwnership: metadata.ListOwnership,
 			Variants: make(map[string]map[string]any, len(materialized)),
 		})
 	}
@@ -475,11 +484,17 @@ func statusPatchSourceDigest(sourceTemplate string, sourceLine int) [sha256.Size
 	return digest
 }
 
-func statusPatchLineageDigest(uid, resourceVersion string) [sha256.Size]byte {
+func statusPatchLineageDigest(uid, resourceVersion string, listOwnership ...string) [sha256.Size]byte {
 	hasher := sha256.New()
 	_, _ = hasher.Write([]byte(uid))
 	_, _ = hasher.Write([]byte{0})
 	_, _ = hasher.Write([]byte(resourceVersion))
+	for _, ownership := range listOwnership {
+		if ownership != "" {
+			_, _ = hasher.Write([]byte{0})
+			_, _ = hasher.Write([]byte(ownership))
+		}
+	}
 	var digest [sha256.Size]byte
 	hasher.Sum(digest[:0])
 	return digest

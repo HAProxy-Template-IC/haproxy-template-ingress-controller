@@ -218,6 +218,7 @@ func (r *StatusPatchProjectionPlanReplay) validateLineage(patch *collectedStatus
 		patch.Kind,
 		patch.UID,
 		patch.ResourceVersion,
+		patch.ListOwnership,
 	)
 }
 
