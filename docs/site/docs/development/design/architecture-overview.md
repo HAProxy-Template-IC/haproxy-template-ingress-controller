@@ -200,6 +200,22 @@ generation, bound to the exact input. [ADR-0020](../adr/0020-authoritative-rende
 records why validation is attached to output rather than assumed from its
 trigger.
 
+### Admission and watch delivery
+
+A resource can exist in the Kubernetes API before its watch event reaches the
+controller. If an admission render fails against the watch cache, HAPTIC reads
+fresh resource collections from the API and validates the proposal once more.
+This lets you create a dependency and immediately reference it in a subsequent
+request, such as rotating a policy to a new immutable credential Secret.
+
+The fresh collections use the configured watch namespaces, selectors, indexes,
+and ignored fields. They belong to that admission request; informer stores stay
+unchanged. The proposal and baseline renders use the same published-file
+snapshot, and the proposal must pass the normal output checks. API failures,
+incomplete reads, and cancellation deny admission. Each controller permits one
+refresh at a time within the request deadline. Successful cached validation
+makes no additional API requests.
+
 ## Operating assumptions and constraints
 
 ### Triggers
