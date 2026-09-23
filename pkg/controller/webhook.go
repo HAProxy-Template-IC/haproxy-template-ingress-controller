@@ -234,7 +234,7 @@ func createDryRunValidator(
 		GeneralDir:        dirConfig.GeneralDir,
 	})
 
-	return buildDryRunValidator(renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, wiring.publishedCurrentFiles.get, logger)
+	return buildDryRunValidator(renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, wiring.publishedCurrentFiles.get, wiring.freshStoreProvider, logger)
 }
 
 // buildDryRunValidator connects the admission service to resource overlay handling.
@@ -246,6 +246,7 @@ func buildDryRunValidator(
 	gvrMapper meta.RESTMapper,
 	watchedResources map[string]coreconfig.WatchedResource,
 	currentFilesProvider func() (map[string]string, error),
+	freshStoreProvider func(context.Context) (stores.StoreProvider, error),
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, error) {
 	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
@@ -258,6 +259,7 @@ func buildDryRunValidator(
 	proposalValidatorInstance := proposalvalidator.NewService(&proposalvalidator.ServiceConfig{
 		Pipeline:             pipelineInstance,
 		BaseStoreProvider:    baseStoreProvider,
+		FreshStoreProvider:   freshStoreProvider,
 		CurrentFilesProvider: currentFilesProvider,
 		Logger:               logger,
 	})

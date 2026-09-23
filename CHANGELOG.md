@@ -47,6 +47,9 @@ before changing the chart's resource schemas.
 
 ### Fixed
 
+- Avoid rejecting valid resource updates when the admission cache has not yet observed a newly created dependency.
+- Preserve the full connection-drain quiet period when HAProxy counter reads or agent scheduling are delayed.
+
 - Restore routing maps, status, events, applied resources, and reload previews in the browser playground.
 - Leadership handover preserves the validated configuration result when startup events arrive out of order, allowing stale upgrade validation failures to clear.
 - Pending reload follow-ups observe already accepted configurations without resending updates that can collide with the reload.

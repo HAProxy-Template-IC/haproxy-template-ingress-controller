@@ -44,6 +44,16 @@ func buildStoreProvider(k8sStores map[string]types.Store) stores.StoreProvider {
 	return stores.NewRealStoreProvider(converted)
 }
 
+func buildFreshStoreProvider(watcher *resourcewatcher.ResourceWatcherComponent) func(context.Context) (stores.StoreProvider, error) {
+	return func(ctx context.Context) (stores.StoreProvider, error) {
+		fresh, err := watcher.FreshStores(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return buildStoreProvider(fresh), nil
+	}
+}
+
 // initRenderState creates debug state and the leader-term currentFiles authority.
 func initRenderState(
 	setup *componentSetup,

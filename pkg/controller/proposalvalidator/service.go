@@ -36,6 +36,8 @@ const renderPhase = "render"
 type Service struct {
 	pipeline             *pipeline.Pipeline
 	baseStore            stores.StoreProvider
+	freshStoreProvider   func(context.Context) (stores.StoreProvider, error)
+	refreshSlot          chan struct{}
 	currentFilesProvider func() (map[string]string, error)
 	logger               *slog.Logger
 }
@@ -44,6 +46,8 @@ type Service struct {
 type ServiceConfig struct {
 	Pipeline          *pipeline.Pipeline
 	BaseStoreProvider stores.StoreProvider
+	// FreshStoreProvider supplies API-backed inputs when a cached render rejects admission.
+	FreshStoreProvider func(context.Context) (stores.StoreProvider, error)
 	// CurrentFilesProvider pins one published baseline across both renders.
 	CurrentFilesProvider func() (map[string]string, error)
 	Logger               *slog.Logger
@@ -58,6 +62,8 @@ func NewService(cfg *ServiceConfig) *Service {
 	return &Service{
 		pipeline:             cfg.Pipeline,
 		baseStore:            cfg.BaseStoreProvider,
+		freshStoreProvider:   cfg.FreshStoreProvider,
+		refreshSlot:          make(chan struct{}, 1),
 		currentFilesProvider: cfg.CurrentFilesProvider,
 		logger:               logger.With("component", ComponentName),
 	}
@@ -164,7 +170,7 @@ func (c *Service) validateSync(ctx context.Context, overlays map[string]*stores.
 			DurationMs: time.Since(startTime).Milliseconds(),
 		}
 	}
-	outcome := c.runWithBaselineCheck(ctx, overlayProvider, opts...)
+	outcome := c.validateAdmission(ctx, overlayProvider, opts...)
 	if outcome.Admit {
 		return outcome.PipelineResult, &validation.ValidationResult{
 			Valid:      true,

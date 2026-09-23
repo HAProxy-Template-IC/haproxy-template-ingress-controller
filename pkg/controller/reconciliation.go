@@ -74,6 +74,7 @@ type reconciliationWiring struct {
 	// the deploy side sources into it.
 	renderService         *renderer.RenderService
 	publishedCurrentFiles *publishedAuxFiles
+	freshStoreProvider    func(context.Context) (stores.StoreProvider, error)
 	gvrMapper             meta.RESTMapper
 	// warmed is the follower warmer's first-render signal; a hand-over waits
 	// for it so the new leader's first render is warm.

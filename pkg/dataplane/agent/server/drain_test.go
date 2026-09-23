@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -45,28 +46,51 @@ func TestDrainEndsAfterTheQuietPeriod(t *testing.T) {
 }
 
 func TestDrainRestartsTheQuietPeriodOnEveryNewConnection(t *testing.T) {
-	var connections atomic.Uint64
-	// The bound only backstops a wedged drain here — its own behavior has its
-	// own test below. It must exceed the 100ms traffic window by enough that a
-	// stalled CI runner cannot turn a quiet drain into a bound one.
-	s := drainTestServer(40*time.Millisecond, 10*time.Second, func(map[string]bool) (uint64, error) {
-		return connections.Load(), nil
-	})
-	stop := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(5 * time.Millisecond)
-		defer ticker.Stop()
-		for range 20 { // 100 ms of traffic, then silence
-			<-ticker.C
+	synctest.Test(t, func(t *testing.T) {
+		var connections atomic.Uint64
+		s := drainTestServer(40*time.Millisecond, time.Second, func(map[string]bool) (uint64, error) {
+			return connections.Load(), nil
+		})
+		result := make(chan DrainResult, 1)
+		go func() { result <- s.drain(nil) }()
+		synctest.Wait()
+		for range 5 {
+			time.Sleep(30 * time.Millisecond)
 			connections.Add(1)
+			synctest.Wait()
+			select {
+			case <-result:
+				t.Fatal("drain finished while new connections were arriving")
+			default:
+			}
 		}
-		close(stop)
-	}()
-	start := time.Now()
-	result := s.drain(nil)
-	<-stop
-	assert.Equal(t, DrainReasonQuiet, result.Reason)
-	assert.GreaterOrEqual(t, time.Since(start), 140*time.Millisecond, "the quiet period starts after the last connection")
+		lastConnection := time.Now()
+		drained := <-result
+		assert.Equal(t, DrainReasonQuiet, drained.Reason)
+		assert.Equal(t, connections.Load(), drained.Connections)
+		assert.GreaterOrEqual(t, time.Since(lastConnection), s.cfg.DrainQuietPeriod)
+	})
+}
+
+func TestDrainMeasuresQuietTimeAfterReadingConnections(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		var observed time.Time
+		s := drainTestServer(40*time.Millisecond, time.Second, func(map[string]bool) (uint64, error) {
+			calls++
+			if calls == 1 {
+				return 0, nil
+			}
+			if calls == 2 {
+				time.Sleep(100 * time.Millisecond)
+				observed = time.Now()
+			}
+			return 1, nil
+		})
+		result := s.drain(nil)
+		assert.Equal(t, DrainReasonQuiet, result.Reason)
+		assert.GreaterOrEqual(t, time.Since(observed), s.cfg.DrainQuietPeriod)
+	})
 }
 
 func TestDrainStopsAtTheBoundUnderConstantTraffic(t *testing.T) {

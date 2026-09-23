@@ -99,19 +99,20 @@ func (s *Server) drain(stop <-chan struct{}) DrainResult {
 		s.logger.Info("drain: the worker does not answer, nothing to hold open", "error", err)
 		return finish(DrainReasonUnavailable, 0)
 	}
-	quietSince := start
+	quietSince := time.Now()
 	ticker := time.NewTicker(s.drainPoll)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-stop:
 			return finish(DrainReasonCancelled, last)
-		case now := <-ticker.C:
+		case <-ticker.C:
 			current, err := s.drainCounter(ignore)
 			if err != nil {
 				s.logger.Info("drain: the worker stopped answering", "error", err)
 				return finish(DrainReasonUnavailable, last)
 			}
+			now := time.Now()
 			if current != last {
 				last, quietSince = current, now
 			}
