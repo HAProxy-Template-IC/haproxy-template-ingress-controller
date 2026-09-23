@@ -265,6 +265,8 @@ func startIteration(
 	// 6.1. EventBuffer was already created early (step 0.25) for /debug/events handler
 	// It subscribes in constructor before EventBus.Start() for proper subscription ordering
 
+	wiring.freshStoreProvider = buildFreshStoreProvider(resourceWatcher)
+
 	// Reconciliation and admission share the same output validator.
 	dryrunValidator, err := createDryRunValidator(cfg, storeProvider, wiring, pluggableMgr, logger)
 	if err != nil && !errors.Is(err, errNoWebhookRules) {
