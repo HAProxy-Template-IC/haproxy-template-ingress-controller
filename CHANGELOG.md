@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-24
+
 Changes since 0.1.0, including the 0.2.0 alpha series.
 
 HAPTIC 0.2 expands Gateway API routing and application policies, adds checks
@@ -47,11 +49,10 @@ before changing the chart's resource schemas.
 
 ### Fixed
 
-- Playground try-out scripts handle missing hostname maps, run without a terminal, and resolve starter examples' auxiliary files correctly; local ports bind to localhost.
+- Playground downloads include all rendered maps, certificates, and error files; local try-out supports configurations without hostname maps and publishes ports on localhost.
 - Avoid rejecting valid resource updates when the admission cache has not yet observed a newly created dependency.
 - Preserve the full connection-drain quiet period when HAProxy counter reads or agent scheduling are delayed.
-
-- Restore routing maps, status, events, applied resources, and reload previews in the browser playground.
+- Playground previews include status, events, applied resources, and reload impact.
 - Leadership handover preserves the validated configuration result when startup events arrive out of order, allowing stale upgrade validation failures to clear.
 - Pending reload follow-ups observe already accepted configurations without resending updates that can collide with the reload.
 - Large runtime updates complete all operation batches before map read-back and plan publication, avoiding false divergence and fallback reloads during bulk route removal.
@@ -101,8 +102,6 @@ before changing the chart's resource schemas.
 - Gateway routes without filters avoid policy-template execution; compact route and backend names retain route-kind and cross-namespace identity.
 - Ingress and Gateway JWT authentication accept the same normalized PEM public keys when sharing a Secret.
 - Admission webhook names support watch keys containing underscores or uppercase letters.
-- Gateway policy credentials use immutable Secrets; rotation validates the replacement through a policy reference update.
-- Gateway policy validation preserves credential errors when a GRPCRoute also requests unsupported caching.
 - Gateway rule filters and backends keep route kinds and target namespaces distinct when resource names match.
 - Named Service ports resolve correctly, and exact Ingress paths preserve trailing slashes.
 

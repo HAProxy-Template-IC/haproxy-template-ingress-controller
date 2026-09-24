@@ -93,11 +93,11 @@ haptic preflight --values ./haptic-values.yaml --chart ./chart --schema-dir ./sc
 matching HAProxy series on the same host. The check runs `haproxy -c` locally.
 
 In a working directory without an existing `chart` directory, download the
-matching chart. For example, for `0.2.0-alpha.3`:
+matching chart:
 
 ```bash
 helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 --untar --untardir ./chart-download
+  --version 0.2.0 --untar --untardir ./chart-download
 mv ./chart-download/haptic ./chart
 ```
 

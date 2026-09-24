@@ -108,7 +108,7 @@ For release `haptic` in namespace `haptic`, apply both values files:
 
 ```bash
 helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 --namespace haptic \
+  --version 0.2.0 --namespace haptic \
   --values haptic-values.yaml --values spiffe-values.yaml
 kubectl rollout status deployment/haptic-controller --namespace haptic
 kubectl rollout status deployment/haptic-haproxy --namespace haptic
