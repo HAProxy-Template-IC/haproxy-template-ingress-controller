@@ -86,8 +86,7 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	./scripts/check-storage-dir-literals.sh
 	@echo "Checking playground/facade highlight bundle is in sync..."
 	node scripts/check-highlight-bundle.mjs
-	@echo "Testing playground migration asset loading..."
-	node --test cmd/playground/web/migration-assets.test.mjs
+	@$(MAKE) test-playground-web
 	@echo "Linting YAML files..."
 	yamllint -c .yamllint.yml .
 	@echo "Linting JSON files..."
@@ -307,6 +306,7 @@ test-admission-readiness: ## Verify admission readiness polling fails closed
 test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
 	@echo "Running tests..."
 	$(MAKE) test-admission-readiness
+	$(MAKE) test-playground-web
 	bash scripts/tests/test_check_test_inventory.sh
 	bash scripts/tests/test_cluster_node_image.sh
 	python3 -m unittest \
@@ -345,6 +345,17 @@ test-unit: ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 test-e2e-helpers: ## Test e2e client and cluster helpers without creating a cluster
 	$(GO) tool gotestsum --junitfile report-e2e-helpers.xml --format testname -- \
 		-tags=e2e -race ./tests/e2e/e2ecluster/... ./tests/e2e/grpcclient/... ./tests/e2e/httpclient/... ./tests/e2e/tunnel/...
+
+.PHONY: test-playground-web
+test-playground-web: ## Test playground asset loading and generated scripts
+	node --test cmd/playground/web/*.test.mjs
+
+PLAYGROUND_TEST_BUNDLE ?= $(CURDIR)/build/playground-test
+
+.PHONY: test-playground-tryout
+test-playground-tryout: ## Validate and run WASM exports (requires Docker or Podman; ports 80, 443, 8080, 8404)
+	./scripts/build-playground.sh "$(PLAYGROUND_TEST_BUNDLE)" local
+	node scripts/tests/test_playground_tryout.mjs "$(PLAYGROUND_TEST_BUNDLE)"
 
 # The `playground` tag builds the client-native syntax + schema check that the
 # browser playground answers `haproxy_valid` with. Nothing else may import it

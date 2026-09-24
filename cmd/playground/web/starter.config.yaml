@@ -3,13 +3,15 @@
 # One backend per watched Service, routed by "<service>.example.com" via a
 # generated host map. Edit this template, or add a Service on the right, and
 # watch the rendered haproxy.cfg change.
-#
-# The controller is resource-agnostic: it learns each resource's shape from the
-# cluster (or a bundled schema) at runtime. Here we use the untyped
-# resources.services.List() + dig() access, which needs no schema.
+dataplane:
+  mapsDir: /etc/haproxy/maps
+  sslCertsDir: /etc/haproxy/ssl
+  generalStorageDir: /etc/haproxy/general
+
 haproxyConfig:
   template: |
     global
+      default-path origin {{ pathResolver.BaseDir }}
       log stdout format raw local0
 
     defaults
@@ -28,12 +30,8 @@ haproxyConfig:
       use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
       default_backend not-found
     {%- for _, svc := range resources.services.List() %}
-    {%%
-      var ns   = svc | dig("metadata", "namespace") | fallback("") | tostring()
-      var name = svc | dig("metadata", "name") | fallback("") | tostring()
-    %%}
-    backend {{ ns }}_{{ name }}
-      server app {{ name }}.{{ ns }}.svc check resolvers cluster-dns init-addr none
+    backend {{ svc.metadata.namespace }}_{{ svc.metadata.name }}
+      server app {{ svc.metadata.name }}.{{ svc.metadata.namespace }}.svc check resolvers cluster-dns init-addr none
     {%- end %}
 
     backend not-found
@@ -50,5 +48,5 @@ watchedResources:
 maps:
   host.map:
     template: |
-      {% for _, svc := range resources.services.List() %}{{ svc | dig("metadata", "name") | fallback("") | tostring() }}.example.com {{ svc | dig("metadata", "namespace") | fallback("") | tostring() }}_{{ svc | dig("metadata", "name") | fallback("") | tostring() }}
+      {% for _, svc := range resources.services.List() %}{{ svc.metadata.name }}.example.com {{ svc.metadata.namespace }}_{{ svc.metadata.name }}
       {% end %}
