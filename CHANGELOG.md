@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Documentation version menus retain older stable releases and remove prereleases after their final release is published.
 - The playground's default starter renders correctly on first load and when restoring an older saved session.
 
 ## [0.2.0] - 2026-09-24

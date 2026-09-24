@@ -3771,7 +3771,7 @@ trigger-docs-release:
     HAPTIC_RELEASE_COMMIT_SHA: ${CI_COMMIT_SHA}
     HAPTIC_RELEASE_PIPELINE_ID: ${CI_PIPELINE_ID}
     HAPTIC_RELEASE_PLAYGROUND_JOB_NAME: build-playground-wasm
-    PAGES_ARTIFACT_FALLBACK_REF: &pages-publisher-tag pages-publisher-5d333b1c31d052d2c845197ba564e65f4e3110a9
+    PAGES_ARTIFACT_FALLBACK_REF: &pages-publisher-tag pages-publisher-51cc55b7146a892f5ee2c67466de8448c993dfc9
   trigger:
     project: haproxy-haptic/haproxy-haptic.gitlab.io
     # A TAG, not a branch: restore-pages-artifact.sh only trusts an artifact

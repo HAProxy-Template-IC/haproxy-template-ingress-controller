@@ -95,15 +95,18 @@ On each triggered pipeline, add a playground publish step:
 
 5. **Update the shared `public/playground/versions.json`** (a sibling of every version
    directory — the shell fetches it as `../versions.json`, so it is written **once**, not
-   into each version dir). Add/refresh this version's entry and set `current` to the newest
-   **stable** release:
+   into each version dir). Rebuild the catalog from published bundles and set `current`
+   to the newest **stable** release, or the newest prerelease if no stable bundle exists.
+   Remove matching alpha/beta/rc bundles once their final release exists, including on
+   retries of older pipelines. Keep older stable bundles, `dev`, and prereleases of
+   later versions. Do not add a documentation-only release without a playground bundle:
 
    ```json
    {
-     "current": "0.2.0-alpha.1",
+     "current": "0.2.0",
      "versions": [
-       { "version": "dev",          "stable": false },
-       { "version": "0.2.0-alpha.1", "stable": false }
+       { "version": "0.2.0", "stable": true },
+       { "version": "dev",   "stable": false }
      ]
    }
    ```
