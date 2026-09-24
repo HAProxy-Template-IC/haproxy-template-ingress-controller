@@ -13,8 +13,9 @@ For an installed release, start with pod status and controller logs:
 ```bash
 kubectl get pods --namespace "$HAPTIC_NAMESPACE" \
   --selector app.kubernetes.io/instance=haptic
-kubectl logs --namespace "$HAPTIC_NAMESPACE" deployment/haptic-controller \
-  --container controller --tail=100
+kubectl logs --namespace "$HAPTIC_NAMESPACE" \
+  --selector app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller \
+  --container controller --tail=100 --prefix
 ```
 
 HAPTIC 0.2.0 also provides [fleet diagnostics](operations/diagnostics.md) with
@@ -27,7 +28,7 @@ For a specific symptom, use the table below.
 |---------|---------|
 | Pods stuck in ImagePullBackOff | [Image Pull Errors](#image-pull-errors) |
 | "no kind HAProxyTemplateConfig is registered" | [CRD Not Found](#crd-not-found) |
-| No DNS or API connectivity on a kind cluster | [NetworkPolicy Issues in kind](#networkpolicy-issues-in-kind) |
+| DNS lookups or controller connections fail | [DNS and network access](#dns-and-network-access) |
 | Pod in CrashLoopBackOff | [Controller Not Starting](#controller-not-starting) |
 | Pod stuck Running but not Ready (for example `1/2` or `3/4`) | [Pods stuck not Ready](#pods-stuck-not-ready) |
 | Pods running, no reconciliation activity | [Controller Running But Not Processing](#controller-running-but-not-processing) |
@@ -80,25 +81,42 @@ kubectl get jobs --namespace "$HAPTIC_NAMESPACE"
 helm status haptic --namespace "$HAPTIC_NAMESPACE"
 ```
 
-### NetworkPolicy issues in kind
+<a id="networkpolicy-issues-in-kind"></a>
 
-Kind's default network doesn't enforce NetworkPolicy. If you installed a network
-plugin that does, such as Calico or Cilium, check that DNS is allowed and
-`controller.networkPolicy.egress.kubernetesApi` covers the API-server address.
-See [Networking](./operations/networking.md).
+### DNS and network access
 
-Debug NetworkPolicy:
+If controller logs report failed DNS lookups or connection timeouts, check
+connectivity from the controller pod. When your cluster enforces NetworkPolicy,
+its egress rules must allow DNS, the Kubernetes API, and HAProxy agents. See
+[Networking](./operations/networking.md) for the chart's rules. Kind's default
+network doesn't enforce these policies; an installed plugin such as Calico or
+Cilium can.
+
+Check whether the controller can resolve the Kubernetes API Service:
 
 ```bash
-# Check controller can resolve DNS
 kubectl exec -n "$HAPTIC_NAMESPACE" deployment/haptic-controller -c controller -- \
-  nslookup kubernetes.default
+  getent hosts kubernetes.default.svc
+```
 
-# Check controller can reach HAProxy pod
+An address confirms DNS resolution. If the lookup fails, inspect your DNS
+Service and allow DNS traffic in the controller's egress policy.
+
+Check whether the controller can reach an HAProxy agent using its configured
+certificates. This command uses the chart's default agent port, `5555`:
+
+```bash
 HAPROXY_IP=$(kubectl get pods -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].status.podIP}')
 kubectl exec -n "$HAPTIC_NAMESPACE" deployment/haptic-controller -c controller -- \
   haptic agent state --url "https://$HAPROXY_IP:5555"
 ```
+
+The command should print the agent's version and plan state. A timeout points to
+network access or an unavailable pod; a certificate error needs
+[certificate checks](operations/agent-certificates.md#check-expiry). Inspect the
+controller's logs for API-server connection errors and use the
+[API egress checks](operations/networking.md#production-hardening) to verify
+the allowed addresses and ports.
 
 ## Controller issues
 
@@ -108,14 +126,28 @@ For repeated restarts or initialization errors, inspect the pod and its logs:
 
 ```bash
 kubectl get pods -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller
-kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller --tail=100
+kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller --tail=100 --prefix
 kubectl describe pod -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller
 ```
+
+If the controller has restarted, read the previous container's logs to see why
+it exited:
+
+```bash
+kubectl logs -n "$HAPTIC_NAMESPACE" -c controller \
+  -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller \
+  --previous --tail=100 --prefix
+```
+
+Pods without a previous container report that its logs aren't available. For
+`OOMKilled`, follow [memory sizing](#high-memory-usage); for `FailedScheduling`
+or `Insufficient memory`, compare node capacity with the
+[installation and upgrade budget](operations/performance.md#what-the-default-installation-reserves).
 
 | Cause | Check | Solution |
 |-------|-------|----------|
 | Missing configuration or library | `kubectl get haproxytemplateconfig,haproxytemplatelibrary -n "$HAPTIC_NAMESPACE"` | Check failed Helm or GitOps Jobs; restore the configuration through the release workflow. |
-| Invalid credentials | Controller logs name a missing Secret or key | Restore the Secret from your credential source; don't generate a replacement password independently of the agent. |
+| Missing or invalid agent identity | Controller logs name a missing Secret, key, or certificate error | Follow [agent certificate recovery](operations/agent-certificates.md#default-renewal). For externally managed credentials, restore them from their issuer or credential source. |
 | Permission denied | Logs name a verb and resource | Compare your ServiceAccount grants with the [required permissions](operations/security.md#rbac). |
 
 ### Pods stuck not ready
@@ -144,7 +176,7 @@ for the chart's probe behavior.
 Check whether the controller has synchronized its watched resources:
 
 ```bash
-kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller | grep -i "watch\|sync complete"
+kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller --tail=200 --prefix | grep -i "watch\|sync complete"
 ```
 
 | Cause | Check | Solution |
@@ -152,7 +184,7 @@ kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=
 | Informers not syncing | Logs show "timeout waiting for cache sync" | Check API server connectivity, network policies |
 | No matching resources | `kubectl get ingresses -A` | Check the watch's namespace, label, and class filters |
 | Ingress class mismatch | `kubectl get ingress --all-namespaces` | The Ingress must reference the class the chart created; also check watch namespace restrictions and `watchedResources.*.fieldSelector` |
-| Leader election (HA) | `kubectl get lease -n "$HAPTIC_NAMESPACE"` (the Lease is named after the Helm release) | Ensure one pod shows `is_leader=1` |
+| No active leader | `kubectl get lease -n "$HAPTIC_NAMESPACE" -o yaml` | Check `spec.holderIdentity` names a running controller and `spec.renewTime` keeps advancing. If not, inspect controller logs for Lease permission or API connection errors. |
 
 ## Configuration issues
 
@@ -161,7 +193,7 @@ kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=
 Find the failing template and line in the controller logs:
 
 ```bash
-kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller | grep -i "template\|render"
+kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller --tail=200 --prefix | grep -i "template\|render"
 ```
 
 Fix the named template in your Helm values or configuration source. Use the
@@ -243,11 +275,10 @@ HAPROXY_POD=$(kubectl get pods -n "$HAPTIC_NAMESPACE" -l app.kubernetes.io/insta
 kubectl exec -n "$HAPTIC_NAMESPACE" "$HAPROXY_POD" -c agent -- haptic agent state
 ```
 
-`/v1/state` answers with the plan the pod applied, the plan its worker is
-running, the digest of every file it holds, and what it last did with an apply.
-The local command uses the pod's read-only Unix socket. To test the encrypted
-network connection, run the controller-to-agent command above. For certificate
-errors, check [agent certificate management](./operations/agent-certificates.md).
+The command reports the applied and running plans, pending reloads, and the last
+apply result. If this succeeds but the controller can't deliver changes, test
+the [controller-to-agent connection](#dns-and-network-access). For
+certificate errors, check [agent certificate management](./operations/agent-certificates.md).
 
 | Cause | Check | Solution |
 |-------|-------|----------|
@@ -277,7 +308,7 @@ This applies to HAProxy 3.3+ with `haproxy.shmStats.enabled: true` (off by
 default). Look for `shm-stats-file-max-objects` errors when a reload fails:
 
 ```bash
-kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller | grep "shm-stats"
+kubectl logs -n "$HAPTIC_NAMESPACE" -c controller -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller --tail=200 --prefix | grep "shm-stats"
 ```
 
 Look for:
