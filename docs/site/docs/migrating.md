@@ -75,7 +75,7 @@ config — open the [playground](/playground/).
 
     ```bash
     helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-      --version 0.2.0-alpha.3 \
+      --version 0.2.0 \
       --namespace haptic --create-namespace \
       --set haproxy.service.type=LoadBalancer \
       --set controller.config.templatingSettings.extraContext.statusPatches.enabled=false   # Hold route status until verification
@@ -85,7 +85,7 @@ config — open the [playground](/playground/).
 
     ```bash
     helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-      --version 0.2.0-alpha.3 \
+      --version 0.2.0 \
       --namespace haptic --reuse-values \
       --set haproxy.service.type=LoadBalancer \
       --set controller.config.templatingSettings.extraContext.statusPatches.enabled=false   # Hold route status until verification
@@ -128,7 +128,7 @@ config — open the [playground](/playground/).
 
     ```bash
     helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-      --version 0.2.0-alpha.3 \
+      --version 0.2.0 \
       --namespace haptic --reuse-values \
       --set controller.config.templatingSettings.extraContext.statusPatches.enabled=true
     ```
@@ -184,7 +184,7 @@ class-less resources.
 
 ```bash
 helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 --namespace haptic --reuse-values \
+  --version 0.2.0 --namespace haptic --reuse-values \
   --set controller.templateLibraries.nginxIngress.enabled=true
 ```
 
@@ -281,7 +281,7 @@ Enable the compatibility library on your existing HAPTIC release:
 
 ```bash
 helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 --namespace haptic --reuse-values \
+  --version 0.2.0 --namespace haptic --reuse-values \
   --set controller.templateLibraries.haproxyIngress.enabled=true
 ```
 
@@ -304,7 +304,7 @@ Enable the compatibility library on your existing HAPTIC release:
 
 ```bash
 helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.3 --namespace haptic --reuse-values \
+  --version 0.2.0 --namespace haptic --reuse-values \
   --set controller.templateLibraries.haproxytech.enabled=true
 ```
 

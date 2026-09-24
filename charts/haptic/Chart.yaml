@@ -6,8 +6,8 @@ type: application
 # restartPolicy: Always), GA in 1.33: they start before HAProxy and are stopped
 # only after it exited, so the drain socket, SPOE and log shipping outlive it.
 kubeVersion: ">=1.33.0-0"
-version: 0.2.0-alpha.3
-appVersion: "0.2.0-alpha.3"
+version: 0.2.0
+appVersion: "0.2.0"
 # Template libraries are packaged as conditional subcharts so a release only
 # carries the source of the libraries it enables — disabled subcharts are
 # pruned from the Helm release Secret, keeping it under the 1 MiB limit. The
@@ -85,7 +85,7 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.3-haproxy3.4
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-haproxy3.4
       platforms:
         - linux/amd64
         - linux/arm64
@@ -96,7 +96,7 @@ annotations:
         - linux/amd64
         - linux/arm64
     - name: spoa-hub
-      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.2.0-alpha.3
+      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.2.0
       platforms:
         - linux/amd64
         - linux/arm64
@@ -106,6 +106,8 @@ annotations:
 
   # Release highlights; full notes are in the root CHANGELOG.md.
   artifacthub.io/changes: |
+    - kind: added
+      description: Gateway route policies provide JWT/API-key authentication, shared rate limits, WAF rules and private HTTP caching with validated credential and catalog rotation
     - kind: added
       description: Agent certificates renew automatically, externally managed credentials support GitOps, and haptic doctor checks the live fleet
     - kind: fixed
@@ -125,7 +127,7 @@ annotations:
     - kind: changed
       description: "BREAKING: migrate controller workload values under controller, dataplane settings to haproxy.agent, and certificate settings to defaultSSLCertificate"
     - kind: changed
-      description: "BREAKING: vendor annotation libraries require explicit enablement and access logs use JSON"
+      description: "BREAKING: class names default to haptic, vendor annotation libraries require explicit enablement, and access logs use JSON"
     - kind: changed
       description: "BREAKING: the haptic binary and agent replace haptic-controller and the Data Plane API; configuration libraries are separate resources"
     - kind: added
@@ -136,7 +138,7 @@ annotations:
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://haproxy-haptic.org/docs/0.2.0-alpha.3/
+      url: https://haproxy-haptic.org/docs/0.2.0/
     - name: Issue Tracker
       url: https://gitlab.com/haproxy-haptic/haptic/-/issues
 
