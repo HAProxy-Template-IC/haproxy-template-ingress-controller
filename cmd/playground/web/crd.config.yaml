@@ -4,9 +4,15 @@
 # HAPTIC at your own CRD the same way; a schema later unlocks typed field access.
 #
 # The demo does something plain Ingress can't: per-server weights for a canary.
+dataplane:
+  mapsDir: /etc/haproxy/maps
+  sslCertsDir: /etc/haproxy/ssl
+  generalStorageDir: /etc/haproxy/general
+
 haproxyConfig:
   template: |
     global
+      default-path origin {{ pathResolver.BaseDir }}
       log stdout format raw local0
 
     defaults

@@ -94,9 +94,27 @@ abs_workdir() { if is_windows_bash; then (cd "$WORKDIR" && pwd -W); else (cd "$W
 kc() { kubectl ${NAMESPACE:+-n "$NAMESPACE"} "$@"; }
 NS_NOTE=""; [ -n "$NAMESPACE" ] && NS_NOTE="-n $NAMESPACE"
 # TCP ports HAProxy binds (from the frontend 'bind' lines).
-bind_ports() { grep -oE '^[[:space:]]*bind[[:space:]]+[^[:space:]]*:[0-9]+' "$WORKDIR/haproxy.cfg" 2>/dev/null | grep -oE '[0-9]+$' | sort -un; }
+bind_ports() {
+  awk '$1 == "bind" {
+    n = split($2, addresses, ",")
+    for (i = 1; i <= n; i++) {
+      if (addresses[i] ~ /:[0-9]+$/) {
+        sub(/^.*:/, "", addresses[i])
+        print addresses[i]
+      }
+    }
+  }' "$WORKDIR/haproxy.cfg" | sort -un
+}
 # A hostname the config routes on, for a copy-pasteable curl example.
-sample_host() { cat "$WORKDIR"/maps/*host*.map 2>/dev/null | awk 'NF && $1 !~ /^#/ {print $1; exit}'; }
+sample_host() {
+  local file host
+  for file in "$WORKDIR"/maps/*host*.map; do
+    [ -f "$file" ] || continue
+    host="$(awk 'NF && $1 !~ /^#/ {print $1; exit}' "$file")"
+    if [ -n "$host" ]; then printf '%s\n' "$host"; return; fi
+  done
+  return 0
+}
 
 # ---- mode: validate (haproxy -c) --------------------------------------------
 do_check() {
@@ -118,7 +136,7 @@ do_run() {
   [ -n "$RUNTIME" ] || { oops "Neither Docker nor Podman is available — cannot run HAProxy."; return 1; }
   local ports pflags="" host
   ports="$(bind_ports)"; host="$(sample_host)"; host="${host:-your-app.example.com}"
-  for p in $ports; do pflags="$pflags -p ${p}:${p}"; done
+  for p in $ports; do pflags="$pflags -p 127.0.0.1:${p}:${p}"; done
   title "Running HAProxy locally  (${RUNTIME} · ${IMAGE})"
   warn "No HAPTIC controller here: backend server IPs are frozen at render time."
   warn "If a target pod restarts you will get 503s — that is expected for a static snapshot."
@@ -131,8 +149,9 @@ do_run() {
   say ""
   # TTY allocation: Git-Bash needs `winpty` for `docker run -it`; without it,
   # fall back to -i only (HAProxy still runs in the foreground; Ctrl-C stops it).
-  local ttyflag="-it" pre=""
-  if is_windows_bash; then
+  local ttyflag="-i" pre=""
+  if [ -t 0 ] && [ -t 1 ]; then ttyflag="-it"; fi
+  if is_windows_bash && [ "$ttyflag" = "-it" ]; then
     if command -v winpty >/dev/null 2>&1; then pre="winpty"; else ttyflag="-i"; warn "No winpty found — running without a TTY (colours off, Ctrl-C still stops it)."; fi
   fi
   # -db forces the foreground (overrides a 'daemon' directive in global).

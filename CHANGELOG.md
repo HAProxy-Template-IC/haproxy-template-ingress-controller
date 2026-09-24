@@ -47,6 +47,7 @@ before changing the chart's resource schemas.
 
 ### Fixed
 
+- Playground try-out scripts handle missing hostname maps, run without a terminal, and resolve starter examples' auxiliary files correctly; local ports bind to localhost.
 - Avoid rejecting valid resource updates when the admission cache has not yet observed a newly created dependency.
 - Preserve the full connection-drain quiet period when HAProxy counter reads or agent scheduling are delayed.
 
