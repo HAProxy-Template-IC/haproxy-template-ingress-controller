@@ -159,19 +159,23 @@ fix the failure before claiming conformance for that release.
 
 ## Documentation versioning
 
-Each release creates a versioned snapshot of the documentation site:
+Each release creates a versioned snapshot under `/docs/<version>/`. The version menu
+keeps older stable releases available and marks the highest stable version as `latest`.
 
-| Release Type | Docs Behavior |
-|--------------|---------------|
-| Stable (`0.1.0`) | Creates version, gets `latest` alias |
-| Pre-release (`0.1.0-alpha.1`) | Creates version, no `latest` alias |
-| Final after pre-release | Removes matching pre-release versions |
+| Release type | Documentation behavior |
+|--------------|------------------------|
+| Stable (`0.3.0`) | Creates a snapshot; updates `latest` if this is the newest stable release |
+| Prerelease (`0.3.0-alpha.1`) | Creates a snapshot without the `latest` alias |
+| Final after pre-releases | Removes alpha, beta, and rc snapshots for that exact version |
 
-**Example lifecycle:**
+For example, publishing `0.3.0` creates `/docs/0.3.0/` and removes
+`/docs/0.3.0-alpha.1/`. It keeps `0.2.0`, `0.1.0`, `dev`, and any pre-releases of
+later versions. Cleanup covers the documentation, playground, and their version
+menus on every publication. Retrying an old prerelease can't bring it back after
+its final release exists.
 
-1. `0.1.0-alpha.1` released -> Docs at `/v0.1.0-alpha.1/`
-2. `0.1.0-alpha.2` released -> Docs at `/v0.1.0-alpha.2/`
-3. `0.1.0` released -> Docs at `/v0.1.0/` with `latest` alias, alpha versions removed
+The 0.1.0 entry links to its original, separate controller and Helm chart docs.
+The playground menu only includes releases with a published playground bundle.
 
 ## Pre-release vs final release
 
