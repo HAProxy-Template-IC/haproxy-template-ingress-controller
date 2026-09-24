@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The playground's default starter renders correctly on first load and when restoring an older saved session.
+
 ## [0.2.0] - 2026-09-24
 
 Changes since 0.1.0, including the 0.2.0 alpha series.

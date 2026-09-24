@@ -353,8 +353,14 @@ test-playground-web: ## Test playground asset loading and generated scripts
 PLAYGROUND_TEST_BUNDLE ?= $(CURDIR)/build/playground-test
 
 .PHONY: test-playground-tryout
-test-playground-tryout: ## Validate and run WASM exports (requires Docker or Podman; ports 80, 443, 8080, 8404)
+test-playground-tryout: ## Download, validate, and run browser exports (requires npm, Docker or Podman; ports 80, 443, 8080, 8404)
 	./scripts/build-playground.sh "$(PLAYGROUND_TEST_BUNDLE)" local
+	$(MAKE) test-playground-tryout-bundle
+
+.PHONY: test-playground-tryout-bundle
+test-playground-tryout-bundle: ## Verify browser exports from an existing PLAYGROUND_TEST_BUNDLE
+	npm ci --prefix scripts/visual-qa --no-audit --no-fund
+	scripts/visual-qa/node_modules/.bin/playwright install --only-shell chromium
 	node scripts/tests/test_playground_tryout.mjs "$(PLAYGROUND_TEST_BUNDLE)"
 
 # The `playground` tag builds the client-native syntax + schema check that the

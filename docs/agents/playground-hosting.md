@@ -16,7 +16,7 @@ The `build-playground-wasm` job (`.gitlab-ci.yml`, `build` stage) runs
 `public/playground/` as a job artifact (`expire_in: 1 month`).
 
 - **Version identity**
-    - Release pipeline (`v*` tag): `<version>` = `${CI_COMMIT_TAG#v}` (e.g. `0.2.0-alpha.1`) — an **immutable** directory.
+    - Release pipeline (`v*` tag): `<version>` = `${CI_COMMIT_TAG#v}` (e.g. `0.2.0-alpha.1`) — immutable rendering assets with separately recorded UI corrections.
     - Default branch (`main`): `<version>` = `dev` — a **moving** directory, overwritten each push.
 - **Bundle layout** (everything relative-linked, no absolute paths):
 
@@ -81,7 +81,17 @@ On each triggered pipeline, add a playground publish step:
 
 4. **Place it in the site** so it serves at `/playground/<version>/`. Copy
    `public/playground/<version>/` into the site's `public/playground/<version>/`.
-   Immutable release dirs must never be re-touched once published; only `dev/` is overwritten.
+   Released rendering assets must never be overwritten. The publisher may apply a
+   reviewed `index.html` correction after checking the original release identity
+   and every bundle file's SHA-256 digest. Its manifest records the exact
+   replacements, expected output digest, and source commit. Unexpected changes,
+   unknown UI revisions, and changes to rendering assets fail publication.
+
+   `release-identity.json` continues to identify the original release bundle.
+   A separate `ui-revision.json` records the UI correction, its source, manifest
+   digest, and corrected file digests. Normal deployments verify and preserve
+   corrections. The Pages repository documents its website-only hotfix pipeline;
+   a browser interface correction does not require a controller release.
 
 5. **Update the shared `public/playground/versions.json`** (a sibling of every version
    directory — the shell fetches it as `../versions.json`, so it is written **once**, not

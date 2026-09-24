@@ -1979,7 +1979,7 @@ backend {{ e }}
     const migrationAssets = createMigrationAssetLoader(fetchText);
     const bundled = (id) => ({ config: `./presets/${id}.config.yaml`, resources: `./presets/${id}.resources.yaml`, schemas: './schemas.json' });
     const PRESETS = [
-      { id: 'starter', label: 'Minimal starter', config: './starter.config.yaml', resources: './starter.resources.yaml', schemas: null },
+      { id: 'starter', label: 'Minimal starter', config: './starter.config.yaml', resources: './starter.resources.yaml', schemas: './schemas.json' },
       { id: 'crd', label: 'Custom CRD (any resource)', config: './crd.config.yaml', resources: './crd.resources.yaml', schemas: null },
       { id: 'ingress', label: 'Ingress', ...bundled('ingress') },
       { id: 'extend', label: 'Ingress · Custom snippet', ...bundled('extend') },
@@ -2166,9 +2166,9 @@ backend {{ e }}
     async function applyState(st) {
       suppressNextGlow = true; configDirty = true; resetBaselineNext = true;
       if (st.v) $('hpver').value = st.v;
-      schemasUrl = st.s || null;
-      schemas = schemasUrl ? await fetchText(schemasUrl).catch(() => '') : '';
       const preset = st.p ? PRESETS.find((p) => p.id === st.p) : null;
+      schemasUrl = st.s || preset?.schemas || null;
+      schemas = schemasUrl ? await fetchText(schemasUrl).catch(() => '') : '';
       const coverage = await migrationAssets.restoreCoverage(st, preset?.id || null);
       migrationSources = coverage.sources; migrationCoverageJSON = coverage.json;
       migrationAssetWarning = coverage.error
