@@ -55,7 +55,7 @@ version: ## Display version information
 ## Linting targets
 
 lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
-	@$(MAKE) test-ci-rules
+	@$(MAKE) test-ci-rules test-admission-readiness
 	@echo "Checking go.mod/go.sum are tidy..."
 	@$(GO) mod tidy -diff || { echo "go.mod/go.sum are not tidy, so the next snapshot or release publish fails its source-hash check. Run 'go mod tidy' and commit the result."; exit 1; }
 	@echo "Checking test inventory (every test must run somewhere)..."
@@ -300,8 +300,13 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 test-ci-rules: ## Check that CI selects chart inputs and excludes chart prose
 	python3 -m unittest scripts/tests/test_ci_chart_rules.py
 
+.PHONY: test-admission-readiness
+test-admission-readiness: ## Verify admission readiness polling fails closed
+	python3 -m unittest scripts/tests/test_admission_readiness.py
+
 test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
 	@echo "Running tests..."
+	$(MAKE) test-admission-readiness
 	bash scripts/tests/test_check_test_inventory.sh
 	bash scripts/tests/test_cluster_node_image.sh
 	python3 -m unittest \

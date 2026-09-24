@@ -72,6 +72,7 @@ info() { echo "==> $*"; }
 # shellcheck source=scripts/lib/cluster.sh
 . "$REPO/scripts/lib/cluster.sh"
 . "$REPO/scripts/lib/upgrade-traffic.sh"
+. "$REPO/scripts/lib/admission.sh"
 
 cleanup() {
   local rc=$?
@@ -214,6 +215,11 @@ helm install "$RELEASE" "$OCI" --version "$BASELINE" \
   --timeout 15m >/dev/null || fail "baseline install failed"
 
 wait_controller_ready 420 || fail "baseline controller never became ready"
+info "checking baseline admission readiness"
+if ! wait_admission_ready "$FIXTURES/routes.yaml" 180 > "$ARTIFACTS/baseline-admission.log" 2>&1; then
+  cat "$ARTIFACTS/baseline-admission.log" >&2
+  fail "baseline admission did not become ready"
+fi
 BASELINE_FP="$(config_fingerprint)"
 k apply -f "$FIXTURES/routes.yaml" >/dev/null
 k rollout status deployment/upgrade-backend --timeout=180s >/dev/null

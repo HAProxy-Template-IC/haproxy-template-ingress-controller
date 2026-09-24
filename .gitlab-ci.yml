@@ -2155,6 +2155,7 @@ test-chart-upgrade:
         - pkg/webhook/**/*
         - pkg/controller/webhook/**/*
         - scripts/test-chart-upgrade.sh
+        - scripts/lib/admission.sh
         - scripts/lib/upgrade-traffic.sh
         - scripts/testdata/chart-upgrade/**/*
         - .gitlab-ci.yml
