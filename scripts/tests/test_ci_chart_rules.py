@@ -104,6 +104,11 @@ class ChartRulesTests(unittest.TestCase):
                 with self.subTest(path=path, job=job):
                     self.assertFalse(selects(self.config, job, path))
 
+    def test_admission_readiness_changes_select_both_upgrade_jobs(self):
+        for job in ("test-chart-upgrade", "test-chart-upgrade-minimum-kubernetes"):
+            with self.subTest(job=job):
+                self.assertTrue(selects(self.config, job, "scripts/lib/admission.sh"))
+
     def test_unknown_extensions_and_markdown_template_inputs_remain_covered(self):
         for path in ("charts/haptic/.helmignore", "charts/haptic/files/config.newtype",
                      "charts/haptic/templates/README.md", "charts/haptic/files/config.md",
