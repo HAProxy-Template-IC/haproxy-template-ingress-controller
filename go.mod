@@ -7,7 +7,7 @@ require (
 	github.com/KimMachineGun/automemlimit v1.0.0
 	github.com/arch-go/arch-go/v2 v2.1.2
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/golangci/golangci-lint/v2 v2.13.2
 	github.com/haproxytech/client-native/v6 v6.4.2
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
@@ -18,12 +18,12 @@ require (
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
-	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260919234319-ed43c52829c5
+	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260920221951-54fdfcc393e3
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
 	golang.org/x/vuln v1.8.0
-	google.golang.org/grpc v1.83.2
+	google.golang.org/grpc v1.84.0
 	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v4 v4.3.0
 	k8s.io/api v0.37.0
