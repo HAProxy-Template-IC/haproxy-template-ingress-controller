@@ -12,17 +12,20 @@ The containers can use spare CPU when busy; their combined memory limits are
 
 Size each controller for the routes and backend resources it watches. These
 are rough planning estimates for the bundled templates, with one or a few
-backends per route:
+backends per route. Installation totals include two controllers, two HAProxy
+pods, and their default sidecars:
 
-| Routing workload | CPU request per controller | Memory request and limit per controller |
-| --- | ---: | ---: |
-| Small installation, up to roughly 100 routes | `100m` | `1Gi` (chart default) |
-| Hundreds of routes, approaching 1,000 | `500m` | `2Gi` |
-| Several thousand routes, around 5,000 | `1` | `4Gi` |
+| Routing workload | CPU request per controller | Memory request and limit per controller | Total installation requests: CPU / memory |
+| --- | ---: | ---: | ---: |
+| Small installation, up to roughly 100 routes | `100m` | `1Gi` (chart default) | 1.05 cores / 5.4 GiB |
+| Hundreds of routes, approaching 1,000 | `500m` | `2Gi` | 1.85 cores / 7.4 GiB |
+| Several thousand routes, around 5,000 | `1` | `4Gi` | 2.85 cores / 11.4 GiB |
 
 These are starting estimates, not capacity limits.
 Many endpoints per Service, large certificates, custom templates, and frequent
-configuration changes can need more resources at the same route count.
+configuration changes can need more resources at the same route count. The
+totals exclude your applications, Kubernetes system components, and monitoring
+services. Extra HAProxy replicas and optional services add to these budgets.
 
 For an installation with hundreds of routes, start with these Helm values.
 Merge them into your [complete values file](../deploying-with-helm.md#change-settings)
@@ -37,10 +40,6 @@ controller:
     limits:
       memory: 2Gi
 ```
-
-Both controller replicas need this budget. With the other chart defaults
-unchanged, this example reserves about **2 CPU cores and 7.4 GiB** across the
-installation.
 
 Set memory through the container's Kubernetes requests and limits. Leave CPU
 limits unset unless your cluster requires them, so startup and bursts of
@@ -65,10 +64,12 @@ features. CPU uses Kubernetes units (`1000m` = one core).
 | SPOA plugin hub | 2 | `50m` | `128Mi` | `256Mi` |
 | **Total** | **4 pods** | **`1050m`** | **`5.375Gi`** | **`7.25Gi`** |
 
-Allow room for rolling upgrades. One extra controller pod and one extra HAProxy
-pod add about **2.7 GiB of memory requests** with these defaults. The temporary
-preflight Job requests another `512Mi`, with a `1Gi` limit. A cluster filled to
-its steady-state reservation may have no room to complete an upgrade.
+Allow room for rolling upgrades. With these defaults, one extra controller pod
+and one extra HAProxy pod bring memory requests to about **8.1 GiB** during
+rollout. Before rollout, the temporary validation Job requests `200m` CPU and
+`512Mi` memory, with a `1Gi` memory limit. If you increase controller or HAProxy
+resources, budget for an extra pod of each at the increased size. A cluster
+filled to its steady-state reservation may have no room to complete an upgrade.
 
 Optional services add to the total:
 
@@ -85,8 +86,8 @@ those services. Their memory use depends on cache size and active keys.
 ## Size HAProxy for traffic {#haproxy-optimization}
 
 Route count chiefly affects the controller. Requests per second, concurrent
-connections, TLS handshakes, compression, and WAF inspection determine traffic
-capacity. Start with the chart's **two HAProxy replicas**, each requesting
+connections, TLS handshakes, compression, and web application firewall (WAF)
+inspection determine traffic capacity. Start with the chart's **two HAProxy replicas**, each requesting
 `250m` CPU and `1Gi` memory, plus the sidecars listed above.
 
 For a busy edge service, reserve more CPU for HAProxy and add replicas as traffic
@@ -103,10 +104,9 @@ haproxy:
       memory: 1Gi
 ```
 
-There is no measured requests-per-second guarantee for these budgets. A short
-plaintext request and a WAF-inspected upload have different costs. Normal
-production metrics show when to increase capacity; a custom benchmark isn't an
-installation prerequisite.
+A short plaintext request and a WAF-inspected upload have different costs, so these budgets don't specify a requests-per-second
+capacity. Use the [symptoms below](#when-to-adjust-the-budget) to decide when to
+increase resources during normal operation.
 
 ### Scaling strategies
 

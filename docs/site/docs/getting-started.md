@@ -11,26 +11,24 @@ description: "Get started with HAPTIC, the template-driven HAProxy ingress contr
 Install HAPTIC with Helm, then route your applications. The optional
 walkthrough creates a sample route you can test locally.
 
-You can also try HAPTIC before installing it. This browser example turns sample
-Ingress resources into HAProxy configuration; it doesn't connect to a cluster.
-
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="maps" data-focus="host.map" data-controls="tabs,resources" data-input="resources" data-input-focus="shop.example.com" data-title="Turn an Ingress into HAProxy configuration" data-height="480">
-
-<p class="pg-task" markdown>In **Resources**, change `shop.example.com` to `store.example.com`. The **maps** output shows the new hostname in `host.map`.</p>
-
-</div>
+To try HAPTIC without a cluster, use the [browser example](#try-in-your-browser).
 
 ## Prerequisites
 
 - A Kubernetes 1.33 or newer cluster
 - `kubectl` configured to access the cluster
 - Helm 3.8 or newer
+- Capacity for the [default installation](operations/performance.md): about
+  1 CPU core and 5.4 GiB of memory requests, plus room for installation Jobs
 
 ## Install with Helm
 
-The command below installs a released chart. Choose that version in the
-documentation menu when following other guides; `dev` includes unreleased
-features.
+If HAPTIC is already installed, continue to the sample app below or follow
+[Upgrading with Helm](deploying-with-helm.md#upgrading) to change its version.
+
+For a new installation, install the released chart below. Choose that version
+in the documentation menu when following other guides; `dev` includes
+unreleased features.
 
 ```bash
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
@@ -167,6 +165,7 @@ curl -H "Host: echo.example.local" http://localhost:8080/
 
 The response includes the request headers and the serving pod's `HOSTNAME`.
 Repeat the request to check that HAProxy distributes traffic across the echo pods.
+If the request fails, follow [routing troubleshooting](troubleshooting.md#routing-issues).
 
 <a id="inspect-the-configuration-optional"></a>
 <a id="check-the-controller-logs"></a>
@@ -201,3 +200,14 @@ kubectl delete service echo -n default
 
 HAPTIC remains installed for your own applications. To remove the controller and
 HAProxy too, follow [Uninstalling](deploying-with-helm.md#uninstalling).
+
+## Try in your browser
+
+This example turns sample Ingress resources into HAProxy configuration without
+connecting to a cluster.
+
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="maps" data-focus="host.map" data-controls="tabs,resources" data-input="resources" data-input-focus="shop.example.com" data-title="Turn an Ingress into HAProxy configuration" data-height="480">
+
+<p class="pg-task" markdown>In **Resources**, change `shop.example.com` to `store.example.com`. The **maps** output shows the new hostname in `host.map`.</p>
+
+</div>

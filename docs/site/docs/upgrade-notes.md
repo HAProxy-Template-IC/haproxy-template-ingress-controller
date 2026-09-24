@@ -20,9 +20,11 @@ release before its artifacts are published.
 - Kubernetes 1.33 or newer. The HAProxy pod uses native sidecars to keep its
   agent, Stream Processing Offload Agent (SPOA) hub, and log collector running
   until HAProxy exits.
-- Capacity for the chart's memory defaults: 1 GiB per controller replica and a
-  1 GiB limit for the pre-rollout validation Job. Size larger installations using
-  the [resource sizing guidance](operations/performance.md#controller-resource-sizing).
+- Capacity for the whole installation and its rolling upgrade. The defaults
+  request about 5.4 GiB of memory, rising to 8.1 GiB during rollout. The
+  pre-rollout validation Job has a separate 1 GiB limit. Use the
+  [resource sizing guidance](operations/performance.md#controller-resource-sizing)
+  for larger installations or customized pod resources.
 - Access to the controller registry from HAProxy pods: their agent now uses
   the HAPTIC image. Set image-pull credentials if your cluster requires them.
 
@@ -47,8 +49,8 @@ helm get values "$HAPTIC_RELEASE" --namespace "$HAPTIC_NAMESPACE" \
   --output yaml > haptic-values-before.yaml
 ```
 
-If you already maintain a values file, copy that file to `haptic-values-0.2.yaml`.
-Otherwise, copy the exported values:
+Copy the exported values, which include settings supplied with `--set`, into a
+working file for the upgrade:
 
 ```bash
 cp haptic-values-before.yaml haptic-values-0.2.yaml
@@ -63,6 +65,8 @@ fi
 ```
 
 Keep `haptic-values-before.yaml` as the record of your previous configuration.
+If you manage values in Git, also apply the migrations below to that source so
+subsequent deployments keep them.
 
 ### Migrate 0.1.0 values
 
@@ -205,12 +209,15 @@ resources, because diff runs before Helm's hooks.
 
 ### Upgrade the release
 
-Pass the migrated values explicitly:
+Pass the complete migrated values file. `--reset-values` starts from the new
+chart's defaults before applying that file, so removed legacy settings aren't
+carried forward from the installed release:
 
 ```bash
 helm upgrade "$HAPTIC_RELEASE" \
   oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --namespace "$HAPTIC_NAMESPACE" --version 0.2.0 \
+  --reset-values \
   --values haptic-values-0.2.yaml
 ```
 
