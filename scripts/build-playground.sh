@@ -7,8 +7,7 @@
 #   migration/*.json
 #
 # The <version> is stamped onto <html data-version="..."> so the version selector
-# knows which build this is. Immutability comes from the per-version directory in
-# the path (public/playground/<version>/), so no content-hashing is needed.
+# knows which build this is.
 #
 # Runnable locally (needs go + helm + yq + optionally brotli); the CI job
 # build-playground-wasm calls it. Aggregating public/playground/versions.json

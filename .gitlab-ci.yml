@@ -935,7 +935,7 @@ publish-chart-snapshot:
 # public/playground/versions.json across versions. See
 # docs/agents/playground-hosting.md for the downstream contract.
 #
-# Release tags publish an immutable /playground/<version>/; the default branch
+# Release tags publish /playground/<version>/; the default branch
 # refreshes a moving /playground/dev/. MRs touching the playground build it
 # (no publish) so a broken bundle fails review. Scheduled pipelines verify only.
 build-playground-wasm:
@@ -963,7 +963,7 @@ build-playground-wasm:
       changes: *chart-inputs
   script:
     - |
-      # Release tag → immutable /playground/<version>/; main → moving /playground/dev/.
+      # Release tag → /playground/<version>/; main → moving /playground/dev/.
       if [ -n "$CI_COMMIT_TAG" ]; then
         VERSION="${CI_COMMIT_TAG#v}"
       else
@@ -3771,7 +3771,7 @@ trigger-docs-release:
     HAPTIC_RELEASE_COMMIT_SHA: ${CI_COMMIT_SHA}
     HAPTIC_RELEASE_PIPELINE_ID: ${CI_PIPELINE_ID}
     HAPTIC_RELEASE_PLAYGROUND_JOB_NAME: build-playground-wasm
-    PAGES_ARTIFACT_FALLBACK_REF: &pages-publisher-tag pages-publisher-cdaddc7aa72914987aec13d97292d14491231c5a
+    PAGES_ARTIFACT_FALLBACK_REF: &pages-publisher-tag pages-publisher-5d333b1c31d052d2c845197ba564e65f4e3110a9
   trigger:
     project: haproxy-haptic/haproxy-haptic.gitlab.io
     # A TAG, not a branch: restore-pages-artifact.sh only trusts an artifact
