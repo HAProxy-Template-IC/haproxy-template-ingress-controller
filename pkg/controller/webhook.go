@@ -181,6 +181,10 @@ func monitorPersistentWebhookRun(
 		case <-ctx.Done():
 			return nil
 		case <-serverRun.Done():
+			if serverRun.stopping.Load() {
+				<-ctx.Done()
+				return nil
+			}
 			if err := context.Cause(procCtx); err != nil {
 				return err
 			}

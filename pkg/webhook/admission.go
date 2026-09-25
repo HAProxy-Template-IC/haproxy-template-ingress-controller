@@ -28,6 +28,11 @@ import (
 const maxAdmissionReviewBytes = 16 << 20
 
 func (s *Server) handleValidation(w http.ResponseWriter, r *http.Request) {
+	draining := s.activity.start()
+	defer s.activity.finish()
+	if draining {
+		w.Header().Set("Connection", "close")
+	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

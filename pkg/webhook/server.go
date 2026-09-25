@@ -51,11 +51,16 @@ type Server struct {
 	onUnregisteredGVK func(gvk string)
 	// boundAddr is the listener's actual address, resolved after net.Listen so
 	// a Port of 0 (tests) can be discovered instead of guessed. Guarded by mu.
-	boundAddr      string
-	httpServer     *http.Server
-	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
-	generation     *ValidatorGeneration
-	closed         bool
+	boundAddr       string
+	httpServer      *http.Server
+	getCertificate  func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	generation      *ValidatorGeneration
+	closed          bool
+	activity        requestActivity
+	shutdownOnce    sync.Once
+	shutdownStarted chan struct{}
+	shutdownDone    chan struct{}
+	shutdownErr     error
 
 	// listening is closed once the TLS listener has been bound to the
 	// configured port. Callers that need to know the server is actually
@@ -145,6 +150,8 @@ func NewServer(input *ServerConfig) (*Server, error) {
 		getCertificate:    getCertificate,
 		generation:        generation,
 		listening:         make(chan struct{}),
+		shutdownStarted:   make(chan struct{}),
+		shutdownDone:      make(chan struct{}),
 	}, nil
 }
 
@@ -330,7 +337,7 @@ func (s *Server) Start(ctx context.Context) error {
 		MinVersion:     tls.VersionTLS12,
 	}
 
-	s.httpServer = &http.Server{
+	httpServer := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
 		TLSConfig:    tlsConfig,
@@ -338,6 +345,9 @@ func (s *Server) Start(ctx context.Context) error {
 		WriteTimeout: s.config.WriteTimeout,
 		IdleTimeout:  s.config.IdleTimeout,
 	}
+	s.mu.Lock()
+	s.httpServer = httpServer
+	s.mu.Unlock()
 
 	// Bind synchronously so callers can observe success before any
 	// admission request is routed at us.
@@ -353,7 +363,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	serveDone := make(chan error, 1)
 	go func() {
-		err := s.httpServer.Serve(tlsListener)
+		err := httpServer.Serve(tlsListener)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
@@ -363,13 +373,16 @@ func (s *Server) Start(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		shutdownErr := s.httpServer.Shutdown(shutdownCtx)
+		shutdownErr := s.Shutdown(shutdownCtx)
 		cancel()
-		if shutdownErr != nil {
-			shutdownErr = errors.Join(shutdownErr, s.httpServer.Close())
-		}
 		return errors.Join(shutdownErr, <-serveDone)
 	case err := <-serveDone:
+		select {
+		case <-s.shutdownStarted:
+			<-s.shutdownDone
+			return errors.Join(err, s.shutdownErr)
+		default:
+		}
 		return err
 	}
 }

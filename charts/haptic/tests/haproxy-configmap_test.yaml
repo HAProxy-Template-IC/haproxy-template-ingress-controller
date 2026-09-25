@@ -20,7 +20,10 @@ tests:
           pattern: "default_backend default_backend"
       - matchRegex:
           path: data["haproxy.cfg"]
-          pattern: "hard-stop-after 10s"
+          pattern: "hard-stop-after 60s"
+      - matchRegex:
+          path: data["haproxy.cfg"]
+          pattern: "option idle-close-on-response"
       - matchRegex:
           path: data["haproxy.cfg"]
           pattern: "stats socket /etc/haproxy/haproxy-worker\\.sock mode 600 level admin"

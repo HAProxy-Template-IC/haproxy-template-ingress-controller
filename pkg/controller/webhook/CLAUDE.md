@@ -23,6 +23,9 @@ empty fail-closed generation. Replacement waits for requests using the retired
 generation, then calls `OnGenerationRetired` to release captured iteration
 dependencies.
 
+Process termination drains the listener before canceling the iteration, keeping
+watchers and validators alive until active admission responses finish.
+
 If `Config.Server` is nil, the component owns the server. This mode is useful for
 tests and standalone composition. `Start` binds the listener, serves until
 cancellation or failure, shuts it down, and joins the serve loop.

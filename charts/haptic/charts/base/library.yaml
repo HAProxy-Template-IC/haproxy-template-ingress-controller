@@ -1487,18 +1487,8 @@ templateSnippets:
 
   global-settings-210-graceful-reload:
     template: |
-      {# Graceful-stop bound: cap how long an old worker keeps draining #}
-      {# after a reload. Without it, a worker pinned by a persistent #}
-      {# keep-alive connection survives every reload and accumulates as a #}
-      {# stale "draining" generation; a request looped through the #}
-      {# http-tcp -> unix-socket -> http_frontend path can then land on a #}
-      {# stale worker mid-reload and be corrupted (-> <BADREQ> 400). Both #}
-      {# the official (haproxytech/kubernetes-ingress, default 30m) and #}
-      {# community (haproxy-ingress, default 10m) controllers set #}
-      {# hard-stop-after for this. The primary churn reducer is #}
-      {# minDeploymentInterval (structural reloads only; the runtime fast #}
-      {# path stays instant and bypasses it). #}
-      {%- var hsa = extraContext | dig("hardStopAfter") | fallback("10s") | tostring() -%}
+      {# Bound retired-worker memory while existing requests finish. #}
+      {%- var hsa = extraContext | dig("hardStopAfter") | fallback("60s") | tostring() -%}
       {%- if hsa != "" %}
       hard-stop-after {{ hsa }}
       {%- end %}
@@ -1591,6 +1581,7 @@ templateSnippets:
       {%- end %}
       option httplog
       option dontlognull
+      option idle-close-on-response
       option log-health-checks
       # Retry a failed TCP connect on a different server in the backend (not the
       # same dead one); with the default `retries 3` this closes the pod-termination
@@ -2934,6 +2925,27 @@ haproxyConfig:
           {{- regexp("\\n([ \\t]*\\n)+").ReplaceAll(input, "\n\n") -}}
 
 validationTests:
+  test-graceful-reload-defaults:
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'hard-stop-after 60s'}
+      - {type: contains, target: haproxy.cfg, pattern: 'option idle-close-on-response'}
+
+  test-graceful-reload-custom-bound:
+    fixtures: {}
+    extraContext: {hardStopAfter: 5m}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'hard-stop-after 5m'}
+
+  test-graceful-reload-unbounded:
+    fixtures: {}
+    extraContext: {hardStopAfter: ""}
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: 'hard-stop-after'}
+
 
   test-retry-on-covers-pod-termination-reset:
     description: "A terminating pod accepts the connection then RSTs, which HAProxy reports as 502 SH-- with retries 0. The default retry-on conn-failure does not match it; empty-response does."

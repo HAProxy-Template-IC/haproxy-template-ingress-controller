@@ -12,8 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep admission validation available while a terminating controller drains requests.
 - Documentation version menus retain older stable releases and remove prereleases after their final release is published.
 - The playground's default starter renders correctly on first load and when restoring an older saved session.
+
+### Helm chart
+
+#### Changed
+
+- Allow HAProxy connections up to 60 seconds to drain after reloads and give controller and HAProxy pods 90 seconds to terminate.
+
+#### Fixed
+
+- Close idle HTTP connections after their next response during reloads, avoiding abrupt disconnects for clients reusing a connection.
 
 ## [0.2.0] - 2026-09-24
 
