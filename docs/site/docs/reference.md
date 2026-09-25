@@ -478,7 +478,7 @@ Configure controller placement, pod metadata, and runtime settings under `contro
 | `controller.podSpec.podLabels` | map | `{}` | Additional pod labels |
 | `controller.podSpec.priorityClassName` | string | `""` | Pod priority class name |
 | `controller.podSpec.runtimeClassName` | string | `""` | Runtime class (for example gVisor, Kata) |
-| `controller.podSpec.terminationGracePeriodSeconds` | int | `30` | Termination grace period |
+| `controller.podSpec.terminationGracePeriodSeconds` | int | `90` | Termination grace period |
 | `controller.podSpec.dnsPolicy` | string | `ClusterFirst` | DNS policy |
 | `controller.podSpec.dnsConfig` | map | `{}` | DNS config |
 | `controller.podSpec.hostAliases` | list | `[]` | /etc/hosts entries |
@@ -640,7 +640,7 @@ Configure HAProxy pod placement, metadata, and runtime settings under `haproxy.p
 | `haproxy.podSpec.podAnnotations` | map | `{}` | Extra pod annotations for HAProxy pods (supports template expressions) |
 | `haproxy.podSpec.shareProcessNamespace` | bool | `false` | Share process namespace between containers (required for signal-based sidecar reload) |
 | `haproxy.podSpec.priorityClassName` | string | `""` | Pod priority class |
-| `haproxy.podSpec.terminationGracePeriodSeconds` | int | `30` | Termination grace period |
+| `haproxy.podSpec.terminationGracePeriodSeconds` | int | `90` | Termination grace period |
 | `haproxy.podSpec.dnsPolicy` | string | `ClusterFirst` | DNS policy |
 | `haproxy.podSpec.dnsConfig` | map | `{}` | DNS config |
 | `haproxy.podSpec.hostAliases` | list | `[]` | /etc/hosts entries |

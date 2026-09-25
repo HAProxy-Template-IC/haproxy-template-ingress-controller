@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -68,8 +69,8 @@ const (
 	ShutdownTimeout = 25 * time.Second
 	// ShutdownProgressInterval is how often to log progress during shutdown.
 	ShutdownProgressInterval = 5 * time.Second
-	// ProcessShutdownTimeout leaves one second before Kubernetes' default SIGKILL deadline.
-	ProcessShutdownTimeout = 29 * time.Second
+	// ProcessShutdownTimeout leaves one second before the chart's SIGKILL deadline.
+	ProcessShutdownTimeout = 89 * time.Second
 )
 
 // buildVersionInfo holds build-time version information exposed via haptic_build_info metric.
@@ -217,6 +218,7 @@ type persistentInfra struct {
 	metricsServerStarted  bool // True after first iteration has started the metrics server
 	eventDropMetrics      *persistentEventDropMetrics
 	processCancel         context.CancelFunc
+	draining              atomic.Bool
 	introspectionRun      *persistentServerRun
 	metricsRun            *persistentServerRun
 	eventSource           *eventSourceDelegate
@@ -238,8 +240,9 @@ type persistentInfra struct {
 }
 
 type persistentServerRun struct {
-	done chan struct{}
-	err  error
+	done     chan struct{}
+	err      error
+	stopping atomic.Bool
 }
 
 type namedPersistentServerRun struct {
@@ -301,6 +304,12 @@ func (p *persistentInfra) EnsureWebhookServer(
 	logger *slog.Logger,
 ) (*pkgwebhook.Server, error) {
 	p.webhookMu.Lock()
+	if p.draining.Load() {
+		p.webhookMu.Unlock()
+		// Keep the serving iteration alive until admission draining finishes.
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	defer p.webhookMu.Unlock()
 
 	if p.WebhookServer != nil {
@@ -568,12 +577,9 @@ func Run(
 		return err
 	}
 
-	procCtx, procCancel := context.WithCancel(ctx)
-	shutdownStarted := make(chan time.Time, 1)
-	stopShutdownClock := context.AfterFunc(procCtx, func() {
-		shutdownStarted <- time.Now()
-	})
-	defer stopShutdownClock()
+	// Admission still needs live watchers and validators while its listener drains.
+	procCtx, procCancel := context.WithCancel(context.WithoutCancel(ctx))
+	defer procCancel()
 	infra := &persistentInfra{
 		AgentTLS:              agentTLS,
 		IntrospectionRegistry: introspection.NewRegistry(),
@@ -586,6 +592,9 @@ func Run(
 	if metricsPort > 0 {
 		infra.MetricsServer = pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), prometheus.NewRegistry())
 	}
+	shutdown := drainOnCancellation(ctx, procCtx, procCancel, func(drainCtx context.Context) error {
+		return infra.drainAdmission(drainCtx, logger)
+	})
 
 	iterations := &iterationSequence{logger: logger}
 	err = runIterations(procCtx, logger, RetryDelay, func() error {
@@ -595,15 +604,16 @@ func Run(
 	})
 	err = errors.Join(err, iterations.close())
 	procCancel()
-	shutdownAt := <-shutdownStarted
-	remainingShutdown := ProcessShutdownTimeout - time.Since(shutdownAt)
+	stopped := <-shutdown
+	err = errors.Join(err, stopped.err)
+	remainingShutdown := ProcessShutdownTimeout - time.Since(stopped.started)
 	var teardownTimeout *iterationTeardownTimeoutError
 	if errors.As(err, &teardownTimeout) {
 		remainingShutdown = min(remainingShutdown, ProcessShutdownTimeout-ShutdownTimeout)
 	}
 	serverErr := infra.waitForPersistentServers(remainingShutdown)
 	if ctx.Err() != nil {
-		return nil
+		return errors.Join(stopped.err, serverErr)
 	}
 	if err != nil {
 		return errors.Join(err, serverErr)

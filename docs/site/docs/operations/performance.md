@@ -196,7 +196,7 @@ for other timing controls.
 ### Graceful reload drain bound
 
 After a reload, HAProxy lets the old worker finish existing connections for up
-to **10 seconds** by default, then closes those still open. Long-lived streams
+to **60 seconds** by default, then closes those still open. Long-lived streams
 need a longer drain window if they must survive reloads:
 
 ```yaml
@@ -204,9 +204,19 @@ controller:
   config:
     templatingSettings:
       extraContext:
-        hardStopAfter: 30s
+        hardStopAfter: 5m
+haproxy:
+  podSpec:
+    terminationGracePeriodSeconds: 330
 ```
 
-Longer windows retain old workers and their memory for longer. An empty string
-disables the bound. If you replace `haproxy.initialConfig`, also set
+The pod termination budget must also cover the drain window, up to 10 seconds
+for traffic to stop arriving, and sidecar shutdown. The chart defaults to
+90 seconds; the example above provides a five-minute drain window during a
+reload or a graceful pod replacement.
+
+Longer windows retain old workers and their memory for longer. Connections still
+open at the deadline close, so applications with indefinite streams must support
+reconnection. An empty string disables the reload bound; Kubernetes still enforces
+the pod termination budget. If you replace `haproxy.initialConfig`, also set
 `hard-stop-after` in that custom bootstrap configuration.

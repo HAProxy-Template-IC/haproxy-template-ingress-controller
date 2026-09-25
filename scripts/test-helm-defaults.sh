@@ -487,7 +487,8 @@ verify_bootstrap_workers_retired() {
 
     local pod output rc reloads old_workers deadline
     for pod in "${pods[@]}"; do
-        deadline=$((SECONDS + 30))
+        # The default hard-stop-after is 60s; allow five seconds for polling.
+        deadline=$((SECONDS + 65))
         while true; do
             output=""
             rc=0

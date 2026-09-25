@@ -76,7 +76,7 @@ func (p *persistentInfra) startProcessServer(
 	run := newPersistentServerRun()
 	go func() {
 		err := start(ctx)
-		unexpected := ctx.Err() == nil
+		unexpected := ctx.Err() == nil && !run.stopping.Load()
 		if err == nil && unexpected {
 			err = errors.New("server exited without an error")
 		}
@@ -151,6 +151,10 @@ func applyReinitGrace(
 	id iterationID,
 	entries map[string]introspection.ComponentHealth,
 ) map[string]introspection.ComponentHealth {
+	if infra.draining.Load() {
+		entries["shutdown"] = introspection.ComponentHealth{Healthy: false, Error: "controller is draining admission requests"}
+		return entries
+	}
 	allHealthy := true
 	for _, e := range entries {
 		if !e.Healthy {

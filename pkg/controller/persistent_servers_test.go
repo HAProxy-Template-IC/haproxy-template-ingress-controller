@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -179,4 +180,23 @@ func TestPersistentServerJoinDoesNotTimeOutAfterEveryServerStopped(t *testing.T)
 	require.ErrorIs(t, err, firstErr)
 	require.ErrorIs(t, err, secondErr)
 	require.NotContains(t, err.Error(), "process shutdown budget")
+}
+
+func TestMonitorPersistentWebhookRunKeepsIterationAliveDuringDrain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		procCtx, stop := context.WithCancel(t.Context())
+		defer stop()
+		iterCtx, cancel := context.WithCancel(procCtx)
+		defer cancel()
+		run := newPersistentServerRun()
+		group := &errgroup.Group{}
+		monitorPersistentWebhookRun(procCtx, iterCtx, run, group,
+			slog.New(slog.NewTextHandler(io.Discard, nil)), cancel)
+		run.stopping.Store(true)
+		run.finish(nil)
+		synctest.Wait()
+		require.NoError(t, iterCtx.Err())
+		cancel()
+		require.NoError(t, group.Wait())
+	})
 }

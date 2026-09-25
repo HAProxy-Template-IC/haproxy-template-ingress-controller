@@ -552,7 +552,7 @@ controller:
     # Affinity rules
     affinity: {}
     # Termination grace period in seconds
-    terminationGracePeriodSeconds: 30
+    terminationGracePeriodSeconds: 90
     # DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
     dnsPolicy: ClusterFirst
     # DNS config for custom DNS settings
@@ -1674,7 +1674,7 @@ haproxy:
     # Share process namespace between containers (required for signal-based sidecar reload)
     shareProcessNamespace: false
     # Termination grace period in seconds
-    terminationGracePeriodSeconds: 30
+    terminationGracePeriodSeconds: 90
     # Pod security context for HAProxy deployment
     # Complies with Pod Security Standards (PSS) Restricted profile.
     # HAProxy binds the literal 80/443 (+8404 stats) — see haproxy.ports.
@@ -1790,7 +1790,7 @@ haproxy:
         {{- with include "haptic.haproxy.nbthread" . }}
         nbthread {{ . }}
         {{- end }}
-        {{- $hardStopAfter := "10s" }}
+        {{- $hardStopAfter := "60s" }}
         {{- if hasKey .Values.controller.config.templatingSettings.extraContext "hardStopAfter" }}
         {{- $hardStopAfter = .Values.controller.config.templatingSettings.extraContext.hardStopAfter }}
         {{- end }}
@@ -1805,6 +1805,7 @@ haproxy:
         mode http
         log global
         option httplog
+        option idle-close-on-response
         # 100ms matches the controller-rendered default in
         # libraries/base.yaml defaults-settings-300-timeouts; the
         # bootstrap config doesn't have real backends (only the status

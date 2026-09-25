@@ -361,7 +361,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
-          value: 30
+          value: 90
 
   - it: should set custom termination grace period
     set:
