@@ -21,18 +21,20 @@ import (
 
 func TestComponent_CancellationLoopRoutesRequest(t *testing.T) {
 	bus := busevents.NewEventBus(10)
-	bus.Start()
 	c := createTestDeployer(bus)
+	bus.Start()
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go c.runCancellationLoop(ctx, done)
+	done := make(chan error, 1)
+	go func() { done <- c.Start(ctx) }()
+	<-c.SubscriptionReady()
 	t.Cleanup(func() {
 		cancel()
-		<-done
+		require.NoError(t, <-done)
 	})
 
 	const deploymentID = "deployment-to-cancel"
-	cancelInvoked, _ := installFakeDeployment(c, deploymentID)
+	cancelInvoked, deploymentDone := installFakeDeployment(c, deploymentID)
+	t.Cleanup(func() { close(deploymentDone) })
 
 	event := events.NewDeploymentCancelRequestEvent(
 		deploymentID,

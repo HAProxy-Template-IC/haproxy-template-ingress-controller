@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prevent standby controllers from restarting when HAProxy discovery events accumulate.
+- Complete pod-status cleanup across auxiliary files after HAProxy replacement, including recovery from interrupted updates.
 - Keep admission validation available while a terminating controller drains requests.
 - Documentation version menus retain older stable releases and remove prereleases after their final release is published.
 - The playground's default starter renders correctly on first load and when restoring an older saved session.

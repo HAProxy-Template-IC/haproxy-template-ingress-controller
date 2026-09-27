@@ -16,7 +16,10 @@ package configpublisher
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"golang.org/x/sync/errgroup"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 
@@ -25,14 +28,7 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
-// CleanupPodReferences removes a terminated pod from all deployment status lists.
-//
-// This method removes the pod from:
-// - All HAProxyCfg.status.deployedToPods in the specified namespace.
-// - All HAProxyMapFile.status.deployedToPods in the specified namespace.
-//
-// The namespace parameter ensures namespace-scoped operations. The controller
-// should only manage CRDs in its own namespace.
+// CleanupPodReferences removes a terminated pod from runtime and referenced auxiliary statuses.
 func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanupRequest) error {
 	p.logger.Debug("Cleaning up pod references",
 		"pod", cleanup.PodName,
@@ -52,27 +48,16 @@ func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanu
 		return fmt.Errorf("listing runtime configs: %w", err)
 	}
 
+	var failures []error
 	for i := range runtimeConfigs.Items {
-		p.cleanupRuntimeConfigPodReference(ctx, &runtimeConfigs.Items[i], cleanup)
+		if err := p.cleanupRuntimeConfigPodReference(ctx, &runtimeConfigs.Items[i], cleanup); err != nil {
+			failures = append(failures, err)
+		}
 	}
-
-	return nil
+	return errors.Join(failures...)
 }
 
-// ReconcileDeployedToPods removes status entries for pods that no longer exist.
-//
-// This reconciles the deployedToPods status in HAProxyCfg resources against
-// the list of currently running HAProxy pods. Entries for pods not in the running
-// set are removed. This cleans up stale entries from pods that terminated while
-// the controller was restarting.
-//
-// Also cleans up corresponding entries in auxiliary file resources (HAProxyMapFile,
-// HAProxyGeneralFile, HAProxyCRTListFile).
-//
-// The namespace parameter ensures namespace-scoped operations. The controller
-// should only manage CRDs in its own namespace.
-//
-// Uses retry-on-conflict to handle concurrent updates.
+// ReconcileDeployedToPods removes stale pod identities from runtime and auxiliary statuses.
 func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace string, runningPods []PodIdentity) error {
 	runningSet := make(map[string]PodIdentity, len(runningPods))
 	for _, pod := range runningPods {
@@ -94,40 +79,25 @@ func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace strin
 		return fmt.Errorf("listing HAProxyCfgs: %w", err)
 	}
 
+	var failures []error
 	for i := range runtimeConfigs.Items {
 		listedCfg := &runtimeConfigs.Items[i]
-
-		// Track auxiliary files for cleanup after main update
-		var auxFiles *haproxyv1alpha1.AuxiliaryFileReferences
-
 		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			return p.reconcileSingleRuntimeConfigStatus(ctx, listedCfg, runningSet, &auxFiles)
+			return p.reconcileSingleRuntimeConfigStatus(ctx, listedCfg, runningSet)
 		})
 		if err != nil {
-			p.logger.Warn("Failed to reconcile HAProxyCfg status",
-				"name", listedCfg.Name,
-				"error", err,
-			)
-		}
-
-		// Also clean up auxiliary file status (map files, general files, crt-list files)
-		// Use batched cleanup to minimize API calls (one update per file vs one per pod)
-		if auxFiles != nil {
-			p.reconcileAuxiliaryFilePods(ctx, auxFiles, runningSet)
+			failures = append(failures, fmt.Errorf("reconciling HAProxyCfg %s: %w", listedCfg.Name, err))
 		}
 	}
-
-	return nil
+	return errors.Join(failures...)
 }
 
 // reconcileSingleRuntimeConfigStatus reconciles the DeployedToPods status for a single HAProxyCfg.
 // It fetches a fresh copy, filters out stale pods, and updates the status.
-// auxFilesOut is populated with auxiliary files reference for cleanup after update.
 func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 	ctx context.Context,
 	listedCfg *haproxyv1alpha1.HAProxyCfg,
 	runningSet map[string]PodIdentity,
-	auxFilesOut **haproxyv1alpha1.AuxiliaryFileReferences,
 ) error {
 	// Fetch fresh copy of the resource
 	cfg, err := p.crdClient.HaproxyTemplateICV1alpha1().
@@ -140,7 +110,10 @@ func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 		return fmt.Errorf("getting runtime config: %w", err)
 	}
 
-	// Find ALL stale pods in one pass
+	// A previous partial cleanup may have left stale children behind a current parent.
+	if err := p.reconcileAuxiliaryFilePods(ctx, cfg.Status.AuxiliaryFiles, runningSet); err != nil {
+		return err
+	}
 	stalePods, newDeployedToPods := p.filterStalePods(cfg.Status.DeployedToPods, runningSet)
 	if len(stalePods) == 0 {
 		return nil
@@ -151,9 +124,6 @@ func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 		"namespace", cfg.Namespace,
 		"stale_pods", stalePods,
 	)
-
-	// Store auxiliary files reference for cleanup after update
-	*auxFilesOut = cfg.Status.AuxiliaryFiles
 
 	// Update status once with all stale pods removed
 	cfg.Status.DeployedToPods = newDeployedToPods
@@ -193,65 +163,39 @@ func podStatusMatchesIdentity(status *haproxyv1alpha1.PodDeploymentStatus, ident
 
 // cleanupRuntimeConfigPodReference removes pod reference from a single HAProxyCfg.
 // Uses retry-on-conflict to handle concurrent updates.
-func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, cleanup *PodCleanupRequest) {
-	// Track auxiliary files for cleanup after main update
-	var auxFiles *haproxyv1alpha1.AuxiliaryFileReferences
-
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Fetch fresh copy of the resource
+func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, cleanup *PodCleanupRequest) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyCfgs(runtimeConfig.Namespace).
 			Get(ctx, runtimeConfig.Name, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				return nil // Resource deleted, nothing to clean up
+				return nil
 			}
 			return fmt.Errorf("getting runtime config: %w", err)
 		}
-
+		if err := p.cleanupAuxiliaryFilePodReferences(ctx, current.Status.AuxiliaryFiles, cleanup); err != nil {
+			return err
+		}
 		newDeployedToPods, removed := removePodAuthorityFromStatus(current.Status.DeployedToPods, cleanup.PodName, cleanup.PodUID)
 		if !removed {
-			return nil // Pod not in this runtime config
+			return nil
 		}
-
-		// Store auxiliary files reference for cleanup after update
-		auxFiles = current.Status.AuxiliaryFiles
-
 		current.Status.DeployedToPods = newDeployedToPods
-
 		_, err = p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyCfgs(current.Namespace).
 			UpdateStatus(ctx, current, metav1.UpdateOptions{})
 		if err != nil {
 			return fmt.Errorf("updating runtime config status: %w", err)
 		}
-
 		return nil
 	})
-	if err != nil {
-		p.logger.Debug("Status update conflict during cleanup (will retry on next reconciliation)",
-			"type", "runtime_config_status",
-			"name", runtimeConfig.Name,
-			"error", err,
-		)
-		// Non-blocking - continue with other runtime configs
-		return
-	}
-
-	// Clean up auxiliary files (map files, general files, crt-list files)
-	if auxFiles != nil {
-		p.cleanupAuxiliaryFilePodReferences(ctx, auxFiles, cleanup)
-	}
 }
 
-// auxFileGroup binds an AuxiliaryFileReferences slice to the metadata needed
-// to operate on each referenced resource: a human-readable label for log
-// messages, a slog key for the file name, a handle accessor, and an optional
-// cached-read accessor that tries to satisfy the read from an informer cache.
+// auxFileGroup supplies typed access to one kind of auxiliary file.
 type auxFileGroup struct {
 	refs          []haproxyv1alpha1.ResourceReference
-	label         string // e.g. "map file" — interpolated into log messages
-	logKey        string // e.g. "map_file" — slog field key for the file name
+	label         string
 	handle        func(ctx context.Context, namespace, name string) (*auxFileHandle, error)
 	tryCachedRead func(namespace, name string) *cachedAuxFileStatus
 }
@@ -263,9 +207,9 @@ func (p *Publisher) auxFileGroupsFor(auxFiles *haproxyv1alpha1.AuxiliaryFileRefe
 		return nil
 	}
 	return []auxFileGroup{
-		{auxFiles.MapFiles, "map file", "map_file", p.mapFileHandle, p.cachedMapFileStatus},
-		{auxFiles.GeneralFiles, "general file", "general_file", p.generalFileHandle, p.cachedGeneralFileStatus},
-		{auxFiles.CRTListFiles, "crt-list file", "crt_list_file", p.crtListFileHandle, p.cachedCRTListFileStatus},
+		{auxFiles.MapFiles, "map file", p.mapFileHandle, p.cachedMapFileStatus},
+		{auxFiles.GeneralFiles, "general file", p.generalFileHandle, p.cachedGeneralFileStatus},
+		{auxFiles.CRTListFiles, "crt-list file", p.crtListFileHandle, p.cachedCRTListFileStatus},
 	}
 }
 
@@ -306,40 +250,48 @@ func (p *Publisher) cachedCRTListFileStatus(namespace, name string) *cachedAuxFi
 	return &cachedAuxFileStatus{pods: cached.Status.DeployedToPods, checksum: cached.Spec.Checksum}
 }
 
-// cleanupAuxiliaryFilePodReferences removes pod reference from all auxiliary files (map files, general files, crt-list files).
-func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, cleanup *PodCleanupRequest) {
-	for _, group := range p.auxFileGroupsFor(auxFiles) {
-		for _, ref := range group.refs {
-			err := mutateAuxFilePodStatus(
-				func() (*auxFileHandle, error) { return group.handle(ctx, ref.Namespace, ref.Name) },
-				removePodMutation(cleanup.PodName, cleanup.PodUID),
-			)
-			if err != nil {
-				p.logger.Warn("Failed to cleanup "+group.label+" pod reference",
-					group.logKey, ref.Name,
-					"error", err,
-				)
-				// Non-blocking - continue
-			}
-		}
-	}
+func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, cleanup *PodCleanupRequest) error {
+	return p.mutateAuxiliaryFilePods(ctx, auxFiles, removePodMutation(cleanup.PodName, cleanup.PodUID))
 }
 
-// reconcileAuxiliaryFilePods removes stale pod entries from all auxiliary files.
-// Unlike cleanupAuxiliaryFilePodReferences which handles one pod at a time,
-// this processes all pods in a single pass per file to minimize API calls.
-func (p *Publisher) reconcileAuxiliaryFilePods(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, runningSet map[string]PodIdentity) {
+func (p *Publisher) reconcileAuxiliaryFilePods(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, runningSet map[string]PodIdentity) error {
+	return p.mutateAuxiliaryFilePods(ctx, auxFiles, filterRunningPods(runningSet, nil))
+}
+
+const auxiliaryCleanupConcurrency = 8
+
+type podStatusMutation func([]haproxyv1alpha1.PodDeploymentStatus) ([]haproxyv1alpha1.PodDeploymentStatus, bool)
+
+func (p *Publisher) mutateAuxiliaryFilePods(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, mutate podStatusMutation) error {
+	var work errgroup.Group
+	work.SetLimit(auxiliaryCleanupConcurrency)
 	for _, group := range p.auxFileGroupsFor(auxFiles) {
 		for _, ref := range group.refs {
-			err := mutateAuxFilePodStatus(
-				func() (*auxFileHandle, error) { return group.handle(ctx, ref.Namespace, ref.Name) },
-				filterRunningPods(runningSet, func(removed []string) {
-					p.logger.Debug("Removing stale pods from "+group.label, "name", ref.Name, "removed_pods", removed)
-				}),
-			)
-			if err != nil {
-				p.logger.Warn("Failed to reconcile "+group.label+" pods", "name", ref.Name, "error", err)
+			if !group.needsPodMutation(ref, mutate) {
+				continue
 			}
+			work.Go(func() error { return group.mutatePods(ctx, ref, mutate) })
 		}
 	}
+	return work.Wait()
+}
+
+func (g *auxFileGroup) needsPodMutation(ref haproxyv1alpha1.ResourceReference, mutate podStatusMutation) bool {
+	cached := g.tryCachedRead(ref.Namespace, ref.Name)
+	if cached == nil {
+		return true
+	}
+	_, changed := mutate(cached.pods)
+	return changed
+}
+
+func (g *auxFileGroup) mutatePods(ctx context.Context, ref haproxyv1alpha1.ResourceReference, mutate podStatusMutation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	err := mutateAuxFilePodStatus(func() (*auxFileHandle, error) { return g.handle(ctx, ref.Namespace, ref.Name) }, mutate)
+	if err != nil {
+		return fmt.Errorf("cleaning %s %s/%s pod references: %w", g.label, ref.Namespace, ref.Name, err)
+	}
+	return nil
 }
