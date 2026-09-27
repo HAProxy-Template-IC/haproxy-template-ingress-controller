@@ -81,6 +81,7 @@ type Component struct {
 	*component.ReadySignal
 
 	deploymentInProgress atomic.Bool // Defensive: prevents concurrent deployments if the scheduler has bugs
+	acceptingEvents      atomic.Bool
 
 	// ctx is the event-loop context captured by Start. Handlers run only on the
 	// loop goroutine and use it for agent calls, so applies abort on shutdown.
@@ -156,26 +157,27 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, syncTimeout time.Dur
 		healthTracker:   lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 		metrics:         domainMetrics,
 	}
-	// Subscription happens here, at construction (component.Base), before
-	// EventBus.Start(). The Deployer remains a leader-only component: its event
-	// loop only runs once Start() is called after leadership is acquired, and
-	// the subscribed event types are published only by the leader-only
-	// DeploymentScheduler.
+	// Standby replicas receive discovery events; leadership replay supplies fresh state on activation.
 	c.Base = component.New(&component.Config{
-		EventBus:   eventBus,
-		Logger:     logger,
-		Name:       ComponentName,
-		BufferSize: EventBufferSize,
-		Handler:    c,
+		EventBus:    eventBus,
+		Logger:      logger,
+		Name:        ComponentName,
+		BufferSize:  EventBufferSize,
+		Handler:     c,
+		EventFilter: c.acceptEvent,
 		EventTypes: []string{
 			events.EventTypeDeploymentScheduled,
 			events.EventTypeRenderGateCompleted,
 			events.EventTypeHAProxyPodsDiscovered,
 		},
 	})
-	c.cancelEventChan = eventBus.SubscribeTypes(cancellationSubscriberName, EventBufferSize,
+	c.cancelEventChan = eventBus.SubscribeTypesFiltered(cancellationSubscriberName, EventBufferSize, c.acceptEvent,
 		events.EventTypeDeploymentCancelRequest)
 	return c
+}
+
+func (c *Component) acceptEvent(_ busevents.Event) bool {
+	return c.acceptingEvents.Load()
 }
 
 // agentStateTimeout bounds a /v1/state read. The agent answers it from memory
@@ -185,6 +187,7 @@ const agentStateTimeout = 10 * time.Second
 // Start begins the deployer's event loop and blocks until ctx is cancelled.
 func (c *Component) Start(ctx context.Context) error {
 	defer c.Rearm()
+	defer c.acceptingEvents.Store(false)
 	// Discard events buffered before this leadership term. The construction-
 	// time subscription persists across terms, so DeploymentScheduledEvents
 	// queued when leadership was lost would otherwise replay a stale deployment
@@ -194,11 +197,6 @@ func (c *Component) Start(ctx context.Context) error {
 	c.cancelMu.Lock()
 	c.pendingCancellation = ""
 	c.cancelMu.Unlock()
-
-	// Signal that subscription is complete for the SubscriptionReadySignaler
-	// interface. Subscription itself happened at construction (component.Base),
-	// so the signal can fire before the loop starts.
-	c.MarkReady()
 
 	// A new term dials fresh: the previous leader's pooled connections carry no
 	// state worth keeping, and its apply sequence restarts under a new epoch.
@@ -213,7 +211,10 @@ func (c *Component) Start(ctx context.Context) error {
 	controlCtx, stopControl := context.WithCancel(ctx)
 	controlDone := make(chan struct{})
 	go c.runCancellationLoop(controlCtx, controlDone)
+	c.acceptingEvents.Store(true)
+	c.MarkReady()
 	err := c.Base.Start(ctx)
+	c.acceptingEvents.Store(false)
 
 	stopControl()
 	c.cancelActiveDeployment("shutdown")

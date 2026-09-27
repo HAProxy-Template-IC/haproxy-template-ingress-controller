@@ -11,7 +11,6 @@ package deployer
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,6 +88,7 @@ func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 	// BEFORE the event loop starts (Publish delivers synchronously). The
 	// mailbox collapses whatever run the intake has absorbed by the time
 	// the worker dequeues; the latest (C) is always the final dispatch.
+	deployer.acceptingEvents.Store(true)
 	published := []string{"initial-superseded", "queued-A-superseded", "queued-B-superseded", "queued-C-latest"}
 	for _, id := range published {
 		bus.Publish(mkScheduled(id))
@@ -145,16 +145,14 @@ func TestStart_FlushesStaleEventsFromPreviousTerm(t *testing.T) {
 		events.WithCorrelation("stale-prev-term", "stale-prev-term"),
 	)
 	require.NoError(t, err)
+	deployer.acceptingEvents.Store(true)
 	bus.Publish(stale)
-
-	// Let the bus route it into the deployer's subscription buffer before
-	// Start flushes; otherwise the flush could race the routing goroutine
-	// and the test would pass vacuously.
-	time.Sleep(50 * time.Millisecond)
+	deployer.acceptingEvents.Store(false)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go deployer.Start(ctx)
+	<-deployer.SubscriptionReady()
 
 	// The stale event must NOT produce a deployment.
 	testutil.AssertNoEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.NoEventTimeout)
