@@ -1892,7 +1892,7 @@ cache:
     # image.repository + image.tag pair), so without the comment + manager this
     # pin silently never gets bumped — which is how it sat at 9.0.
     # renovate: datasource=docker depName=varnish
-    image: varnish:9.0
+    image: varnish:9.1
     imagePullPolicy: IfNotPresent
     # Object storage only; budget shared logs, VCL, and process overhead separately.
     malloc: 256m
@@ -1962,7 +1962,7 @@ rateLimit:
       # matching grant cannot be applied and the controller retries it forever.
       enabled: true
       # renovate: datasource=docker depName=valkey/valkey
-      image: valkey/valkey:9.1.2-alpine
+      image: valkey/valkey:9.2-alpine
       imagePullPolicy: IfNotPresent
       port: 6379
       # One writable primary with Sentinel failover. Three replicas gives

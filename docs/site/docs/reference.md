@@ -99,7 +99,7 @@ workflows too.
 | `cache.varnish.originServiceName` | string | `haptic-cache-origin` | Name of the internal ClusterIP Service (in the release namespace) that fronts the dedicated backend-fetch port on the HAProxy pods |
 | `cache.varnish.workload` | string | `statefulset` | Workload type: `statefulset` updates one shard at a time; `deployment` uses the configured Deployment rollout strategy. |
 | `cache.varnish.replicas` | int | `2` | Number of Varnish cache shards |
-| `cache.varnish.image` | string | `varnish:9.0` | Varnish container image — stock upstream, since the loopback topology needs no custom build. Pin to a digest in production |
+| `cache.varnish.image` | string | `varnish:9.1` | Varnish container image — stock upstream, since the loopback topology needs no custom build. Pin to a digest in production |
 | `cache.varnish.imagePullPolicy` | string | `IfNotPresent` | Kubernetes pull policy for the Varnish image (`Always`, `IfNotPresent`, or `Never`) |
 | `cache.varnish.malloc` | string | `256m` | Varnish `-s malloc,<size>` object storage per shard; excludes shared logs, compiled configuration, and process/object overhead |
 | `cache.varnish.resources` | object | cpu `100m` / memory `384Mi` | Varnish pod resource requests and limits. A CPU request is required for autoscaling. Budget `malloc`, the memory-backed working directory (including the default 80 MiB shared log), compiled configuration, and process/object overhead |
@@ -121,7 +121,7 @@ workflows too.
 | `spoaHub.plugins.rate-limit.storeOperationTimeoutMs` | int | `10` | Per-operation Redis/Valkey timeout rendered as the rate-limit plugin's `store_timeout_ms`. Exact `gcra` mode waits on this path per request; tune according to measured store round-trip time and failover behavior |
 | `rateLimit.shared.managedStore.enabled` | bool | `true` | Use the bundled Valkey/Sentinel store when `rateLimit.shared.enabled` is true. Set false to supply your own store with `rateLimit.shared.externalStore.urls`. This setting alone deploys nothing. |
 | `rateLimit.shared.externalStore.urls` | list | `[]` | One bring-your-own HA Redis/Valkey/Sentinel/Cluster endpoint, used with `managedStore.enabled=false` (setting both fails the render). Multiple URLs fail validation because the bundled plugin shares one circuit breaker across its shards. Configure the external store with a non-evicting memory policy. The chart owns the generated `store_url` and rejects a manual `store_url`/`store_urls` in `spoaHub.plugins.rate-limit.params` |
-| `rateLimit.shared.managedStore.image` | string | `valkey/valkey:9.1.2-alpine` | Valkey image for the chart-managed shared rate-limit store |
+| `rateLimit.shared.managedStore.image` | string | `valkey/valkey:9.2-alpine` | Valkey image for the chart-managed shared rate-limit store |
 | `rateLimit.shared.managedStore.imagePullPolicy` | string | `IfNotPresent` | Kubernetes pull policy for both the Valkey and Sentinel containers (`Always`, `IfNotPresent`, or `Never`) |
 | `rateLimit.shared.managedStore.port` | int | `6379` | Valkey Service port for the chart-managed shared rate-limit store |
 | `rateLimit.shared.managedStore.replicas` | int | `3` | Fixed Valkey pod count for the chart-managed Sentinel topology: one writable primary plus replicas for failover. Must be at least 3. This is HA, not automatic horizontal Valkey scaling |
