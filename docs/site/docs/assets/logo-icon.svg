@@ -1,34 +1,16 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- HAPTIC — simplified icon (auto light/dark adaptive SVG) -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 160" width="380" height="160" role="img" aria-labelledby="title desc">
-  <title id="title">HAPTIC icon (auto light/dark)</title>
-  <desc id="desc">Adaptive minimalist icon with templating tag "{%%}" in monospace font. Automatically switches color scheme between light and dark mode.</desc>
-
-  <style>
-    :root {
-      --brand: #0b3a66;  /* text color in light mode */
-      --bg: transparent; /* background color in light mode */
-    }
-    svg { background: var(--bg); }
-
-    /* Dark mode overrides */
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --brand: #e8edf4; /* light text on dark bg */
-        --bg: #0b3a66;    /* dark background */
-      }
-    }
-
-    .icon-text {
-      fill: var(--brand);
-      font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
-      font-weight: 700;
-      letter-spacing: 6px;
-    }
-  </style>
-
-  <!-- Symbol -->
-  <text class="icon-text" x="190" y="120" text-anchor="middle" font-size="140">
-    {%%}
-  </text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 252" width="520" height="252" role="img" aria-labelledby="title desc">
+  <title id="title">HAPTIC</title>
+  <desc id="desc">Two percent signs inside curly braces.</desc>
+  <g fill="#ffffff" transform="translate(30 30)">
+    <path d="M80 0H50C26 0 18 20 18 45V61C18 78 12 86 0 86V106C12 106 18 114 18 131V147C18 172 26 192 50 192H80V168H61C47 168 44 160 44 145V129C44 112 36 100 25 96C36 92 44 80 44 63V47C44 32 47 24 61 24H80Z" />
+    <path transform="translate(460 0) scale(-1 1)" d="M80 0H50C26 0 18 20 18 45V61C18 78 12 86 0 86V106C12 106 18 114 18 131V147C18 172 26 192 50 192H80V168H61C47 168 44 160 44 145V129C44 112 36 100 25 96C36 92 44 80 44 63V47C44 32 47 24 61 24H80Z" />
+    <g transform="translate(101.5 0)">
+      <path fill-rule="evenodd" d="M56 52a27 27 0 1 1 -54 0a27 27 0 1 1 54 0Z M39.5 52a10.5 10.5 0 1 0 -21 0a10.5 10.5 0 1 0 21 0Z M110 140a27 27 0 1 1 -54 0a27 27 0 1 1 54 0Z M93.5 140a10.5 10.5 0 1 0 -21 0a10.5 10.5 0 1 0 21 0Z" />
+      <path d="M87 24H112L25 168H0Z" />
+    </g>
+    <g transform="translate(246.5 0)">
+      <path fill-rule="evenodd" d="M56 52a27 27 0 1 1 -54 0a27 27 0 1 1 54 0Z M39.5 52a10.5 10.5 0 1 0 -21 0a10.5 10.5 0 1 0 21 0Z M110 140a27 27 0 1 1 -54 0a27 27 0 1 1 54 0Z M93.5 140a10.5 10.5 0 1 0 -21 0a10.5 10.5 0 1 0 21 0Z" />
+      <path d="M87 24H112L25 168H0Z" />
+    </g>
+  </g>
 </svg>

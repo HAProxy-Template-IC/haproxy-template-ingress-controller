@@ -1,16 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 600" width="1600" height="600" role="img" aria-labelledby="title desc">
   <title id="title">HAPTIC</title>
   <desc id="desc">Refined classic logo with two percent signs inside curly braces beside HAPTIC. Centered with equal outer margins.</desc>
-  <style>
-    .background { fill: #ffffff; }
-    .artwork { fill: #0b3a66; }
-    @media (prefers-color-scheme: dark) {
-      .background { fill: #0b3a66; }
-      .artwork { fill: #ffffff; }
-    }
-  </style>
-  <path fill="#ffffff" d="M0 0H1600V600H0Z" class="background" />
-  <g fill="#0b3a66" class="artwork">
+  <path fill="#0b3a66" d="M0 0H1600V600H0Z" />
+  <g fill="#ffffff">
     <g transform="translate(212 204)">
       <path d="M80 0H50C26 0 18 20 18 45V61C18 78 12 86 0 86V106C12 106 18 114 18 131V147C18 172 26 192 50 192H80V168H61C47 168 44 160 44 145V129C44 112 36 100 25 96C36 92 44 80 44 63V47C44 32 47 24 61 24H80Z" />
       <path transform="translate(460 0) scale(-1 1)" d="M80 0H50C26 0 18 20 18 45V61C18 78 12 86 0 86V106C12 106 18 114 18 131V147C18 172 26 192 50 192H80V168H61C47 168 44 160 44 145V129C44 112 36 100 25 96C36 92 44 80 44 63V47C44 32 47 24 61 24H80Z" />
