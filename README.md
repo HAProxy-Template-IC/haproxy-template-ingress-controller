@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="docs/site/docs/assets/logo.svg" alt="HAPTIC Logo" width="400">
+<img src="docs/site/docs/assets/logo.svg" alt="HAPTIC" width="400" height="150">
 
 </div>
 

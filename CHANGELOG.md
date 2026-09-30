@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refine the HAPTIC logo with centered, scalable artwork that preserves the template-tag symbol.
+
 ### Fixed
 
 - Keep admission validation available while a terminating controller drains requests.
