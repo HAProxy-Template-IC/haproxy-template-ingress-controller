@@ -479,7 +479,7 @@ controller:
         cpu: 25m
         memory: 64Mi
       limits:
-        memory: 128Mi
+        memory: 256Mi
     # Container-level securityContext for the validator sidecar.
     # runAsUser=65532 matches the controller's nonroot UID so the Unix
     # socket the sidecar creates under socketDir is readable / writable
@@ -1354,14 +1354,13 @@ controller:
         #
         # Add custom or override library-defined entries. Per-resource
         # debounceInterval is supported (default 100ms).
-    # Override or extend the library-provided templateSnippets / maps /
-    # files / haproxyConfig / validationTests sections by defining the
-    # same keys here — user-provided values always win.
-  # templateSnippets:
-  # maps:
-  # files:
-  # haproxyConfig:
-  # validationTests:
+    # Add or override templateSnippets, maps, files, and haproxyConfig here.
+    # Additional validationTests must have unique names across all libraries.
+    # templateSnippets:
+    # maps:
+    # files:
+    # haproxyConfig:
+    # validationTests:
 
 # IngressClass resource
 # Creates an IngressClass resource for Kubernetes 1.18+

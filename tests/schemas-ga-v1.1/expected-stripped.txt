@@ -43,6 +43,7 @@ test-backendtlspolicy-tlsroute-passthrough-forwards-client-tls
 test-backendtlspolicy-tlsroute-terminate-reencrypts
 test-backendtlspolicy-tlsroute-terminate-unresolvable-ca-rejects
 test-backendtlspolicy-tlsroute-unsupported-identity-rejects
+test-cache-dispatch-timeout-gateway
 test-gateway-backend-client-cert-file-name-bounded-for-maximum-length-gateway-name
 test-gateway-backend-client-cert-shape
 test-gateway-bind-per-gateway-shape

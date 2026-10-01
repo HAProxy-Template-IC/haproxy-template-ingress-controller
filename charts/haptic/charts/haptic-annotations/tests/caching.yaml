@@ -184,9 +184,9 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "timeout server 2000ms"}
       - type: contains
         target: haproxy.cfg
-        # `timeout server 0` is a defaults-eligible directive, so base carries it in
-        # the cache backend's profile rather than in its section.
-        pattern: "(?ms)^defaults haptic-be-\\w+ from haptic-base$(?:\\n[ \\t]+[^\\n]*)*?\\n[ \\t]+timeout server 0$"
+        pattern: '(?ms)^defaults haptic-be-\w+ from haptic-base$(?:\n[ \t]+[^\n]*)*?\n[ \t]+timeout server 206900ms$'
+      - {type: contains, target: "map:cache-dispatch-timeout.map", pattern: '(?m)^budget 206900$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-timeout server str\(budget\),map_str_int\([^)]*cache-dispatch-timeout\.map\)'}
       - {type: contains, target: haproxy.cfg, pattern: "retries 1"}
       - {type: contains, target: haproxy.cfg, pattern: "retry-on conn-failure empty-response response-timeout 425"}
       - {type: contains, target: haproxy.cfg, pattern: "option redispatch 1"}

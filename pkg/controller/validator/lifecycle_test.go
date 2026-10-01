@@ -15,6 +15,7 @@
 package validator
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"testing"
@@ -48,7 +49,9 @@ func TestValidatorCancellationCancelsBootstrap(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			bus, logger := testutil.NewTestBusAndLogger()
+			bus, _ := testutil.NewTestBusAndLogger()
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 			started := make(chan struct{})
 			canceled := make(chan struct{})
 			bootstrap := func(ctx context.Context, _ *coreconfig.Config) (*typebootstrap.Result, error) {
@@ -74,6 +77,8 @@ func TestValidatorCancellationCancelsBootstrap(t *testing.T) {
 			case <-time.After(testutil.LongTimeout):
 				t.Fatal("validator did not stop after cancellation")
 			}
+			require.NotContains(t, logs.String(), "level=ERROR")
+			require.Contains(t, logs.String(), "canceled")
 		})
 	}
 }

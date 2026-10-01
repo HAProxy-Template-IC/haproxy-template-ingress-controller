@@ -74,6 +74,10 @@ func (v *TemplateValidator) Validate(ctx context.Context, cfg *coreconfig.Config
 	v.Logger().Debug("Validating templates", "version", version)
 
 	errors = validateTemplates(ctx, cfg, v.bootstrap)
+	if ctx.Err() == context.Canceled {
+		v.Logger().Debug("Template validation canceled", "version", version)
+		return false, []string{context.Cause(ctx).Error()}
+	}
 	extraction := helpers.ExtractTemplatesFromConfig(cfg)
 
 	valid = len(errors) == 0

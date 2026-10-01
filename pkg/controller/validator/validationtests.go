@@ -166,6 +166,10 @@ func (v *ValidationTestsValidator) Validate(ctx context.Context, cfg *coreconfig
 		"version", version, "test_count", len(cfg.ValidationTests), "run_budget", budget)
 
 	result, err := RunValidationTestsSync(ctx, cfg, v.bootstrap, budget, v.Logger())
+	if ctx.Err() == context.Canceled {
+		v.Logger().Debug("ValidationTests canceled", "version", version)
+		return false, []string{context.Cause(ctx).Error()}
+	}
 	valid, errors = validationTestsVerdict(result, err, fmt.Sprintf(
 		"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", budget))
 	duration := time.Since(start)

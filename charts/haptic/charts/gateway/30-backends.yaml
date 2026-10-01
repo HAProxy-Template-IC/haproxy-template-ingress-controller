@@ -1,4 +1,18 @@
 templateSnippets:
+  cache-timeouts-510-gateway:
+    requires: [gateways, grpcroutes, httproutes]
+    template: |-
+      {{- render "util-gateway-route-filter-publications" -}}
+      {%- for _, entry := range incremental_values("gateway-backends", "timeouts") -%}
+        {%- for key, value := range entry.(map[string]any) -%}
+          {{- key + " " + tostring(value) + "\n" -}}
+        {%- end -%}
+      {%- end -%}
+      {%- for _, line := range split(incremental_ranked_fragments("gateway-route-filter-maps", "timeout"), "\n") -%}
+        {%- var fields = split(trimSpace(line), " ") -%}
+        {%- if len(fields) == 2 -%}{{- "server " + fields[1] + "\n" -}}{%- end -%}
+      {%- end -%}
+
   util-backend-tls-identity:
     template: |-
       {%- var BackendTLSIdentity = func(validation any) (string, string) {
@@ -72,6 +86,7 @@ templateSnippets:
     requires: [gateways, httproutes, referencegrants]
     template: |
       {%- import "util-backend" for FlagsToKeywordArgs, PrepareBackend -%}
+      {%- import "util-backend-timeouts" for BackendTimeouts -%}
       {%- import "util-backend-servers-result" for BackendServersResult -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
@@ -339,6 +354,7 @@ templateSnippets:
         // set: one line for every rule this backend serves, its value from a
         // map. `set-timeout server` is backend-only, which is why it is here
         // and not with the other map-driven filters.
+        var timeoutProfile = append([]any{}, profile...)
         var toMap = FilePath("map", "gw-timeout.map")
         profile = append(profile, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
           tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
@@ -352,6 +368,9 @@ templateSnippets:
       %%}
       {%- var serverResult = BackendServersResult(backendName, 0, backendPort, nil, nil, beKey, backendNs) -%}
       {{- shared.Publish("owners", beKey, map[string]any{"backend": beKey}) -}}
+      {%- if props["cacheVarnishEnabled"] == true -%}
+        {{- shared.Publish("timeouts", beKey, BackendTimeouts(map[string]any{}, append(timeoutProfile, body...))) -}}
+      {%- end -%}
       {%- var record, text = PrepareBackend(map[string]any{
            "name": beKey,
            "guid": make_guid("be", beKey),
@@ -381,6 +400,7 @@ templateSnippets:
     requires: [gateways, grpcroutes, referencegrants]
     template: |
       {%- import "util-backend" for FlagsToKeywordArgs, PrepareBackend -%}
+      {%- import "util-backend-timeouts" for BackendTimeouts -%}
       {%- import "util-backend-servers-result" for BackendServersResult -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
@@ -591,6 +611,7 @@ templateSnippets:
         }
 
         // GEP-1742 timeouts, same map and gate as the HTTPRoute backend above.
+        var timeoutProfile = append([]any{}, profile...)
         var toMap = FilePath("map", "gw-timeout.map")
         profile = append(profile, "http-request set-timeout server var(txn.gw_rule_id),map_str_int(" +
           tostring(toMap) + ") if { var(txn.gw_rule_id),map_str_int(" + tostring(toMap) + ") -m found }")
@@ -604,6 +625,9 @@ templateSnippets:
       %%}
       {%- var serverResult = BackendServersResult(backendName, 0, backendPort, nil, nil, beKey, backendNs) -%}
       {{- shared.Publish("owners", beKey, map[string]any{"backend": beKey}) -}}
+      {%- if props["cacheVarnishEnabled"] == true -%}
+        {{- shared.Publish("timeouts", beKey, BackendTimeouts(map[string]any{}, append(timeoutProfile, body...))) -}}
+      {%- end -%}
       {%- var record, text = PrepareBackend(map[string]any{
            "name": beKey,
            "guid": make_guid("be", beKey),
@@ -695,6 +719,7 @@ templateSnippets:
         var fileDir, fileErr = pathResolver.GetPath("", "file")
         if fileErr != nil { fail(tostring(fileErr)) }
         return map[string]any{
+          "cacheVarnishEnabled": extraContext | dig("cache", "varnish", "enabled") | fallback(false),
           "mapDir": mapDir,
           "fileDir": fileDir,
           "dynamicCookieKey": extraContext | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie"),

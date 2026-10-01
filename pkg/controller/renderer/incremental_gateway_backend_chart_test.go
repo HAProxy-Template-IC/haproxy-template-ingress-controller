@@ -501,7 +501,7 @@ func loadGatewayBackendChartSnippets(t *testing.T) map[string]config.TemplateSni
 		"gateway/73-status-policy.yaml",
 	}
 	wanted := map[string]bool{
-		"util-backend": true, "util-macros": true,
+		"util-backend": true, "util-macros": true, "util-backend-timeouts": true, "util-haproxy-duration": true,
 		"util-webhook-reject-or-warn": true, "util-config-injection-kind": true,
 		"util-escape-dquote-value": true, "util-escape-logformat-value": true,
 		"util-backend-servers-helpers": true,

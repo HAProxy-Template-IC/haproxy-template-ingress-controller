@@ -3,6 +3,16 @@
 # server-options, session-affinity, config-backend snippet. (The basic-auth
 # backend directive lives in 50-auth-spoe alongside the rest of auth.)
 templateSnippets:
+  backend-timeout-metadata-600-haproxy-ingress:
+    template: |-
+      {%- import "util-haproxy-duration" for HAProxyDurationMs -%}
+      {%- for kind, annotation := range map[string]string{"server": "haproxy-ingress.github.io/timeout-server", "tunnel": "haproxy-ingress.github.io/timeout-tunnel"} -%}
+        {%- var value = HAProxyDurationMs(dig_string(ingress, "", "metadata", "annotations", annotation)) -%}
+        {%- if value != "" && toint(value) > 0 -%}
+          {{- kind + " " + value + "\n" -}}
+        {%- end -%}
+      {%- end -%}
+
   # ============================================================================
   # Annotation Helpers
   # ============================================================================

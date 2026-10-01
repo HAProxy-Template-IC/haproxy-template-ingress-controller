@@ -16,7 +16,6 @@ package main
 
 import (
 	"cmp"
-	"context"
 	"fmt"
 	"log/slog"
 	"math"
@@ -152,6 +151,9 @@ func resolveConfigName(fromFlag string) string {
 }
 
 func runController(cmd *cobra.Command, _ []string) error {
+	ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
 	// Configuration priority: CLI flags > Environment variables > Defaults
 
 	runCRDName = resolveConfigName(runCRDName)
@@ -197,7 +199,7 @@ func runController(cmd *cobra.Command, _ []string) error {
 
 	// Route client-go's klog output (leader election, informers) through slog
 	// so it shares the same logfmt format and dynamic level as everything else.
-	klog.SetSlogLogger(logger)
+	klog.SetSlogLogger(logging.WithCancellationLogging(logger, ctx))
 
 	configureMemoryLimit(logger)
 
@@ -247,10 +249,6 @@ func runController(cmd *cobra.Command, _ []string) error {
 	logger.Info("Kubernetes client created successfully",
 		"namespace", k8sClient.Namespace(),
 		"in_cluster", runKubeconfig == "")
-
-	// Set up signal handling for graceful shutdown
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
 
 	if err := controller.Run(
 		ctx,
