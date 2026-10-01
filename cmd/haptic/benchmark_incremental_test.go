@@ -1498,6 +1498,16 @@ func assertWarmEndpointChangeRender(
 func TestBundledHTTPRouteSourceTransactionWaveControl(t *testing.T) {
 	cfg, setup, logger, cleanup := bundledChartSetup(t)
 	t.Cleanup(cleanup)
+	if diagnostic, ok := setup.Engine.(interface{ IncrementalComponentVectorCarrierDiagnostic() error }); ok {
+		require.NoError(t, diagnostic.IncrementalComponentVectorCarrierDiagnostic())
+	}
+	sourceRenderer, ok := setup.Engine.(templating.IncrementalComponentSourceTransactionsRenderer)
+	require.True(t, ok)
+	if !sourceRenderer.IncrementalComponentSourceTransactionsEligibility() {
+		t.Fatalf("source transaction compilation failed: %v", sourceRenderer.RenderIncrementalComponentSourceTransactions(
+			t.Context(), templating.IncrementalComponentSourceTransactionsInput{},
+		))
+	}
 	storeMap, err := createStoresForBenchmark(
 		cfg,
 		setup.Engine,

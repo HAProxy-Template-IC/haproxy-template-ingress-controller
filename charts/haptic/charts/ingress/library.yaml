@@ -398,6 +398,7 @@ templateSnippets:
   util-generate-backends-ingress:
     template: |
       {%- import "util-backend" for AppendLines, DefaultServerArgs, PrepareBackend -%}
+      {%- import "util-ingress-timeout-metadata" for PublishIngressTimeouts -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-backend-servers-result" for BackendServersResult -%}
       {%- import "util-service-port-resolution" for ResolveServicePort -%}
@@ -475,6 +476,9 @@ templateSnippets:
             degradedMarkers["degradedBackendRef:" + ns + "/" + svcName + "/" + tostring(serverResult["portName"])] = true
           }
           _ = shared.Publish("owners", backendKey, map[string]any{"backend": backendKey})
+          if props["cacheVarnishEnabled"] == true {
+            _ = PublishIngressTimeouts(ingress, backendKey, toSlice(serverOpts["profile"]), body)
+          }
           var record, text = PrepareBackend(map[string]any{
             "name": backendKey,
             "guid": make_guid("be", backendKey),
@@ -519,6 +523,7 @@ templateSnippets:
   util-generate-annotation-default-backend:
     template: |-
       {%- import "util-backend" for AppendLines, DefaultServerArgs, PrepareBackend -%}
+      {%- import "util-ingress-timeout-metadata" for PublishIngressTimeouts -%}
       {%- import "util-backend-servers-result" for BackendServersResult -%}
       {% macro GenerateAnnotationDefaultBackend(ingress *resources.ingresses.T, svcNs string,
         svcName string, port int, portName string, backendName string, effectPrefix string,
@@ -557,6 +562,9 @@ templateSnippets:
           {{- shared.Publish("degraded", tostring(degraded[0]), true) -}}
         {%- end -%}
         {{- shared.Publish("owners", backendName, map[string]any{"backend": backendName}) -}}
+        {%- if props["cacheVarnishEnabled"] == true -%}
+          {{- PublishIngressTimeouts(ingress, backendName, profile, body) -}}
+        {%- end -%}
         {%- if len(backendFiles) > 0 || len(degraded) > 0 -%}
           {{- shared.Publish("effects", effectPrefix + "/" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name,
             map[string]any{"phase": effectPrefix, "files": backendFiles, "degraded": degraded}) -}}
@@ -786,6 +794,28 @@ templateSnippets:
           show shared.Unique("map-backend-service-ingress", be, "\n" + be + " " + ns + "/" + dbSvc)
         }
       %%}
+
+  util-ingress-timeout-metadata:
+    template: |-
+      {%- import "util-backend-timeouts" for BackendTimeouts -%}
+      {% macro PublishIngressTimeouts(ingress any, backendKey string, profile []any, body []any) string %}
+        {{- shared.Publish("timeouts", backendKey, BackendTimeouts(map[string]any{}, append(profile, body...))) -}}
+        {%- for _, line := range split(render_glob "backend-timeout-metadata-*" inherit_context, "\n") -%}
+          {%- if trimSpace(line) == "" -%}{%- continue -%}{%- end -%}
+          {%- var fields = split(line, " ") -%}
+          {{- shared.Publish("timeout-overrides", backendKey + "|" + line, map[string]any{fields[0]: toint(fields[1])}) -}}
+        {%- end -%}
+      {% end %}
+
+  cache-timeouts-500-ingress:
+    template: |-
+      {%- for _, bucket := range []string{"timeouts", "timeout-overrides"} -%}
+        {%- for _, entry := range incremental_values("ingress-backends", bucket) -%}
+          {%- for key, value := range entry.(map[string]any) -%}
+            {{- key + " " + tostring(value) + "\n" -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
 
   # Emits one Ingress's validated timeout map contributions for annotation libraries.
   util-ingress-backend-timeout:

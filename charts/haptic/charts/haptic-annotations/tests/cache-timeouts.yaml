@@ -1,0 +1,361 @@
+validationTests:
+  test-cache-dispatch-timeout-haptic:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy-haptic.org/timeout-server: 2h
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 28806900$
+    - type: contains
+      target: haproxy.cfg
+      pattern: timeout server 206900ms
+    - type: not_contains
+      target: haproxy.cfg
+      pattern: timeout server 28806900ms
+  test-cache-dispatch-timeout-tunnel:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy-haptic.org/timeout-tunnel: 3h
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 43206900$
+    - type: contains
+      target: haproxy.cfg
+      pattern: timeout server 206900ms
+    - type: not_contains
+      target: haproxy.cfg
+      pattern: timeout server 43206900ms
+  test-cache-dispatch-timeout-static:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+      waf:
+        ingressPermissions:
+          allowRawHAProxyConfig: true
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy-haptic.org/config-backend: 'timeout server 2h
+
+              timeout connect 2s
+
+              timeout queue 3s
+
+              retries 5'
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 43240000$
+    - type: contains
+      target: haproxy.cfg
+      pattern: timeout server 206900ms
+    - type: not_contains
+      target: haproxy.cfg
+      pattern: timeout server 43240000ms
+  test-cache-dispatch-timeout-unbounded:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+      waf:
+        ingressPermissions:
+          allowRawHAProxyConfig: true
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy-haptic.org/config-backend: timeout server 0
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 0$
+  test-cache-dispatch-timeout-dynamic-literal:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+      waf:
+        ingressPermissions:
+          allowRawHAProxyConfig: true
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy-haptic.org/config-backend: http-request set-timeout server 2h if { path /slow }
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 28806900$
+  test-cache-dispatch-timeout-dynamic-expression:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+      waf:
+        ingressPermissions:
+          allowRawHAProxyConfig: true
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy-haptic.org/config-backend: http-request set-timeout server int(7200000)
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 0$
+  test-cache-dispatch-timeout-unbounded-conditional:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+      waf:
+        ingressPermissions:
+          allowRawHAProxyConfig: true
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy-haptic.org/config-backend: 'timeout server 0
+
+              http-request set-timeout server 2h if { path /slow }'
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 0$
+  test-cache-dispatch-timeout-annotation-default:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+      waf:
+        ingressPermissions:
+          allowRawHAProxyConfig: true
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy-haptic.org/default-backend: echo
+            haproxy-haptic.org/config-backend: timeout server 2h
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 28806900$
+  test-cache-dispatch-timeout-overflow:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+      waf:
+        ingressPermissions:
+          allowRawHAProxyConfig: true
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy-haptic.org/config-backend: 'timeout server 2147483647ms
+
+              timeout connect 2147483647ms
+
+              timeout queue 2147483647ms
+
+              retries 2147483647'
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 0$

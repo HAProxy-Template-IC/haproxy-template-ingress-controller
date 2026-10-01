@@ -166,6 +166,9 @@ func Bootstrap(ctx context.Context, cfg Config) (*Result, error) {
 
 		typ, err := bootstrapOne(ctx, &cfg, &res)
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return result, context.Cause(ctx)
+			}
 			// Hard failure: template authors using typed access
 			// (gw.Spec.X, route.Status.Y) need the guarantee that
 			// every declared watched resource resolved to its real

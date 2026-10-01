@@ -1,4 +1,13 @@
 templateSnippets:
+  backend-timeout-metadata-700-nginx:
+    template: |-
+      {%- for _, key := range []string{"nginx.ingress.kubernetes.io/proxy-read-timeout", "nginx.ingress.kubernetes.io/proxy-send-timeout"} -%}
+        {%- var value = dig_string(ingress, "", "metadata", "annotations", key) -%}
+        {%- if regex_search(value, "^[0-9]+$") && toint(value) > 0 -%}
+          {{- "server " + tostring(toint(value) * 1000) + "\n" -}}
+        {%- end -%}
+      {%- end -%}
+
 
   util-nginx-ingress-rewrite-target:
     template: |

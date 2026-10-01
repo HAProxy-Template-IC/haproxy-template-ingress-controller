@@ -281,12 +281,12 @@ k8sResources:
                     containerPort: {{ port }}
                 readinessProbe:
                   exec:
-                    command: ["sh", "-ec", "valkey-cli -p {{ port }} ping | grep -q PONG"]
+                    command: ["valkey-cli", "-e", "-p", "{{ port }}", "ping"]
                   initialDelaySeconds: 2
                   periodSeconds: 5
                 livenessProbe:
                   exec:
-                    command: ["sh", "-ec", "valkey-cli -p {{ port }} ping | grep -q PONG"]
+                    command: ["valkey-cli", "-e", "-p", "{{ port }}", "ping"]
                   initialDelaySeconds: 5
                   periodSeconds: 10
               - name: sentinel
@@ -335,12 +335,12 @@ k8sResources:
                     containerPort: {{ sentinelPort }}
                 readinessProbe:
                   exec:
-                    command: ["sh", "-ec", "valkey-cli -p {{ sentinelPort }} ping | grep -q PONG"]
+                    command: ["valkey-cli", "-e", "-p", "{{ sentinelPort }}", "ping"]
                   initialDelaySeconds: 2
                   periodSeconds: 5
                 livenessProbe:
                   exec:
-                    command: ["sh", "-ec", "valkey-cli -p {{ sentinelPort }} ping | grep -q PONG"]
+                    command: ["valkey-cli", "-e", "-p", "{{ sentinelPort }}", "ping"]
                   initialDelaySeconds: 5
                   periodSeconds: 10
                 volumeMounts:

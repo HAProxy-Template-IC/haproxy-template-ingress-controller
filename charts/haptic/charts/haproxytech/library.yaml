@@ -22,6 +22,16 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
 
 templateSnippets:
+  backend-timeout-metadata-100-haproxytech:
+    template: |-
+      {%- import "util-haproxy-duration" for HAProxyDurationMs -%}
+      {%- for kind, annotation := range map[string]string{"server": "haproxy.org/timeout-server", "tunnel": "haproxy.org/timeout-tunnel"} -%}
+        {%- var value = HAProxyDurationMs(dig_string(ingress, "", "metadata", "annotations", annotation)) -%}
+        {%- if value != "" && toint(value) > 0 -%}
+          {{- kind + " " + value + "\n" -}}
+        {%- end -%}
+      {%- end -%}
+
   features-099-haproxytech-publications:
     template: |-
       {{- render "haproxytech-forwarded-for-publications" -}}
@@ -1224,6 +1234,47 @@ templateSnippets:
       {%- end -%}
 
 validationTests:
+  test-cache-dispatch-timeout-haproxytech:
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+        haproxy:
+          responseTimeoutMs: 2000
+    fixtures:
+      ingresses:
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: slow
+          namespace: default
+          annotations:
+            haproxy.org/timeout-server: 2h
+        spec:
+          ingressClassName: haptic
+          rules:
+          - host: slow.example.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: echo
+                    port:
+                      number: 80
+    assertions:
+    - type: haproxy_valid
+    - type: contains
+      target: map:cache-dispatch-timeout.map
+      pattern: (?m)^budget 28806900$
+    - type: contains
+      target: haproxy.cfg
+      pattern: timeout server 206900ms
+    - type: not_contains
+      target: haproxy.cfg
+      pattern: timeout server 28806900ms
+
   test-haproxytech-set-host:
     description: haproxy.org/set-host relocates the upstream Host override to reqhdr-host.map (reload-free)
     fixtures:

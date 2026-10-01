@@ -518,6 +518,10 @@ templateSnippets:
         return out
       }) -%}
 
+  util-http-frontend-settings:
+    template: |-
+      {{ "\n" }}    option idle-close-on-response{{ render "util-log-format-http" }}
+
   util-log-format-http:
     template: |-
       {#
@@ -1576,7 +1580,6 @@ templateSnippets:
       {%- end %}
       option httplog
       option dontlognull
-      option idle-close-on-response
       option log-health-checks
       # Retry a failed TCP connect on a different server in the backend (not the
       # same dead one); with the default `retries 3` this closes the pod-termination
@@ -1876,6 +1879,57 @@ templateSnippets:
           show tostring(toint(num) * mult)
         %%}
       {%- end macro -%}
+
+  util-backend-timeouts:
+    template: |-
+      {%- import "util-haproxy-duration" for HAProxyDurationMs -%}
+      {%- var BackendTimeouts = func(defaults map[string]any, lines []any) map[string]any {
+        var result = map[string]any{}
+        for key, value := range defaults { result[key] = value }
+        var dynamic = map[string]int{}
+        var unbounded = false
+        for _, inputLine := range lines {
+          var fields = []string{}
+          for _, field := range split(replace(trimSpace(tostring(inputLine)), "\t", " "), " ") {
+            if field != "" { fields = append(fields, field) }
+          }
+          if len(fields) == 2 && fields[0] == "retries" {
+            result["retries"] = toint(fields[1])
+          }
+          if len(fields) >= 3 && fields[0] == "http-request" && fields[1] == "set-retries" {
+            if !regex_search(fields[2], "^[0-9]+$") { unbounded = true } else if toint(fields[2]) > dynamic["retries"] {
+              dynamic["retries"] = toint(fields[2])
+            }
+          }
+          if len(fields) >= 4 && fields[0] == "http-request" && fields[1] == "set-timeout" {
+            var milliseconds = HAProxyDurationMs(fields[3])
+            if milliseconds == "" || toint(milliseconds) == 0 { unbounded = true } else if toint(milliseconds) > dynamic[fields[2]] {
+              dynamic[fields[2]] = toint(milliseconds)
+            }
+          }
+          if len(fields) != 3 || fields[0] != "timeout" { continue }
+          var key = fields[1]
+          if key != "server" && key != "connect" && key != "queue" && key != "tunnel" { continue }
+          var milliseconds = HAProxyDurationMs(fields[2])
+          if milliseconds != "" {
+            result[key] = toint(milliseconds)
+            if toint(milliseconds) == 0 { unbounded = true }
+          }
+        }
+        for key, value := range dynamic {
+          if value > toint(result[key]) { result[key] = value }
+        }
+        if unbounded { result["server"] = 0 }
+        return result
+      } -%}
+
+  util-default-backend-timeouts:
+    template: |-
+      {%- import "util-backend-timeouts" for BackendTimeouts -%}
+      {%- var DefaultBackendTimeouts = func() map[string]any {
+        return BackendTimeouts(map[string]any{"server": 0, "connect": 0, "queue": -1, "tunnel": -1, "retries": 3},
+          toSlice(split(render "defaults-settings", "\n")))
+      } -%}
 
   util-header-modifier-rules:
     template: |-
@@ -2759,7 +2813,7 @@ haproxyConfig:
         bind *:8404
         # Keep health probes quiet without removing the inherited log target:
         # `no log` plus the inherited HTTP log format makes haproxy -c warn.
-        option dontlog-normal{{ render "util-log-format-http" }}
+        option dontlog-normal{{ render "util-http-frontend-settings" }}
         http-request return status 200 content-type text/plain string "OK" if { path /healthz }
         http-request return status 200 content-type text/plain string "READY" if { path /ready }
         {# Extension point for status frontend directives (e.g., Prometheus exporter) #}
@@ -2860,7 +2914,7 @@ haproxyConfig:
         option forwardfor
         # accept-proxy reads the PROXY v2 header from http-h1-loopback's send-proxy-v2,
         # so `src` and logging see the original client.
-        bind unix@/etc/haproxy/http-h1-frontend.sock mode 660 accept-proxy{{ render "util-log-format-http" }}
+        bind unix@/etc/haproxy/http-h1-frontend.sock mode 660 accept-proxy{{ render "util-http-frontend-settings" }}
         {# Extension point for early frontend directives (options, captures, ACLs) #}
         {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
         {{- render_glob "frontend-extra-*" | indent(2, true) }}
@@ -2883,7 +2937,7 @@ haproxyConfig:
         # HAProxy can't auto-detect h2c on plaintext binds. The outer tcp
         # inspector has already classified the connection by preface, so
         # only h2c traffic reaches this socket.
-        bind unix@/etc/haproxy/http-h2c-frontend.sock mode 660 accept-proxy proto h2{{ render "util-log-format-http" }}
+        bind unix@/etc/haproxy/http-h2c-frontend.sock mode 660 accept-proxy proto h2{{ render "util-http-frontend-settings" }}
         {# Same render_glob extension points as the h1 sibling — every #}
         {# routing/filter snippet lands in both protocols' frontends so #}
         {# behaviour stays in lockstep regardless of which protocol the #}
@@ -2921,11 +2975,25 @@ haproxyConfig:
 
 validationTests:
   test-graceful-reload-defaults:
-    fixtures: {}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {name: drain, namespace: default}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: drain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: 'hard-stop-after 60s'}
-      - {type: contains, target: haproxy.cfg, pattern: 'option idle-close-on-response'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^frontend http_frontend\n(?:[ \t]+[^\n]*\n|\n)*?[ \t]+option idle-close-on-response$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^(?:defaults[^\n]*|frontend http-tcp)\n(?:[ \t]+[^\n]*\n|\n)*?[ \t]+option idle-close-on-response$'}
 
   test-graceful-reload-custom-bound:
     fixtures: {}

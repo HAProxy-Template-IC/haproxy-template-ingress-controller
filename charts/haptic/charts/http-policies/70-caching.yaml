@@ -1,4 +1,57 @@
 templateSnippets:
+  util-cache-dispatch-timeout:
+    template: |-
+      {%- import "util-default-backend-timeouts" for DefaultBackendTimeouts -%}
+      {%- var CacheDispatchTimeout = func(records []any) int {
+        var maximum = map[string]int{"server": 0, "connect": 0, "queue": 0, "tunnel": 0, "retries": 0}
+        for _, recordAny := range records {
+          var record = recordAny.(map[string]any)
+          for _, kind := range []string{"server", "connect", "queue", "tunnel", "retries"} {
+            if record[kind] == nil { continue }
+            var value = toint(record[kind])
+            if value == 0 && kind != "retries" { return 0 }
+            if value > maximum[kind] { maximum[kind] = value }
+          }
+        }
+        if maximum["queue"] < maximum["connect"] { maximum["queue"] = maximum["connect"] }
+        if maximum["server"] < maximum["tunnel"] { maximum["server"] = maximum["tunnel"] }
+        var ceiling = 2147483647
+        for _, value := range maximum { if value >= ceiling { return 0 } }
+        var cache = toint(extraContext | dig("cache", "haproxy", "responseTimeoutMs") | fallback(2000))
+        if cache > ceiling - maximum["connect"] { return 0 }
+        var overhead = cache + maximum["connect"]
+        // HAProxy may wait one second before retrying a failed connection.
+        var attempt = 1000
+        for _, kind := range []string{"server", "connect", "queue"} {
+          if maximum[kind] > ceiling - attempt { return 0 }
+          attempt += maximum[kind]
+        }
+        var attempts = maximum["retries"] + 1
+        if attempt > (ceiling - overhead) / attempts { return 0 }
+        return attempt * attempts + overhead
+      } -%}
+      {%- macro CacheDispatchTimeouts() string -%}
+        {%%
+          var defaults = DefaultBackendTimeouts()
+          var records = []any{defaults}
+          for _, line := range split(render_glob "cache-timeouts-*", "\n") {
+            if trimSpace(line) == "" { continue }
+            var fields = split(line, " ")
+            if len(fields) != 2 { fail("Cache timeout metadata must contain a name and milliseconds.") }
+            records = append(records, map[string]any{fields[0]: toint(fields[1])})
+          }
+          var budget = CacheDispatchTimeout(records)
+          var fallbackTimeout = CacheDispatchTimeout([]any{defaults})
+          if budget == 0 { fallbackTimeout = 0 }
+          var path, err = fileRegistry.Register("map", "cache-dispatch-timeout.map", "budget " + tostring(budget) + "\n")
+          if err != nil { fail(err.Error()) }
+          show "timeout server " + tostring(fallbackTimeout) + "ms\n"
+          if budget > 0 {
+            show "http-request set-timeout server str(budget),map_str_int(" + path + ")\n"
+          }
+        %%}
+      {%- end macro -%}
+
   util-haptic-cache-private-request-header-deletes:
     template: |
       {% macro HapticCachePrivateRequestHeaderDeletes(includeProbeHeaders bool) string %}{%%
@@ -329,6 +382,7 @@ templateSnippets:
       {# HAPTIC shared cache — the sharded varnish_cache backend + header injection. #}
       {%- import "util-backend" for Backend, AppendLines -%}
       {%- import "util-haptic-cache-private-request-header-deletes" for HapticCachePrivateRequestHeaderDeletes -%}
+      {%- import "util-cache-dispatch-timeout" for CacheDispatchTimeouts -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
@@ -365,7 +419,6 @@ templateSnippets:
           "http-check send meth GET uri /.well-known/haptic-cache-dispatch-ready ver HTTP/1.1 hdr Host haptic-cache-health hdr X-Haptic-Cache-Probe dispatch",
           "http-check expect status 204",
           "timeout check 500ms",
-          "timeout server 0",
           "retries 1",
           "retry-on conn-failure empty-response response-timeout 425",
           "option redispatch 1",
@@ -375,6 +428,7 @@ templateSnippets:
           "# client-leg selected — without re-deriving routing from an",
           "# already-rewritten request. del-header first so a client can't forge it.",
         }
+        cacheBody = AppendLines(cacheBody, CacheDispatchTimeouts())
         cacheBody = AppendLines(cacheBody, HapticCachePrivateRequestHeaderDeletes(false))
         cacheBody = append(cacheBody, "http-request set-header X-Haptic-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }")
 
@@ -484,7 +538,7 @@ templateSnippets:
 
       frontend haptic_cache_dispatch
           mode http
-          bind unix@/etc/haproxy/cache-dispatch.sock mode 660{{ render "util-log-format-http" }}
+          bind unix@/etc/haproxy/cache-dispatch.sock mode 660{{ render "util-http-frontend-settings" }}
           http-request set-log-level silent
           http-request return status 204 if { path /.well-known/haptic-cache-dispatch-ready } { req.hdr(X-Haptic-Cache-Probe) -m str dispatch } { nbsrv(varnish_cache_shards) gt 0 }
           http-request return status 503 if { path /.well-known/haptic-cache-dispatch-ready } { req.hdr(X-Haptic-Cache-Probe) -m str dispatch }
@@ -546,7 +600,7 @@ templateSnippets:
       {{ "\n" }}frontend haptic_cache_origin
           mode http
           option forwardfor if-none
-          bind *:{{ loopbackPort }}{{ render "util-log-format-http" }}
+          bind *:{{ loopbackPort }}{{ render "util-http-frontend-settings" }}
           http-request set-log-level silent if { path /.well-known/haptic-cache-ready } { req.hdr(X-Haptic-Cache-Probe) -m str origin }
           http-request return status 204 if { path /.well-known/haptic-cache-ready } { req.hdr(X-Haptic-Cache-Probe) -m str origin }
           {# Capture the routing decision, then strip the cache protocol before origin. #}

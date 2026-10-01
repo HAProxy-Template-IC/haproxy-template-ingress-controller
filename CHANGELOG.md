@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Log expected controller shutdown cancellations at debug level while preserving operational errors.
+
+### Helm chart
+
+#### Fixed
+
+- Increase the bundled validator memory limit to 256 MiB to accommodate large configuration inputs.
+- Apply idle-connection draining only to HTTP frontends, avoiding warnings from TCP listeners.
+- Derive the cache dispatcher timeout from application timeouts and retries without forcing reloads for route timeout changes.
+- Use direct Valkey health probes to prevent orphaned probe processes and spurious child-process warnings.
+
 ## [0.2.1] - 2026-10-01
 
 ### Changed

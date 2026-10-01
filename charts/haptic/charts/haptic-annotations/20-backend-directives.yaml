@@ -18,6 +18,16 @@
 # `{%- if ingress != nil %}` and either emits directives inline into the
 # backend {...} section or pushes default-server flags onto serverOpts["flags"].
 templateSnippets:
+  backend-timeout-metadata-800-haptic:
+    template: |-
+      {%- import "util-haproxy-duration" for HAProxyDurationMs -%}
+      {%- for kind, annotation := range map[string]string{"server": "haproxy-haptic.org/timeout-server", "tunnel": "haproxy-haptic.org/timeout-tunnel"} -%}
+        {%- var value = HAProxyDurationMs(dig_string(ingress, "", "metadata", "annotations", annotation)) -%}
+        {%- if value != "" && toint(value) > 0 -%}
+          {{- kind + " " + value + "\n" -}}
+        {%- end -%}
+      {%- end -%}
+
   backend-directives-800-haptic-timeouts:
     template: |
       {#
