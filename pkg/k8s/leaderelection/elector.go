@@ -211,7 +211,7 @@ func (e *Elector) Start(ctx context.Context) error {
 				e.mu.RUnlock()
 
 				level := slog.LevelWarn
-				if e.LeaseKept() {
+				if e.LeaseKept() || context.Cause(ctx) == context.Canceled {
 					level = slog.LevelInfo
 				}
 				e.logger.Log(context.Background(), level, "Stopped leading",

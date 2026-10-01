@@ -44,12 +44,12 @@ func startReconciliationComponents(
 	iterCtx context.Context,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
-	cancel context.CancelFunc,
+	cancelCause context.CancelCauseFunc,
 	errGroup *errgroup.Group,
 ) {
 	// Start all-replica components using the registry (tracked by errgroup for graceful shutdown)
 	// The registry handles concurrent startup and error propagation
-	startInErrGroup(errGroup, iterCtx, logger, cancel, "reconciliation component", func(ctx context.Context) error {
+	startInErrGroup(errGroup, iterCtx, logger, cancelCause, "reconciliation component", func(ctx context.Context) error {
 		return registry.StartAll(ctx, false)
 	})
 
@@ -68,7 +68,7 @@ func startLeaderOnlyComponents(
 	parentCtx context.Context,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
-	parentCancel context.CancelFunc,
+	parentCancel context.CancelCauseFunc,
 	errGroup *errgroup.Group,
 ) (*leaderOnlyComponents, error) {
 	// Create separate context for leader-only components
@@ -83,7 +83,7 @@ func startLeaderOnlyComponents(
 		err := run.Wait()
 		if err != nil && (startupFailed || leaderCtx.Err() == nil) {
 			logger.Error("Leader-only component failed", "error", err)
-			parentCancel()
+			parentCancel(err)
 			return err
 		}
 		return nil
@@ -115,11 +115,11 @@ func stopLeaderOnlyComponents(components *leaderOnlyComponents, logger *slog.Log
 // Extracting these to a struct makes the dependencies explicit rather than
 // relying on closure scope, improving code clarity and testability.
 type leaderCallbackDeps struct {
-	registry *lifecycle.Registry
-	logger   *slog.Logger
-	cancel   context.CancelFunc
-	podName  string
-	errGroup *errgroup.Group
+	registry    *lifecycle.Registry
+	logger      *slog.Logger
+	cancelCause context.CancelCauseFunc
+	podName     string
+	errGroup    *errgroup.Group
 }
 
 // leaderCallbackState holds mutable state shared across leader callbacks.
@@ -172,7 +172,7 @@ func (s *leaderCallbackState) cancel() {
 
 // makeLeaderCallbacks creates leader election callbacks with explicit dependencies.
 // The returned state struct allows the caller to access leader component state.
-func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, *leaderCallbackState) {
+func makeLeaderCallbacks(ctx context.Context, deps leaderCallbackDeps) (k8sleaderelection.Callbacks, *leaderCallbackState) {
 	state := &leaderCallbackState{}
 
 	callbacks := k8sleaderelection.Callbacks{
@@ -187,18 +187,20 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 				ctx,
 				deps.registry,
 				deps.logger,
-				deps.cancel,
+				deps.cancelCause,
 				deps.errGroup,
 			)
 			state.components = components
 			if err != nil && ctx.Err() == nil {
 				deps.logger.Error("Failed to start leader-only components", "error", err)
-				deps.cancel()
+				deps.cancelCause(err)
 			}
 		},
 		OnStoppedLeading: func() {
 			if state.isRetiring() {
 				deps.logger.Info("Leadership term ended for the successor iteration, stopping deployment components")
+			} else if context.Cause(ctx) == context.Canceled {
+				deps.logger.Info("Controller stopping, ending leadership term")
 			} else {
 				deps.logger.Warn("Lost leadership, stopping deployment components")
 			}
@@ -361,12 +363,12 @@ func setupLeaderElection(
 		}
 
 		// Create callbacks with explicit dependencies
-		callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
-			registry: setup.Registry,
-			logger:   logger,
-			cancel:   setup.Cancel,
-			podName:  podName,
-			errGroup: setup.ErrGroup,
+		callbacks, state := makeLeaderCallbacks(setup.IterCtx, leaderCallbackDeps{
+			registry:    setup.Registry,
+			logger:      logger,
+			cancelCause: setup.CancelCause,
+			podName:     podName,
+			errGroup:    setup.ErrGroup,
 		})
 
 		// Create leader election component (event adapter). It claims the
@@ -397,7 +399,7 @@ func setupLeaderElection(
 	setup.Bus.Pause()
 	setup.Bus.Publish(events.NewBecameLeaderEvent("standalone"))
 	state := &leaderCallbackState{}
-	components, err := startLeaderOnlyComponents(setup.IterCtx, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
+	components, err := startLeaderOnlyComponents(setup.IterCtx, setup.Registry, logger, setup.CancelCause, setup.ErrGroup)
 	state.components = components
 	if err != nil {
 		return state, fmt.Errorf("starting leader-only components: %w", err)

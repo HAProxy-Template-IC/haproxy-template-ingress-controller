@@ -527,6 +527,9 @@ func teardownIteration(setup *componentSetup, logger *slog.Logger) error {
 }
 
 func completeIteration(setup *componentSetup, iterationErr error, logger *slog.Logger) error {
+	if iterationErr != nil && setup.CancelCause != nil && !isContextTermination(setup.IterCtx, iterationErr) {
+		setup.CancelCause(iterationErr)
+	}
 	cause := context.Cause(setup.IterCtx)
 	result := errors.Join(iterationErr, teardownIteration(setup, logger))
 	if cause != nil && !errors.Is(cause, context.Canceled) && !errors.Is(result, cause) {
@@ -561,5 +564,5 @@ func maybeSetupWebhook(
 		return nil
 	}
 	logger.Info("Stage 7: Setting up webhook validation")
-	return setupWebhook(procCtx, setup.IterCtx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, pluggableMgrCleanup, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
+	return setupWebhook(procCtx, setup.IterCtx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, pluggableMgrCleanup, logger, setup.MetricsComponent.Metrics(), setup.CancelCause, setup.ErrGroup)
 }

@@ -197,7 +197,7 @@ func startCRDWatch(
 			setup.ConfigChangeHandler.RequestEffectiveReload()
 		},
 		logger)
-	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "crd watch", crdWatch.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.CancelCause, "crd watch", crdWatch.Start)
 }
 
 // resolveEffectiveConfig resolves the config's watched resources against live

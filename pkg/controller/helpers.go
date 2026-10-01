@@ -123,7 +123,7 @@ func startInErrGroup(
 	errGroup *errgroup.Group,
 	iterCtx context.Context,
 	logger *slog.Logger,
-	cancel context.CancelFunc,
+	cancelCause context.CancelCauseFunc,
 	componentName string,
 	startFn func(context.Context) error,
 ) {
@@ -137,7 +137,7 @@ func startInErrGroup(
 				return nil
 			}
 			logger.Error(componentName+" failed", "error", err)
-			cancel()
+			cancelCause(err)
 			return err
 		}
 		return nil

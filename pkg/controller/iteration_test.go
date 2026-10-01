@@ -176,15 +176,27 @@ func TestCompleteIterationPreservesCancellationCause(t *testing.T) {
 			parent, cancelCause := context.WithCancelCause(t.Context())
 			group, groupCtx := errgroup.WithContext(parent)
 			setup := &componentSetup{
-				IterCtx:  groupCtx,
-				Cancel:   func() { cancelCause(nil) },
-				ErrGroup: group,
+				IterCtx:     groupCtx,
+				Cancel:      func() { cancelCause(nil) },
+				CancelCause: cancelCause,
+				ErrGroup:    group,
 			}
 			if test.cause != nil {
 				cancelCause(test.cause)
 			}
 
+			stoppingCause := make(chan error, 1)
+			group.Go(func() error {
+				<-groupCtx.Done()
+				stoppingCause <- context.Cause(groupCtx)
+				return nil
+			})
 			err := completeIteration(setup, test.stageErr, logger)
+			wantCause := test.cause
+			if wantCause == nil {
+				wantCause = test.stageErr
+			}
+			require.ErrorIs(t, <-stoppingCause, wantCause)
 			if test.want != nil {
 				require.ErrorIs(t, err, test.want)
 			}

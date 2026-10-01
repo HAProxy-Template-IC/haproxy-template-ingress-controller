@@ -15,6 +15,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -140,14 +141,15 @@ func TestLeaderCallbacksSurviveLeaseLossAndRestartTheNextTerm(t *testing.T) {
 	registry := lifecycle.NewRegistry().WithLogger(logger)
 	component := newRestartableLeaderComponent()
 	registry.Register(component, true)
-	iterCtx, iterCancel := context.WithCancel(t.Context())
+	iterCtx, cancelCause := context.WithCancelCause(t.Context())
+	iterCancel := func() { cancelCause(nil) }
 	defer iterCancel()
 	group, _ := errgroup.WithContext(iterCtx)
-	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
-		registry: registry,
-		logger:   logger,
-		cancel:   iterCancel,
-		errGroup: group,
+	callbacks, _ := makeLeaderCallbacks(iterCtx, leaderCallbackDeps{
+		registry:    registry,
+		logger:      logger,
+		cancelCause: cancelCause,
+		errGroup:    group,
 	})
 
 	leaderCtx, loseLeadership := context.WithCancel(iterCtx)
@@ -177,11 +179,11 @@ func TestLeaderCallbacksRejectDelayedStartAfterStop(t *testing.T) {
 	cancel := func() { cancelCause(nil) }
 	defer cancel()
 	group, _ := errgroup.WithContext(ctx)
-	callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
-		registry: registry,
-		logger:   logger,
-		cancel:   cancel,
-		errGroup: group,
+	callbacks, state := makeLeaderCallbacks(ctx, leaderCallbackDeps{
+		registry:    registry,
+		logger:      logger,
+		cancelCause: cancelCause,
+		errGroup:    group,
 	})
 
 	// A start callback firing late for an already-retired term carries that
@@ -210,13 +212,12 @@ func TestLeaderCallbacksRejectDelayedStartAfterStop(t *testing.T) {
 func TestLeaderCallbacksPreserveEarlierIterationFailure(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	iterCtx, cancelCause := context.WithCancelCause(t.Context())
-	cancel := func() { cancelCause(nil) }
 	group, _ := errgroup.WithContext(iterCtx)
-	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
-		registry: lifecycle.NewRegistry().WithLogger(logger),
-		logger:   logger,
-		cancel:   cancel,
-		errGroup: group,
+	callbacks, _ := makeLeaderCallbacks(iterCtx, leaderCallbackDeps{
+		registry:    lifecycle.NewRegistry().WithLogger(logger),
+		logger:      logger,
+		cancelCause: cancelCause,
+		errGroup:    group,
 	})
 	failure := errors.New("required component failed")
 	cancelCause(failure)
@@ -229,14 +230,15 @@ func TestLeaderCallbacksPreserveEarlierIterationFailure(t *testing.T) {
 
 func TestSuperviseElectionReentersAfterCallbackLeadershipLoss(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	iterCtx, cancel := context.WithCancel(t.Context())
+	iterCtx, cancelCause := context.WithCancelCause(t.Context())
+	cancel := func() { cancelCause(nil) }
 	defer cancel()
 	group, _ := errgroup.WithContext(iterCtx)
-	callbacks, _ := makeLeaderCallbacks(leaderCallbackDeps{
-		registry: lifecycle.NewRegistry().WithLogger(logger),
-		logger:   logger,
-		cancel:   cancel,
-		errGroup: group,
+	callbacks, _ := makeLeaderCallbacks(iterCtx, leaderCallbackDeps{
+		registry:    lifecycle.NewRegistry().WithLogger(logger),
+		logger:      logger,
+		cancelCause: cancelCause,
+		errGroup:    group,
 	})
 
 	var calls atomic.Int32
@@ -299,11 +301,11 @@ func TestTeardownCancelsLeaderStartupBeforeWaiting(t *testing.T) {
 	iterCtx, cancelCause := context.WithCancelCause(t.Context())
 	cancel := func() { cancelCause(nil) }
 	group, groupCtx := errgroup.WithContext(iterCtx)
-	callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
-		registry: registry,
-		logger:   logger,
-		cancel:   cancel,
-		errGroup: group,
+	callbacks, state := makeLeaderCallbacks(iterCtx, leaderCallbackDeps{
+		registry:    registry,
+		logger:      logger,
+		cancelCause: cancelCause,
+		errGroup:    group,
 	})
 	setup := &componentSetup{
 		IterCtx:     groupCtx,
@@ -365,3 +367,74 @@ func (c *restartableLeaderComponent) Start(ctx context.Context) error {
 	c.stops.Add(1)
 	return nil
 }
+
+func TestLeaderCallbacksLogExpectedShutdownAtInfo(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cause    error
+		retiring bool
+		want     string
+	}{
+		{name: "shutdown", cause: context.Canceled, want: "level=INFO"},
+		{name: "handover", retiring: true, want: "level=INFO"},
+		{name: "lease loss", want: "level=WARN"},
+		{name: "failed iteration", cause: errors.New("iteration failed"), want: "level=WARN"},
+		{name: "deadline", cause: context.DeadlineExceeded, want: "level=WARN"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			var output bytes.Buffer
+			callbacks, state := makeLeaderCallbacks(ctx, leaderCallbackDeps{
+				logger: slog.New(slog.NewTextHandler(&output, nil)),
+			})
+			if tc.retiring {
+				state.retire()
+			}
+			if tc.cause != nil {
+				cancel(tc.cause)
+			}
+			callbacks.OnStoppedLeading()
+			assert.Contains(t, output.String(), tc.want)
+		})
+	}
+}
+
+func TestComponentFailurePreservesLeadershipStopCause(t *testing.T) {
+	for _, leaderOnly := range []bool{false, true} {
+		name := "all replicas"
+		if leaderOnly {
+			name = "leader only"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancelCause := context.WithCancelCause(t.Context())
+			defer cancelCause(nil)
+			group, groupCtx := errgroup.WithContext(ctx)
+			var output bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&output, nil))
+			failure := errors.New("component failed")
+			registry := lifecycle.NewRegistry().WithLogger(logger)
+			registry.Register(&failedLifecycleComponent{failure: failure}, leaderOnly)
+			callbacks, _ := makeLeaderCallbacks(groupCtx, leaderCallbackDeps{
+				registry: registry, logger: logger, cancelCause: cancelCause, errGroup: group,
+			})
+			if leaderOnly {
+				callbacks.OnStartedLeading(groupCtx)
+			} else {
+				startReconciliationComponents(groupCtx, registry, logger, cancelCause, group)
+			}
+			require.ErrorIs(t, group.Wait(), failure)
+			require.ErrorIs(t, context.Cause(ctx), failure)
+			callbacks.OnStoppedLeading()
+			assert.Contains(t, output.String(), "level=WARN msg=\"Lost leadership, stopping deployment components\"")
+		})
+	}
+}
+
+type failedLifecycleComponent struct {
+	failure error
+}
+
+func (*failedLifecycleComponent) Name() string { return "failed-component" }
+
+func (c *failedLifecycleComponent) Start(context.Context) error { return c.failure }

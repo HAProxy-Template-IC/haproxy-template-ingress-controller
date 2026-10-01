@@ -15,7 +15,9 @@
 package leaderelection
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"sync/atomic"
 	"testing"
@@ -24,8 +26,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func validConfig() *Config {
@@ -541,4 +545,75 @@ func TestElector_KeepLeaseOnStopLetsASuccessorResume(t *testing.T) {
 		t.Fatal("the successor did not resume the kept Lease")
 	}
 	assert.Equal(t, "test-pod-keep", leaseHolder(t, clientset))
+}
+
+type electorStopCase struct {
+	name      string
+	loseLease bool
+	keepLease bool
+	cause     error
+	want      string
+}
+
+func TestElectorLogsExpectedShutdownAtInfo(t *testing.T) {
+	for _, tc := range []electorStopCase{
+		{name: "shutdown", cause: context.Canceled, want: "level=INFO msg=\"Stopped leading\""},
+		{name: "handover", keepLease: true, cause: context.Canceled, want: "level=INFO msg=\"Stopped leading\""},
+		{name: "lease loss", loseLease: true, want: "level=WARN msg=\"Stopped leading\""},
+		{name: "failure", cause: errors.New("failed election attempt"), want: "level=WARN msg=\"Stopped leading\""},
+		{name: "deadline", cause: context.DeadlineExceeded, want: "level=WARN msg=\"Stopped leading\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkElectorStopLog(t, tc)
+		})
+	}
+}
+
+func checkElectorStopLog(t *testing.T, tc electorStopCase) {
+	t.Helper()
+	clientset := fake.NewClientset()
+	var rejectRenewal atomic.Bool
+	clientset.PrependReactor("update", "leases", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if rejectRenewal.Load() {
+			return true, nil, errors.New("lease renewal failed")
+		}
+		return false, nil, nil
+	})
+	cfg := validConfig()
+	cfg.LeaseDuration = time.Second
+	cfg.RenewDeadline = 200 * time.Millisecond
+	cfg.RetryPeriod = 50 * time.Millisecond
+	var output bytes.Buffer
+	started := make(chan struct{})
+	elector, err := New(cfg, clientset, Callbacks{
+		OnStartedLeading: func(context.Context) { close(started) },
+	}, slog.New(slog.NewTextHandler(&output, nil)))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	done := make(chan error, 1)
+	go func() { done <- elector.Start(ctx) }()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("elector did not become leader")
+	}
+	if tc.keepLease {
+		elector.KeepLeaseOnStop()
+	}
+	if tc.loseLease {
+		rejectRenewal.Store(true)
+	} else {
+		cancel(tc.cause)
+	}
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("elector did not stop")
+	}
+	assert.Contains(t, output.String(), tc.want)
+	if tc.loseLease {
+		require.NoError(t, ctx.Err())
+	}
 }
