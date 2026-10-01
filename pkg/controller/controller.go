@@ -877,14 +877,14 @@ func setupComponents(
 	)
 
 	// Start components in errgroup (these return nil on graceful shutdown)
-	startInErrGroup(g, gCtx, logger, cancel, "event commentator", eventCommentator.Start)
-	startInErrGroup(g, gCtx, logger, cancel, "config loader", configLoaderComponent.Start)
-	startInErrGroup(g, gCtx, logger, cancel, "credentials loader", credentialsLoaderComponent.Start)
-	startInErrGroup(g, gCtx, logger, cancel, "basic validator", basicValidator.Start)
-	startInErrGroup(g, gCtx, logger, cancel, "template validator", templateValidator.Start)
-	startInErrGroup(g, gCtx, logger, cancel, "jsonpath validator", jsonpathValidator.Start)
-	startInErrGroup(g, gCtx, logger, cancel, "validationtests validator", validationTestsValidator.Start)
-	startInErrGroup(g, gCtx, logger, cancel, "config change handler", configChangeHandlerComponent.Start)
+	startInErrGroup(g, gCtx, logger, cancelCause, "event commentator", eventCommentator.Start)
+	startInErrGroup(g, gCtx, logger, cancelCause, "config loader", configLoaderComponent.Start)
+	startInErrGroup(g, gCtx, logger, cancelCause, "credentials loader", credentialsLoaderComponent.Start)
+	startInErrGroup(g, gCtx, logger, cancelCause, "basic validator", basicValidator.Start)
+	startInErrGroup(g, gCtx, logger, cancelCause, "template validator", templateValidator.Start)
+	startInErrGroup(g, gCtx, logger, cancelCause, "jsonpath validator", jsonpathValidator.Start)
+	startInErrGroup(g, gCtx, logger, cancelCause, "validationtests validator", validationTestsValidator.Start)
+	startInErrGroup(g, gCtx, logger, cancelCause, "config change handler", configChangeHandlerComponent.Start)
 
 	logger.Debug("All components started")
 

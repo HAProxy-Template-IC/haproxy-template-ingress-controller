@@ -409,7 +409,7 @@ func setupPublishedAuxFilesStore(
 			return nil, fmt.Errorf("creating %s watcher: %w", kind.gvr.Resource, err)
 		}
 
-		startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, kind.gvr.Resource+" watcher", w.Start)
+		startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.CancelCause, kind.gvr.Resource+" watcher", w.Start)
 		if err := syncAndRefreshPublishedStore(setup.IterCtx, w, refresh); err != nil {
 			return nil, fmt.Errorf("%s watcher sync failed: %w", kind.gvr.Resource, err)
 		}
@@ -440,7 +440,7 @@ func setupPublishedAuxFilesStore(
 	if err != nil {
 		return nil, fmt.Errorf("creating %s watcher: %w", haproxyCfgGVR.Resource, err)
 	}
-	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, haproxyCfgGVR.Resource+" currentFiles watcher", runtimeConfigWatcher.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.CancelCause, haproxyCfgGVR.Resource+" currentFiles watcher", runtimeConfigWatcher.Start)
 	if err := syncAndRefreshPublishedStore(setup.IterCtx, runtimeConfigWatcher, refreshCommit); err != nil {
 		return nil, fmt.Errorf("%s currentFiles watcher sync failed: %w", haproxyCfgGVR.Resource, err)
 	}

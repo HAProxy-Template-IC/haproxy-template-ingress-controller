@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Log expected controller shutdown cancellations at debug level while preserving operational errors.
+- Stop reporting normal controller shutdown cancellations and leadership handover as failures.
 
 ### Helm chart
 

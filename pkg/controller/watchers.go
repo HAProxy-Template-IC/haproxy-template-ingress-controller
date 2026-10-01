@@ -64,8 +64,8 @@ func setupResourceWatchers(
 	indexTracker := indextracker.New(setup.Bus, logger, resourceNames)
 
 	// Start resource watcher and index tracker (tracked by errgroup for graceful shutdown)
-	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "resource watcher", resourceWatcher.Start)
-	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "index tracker", indexTracker.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.CancelCause, "resource watcher", resourceWatcher.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.CancelCause, "index tracker", indexTracker.Start)
 
 	// Wait for all resource indices to sync
 	logger.Debug("Waiting for resource indices to sync")
@@ -162,12 +162,12 @@ func setupConfigWatchers(
 
 	// Start watchers (tracked by errgroup for graceful shutdown)
 	for _, w := range crdWatchers {
-		startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel,
+		startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.CancelCause,
 			fmt.Sprintf("HAProxyTemplateConfig watcher (%s)", crdName), w.Start)
 	}
-	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel,
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.CancelCause,
 		"HAProxyTemplateLibrary watcher", libraryWatcher.Start)
-	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "Secret watcher", secretWatcher.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.CancelCause, "Secret watcher", secretWatcher.Start)
 
 	logger.Debug("Watchers started, waiting for initial sync")
 

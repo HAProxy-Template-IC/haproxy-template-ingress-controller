@@ -87,7 +87,8 @@ func TestStartNonFatalInErrGroupTracksWithoutCancelling(t *testing.T) {
 }
 
 func TestStartInErrGroupIgnoresContextTermination(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
 	group, groupCtx := errgroup.WithContext(ctx)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	started := make(chan struct{})
@@ -98,12 +99,13 @@ func TestStartInErrGroupIgnoresContextTermination(t *testing.T) {
 		return ctx.Err()
 	})
 	<-started
-	cancel()
+	cancel(nil)
 	require.NoError(t, group.Wait())
 }
 
 func TestStartInErrGroupRejectsUnexpectedStop(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
 	group, groupCtx := errgroup.WithContext(ctx)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -111,7 +113,9 @@ func TestStartInErrGroupRejectsUnexpectedStop(t *testing.T) {
 		return nil
 	})
 
-	require.ErrorContains(t, group.Wait(), "test component stopped unexpectedly")
+	err := group.Wait()
+	require.ErrorContains(t, err, "test component stopped unexpectedly")
+	require.ErrorIs(t, context.Cause(ctx), err)
 }
 
 func TestWaitForGoroutinesToFinishTimesOut(t *testing.T) {

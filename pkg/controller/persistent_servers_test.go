@@ -85,8 +85,8 @@ func decodeFirstEventType(t *testing.T, response *httptest.ResponseRecorder) str
 func TestMonitorPersistentWebhookRunCancelsAfterPostBindFailure(t *testing.T) {
 	procCtx, processCancel := context.WithCancel(context.Background())
 	defer processCancel()
-	iterCtx, iterationCancel := context.WithCancel(procCtx)
-	defer iterationCancel()
+	iterCtx, iterationCancel := context.WithCancelCause(procCtx)
+	defer iterationCancel(nil)
 
 	serverRun := newPersistentServerRun()
 	group := &errgroup.Group{}
@@ -106,6 +106,7 @@ func TestMonitorPersistentWebhookRunCancelsAfterPostBindFailure(t *testing.T) {
 	var persistentErr *persistentWebhookServerError
 	require.ErrorAs(t, err, &persistentErr)
 	require.ErrorIs(t, err, serveErr)
+	require.ErrorIs(t, context.Cause(iterCtx), serveErr)
 	require.NoError(t, procCtx.Err())
 	require.ErrorIs(t, iterCtx.Err(), context.Canceled)
 }
@@ -186,8 +187,8 @@ func TestMonitorPersistentWebhookRunKeepsIterationAliveDuringDrain(t *testing.T)
 	synctest.Test(t, func(t *testing.T) {
 		procCtx, stop := context.WithCancel(t.Context())
 		defer stop()
-		iterCtx, cancel := context.WithCancel(procCtx)
-		defer cancel()
+		iterCtx, cancel := context.WithCancelCause(procCtx)
+		defer cancel(nil)
 		run := newPersistentServerRun()
 		group := &errgroup.Group{}
 		monitorPersistentWebhookRun(procCtx, iterCtx, run, group,
@@ -196,7 +197,7 @@ func TestMonitorPersistentWebhookRunKeepsIterationAliveDuringDrain(t *testing.T)
 		run.finish(nil)
 		synctest.Wait()
 		require.NoError(t, iterCtx.Err())
-		cancel()
+		cancel(nil)
 		require.NoError(t, group.Wait())
 	})
 }

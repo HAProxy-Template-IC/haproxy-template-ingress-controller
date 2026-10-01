@@ -77,7 +77,7 @@ func setupWebhook(
 	pluggableMgrCleanup *sharedCleanup,
 	logger *slog.Logger,
 	metricsRecorder webhook.MetricsRecorder,
-	cancel context.CancelFunc,
+	cancelCause context.CancelCauseFunc,
 	errGroup *errgroup.Group,
 ) error {
 	resourceAdmissionTimeout := effectiveResourceAdmissionTimeout(admissionTimeouts.Resource)
@@ -123,7 +123,7 @@ func setupWebhook(
 	}
 	monitorPersistentWebhookRun(
 		procCtx, iterCtx, serverRun,
-		errGroup, logger, cancel,
+		errGroup, logger, cancelCause,
 	)
 	var onGenerationRetired func()
 	if len(rules) > 0 && pluggableMgrCleanup != nil {
@@ -150,7 +150,7 @@ func setupWebhook(
 	)
 
 	// Start webhook component (tracked by errgroup for graceful shutdown)
-	startInErrGroup(errGroup, iterCtx, logger, cancel, "webhook component", webhookComponent.Start)
+	startInErrGroup(errGroup, iterCtx, logger, cancelCause, "webhook component", webhookComponent.Start)
 
 	select {
 	case <-webhookComponent.Listening():
@@ -174,7 +174,7 @@ func monitorPersistentWebhookRun(
 	serverRun *persistentServerRun,
 	errGroup *errgroup.Group,
 	logger *slog.Logger,
-	iterationCancel context.CancelFunc,
+	iterationCancel context.CancelCauseFunc,
 ) {
 	startInErrGroup(errGroup, iterCtx, logger, iterationCancel, "persistent webhook server", func(ctx context.Context) error {
 		select {
@@ -313,7 +313,7 @@ func setupReconciliation(
 	// Start all-replica components in background
 	// Leader-only components (Deployer, DeploymentScheduler, ConfigPublisher) are NOT started here
 	// Note: Components already subscribed during construction, so they're ready to receive events
-	startReconciliationComponents(setup.IterCtx, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
+	startReconciliationComponents(setup.IterCtx, setup.Registry, logger, setup.CancelCause, setup.ErrGroup)
 
 	// Publish initial config and credentials events
 	// These events are buffered by EventBus until Start() is called in the main controller loop
