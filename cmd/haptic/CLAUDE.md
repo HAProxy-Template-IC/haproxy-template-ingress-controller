@@ -322,6 +322,12 @@ The chart injects `POD_NAME` and `POD_NAMESPACE` via the downward API (`fieldRef
 
 ## Memory limit (GOMEMLIMIT via automemlimit)
 
+`configureMemoryLimit` first disables Linux transparent huge pages for the
+process, keeping physical memory overhead within the container headroom.
+Other operating systems are unchanged. See
+[ADR-0027](../../docs/adr/0027-process-memory-page-policy.md) for the measured
+failure and the throughput trade-off.
+
 `run.go` sets Go's `GOMEMLIMIT` from the container's cgroup memory limit at
 startup — `memlimit.SetGoMemLimitWithOpts` (`github.com/KimMachineGun/automemlimit`),
 mirroring automemlimit's defaults (FromCgroup provider, **0.9 ratio** → ~90% of

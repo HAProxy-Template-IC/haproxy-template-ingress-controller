@@ -371,6 +371,7 @@ func loadGatewayHostMapCurrentSnippets(tb testing.TB) map[string]config.Template
 		},
 		"gateway/21-route-helpers.yaml": {"util-hostname-intersect-gateway"},
 		"gateway/40-maps-host.yaml": {
+			"util-gateway-host-port-suffix",
 			"map-hostvalues-479-gateway-listenersets-empty",
 			"map-hostvalues-480-gateway-listenersets",
 			"map-hostvalues-490-gateway-port-scopes",

@@ -134,7 +134,7 @@ clients have switched.
     ```bash
     helm upgrade haptic \
       oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-      --version 0.2.0 \
+      --version 0.2.1 \
       --namespace haptic --reuse-values \
       --set rateLimit.shared.enabled=true \
       --set rateLimit.shared.managedStore.enabled=true

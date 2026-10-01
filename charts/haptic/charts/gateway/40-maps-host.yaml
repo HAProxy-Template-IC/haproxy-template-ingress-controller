@@ -158,6 +158,28 @@ templateSnippets:
         }
       %%}
 
+  util-gateway-host-port-suffix:
+    template: |
+      {%- macro GatewayHostPortSuffix(namespace, name string, listener any) -%}
+      {%%
+        var port = toint(dig(listener, "port") | fallback(0))
+        if port <= 0 { return }
+        var selected, found = shared.Select("gateway-host-port-scopes", "ports",
+          namespace + "/" + name + ":" + tostring(port))
+        if found {
+          show ":" + tostring(toint(selected))
+          return
+        }
+        var protocol = dig_string(listener, "HTTP", "protocol")
+        if protocol == "" { protocol = "HTTP" }
+        if dig_string(listener, "", "hostname") == "" ||
+          (protocol == "HTTP" && port != 80) ||
+          ((protocol == "HTTPS" || protocol == "TLS") && port != 443) {
+          show ":" + tostring(port)
+        }
+      %%}
+      {%- end macro -%}
+
   util-generate-httproute-host-map-gateway:
     requires: [gateways, httproutes, referencegrants]
     template: |
@@ -183,6 +205,7 @@ templateSnippets:
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
+      {%- import "util-gateway-host-port-suffix" for GatewayHostPortSuffix -%}
       {%- macro GenerateHTTPRouteHostMap(routes []any) -%}
       {%- for _, route := range routes %}
       {%%
@@ -225,14 +248,8 @@ templateSnippets:
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
-              var listenerProto = tostring(listener["protocol"])
-              if listenerProto == "" { listenerProto = "HTTP" }
-              var portSuffix = ""
-              if listenerPort > 0 {
-                if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
-                  portSuffix = ":" + tostring(listenerPort)
-                }
-              }
+              var portSuffix = GatewayHostPortSuffix(
+                tostring(lsInfo["gatewayNamespace"]), tostring(lsInfo["gatewayName"]), listener)
               var listenerHostname = dig_string(listener, "", "hostname")
               if len(routeHostnames) == 0 {
                 effectiveHosts[listenerHostname + portSuffix] = true
@@ -273,28 +290,8 @@ templateSnippets:
             if prPort != 0 && prPort != listenerPort {
               continue
             }
-            var listenerProto = listener.Protocol
-            if listenerProto == "" { listenerProto = "HTTP" }
             var listenerHostname = listener.Hostname
-            // Per-Gateway port scope: a catch-all (no-hostname) listener,
-            // and any listener on a non-default port, keys by the Gateway's
-            // representative pod port so its routes are reachable only via
-            // this Gateway's bind (GatewayHTTPListenerIsolation). Default-
-            // port hostname'd listeners keep the bare-host key (base's
-            // wildcard cascade doesn't carry a port). Falls back to the
-            // listener port for pinned / chart-static Gateways.
-            var portSuffix = ""
-            if listenerPort > 0 {
-              var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443)
-              if listenerHostname == "" || isNonDefault {
-                var scopePort = listenerPort
-                var selectedPort, found = shared.Select(
-                  "gateway-host-port-scopes", "ports",
-                  gwNs + "/" + gwName + ":" + tostring(listenerPort))
-                if found { scopePort = toint(selectedPort) }
-                portSuffix = ":" + tostring(scopePort)
-              }
-            }
+            var portSuffix = GatewayHostPortSuffix(gwNs, gwName, listener)
             // Listener isolation (catch-all only — see analyze_routes for
             // the rationale): drop a route hostname when a sibling listener
             // on the same Gateway claims it more specifically.
@@ -375,6 +372,7 @@ templateSnippets:
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
+      {%- import "util-gateway-host-port-suffix" for GatewayHostPortSuffix -%}
       {%- macro GenerateGRPCRouteHostMap(routes []*resources.grpcroutes.T) -%}
       {%- for _, route := range routes %}
       {%%
@@ -417,14 +415,8 @@ templateSnippets:
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
-              var listenerProto = tostring(listener["protocol"])
-              if listenerProto == "" { listenerProto = "HTTP" }
-              var portSuffix = ""
-              if listenerPort > 0 {
-                if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
-                  portSuffix = ":" + tostring(listenerPort)
-                }
-              }
+              var portSuffix = GatewayHostPortSuffix(
+                tostring(lsInfo["gatewayNamespace"]), tostring(lsInfo["gatewayName"]), listener)
               var listenerHostname = dig_string(listener, "", "hostname")
               if len(routeHostnames) == 0 {
                 effectiveHosts[listenerHostname + portSuffix] = true
@@ -465,31 +457,8 @@ templateSnippets:
             if prPort != 0 && prPort != listenerPort {
               continue
             }
-            var listenerProto = listener.Protocol
-            if listenerProto == "" { listenerProto = "HTTP" }
             var listenerHostname = listener.Hostname
-            // Per-Gateway port scope: a catch-all (no-hostname) listener, and
-            // any listener on a non-default port, keys by the Gateway's
-            // representative pod port so its routes are reachable only via this
-            // Gateway's bind (GatewayHTTPListenerIsolation). Must mirror
-            // GenerateHTTPRouteHostMap exactly — a GRPCRoute on a default-port
-            // catch-all listener (the conformance shape) otherwise gets an empty
-            // portSuffix, so its only "host" is "" which the emit loop skips,
-            // leaving no `:<podPort>` host.map entry. host_match then stays empty,
-            // the path key never forms, and the request falls to default_backend
-            // (grpc-status 12 Unimplemented) instead of the matched route.
-            var portSuffix = ""
-            if listenerPort > 0 {
-              var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443)
-              if listenerHostname == "" || isNonDefault {
-                var scopePort = listenerPort
-                var selectedPort, found = shared.Select(
-                  "gateway-host-port-scopes", "ports",
-                  gwNs + "/" + gwName + ":" + tostring(listenerPort))
-                if found { scopePort = toint(selectedPort) }
-                portSuffix = ":" + tostring(scopePort)
-              }
-            }
+            var portSuffix = GatewayHostPortSuffix(gwNs, gwName, listener)
             var currentRank = toint(HostnameRank(listenerHostname))
             if len(routeHostnames) == 0 {
               effectiveHosts[listenerHostname + portSuffix] = true
@@ -623,6 +592,16 @@ templateSnippets:
     requires: [gateways]
     template: |-
       {{- render "gateway-listener-hostname-suffixes-100-gateway" -}}
+
+  map-hostregex-490-gateway-routes:
+    requires: [gateways, httproutes, grpcroutes]
+    template: |
+      {{- render "map-hostvalues-479-gateway-listenersets-empty" -}}
+      {{- render "map-hostvalues-480-gateway-listenersets" default "" -}}
+      {{- render "map-hostvalues-490-gateway-port-scopes" -}}
+      {{- render "gateway-route-candidates-100-http" -}}
+      {{- render "gateway-route-candidates-200-grpc" -}}
+      {{ incremental_ranked_text_fragment("gateway-route-candidates", "hostname-regex") }}
 
   map-hostregex-500-gateway:
     requires: [gateways]

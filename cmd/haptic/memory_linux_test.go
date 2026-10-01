@@ -15,17 +15,23 @@
 package main
 
 import (
-	"log/slog"
+	"testing"
 
-	"github.com/KimMachineGun/automemlimit/memlimit"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
-func configureMemoryLimit(logger *slog.Logger) {
-	if err := disableTransparentHugePages(); err != nil {
-		logger.Warn("Cannot disable transparent huge pages; memory use may increase. Check the container's prctl permissions",
-			"error", err)
-	}
-	if _, err := memlimit.Set(memlimit.WithLogger(logger)); err != nil {
-		logger.Warn("Failed to set GOMEMLIMIT from cgroup", "error", err)
-	}
+func TestDisableTransparentHugePages(t *testing.T) {
+	previous, err := unix.PrctlRetInt(unix.PR_GET_THP_DISABLE, 0, 0, 0, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, unix.Prctl(unix.PR_SET_THP_DISABLE, uintptr(previous&1), uintptr(previous>>1), 0, 0))
+	})
+	require.NoError(t, unix.Prctl(unix.PR_SET_THP_DISABLE, 0, 0, 0, 0))
+
+	require.NoError(t, disableTransparentHugePages())
+
+	disabled, err := unix.PrctlRetInt(unix.PR_GET_THP_DISABLE, 0, 0, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, disabled)
 }

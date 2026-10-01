@@ -4,12 +4,18 @@ templateSnippets:
     template: |
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- import "util-listenerset-routing-gate" for IsRouteAllowedOnListener -%}
-      {%- import "util-resource-helpers" for ListenerProtocolOr, ListenerHostname -%}
+      {%- import "util-resource-helpers" for ListenerHostname -%}
       {%- import "util-gw-mtls-blocked-value" for ComputeGwMtlsBlockedValue -%}
-      {%- macro GatewayRouteEffectiveHosts(route any, effectiveHosts map[string]bool) -%}
+      {%- import "util-gateway-host-port-suffix" for GatewayHostPortSuffix -%}
+      {%- macro GatewayRouteEffectiveHosts(route any, effectiveHosts map[string]int) -%}
       {%%
         var routeNs = dig_string(route, "", "metadata", "namespace")
         var routeHostnames = toSlice(dig(route, "spec", "hostnames"))
+        var recordHost = func(effectiveHostname, routeHostname string) {
+          var rank = toint(HostnameRank(routeHostname))
+          var existing, found = effectiveHosts[effectiveHostname]
+          if !found || rank > existing { effectiveHosts[effectiveHostname] = rank }
+        }
         var resolvedParentCount = 0
         for _, parentRef := range toSlice(dig(route, "spec", "parentRefs")) {
           var parentGroup = dig_string(parentRef, "", "group")
@@ -41,26 +47,11 @@ templateSnippets:
                 !hasPrefix(IsRouteAllowedOnListener(routeNs, listener, gatewayNs), "true") {
                 continue
               }
-              var listenerProtocol = ListenerProtocolOr(listener, "HTTP")
               var listenerHostname = ListenerHostname(listener)
-              var portSuffix = ""
-              if listenerPort > 0 {
-                var scopePort = listenerPort
-                var selectedPort, foundPort = shared.Select(
-                  "gateway-host-port-scopes", "ports",
-                  gatewayNs + "/" + gatewayName + ":" + tostring(listenerPort))
-                if foundPort {
-                  scopePort = toint(selectedPort)
-                }
-                var nonDefault = (listenerProtocol == "HTTP" && listenerPort != 80) ||
-                  ((listenerProtocol == "HTTPS" || listenerProtocol == "TLS") && listenerPort != 443)
-                if listenerHostname == "" || nonDefault {
-                  portSuffix = ":" + tostring(scopePort)
-                }
-              }
+              var portSuffix = GatewayHostPortSuffix(gatewayNs, gatewayName, listener)
               var currentRank = toint(HostnameRank(listenerHostname))
               if len(routeHostnames) == 0 {
-                effectiveHosts[listenerHostname + portSuffix] = true
+                recordHost(listenerHostname + portSuffix, "")
               } else if listenerHostname == "" {
                 for _, hostnameAny := range routeHostnames {
                   var hostname = tostring(hostnameAny)
@@ -73,7 +64,7 @@ templateSnippets:
                     }
                   }
                   if !ownedBySibling {
-                    effectiveHosts[hostname + portSuffix] = true
+                    recordHost(hostname + portSuffix, hostname)
                   }
                 }
               } else {
@@ -91,7 +82,7 @@ templateSnippets:
                     }
                   }
                   if !ownedBySibling {
-                    effectiveHosts[intersection + portSuffix] = true
+                    recordHost(intersection + portSuffix, tostring(hostnameAny))
                   }
                 }
               }
@@ -116,21 +107,15 @@ templateSnippets:
                 !hasPrefix(IsRouteAllowedOnListener(routeNs, listener, ownerNs), "true") {
                 continue
               }
-              var listenerProtocol = ListenerProtocolOr(listener, "HTTP")
-              var portSuffix = ""
-              if listenerPort > 0 &&
-                ((listenerProtocol == "HTTP" && listenerPort != 80) ||
-                  (listenerProtocol == "HTTPS" && listenerPort != 443) ||
-                  (listenerProtocol == "TLS" && listenerPort != 443)) {
-                portSuffix = ":" + tostring(listenerPort)
-              }
               var listenerHostname = ListenerHostname(listener)
+              var portSuffix = GatewayHostPortSuffix(
+                dig_string(selected, "", "gatewayNamespace"), dig_string(selected, "", "gatewayName"), listener)
               var currentRank = toint(HostnameRank(listenerHostname))
               if len(routeHostnames) == 0 {
-                effectiveHosts[listenerHostname + portSuffix] = true
+                recordHost(listenerHostname + portSuffix, "")
               } else if listenerHostname == "" {
                 for _, hostnameAny := range routeHostnames {
-                  effectiveHosts[tostring(hostnameAny) + portSuffix] = true
+                  recordHost(tostring(hostnameAny) + portSuffix, tostring(hostnameAny))
                 }
               } else {
                 for _, hostnameAny := range routeHostnames {
@@ -149,7 +134,7 @@ templateSnippets:
                     }
                   }
                   if !ownedBySibling {
-                    effectiveHosts[intersection + portSuffix] = true
+                    recordHost(intersection + portSuffix, tostring(hostnameAny))
                   }
                 }
               }
@@ -158,10 +143,10 @@ templateSnippets:
         }
         if resolvedParentCount == 0 {
           if len(routeHostnames) == 0 {
-            effectiveHosts[""] = true
+            recordHost("", "")
           } else {
             for _, hostname := range routeHostnames {
-              effectiveHosts[tostring(hostname)] = true
+              recordHost(tostring(hostname), tostring(hostname))
             }
           }
         }
@@ -189,11 +174,16 @@ templateSnippets:
           return zeroes[:len(zeroes)-len(encoded)] + encoded
         }
         var descending = func(value int) string { return fixed(999999999 - value) }
-        var effectiveHosts = map[string]bool{}
+        var effectiveHosts = map[string]int{}
         GatewayRouteEffectiveHosts(route, effectiveHosts)
         var entries = []any{}
         var routeAdvanced = routeKind == "GRPCRoute"
         for _, hostname := range keys(effectiveHosts) {
+          if hasPrefix(hostname, "*.") {
+            var suffix = hostname[2:]
+            var fragment = "^[^.]+(?:\\.[^.]+)*\\." + sanitize_regex(suffix) + "$ ." + suffix + "\n"
+            show shared.PublishRanked("hostname-regex", hostname, descending(len(suffix)) + hostname, fragment)
+          }
           for ruleIndex, rule := range toSlice(dig(route, "spec", "rules")) {
             var matches = toSlice(dig(rule, "matches"))
             var matchCount = len(matches)
@@ -231,7 +221,8 @@ templateSnippets:
               var methodRank = "1"
               if hasMethod { methodRank = "0" }
               var creationTimestamp = dig_string(route, "", "metadata", "creationTimestamp")
-              var sortRank = pathType + "\x00" + descending(len(pathValue)) + "\x00" + methodRank + "\x00" +
+              var sortRank = descending(effectiveHosts[hostname]) + "\x00" + pathType + "\x00" +
+                descending(len(pathValue)) + "\x00" + methodRank + "\x00" +
                 descending(headerCount) + "\x00" + descending(queryParamCount) + "\x00" +
                 creationTimestamp + "\x00" + namespace + "/" + name + "\x00" + fixed(ruleIndex) + "\x00" +
                 pathKey + "\x00" + rawRank

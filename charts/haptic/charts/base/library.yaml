@@ -941,15 +941,10 @@ templateSnippets:
           The blank line before render_glob is load-bearing (charts/CLAUDE.md → Whitespace Control). #}
 
       {{ render_glob "frontend-routing-listener-port-*" }}
-      # host_match cascade: full-host (port-pinned) > host:listener_port
-      # (per-Gateway / per-listener-port scope) > host > wildcard > regex >
-      # :listener_port catch-all. The port-scoped exact lookup MUST precede
-      # the bare-host lookup: a hostname that appears on several listener
-      # ports (e.g. foo.com on :80, :8080, :8090) has a distinct
-      # `host:<podPort>` key for each non-default port plus a bare key for
-      # the default port. Trying bare first would shadow the port-specific
-      # backends with the default-port one (HTTPRouteListenerPortMatching).
+      # Listener-scoped keys precede shared hostname keys.
       http-request set-var(txn.host_match) str()
+
+      {{ render_glob "frontend-routing-host-match-*" }}
       http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }},'') if { var(txn.host_full) -m sub : } { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),concat(:,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }

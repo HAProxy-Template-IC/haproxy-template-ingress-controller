@@ -81,6 +81,7 @@ import (
 	xv1alpha1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
 	gwconformance "sigs.k8s.io/gateway-api/conformance"
 	confv1 "sigs.k8s.io/gateway-api/conformance/apis/v1"
+	conformancetests "sigs.k8s.io/gateway-api/conformance/tests"
 	conformanceconfig "sigs.k8s.io/gateway-api/conformance/utils/config"
 	"sigs.k8s.io/gateway-api/conformance/utils/roundtripper"
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
@@ -383,7 +384,25 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// of polling, so gate here until it exists.
 	waitForGatewayClassExists(t, opts.Client, gatewayClassName)
 
+	isolateSharedReferenceGrants(t)
 	gwconformance.RunConformanceWithOptions(t, opts)
+}
+
+func isolateSharedReferenceGrants(t *testing.T) {
+	t.Helper()
+	original := conformancetests.ConformanceTests
+	isolated := append([]suite.ConformanceTest(nil), original...)
+	for i := range isolated {
+		// These fixtures change each other's permissions; see tests/README.md.
+		switch isolated[i].ShortName {
+		case "GatewaySecretMissingReferenceGrant", "GatewaySecretInvalidReferenceGrant",
+			"GatewaySecretReferenceGrantAllInNamespace", "GatewaySecretReferenceGrantSpecific",
+			"ListenerSetReferenceGrant":
+			isolated[i].Parallel = false
+		}
+	}
+	conformancetests.ConformanceTests = isolated
+	t.Cleanup(func() { conformancetests.ConformanceTests = original })
 }
 
 // waitForGatewayClassExists polls until the named GatewayClass is present.

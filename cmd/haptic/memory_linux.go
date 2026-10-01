@@ -14,18 +14,9 @@
 
 package main
 
-import (
-	"log/slog"
+import "golang.org/x/sys/unix"
 
-	"github.com/KimMachineGun/automemlimit/memlimit"
-)
-
-func configureMemoryLimit(logger *slog.Logger) {
-	if err := disableTransparentHugePages(); err != nil {
-		logger.Warn("Cannot disable transparent huge pages; memory use may increase. Check the container's prctl permissions",
-			"error", err)
-	}
-	if _, err := memlimit.Set(memlimit.WithLogger(logger)); err != nil {
-		logger.Warn("Failed to set GOMEMLIMIT from cgroup", "error", err)
-	}
+func disableTransparentHugePages() error {
+	// Huge-page overhead is outside Go's memory accounting; see ADR-0027.
+	return unix.Prctl(unix.PR_SET_THP_DISABLE, 1, 0, 0, 0)
 }

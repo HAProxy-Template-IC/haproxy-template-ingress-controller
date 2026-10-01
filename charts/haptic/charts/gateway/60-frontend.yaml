@@ -1,4 +1,14 @@
 templateSnippets:
+  frontend-routing-host-match-100-gateway:
+    requires: [gateways]
+    template: |
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
+      http-request set-var(txn.gw_host_scope) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
+      http-request set-var(txn.host_match) var(txn.host),concat(:,txn.gw_host_scope,),map({{ mapPath("host.map") }},'') if { var(txn.gw_host_scope) -m found }
+      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),concat(:,txn.gw_host_scope,),map({{ mapPath("host.map") }},'') if { var(txn.gw_host_scope) -m found } { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),concat(:,txn.gw_host_scope,),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.gw_host_scope) -m found } { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) str(:),concat(,txn.gw_host_scope,) if { var(txn.gw_host_scope) -m found } { var(txn.host_match) -m len 0 }
+
   frontend-routing-owner-500-gateway:
     template: |-
       http-request set-var(txn.resource_namespace) var(txn.gw_rule_id),field(2,_) if { var(txn.gw_rule_id) -m found }

@@ -10,12 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-01
+
 ### Changed
 
 - Refine the HAPTIC logo with centered, scalable artwork that preserves the template-tag symbol.
 
 ### Fixed
 
+- Avoid excessive controller memory use on Linux nodes with transparent huge pages enabled.
 - Prevent standby controllers from restarting when HAProxy discovery events accumulate.
 - Complete pod-status cleanup across auxiliary files after HAProxy replacement, including recovery from interrupted updates.
 - Keep admission validation available while a terminating controller drains requests.
@@ -27,10 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Changed
 
 - Allow HAProxy connections up to 60 seconds to drain after reloads and give controller and HAProxy pods 90 seconds to terminate.
+- Update the default cache image to Varnish 9.1 and shared rate-limit storage to Valkey 9.2.
 
 #### Fixed
 
 - Close idle HTTP connections after their next response during reloads, avoiding abrupt disconnects for clients reusing a connection.
+- Prefer the more specific HTTPRoute or GRPCRoute hostname when multiple routes intersect the same listener hostname.
+- Keep HTTP and gRPC routes isolated between Gateways with overlapping hostnames.
 
 ## [0.2.0] - 2026-09-24
 

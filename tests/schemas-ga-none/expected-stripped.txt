@@ -130,6 +130,7 @@ test-grpcroute-duplicate-backend-different-ports
 test-grpcroute-h2c-on-port-80
 test-grpcroute-headers
 test-grpcroute-https-listener-alpn-h2
+test-grpcroute-intersection-exact-over-wildcard
 test-grpcroute-method-regex
 test-grpcroute-multi-hostname-map-newlines
 test-grpcroute-multiple-headers
@@ -167,6 +168,14 @@ test-httproute-header-matching-conformance-fixture
 test-httproute-header-regex
 test-httproute-header-value-injection-admission-rejected
 test-httproute-header-value-injection-reconcile-warns-and-skips
+test-httproute-intersection-best-matching-host
+test-httproute-intersection-equal-host-oldest-wins
+test-httproute-intersection-exact-over-wildcard
+test-httproute-intersection-host-before-headers
+test-httproute-intersection-isolated-gateways
+test-httproute-intersection-narrow-wildcard-over-broad
+test-httproute-intersection-specified-over-empty
+test-httproute-intersection-unmatched-host-ignored
 test-httproute-invalid-regex
 test-httproute-listener-port-matching
 test-httproute-method-matching

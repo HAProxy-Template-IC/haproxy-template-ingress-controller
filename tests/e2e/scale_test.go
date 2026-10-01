@@ -1130,13 +1130,16 @@ func (s *scaleScenario) measureChanges(ctx context.Context, t *testing.T, cfg *e
 		name := fmt.Sprintf("probe-%d", k)
 		host := fmt.Sprintf("scale-probe-%d.localdev.me", k)
 		start := time.Now()
-		if err := createScaleIngress(ctx, s.cs, s.probeNS, &IngressSpec{
+		createErr := createScaleIngress(ctx, s.cs, s.probeNS, &IngressSpec{
 			Name:           name,
 			Host:           host,
 			BackendService: EchoServerBackend.Service,
 			BackendPort:    EchoServerBackend.Port,
-		}); err != nil {
-			t.Fatalf("latency sample %d: %v", k, err)
+		})
+		admissionDur := time.Since(start)
+		s.sink.set(fmt.Sprintf("change_admission_seconds_sample_%d", k), round2(admissionDur.Seconds()))
+		if createErr != nil {
+			t.Fatalf("latency sample %d: %v", k, createErr)
 		}
 		waitCfg := testutil.WaitConfig{
 			InitialInterval: 100 * time.Millisecond,
@@ -1155,6 +1158,7 @@ func (s *scaleScenario) measureChanges(ctx context.Context, t *testing.T, cfg *e
 		// "actually routed" (NodePort round-robin across pods).
 		httpclient.New(t).GET(host, "/").ExpectOK(t)
 		routedDur := time.Since(start)
+		s.sink.set(fmt.Sprintf("change_post_admission_seconds_sample_%d", k), round2((routedDur - admissionDur).Seconds()))
 		s.markerDurations = append(s.markerDurations, markerDur)
 		s.routedDurations = append(s.routedDurations, routedDur)
 		// Record the sample and the running aggregates immediately so
@@ -1164,8 +1168,8 @@ func (s *scaleScenario) measureChanges(ctx context.Context, t *testing.T, cfg *e
 		s.sink.set("change_convergence_seconds_p95", round2(durationPercentile(s.routedDurations, 95).Seconds()))
 		s.sink.set("change_marker_seconds_median", round2(durationPercentile(s.markerDurations, 50).Seconds()))
 		s.sink.set("change_marker_seconds_p95", round2(durationPercentile(s.markerDurations, 95).Seconds()))
-		t.Logf("latency sample %d: create->deployed %s, create->routed %s",
-			k, markerDur.Round(time.Millisecond), routedDur.Round(time.Millisecond))
+		t.Logf("latency sample %d: admission %s, create->deployed %s, create->routed %s",
+			k, admissionDur.Round(time.Millisecond), markerDur.Round(time.Millisecond), routedDur.Round(time.Millisecond))
 	}
 	return ctx
 }
