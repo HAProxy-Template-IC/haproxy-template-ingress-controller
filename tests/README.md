@@ -22,6 +22,21 @@ tests/
 
 ## Running
 
+### Gateway conformance fixture isolation
+
+The four `GatewaySecret*ReferenceGrant*` tests and `ListenerSetReferenceGrant`
+run exclusively because they share certificate Secrets and grant namespaces.
+The ListenerSet fixture grants every Gateway in `gateway-conformance-infra`
+access to every Secret in `gateway-conformance-web-backend`. Running it alongside
+the missing-grant tests makes their expected denial impossible. Its namespace
+readiness wait can then keep that grant alive until those tests time out.
+
+The runner changes only these tests' scheduling. Their manifests, assertions,
+timeouts, feature requirements, and inclusion in conformance reports stay intact.
+All other upstream parallel tests retain their parallel execution.
+
+### Commands
+
 From the root of the repo:
 
 | Command | What it runs | Typical duration |

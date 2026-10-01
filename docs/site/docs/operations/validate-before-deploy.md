@@ -97,7 +97,7 @@ matching chart:
 
 ```bash
 helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0 --untar --untardir ./chart-download
+  --version 0.2.1 --untar --untardir ./chart-download
 mv ./chart-download/haptic ./chart
 ```
 

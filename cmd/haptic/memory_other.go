@@ -12,20 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !linux
+
 package main
 
-import (
-	"log/slog"
-
-	"github.com/KimMachineGun/automemlimit/memlimit"
-)
-
-func configureMemoryLimit(logger *slog.Logger) {
-	if err := disableTransparentHugePages(); err != nil {
-		logger.Warn("Cannot disable transparent huge pages; memory use may increase. Check the container's prctl permissions",
-			"error", err)
-	}
-	if _, err := memlimit.Set(memlimit.WithLogger(logger)); err != nil {
-		logger.Warn("Failed to set GOMEMLIMIT from cgroup", "error", err)
-	}
+func disableTransparentHugePages() error {
+	return nil
 }

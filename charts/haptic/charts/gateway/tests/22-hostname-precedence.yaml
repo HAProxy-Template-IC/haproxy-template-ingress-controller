@@ -1,0 +1,398 @@
+validationTests:
+  test-httproute-intersection-exact-over-wildcard:
+    requires: [gatewayclasses, gateways, httproutes]
+    fixtures:
+      gatewayclasses: &gatewayClasses
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, hostname: abc.example.com, protocol: HTTP}
+      services: &services
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: app, namespace: default}
+          spec:
+            ports:
+              - {port: 80}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: older, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: ['*.example.com']
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: newer, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: [abc.example.com]
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: 'map:route-winner.map', pattern: '(?m)^h_default_newer_0__h_default_older_0 h_default_newer_0$'}
+  test-httproute-intersection-narrow-wildcard-over-broad:
+    requires: [gatewayclasses, gateways, httproutes]
+    fixtures:
+      gatewayclasses: *gatewayClasses
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, hostname: '*.test.example.com', protocol: HTTP}
+      services: *services
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: older, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: ['*.example.com']
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: newer, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: ['*.test.example.com']
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: 'map:route-winner.map', pattern: '(?m)^h_default_newer_0__h_default_older_0 h_default_newer_0$'}
+  test-httproute-intersection-specified-over-empty:
+    requires: [gatewayclasses, gateways, httproutes]
+    fixtures:
+      gatewayclasses: *gatewayClasses
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, hostname: abc.example.com, protocol: HTTP}
+      services: *services
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: older, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: newer, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: ['*.example.com']
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: 'map:route-winner.map', pattern: '(?m)^h_default_newer_0__h_default_older_0 h_default_newer_0$'}
+  test-httproute-intersection-best-matching-host:
+    requires: [gatewayclasses, gateways, httproutes]
+    fixtures:
+      gatewayclasses: *gatewayClasses
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, hostname: abc.example.com, protocol: HTTP}
+      services: *services
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: older, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: ['*.example.com']
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: newer, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: [abc.example.com, '*.example.com']
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: 'map:route-winner.map', pattern: '(?m)^h_default_newer_0__h_default_older_0 h_default_newer_0$'}
+  test-httproute-intersection-unmatched-host-ignored:
+    requires: [gatewayclasses, gateways, httproutes]
+    fixtures:
+      gatewayclasses: *gatewayClasses
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, hostname: abc.test.example.com, protocol: HTTP}
+      services: *services
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: older, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: [unrelated.longer.example.net, '*.example.com']
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: newer, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: ['*.test.example.com']
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: 'map:route-winner.map', pattern: '(?m)^h_default_newer_0__h_default_older_0 h_default_newer_0$'}
+  test-httproute-intersection-host-before-headers:
+    requires: [gatewayclasses, gateways, httproutes]
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, hostname: abc.example.com, protocol: HTTP}
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: app, namespace: default}
+          spec:
+            ports:
+              - {port: 80}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: older, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: ['*.example.com']
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+                matches:
+                  - headers:
+                      - {name: x-match, value: 'yes'}
+                      - {name: x-extra, value: 'yes'}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: newer, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: [abc.example.com]
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+                matches:
+                  - headers:
+                      - {name: x-match, value: 'yes'}
+    assertions:
+      - {type: haproxy_valid}
+      - type: match_order
+        target: haproxy.cfg
+        patterns: [set-var\(txn.gw_rule_id\) str\(h_default_newer_0\), set-var\(txn.gw_rule_id\) str\(h_default_older_0\)]
+  test-httproute-intersection-equal-host-oldest-wins:
+    requires: [gatewayclasses, gateways, httproutes]
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, hostname: abc.example.com, protocol: HTTP}
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: app, namespace: default}
+          spec:
+            ports:
+              - {port: 80}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: older, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: [abc.example.com]
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: newer, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: [abc.example.com]
+            rules:
+              - backendRefs:
+                  - {name: app, port: 80}
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: 'map:route-winner.map', pattern: '(?m)^h_default_newer_0__h_default_older_0 h_default_older_0$'}
+
+  test-grpcroute-intersection-exact-over-wildcard:
+    requires: [gatewayclasses, gateways, grpcroutes]
+    fixtures:
+      gatewayclasses: *gatewayClasses
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, hostname: abc.example.com, protocol: HTTP}
+      services: *services
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata: {name: older, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: ['*.example.com']
+            rules:
+              - matches:
+                  - method: {service: example.Echo, method: Ping}
+                backendRefs:
+                  - {name: app, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata: {name: newer, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs:
+              - {name: gateway}
+            hostnames: [abc.example.com]
+            rules:
+              - matches:
+                  - method: {service: example.Echo, method: Ping}
+                backendRefs:
+                  - {name: app, port: 80}
+    assertions:
+      - {type: haproxy_valid}
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'set-var\(txn.gw_rule_id\) str\(g_default_newer_0\)'
+          - 'set-var\(txn.gw_rule_id\) str\(g_default_older_0\)'
+
+  test-httproute-intersection-isolated-gateways:
+    requires: [gatewayclasses, gateways, httproutes]
+    fixtures:
+      gatewayclasses: *gatewayClasses
+      services: *services
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: exact, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, protocol: HTTP, port: 80, hostname: abc.example.com}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: wildcard, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, protocol: HTTP, port: 80, hostname: '*.example.com'}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: other-gateway, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs: [{name: exact}]
+            hostnames: ['*.example.com']
+            rules:
+              - backendRefs: [{name: app, port: 80}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: older, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs: [{name: wildcard}]
+            hostnames: ['*.com']
+            rules:
+              - backendRefs: [{name: app, port: 80}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: newer, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs: [{name: wildcard}]
+            hostnames: ['*.example.com']
+            rules:
+              - backendRefs: [{name: app, port: 80}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: 'map:route-winner.map', pattern: '(?m)^h_default_newer_0__h_default_older_0 h_default_newer_0$'}
+      - {type: contains, target: 'map:host.map', pattern: '(?m)^abc\.example\.com:18886 abc\.example\.com:18886$'}
+      - {type: contains, target: 'map:host.map', pattern: '(?m)^\.example\.com:18516 \.example\.com:18516$'}
+      - {type: not_contains, target: 'map:host.map', pattern: '(?m)^abc\.example\.com abc\.example\.com$'}
+      - {type: contains, target: 'map:path-prefix.map', pattern: '(?m)^\.example\.com:18516/ GW_ROUTE_ID:http:h_default_newer_0__h_default_older_0$'}
+      - {type: contains, target: 'map:host-regex.map', pattern: 'example.*com:18516\$ \.example\.com:18516'}

@@ -112,6 +112,7 @@ This table is the authoritative registry of every `render_glob` extension point 
 | HTTP Bind Extra | `http-bind-extra-*` | Inside the outer plaintext TCP frontend, after the chart-static bind | Additional plaintext-HTTP `bind` lines (for example, Gateway HTTP listeners on non-default ports); every added port goes through the same [h2c detection](#h2c-cleartext-detection) |
 | Frontend Extra | `frontend-extra-*` | After frontend bind, before routing | Early frontend directives (options, captures, ACLs) |
 | Listener Port Translation | `frontend-routing-listener-port-*` | Routing prologue, after `txn.listener_port` is seeded from `dst_port` | Remap `txn.listener_port` when a library binds a pod port that differs from the user-facing listener port (for example, Gateway per-Gateway HTTPS binds) |
+| Host Matching | `frontend-routing-host-match-*` | Before the standard hostname lookups | Set `txn.host_match` to select a routing group; leave it empty to use the standard lookups |
 | Frontend Matchers | `frontend-matchers-advanced-*` | Within frontend routing logic | Advanced request matching (method, headers, query params) |
 | Frontend Filters | `frontend-filters-*` | HTTP frontend, after routing | Request/response filters (header modification, redirects) |
 | Frontend Switching | `frontend-switching-*` | HTTP/HTTPS frontend, after filters and before the default backend selection | Conditional `use_backend` rules, including canary splits |

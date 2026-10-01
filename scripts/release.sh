@@ -121,21 +121,7 @@ sed -i "s|most recently shipped release ([^)]*)|most recently shipped release ($
 
 # --- documentation version references (single pass) ----------------------------
 echo "Updating documentation version references..."
-# One rewrite pass for the whole documentation — no per-kind duplication. The
-# current release appears in exactly two syntactic forms across the docs:
-#   1. helm `... --version X.Y.Z` install examples
-#   2. the pinned controller image tag in migrate-check's docker one-liner,
-#      `haptic:X.Y.Z-haproxy<series>`
-# Both are rewritten below from the PREVIOUS release's version. The patterns are
-# ANCHORED to those two contexts rather than a bare global substring, so that
-# deliberately-fixed illustrative version strings elsewhere are never clobbered:
-# Prometheus `version="0.1.0"` examples, changelog `## [X.Y.Z]` headings, and the
-# version-scheme tables in releasing.md. The `\b` / `-haproxy` boundaries also
-# stop a version that is a prefix of a longer one (0.2.0-alpha.1 vs .10) from
-# being partially rewritten. The image tag's `-haproxy<series>` suffix is
-# regenerated from versions.env's DEFAULT_HAPROXY (sourced above), so it tracks
-# the default HAProxy series and stays a published tag instead of a stale
-# hardcoded one.
+# Match command pins, not historical versions in prose or changelog headings.
 PREV_VERSION=$(git show HEAD:VERSION 2>/dev/null || cat VERSION)
 # Escape the version for a Basic-Regexp (BRE) sed pattern so it matches
 # literally. BRE, not -E: in BRE the only metacharacters are . [ ] \ * ^ $
@@ -148,6 +134,7 @@ VERSION_DOC_FILES=$(grep -rlF -- "$PREV_VERSION" \
 for f in $VERSION_DOC_FILES; do
     sed -i \
         -e "s|\\(--version \\)$PREV_ESC\\b|\\1$VERSION|g" \
+        -e "s|\\(--expect-chart-version \\)$PREV_ESC\\b|\\1$VERSION|g" \
         -e "s|\\(haptic:\\)$PREV_ESC-haproxy[0-9.]*|\\1$VERSION-haproxy$DEFAULT_HAPROXY|g" \
         "$f"
 done

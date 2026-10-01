@@ -455,6 +455,7 @@ func loadGatewayRouteAnalysisSnippets(t *testing.T) map[string]config.TemplateSn
 			"util-reference-grant-permitted", "util-gw-mtls-blocked-value",
 		},
 		"gateway/40-maps-host.yaml": {
+			"util-gateway-host-port-suffix",
 			"map-hostvalues-479-gateway-listenersets-empty",
 			"map-hostvalues-480-gateway-listenersets",
 			"map-hostvalues-490-gateway-port-scopes",

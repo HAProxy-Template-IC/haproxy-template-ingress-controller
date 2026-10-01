@@ -90,6 +90,11 @@ class ReleaseTests(unittest.TestCase):
                 "charts/haptic/templates/NOTES.txt": "https://haproxy-haptic.org/docs/dev/\n",
                 "README.md": "helm install haptic --version 0.1.0\n",
                 "docs/site/docs/install.md": "helm upgrade haptic --version 0.1.0\n",
+                "docs/site/docs/upgrade-notes.md": (
+                    "helm pull chart --version 0.1.0\n"
+                    "haptic preflight --chart chart --expect-chart-version 0.1.0\n"
+                    "Upgrade from 0.1.0.\n"
+                ),
                 "docs/landing/overrides/home.html": '<span id="helm-version" class="t-num">0.1.0</span>\n',
             }
             for name, content in files.items():
@@ -120,6 +125,14 @@ class ReleaseTests(unittest.TestCase):
                     self.assertIn("0.2.0-alpha.2", committed)
                     self.assertNotIn("/docs/dev/", committed)
                     self.assertNotIn("/blob/main/", committed)
+            for version in ("0.2.0-alpha.2", "0.2.0"):
+                with self.subTest(version=version):
+                    run("bash", "scripts/release.sh", version)
+                    self.assertEqual(run("git", "status", "--porcelain"), "")
+                    committed = run("git", "show", "HEAD:docs/site/docs/upgrade-notes.md")
+                    self.assertIn(f"--version {version}\n", committed)
+                    self.assertIn(f"--expect-chart-version {version}\n", committed)
+                    self.assertIn("Upgrade from 0.1.0.\n", committed)
 
 
 if __name__ == "__main__":

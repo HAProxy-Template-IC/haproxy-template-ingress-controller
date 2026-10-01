@@ -7,11 +7,11 @@ to keep your existing routes working. For routine chart upgrades, see
 
 ## Upgrading to 0.2
 
-Use this guide to upgrade from 0.1.0 or a 0.2.0 alpha to 0.2.0. The controller
+Use this guide to upgrade from 0.1.0 or a 0.2.0 alpha to a stable 0.2 release. The controller
 and chart share one version. The chart replaces the HAProxy Data Plane API with
 the HAPTIC agent and changes several values paths.
 
-Confirm that 0.2.0 is available on the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases)
+Confirm that the target version is available on the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases)
 before running the upgrade commands. Development documentation can describe a
 release before its artifacts are published.
 
@@ -185,23 +185,23 @@ values file.
 
 ### Validate the candidate
 
-Use the 0.2.0 `haptic` binary and its chart to run
+Use the `haptic` binary matching the chart version below to run
 [preflight validation](operations/validate-before-deploy.md):
 
 ```bash
 helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0 --untar --untardir ./haptic-0.2-chart
+  --version 0.2.1 --untar --untardir ./haptic-0.2-chart
 haptic preflight --values ./haptic-values-0.2.yaml \
-  --chart ./haptic-0.2-chart/haptic --expect-chart-version 0.2.0 \
+  --chart ./haptic-0.2-chart/haptic --expect-chart-version 0.2.1 \
   --namespace "$HAPTIC_NAMESPACE" --release "$HAPTIC_RELEASE"
 ```
 
 Keep the default CRD upgrade and pre-rollout validation hooks enabled. If your
-deployment manages CRDs separately, apply the 0.2.0 schemas before upgrading:
+deployment manages CRDs separately, apply the target chart's schemas before upgrading:
 
 ```bash
 helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0 | kubectl apply --server-side --force-conflicts -f -
+  --version 0.2.1 | kubectl apply --server-side --force-conflicts -f -
 ```
 
 GitOps diff tools can need these CRDs before they can map the new library
@@ -216,7 +216,7 @@ carried forward from the installed release:
 ```bash
 helm upgrade "$HAPTIC_RELEASE" \
   oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --namespace "$HAPTIC_NAMESPACE" --version 0.2.0 \
+  --namespace "$HAPTIC_NAMESPACE" --version 0.2.1 \
   --reset-values \
   --values haptic-values-0.2.yaml
 ```
