@@ -43,6 +43,8 @@ graph, and then retires this term with the Lease kept (`retireLeadership` in
 `leader.go`). `LostLeadershipEvent` carries `Reason: "handover"`; the
 successor's election resumes the Lease on its first acquire, so no replica
 sees a vacancy and the leader-only components of the successor start warm.
+A successor that stops before resuming the kept Lease, by failing or by a
+shutdown, releases it, so a standby replica need not wait for it to expire.
 
 ## Leader-Only Components
 

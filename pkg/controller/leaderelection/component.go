@@ -174,6 +174,11 @@ func (c *Component) KeepLeaseOnStop() {
 	c.elector.KeepLeaseOnStop()
 }
 
+// ReleaseLease vacates a Lease kept for a successor that will not run.
+func (c *Component) ReleaseLease() {
+	c.elector.ReleaseLease()
+}
+
 // Start starts the leader election loop.
 //
 // This function blocks until the context is cancelled or an error occurs.

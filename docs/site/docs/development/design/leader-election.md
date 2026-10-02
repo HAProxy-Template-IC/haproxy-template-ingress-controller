@@ -161,7 +161,7 @@ state replay supplies the inputs they need. See
 
 **Graceful transition** (rolling update, voluntary handoff):
 
-1. Old leader releases the lease on shutdown (`ReleaseOnCancel`) and stops deployment components
+1. Old leader releases the lease on shutdown (`ReleaseOnCancel`) and stops deployment components. This includes a Lease kept for a configuration hand-over that the shutdown interrupted
 2. A follower acquires the released lease on its next successful election attempt
 3. New leader starts deployment components with hot cache and replayed state → immediate reconciliation
 

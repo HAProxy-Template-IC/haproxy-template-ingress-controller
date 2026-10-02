@@ -27,9 +27,14 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	controllerevents "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	k8sleaderelection "gitlab.com/haproxy-haptic/haptic/pkg/k8s/leaderelection"
 	"golang.org/x/sync/errgroup"
+	coordinationv1 "k8s.io/api/coordination/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestLoadIterationBundleUsesValidatedSnapshotWithoutLiveRefetch(t *testing.T) {
@@ -278,6 +283,60 @@ func TestIterationSequenceStepTearsDownARetiredPredecessorOnFailure(t *testing.T
 	require.ErrorIs(t, err, startFailure)
 	assert.Nil(t, seq.current)
 	require.Error(t, first.setup.IterCtx.Err())
+}
+
+// The Lease a retired predecessor kept for a successor that then failed to
+// start is released, so a standby replica need not wait for it to expire;
+// otherwise a shutdown during the hand-over leaves the fleet leaderless (#249).
+func TestIterationSequenceStepReleasesTheLeaseKeptForAFailedSuccessor(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		startErr error
+	}{
+		{name: "failure", startErr: context.Canceled},
+		// The restart begins cold with no predecessor, so keeping the Lease
+		// would leave every replica leaderless for its whole startup.
+		{name: "interrupting reload", startErr: &startupInterruptedError{reload: testReload("d")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkKeptLeaseReleasedOnFailedStart(t, tc.startErr)
+		})
+	}
+}
+
+func checkKeptLeaseReleasedOnFailedStart(t *testing.T, startErr error) {
+	t.Helper()
+	const identity = "controller-0"
+	holder := identity
+	clientset := fake.NewClientset(&coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{Name: "haptic-leader", Namespace: "haptic"},
+		Spec:       coordinationv1.LeaseSpec{HolderIdentity: &holder},
+	})
+	elector, err := leaderelectionctrl.New(&k8sleaderelection.Config{
+		Enabled: true, Identity: identity, LeaseName: "haptic-leader", LeaseNamespace: "haptic",
+		LeaseDuration: 15 * time.Second, RenewDeadline: 10 * time.Second, RetryPeriod: 2 * time.Second,
+		ReleaseOnCancel: true,
+	}, clientset, busevents.NewEventBus(1), k8sleaderelection.Callbacks{}, nil, nil)
+	require.NoError(t, err)
+
+	first := newTestLiveIteration(t)
+	first.retired = true
+	first.setup.Election = &electionRun{elector: elector}
+	seq := &iterationSequence{logger: first.logger, current: first}
+
+	err = seq.step(func(*configchange.ReloadRequest, *liveIteration) (*liveIteration, error) {
+		return nil, startErr
+	})
+	var interrupted *startupInterruptedError
+	if errors.As(startErr, &interrupted) {
+		require.NoError(t, err)
+	} else {
+		require.ErrorIs(t, err, startErr)
+	}
+	assert.Nil(t, seq.current)
+	lease, err := clientset.CoordinationV1().Leases("haptic").Get(t.Context(), "haptic-leader", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, lease.Spec.HolderIdentity)
 }
 
 // A reload that interrupts a startup restarts at once from that reload, with

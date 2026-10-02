@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/leaderelection"
@@ -170,17 +171,7 @@ func (e *Elector) Start(ctx context.Context) error {
 		"lease_namespace", e.config.LeaseNamespace,
 		"identity", e.config.Identity)
 
-	// Create resource lock for Lease
-	lock := &resourcelock.LeaseLock{
-		LeaseMeta: metav1.ObjectMeta{
-			Name:      e.config.LeaseName,
-			Namespace: e.config.LeaseNamespace,
-		},
-		Client: e.clientset.CoordinationV1(),
-		LockConfig: resourcelock.ResourceLockConfig{
-			Identity: e.config.Identity,
-		},
-	}
+	lock := e.newLock()
 
 	// Create leader election config
 	leConfig := leaderelection.LeaderElectionConfig{
@@ -261,8 +252,10 @@ func (e *Elector) Start(ctx context.Context) error {
 	elector.Run(ctx)
 
 	keep := e.LeaseKept()
-	if e.config.ReleaseOnCancel && !keep && elector.IsLeader() {
-		e.release(lock, elector.GetLeader())
+	// Not gated on elector.IsLeader: a successor cancelled before its first
+	// acquire never observed the Lease it was handed (issue #249).
+	if e.config.ReleaseOnCancel && !keep {
+		e.release(lock)
 	}
 
 	e.logger.Info("Leader election loop stopped",
@@ -271,22 +264,60 @@ func (e *Elector) Start(ctx context.Context) error {
 	return nil
 }
 
+// ReleaseLease vacates the Lease if it still names this identity. It undoes
+// KeepLeaseOnStop when no successor elector will run to resume the Lease.
+func (e *Elector) ReleaseLease() {
+	e.release(e.newLock())
+}
+
+func (e *Elector) newLock() *resourcelock.LeaseLock {
+	return &resourcelock.LeaseLock{
+		LeaseMeta: metav1.ObjectMeta{
+			Name:      e.config.LeaseName,
+			Namespace: e.config.LeaseNamespace,
+		},
+		Client: e.clientset.CoordinationV1(),
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity: e.config.Identity,
+		},
+	}
+}
+
 // release writes the Lease back vacant the way client-go's ReleaseOnCancel
-// does: one-second duration, no holder, transitions carried over.
-func (e *Elector) release(lock *resourcelock.LeaseLock, holder string) {
+// does: one-second duration, no holder, transitions carried over. Each update
+// carries the read resourceVersion, so it cannot clobber a newer holder; a
+// conflict (a cancelled renew landing first) re-reads and retries.
+func (e *Elector) release(lock *resourcelock.LeaseLock) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.config.RenewDeadline)
 	defer cancel()
+	for {
+		err := e.tryRelease(ctx, lock)
+		if err == nil {
+			return
+		}
+		if !apierrors.IsConflict(err) || ctx.Err() != nil {
+			e.logger.Warn("Failed to release the Lease", "lease", e.config.LeaseName, "error", err)
+			return
+		}
+	}
+}
+
+func (e *Elector) tryRelease(ctx context.Context, lock *resourcelock.LeaseLock) error {
 	record, _, err := lock.Get(ctx)
-	if err != nil || record == nil || record.HolderIdentity != holder {
-		return
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if record.HolderIdentity != e.config.Identity {
+		return nil
 	}
 	now := metav1.Now()
-	if err := lock.Update(ctx, resourcelock.LeaderElectionRecord{
+	return lock.Update(ctx, resourcelock.LeaderElectionRecord{
 		LeaderTransitions:    record.LeaderTransitions,
 		LeaseDurationSeconds: 1,
 		RenewTime:            now,
 		AcquireTime:          now,
-	}); err != nil {
-		e.logger.Warn("Failed to release the Lease", "lease", e.config.LeaseName, "error", err)
-	}
+	})
 }
