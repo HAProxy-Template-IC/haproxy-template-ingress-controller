@@ -28,6 +28,36 @@ class ShardTest(unittest.TestCase):
         repeated = "TestFour\nTestTwo\nTestOne\nTestOne\nTestThree"
         self.assertEqual(SHARD.partition(original, 3), SHARD.partition(repeated, 3))
 
+    def test_weights_balance_serial_cost(self):
+        weights = {
+            "TestHeavy": {"seconds": 360.0, "parallel": False},
+            "TestMedium": {"seconds": 180.0, "parallel": False},
+            "TestWide": {"seconds": 200.0, "parallel": True},
+        }
+        weights.update({f"TestLight{index}": {"seconds": 30.0, "parallel": False} for index in range(12)})
+        inventory = "\n".join(list(weights) + ["TestUnmeasured"])
+        shards = SHARD.partition(inventory, 3, weights)
+
+        def serial(shard):
+            return sum(weights.get(name, {"seconds": 30.0, "parallel": False})["seconds"]
+                       for name in shard if not weights.get(name, {"parallel": False})["parallel"])
+
+        self.assertCountEqual([name for shard in shards for name in shard], inventory.split())
+        self.assertEqual(max(map(serial, shards)), 360.0, "nothing serial may join the heaviest test")
+        self.assertEqual(sorted(map(serial, shards)), [270.0, 300.0, 360.0])
+
+    def test_unmeasured_tests_cost_a_typical_cluster_test(self):
+        weights = {"TestA": 20.0, "TestB": 30.0, "TestC": 40.0, "TestWide": 90.0}
+        weights.update({f"TestHelper{index}": 0.0 for index in range(10)})
+        weights = {name: {"seconds": seconds, "parallel": name == "TestWide"} for name, seconds in weights.items()}
+        self.assertEqual(SHARD.unmeasured_weight(weights), {"seconds": 30.0, "parallel": False})
+
+    def test_weighted_partition_is_deterministic(self):
+        weights = {f"TestCase{index}": {"seconds": float(index % 7), "parallel": index % 3 == 0} for index in range(40)}
+        reordered = "\n".join(reversed(list(weights)))
+        self.assertEqual(SHARD.partition("\n".join(weights), 3, weights),
+                         SHARD.partition(reordered, 3, dict(reversed(weights.items()))))
+
     def test_rejects_empty_shards_and_invalid_totals(self):
         for inventory, total in [("ok example/pkg 0.01s", 1), ("TestOne", 2), ("TestOne", 0)]:
             with self.subTest(inventory=inventory, total=total):

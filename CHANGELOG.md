@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING for Varnish users:** Lock shared memory with a bundled non-root image; cluster policy must allow `IPC_LOCK`.
 
 #### Fixed
+
 - Increase the bundled validator memory limit to 256 MiB to accommodate large configuration inputs.
 - Apply idle-connection draining only to HTTP frontends, avoiding warnings from TCP listeners.
 - Derive the cache dispatcher timeout from application timeouts and retries without forcing reloads for route timeout changes.

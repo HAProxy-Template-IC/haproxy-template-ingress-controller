@@ -2034,7 +2034,7 @@ test-acceptance:
       set -euo pipefail
       mkdir -p debug-logs
       go test -mod=readonly -tags=e2e -list '^Test' ./tests/e2e/... > debug-logs/e2e-test-inventory.txt
-      TEST_RUN_PATTERN="$(python3 scripts/shard-go-tests.py "$E2E_SHARD_INDEX" "$E2E_SHARD_TOTAL" < debug-logs/e2e-test-inventory.txt)"
+      TEST_RUN_PATTERN="$(python3 scripts/shard-go-tests.py --weights tests/e2e/shard-weights.json "$E2E_SHARD_INDEX" "$E2E_SHARD_TOTAL" < debug-logs/e2e-test-inventory.txt)"
       export TEST_RUN_PATTERN
       printf '%s\n' "$TEST_RUN_PATTERN" > debug-logs/e2e-test-selection.txt
       make test-e2e
