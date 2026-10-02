@@ -649,6 +649,9 @@ func (s *iterationSequence) step(
 			err = nil
 		}
 		if s.current != nil && s.current.retired {
+			// Also on an interrupting reload: the restart starts cold with no
+			// predecessor, so a kept Lease would leave no replica leading.
+			s.current.releaseKeptLease()
 			err = errors.Join(err, s.close())
 		}
 		return err

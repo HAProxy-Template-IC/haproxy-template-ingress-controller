@@ -25,8 +25,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -616,4 +618,97 @@ func checkElectorStopLog(t *testing.T, tc electorStopCase) {
 	if tc.loseLease {
 		require.NoError(t, ctx.Err())
 	}
+}
+
+// A successor stopped before its first acquire still releases the Lease it was
+// handed, so a shutdown during a hand-over leaves no vacancy until expiry (#249).
+func TestElector_SuccessorStoppedBeforeAcquireReleasesTheKeptLease(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping leader election test in short mode")
+	}
+	clientset := fake.NewClientset()
+	elector, stop := startLeadingElector(t, clientset, Callbacks{})
+	elector.KeepLeaseOnStop()
+	stop()
+	require.Equal(t, "test-pod-keep", leaseHolder(t, clientset))
+
+	successor, err := New(keepLeaseTestConfig(), clientset, Callbacks{}, nil)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.NoError(t, successor.Start(ctx))
+	assert.Empty(t, leaseHolder(t, clientset))
+}
+
+// A stop that never acquired leaves another replica's Lease alone.
+func TestElector_StopBeforeAcquireLeavesAnotherHolder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping leader election test in short mode")
+	}
+	clientset := fake.NewClientset()
+	_, stop := startLeadingElector(t, clientset, Callbacks{})
+	defer stop()
+
+	other := keepLeaseTestConfig()
+	other.Identity = "other-pod"
+	elector, err := New(other, clientset, Callbacks{}, nil)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.NoError(t, elector.Start(ctx))
+	assert.Equal(t, "test-pod-keep", leaseHolder(t, clientset))
+}
+
+// A conflicting write, such as a cancelled renew landing first, re-reads and
+// still releases.
+func TestElector_ReleaseRetriesAConflict(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping leader election test in short mode")
+	}
+	clientset := fake.NewClientset()
+	elector, stop := startLeadingElector(t, clientset, Callbacks{})
+	elector.KeepLeaseOnStop()
+	stop()
+
+	var conflicts atomic.Int32
+	clientset.PrependReactor("update", "leases", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if conflicts.Add(1) > 2 {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewConflict(schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"}, "keep-lease", nil)
+	})
+	elector.ReleaseLease()
+	assert.Empty(t, leaseHolder(t, clientset))
+	assert.Equal(t, int32(3), conflicts.Load())
+}
+
+// ReleaseLease vacates a kept Lease that no successor elector will resume.
+func TestElector_ReleaseLeaseVacatesAKeptLease(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping leader election test in short mode")
+	}
+	clientset := fake.NewClientset()
+	elector, stop := startLeadingElector(t, clientset, Callbacks{})
+	elector.KeepLeaseOnStop()
+	stop()
+	require.Equal(t, "test-pod-keep", leaseHolder(t, clientset))
+
+	elector.ReleaseLease()
+	assert.Empty(t, leaseHolder(t, clientset))
+}
+
+func TestElector_ReleaseLeaseLeavesAnotherHolder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping leader election test in short mode")
+	}
+	clientset := fake.NewClientset()
+	_, stop := startLeadingElector(t, clientset, Callbacks{})
+	defer stop()
+
+	other := keepLeaseTestConfig()
+	other.Identity = "other-pod"
+	elector, err := New(other, clientset, Callbacks{}, nil)
+	require.NoError(t, err)
+	elector.ReleaseLease()
+	assert.Equal(t, "test-pod-keep", leaseHolder(t, clientset))
 }

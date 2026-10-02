@@ -140,6 +140,14 @@ func (it *liveIteration) retireLeadership() {
 	retireLeadership(it.setup, it.logger)
 }
 
+// releaseKeptLease vacates the Lease a retired iteration kept for a successor
+// that failed to start, so another replica need not wait for it to expire.
+func (it *liveIteration) releaseKeptLease() {
+	if it.retired && it.setup.Election != nil {
+		it.setup.Election.elector.ReleaseLease()
+	}
+}
+
 // teardown stops everything the iteration still runs.
 func (it *liveIteration) teardown() error {
 	return completeIteration(it.setup, nil, it.logger)
