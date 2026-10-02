@@ -195,6 +195,13 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		}
 		templatingSettings.ExtraContext = extraContext
 	}
+	if len(spec.TemplatingSettings.TestExtraContext.Raw) > 0 {
+		var testExtraContext map[string]any
+		if err := json.Unmarshal(spec.TemplatingSettings.TestExtraContext.Raw, &testExtraContext); err != nil {
+			return nil, fmt.Errorf("unmarshalling templating_settings.test_extra_context: %w", err)
+		}
+		templatingSettings.TestExtraContext = testExtraContext
+	}
 
 	// Convert validation tests
 	// Note: Using convertValidationTests helper to avoid linter warning about

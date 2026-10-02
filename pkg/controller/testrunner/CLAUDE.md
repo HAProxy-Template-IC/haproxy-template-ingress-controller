@@ -67,6 +67,13 @@ This package implements a pure test runner component that executes embedded vali
 - `(*Runner).RunTests(ctx, testName)` - Executes all tests, or just `testName` when non-empty
 - `(*Runner).runSingleTest(ctx, name, test, engine, paths)` - Executes one test with its own engine + validation paths
 
+### Two renders per test
+
+- **Assertions** render with `AssertionExtraContext`: `templatingSettings.testExtraContext` < `_global` < the test's own `extraContext`. The deployment's `extraContext` never reaches them, like live resources never reach a fixture store.
+- **`assertDeploymentRenders`** renders the same fixtures with `DeploymentExtraContext` (`extraContext` < `_global` < the test's) and checks validity only: the render succeeds, and `haproxy -c` passes where the test asserts `haproxy_valid` and the bytes differ from the first render. Any render error fails it, `fail()` included: in a reconcile render a `fail()` stops the whole config. Skipped when the two contexts are equal, when the first render failed, and for `rendering_error` tests.
+
+`extraContext.renderMode` and `extraContext.admissionSubject` become builder options (`ExtraContextOptions`): the builder owns both globals and would overwrite promoted keys.
+
 ### rendering.go - Template Rendering for Tests
 
 **Key Functions:**

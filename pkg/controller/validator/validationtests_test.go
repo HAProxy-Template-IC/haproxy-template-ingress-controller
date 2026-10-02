@@ -217,11 +217,11 @@ func TestSuiteRunBudget(t *testing.T) {
 	if got := SuiteRunBudget(0); got != 25*time.Second {
 		t.Fatalf("zero-suite budget must be the 25s floor, got %s", got)
 	}
-	if got := SuiteRunBudget(100); got != 35*time.Second {
-		t.Fatalf("100 tests must be floor + 10s = 35s, got %s", got)
+	if got := SuiteRunBudget(100); got != 42500*time.Millisecond {
+		t.Fatalf("100 tests must be floor + 17.5s = 42.5s, got %s", got)
 	}
-	if got := SuiteRunBudget(362); got != 61200*time.Millisecond {
-		t.Fatalf("the incident's 362-test suite must get floor + 36.2s = 61.2s, got %s", got)
+	if got := SuiteRunBudget(362); got != 88350*time.Millisecond {
+		t.Fatalf("the incident's 362-test suite must get floor + 63.35s = 88.35s, got %s", got)
 	}
 	// The crossover that clamping broke: a ~249-test suite observed at 27.3s
 	// must fit, where max(floor, scaled) gave it exactly 25s.

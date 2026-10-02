@@ -213,17 +213,13 @@ templateSnippets:
       %%}
 
 validationTests:
-  # Pin governance OFF for the bundled tests: an operator's production rules
-  # would otherwise emit GovernanceViolation events on unrelated tests' fixtures
-  # and — because the daemon runs validationTests at the load gate — get their
-  # config rejected. The governance tests below re-enable it per-test.
+  # Keeps an operator's governance rules away from the fixtures when tests render
+  # with the deployment's extraContext. The governance tests re-enable it per-test.
   _global:
     extraContext:
       governance:
         enabled: false
-        # __replace__ clears the operator's rules outright. A plain {} would
-        # deep-merge and leave them in place, so `enabled: false` would be the
-        # only thing standing between a production rule set and these fixtures.
+        # A plain {} would deep-merge and leave the operator's rules in place.
         rules: { __replace__: true }
 
   test-governance-inject-reaches-consumer:

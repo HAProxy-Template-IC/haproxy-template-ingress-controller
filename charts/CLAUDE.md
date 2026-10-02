@@ -183,7 +183,7 @@ templatingSettings:
     nginxHttpRedirectCode: "308"   # consumed by this library's ssl-redirect snippet
 ```
 
-`templates/haproxytemplateconfig.yaml` merges these into the rendered config's `templatingSettings.extraContext` at the **lowest precedence** — an operator override via `controller.config.templatingSettings.extraContext.<key>` and any chart-computed key both win (Helm `merge` fills only keys not already set). Snippets read the value the usual way, keeping a literal fallback so the snippet still works if the key is somehow absent (e.g. the library is loaded standalone in a test):
+The controller merges these beneath the config's `templatingSettings.extraContext` at the **lowest precedence** — an operator override via `controller.config.templatingSettings.extraContext.<key>` and any chart-computed key both win. They are also the lowest layer validationTests render with. Snippets read the value the usual way, keeping a literal fallback so the snippet still works if the key is somehow absent (e.g. the library is loaded standalone in a test):
 
 ```scriggo
 {%- var code = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() %}
@@ -851,23 +851,14 @@ Tests run against the **merged configuration**, so they can validate cross-libra
 
 **Every rendering test is checked for determinism automatically.** The runner renders twice and compares the config and every auxiliary file, so a template whose output depends on Go's map-iteration order fails the suite that covers it rather than the one test whose author thought to ask. Iterate a map with `keys()`, never a bare `range` — a reordered map file or rule block is a changed file to the controller, costing a sync and a reload on a config nobody edited. The check only sees what the fixture can express — a map with one key cannot be reordered, so give a map-ordered site a fixture with at least two — and detection is probabilistic even then, since two renders can coincidentally agree.
 
-**An absence assertion MUST pin its own opt-in.** A test's `extraContext` deep-merges *over the operator's*, so a `not_contains` that relies on a chart default holds only until someone enables that feature — and the load gate turns the resulting failure into a controller crash-loop on a config CI called green. Pin the toggle explicitly:
+**Assertions see chart defaults, never the operator's values.** A test renders with the libraries' `extraContext`, the config's `templatingSettings.testExtraContext`, `_global`, and its own `extraContext` — the chart computes `testExtraContext` from its default values (`haptic.testValues` in `templates/_extracontext.tpl`). An operator's `extraContext` reaches only a second render of each test's fixtures, which must succeed and pass `haproxy -c` but runs no content assertion. So assert on defaults freely; don't pin a value just because an operator might change it.
 
-```yaml
-test-my-feature-disabled:
-  extraContext:
-    myFeature:
-      enabled: false        # NOT inherited from values.yaml — state it
-  assertions:
-    - type: not_contains
-      target: haproxy.cfg
-      pattern: 'the directive myFeature emits'
-```
+Four rules follow:
 
-Two rules follow, and both are load-bearing:
-
+- **Pin the input policy your fixtures depend on.** That second render fails on any `fail()`, so a fixture an operator's stricter policy refuses (a password hash outside `annotationCompatibility.basicAuth.passwordHashValidation`) must carry the policy it was written for in the test's own `extraContext`.
+- **A value a `_helm_load` or `_helm_skip_test` reads must be copied in `haptic.testValues`.** Such a value selects which tests exist, so their context has to agree with it. A test gated on a toggle the helper doesn't copy runs against the default, fails in the profile that enables the toggle, and never in an operator's cluster.
 - **Scope the pattern.** A whole-config `not_contains` fails on any unrelated line that happens to match. See "Absence assertions need scoping" — the pattern must name the frontend, backend, or bind it is really about.
-- **Give every new opt-in a profile in `scripts/test-templates.sh`** that renders with it ON and runs the **whole** test set (the PROXY-protocol profile is the model). The named-test profiles above it catch a feature's own tests; only a full pass catches an *unrelated* test that the opt-in breaks. That is the exact failure this rule exists to prevent.
+- **Give every new opt-in a profile in `scripts/test-templates.sh`** that renders with it ON and runs the **whole** test set (the PROXY-protocol profile is the model). The deployment-values render of every test is what catches an opt-in that breaks an unrelated scenario.
 
 Before bumping a chart an operator already runs, validate against **their** values, not the defaults:
 

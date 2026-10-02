@@ -802,9 +802,6 @@ validationTests:
       haproxyVersion: "3.2"
       waf:
         dispatch: {mode: default-on, defaultEnforcement: deny}
-        # Per-test extraContext deep-merges into the global context, so pin
-        # the permission this test asserts instead of relying on the global
-        # values leaving it unset.
         ingressPermissions: {allowWafDisable: false}
     fixtures:
       ingresses:

@@ -17,9 +17,12 @@ package testrunner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,6 +34,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -321,12 +325,8 @@ func TestRunner_RunTests(t *testing.T) {
 }
 
 // TestRunner_GlobalExtraContextIsolation pins the _global validationTest's
-// extraContext as a shared, isolated baseline folded into every test: it
-// overrides the deployment's PRODUCTION extraContext, and a per-test
-// extraContext overrides it in turn (production < _global < per-test). This is
-// what decouples the synthetic suite from the operator's real values (e.g.
-// defaultSSLCertificate names) — without it, a custom default-cert name leaked
-// into every test and crash-looped the load gate.
+// extraContext as a baseline every test renders with, overridden by a per-test
+// extraContext, while the deployment's extraContext never reaches an assertion.
 func TestRunner_GlobalExtraContextIsolation(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -377,6 +377,126 @@ func TestRunner_GlobalExtraContextIsolation(t *testing.T) {
 	assert.Equal(t, 2, results.PassedTests, "both isolation tests pass")
 	assert.Equal(t, 0, results.FailedTests)
 	assert.True(t, results.AllPassed())
+}
+
+// TestRunner_DeploymentValues pins the split: an assertion on a template default
+// passes whatever the deployment sets, while the deployment's values still have
+// to render the same fixtures and pass haproxy -c.
+func TestRunner_DeploymentValues(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	restore := dataplanetest.InstallFakeHAProxy(dataplanetest.WithCheck(func(workDir string, _ []string) ([]byte, error) {
+		cfg, err := os.ReadFile(filepath.Join(workDir, "haproxy.cfg"))
+		if err != nil {
+			return nil, err
+		}
+		if strings.Contains(string(cfg), "port=rejected") {
+			return []byte("[ALERT]    (1) : config : invalid port\n"), errors.New("exit status 1")
+		}
+		return nil, nil
+	}))
+	t.Cleanup(restore)
+
+	template := "global\n  # port={{ extraContext | dig(\"port\") | fallback(\"default\") | tostring() }}\n" +
+		"{%- if (extraContext | dig(\"breaks\") | fallback(false)) == true %}{{ fail(\"breaks is set\") }}{% end %}\n" +
+		"{%- if (extraContext | dig(\"strict\") | fallback(false)) == true and (extraContext | dig(\"weak\") | fallback(false)) == true %}" +
+		"{{ fail(\"weak input refused\") }}{% end %}\n"
+	defaultAssertion := v1alpha1.ValidationTest{
+		Assertions: []v1alpha1.ValidationAssertion{
+			{Type: "contains", Target: "haproxy.cfg", Pattern: "port=default"},
+			{Type: "haproxy_valid"},
+		},
+	}
+	tests := []struct {
+		name       string
+		deployment map[string]any
+		test       v1alpha1.ValidationTest
+		wantPassed bool
+		wantError  string
+	}{
+		{
+			name:       "an overridden default does not fail the assertion",
+			deployment: map[string]any{"port": "9443"},
+			test:       defaultAssertion,
+			wantPassed: true,
+		},
+		{
+			name:       "a value that fails the render fails the test",
+			deployment: map[string]any{"breaks": true},
+			test:       defaultAssertion,
+			wantError:  "breaks is set",
+		},
+		{
+			name:       "a value that refuses only these fixtures fails the test",
+			deployment: map[string]any{"strict": true},
+			test: v1alpha1.ValidationTest{
+				ExtraContext: mustMarshalRawExtension(map[string]any{"weak": true}),
+				Assertions: []v1alpha1.ValidationAssertion{
+					{Type: "contains", Target: "haproxy.cfg", Pattern: "port=default"},
+				},
+			},
+			wantError: "weak input refused",
+		},
+		{
+			name:       "a value HAProxy rejects fails the test",
+			deployment: map[string]any{"port": "rejected"},
+			test:       defaultAssertion,
+			wantError:  "invalid port",
+		},
+		{
+			name:       "haproxy -c runs only where the test asserts haproxy_valid",
+			deployment: map[string]any{"port": "rejected"},
+			test: v1alpha1.ValidationTest{Assertions: []v1alpha1.ValidationAssertion{
+				{Type: "contains", Target: "haproxy.cfg", Pattern: "port=default"},
+			}},
+			wantPassed: true,
+		},
+		{
+			name:       "a test expecting a render error skips the check",
+			deployment: map[string]any{"breaks": true},
+			test: v1alpha1.ValidationTest{
+				ExtraContext: mustMarshalRawExtension(map[string]any{"breaks": true}),
+				Assertions: []v1alpha1.ValidationAssertion{
+					{Type: "contains", Target: "rendering_error", Pattern: "breaks is set"},
+				},
+			},
+			wantPassed: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := &v1alpha1.HAProxyTemplateConfigSpec{
+				TemplatingSettings: v1alpha1.TemplatingSettings{
+					Engine:       "scriggo",
+					ExtraContext: mustMarshalRawExtension(tt.deployment),
+				},
+				HAProxyConfig:   v1alpha1.HAProxyConfig{Template: template},
+				ValidationTests: map[string]v1alpha1.ValidationTest{"test-default": tt.test},
+			}
+			engine, err := templating.New(map[string]string{"haproxy.cfg": template}, nil)
+			require.NoError(t, err)
+			cfg, err := conversion.ConvertSpec(spec)
+			require.NoError(t, err)
+			tempDir := t.TempDir()
+			paths := &dataplane.ValidationPaths{
+				MapsDir:           filepath.Join(tempDir, "maps"),
+				SSLCertsDir:       filepath.Join(tempDir, "ssl"),
+				GeneralStorageDir: filepath.Join(tempDir, "general"),
+				ConfigFile:        filepath.Join(tempDir, "haproxy.cfg"),
+			}
+
+			results, err := New(cfg, engine, paths, &Options{Logger: logger, Workers: 1}).RunTests(t.Context(), "")
+			require.NoError(t, err)
+
+			require.Len(t, results.TestResults, 1)
+			result := results.TestResults[0]
+			assert.Equal(t, tt.wantPassed, result.Passed)
+			if tt.wantError != "" {
+				last := result.Assertions[len(result.Assertions)-1]
+				assert.Equal(t, deploymentAssertionType, last.Type)
+				assert.Contains(t, last.Error, tt.wantError)
+			}
+		})
+	}
 }
 
 func TestRunner_RunTests_WithFixtures(t *testing.T) {

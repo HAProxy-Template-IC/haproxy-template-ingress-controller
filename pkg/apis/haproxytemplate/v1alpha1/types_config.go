@@ -462,6 +462,14 @@ type TemplatingSettings struct {
 	// +kubebuilder:validation:Type=object
 	// +kubebuilder:pruning:PreserveUnknownFields
 	ExtraContext runtime.RawExtension `json:"extraContext,omitempty"`
+
+	// TestExtraContext is the extraContext validationTests render with in place of
+	// this config's extraContext, so a deployment's values can't change what a
+	// test asserts. Library extraContext defaults apply beneath it.
+	// +optional
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	TestExtraContext runtime.RawExtension `json:"testExtraContext,omitempty"`
 }
 
 // WatchedResource configures watching for a specific Kubernetes resource type.

@@ -49,6 +49,7 @@ validationTests:
 
   test-haproxy-ingress-basic-auth:
     description: HAProxy-Ingress auth-secret generates userlist and auth directive
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -78,6 +79,7 @@ validationTests:
 
   test-haproxy-ingress-basic-auth-htpasswd-key:
     description: An `auth`-key htpasswd Secret (haproxy-ingress / ingress-nginx native format) is parsed into the userlist; "user::plain" lines use insecure-password
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         # data.auth = base64("admin:$2y$05$...\nguest::plainpw\n")
@@ -925,6 +927,7 @@ validationTests:
 
   test-haproxy-ingress-basic-auth-map-lane:
     description: Basic auth rides the frontend map lane — routes on one Secret share its userlist, one auth rule per (userlist, realm) pair selected on the whole map value, one denied_by rule per userlist, and no backend challenge
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1

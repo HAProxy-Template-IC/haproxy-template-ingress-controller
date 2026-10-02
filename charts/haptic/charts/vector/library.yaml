@@ -901,9 +901,6 @@ validationTests:
         otlp:
           endpoint: http://tempo:4318/v1/traces
           serviceName: haptic-edge
-          # Pinned, not inherited: an operator who sets clusterName would
-          # otherwise fail the not_contains below — on load, which crash-loops
-          # the controller on a perfectly good config.
           clusterName: ""
       vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, spoaHubMetricsPort: 0, dataDir: /var/lib/vector }
     assertions:
@@ -958,11 +955,6 @@ validationTests:
   test-vector-no-otlp-endpoint-no-span-pipeline:
     description: Without an endpoint neither the span transform nor the sink is rendered
     fixtures: {}
-    # PINNED EMPTY, not merely omitted. A per-test extraContext deep-merges over
-    # the deployment's, so a test asserting a feature's ABSENCE must switch that
-    # feature off explicitly — otherwise an operator who enables it makes this test
-    # fail, and a failing validationTest fails the LOAD GATE and crash-loops the
-    # controller.
     extraContext:
       tracing: {otlp: {endpoint: ""}}
       vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, spoaHubMetricsPort: 0, dataDir: /var/lib/vector }

@@ -22,6 +22,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
@@ -117,21 +118,18 @@ type RenderOutput struct {
 // This follows the same pattern as DryRunValidator.renderWithOverlayStores.
 // When profileIncludes is enabled, it returns timing statistics for included templates.
 // The currentConfig parameter enables slot-aware server assignment testing (nil for first deployment).
-// The testExtraContext parameter allows test-specific extraContext values to override global ones.
+// extraContext is the whole extraContext the render sees (see AssertionExtraContext).
 //
 // Returns rendered haproxy.cfg, auxiliary files, k8sResources (template name → YAML),
 // status patches (key `<ns>/<name>:<phase>` → JSON-marshalled status content), and
 // include-stats (when profiling) bundled in a RenderOutput, plus the render error.
-func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *renderplan.CurrentConfig, currentFiles map[string]string, testExtraContext map[string]any) (RenderOutput, error) {
-	// Build rendering context with fixture stores
-	bctx := r.buildRenderingContext(ctx, storeMap, validationPaths, httpStore, currentConfig, currentFiles)
-	renderCtx := bctx.Context
-
-	mergeTestExtraContext(renderCtx, testExtraContext)
-	renderMode := rendercontext.RenderModeReconcile
-	if renderCtx["renderMode"] == string(rendercontext.RenderModeAdmission) {
-		renderMode = rendercontext.RenderModeAdmission
+func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *renderplan.CurrentConfig, currentFiles map[string]string, extraContext map[string]any) (RenderOutput, error) {
+	bctx, err := r.buildRenderingContext(ctx, storeMap, validationPaths, httpStore, currentConfig, currentFiles, extraContext)
+	if err != nil {
+		return RenderOutput{}, err
 	}
+	renderCtx := bctx.Context
+	renderMode := extraContextRenderMode(extraContext)
 	coldRender, err := renderer.NewColdIncrementalRender(ctx, &renderer.ColdIncrementalRenderConfig{
 		Config:             r.config,
 		Engine:             engine,
@@ -216,47 +214,62 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 	}, nil
 }
 
-// mergeTestExtraContext folds a per-test extraContext map into the rendering
-// context built from the global config. Nested maps merge recursively with
-// per-test leaves winning — the same mergeOverwrite semantics the chart uses
-// for extraContext — so a test overriding one key of a subtree (for example
-// tls.hsts.enabled) doesn't clobber sibling keys the chart set (for example
-// tls.defaultCertificate). The merge builds fresh maps along every merged
-// path (never mutating the shared global map) so parallel test workers don't
-// leak state into each other.
-func mergeTestExtraContext(renderCtx, testExtraContext map[string]any) {
-	if testExtraContext == nil {
-		return
-	}
-	globalExtraContext := renderCtx["extraContext"].(map[string]any)
-	merged := deepMergeMaps(globalExtraContext, testExtraContext)
-	for key := range testExtraContext {
-		// Also merge into top-level context for direct access.
-		renderCtx[key] = merged[key]
-	}
-	renderCtx["extraContext"] = merged
+// AssertionExtraContext is the extraContext a test's assertions render with:
+// the config's testExtraContext, then _global, then the test's own. The
+// deployment's extraContext never reaches it, the same way live resources never
+// reach a fixture store.
+func AssertionExtraContext(cfg *config.Config, test *config.ValidationTest) map[string]any {
+	return withTestLayers(cfg, cfg.TemplatingSettings.TestExtraContext, test)
 }
 
-// foldGlobalExtraContext folds a per-test extraContext onto the _global
-// validationTest's shared extraContext baseline (baseline first, per-test wins),
-// or returns testExtra unchanged when _global declares none. This is the single
-// source of the production < _global < per-test precedence every validationTest
-// render site relies on.
-func foldGlobalExtraContext(cfg *config.Config, testExtra map[string]any) map[string]any {
-	if globalTest, ok := cfg.ValidationTests["_global"]; ok && len(globalTest.ExtraContext) > 0 {
-		return deepMergeMaps(globalTest.ExtraContext, testExtra)
-	}
-	return testExtra
+// DeploymentExtraContext is what the deployment check renders a test's fixtures
+// with: the deployment's extraContext beneath _global and the test's own.
+// _global stays on top because it binds names to fixtures (the default
+// certificate) that the deployment's values point elsewhere.
+func DeploymentExtraContext(cfg *config.Config, test *config.ValidationTest) map[string]any {
+	return withTestLayers(cfg, cfg.TemplatingSettings.ExtraContext, test)
 }
 
-// ApplyTestExtraContext folds the _global baseline and a per-test extraContext
-// (pass the test's ExtraContext) into an already-built render context (whose
-// "extraContext" key holds the deployment's production extraContext), matching
-// runSingleTest's production < _global < per-test precedence. Render sites that
-// build their own context outside the Runner — the benchmark path in
-// cmd/haptic — call this so they render each test exactly as the load gate does.
-func ApplyTestExtraContext(renderCtx map[string]any, cfg *config.Config, testExtra map[string]any) {
-	mergeTestExtraContext(renderCtx, foldGlobalExtraContext(cfg, testExtra))
+func withTestLayers(cfg *config.Config, base map[string]any, test *config.ValidationTest) map[string]any {
+	merged := base
+	if globalTest, ok := cfg.ValidationTests["_global"]; ok {
+		merged = deepMergeMaps(merged, globalTest.ExtraContext)
+	}
+	return deepMergeMaps(merged, test.ExtraContext)
+}
+
+// ExtraContextOptions hands a test's extraContext to the context builder. A
+// test simulates an admission with extraContext.renderMode and
+// extraContext.admissionSubject; the builder owns both globals and would
+// otherwise overwrite the promoted keys.
+func ExtraContextOptions(extraContext map[string]any) ([]rendercontext.Option, error) {
+	detached, err := rendercontext.DetachExtraContext(extraContext)
+	if err != nil {
+		return nil, fmt.Errorf("copying extraContext: %w", err)
+	}
+	opts := []rendercontext.Option{
+		rendercontext.WithDetachedExtraContext(detached),
+		rendercontext.WithRenderMode(extraContextRenderMode(extraContext)),
+	}
+	if subject, ok := extraContext["admissionSubject"].(map[string]any); ok {
+		field := func(key string) string {
+			value, _ := subject[key].(string)
+			return value
+		}
+		aliases := []string{field("store")}
+		if storeSet, ok := subject["stores"].(map[string]any); ok {
+			aliases = slices.Sorted(maps.Keys(storeSet))
+		}
+		opts = append(opts, rendercontext.WithAdmissionSubjectStores(aliases, field("namespace"), field("name")))
+	}
+	return opts, nil
+}
+
+func extraContextRenderMode(extraContext map[string]any) rendercontext.RenderMode {
+	if extraContext["renderMode"] == string(rendercontext.RenderModeAdmission) {
+		return rendercontext.RenderModeAdmission
+	}
+	return rendercontext.RenderModeReconcile
 }
 
 // replaceSentinelKey, when present (with any truthy value) in a test
@@ -420,7 +433,12 @@ func (r *Runner) renderK8sResources(
 	return k8sResources, nil
 }
 
-func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *renderplan.CurrentConfig, currentFiles map[string]string) *rendercontext.BuildResult {
+func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *renderplan.CurrentConfig, currentFiles map[string]string, extraContext map[string]any) (*rendercontext.BuildResult, error) {
+	extraContextOpts, err := ExtraContextOptions(extraContext)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
@@ -436,11 +454,7 @@ func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]
 	// top-level global per typed resource so chart templates that
 	// use the typed shape compile against the same surface the
 	// production renderer provides.
-	builder := rendercontext.NewBuilder(
-		ctx,
-		r.config,
-		pathResolver,
-		r.logger,
+	opts := append([]rendercontext.Option{
 		rendercontext.WithStores(resourceStores),
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
 		rendercontext.WithHTTPFetcher(httpStore),
@@ -448,9 +462,9 @@ func (r *Runner) buildRenderingContext(ctx context.Context, storeMap map[string]
 		rendercontext.WithCurrentAuxFiles(currentFiles),
 		rendercontext.WithTypedResources(r.typedResourceTypes),
 		rendercontext.WithCapabilities(r.capabilities),
-	)
+	}, extraContextOpts...)
 
-	return builder.Build()
+	return rendercontext.NewBuilder(ctx, r.config, pathResolver, r.logger, opts...).Build(), nil
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) using worker-specific engine.

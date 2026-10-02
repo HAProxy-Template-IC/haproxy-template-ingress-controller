@@ -661,6 +661,11 @@ type TemplatingSettings struct {
 	//
 	// Templates can then reference these variables directly: {{ debug.enabled }}, {{ environment }}, etc.
 	ExtraContext map[string]any `yaml:"extra_context" json:"extraContext"`
+
+	// TestExtraContext is the extraContext validationTests render with instead of
+	// ExtraContext: the libraries' extraContext defaults overlaid with every
+	// source's testExtraContext (see conversion.MergeSpecs).
+	TestExtraContext map[string]any `yaml:"test_extra_context" json:"testExtraContext"`
 }
 
 // GetRenderTimeout returns the configured render timeout or the default.

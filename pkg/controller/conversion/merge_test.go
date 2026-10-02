@@ -243,6 +243,56 @@ func TestMergeSpecs_DoesNotMutateSources(t *testing.T) {
 	}, base.Object["spec"], "the first source must be untouched")
 }
 
+// Libraries' extraContext defaults reach the tests; the config's own
+// extraContext is deployment input and must not.
+func TestMergeSpecs_TestExtraContext(t *testing.T) {
+	library := func(name string, extra map[string]any) *unstructured.Unstructured {
+		return source(name, map[string]any{"templatingSettings": map[string]any{"extraContext": extra}})
+	}
+	tests := []struct {
+		name    string
+		sources []*unstructured.Unstructured
+		want    map[string]any
+	}{
+		{
+			name: "library defaults beneath every testExtraContext, config extraContext left out",
+			sources: []*unstructured.Unstructured{
+				library("ssl", map[string]any{"tls": map[string]any{"minVersion": "TLSv1.2", "hsts": false}}),
+				source("lib-b", map[string]any{"templatingSettings": map[string]any{
+					"extraContext":     map[string]any{"port": int64(80)},
+					"testExtraContext": map[string]any{"fromLibrary": true},
+				}}),
+				source("config", map[string]any{"templatingSettings": map[string]any{
+					"extraContext":     map[string]any{"port": int64(9080), "tls": map[string]any{"hsts": true}},
+					"testExtraContext": map[string]any{"tls": map[string]any{"minVersion": "TLSv1.3"}},
+				}}),
+			},
+			want: map[string]any{
+				"tls":         map[string]any{"minVersion": "TLSv1.3", "hsts": false},
+				"port":        int64(80),
+				"fromLibrary": true,
+			},
+		},
+		{
+			name: "a lone config contributes only its testExtraContext",
+			sources: []*unstructured.Unstructured{
+				source("config", map[string]any{"templatingSettings": map[string]any{
+					"extraContext":     map[string]any{"port": int64(9080)},
+					"testExtraContext": map[string]any{"port": int64(80)},
+				}}),
+			},
+			want: map[string]any{"port": int64(80)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _, err := unstructured.NestedMap(mergedSpec(t, tt.sources...), "templatingSettings", "testExtraContext")
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestMergeSpecs_SpecOverrides(t *testing.T) {
 	tests := []struct {
 		name    string

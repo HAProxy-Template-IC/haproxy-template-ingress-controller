@@ -864,6 +864,13 @@ spec:
                       Templates can then reference these as: {{ debug.enabled }}, {{ environment }}, etc.
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
+                  testExtraContext:
+                    description: |-
+                      TestExtraContext is the extraContext validationTests render with in place of
+                      this config's extraContext, so a deployment's values can't change what a
+                      test asserts. Library extraContext defaults apply beneath it.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                 type: object
               validationTests:
                 additionalProperties:

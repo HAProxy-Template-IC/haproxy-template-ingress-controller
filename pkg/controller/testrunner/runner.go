@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"runtime"
 	"runtime/debug"
 	"sync"
@@ -403,7 +404,14 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 6. Build template context for JSONPath assertions
-	templateContext := r.buildRenderingContext(ctx, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles).Context
+	bctx, err := r.buildRenderingContext(ctx, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles, effectiveExtraContext)
+	if err != nil {
+		recordRenderFailure(&result, err)
+		result.Passed = false
+		result.Duration = time.Since(startTime)
+		return result, false
+	}
+	templateContext := bctx.Context
 
 	// 7. Create render dependencies for deterministic assertion (if needed)
 	renderDeps := &RenderDependencies{
@@ -413,15 +421,23 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		HTTPStore:       httpStore,
 		CurrentConfig:   currentConfig,
 		CurrentFiles:    test.CurrentFiles,
-		// effectiveExtraContext (not test.ExtraContext): the deterministic
-		// assertion re-renders through this, and must use the same _global-merged
-		// baseline as the first render — otherwise the second render loses the
-		// _global default-cert pin and diverges (or fails) against production.
-		ExtraContext: effectiveExtraContext,
+		ExtraContext:    effectiveExtraContext,
 	}
 
 	// 8. Run all assertions (whether rendering succeeded or failed)
 	incomplete := r.executeAssertions(ctx, &result, test, rendered.HAProxyConfig, rendered.AuxiliaryFiles, rendered.K8sResources, rendered.StatusPatches, rendered.Events, templateContext, validationPaths, renderDeps)
+
+	// 9. The same fixtures with the deployment's values, where they differ
+	deploymentExtraContext := DeploymentExtraContext(r.config, test)
+	if !incomplete && result.RenderError == "" && !hasRenderingErrorAssertions(test.Assertions) &&
+		!reflect.DeepEqual(deploymentExtraContext, effectiveExtraContext) {
+		deployment := r.assertDeploymentRenders(ctx, test, &inputs, &rendered, deploymentExtraContext, engine, validationPaths)
+		incomplete = deployment.incomplete
+		if !incomplete {
+			result.Assertions = append(result.Assertions, deployment)
+			result.Passed = result.Passed && deployment.Passed
+		}
+	}
 
 	// Test passes if either:
 	// - Rendering succeeded AND all assertions passed
@@ -459,17 +475,9 @@ type renderInput struct {
 
 // renderInputs assembles a test's render inputs: the _global-merged fixture
 // stores and HTTP fixtures, the previously-deployed servers, and the
-// extraContext baseline. Returns a non-empty message when an input is
-// unusable — the message lands in TestResult.RenderError.
-//
-// _global contributes a shared extraContext baseline: the isolated, synthetic
-// values every test renders against (e.g. a default SSL cert decoupled from
-// the operator's real defaultSSLCertificate.*). Per-test extraContext overrides
-// this baseline, and mergeTestExtraContext later folds the result over the
-// deployment's production extraContext — so what a synthetic test resolves is
-// the _global pin, never the operator's real secret names. Without this, a
-// custom default-cert name leaks into every test and fails the fixture-store
-// lookup (crash-looping the load gate).
+// extraContext its assertions render with (AssertionExtraContext). Returns a
+// non-empty message when an input is unusable — the message lands in
+// TestResult.RenderError.
 func (r *Runner) renderInputs(testName string, test *config.ValidationTest) (inputs renderInput, failure string) {
 	fixtures := test.Fixtures
 	httpFixtures := test.HTTPFixtures
@@ -496,14 +504,72 @@ func (r *Runner) renderInputs(testName string, test *config.ValidationTest) (inp
 		Stores:        fixtureStores,
 		HTTPStore:     httpStore,
 		CurrentConfig: r.currentServers(test),
-		ExtraContext:  foldGlobalExtraContext(r.config, test.ExtraContext),
+		ExtraContext:  AssertionExtraContext(r.config, test),
 	}, ""
+}
+
+// assertDeploymentRenders renders the test's fixtures with the deployment's
+// extraContext (DeploymentExtraContext) and holds that render to what the
+// test's own assertions demand of validity: it renders, and passes `haproxy -c`
+// when the test asserts haproxy_valid. Content assertions describe the
+// templates' defaults, which a deployment may override, so they don't apply.
+// A template fail() fails it too: in a reconcile render it stops the whole
+// config, so a value that refuses these fixtures breaks every cluster holding
+// such a resource.
+func (r *Runner) assertDeploymentRenders(ctx context.Context, test *config.ValidationTest, inputs *renderInput, asserted *RenderOutput, extraContext map[string]any, engine templating.Engine, validationPaths *dataplane.ValidationPaths) AssertionResult {
+	result := AssertionResult{
+		Type:        deploymentAssertionType,
+		Description: "Fixtures render with the deployment's extraContext",
+		Passed:      true,
+	}
+	rendered, err := r.renderWithStores(ctx, engine, inputs.Stores, validationPaths, inputs.HTTPStore,
+		inputs.CurrentConfig, test.CurrentFiles, extraContext)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			result.incomplete = true
+			return result
+		}
+		result.Passed = false
+		result.Error = fmt.Sprintf("This test's fixtures fail to render with the deployment's extraContext, "+
+			"so a cluster holding such resources stops reconciling: %s. Fix the value the error names.",
+			dataplane.SimplifyRenderingError(err))
+		return result
+	}
+	// The same bytes get the same verdict, which the test's own haproxy_valid gave.
+	unchanged := rendered.HAProxyConfig == asserted.HAProxyConfig &&
+		compareAuxiliaryFiles(asserted.AuxiliaryFiles, rendered.AuxiliaryFiles) == ""
+	if unchanged || !hasAssertionType(test.Assertions, "haproxy_valid") {
+		return result
+	}
+	valid := r.assertHAProxyValid(ctx, rendered.HAProxyConfig, rendered.AuxiliaryFiles, &config.ValidationAssertion{}, validationPaths)
+	result.incomplete = valid.incomplete
+	if !valid.Passed {
+		result.Passed = false
+		result.Error = fmt.Sprintf("With the deployment's extraContext, this test's fixtures render a config HAProxy rejects: %s. "+
+			"Fix the value the error names.", valid.Error)
+		result.Target, result.TargetSize, result.TargetPreview = valid.Target, valid.TargetSize, valid.TargetPreview
+	}
+	return result
+}
+
+// deploymentAssertionType labels the result of assertDeploymentRenders.
+const deploymentAssertionType = "deployment_values"
+
+func hasAssertionType(assertions []config.ValidationAssertion, assertionType string) bool {
+	for i := range assertions {
+		if assertions[i].Type == assertionType {
+			return true
+		}
+	}
+	return false
 }
 
 // Render renders one validation test and returns everything the render
 // produced — including the plan the templates declared — without executing the
-// test's assertions. It renders into the runner's base validation paths, which
-// nothing writes to while no assertion runs.
+// test's assertions. It renders with the deployment's extraContext, so a diff
+// shows what a config change does to the test's scenario. It renders into the
+// runner's base validation paths, which nothing writes to while no assertion
+// runs.
 func (r *Runner) Render(ctx context.Context, testName string) (RenderOutput, error) {
 	test, found := r.config.ValidationTests[testName]
 	if !found {
@@ -514,7 +580,7 @@ func (r *Runner) Render(ctx context.Context, testName string) (RenderOutput, err
 		return RenderOutput{}, errors.New(inputErr)
 	}
 	return r.renderWithStores(ctx, r.engineTemplate, inputs.Stores, r.validationPaths,
-		inputs.HTTPStore, inputs.CurrentConfig, test.CurrentFiles, inputs.ExtraContext)
+		inputs.HTTPStore, inputs.CurrentConfig, test.CurrentFiles, DeploymentExtraContext(r.config, &test))
 }
 
 // RenderWithoutFixtures renders the configuration against empty stores: no
@@ -525,7 +591,7 @@ func (r *Runner) Render(ctx context.Context, testName string) (RenderOutput, err
 func (r *Runner) RenderWithoutFixtures(ctx context.Context) (RenderOutput, error) {
 	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(nil, r.logger), r.logger)
 	return r.renderWithStores(ctx, r.engineTemplate, r.createEmptyStores(), r.validationPaths,
-		httpStore, nil, nil, nil)
+		httpStore, nil, nil, r.config.TemplatingSettings.ExtraContext)
 }
 
 // currentServers resolves what a test declares about the previous deployment

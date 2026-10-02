@@ -84,7 +84,10 @@ func benchFullRender(
 	storeMap map[string]stores.Store,
 ) {
 	b.Helper()
-	bctx := freshBenchmarkContext(cfg, nil, storeMap, setup.ValidationPaths, httpStore, setup.TypedResourceTypes, logger)
+	bctx, err := freshBenchmarkContext(cfg, cfg.TemplatingSettings.ExtraContext, storeMap, setup.ValidationPaths, httpStore, setup.TypedResourceTypes, logger)
+	if err != nil {
+		b.Fatal(err)
+	}
 	if _, err := renderAllFiles(
 		setup.Engine,
 		cfg,
@@ -143,15 +146,16 @@ func TestRenderAllFilesIncludesK8sResourceRoots(t *testing.T) {
 	require.NoError(t, err)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	httpStore := createHTTPStoreForBenchmark(nil, logger)
-	bctx := freshBenchmarkContext(
+	bctx, err := freshBenchmarkContext(
 		cfg,
-		nil,
+		cfg.TemplatingSettings.ExtraContext,
 		storeMap,
 		&dataplane.ValidationPaths{},
 		httpStore,
 		typedResult.Types,
 		logger,
 	)
+	require.NoError(t, err)
 
 	result, err := renderAllFiles(engine, cfg, bctx, storeMap, typedResult.Types, logger)
 

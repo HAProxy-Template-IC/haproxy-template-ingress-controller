@@ -53,10 +53,12 @@ const validationTestsBootstrapTimeout = 5 * time.Second
 const validationTestsRunTimeout = 25 * time.Second
 
 // suitePerTestBudget is the per-test increment SuiteRunBudget adds above the
-// floor for large suites. ~100ms comfortably covers one test's engine render +
-// `haproxy -c` on a contended CI node (observed: the chart's 362-test suite
-// needs 26-28s under 4-shard contention ≈ 75ms/test).
-const suitePerTestBudget = 100 * time.Millisecond
+// floor for large suites. A test renders twice — its assertions with the
+// testExtraContext, then its fixtures with the deployment's extraContext — and
+// each render may run `haproxy -c`. One pass measured ≈75ms/test on a contended
+// CI node (the chart's 362-test suite in 26-28s under 4-shard contention); the
+// second pass measured 1.7x the suite's wall time locally.
+const suitePerTestBudget = 175 * time.Millisecond
 
 // SuiteRunBudget returns the live-gate test-execution budget for a suite of
 // the given size: the validationTestsRunTimeout floor PLUS suitePerTestBudget

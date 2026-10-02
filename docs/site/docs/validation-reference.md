@@ -18,7 +18,7 @@ Each test consists of:
 | **Assertions** | Checks on rendered output |
 | **HTTP fixtures** (`httpResources`) | Optional — mocked responses for `http.Fetch()` URLs (see [HTTP Fixtures](#http-fixtures)) |
 | **Min HAProxy version** (`minHAProxyVersion`) | Optional — skip the test unless the HAProxy version under test is at least this (for version-gated features) |
-| **Extra context** (`extraContext`) | Optional — per-test values deep-merged into the global `templatingSettings.extraContext`: nested maps merge key by key with per-test leaves winning, so overriding one key keeps its siblings. Pin every value your assertions depend on — a sibling you leave unset keeps its deployment-configured value. To pin an exact key set instead of merging, give the nested map `__replace__: true`: it replaces the deployment's map at that key wholesale, and the sentinel is stripped from the result |
+| **Extra context** (`extraContext`) | Optional — per-test values deep-merged over the test baseline (see [Extra context](#extra-context)): nested maps merge key by key with per-test leaves winning, so overriding one key keeps its siblings. To pin an exact key set instead of merging, give the nested map `__replace__: true`: it replaces the baseline's map at that key wholesale, and the sentinel is stripped from the result |
 | **Current servers** (`currentServers`) | Optional — the servers a previous deployment had, keyed by backend and server name, exposed to templates as `currentConfig.ServerIndex`; use it to exercise slot-preservation logic (see [Current servers](#current-servers)) |
 | **Current config** (`currentConfig`) | Deprecated — a raw `haproxy.cfg` the runner parses down to the same server index. Use `currentServers` |
 | **Current files** (`currentFiles`) | Optional — filename → content of the general files already deployed, exposed to templates as `currentFiles`; use it for templates that read their own prior output, such as self-rotating TLS session-ticket keys |
@@ -102,6 +102,30 @@ Put shared `fixtures`, `httpResources`, and `extraContext` in an entry named
 `_global`. They apply to every test; assertions on `_global` don't run. Multiple
 libraries can contribute to this entry. All other test names must be unique
 across the merged configuration.
+
+### Extra context
+
+A test's assertions never see your deployment's `templatingSettings.extraContext`,
+the same way they never see your live resources. They render with, from lowest to
+highest precedence:
+
+1. the `templatingSettings.extraContext` of each `HAProxyTemplateLibrary`,
+2. `templatingSettings.testExtraContext`,
+3. `_global`'s `extraContext`,
+4. the test's own `extraContext`.
+
+The Helm chart sets `testExtraContext` to the `extraContext` it computes from its
+default values. It keeps only the values that select which libraries and tests
+are installed, such as `controller.templateLibraries.*`, `haproxyVersion`, and
+feature switches like `rateLimit.shared.enabled`. A test asserting a chart
+default passes however you override that value.
+
+Your values are still checked. Each test's fixtures render a second time with
+your `extraContext` beneath `_global`'s and the test's own values. That render
+must succeed, and when the test asserts `haproxy_valid`, it must pass
+`haproxy -c`. A test whose own render is expected to fail skips this check. If
+a test's fixtures depend on an input policy you can tighten, such as accepted
+password-hash formats, the test sets that policy in its own `extraContext`.
 
 ### Conditional Tests (`requires` and `requiresFields`)
 
@@ -199,13 +223,16 @@ Use for small, deterministic files. Not recommended for large configs.
 
 ### `jsonpath`
 
-Evaluates a JSONPath expression against the template rendering context and compares the single result to `expected`. JSONPath reads plain values from the context — it can't invoke the store methods templates use (`resources.services.List()`), so it fits scalar context values (for example a `spec.templatingSettings.extraContext` key, which is injected into the context by name):
+Evaluates a JSONPath expression against the template rendering context and compares the single result to `expected`. JSONPath reads plain values from the context — it can't invoke the store methods templates use (`resources.services.List()`), so it fits scalar context values (for example an [extra context](#extra-context) key, which is injected into the context by name):
 
 ```yaml
-- type: jsonpath
-  jsonpath: "{.environment}"     # set via spec.templatingSettings.extraContext.environment
-  expected: "production"
-  description: extraContext.environment is wired through
+extraContext:
+  environment: production
+assertions:
+  - type: jsonpath
+    jsonpath: "{.environment}"
+    expected: "production"
+    description: extraContext.environment is wired through
 ```
 
 To assert on watched resources or rendered output, use `contains`, `match_count`, or `equals` against `haproxy.cfg` (or a `map:` / `file:` target) instead.
