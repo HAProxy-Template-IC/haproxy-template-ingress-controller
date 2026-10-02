@@ -312,7 +312,7 @@ validationTests:
 
   test-haproxy-ingress-auth-realm-escape-and-fail-closed:
     description: An auth-realm double quote renders escaped inside its quoted literal, while a control character fails the route closed with 503 instead of a splittable directive.
-    extraContext: {renderMode: reconcile}
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}, renderMode: reconcile}
     fixtures:
       secrets:
         - apiVersion: v1

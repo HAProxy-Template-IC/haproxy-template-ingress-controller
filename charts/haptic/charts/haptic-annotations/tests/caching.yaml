@@ -49,9 +49,7 @@ validationTests:
         haproxy: {responseTimeoutMs: 2000}
         varnish:
           enabled: true
-          # Per-test extraContext deep-merges into the global context; pin the
-          # topology this test asserts (PDB + anti-affinity need replicas > 1)
-          # instead of relying on the deployment's values.
+          # PDB + anti-affinity need replicas > 1.
           replicas: 2
           podDisruptionBudget: {enabled: true, maxUnavailable: 1}
     fixtures:

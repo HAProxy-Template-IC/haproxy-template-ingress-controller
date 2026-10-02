@@ -1310,6 +1310,7 @@ validationTests:
 
   test-auth-basic-cross-namespace:
     description: Basic authentication with secret in different namespace
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -1349,6 +1350,7 @@ validationTests:
 
   test-haproxytech-basic-auth-map-lane:
     description: Basic auth rides the frontend map lane — routes on one Secret share its userlist, one auth rule per (userlist, realm) pair selected on the whole map value (spaces dashed as upstream does), one denied_by rule per userlist, and no backend challenge
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -1411,6 +1413,7 @@ validationTests:
 
   test-auth-custom-realm:
     description: Basic authentication with custom realm
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -1518,6 +1521,7 @@ validationTests:
 
   test-auth-realm-with-spaces:
     description: Auth realm with spaces is normalized to dashes (matching upstream), not a render failure
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -1550,6 +1554,7 @@ validationTests:
 
   test-auth-per-secret-userlists:
     description: Ingresses sharing the same secret share the same userlist (deduplication for performance)
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -2609,6 +2614,7 @@ validationTests:
 
   test-haproxytech-auth-realm-quote-escaped:
     description: A double quote in auth-realm is escaped inside the quoted realm string.
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - {apiVersion: v1, kind: Secret, metadata: {namespace: default, name: realm-auth2}, type: Opaque, data: {admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX}}

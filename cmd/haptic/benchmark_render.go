@@ -192,6 +192,7 @@ func buildBenchmarkContext(
 	httpStore *testrunner.FixtureHTTPStoreWrapper,
 	typedResourceTypes map[string]reflect.Type,
 	logger *slog.Logger,
+	extraOpts ...rendercontext.Option,
 ) *rendercontext.BuildResult {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
@@ -203,16 +204,13 @@ func buildBenchmarkContext(
 	// typed store wrappers (`resources.<name>.List()` returning typed pointers)
 	// the engine compiled against, so typed-access templates render identically
 	// to production; it's empty when no --schema-dir was supplied.
-	builder := rendercontext.NewBuilder(
-		context.Background(),
-		cfg,
-		pathResolver,
-		logger,
+	opts := append([]rendercontext.Option{
 		rendercontext.WithStores(resourceStores),
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
 		rendercontext.WithHTTPFetcher(httpStore),
 		rendercontext.WithTypedResources(typedResourceTypes),
-	)
+	}, extraOpts...)
+	builder := rendercontext.NewBuilder(context.Background(), cfg, pathResolver, logger, opts...)
 
 	return builder.Build()
 }
@@ -224,18 +222,16 @@ func buildBenchmarkContext(
 // reused; only render-scoped state (SharedContext, PlanRegistry, collectors) resets.
 func freshBenchmarkContext(
 	cfg *config.Config,
-	testExtra map[string]any,
+	extraContext map[string]any,
 	storeMap map[string]stores.Store,
 	validationPaths *dataplane.ValidationPaths,
 	httpStore *testrunner.FixtureHTTPStoreWrapper,
 	typedResourceTypes map[string]reflect.Type,
 	logger *slog.Logger,
-) *rendercontext.BuildResult {
-	bctx := buildBenchmarkContext(cfg, storeMap, validationPaths, httpStore, typedResourceTypes, logger)
-	// Fold in the _global + per-test extraContext baseline so the benchmark
-	// renders each test exactly as the load gate does (against the isolated
-	// synthetic default certificate), not the deployment's production
-	// extraContext — otherwise a custom defaultSSLCertificate name fails here.
-	testrunner.ApplyTestExtraContext(bctx.Context, cfg, testExtra)
-	return bctx
+) (*rendercontext.BuildResult, error) {
+	extraContextOpts, err := testrunner.ExtraContextOptions(extraContext)
+	if err != nil {
+		return nil, err
+	}
+	return buildBenchmarkContext(cfg, storeMap, validationPaths, httpStore, typedResourceTypes, logger, extraContextOpts...), nil
 }

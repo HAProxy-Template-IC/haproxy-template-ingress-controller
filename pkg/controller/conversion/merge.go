@@ -47,6 +47,10 @@ const (
 	haproxyConfigKey    = "haproxyConfig"
 
 	specKey = "spec"
+
+	templatingSettingsKey = "templatingSettings"
+	extraContextKey       = "extraContext"
+	testExtraContextKey   = "testExtraContext"
 )
 
 // guardedSections are the named-map spec sections where a name defined by two
@@ -87,6 +91,9 @@ type SpecOverride struct {
 //     error on a non-`_global` duplicate, `_global` contributions accumulate —
 //     because a mergo deep-merge of two same-named tests silently fabricates a
 //     hybrid test neither author wrote.
+//
+// templatingSettings.testExtraContext is composed after the merge: the
+// libraries' extraContext beneath every source's testExtraContext.
 //
 // Within guardedSections, a name defined by two of the first N-1 sources is an
 // error; the LAST source may override anything, each such override is
@@ -143,6 +150,10 @@ func MergeSpecs(sources []*unstructured.Unstructured) (*unstructured.Unstructure
 		}
 	}
 
+	if err := composeTestExtraContext(merged, sources[:len(sources)-1]); err != nil {
+		return nil, nil, err
+	}
+
 	if len(testSources) > 0 {
 		union, err := UnionValidationTests(testSources)
 		if err != nil {
@@ -159,6 +170,55 @@ func MergeSpecs(sources []*unstructured.Unstructured) (*unstructured.Unstructure
 	result := &unstructured.Unstructured{Object: runtime.DeepCopyJSON(last.Object)}
 	result.Object[specKey] = merged
 	return result, overrides, nil
+}
+
+// composeTestExtraContext sets what validationTests render with: the libraries'
+// extraContext defaults beneath every source's testExtraContext. The config's
+// own extraContext is deployment input and never reaches a test.
+func composeTestExtraContext(merged map[string]any, libraries []*unstructured.Unstructured) error {
+	libraryExtraContext := map[string]any{}
+	for _, library := range libraries {
+		spec, err := extractSpec(library)
+		if err != nil {
+			return err
+		}
+		defaults, err := templatingSettingsMap(spec, extraContextKey)
+		if err != nil {
+			return fmt.Errorf("%s: %w", library.GetName(), err)
+		}
+		if len(defaults) == 0 {
+			continue
+		}
+		if err := mergo.MergeWithOverwrite(&libraryExtraContext, defaults); err != nil {
+			return fmt.Errorf("merging extraContext of %s: %w", library.GetName(), err)
+		}
+	}
+	testExtraContext, err := templatingSettingsMap(merged, testExtraContextKey)
+	if err != nil {
+		return err
+	}
+	if len(libraryExtraContext) == 0 && len(testExtraContext) == 0 {
+		return nil
+	}
+	if err := mergo.MergeWithOverwrite(&libraryExtraContext, testExtraContext); err != nil {
+		return fmt.Errorf("merging %s: %w", testExtraContextKey, err)
+	}
+	return unstructured.SetNestedMap(merged, libraryExtraContext, templatingSettingsKey, testExtraContextKey)
+}
+
+// templatingSettingsMap returns a deep copy of templatingSettings.<field>, so a
+// caller's merge never aliases maps mergo writes into the merged spec. An empty
+// RawExtension serializes as null, which reads as absent.
+func templatingSettingsMap(spec map[string]any, field string) (map[string]any, error) {
+	value, _, err := unstructured.NestedFieldNoCopy(spec, templatingSettingsKey, field)
+	if err != nil || value == nil {
+		return nil, err
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s.%s must be an object, got %T", templatingSettingsKey, field, value)
+	}
+	return runtime.DeepCopyJSON(object), nil
 }
 
 // CompositeVersion identifies the state of a whole merged set as one string.

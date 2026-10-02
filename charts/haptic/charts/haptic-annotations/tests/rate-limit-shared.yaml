@@ -384,10 +384,8 @@ validationTests:
     extraContext:
       rateLimit:
         shared:
-          # Required, not incidental: the store renders only when the shared limiter is
-          # on, because that is the condition under which role.yaml grants the RBAC to
-          # apply it. A per-test extraContext deep-merges over the production one, so
-          # setting managedStore alone does NOT imply this.
+          # The store renders only with the shared limiter on, the condition under
+          # which role.yaml grants the RBAC to apply it.
           enabled: true
           managedStore:
             enabled: true

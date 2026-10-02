@@ -3,7 +3,7 @@
         test-coverage test-integration-coverage test-coverage-combined bench bench-gateway-api \
         build check-source-hash docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check test-spoa-reload \
-        tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
+        tidy vendor verify verify-generate generate generate-chart-defaults clean fmt vet install-tools dev \
         release test-release check-controller-output goreleaser-snapshot \
         pgo-profile pgo-merge \
         extract-schemas
@@ -1042,7 +1042,7 @@ verify: ## Verify dependencies
 
 verify-generate: ## Verify generated code (CRDs, DeepCopy) is up-to-date
 	@echo "Verifying generated code is up-to-date..."
-	@$(MAKE) generate-crds generate-deepcopy
+	@$(MAKE) generate-crds generate-deepcopy generate-chart-defaults
 	@# tests/schemas is the offline --schema-dir. Its HAPTIC CRD copies must
 	@# track charts/haptic/crds, or an author can validate a config against a
 	@# field the real CRD dropped (e.g. a deleted validationTest key) and never
@@ -1058,10 +1058,10 @@ verify-generate: ## Verify generated code (CRDs, DeepCopy) is up-to-date
 	@# running this with a freshly regenerated (but not yet committed) type threw
 	@# that work away and left the tree unbuildable. CI runs on a fresh checkout,
 	@# so there is nothing there worth reverting either.
-	@if ! git diff --quiet --exit-code -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go' '$(SCHEMA_DIR)/haproxy-haptic.org_*.yaml'; then \
+	@if ! git diff --quiet --exit-code -- charts/haptic/crds/ charts/haptic/files/default-values.json 'pkg/apis/**/zz_generated.*.go' '$(SCHEMA_DIR)/haproxy-haptic.org_*.yaml'; then \
 		echo ""; \
 		echo "ERROR: Generated files are out of date:"; \
-		git diff --stat -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go' '$(SCHEMA_DIR)/haproxy-haptic.org_*.yaml'; \
+		git diff --stat -- charts/haptic/crds/ charts/haptic/files/default-values.json 'pkg/apis/**/zz_generated.*.go' '$(SCHEMA_DIR)/haproxy-haptic.org_*.yaml'; \
 		echo ""; \
 		echo "The regenerated files have been left in place — commit them."; \
 		exit 1; \
@@ -1070,7 +1070,10 @@ verify-generate: ## Verify generated code (CRDs, DeepCopy) is up-to-date
 
 ## Code generation
 
-generate: generate-crds generate-deepcopy generate-clientset ## Run all code generation
+generate: generate-crds generate-deepcopy generate-clientset generate-chart-defaults ## Run all code generation
+
+generate-chart-defaults: ## Copy the chart's default values to where its templates can read them
+	yq -o json -I0 '... comments=""' charts/haptic/values.yaml > charts/haptic/files/default-values.json
 
 generate-crds: ## Generate CRD manifests from Go types
 	@echo "Generating CRD manifests..."

@@ -810,19 +810,12 @@ sslCertificates:
 validationTests:
   _global:
     description: Global SSL test fixtures
-    # Pins the whole suite to the synthetic fixture cert: the operator's real
-    # defaultSSLCertificate names exist only in the cluster, never in a fixture, and
-    # their production extraContext is the lowest merge layer. Per-test extraContext
-    # still overrides this.
+    # Binds the default certificate to the fixture Secret below, also when tests
+    # render with the deployment's extraContext, whose certificate exists only in
+    # the cluster. Per-test extraContext still overrides this.
     extraContext:
       tls:
         defaultCertificate: {name: default-ssl-cert, namespace: haptic, ecdsaName: ""}
-        # Pinned OFF for the same reason: with it on, the STEK file is freshly
-        # crypto-random every render (no `deterministic` assertion can hold) and every
-        # HTTPS bind gains tls-ticket-keys (breaking end-anchored bind assertions in
-        # the gateway tests) — a load-gate crash-loop for any operator who enabled it.
-        # test-ssl-session-tickets-seed opts back in explicitly.
-        sessionTickets: {enabled: false}
     fixtures:
       secrets:
         # Name + namespace must match the _global extraContext pin above.

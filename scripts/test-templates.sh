@@ -187,21 +187,12 @@ HAPROXY_VERSION_ARG=""
 if [[ -n "${HAPROXY_VERSION:-}" ]]; then
     HAPROXY_VERSION_ARG="--set haproxyVersion=${HAPROXY_VERSION}"
 fi
-# Render with operator customisations that MUST be isolated from the bundled
-# synthetic validationTests, so the full-suite run below doubles as the
-# isolation regression for two same-class bugs that each crash-looped the load
-# gate on a real deployment:
-#   1. A CUSTOM defaultSSLCertificate name (RSA + ECDSA companion) that does NOT
-#      match the chart default ("default-ssl-cert"). ssl.yaml's _global test pins
-#      a synthetic default cert every test renders against, so the suite passes
-#      whatever secretName/ecdsaSecretName the deployment sets.
-#   2. Governance ENABLED with a global rule. The daemon runs validationTests on
-#      config load, and a global rule ("every Ingress must set a waf-policy")
-#      emits GovernanceViolation events on unrelated tests' fixtures — the
-#      event-asserting tests then fail and reject the operator's config at the
-#      load gate. ingress-annotations-compat.yaml's _global test pins governance
-#      OFF so it can't leak; the governance-specific tests re-enable it per-test.
-# Both leaked into every test before their _global pins and broke the homelab.
+# Render with operator values the bundled validationTests have broken on real
+# deployments: a custom default-cert name, governance on with a global rule,
+# session tickets on, non-default ports, overrides of keys that tests assert the
+# chart default of, and a password-hash policy every hash fails. Assertions must
+# not see any of them (they render with testExtraContext); the deployment-values
+# pass must still render them.
 TEMPLATE_VALUES_ARGS=()
 if [[ -n "${HAPTIC_TEMPLATE_VALUES:-}" ]]; then
     if [[ ! -f "$HAPTIC_TEMPLATE_VALUES" ]]; then
@@ -210,7 +201,7 @@ if [[ -n "${HAPTIC_TEMPLATE_VALUES:-}" ]]; then
     fi
     TEMPLATE_VALUES_ARGS=(--values "$HAPTIC_TEMPLATE_VALUES")
 fi
-echo -e "${YELLOW}Rendering Helm chart (custom default-cert name, isolation regression)...${NC}" >&2
+echo -e "${YELLOW}Rendering Helm chart (operator-value isolation regression)...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --namespace default \
     $HAPROXY_VERSION_ARG \
@@ -224,21 +215,19 @@ if ! helm template "$CHART_DIR" \
     --set controller.templateLibraries.customCrdExample.enabled=true \
     --set defaultSSLCertificate.secretName=regression-custom-rsa-cert \
     --set defaultSSLCertificate.ecdsaSecretName=regression-custom-ecdsa-cert \
-    `# Regression guard: run the WHOLE suite with the session-ticket opt-in ON.` \
-    `# The suite otherwise only ever exercises chart defaults, where the feature` \
-    `# is off — so a test that the opt-in falsifies passes here and crash-loops` \
-    `# the operator's controller at the load gate. That is exactly what happened:` \
-    `# with tickets on, the SSL library emits a per-render crypto-random` \
-    `# tls-ticket-keys file, breaking the deterministic assertion AND every` \
-    `# end-anchored HTTPS bind-shape assertion. Five tests, none visible under` \
-    `# defaults. Isolation now lives in the ssl library's _global baseline; this` \
-    `# flag is what proves it stays effective.` \
     --set 'controller.config.templatingSettings.extraContext.tls.sessionTickets.enabled=true' \
     --set 'controller.config.templatingSettings.extraContext.governance.enabled=true' \
     --set 'controller.config.templatingSettings.extraContext.governance.rules[0].resource=ingresses' \
     --set-string "controller.config.templatingSettings.extraContext.governance.rules[0].path=metadata.annotations['haproxy-haptic.org/waf-policy']" \
     --set 'controller.config.templatingSettings.extraContext.governance.rules[0].required=true' \
     --set 'controller.config.templatingSettings.extraContext.governance.rules[0].enforcement=audit' \
+    --set haproxy.ports.http=9080 \
+    --set haproxy.ports.https=9443 \
+    --set controller.config.templatingSettings.extraContext.hardStopAfter=61m \
+    --set controller.config.templatingSettings.extraContext.tune.bufsize=262144 \
+    --set controller.config.templatingSettings.extraContext.ssl_redirect_default=true \
+    --set controller.config.templatingSettings.extraContext.ingressDefaultSSLRedirect=true \
+    --set 'controller.config.templatingSettings.extraContext.annotationCompatibility.basicAuth.passwordHashValidation.regex=^NOMATCH$' \
     | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
     > "$TEMP_CONFIG"; then
     echo -e "${RED}Error: Failed to render Helm chart${NC}" >&2
@@ -934,18 +923,9 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     fi
 fi
 
-# The reusable-WAF validationTests are self-contained: each pins the exact
-# extraContext.waf values it needs (per-test extraContext deep-merges over the
-# global context at test run time), so they run in the main validation pass
-# above under the standard render — no per-profile helm renders are needed.
-
 # PROXY-protocol opt-in profile. Unlike the profiles above this runs the WHOLE
-# test set, not named tests: the hazard it guards is an UNRELATED test breaking
-# once an operator flips the opt-in. Per-test extraContext deep-merges over the
-# operator's, so a test asserting a feature is absent fails as soon as someone
-# enables it — and the load gate turns that into a controller crash-loop on a
-# config CI called green. Any absence assertion must pin its own opt-in; this
-# profile is what catches the ones that don't.
+# test set, not named tests: every test's fixtures must still render, and pass
+# haproxy -c, with the opt-in on.
 if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     PROXY_PROTOCOL_CONFIG=$(mktemp /tmp/haptic-proxy-protocol-config-XXXXXX.yaml)
     trap 'rm -f "$TEMP_CONFIG" "$RATE_LIMIT_CONFIG" "$PROXY_PROTOCOL_CONFIG"' EXIT

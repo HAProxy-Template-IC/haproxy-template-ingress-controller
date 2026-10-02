@@ -3460,10 +3460,6 @@ validationTests:
       With tracing off an inbound trace id is adopted for log correlation, but
       nothing is minted and no traceparent is written upstream
     fixtures: {}
-    # Pinned, not inherited. A per-test extraContext deep-merges over the
-    # deployment's, so without this the test would assert the off-shape against an
-    # operator who enabled tracing — failing the LOAD GATE and crash-looping the
-    # controller on a perfectly good config.
     extraContext: {tracing: {enabled: false}}
     assertions:
       - type: haproxy_valid

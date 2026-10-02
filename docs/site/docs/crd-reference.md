@@ -659,6 +659,7 @@ Template rendering configuration and custom variables.
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `extraContext` | object (any JSON value) | No | — |
+| `testExtraContext` | object (any JSON value) | No | — |
 | `engine` | string (`scriggo`) | No | `scriggo` (the only valid value) |
 
 ```yaml
@@ -678,6 +679,8 @@ Custom variables are exposed to templates as the `extraContext` map. Read a key 
 ```
 
 See [Custom template variables](templating.md#custom-template-variables) for detailed examples.
+
+`testExtraContext` is what validation tests render with instead of `extraContext`, so the values you deploy with can't change what a test asserts. The Helm chart sets it to the context its default values produce. See [Extra context](validation-reference.md#extra-context).
 
 ### `validationTests`
 
