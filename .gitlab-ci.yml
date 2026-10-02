@@ -2132,6 +2132,12 @@ test-chart-upgrade:
     - .snapshot-version
   timeout: 40 minutes
   interruptible: true
+  # One job per upgrade baseline: every published stable release plus the
+  # retained compatibility baseline. check-chart-upgrade-baselines fails when a
+  # published release is missing here.
+  parallel:
+    matrix:
+      - BASELINE_CHART_VERSION: ["0.1.0", "0.2.0", "0.2.1", "0.2.0-alpha.3"]
   needs:
     - compute-ci-image-tag
     - job: build-ci
@@ -2155,6 +2161,7 @@ test-chart-upgrade:
         - pkg/webhook/**/*
         - pkg/controller/webhook/**/*
         - scripts/test-chart-upgrade.sh
+        - scripts/check-chart-upgrade-baselines.sh
         - scripts/lib/admission.sh
         - scripts/lib/upgrade-traffic.sh
         - scripts/testdata/chart-upgrade/**/*
@@ -2222,6 +2229,17 @@ test-chart-upgrade-minimum-kubernetes:
   extends: test-chart-upgrade
   variables:
     KIND_NODE_IMAGE: ${MINIMUM_KIND_NODE_IMAGE}
+
+check-chart-upgrade-baselines:
+  stage: integration
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+  interruptible: true
+  rules: !reference [test-chart-upgrade, rules]
+  script:
+    - scripts/check-chart-upgrade-baselines.sh
 
 test-gitops-lifecycle:
   stage: integration
