@@ -109,15 +109,20 @@ shared-log buffer (80 MiB with the default image), compiled configuration, and
 process overhead. The working directory is an executable, memory-backed
 `emptyDir`; its memory also counts toward the container limit.
 
-### Prevent the shared log from being swapped
+### Shared-log memory
 
-The working directory must remain resident in memory. Use a verified `noswap`
-mount, container swap prohibition, or nodes without swap; `tmpfs` alone doesn't
-prevent paging. See [Kubernetes swap behavior](https://kubernetes.io/docs/concepts/cluster-administration/swap-memory-management/#swap-behaviors).
+The bundled Varnish image locks its shared log in memory automatically. It runs
+as user 1000 with only the `IPC_LOCK` Linux capability; privilege escalation is
+disabled. Its memory remains subject to the container limit.
 
-If Varnish logs `mlock() of VSM failed`, [upstream permits it](https://www.varnish.org/docs/reference/vsm/#warning-mlock-of-vsm-failed)
-only when the environment prevents paging. Otherwise, raise the memory-lock limit in the container
-runtime or disable swapping for these containers. The chart
-keeps the non-root image and adds no capabilities or host-limit changes.
+Your cluster policy must permit `IPC_LOCK` for the Varnish container, including
+when you use the default image. Kubernetes [Baseline and Restricted Pod Security
+Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+reject this capability. If your namespace enforces either policy, arrange a
+policy exception with your cluster administrator before enabling or upgrading
+the cache.
+
+If you override `cache.varnish.image`, use an image with the `cap_ipc_lock=ep`
+file capability on `varnishd`.
 Collect routine access logs from HAProxy; Varnish's shared log is a circular
 diagnostic buffer.

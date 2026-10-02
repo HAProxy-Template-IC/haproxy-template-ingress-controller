@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1
+FROM varnish:9.1@sha256:2b2f4efc79f6172af8513e48d8b37bc03bb91b34470122f4e3ccec29aeb0afc9
+
+# Non-root exec needs a file capability to retain the Pod's IPC_LOCK grant.
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libcap2-bin \
+    && setcap cap_ipc_lock=ep /usr/sbin/varnishd \
+    && rm -rf /var/lib/apt/lists/*
+USER 1000:1000

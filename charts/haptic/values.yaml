@@ -1882,16 +1882,8 @@ cache:
     # restart) or deployment (ephemeral accelerator).
     workload: statefulset
     replicas: 2
-    # Stock upstream Varnish image — no custom build needed for the loopback
-    # topology. Pin to a digest in production.
-    #
-    # Renovate tracks this through the `varnish image` customManager in
-    # renovate.json. A bare `image: repo:tag` string is invisible to Renovate's
-    # built-in helm-values manager (that one only recognises an
-    # image.repository + image.tag pair), so without the comment + manager this
-    # pin silently never gets bumped — which is how it sat at 9.0.
-    # renovate: datasource=docker depName=varnish
-    image: varnish:9.1
+    # Empty selects the bundled non-root image for this chart version.
+    image: ""
     imagePullPolicy: IfNotPresent
     # Object storage only; budget shared logs, VCL, and process overhead separately.
     malloc: 256m

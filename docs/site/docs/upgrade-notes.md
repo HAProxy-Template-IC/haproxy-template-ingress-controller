@@ -5,6 +5,18 @@ you plan to deploy. Each section lists configuration changes and the steps neede
 to keep your existing routes working. For routine chart upgrades, see
 [Upgrading with Helm](deploying-with-helm.md#upgrading).
 
+## Unreleased: Varnish cache permissions
+
+The next chart version uses a bundled non-root Varnish image and grants its
+container `IPC_LOCK` to keep shared logs in memory. If you enable
+`cache.varnish.enabled`, your cluster policy must allow this capability before
+upgrading. Kubernetes Baseline and Restricted Pod Security Standards reject it;
+arrange a policy exception with your cluster administrator first.
+
+If you override `cache.varnish.image`, remove the override to use the bundled
+image, or supply an image with `cap_ipc_lock=ep` on `varnishd`. See
+[shared-log memory](operations/response-cache.md#shared-log-memory).
+
 ## Upgrading to 0.2
 
 Use this guide to upgrade from 0.1.0 or a 0.2.0 alpha to a stable 0.2 release. The controller

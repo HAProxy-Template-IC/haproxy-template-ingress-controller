@@ -532,6 +532,7 @@ spec:
          and the standalone annotation library on one structured contract. */ -}}
   {{- $cacheContext := deepCopy .Values.cache }}
   {{- $varnish := $cacheContext.varnish }}
+  {{- $_ := set $varnish "image" (include "haptic.varnish.image" .) }}
   {{- if $varnish.enabled }}
     {{- if not .Values.haproxy.enabled }}
       {{- fail "cache.varnish.enabled=true requires the chart-managed HAProxy workload (haproxy.enabled=true): Varnish fetches cache misses from a dedicated backend-fetch frontend on the HAProxy pods." }}

@@ -117,6 +117,7 @@ echo "Updating Chart.yaml artifacthub.io/images annotation..."
 source versions.env
 sed -i "s|haptic:[0-9a-z.-]*|haptic:$VERSION-haproxy$DEFAULT_HAPROXY|" charts/haptic/Chart.yaml
 sed -i "s|spoa-hub:[0-9a-z.-]*|spoa-hub:$VERSION|" charts/haptic/Chart.yaml
+sed -i "s|haptic/varnish:[0-9a-z.-]*|haptic/varnish:$VERSION|" charts/haptic/Chart.yaml
 sed -i "s|most recently shipped release ([^)]*)|most recently shipped release ($VERSION)|" charts/haptic/Chart.yaml
 
 # --- documentation version references (single pass) ----------------------------

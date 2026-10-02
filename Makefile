@@ -326,6 +326,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	bash scripts/tests/test_chart_haproxy_image.sh
 	$(MAKE) test-release
 	bash scripts/tests/test_chart_spoa_image.sh
+	bash scripts/tests/test_chart_varnish_image.sh
 	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
 	@$(MAKE) test-unit
@@ -642,7 +643,23 @@ test-ingress-conformance: ## Run upstream Kubernetes Ingress conformance suite a
 		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
 		$(if $(TEST_RUN_PATTERN),-test.run "$(TEST_RUN_PATTERN)")
 
-test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e tests (self-contained — kind + helm install + fixtures)
+VARNISH_OUTPUT ?= --load
+
+.PHONY: docker-build-varnish
+docker-build-varnish: ## Build the bundled non-root Varnish image
+	@set -eu; image="$(VARNISH_IMAGE)"; \
+	if [ -z "$$image" ]; then \
+		if [ -n "$$(yq -r '.cache.varnish.image' charts/haptic/values.yaml)" ]; then \
+			echo "Using the configured Varnish image; no bundled image build required"; exit 0; \
+		fi; \
+		image="$$(bash scripts/chart-varnish-image.sh)"; \
+	fi; \
+	docker buildx build $(if $(VARNISH_PLATFORMS),--platform "$(VARNISH_PLATFORMS)") \
+		--label "org.opencontainers.image.source=https://gitlab.com/haproxy-haptic/haptic" \
+		--label "org.opencontainers.image.revision=$$(git rev-parse HEAD)" \
+		--provenance=false --tag "$$image" $(VARNISH_OUTPUT) -f Dockerfile.varnish .
+
+test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test docker-build-varnish) ## Run full-stack e2e tests (self-contained — kind + helm install + fixtures)
 	@echo "Running e2e tests..."
 	@# The chart composes its image tag as "<image.tag>-haproxy<haproxyVersion>".
 	@# docker-build-test produces "haptic:test" (with HAProxy $(HAPROXY_VERSION)

@@ -99,7 +99,7 @@ workflows too.
 | `cache.varnish.originServiceName` | string | `haptic-cache-origin` | Name of the internal ClusterIP Service (in the release namespace) that fronts the dedicated backend-fetch port on the HAProxy pods |
 | `cache.varnish.workload` | string | `statefulset` | Workload type: `statefulset` updates one shard at a time; `deployment` uses the configured Deployment rollout strategy. |
 | `cache.varnish.replicas` | int | `2` | Number of Varnish cache shards |
-| `cache.varnish.image` | string | `varnish:9.1` | Varnish container image — stock upstream, since the loopback topology needs no custom build. Pin to a digest in production |
+| `cache.varnish.image` | string | `""` | Empty selects the bundled non-root Varnish image for this chart version; set a full image reference to override it |
 | `cache.varnish.imagePullPolicy` | string | `IfNotPresent` | Kubernetes pull policy for the Varnish image (`Always`, `IfNotPresent`, or `Never`) |
 | `cache.varnish.malloc` | string | `256m` | Varnish `-s malloc,<size>` object storage per shard; excludes shared logs, compiled configuration, and process/object overhead |
 | `cache.varnish.resources` | object | cpu `100m` / memory `384Mi` | Varnish pod resource requests and limits. A CPU request is required for autoscaling. Budget `malloc`, the memory-backed working directory (including the default 80 MiB shared log), compiled configuration, and process/object overhead |

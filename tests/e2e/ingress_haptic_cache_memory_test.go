@@ -18,9 +18,11 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,12 +81,18 @@ func verifyVarnishRuntimeMemory(ctx context.Context, tb testing.TB, pod *corev1.
 		return err
 	}
 	if values["filesystem"] != "tmpfs" || values["owner"] != "1000:1000" || values["reload"] != "ok" ||
-		values["worker_uid"] != "1000:1000" || values["worker_capabilities"] != "0000000000000000" {
+		values["worker_uid"] != "1000:1000" || values["worker_capabilities"] != "0000000000004000" || values["worker_no_new_privileges"] != "1" {
 		return fmt.Errorf("unexpected workdir evidence: %v", values)
+	}
+	if err := addVarnishSharedMappings(ctx, pod, values); err != nil {
+		return err
 	}
 	residency, err := testutil.VerifyVarnishMemoryResidency(values)
 	if err != nil {
 		return err
+	}
+	if residency != "mlock" {
+		return fmt.Errorf("Varnish shared memory is not locked: %s", residency)
 	}
 	tb.Logf("Varnish %s residency=%s evidence=%v", pod.Name, residency, values)
 	return nil
@@ -105,10 +113,21 @@ func verifyVarnishMemoryPod(pod *corev1.Pod, expectedImage string) error {
 	if pod.Spec.Containers[container].Image != expectedImage {
 		return fmt.Errorf("pod image %q does not match configured image %q", pod.Spec.Containers[container].Image, expectedImage)
 	}
-	security := pod.Spec.Containers[container].SecurityContext
-	if security != nil && (security.Capabilities != nil && len(security.Capabilities.Add) > 0 ||
-		security.Privileged != nil && *security.Privileged) {
-		return fmt.Errorf("stock Varnish must not add capabilities or run privileged")
+	return verifyVarnishSecurity(pod.Spec.Containers[container].SecurityContext)
+}
+
+func verifyVarnishSecurity(security *corev1.SecurityContext) error {
+	if security == nil || security.RunAsNonRoot == nil || !*security.RunAsNonRoot ||
+		security.RunAsUser == nil || *security.RunAsUser != 1000 ||
+		security.RunAsGroup == nil || *security.RunAsGroup != 1000 ||
+		security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
+		security.Privileged != nil && *security.Privileged {
+		return fmt.Errorf("Varnish must run as user 1000 without privilege escalation")
+	}
+	if security.Capabilities == nil ||
+		!slices.Equal(security.Capabilities.Add, []corev1.Capability{"IPC_LOCK"}) ||
+		!slices.Equal(security.Capabilities.Drop, []corev1.Capability{"ALL"}) {
+		return fmt.Errorf("Varnish must drop every capability except IPC_LOCK")
 	}
 	return nil
 }
@@ -121,6 +140,10 @@ func readVarnishMemoryProbe(ctx context.Context, podName string) (map[string]str
 	if err != nil {
 		return nil, fmt.Errorf("probe workdir and reload VCL: %w: %s", err, strings.TrimSpace(string(output)))
 	}
+	return parseVarnishProbe(output)
+}
+
+func parseVarnishProbe(output []byte) (map[string]string, error) {
 	values := map[string]string{}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(output)), "\n") {
 		key, value, found := strings.Cut(line, "=")
@@ -131,6 +154,116 @@ func readVarnishMemoryProbe(ctx context.Context, podName string) (map[string]str
 		values[key] = value
 	}
 	return values, nil
+}
+
+func addVarnishSharedMappings(ctx context.Context, pod *corev1.Pod, values map[string]string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	node := pod.Spec.NodeName
+	owner, err := exec.CommandContext(ctx, "docker", "inspect", "--format",
+		`{{index .Config.Labels "io.x-k8s.kind.cluster"}}`, node).Output()
+	if err != nil || strings.TrimSpace(string(owner)) != ClusterName {
+		return fmt.Errorf("node %s does not belong to test cluster %s: %v", node, ClusterName, err)
+	}
+	rootPID, err := varnishContainerPID(ctx, pod)
+	if err != nil {
+		return err
+	}
+	workerPID, err := strconv.Atoi(values["worker_pid"])
+	if err != nil || workerPID <= 0 {
+		return fmt.Errorf("invalid Varnish worker PID %q", values["worker_pid"])
+	}
+	// File capabilities restrict smaps access; inspect from the owned Kind node.
+	workerPath := fmt.Sprintf("/proc/%d/root/proc/%d/smaps", rootPID, workerPID)
+	managerPath := fmt.Sprintf("/proc/%d/smaps", rootPID)
+	output, err := exec.CommandContext(ctx, "docker", "exec", node, "awk", varnishSharedMappingProbe, managerPath, workerPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("read Varnish mappings: %w: %s", err, output)
+	}
+	mappings, err := parseVarnishProbe(output)
+	if err != nil {
+		return err
+	}
+	for key, value := range mappings {
+		values[key] = value
+	}
+	return nil
+}
+
+func varnishContainerPID(ctx context.Context, pod *corev1.Pod) (int, error) {
+	index := slices.IndexFunc(pod.Status.ContainerStatuses, func(status corev1.ContainerStatus) bool {
+		return status.Name == "varnish"
+	})
+	if index < 0 {
+		return 0, fmt.Errorf("Varnish container status is missing")
+	}
+	id := strings.TrimPrefix(pod.Status.ContainerStatuses[index].ContainerID, "containerd://")
+	output, err := exec.CommandContext(ctx, "docker", "exec", pod.Spec.NodeName, "crictl", "inspect", id).CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("inspect Varnish process: %w: %s", err, output)
+	}
+	var container struct {
+		Info struct {
+			PID int `json:"pid"`
+		} `json:"info"`
+	}
+	if err := json.Unmarshal(output, &container); err != nil {
+		return 0, fmt.Errorf("decode Varnish process identity: %w", err)
+	}
+	if container.Info.PID <= 0 {
+		return 0, fmt.Errorf("Varnish container has no running process")
+	}
+	return container.Info.PID, nil
+}
+
+// Count each backing-file extent once; mlock is not inherited across fork.
+// VmFlags reports locking; Locked is PSS: https://docs.kernel.org/filesystems/proc.html.
+const varnishSharedMappingProbe = `
+/^[0-9a-f]+-[0-9a-f]+ / {
+  shared = ($0 ~ /\/_.vsm_(child|mgt)\//)
+  extent = $4 ":" $5 ":" $3
+}
+shared && $1 == "Size:" {key = extent ":" $2; sizes[key] = $2}
+shared && $1 == "Rss:" && $2 > rss[key] {rss[key] = $2}
+shared && $1 == "VmFlags:" {for (i = 2; i <= NF; i++) if ($i == "lo") locks[key] = sizes[key]}
+shared && $1 == "Swap:" && $2 > swaps[key] {swaps[key] = $2}
+END {
+  for (key in sizes) {
+    mapped += sizes[key]; resident += rss[key]; locked += locks[key]; swapped += swaps[key]
+  }
+  printf "shared_size_kib=%.0f\nshared_rss_kib=%.0f\nshared_locked_kib=%.0f\nshared_swap_kib=%.0f\n", mapped, resident, locked, swapped
+}`
+
+func TestHapticVarnishSharedMappingProbe(t *testing.T) {
+	mapping := func(inode, offset, rss, locked int, flags string) string {
+		return fmt.Sprintf("1000-2000 rw-s %08x 00:229 %d /var/lib/varnish/_.vsm_mgt/_.Params\nSize: 4 kB\nRss: %d kB\nLocked: %d kB\nSwap: 0 kB\nVmFlags: rd wr sh %s\n",
+			offset, inode, rss, locked, flags)
+	}
+	tests := []struct {
+		name, input, size, resident, locked string
+	}{
+		{"inherited mapping locked by manager", mapping(21, 0, 4, 2, "lo") + mapping(21, 0, 4, 0, ""), "4", "4", "4"},
+		{"unlocked in both processes", mapping(21, 0, 4, 0, "") + mapping(21, 0, 0, 0, ""), "4", "4", "0"},
+		{"different files are not combined", mapping(21, 0, 4, 4, "lo") + mapping(22, 0, 4, 0, ""), "8", "8", "4"},
+		{"different extents are not combined", mapping(21, 0, 4, 4, "lo") + mapping(21, 4096, 4, 0, ""), "8", "8", "4"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), "awk", varnishSharedMappingProbe)
+			cmd.Stdin = strings.NewReader(tt.input)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("run mapping probe: %v: %s", err, output)
+			}
+			values, err := parseVarnishProbe(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if values["shared_size_kib"] != tt.size || values["shared_rss_kib"] != tt.resident || values["shared_locked_kib"] != tt.locked {
+				t.Fatalf("unexpected mappings: %v", values)
+			}
+		})
+	}
 }
 
 const varnishMemoryProbe = `set -eu
@@ -144,18 +277,11 @@ printf 'mount_noswap=%s\n' "$(awk '$2 == "/var/lib/varnish" {print ($4 ~ /(^|,)n
 printf 'node_swap_devices=%s\n' "$(awk 'END {print NR-1}' /proc/swaps)"
 worker=$(varnishadm -n "$workdir" pid | awk '$1 == "Worker:" {print $2}')
 test -n "$worker"
+printf 'worker_pid=%s\n' "$worker"
 printf 'worker_uid=%s\n' "$(awk '$1 == "Uid:" {print $2 ":" $3}' "/proc/$worker/status")"
+printf 'worker_no_new_privileges=%s\n' "$(awk '$1 == "NoNewPrivs:" {print $2}' "/proc/$worker/status")"
 printf 'worker_capabilities=%s\n' "$(awk '$1 == "CapEff:" {print $2}' "/proc/$worker/status")"
 printf 'locked_kib=%s\n' "$(awk '$1 == "VmLck:" && $3 == "kB" {print $2}' "/proc/$worker/status")"
-awk '
-/^[0-9a-f]+-[0-9a-f]+ / {shared = ($0 ~ /\/_.vsm_(child|mgt)\//)}
-shared && $1 == "Size:" {mapped += $2}
-shared && $1 == "Rss:" {resident += $2}
-shared && $1 == "Locked:" {locked += $2}
-shared && $1 == "Swap:" {swapped += $2}
-END {
-  printf "shared_size_kib=%.0f\nshared_rss_kib=%.0f\nshared_locked_kib=%.0f\nshared_swap_kib=%.0f\n", mapped, resident, locked, swapped
-}' "/proc/$worker/smaps"
 cgroup_path=$(awk -F: '$1 == "0" && $2 == "" {print $3}' "/proc/$worker/cgroup")
 cgroup_dir=/sys/fs/cgroup$cgroup_path
 if test -n "$cgroup_path" && test -r "$cgroup_dir/memory.swap.max" && test -r "$cgroup_dir/memory.swap.current"; then

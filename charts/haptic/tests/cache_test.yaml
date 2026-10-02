@@ -7,6 +7,30 @@ templates:
   - varnish-networkpolicy.yaml
 
 tests:
+  - it: should select the bundled Varnish image for the chart version
+    template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    chart:
+      appVersion: test-version
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.cache.varnish.image
+          value: registry.gitlab.com/haproxy-haptic/haptic/varnish:test-version
+
+  - it: should preserve an explicit Varnish image
+    template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      cache.varnish.image: example.invalid/cache@sha256:abc
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.cache.varnish.image
+          value: example.invalid/cache@sha256:abc
+
   - it: should reject an unsupported memory-lock capability setting
     template: haproxytemplateconfig.yaml
     set:

@@ -93,6 +93,7 @@ variables:
         - .tool-versions
         - Makefile
         - Dockerfile
+        - Dockerfile.varnish
         - scripts/**/*
         - .gitlab-ci.yml
         - .golangci.yml
@@ -125,6 +126,7 @@ variables:
         - .tool-versions
         - Makefile
         - Dockerfile
+        - Dockerfile.varnish
         - scripts/**/*
         - .gitlab-ci.yml
         - .golangci.yml
@@ -667,6 +669,8 @@ validate-helm-libraries:
         charts/haptic/Chart.yaml
       grep -q "^version: ${CHART_SNAPSHOT_VERSION}$" charts/haptic/Chart.yaml \
         || { echo "source chart version stamp did not apply"; exit 1; }
+      VARNISH_CI_IMAGE="${CI_REGISTRY_IMAGE}/varnish:ci-${CI_PIPELINE_ID}" \
+        yq -i '.cache.varnish.image = strenv(VARNISH_CI_IMAGE)' charts/haptic/values.yaml
       echo "Source chart stamped: ${CHART_SNAPSHOT_VERSION}"
 
 .snapshot-build-base:
@@ -766,6 +770,10 @@ validate-helm-libraries:
         build_snapshot_image "${HAPROXY_VERSION}" || failed=1
       done
       [ "${failed}" -eq 0 ]
+    - |
+      make docker-build-varnish \
+        VARNISH_IMAGE="${CI_REGISTRY_IMAGE}/varnish:${SNAPSHOT_TAG}" \
+        VARNISH_PLATFORMS="${PLATFORMS//,linux\/arm\/v7/}" VARNISH_OUTPUT=--push
     # Create default tag if requested (points to haproxy3.4)
     - |
       if [ "${CREATE_DEFAULT_TAG}" = "true" ]; then
@@ -1103,6 +1111,7 @@ build-playground-wasm:
 .rules-spoa-chart:
   rules:
     - changes:
+        - Dockerfile.varnish
         - charts/haptic/charts/base/library.yaml
         - charts/haptic/charts/ssl/library.yaml
         - charts/haptic/charts/ingress/library.yaml
@@ -3685,17 +3694,23 @@ release-controller:
     # Post-release: SBOM generation (goreleaser can't do this for Docker images)
     # Query registry for digests using buildx imagetools (dockers_v2 doesn't include digest in artifacts.json)
     - |
-      for HAPROXY_VERSION in $HAPROXY_VERSIONS; do
-        IMAGE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}-haproxy${HAPROXY_VERSION}"
+      for IMAGE_VARIANT in $HAPROXY_VERSIONS varnish; do
+        if [ "$IMAGE_VARIANT" = "varnish" ]; then
+          IMAGE_TAG="${CI_REGISTRY_IMAGE}/varnish:${VERSION#v}"
+          SBOM_NAME="varnish"
+        else
+          IMAGE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}-haproxy${IMAGE_VARIANT}"
+          SBOM_NAME="haproxy${IMAGE_VARIANT}"
+        fi
         IMAGE_DIGEST=$(docker buildx imagetools inspect "$IMAGE_TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')
         if [ -z "$IMAGE_DIGEST" ]; then
           echo "ERROR: Could not get digest for $IMAGE_TAG"
           exit 1
         fi
-        IMAGE_REF="${CI_REGISTRY_IMAGE}@${IMAGE_DIGEST}"
+        IMAGE_REF="${IMAGE_TAG%:*}@${IMAGE_DIGEST}"
         echo "Generating SBOM for ${IMAGE_TAG} (${IMAGE_DIGEST})..."
-        syft $IMAGE_REF -o spdx-json > sbom-haproxy${HAPROXY_VERSION}.spdx.json
-        cosign attest --predicate sbom-haproxy${HAPROXY_VERSION}.spdx.json --type spdxjson --yes $IMAGE_REF
+        syft $IMAGE_REF -o spdx-json > sbom-${SBOM_NAME}.spdx.json
+        cosign attest --predicate sbom-${SBOM_NAME}.spdx.json --type spdxjson --yes $IMAGE_REF
       done
     # Create latest tags (stable releases only)
     # Use buildx imagetools to create tags and query digests from registry

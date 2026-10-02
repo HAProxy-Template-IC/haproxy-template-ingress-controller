@@ -637,8 +637,8 @@ k8sResources:
       {%- var vSvc = extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring() %}
       {%- var vNs = extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring() %}
       {%- var vPort = extraContext | dig("cache", "varnish", "servicePort") | fallback("6081") | tostring() %}
-      {#- renovate: datasource=docker depName=varnish #}
-      {%- var img = extraContext | dig("cache", "varnish", "image") | fallback("varnish:9.0") | tostring() %}
+      {%- var img = extraContext | dig("cache", "varnish", "image") | fallback("") | tostring() %}
+      {%- if img == "" %}{% fail("cache.varnish.image is required when Varnish is enabled.") %}{% end %}
       {%- var imagePullPolicy = extraContext | dig("cache", "varnish", "imagePullPolicy") | fallback("IfNotPresent") | tostring() %}
       {%- var replicas = extraContext | dig("cache", "varnish", "replicas") | fallback("2") | tostring() %}
       {%- var malloc = extraContext | dig("cache", "varnish", "malloc") | fallback("256m") | tostring() %}
@@ -794,6 +794,14 @@ k8sResources:
               - name: varnish
                 image: {{ img }}
                 imagePullPolicy: {{ imagePullPolicy }}
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 1000
+                  runAsGroup: 1000
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop: ["ALL"]
+                    add: ["IPC_LOCK"]
                 command: ["varnishd"]
                 args: ["-F", "-a", ":6081", "-n", "/var/lib/varnish/varnishd", "-f", "/etc/varnish/default.vcl", "-s", "malloc,{{ malloc }}"]
                 resources:

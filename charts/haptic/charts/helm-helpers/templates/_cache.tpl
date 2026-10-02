@@ -1,3 +1,7 @@
+{{- define "haptic.varnish.image" -}}
+{{- .Values.cache.varnish.image | default (printf "registry.gitlab.com/haproxy-haptic/haptic/varnish:%s" .Chart.AppVersion) -}}
+{{- end -}}
+
 {{/*
 Validate the complete chart-managed cache value surface, including while the
 feature is disabled. This prevents staged configuration from hiding typos or
@@ -41,7 +45,7 @@ invalid availability/autoscaling combinations until a later enable.
 {{- if not (regexMatch "^[0-9]+$" (toString $varnish.replicas)) -}}{{- fail "cache.varnish.replicas must be a positive integer." -}}{{- end -}}
 {{- $replicas := int $varnish.replicas -}}
 {{- if lt $replicas 1 -}}{{- fail "cache.varnish.replicas must be a positive integer." -}}{{- end -}}
-{{- if or (not (kindIs "string" $varnish.image)) (eq (trim $varnish.image) "") -}}{{- fail "cache.varnish.image must be a non-empty image reference string." -}}{{- end -}}
+{{- if or (not (kindIs "string" $varnish.image)) (and (ne $varnish.image "") (eq (trim $varnish.image) "")) -}}{{- fail "cache.varnish.image must be an image reference string or empty for the bundled image." -}}{{- end -}}
 {{- if or (not (kindIs "string" $varnish.imagePullPolicy)) (not (has $varnish.imagePullPolicy (list "Always" "IfNotPresent" "Never"))) -}}{{- fail "cache.varnish.imagePullPolicy must be one of: Always, IfNotPresent, Never." -}}{{- end -}}
 {{- if or (not (kindIs "string" $varnish.malloc)) (not (regexMatch "^[1-9][0-9]*[kKmMgGtT]?$" $varnish.malloc)) -}}
   {{- fail "cache.varnish.malloc must be a positive Varnish malloc size in bytes or with a K, M, G, or T suffix, such as 256m." -}}
