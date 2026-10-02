@@ -281,6 +281,9 @@ func TestCheckRenderedSidecarConfigsInvokesBothCompilers(t *testing.T) {
 	assert.Contains(t, got, "validate", "vector config was not validated")
 	assert.Contains(t, got, "/w/vector.yaml")
 	assert.Contains(t, got, "varnishd", "VCL was not compiled")
+	assert.Contains(t, got, "--cap-drop=ALL")
+	assert.Contains(t, got, "--cap-add=IPC_LOCK")
+	assert.Contains(t, got, "--security-opt=no-new-privileges")
 	assert.Contains(t, got, "/w/default.vcl")
 	// Backend hostnames are faked so varnishd's compile-time resolution can't
 	// depend on cluster DNS that doesn't exist on the pipeline host.

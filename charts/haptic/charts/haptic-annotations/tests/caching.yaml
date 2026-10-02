@@ -13,7 +13,7 @@ _fx:
 
 validationTests:
   test-haptic-cache-workdir-statefulset:
-    description: Stateful Varnish uses writable tmpfs without adding capabilities.
+    description: Varnish locks its shared log without running as root.
     extraContext:
       cache:
         varnish: {enabled: true, workload: statefulset}
@@ -24,7 +24,8 @@ validationTests:
       - {type: contains, target: "k8s:varnish-cache", pattern: '"-n", "/var/lib/varnish/varnishd"'}
       - {type: contains, target: "k8s:varnish-cache", pattern: 'name: varnish-workdir\s+mountPath: /var/lib/varnish'}
       - {type: contains, target: "k8s:varnish-cache", pattern: 'name: varnish-workdir\s+emptyDir:\s+medium: Memory'}
-      - {type: not_contains, target: "k8s:varnish-cache", pattern: 'capabilities:|privileged:|vsl_space|varnishncsa|varnishlog'}
+      - {type: contains, target: "k8s:varnish-cache", pattern: 'runAsNonRoot: true\s+runAsUser: 1000\s+runAsGroup: 1000\s+allowPrivilegeEscalation: false\s+capabilities:\s+drop: \["ALL"\]\s+add: \["IPC_LOCK"\]'}
+      - {type: not_contains, target: "k8s:varnish-cache", pattern: 'privileged:|vsl_space|varnishncsa|varnishlog'}
 
   test-haptic-cache-workdir-deployment:
     description: Deployment Varnish uses the same tmpfs and capability policy.
@@ -38,7 +39,8 @@ validationTests:
       - {type: contains, target: "k8s:varnish-cache", pattern: '"-n", "/var/lib/varnish/varnishd"'}
       - {type: contains, target: "k8s:varnish-cache", pattern: 'name: varnish-workdir\s+mountPath: /var/lib/varnish'}
       - {type: contains, target: "k8s:varnish-cache", pattern: 'name: varnish-workdir\s+emptyDir:\s+medium: Memory'}
-      - {type: not_contains, target: "k8s:varnish-cache", pattern: 'capabilities:|privileged:|vsl_space|varnishncsa|varnishlog'}
+      - {type: contains, target: "k8s:varnish-cache", pattern: 'runAsNonRoot: true\s+runAsUser: 1000\s+runAsGroup: 1000\s+allowPrivilegeEscalation: false\s+capabilities:\s+drop: \["ALL"\]\s+add: \["IPC_LOCK"\]'}
+      - {type: not_contains, target: "k8s:varnish-cache", pattern: 'privileged:|vsl_space|varnishncsa|varnishlog'}
 
   test-haptic-cache-core:
     description: Cache exclusions and canaries preserve routing precedence with request filters before backend switches.

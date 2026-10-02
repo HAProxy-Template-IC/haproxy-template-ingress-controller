@@ -62,7 +62,7 @@ func LoadChartImages(series string) (ChartImages, error) {
 const chartImagesTemplate = `haproxyVersion: {{ .Values.haproxyVersion | quote }}
 haproxy: {{ include "haptic.haproxy.image" . | quote }}
 vector: {{ include "haptic.vector.image" . | quote }}
-varnish: {{ .Values.cache.varnish.image | quote }}
+varnish: {{ include "haptic.varnish.image" . | quote }}
 valkey: {{ .Values.rateLimit.shared.managedStore.image | quote }}
 spoaHub: {{ include "haptic.spoaHub.image" . | quote }}
 `

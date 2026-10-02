@@ -2,6 +2,8 @@ _helm_load:
   enable: '{{ or .Values.controller.templateLibraries.hapticAnnotations.enabled .Values.controller.templateLibraries.gateway.enabled .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}'
 
   inject:
+    - path: templatingSettings.extraContext.cache.varnish.image
+      value: '{{ include "haptic.varnish.image" . }}'
     - path: watchedResources.waf_selfservice_catalogs.fieldSelector
       value: 'metadata.name={{ .Values.controller.config.templatingSettings.extraContext.waf.policies.selfService.configMapName | default "waf-policies" }}'
 
@@ -45,8 +47,7 @@ templatingSettings:
         originServiceName: haptic-cache-origin
         workload: statefulset
         replicas: 2
-        # renovate: datasource=docker depName=varnish
-        image: varnish:9.0
+        image: ""
         imagePullPolicy: IfNotPresent
         malloc: 256m
         resources: {requests: {cpu: 100m, memory: 384Mi}, limits: {memory: 384Mi}}

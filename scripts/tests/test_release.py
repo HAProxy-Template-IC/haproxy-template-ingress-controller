@@ -50,6 +50,35 @@ class ReleaseTests(unittest.TestCase):
                     self.assertEqual(result.returncode, code, result.stderr)
                     self.assertEqual(result.stdout, output, result.stderr)
 
+    def test_release_attests_each_images_own_repository(self):
+        config = yaml.compose((ROOT / ".gitlab-ci.yml").read_text())
+        jobs = {key.value: value for key, value in config.value}
+        job = {key.value: value for key, value in jobs["release-controller"].value}
+        script = next(node.value for node in job["script"].value
+                      if node.value.startswith("for IMAGE_VARIANT"))
+        with tempfile.TemporaryDirectory(prefix="haptic-image-sboms-") as temp:
+            root = Path(temp)
+            for name, body in {
+                "docker": "printf 'sha256:fixture\\n'",
+                "syft": 'printf "syft %s\\n" "$1" >> "$TEST_CALLS"; printf "{}\\n"',
+                "cosign": 'printf "cosign %s\\n" "$*" >> "$TEST_CALLS"',
+            }.items():
+                command = root / name
+                command.write_text("#!/bin/sh\n" + body + "\n")
+                command.chmod(0o755)
+            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                   "TEST_CALLS": str(root / "calls"), "CI_REGISTRY_IMAGE": "registry.test/haptic",
+                   "VERSION": "v1.2.3", "HAPROXY_VERSIONS": "3.4"}
+            subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=root, env=env,
+                           capture_output=True, text=True, check=True)
+            calls = (root / "calls").read_text().splitlines()
+            self.assertEqual([line for line in calls if line.startswith("syft ")], [
+                "syft registry.test/haptic@sha256:fixture",
+                "syft registry.test/haptic/varnish@sha256:fixture",
+            ])
+            self.assertTrue(any(line.endswith("registry.test/haptic/varnish@sha256:fixture")
+                                for line in calls if line.startswith("cosign ")))
+
     def test_chart_publication_waits_for_complete_signed_runtime(self):
         config = yaml.compose((ROOT / ".gitlab-ci.yml").read_text())
         jobs = {key.value: value for key, value in config.value}
@@ -84,7 +113,12 @@ class ReleaseTests(unittest.TestCase):
                 "VERSION": "0.1.0\n",
                 "versions.env": 'DEFAULT_HAPROXY="3.4"\n',
                 "CHANGELOG.md": "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A fix.\n",
-                "charts/haptic/Chart.yaml": 'version: 0.1.0\nappVersion: "0.1.0"\n',
+                "charts/haptic/Chart.yaml": (
+                    'version: 0.1.0\nappVersion: "0.1.0"\n'
+                    'annotations:\n  artifacthub.io/images: |\n'
+                    '    - name: varnish\n'
+                    '      image: registry.gitlab.com/haproxy-haptic/haptic/varnish:0.1.0\n'
+                ),
                 "charts/haptic/README.md": "https://haproxy-haptic.org/docs/dev/\n",
                 "charts/haptic/values.yaml": "# https://gitlab.com/haproxy-haptic/haptic/-/blob/main/README.md\n",
                 "charts/haptic/templates/NOTES.txt": "https://haproxy-haptic.org/docs/dev/\n",
@@ -129,6 +163,7 @@ class ReleaseTests(unittest.TestCase):
                 with self.subTest(version=version):
                     run("bash", "scripts/release.sh", version)
                     self.assertEqual(run("git", "status", "--porcelain"), "")
+                    self.assertIn(f"haptic/varnish:{version}\n", run("git", "show", "HEAD:charts/haptic/Chart.yaml"))
                     committed = run("git", "show", "HEAD:docs/site/docs/upgrade-notes.md")
                     self.assertIn(f"--version {version}\n", committed)
                     self.assertIn(f"--expect-chart-version {version}\n", committed)

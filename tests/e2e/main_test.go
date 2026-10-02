@@ -455,11 +455,8 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 			return ctx, err
 		}
 	}
-	// The cache shard deploys the Varnish tier. Pull the (stock upstream) image
-	// on the host and load it into kind so the StatefulSet doesn't depend on the
-	// kind node reaching Docker Hub (and no rate-limit flakiness in CI).
 	if os.Getenv("HAPTIC_E2E_PROFILE") == "cache" {
-		if err := pullImageIntoKind(ctx, runtimeImages.Varnish); err != nil {
+		if err := loadVarnishIntoKind(ctx); err != nil {
 			return ctx, err
 		}
 		if err := pullImageIntoKind(ctx, VarnishPolicyProbeImage); err != nil {
@@ -487,6 +484,13 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 // on main before any test ran. The retry covers only the network fetch — the
 // kind import that follows is local and fails deterministically.
 const pullImageRetries = 3
+
+func loadVarnishIntoKind(ctx context.Context) error {
+	if err := exec.CommandContext(ctx, "docker", "image", "inspect", runtimeImages.Varnish).Run(); err == nil {
+		return loadImageIntoKind(ctx, runtimeImages.Varnish)
+	}
+	return pullImageIntoKind(ctx, runtimeImages.Varnish)
+}
 
 func pullImageIntoKind(ctx context.Context, image string) error {
 	var err error

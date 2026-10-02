@@ -13,6 +13,7 @@ chart, the template libraries, the SPOA hub and modules, external services
 The suite owns its dependencies. `make test-e2e` will:
 
 1. Build the controller image as `haptic:test` via `docker-build-test`.
+   Build the bundled non-root Varnish image; explicit image overrides are preserved.
    Pull the chart-selected SPOA image and load it into Kind for both the hub
    and validator containers. A conflicting `SPOA_TAG` is rejected before setup.
 2. Tag it as `haptic:test-haproxyX.Y` and verify its source hash and binary digest.

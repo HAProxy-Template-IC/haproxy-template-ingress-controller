@@ -80,24 +80,7 @@
     },
     {
       "customType": "regex",
-      "description": "Varnish image tag, in every file that pins one. The value is a bare `image: <repo>:<tag>` string, which Renovate's built-in helm-values manager does not recognise (it looks for an image.repository + image.tag pair), so this pin needs an explicit manager or it is never bumped. All five pins must move together: values.yaml is what deploys, preflight.go is the varnishd that compiles the VCL in the gate, and constants.go is the image e2e preloads into kind. Bumping values.yaml alone left the others two majors behind on an EOL release. The pattern matches a `renovate:` comment line followed by the pin on the next line, in any file type — keep them adjacent.",
-      "managerFilePatterns": [
-        "/^charts/haptic/values\\.yaml$/",
-        "/^charts/haptic/charts/haptic-annotations/_index\\.yaml$/",
-        "/^charts/haptic/charts/haptic-annotations/70-caching\\.yaml$/",
-        "/^cmd/haptic/preflight\\.go$/",
-        "/^tests/e2e/constants\\.go$/"
-      ],
-      "matchStrings": [
-        "renovate:\\s*datasource=docker\\s+depName=varnish[^\\n]*\\n[^\\n]*varnish:(?<currentValue>[0-9]+\\.[0-9]+(\\.[0-9]+)?)"
-      ],
-      "datasourceTemplate": "docker",
-      "depNameTemplate": "varnish",
-      "packageNameTemplate": "varnish"
-    },
-    {
-      "customType": "regex",
-      "description": "Valkey image tag, in every file that pins one, for the same reason as the Varnish manager above: values.yaml was bumped to 9-alpine while the annotation-library default, its snippet fallback, and the e2e preload stayed on 8-alpine. Same comment-anchored pattern — a `renovate:` line immediately above the pin.",
+      "description": "Valkey image tag, in every file that pins one, for the same reason as the Varnish manager above: values.yaml was bumped to 9-alpine while the annotation-library default, its snippet fallback, and the e2e preload stayed on 8-alpine. Same comment-anchored pattern \u2014 a `renovate:` line immediately above the pin.",
       "managerFilePatterns": [
         "/^charts/haptic/values\\.yaml$/",
         "/^charts/haptic/charts/haptic-annotations/_index\\.yaml$/",
@@ -111,19 +94,6 @@
       "depNameTemplate": "valkey/valkey",
       "packageNameTemplate": "valkey/valkey",
       "versioningTemplate": "regex:^(?<major>\\d+)(\\.(?<minor>\\d+))?(\\.(?<patch>\\d+))?-(?<compatibility>[a-z]+)$"
-    },
-    {
-      "customType": "regex",
-      "description": "Varnish pin as DOCUMENTED in the chart values reference — same reason as the Valkey entry below.",
-      "managerFilePatterns": [
-        "/^docs/site/docs/reference\\.md$/"
-      ],
-      "matchStrings": [
-        "\\|\\s*`varnish:(?<currentValue>[0-9]+(\\.[0-9]+)*)`\\s*\\|"
-      ],
-      "datasourceTemplate": "docker",
-      "depNameTemplate": "varnish",
-      "packageNameTemplate": "varnish"
     },
     {
       "customType": "regex",
@@ -142,7 +112,7 @@
   ],
   "packageRules": [
     {
-      "description": "The scriggo runtime is a HAPTIC fork (gitlab.com/haproxy-haptic/scriggo), tracked by the built-in gomod manager as a pseudo-version digest. A digest bump is a fork sync that may carry an upstream security fix, but nothing here links it to open2b/scriggo advisories (govulncheck keys on module path). Force human review — never auto-merge — so a reviewer checks each bump against the upstream advisory watch. See docs/site/docs/development/scriggo-fork-maintenance.md.",
+      "description": "The scriggo runtime is a HAPTIC fork (gitlab.com/haproxy-haptic/scriggo), tracked by the built-in gomod manager as a pseudo-version digest. A digest bump is a fork sync that may carry an upstream security fix, but nothing here links it to open2b/scriggo advisories (govulncheck keys on module path). Force human review \u2014 never auto-merge \u2014 so a reviewer checks each bump against the upstream advisory watch. See docs/site/docs/development/scriggo-fork-maintenance.md.",
       "matchManagers": [
         "gomod"
       ],
@@ -210,7 +180,7 @@
       "groupName": "haproxy image"
     },
     {
-      "description": "Keep HAPROXY_VERSION ARGs on stable series only. Docker Hub's floating `X.Y` tag can point at a dev release before the first `X.Y.Z` patch ships (e.g. `3.4` → `3.4-dev2`), so derive the tracked version from patch tags. Covers both the `ARG HAPROXY_VERSION=` lines and the `FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}` lines that Renovate's built-in dockerfile manager extracts by resolving the ARG — both need the clamp, across all three files.",
+      "description": "Keep HAPROXY_VERSION ARGs on stable series only. Docker Hub's floating `X.Y` tag can point at a dev release before the first `X.Y.Z` patch ships (e.g. `3.4` \u2192 `3.4-dev2`), so derive the tracked version from patch tags. Covers both the `ARG HAPROXY_VERSION=` lines and the `FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}` lines that Renovate's built-in dockerfile manager extracts by resolving the ARG \u2014 both need the clamp, across all three files.",
       "matchFileNames": [
         "Dockerfile",
         "versions.env",

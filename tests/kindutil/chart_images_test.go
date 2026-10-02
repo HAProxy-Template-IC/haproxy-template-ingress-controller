@@ -29,6 +29,7 @@ func TestChartImagesFollowTheDefaultAndEverySupportedSeries(t *testing.T) {
 	images, err := LoadChartImages("")
 	require.NoError(t, err)
 	assert.Equal(t, chart.Values["haproxyVersion"], images.HAProxyVersion)
+	assert.Equal(t, "registry.gitlab.com/haproxy-haptic/haptic/varnish:"+chart.Metadata.AppVersion, images.Varnish)
 	patches := chart.Values["haproxyPatchVersions"].(map[string]any)
 	for series, patch := range patches {
 		t.Run(series, func(t *testing.T) {

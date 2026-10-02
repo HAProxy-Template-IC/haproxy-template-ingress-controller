@@ -103,6 +103,11 @@ class ChartRulesTests(unittest.TestCase):
                 with self.subTest(path=path, job=job):
                     self.assertTrue(selects(self.config, job, path))
 
+    def test_varnish_image_changes_build_and_exercise_the_cache(self):
+        for job in ("build-snapshot", "build-spoa-image-snapshot", "test-e2e-cache"):
+            with self.subTest(job=job):
+                self.assertTrue(selects(self.config, job, "Dockerfile.varnish"))
+
     def test_chart_prose_does_not_select_expensive_jobs(self):
         for path in CHART_DOCS | {"docs/site/docs/operations/gitops.md"}:
             for job in ("chart-test", "chart-test-minimum-kubernetes", "validate-helm-libraries",

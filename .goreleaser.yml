@@ -165,6 +165,17 @@ dockers_v2:
       - "--target=runtime"
       - "--build-context=binary=."
 
+  - id: varnish
+    ids: [controller]
+    dockerfile: Dockerfile.varnish
+    images:
+      - "registry.gitlab.com/haproxy-haptic/haptic/varnish"
+    tags:
+      - "{{ .Version }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+
 # Cosign keyless signing for Docker images
 docker_signs:
   - cmd: cosign

@@ -353,6 +353,7 @@ func writeAndRun(ctx context.Context, dir string, config *sidecarConfig, runtime
 	if config.kind == vectorSidecar {
 		args = append(args, config.image, "validate", "--no-environment", "/w/"+config.name)
 	} else {
+		args = append(args, "--cap-drop=ALL", "--cap-add=IPC_LOCK", "--security-opt=no-new-privileges")
 		// Varnish resolves cluster DNS names at compile time, outside the cluster.
 		for _, host := range vclBackendHosts(config.content) {
 			args = append(args, "--add-host", host+":127.0.0.1")
