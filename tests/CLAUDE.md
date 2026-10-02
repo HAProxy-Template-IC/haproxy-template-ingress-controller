@@ -397,6 +397,21 @@ Or set `KEEP_CLUSTER=false` to always cleanup:
 KEEP_CLUSTER=false make test-integration
 ```
 
+### An e2e Shard Outgrows Its Job Timeout
+
+CI splits the e2e suite by measured cost (`scripts/shard-go-tests.py --weights
+tests/e2e/shard-weights.json`): serial tests add up on a shard's wall clock, so
+an unbalanced split can push one shard past the 25-minute timeout while the
+others idle. When a slow test is added or a shard nears the timeout, regenerate
+the weights from the `go test -v` traces of every shard of one full run:
+
+```bash
+python3 scripts/go-test-weights.py shard1.log shard2.log shard3.log > tests/e2e/shard-weights.json
+```
+
+A test without a weight, including one the measured run skipped, is treated as
+serial with the median duration of the serial tests that took a second or more.
+
 ### Test Namespaces Left Behind
 
 **Problem**: Many `test-*` namespaces accumulating.
