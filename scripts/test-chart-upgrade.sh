@@ -43,6 +43,11 @@ if missing:
 print("\n".join(stable + required))'
 }
 
+if [ "${1:-}" = "--list-baselines" ]; then
+  discover_baselines
+  exit $?
+fi
+
 # One baseline per invocation. With none pinned, re-exec once per discovered
 # release rather than restructuring the phases into a loop: each pass then gets
 # its own fresh cluster for free, which it needs anyway because a baseline's
