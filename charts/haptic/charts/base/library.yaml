@@ -2654,7 +2654,8 @@ k8sResources:
         // hardcode anything Service-port-shaped on the Scriggo side.
         var ports = []any{}
         var seenNames = map[string]bool{}
-        var seenPorts = map[int]bool{}
+        // Keyed "<port>/<protocol>": a QUIC listener shares its number with the TCP one.
+        var seenPorts = map[string]bool{}
         for _, rawPort := range svcMap | dig("ports") | toSlice() {
           var entry = rawPort.(map[string]any)
           var entryName = tostring(entry | dig("name") | fallback(""))
@@ -2666,11 +2667,12 @@ k8sResources:
             continue
           }
           seenNames[entryName] = true
-          seenPorts[entryPort] = true
+          var entryProtocol = tostring(entry | dig("protocol") | fallback("TCP"))
+          seenPorts[tostring(entryPort) + "/" + entryProtocol] = true
           var built = map[string]any{
             "name":     entryName,
             "port":     entryPort,
-            "protocol": tostring(entry | dig("protocol") | fallback("TCP")),
+            "protocol": entryProtocol,
           }
           var targetVal = dig(entry, "targetPort")
           if targetVal == nil {
@@ -2713,15 +2715,17 @@ k8sResources:
       {%- for _, extraPort := range extraPorts %}
       {%%
         var port = toint(dig(extraPort, "port") | fallback(0))
-        if port <= 0 || seenPorts[port] {
+        var protocol = tostring(dig(extraPort, "protocol") | fallback("TCP"))
+        var portKey = tostring(port) + "/" + protocol
+        if port <= 0 || seenPorts[portKey] {
           continue
         }
-        seenPorts[port] = true
+        seenPorts[portKey] = true
         ports = append(ports, map[string]any{
           "name":       tostring(dig(extraPort, "name") | fallback("")),
           "port":       port,
           "targetPort": toint(dig(extraPort, "targetPort") | fallback(port)),
-          "protocol":   tostring(dig(extraPort, "protocol") | fallback("TCP")),
+          "protocol":   protocol,
         })
       %%}
       {%- end %}
@@ -3097,6 +3101,8 @@ validationTests:
       - {type: contains, target: "k8s:haproxy-service", pattern: "name: http\n"}
       - {type: contains, target: "k8s:haproxy-service", pattern: "name: https\n"}
       - {type: contains, target: "k8s:haproxy-service", pattern: "name: stats"}
+      # HTTP/3 (default on) shares the HTTPS port number and nodePort over UDP.
+      - {type: contains, target: "k8s:haproxy-service", pattern: '- name: https-quic\s+nodePort: 30443\s+port: 443\s+protocol: UDP\s+targetPort: https-quic'}
 
   test-k8s-haproxy-service-extra-ports:
     description: Operators using haptic without Gateway API (e.g. exposing a raw TCP frontend via a custom haproxyConfig snippet) declare additional Service ports through `haproxy.service.extraPorts` in values.yaml.

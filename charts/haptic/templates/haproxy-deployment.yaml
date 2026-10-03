@@ -12,6 +12,7 @@
 {{- $podSpec := $haproxy.podSpec }}
 {{- $ports := $haproxy.ports }}
 {{- $proxyProtocol := include "haptic.proxyProtocol" . | fromYaml }}
+{{- $http3 := include "haptic.http3" . | fromYaml }}
 {{- $agent := $haproxy.agent }}
 
 {{/*
@@ -538,6 +539,11 @@ spec:
             - name: {{ $name }}
               containerPort: {{ index $ports $name }}
               protocol: TCP
+            {{- end }}
+            {{- if $http3.enabled }}
+            - name: https-quic
+              containerPort: {{ $ports.https }}
+              protocol: UDP
             {{- end }}
             {{- if $proxyProtocol.enabled }}
             - name: proxy-http

@@ -4,6 +4,7 @@ templateSnippets:
       {{- toJSON(map[string]any{"gateways": map[string]any{
         "controllerNamespace": tostring(extraContext | dig("controllerNamespace") | fallback("")),
         "haproxyPodSelector": extraContext | dig("haproxyPodSelector"),
+        "http3": tostring(extraContext | dig("http3", "enabled") | fallback(true)) == "true",
       }}) -}}
 
   gateway-service-resources-200-per-gateway:
@@ -46,6 +47,12 @@ templateSnippets:
               "name": "p" + tostring(listenerPort), "port": listenerPort,
               "targetPort": targetPort, "protocol": "TCP",
             })
+            if listenerProtocol == "HTTPS" && tostring(dig(props, "http3")) == "true" {
+              ports = append(ports, map[string]any{
+                "name": "q" + tostring(listenerPort), "port": listenerPort,
+                "targetPort": targetPort, "protocol": "UDP",
+              })
+            }
           }
           if hasIsolated && len(ports) > 0 {
             var serviceName = BoundedK8sName("gw", namespace, name, "")

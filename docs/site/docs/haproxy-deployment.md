@@ -50,7 +50,11 @@ its ports through `haproxy.service.*` and pod ports through `haproxy.ports.*`:
 |------|--------------|----------------|------------------|
 | `http` | 80 | 80 | 30080 |
 | `https` | 443 | 443 | 30443 |
+| `https-quic` (UDP) | 443 | 443 | 30443 |
 | `stats` | 8404 | 8404 | 30404 |
+
+`https-quic` carries [HTTP/3](#http3-quic). It follows the `https` entry's port
+and nodePort, and setting `haproxy.service.https.port: 0` drops both.
 
 The agent gets its own internal-only `ClusterIP` Service (`<fullname>-haproxy-dataplane`, for example `<release>-haptic-haproxy-dataplane`) on port 5555. Its type comes from `haproxy.agent.service.type`.
 
@@ -82,6 +86,75 @@ haproxy:
 haproxy:
   enabled: false
 ```
+
+### HTTP/3 (QUIC)
+
+HTTP/3 is on by default. Every HTTPS listener that terminates TLS, including
+HTTPS listeners on Gateways, also accepts QUIC on the same port number over UDP.
+It uses the same certificates, client-certificate validation, and session
+tickets as the TCP listener. HTTPS responses carry an `alt-svc` header, so
+browsers and other HTTP/3 clients switch to QUIC on their next request:
+
+```http
+alt-svc: h3=":443"; ma=86400
+```
+
+HAProxy advertises the port the client used for HTTPS, read from the request's
+`Host` header, or 443 when `Host` has no port. That's correct whenever UDP is
+published on the same port as TCP, which the chart does: the HAProxy Service,
+each Gateway's Service, the container, and the NetworkPolicy all add a UDP port
+next to every HTTPS port.
+
+**Allow UDP to HAProxy.** Firewalls, security groups, and load balancers in
+front of the HAProxy Service must pass UDP on the HTTPS port (443 by default),
+or on the nodePort when clients reach a `NodePort` Service directly. Clients
+that can't reach UDP keep using HTTP/2 or HTTP/1.1 over TCP. A cloud load
+balancer has to support Services that mix TCP and UDP ports, which Kubernetes
+supports since 1.26.
+
+If your load balancer publishes UDP on a different port than TCP, advertise
+that port:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        http3:
+          altSvc:
+            port: 8443      # UDP port clients reach
+            maxAge: 86400   # seconds a client remembers the advertisement
+```
+
+To turn HTTP/3 off, which removes the UDP listeners, the UDP Service ports, and
+the `alt-svc` header:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        http3:
+          enabled: false
+```
+
+Clients cache the advertisement for up to `maxAge` seconds. After you turn
+HTTP/3 off, a client with a cached entry tries QUIC, fails, and falls back to
+TCP.
+
+HAProxy doesn't add HTTP/3 in these cases:
+
+- **The [PROXY protocol](#proxy-protocol) listener.** QUIC can't carry a PROXY
+  header, so an HTTP/3 client would reach HAProxy without its real address.
+  Responses on `proxyProtocol.httpsPort` carry no `alt-svc` header.
+- **Gateway listeners with `tls-max-version` below 1.3.** QUIC requires TLS 1.3,
+  so such a listener stays TCP-only and isn't advertised.
+- **TLS-Passthrough and TLS-Terminate (`TLSRoute`) listeners.** They forward TCP
+  streams, not HTTP.
+
+The bundled HAProxy images (3.0–3.4) are built with QUIC support. A
+[self-managed HAProxy](#haproxy-pod-requirements) needs a QUIC-capable build too;
+if `haproxy -vv` doesn't list `QUIC`, set `http3.enabled: false`.
 
 ### PROXY protocol
 

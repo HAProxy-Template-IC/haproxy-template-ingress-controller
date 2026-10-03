@@ -207,7 +207,7 @@ controller:
           minVersion: "TLSv1.2"
 ```
 
-You override one sub-key without restating the others — Helm deep-merges your value with the defaults. Set any value to an empty string (`""`) to omit its directive and fall back to HAProxy's built-in default. Per-listener Gateway TLS options still override this policy for their own bind.
+You override one sub-key without restating the others — Helm deep-merges your value with the defaults. Set any value to an empty string (`""`) to omit its directive and fall back to HAProxy's built-in default. Per-listener Gateway TLS options still override this policy for their own bind. [HTTP/3](haproxy-deployment.md#http3-quic) listeners serve the same certificates and always negotiate TLS 1.3, which QUIC requires.
 
 <a id="it-works-with-whatever-certificate-you-provide"></a>
 

@@ -62,6 +62,7 @@ templateSnippets:
   util-gateway-extra-port-binds:
     requires: [gateways, referencegrants]
     template: |
+      {%- import "util-http3-bind" for HTTP3Bind %}
       {%- macro ExtraPortBinds(protocol string, sslOptionsSuffix string, seenInitial []int) %}
         {%- var seen = map[int]bool{} %}
         {%- for _, p := range seenInitial %}
@@ -75,6 +76,13 @@ templateSnippets:
           {%- if port > 0 && !seen[port] %}
             {%- seen[port] = true %}
       bind *:{{ port }}{{ sslOptionsSuffix }}
+            {%- var quicBind = "" %}
+            {%- if protocol == "HTTPS" %}
+              {%- quicBind = HTTP3Bind(port, "certificate-list.txt", "") %}
+            {%- end %}
+            {%- if quicBind != "" %}
+      {{ quicBind }}
+            {%- end %}
           {%- end %}
         {%- end %}
       {%- end %}

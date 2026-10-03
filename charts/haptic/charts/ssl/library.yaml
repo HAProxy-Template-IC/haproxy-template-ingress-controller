@@ -57,6 +57,10 @@ templatingSettings:
       ciphersuites: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
       minVersion: "TLSv1.2"
 
+    http3:
+      enabled: true
+      altSvc: {port: 0, maxAge: 86400}
+
 templateSnippets:
   util-ssl-passthrough-backends:
     template: |-
@@ -87,6 +91,59 @@ templateSnippets:
       {%- macro SSLBindOptionsForCrtlist(crtlistFilename string) string -%}
         {{- " " -}}ssl crt-list {{ pathResolver.GetPath(crtlistFilename, "crt-list") }} alpn h2,http/1.1{% if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %} tls-ticket-keys {{ pathResolver.GetPath("tls-ticket-keys", "file") }}{% end %}
       {%- end -%}
+
+  # QUIC twin of a TLS bind: same port over UDP, same certificates, ALPN h3. ""
+  # when HTTP/3 is off or the bind caps TLS below 1.3, which QUIC requires.
+  util-http3-bind:
+    template: |-
+      {%- var HTTP3Bind = func(port int, crtlistFilename string, suffix string) string {
+        if tostring(extraContext | dig("http3", "enabled") | fallback(true)) != "true" ||
+          regex_search(suffix, `ssl-max-ver (SSLv3|TLSv1\.[0-2])`) {
+          return ""
+        }
+        var crtlist, _ = pathResolver.GetPath(crtlistFilename, "crt-list")
+        var line = "bind quic4@:" + tostring(port) + " ssl crt-list " + crtlist + " alpn h3"
+        if tostring(extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false)) == "true" {
+          var ticketKeys, _ = pathResolver.GetPath("tls-ticket-keys", "file")
+          line = line + " tls-ticket-keys " + ticketKeys
+        }
+        return line + suffix
+      } -%}
+
+  # alt-svc for responses received on a port that has a QUIC bind in `binds`, so
+  # HTTP/3 is never advertised for a listener that isn't there. Never on the
+  # PROXY-protocol listener (direct, or via the passthrough loopback's TLV): QUIC
+  # can't carry the PROXY header, so h3 clients would lose their real address.
+  util-http3-alt-svc:
+    template: |-
+      {%- var HTTP3AltSvc = func(binds string) string {
+        var ports = []string{}
+        for _, line := range split(binds, "\n") {
+          var trimmed = trimSpace(line)
+          if hasPrefix(trimmed, "bind quic4@:") {
+            ports = append(ports, split(trimmed[len("bind quic4@:"):], " ")[0])
+          }
+        }
+        if len(ports) == 0 {
+          return ""
+        }
+        var cond = "{ dst_port " + join(ports, " ") + " }"
+        if tostring(extraContext | dig("proxyProtocol", "enabled") | fallback(false)) == "true" {
+          cond = cond + " !{ so_name https-proxy-protocol } !{ fc_pp_tlv(0xE0) -m str https-proxy-protocol }"
+        }
+        var maxAge = tostring(toint(extraContext | dig("http3", "altSvc", "maxAge") | fallback(86400)))
+        var header = func(port string) string {
+          return `http-after-response set-header alt-svc "h3=\":` + port + `\"; ma=` + maxAge + `" if ` + cond
+        }
+        var advertised = toint(extraContext | dig("http3", "altSvc", "port") | fallback(0))
+        if advertised > 0 {
+          return "# ssl/http3-alt-svc\n" + header(tostring(advertised))
+        }
+        return "# ssl/http3-alt-svc: advertise the port the client used for HTTPS\n" +
+          `http-request set-var(txn.h3_port) req.hdr(host),regsub("^.*:","") if { req.hdr(host) -m reg :[0-9]+$ }` + "\n" +
+          header("%[var(txn.h3_port)]") + " { var(txn.h3_port) -m found }\n" +
+          header("443") + " !{ var(txn.h3_port) -m found }"
+      } -%}
 
   # 80 bytes: an 8-byte YYYYMMDD marker inside HAProxy's public 16-byte key-NAME
   # field, then 72 crypto-random bytes (AES-256 + HMAC halves stay full-entropy).
@@ -534,7 +591,7 @@ templateSnippets:
       {%- var passthroughBackends = SSLPassthroughBackends() -%}
       {%- var sslTCPOwnsPort = len(passthroughBackends) > 0 && tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
       {%- if !sslTCPOwnsPort && tostring(extraContext | dig("proxyProtocol", "enabled") | fallback(false)) == "true" %}
-      bind *:{{ toint(extraContext | dig("proxyProtocol", "httpsPort") | fallback(8444)) }} accept-proxy{{ render "util-ssl-bind-options" }}
+      bind *:{{ toint(extraContext | dig("proxyProtocol", "httpsPort") | fallback(8444)) }} accept-proxy name https-proxy-protocol{{ render "util-ssl-bind-options" }}
       {%- end -%}
 
   # Passthrough half of the pair above. `frontend ssl-tcp` exists only when it
@@ -542,7 +599,7 @@ templateSnippets:
   ssl-tcp-bind-extra-010-proxy-protocol:
     template: |
       {%- if tostring(extraContext | dig("proxyProtocol", "enabled") | fallback(false)) == "true" %}
-      bind *:{{ toint(extraContext | dig("proxyProtocol", "httpsPort") | fallback(8444)) }} accept-proxy
+      bind *:{{ toint(extraContext | dig("proxyProtocol", "httpsPort") | fallback(8444)) }} accept-proxy name https-proxy-protocol
       {%- end -%}
 
   frontends-500-ssl-tcp:
@@ -735,6 +792,12 @@ templateSnippets:
       {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
       {%- var passthroughBackends = SSLPassthroughBackends() -%}
       {%- if len(passthroughBackends) > 0 -%}
+      {%- var serverExtra = []any{map[string]any{"name": "send-proxy-v2"}} -%}
+      {#- Tells frontend https which ssl-tcp listener accepted the connection; the
+          HTTP/3 alt-svc rules skip the PROXY-protocol one. -#}
+      {%- if tostring(extraContext | dig("proxyProtocol", "enabled") | fallback(false)) == "true" -%}
+        {%- serverExtra = append(serverExtra, map[string]any{"name": "set-proxy-v2-tlv-fmt(0xE0)", "args": []any{"%[so_name]"}}) -%}
+      {%- end -%}
       {{ Backend(map[string]any{
            "name": "ssl-loopback",
            "guid": "be:ssl-loopback",
@@ -742,13 +805,15 @@ templateSnippets:
            "shape": "structural",
            "comments": []any{"# ssl/backends-ssl-loopback"},
            "servers": []any{map[string]any{"name": "loopback", "address": "unix@/etc/haproxy/ssl-frontend.sock",
-             "extra": []any{map[string]any{"name": "send-proxy-v2"}}}},
+             "extra": serverExtra}},
          }) }}
       {%- end -%}
 
   frontends-500-https:
     template: |
       {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
+      {%- import "util-http3-bind" for HTTP3Bind -%}
+      {%- import "util-http3-alt-svc" for HTTP3AltSvc -%}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var gfMap = gf.(map[string]any) -%}
       {%- var passthroughBackends = SSLPassthroughBackends() -%}
@@ -769,7 +834,20 @@ templateSnippets:
       {%- else if bindHTTPSDefault %}
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}{{ render "util-ssl-bind-options" }}
       {%- end %}
-          {{- render_glob "https-bind-extra-*" | indent(2, true) }}
+      {#- UDP stays free even when ssl-tcp owns the TCP port for passthrough. -#}
+      {%- var quicBind = "" %}
+      {%- if bindHTTPSDefault %}
+        {%- quicBind = HTTP3Bind(toint(extraContext | dig("httpsPort") | fallback(8443)), "certificate-list.txt", "") %}
+      {%- end %}
+      {%- if quicBind != "" %}
+          {{ quicBind }}
+      {%- end %}
+      {%- var extraBinds = render_glob "https-bind-extra-*" %}
+          {{- extraBinds | indent(2, true) }}
+      {%- var altSvc = HTTP3AltSvc(quicBind + "\n" + extraBinds) %}
+      {%- if altSvc != "" %}
+          {{ altSvc | indent(4) }}
+      {%- end %}
 
           {{- render_glob "frontend-extra-*" | indent(2, true) }}
 
@@ -1234,7 +1312,7 @@ validationTests:
         pattern: '(?ms)^frontend https$.*?^\s+bind \*:443 ssl crt-list .*?alpn h2,http/1\.1$'
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^frontend https$.*?^\s+bind \*:8444 accept-proxy ssl crt-list .*?alpn h2,http/1\.1$'
+        pattern: '(?ms)^frontend https$.*?^\s+bind \*:8444 accept-proxy name https-proxy-protocol ssl crt-list .*?alpn h2,http/1\.1$'
 
   test-proxy-protocol-https-bind-disabled:
     description: >-
@@ -1265,3 +1343,77 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: not_contains, target: haproxy.cfg, pattern: 'bind \*:[0-9]+ accept-proxy'}
+
+  test-ssl-http3-quic-bind:
+    description: >-
+      HTTP/3 adds a QUIC twin of the HTTPS bind with the same crt-list and ALPN
+      h3, and alt-svc advertises the client's HTTPS port from Host (443 when
+      Host carries none) only for responses on a port with a QUIC bind.
+    extraContext: {http3: {enabled: true, altSvc: {port: 0, maxAge: 86400}}}
+    fixtures: *fixturesTlsTriggerDefaultSsl
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend https$.*?^\s+bind quic4@:443 ssl crt-list \S+/certificate-list\.txt alpn h3$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+http-request set-var\(txn\.h3_port\) req\.hdr\(host\),regsub\("\^\.\*:",""\) if \{ req\.hdr\(host\) -m reg :\[0-9\]\+\$ \}$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+http-after-response set-header alt-svc "h3=\\":%\[var\(txn\.h3_port\)\]\\"; ma=86400" if \{ dst_port 443 \} \{ var\(txn\.h3_port\) -m found \}$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+http-after-response set-header alt-svc "h3=\\":443\\"; ma=86400" if \{ dst_port 443 \} !\{ var\(txn\.h3_port\) -m found \}$'
+
+  test-ssl-http3-disabled:
+    description: With http3.enabled=false there is no QUIC bind and no alt-svc header.
+    extraContext: {http3: {enabled: false}}
+    fixtures: *fixturesTlsTriggerDefaultSsl
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+bind \*:443 ssl crt-list '}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'quic4@'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'set-header alt-svc'}
+
+  test-ssl-http3-alt-svc-fixed-port:
+    description: A configured altSvc.port replaces the Host-derived port, for load balancers that publish UDP on a different port than TCP.
+    extraContext: {http3: {enabled: true, altSvc: {port: 8443, maxAge: 3600}}}
+    fixtures: *fixturesTlsTriggerDefaultSsl
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+http-after-response set-header alt-svc "h3=\\":8443\\"; ma=3600" if \{ dst_port 443 \}$'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'txn\.h3_port'}
+
+  test-ssl-http3-session-tickets:
+    description: The QUIC bind resumes sessions with the same ticket keys as the TCP bind.
+    extraContext:
+      tls: {sessionTickets: {enabled: true}, sessionTicketsToday: "20260721"}
+      http3: {enabled: true, altSvc: {port: 0, maxAge: 86400}}
+    fixtures: *fixturesTlsTriggerDefaultSsl
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind quic4@:443 ssl crt-list \S+ alpn h3 tls-ticket-keys \S*general/tls-ticket-keys$'
+
+  test-ssl-http3-proxy-protocol:
+    description: >-
+      QUIC can't carry a PROXY header, so the PROXY-protocol listener gets no
+      QUIC twin, and responses received on it never advertise HTTP/3.
+    extraContext:
+      proxyProtocol: {enabled: true, httpPort: 8081, httpsPort: 8444}
+      http3: {enabled: true, altSvc: {port: 0, maxAge: 86400}}
+    fixtures: *fixturesTlsTriggerDefaultSsl
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: 'quic4@:8444'}
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:8444 accept-proxy name https-proxy-protocol ssl crt-list '
+      - type: match_count
+        target: haproxy.cfg
+        pattern: 'set-header alt-svc .* if \{ dst_port 443 \} !\{ so_name https-proxy-protocol \} !\{ fc_pp_tlv\(0xE0\) -m str https-proxy-protocol \} !?\{ var\(txn\.h3_port\) -m found \}'
+        expected: "2"

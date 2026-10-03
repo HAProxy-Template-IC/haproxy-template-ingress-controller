@@ -409,3 +409,24 @@ Usage: {{- $pp := include "haptic.proxyProtocol" . | fromYaml }}
 {{- if not (kindIs "map" $configured) -}}{{- $configured = dict -}}{{- end -}}
 {{- merge (deepCopy $configured) (dict "enabled" false "httpPort" 8081 "httpsPort" 8444) | toYaml -}}
 {{- end -}}
+
+{{/*
+Normalized HTTP/3 settings as YAML: {enabled, altSvc: {port, maxAge}}. One
+source for the QUIC switch so the Service port, container port and
+NetworkPolicy cannot drift apart.
+
+Usage: {{- $http3 := include "haptic.http3" . | fromYaml }}
+*/}}
+{{- define "haptic.http3" -}}
+{{- $configured := dig "config" "templatingSettings" "extraContext" "http3" dict .Values.controller -}}
+{{- if not (kindIs "map" $configured) -}}{{- $configured = dict -}}{{- end -}}
+{{- $altSvc := dig "altSvc" dict $configured -}}
+{{- if not (kindIs "map" $altSvc) -}}{{- $altSvc = dict -}}{{- end -}}
+{{- /* hasKey, not merge: merge treats an explicit false or 0 as unset. */ -}}
+{{- dict
+    "enabled" (ternary $configured.enabled true (hasKey $configured "enabled"))
+    "altSvc" (dict
+      "port" (ternary $altSvc.port 0 (hasKey $altSvc "port"))
+      "maxAge" (ternary $altSvc.maxAge 86400 (hasKey $altSvc "maxAge")))
+  | toYaml -}}
+{{- end -}}

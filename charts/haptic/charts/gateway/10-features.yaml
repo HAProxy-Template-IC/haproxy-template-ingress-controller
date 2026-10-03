@@ -745,10 +745,30 @@ templateSnippets:
         if protocol == "" { protocol = "HTTP" }
         var key = tostring(port) + "-" + toLower(protocol[0:1])
         return map[string]any{
-          "name":       "gw-" + key,
+          "name":             "gw-" + key,
+          "port":             port,
+          "targetPort":       port,
+          "protocol":         "TCP",
+          "listenerProtocol": protocol,
+        }
+      } -%}
+
+  # UDP twin of an HTTPS listener's Service port, for its QUIC bind; nil
+  # otherwise. Separate from the TCP entry because it reads extraContext, which
+  # the incremental publisher above can't.
+  util-gateway-quic-service-port-entry:
+    template: |
+      {%- var QUICServicePortEntry = func(entry map[string]any) map[string]any {
+        if tostring(entry["listenerProtocol"]) != "HTTPS" ||
+          tostring(extraContext | dig("http3", "enabled") | fallback(true)) != "true" {
+          return nil
+        }
+        var port = toint(entry["port"])
+        return map[string]any{
+          "name":       "gw-" + tostring(port) + "-q",
           "port":       port,
           "targetPort": port,
-          "protocol":   "TCP",
+          "protocol":   "UDP",
         }
       } -%}
 
@@ -787,6 +807,7 @@ templateSnippets:
   features-140-gateway-service-extra-ports:
     requires: [gateways]
     template: |
+      {%- import "util-gateway-quic-service-port-entry" for QUICServicePortEntry -%}
       {{- render "gateway-service-ports-100-gateway" -}}
       {%%
         // A holder, so features-141 can add to it when the ListenerSet CRD is
@@ -799,6 +820,9 @@ templateSnippets:
         var ports = []map[string]any{}
         for _, entry := range incremental_values("gateway-service-ports", "ports") {
           ports = append(ports, entry.(map[string]any))
+          if quic := QUICServicePortEntry(entry.(map[string]any)); quic != nil {
+            ports = append(ports, quic)
+          }
         }
         holder["ports"] = ports
       %%}
@@ -831,6 +855,7 @@ templateSnippets:
     requires: [listenersets]
     template: |
       {%- import "util-gateway-service-port-entry" for ServicePortEntry -%}
+      {%- import "util-gateway-quic-service-port-entry" for QUICServicePortEntry -%}
       {{- render "gateway-listenerset-service-ports-100-listenerset" -}}
       {%%
         var holderAny, _ = shared.ComputeIfAbsent("extraServicePorts", func() any {
@@ -841,7 +866,11 @@ templateSnippets:
         for _, listener := range incremental_values("gateway-listenerset-service-ports", "ports") {
           var port = toint(dig(listener, "port") | fallback(0))
           if port > 0 {
-            ports = append(ports, ServicePortEntry(port, dig_string(listener, "", "protocol")))
+            var entry = ServicePortEntry(port, dig_string(listener, "", "protocol"))
+            ports = append(ports, entry)
+            if quic := QUICServicePortEntry(entry); quic != nil {
+              ports = append(ports, quic)
+            }
           }
         }
         holder["ports"] = ports | unique_by(e => tostring(e["name"]))

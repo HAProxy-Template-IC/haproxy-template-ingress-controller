@@ -92,6 +92,7 @@ test-gateway-listener-tls-options-injection-admission-rejected
 test-gateway-listener-tls-options-injection-reconcile-warns-and-skips
 test-gateway-listener-tls-options-min-version-only
 test-gateway-listener-tls-options-version-and-ciphers
+test-gateway-listener-tls-options-max-below-1-3-no-quic
 test-gateway-mirror-mixed-percent-fallback
 test-gateway-mixed-unsupported-protocol
 test-gateway-multi-port-listener-bind
@@ -235,6 +236,8 @@ test-httproute-weight-unpermitted-cross-namespace-ref-share-returns-500
 test-httproute-weight-zero-explicit-excludes
 test-httproute-weighted-with-matchers
 test-k8s-haproxy-service-gateway-listener-ports
+test-k8s-haproxy-service-gateway-quic-ports
+test-k8s-haproxy-service-gateway-quic-ports-disabled
 test-k8s-haproxy-service-listenerset-ports
 test-listenerset-allowed-different-namespace-denied
 test-listenerset-allowed-namespace-selector

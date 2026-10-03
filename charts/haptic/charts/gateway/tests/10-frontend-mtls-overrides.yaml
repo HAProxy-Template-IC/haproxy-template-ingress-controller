@@ -118,7 +118,7 @@ validationTests:
         pattern: 'metallb\.universe\.tf/loadBalancerIPs: 192\.0\.2\.10'
       - type: match_count
         target: k8s:gateway-static-addresses
-        pattern: 'targetPort: 18[0-9]{3}'
+        pattern: 'protocol: TCP\s+targetPort: 18[0-9]{3}'
         expected: "2"
       - type: not_contains
         target: k8s:gateway-static-addresses
