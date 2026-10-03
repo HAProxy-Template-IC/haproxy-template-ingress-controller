@@ -67,6 +67,15 @@ spec:
           protocol: TCP
     {{- end }}
 
+    # Controller replicas read each other's /healthz (ADR-0028).
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "haptic.controller.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ $controllerPorts.healthz }}
+          protocol: TCP
+
     {{- with $np.egress.additionalRules }}
     # Additional egress rules
     {{- toYaml . | nindent 4 }}
@@ -82,6 +91,14 @@ spec:
         - port: {{ $controllerPorts.healthz }}
           protocol: TCP
     {{- end }}
+
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "haptic.controller.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ $controllerPorts.healthz }}
+          protocol: TCP
 
     {{- if $np.ingress.monitoring.enabled }}
     # Allow Prometheus/monitoring to scrape metrics

@@ -397,6 +397,7 @@ them:
   endpoints → the watched-resource rule (`failurePolicy: Fail`, no
   `namespaceSelector`) denies **every Ingress create/update in the cluster**.
   `replicaCount: 2` does not help; both replicas read the same merged set.
+  Resolved by [ADR-0028](0028-probes-judge-the-serving-iteration.md).
 
 ### 6a. Deleting the stripper — what is left
 
@@ -456,8 +457,8 @@ template-test profiles, both size gates, helm-unittest,
 **Explicitly deferred, not forgotten:** the 5a readiness blast-radius bound.
 It predates this ADR, exists at N=1, needs its own RULE #2 delta discussion
 (live-reinit and startup failures need different mechanisms), and burying that
-design in a mega-MR is how it would get rubber-stamped. It is the first
-follow-up after this MR merges.
+design in a mega-MR is how it would get rubber-stamped. Decided in
+[ADR-0028](0028-probes-judge-the-serving-iteration.md).
 
 ## Alternatives considered
 

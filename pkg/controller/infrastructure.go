@@ -128,6 +128,9 @@ func waitForPersistentServerBind(
 const (
 	msgStillInitializing = "controller still initializing"
 	healthKeyInitialized = "initialized"
+	// reinitGracePrefix marks an entry softened by applyReinitGrace; sibling
+	// replicas and the e2e suite read it to tell a grace 200 from convergence.
+	reinitGracePrefix = "reinitializing (grace period): "
 )
 
 // beginIteration performs the per-iteration bookkeeping runIteration starts
@@ -175,7 +178,7 @@ func applyReinitGrace(
 		if !e.Healthy {
 			entries[name] = introspection.ComponentHealth{
 				Healthy: true,
-				Error:   "reinitializing (grace period): " + e.Error,
+				Error:   reinitGracePrefix + e.Error,
 			}
 		}
 	}
@@ -240,6 +243,7 @@ func startEarlyInfrastructureServers(
 		// Register /debug/events handler BEFORE Setup()
 		// EventBuffer was created before this function to ensure proper subscription ordering
 		debug.RegisterEventsHandler(infra.IntrospectionServer, eventSource)
+		infra.registerProbeEndpoints()
 		infra.IntrospectionServer.SetHealthChecker(createEarlyHealthChecker(state, infra))
 
 		// Setup routes (including custom handlers) - must be called before Serve()
@@ -262,7 +266,7 @@ func startEarlyInfrastructureServers(
 		logger.Info("Introspection HTTP server started (early startup)",
 			"port", debugPort,
 			"bind_address", fmt.Sprintf("0.0.0.0:%d", debugPort),
-			"endpoints", "/healthz, /debug/vars, /debug/pprof, /debug/events")
+			"endpoints", "/healthz, /readyz, /livez, /debug/vars, /debug/pprof, /debug/events")
 
 		infra.serverStarted = true
 	} else if infra.IntrospectionServer != nil {
@@ -316,7 +320,7 @@ func setupInfrastructureServers(
 	eventBuffer *debug.EventBuffer, // Pre-created buffer (created before EventBus.Start())
 	pluggableMgr *pluggablevalidator.Manager,
 	logger *slog.Logger,
-) {
+) introspection.HealthCheckFunc {
 	logger.Info("Stage 8: Registering debug variables and updating health checker")
 
 	// Start event buffer (created before EventBus.Start() to ensure proper subscription)
@@ -329,12 +333,14 @@ func setupInfrastructureServers(
 	// This replaces the initial simple health checker set in
 	// startEarlyInfrastructureServers. See buildFullHealthChecker for
 	// the readiness contract.
+	checker := buildFullHealthChecker(setup.Registry, state, infra, pluggableMgr)
 	if setup.IntrospectionServer != nil {
-		setup.IntrospectionServer.SetHealthChecker(buildFullHealthChecker(setup.Registry, state, infra, pluggableMgr))
+		setup.IntrospectionServer.SetHealthChecker(checker)
 	}
 
 	logger.Info("Debug variables registered and health checker updated",
 		"endpoints", "/debug/vars, /debug/pprof, /healthz")
+	return checker
 }
 
 // buildFullHealthChecker returns the /healthz callback installed once the

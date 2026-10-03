@@ -78,14 +78,26 @@ Pull a `correlation_id` out of `/debug/vars/events` (reconciliation-, render-, v
 
 ## Health checks during configuration changes
 
-`/healthz` lives on the same listener. Set `controller.ports.healthz` to change its port; the chart updates the Service,
+`/healthz`, `/readyz`, and `/livez` live on the same listener. Set `controller.ports.healthz` to change its port; the chart updates the Service,
 probes, and NetworkPolicy to match. Keep the listener enabled so Kubernetes can
 check the controller's health.
 
-During reinitialization, the health check allows up to 165 seconds for the new
+| Endpoint | Probe | Reports |
+|---|---|---|
+| `/healthz` | startup | Whether the newest configuration loaded and every component runs |
+| `/livez` | liveness | The same for the configuration this replica serves |
+| `/readyz` | readiness | `/livez`, plus whether admission validators are installed |
+
+During reinitialization, `/healthz` allows up to 165 seconds for the new
 configuration to load. A failure that persists beyond this window returns HTTP
 503. Repeated failures don't extend the window. Check controller logs and
 `HAProxyTemplateConfig` status when a change leaves the controller unhealthy.
+
+While the new configuration fails, the replica that leads keeps serving the
+previous one. Its `/readyz` and `/livez` stay 200, so admission keeps validating
+against the configuration your HAProxy pods run. Other replicas return 503 and
+restart. The leader's exemption ends when any replica reports a healthy
+`/healthz`, or when a startup attempt runs longer than 165 seconds.
 
 ## Performance profiles
 

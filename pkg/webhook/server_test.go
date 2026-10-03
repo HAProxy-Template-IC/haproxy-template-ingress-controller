@@ -1087,3 +1087,22 @@ func TestServer_RetireValidatorGenerationIfCurrentLeavesASuccessorServing(t *tes
 	assert.Empty(t, server.validators)
 	server.mu.RUnlock()
 }
+
+// Controller readiness routes admission only to a server whose table an
+// iteration installed; the placeholder before and after one denies everything.
+func TestServer_ValidatingTracksTheInstalledGeneration(t *testing.T) {
+	server := newTestServer(t, &ServerConfig{})
+	assert.False(t, server.Validating(), "a new server has no installed table")
+
+	generation, err := server.InstallValidatorGeneration(map[string]ValidationFunc{}, nil, nil)
+	require.NoError(t, err)
+	assert.True(t, server.Validating(), "an installed table counts even when it registers no kind")
+
+	require.NoError(t, server.RetireValidatorGenerationIfCurrent(generation))
+	assert.False(t, server.Validating(), "retiring the installed table falls back to the placeholder")
+
+	_, err = server.InstallValidatorGeneration(map[string]ValidationFunc{}, nil, nil)
+	require.NoError(t, err)
+	server.retireValidatorGeneration()
+	assert.False(t, server.Validating(), "a closed server validates nothing")
+}

@@ -516,12 +516,12 @@ Configure controller placement, pod metadata, and runtime settings under `contro
 | `controller.service.internalTrafficPolicy` | string | `""` | `Cluster` or `Local` for in-cluster traffic |
 | `controller.service.sessionAffinity` | string | `""` | `None` or `ClientIP` |
 | `controller.service.sessionAffinityConfig` | map | `{}` | Session-affinity tuning (when `sessionAffinity: ClientIP`) |
-| `controller.livenessProbe.httpGet.path` | string | `/healthz` | Liveness probe path |
+| `controller.livenessProbe.httpGet.path` | string | `/livez` | Liveness probe path. `/livez` keeps a replica alive while it serves the previous configuration and leads; see [health checks during configuration changes](development/debug-endpoints.md#health-checks-during-configuration-changes) |
 | `controller.livenessProbe.httpGet.port` | string | `healthz` | Named container port the probe targets (declared by `controller.ports.healthz`) |
 | `controller.livenessProbe.initialDelaySeconds` | int | `10` | Initial delay |
 | `controller.livenessProbe.periodSeconds` | int | `10` | Probe period |
 | `controller.livenessProbe.failureThreshold` | int | `3` | Failure threshold |
-| `controller.readinessProbe.httpGet.path` | string | `/healthz` | Readiness probe path |
+| `controller.readinessProbe.httpGet.path` | string | `/readyz` | Readiness probe path. `/readyz` also requires installed admission validators, so only replicas that can validate receive admission requests |
 | `controller.readinessProbe.httpGet.port` | string | `healthz` | Named container port the probe targets |
 | `controller.readinessProbe.initialDelaySeconds` | int | `5` | Initial delay |
 | `controller.readinessProbe.periodSeconds` | int | `5` | Probe period |

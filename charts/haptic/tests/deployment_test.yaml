@@ -322,6 +322,21 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].startupProbe.httpGet.path
           value: /healthz
+
+  # Replicas find each other by the Deployment selector, which upgrades keep.
+  - it: passes the controller Deployment selector to the controller
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: haptic
+            app.kubernetes.io/instance: RELEASE-NAME
+            app.kubernetes.io/component: controller
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONTROLLER_POD_SELECTOR
+            value: app.kubernetes.io/component=controller,app.kubernetes.io/instance=RELEASE-NAME,app.kubernetes.io/name=haptic
       - equal:
           path: spec.template.spec.containers[0].startupProbe.httpGet.port
           value: healthz
@@ -343,6 +358,24 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].startupProbe.failureThreshold
           value: 20
+
+  # Readiness routes admission to replicas that can validate it; /healthz
+  # stays the startup gate (ADR-0028).
+  - it: should probe readiness on /readyz and liveness on /livez
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet
+          value:
+            path: /readyz
+            port: healthz
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet
+          value:
+            path: /livez
+            port: healthz
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /healthz
 
   # Lifecycle hooks
   - it: should include lifecycle hooks when specified

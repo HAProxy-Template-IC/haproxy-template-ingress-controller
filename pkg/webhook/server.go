@@ -74,6 +74,9 @@ type Server struct {
 // ValidatorGeneration is one installed validator table; the installer keeps
 // it to retire only its own.
 type ValidatorGeneration struct {
+	// installed is false for the fail-closed placeholder a server starts with
+	// and falls back to when a generation is retired.
+	installed         bool
 	validators        map[string]ValidationFunc
 	onUnregisteredGVK func(gvk string)
 	onRetired         func()
@@ -254,6 +257,7 @@ func (s *Server) InstallValidatorGeneration(
 	replacement := make(map[string]ValidationFunc, len(validators))
 	maps.Copy(replacement, validators)
 	next := newValidatorGeneration(replacement, onUnregisteredGVK, onRetired)
+	next.installed = true
 
 	s.mu.Lock()
 	if s.closed {
@@ -268,6 +272,14 @@ func (s *Server) InstallValidatorGeneration(
 
 	previous.retire()
 	return next, nil
+}
+
+// Validating reports whether a caller-installed validator generation answers
+// requests. A server without one denies every request.
+func (s *Server) Validating() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return !s.closed && s.generation.installed
 }
 
 // RetireValidatorGenerationIfCurrent empties the table only while generation

@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: controller network policy
+templates:
+  - networkpolicy.yaml
+release:
+  name: haptic
+tests:
+  # Replicas compare their /healthz to decide which keeps serving a
+  # configuration that failed to start elsewhere (ADR-0028).
+  - it: lets controller replicas reach each other's health port
+    set:
+      controller.networkPolicy.egress.additionalRules: []
+      controller.networkPolicy.ingress.healthChecks.enabled: false
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haptic
+                    app.kubernetes.io/instance: haptic
+                    app.kubernetes.io/component: controller
+            ports:
+              - port: 8080
+                protocol: TCP
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haptic
+                    app.kubernetes.io/instance: haptic
+                    app.kubernetes.io/component: controller
+            ports:
+              - port: 8080
+                protocol: TCP
+
+  - it: follows controller.ports.healthz
+    set:
+      controller.ports.healthz: 8888
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haptic
+                    app.kubernetes.io/instance: haptic
+                    app.kubernetes.io/component: controller
+            ports:
+              - port: 8888
+                protocol: TCP
