@@ -585,10 +585,10 @@ And these per-backend feature maps, all keyed by backend name and looked up with
 | reqhdr-xfwd-prefix.map | `X-Forwarded-Prefix` header value (URL-encoded) |
 | reqhdr-connection.map | `Connection` header override (URL-encoded) |
 | path-rewrite.map | Literal full-path rewrite (URL-encoded) |
-| backend-timeouts.map | Settable server/tunnel timeouts, keyed `<backend>\|server` / `<backend>\|tunnel`, integer milliseconds |
+| backend-timeouts.map | Settable server/tunnel timeouts, keyed <code>&lt;backend&gt;&#124;server</code> / <code>&lt;backend&gt;&#124;tunnel</code>, integer milliseconds |
 | backend-service.map | `<backend>` to `<namespace>/<service>`, read at log time (keyed by `var(txn.backend_name)`) for the `namespace`/`service` access-log fields — keeps them off the backend section so it stays dynamic |
-| ing-reqhdr.map | Ingress request-header modifiers, keyed `<backend>\|<op>\|<name>` (op ∈ set/add/del), value URL-encoded (`1` for del) |
-| ing-reshdr.map | Ingress response-header modifiers, keyed `<backend>\|<op>\|<name>`, value URL-encoded (`1` for del) |
+| ing-reqhdr.map | Ingress request-header modifiers, keyed <code>&lt;backend&gt;&#124;&lt;op&gt;&#124;&lt;name&gt;</code> (op ∈ set/add/del), value URL-encoded (`1` for del) |
+| ing-reshdr.map | Ingress response-header modifiers, keyed <code>&lt;backend&gt;&#124;&lt;op&gt;&#124;&lt;name&gt;</code>, value URL-encoded (`1` for del) |
 
 Values a request-time reader takes from a map are URL-encoded by the writer
 (`queryEscape`) and decoded with `url_dec(1)`, so a space, `;` or `%` in a value

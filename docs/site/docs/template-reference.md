@@ -85,7 +85,7 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `fallback(value, default)` | Return `default` if `value` is nil. Empty strings and zeroes pass through — only `dig()` on optional typed fields normalises zero values to nil first | `fallback(dig(settings, "port"), 80)` |
 | `dig(obj, "k1", "k2", ...)` | Walk a nested map / typed struct without nil-checking each level (navigates JSON tags on typed structs) | `dig(ing, "metadata", "annotations")` |
 | `toSlice(v)` | Coerce `any` to `[]any` (safe to range over even if nil) | `for _, r := range toSlice(dig(item, "rules"))` |
-| `to_str_map(v)` | Copy a string-keyed map to `map[string]string`; each value must be a deterministic scalar | `for k, v := range route.metadata.labels \| to_str_map()` |
+| `to_str_map(v)` | Copy a string-keyed map to `map[string]string`; each value must be a deterministic scalar | <code>for k, v := range route.metadata.labels &#124; to_str_map()</code> |
 | `shard_slice(items, idx, n)` | Type-preserving split of a slice into `n` shards, returning shard `idx` — input element type is kept | `shard_slice(gateways, i, totalShards)` |
 | `tostring(v)` | Convert nil, a boolean, a finite number, a string, or a pointer to one of those scalars to text. Composite values and custom formatting methods fail the render; use field access or `toJSON()` instead | `name = tostring(dynamicName)` |
 | `toint(v)`, `tofloat(v)` | Numeric conversions from `any` | `port = toint(annotation)` |
@@ -99,16 +99,16 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `regex_search(s, pattern)` | True when the RE2 pattern matches anywhere in the string. Both arguments are coerced with `tostring()` first, and a pattern that doesn't compile aborts the render | `{% if regex_search(name, "ssl.*passthrough") %}` |
 | `semver_gte(version, "3.3")` | Compare a semver string (major.minor) against a target | `if semver_gte(extraContext.haproxyVersion, "3.3")` (the chart auto-populates `extraContext.haproxyVersion`; outside the chart, set it yourself via `templatingSettings.extraContext.haproxyVersion` — see [Custom Template Variables](./templating.md#custom-template-variables)) |
 | `fail(msg)` | Abort rendering with an error message (surfaces in validation tests and webhooks) | `fail("missing required annotation")` |
-| `b64decode(s)` | Decode base64 strings (Secret `.data` values) | `{{ secret.data.password \| b64decode() }}` |
-| `b64encode(s)` | Encode a value as standard base64 | `{{ configmap.data.schema \| b64encode() }}` |
+| `b64decode(s)` | Decode base64 strings (Secret `.data` values) | <code>{{ secret.data.password &#124; b64decode() }}</code> |
+| `b64encode(s)` | Encode a value as standard base64 | <code>{{ configmap.data.schema &#124; b64encode() }}</code> |
 | `parse_yaml(text)` | Decode one YAML document into a value plus an error; rejects duplicate keys and additional documents | `{% var value, err = parse_yaml(text) %}` |
 | `public_key_info(pem)` | Parse one RSA, ECDSA, or Ed25519 public key; returns a map with `algorithm`, `bits`, `curve`, and canonical `PUBLIC KEY` PEM in `pem`, plus an error. Private keys and extra PEM blocks are rejected | `{% var info, err = public_key_info(publicKey) %}` |
 | `untar_gz(archive)` | Expand a `.tar.gz` archive into a map of entry path to content. Returns `(map[string]string, error)`; any failure returns no files. Keeps regular files and their directory paths; select with `keys()` + `glob_match()`. Rejects path traversal and invalid compression checksums. Limits: 4096 entries, 8 MiB per file, 32 MiB of extracted content, and 64 MiB for the complete decompressed stream, including skipped entries and metadata | `{%- var files, err = untar_gz(archive) %}` |
-| `glob_match(items, pattern)` | Filter strings by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
-| `map_extract(items, keyPath)` | Pluck one field (dotted key path) from each item into a flat slice | `{{ routes \| map_extract("routeId") }}` |
-| `indent(s, n)` | Indent lines by N spaces (first and blank lines excluded) | `{{ render "snippet" \| indent(4) }}` |
-| `debug(v, label)` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
-| `toJSON(v)` | Convert a value to JSON; an unsupported value fails the render | `{{ myMap \| toJSON() }}` |
+| `glob_match(items, pattern)` | Filter strings by glob pattern | <code>{{ templateSnippets &#124; glob_match("backend-*") }}</code> |
+| `map_extract(items, keyPath)` | Pluck one field (dotted key path) from each item into a flat slice | <code>{{ routes &#124; map_extract("routeId") }}</code> |
+| `indent(s, n)` | Indent lines by N spaces (first and blank lines excluded) | <code>{{ render "snippet" &#124; indent(4) }}</code> |
+| `debug(v, label)` | Output as JSON comment | <code>{{ routes &#124; debug("routes") }}</code> |
+| `toJSON(v)` | Convert a value to JSON; an unsupported value fails the render | <code>{{ myMap &#124; toJSON() }}</code> |
 | `basename(path)` | Filename portion of a path, like Unix `basename` | `basename("/etc/haproxy/maps/hosts.map")` |
 | `namespace(init)` | Mutable `map[string]any` for accumulating state across loop iterations | `{%- var acc = namespace(map[string]any{"n": 0}) %}` |
 | `isNil(v)` | Nil check that also catches a typed nil pointer boxed in an `any` | `{% if !isNil(currentConfig) %}` |
@@ -128,7 +128,7 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `ceil(f)` | Round a float up | `ceil(tofloat(total) / 4)` |
 | `seq(n)` | `[]int{0, 1, …, n-1}`, for fixed-count loops | `{% for _, i := range seq(count) %}` |
 | `append(slice, item)` | Go's builtin, type-preserving; `append(dst, src...)` spreads a slice of the **same** type. Widening into `[]any` is a compile error — box per element in a loop. A slice reached through `any` is asserted at the boundary | `append(gf["hosts"].([]any), h)` |
-| `dig_string(obj, default, keys...)` | `dig` + `fallback` + `tostring` in one call, for annotation and metadata lookups | `ing \| dig_string("", "metadata", "annotations", key)` |
+| `dig_string(obj, default, keys...)` | `dig` + `fallback` + `tostring` in one call, for annotation and metadata lookups | <code>ing &#124; dig_string("", "metadata", "annotations", key)</code> |
 | `join_key(sep, parts...)` | Join any values into one composite key string | `join_key("_", ns, name, port)` |
 | `make_guid(parts...)` | Build a value for HAProxy's `guid` directive from parts joined by `:`, auto-truncating with a hash suffix past its 127-character limit | `guid {{ make_guid("be", beKey) }}` |
 | `selectattr(items, attr[, op, value])` | Jinja2-style attribute filter. `op` is `eq`, `ne` or `in`; omitted, it keeps items whose `attr` is truthy. `attr` is one literal key — a dotted path matches nothing, so prefer `filter` with a closure | `selectattr(rules, "host", "ne", "")` |
@@ -139,15 +139,15 @@ Type-preserving stages, chained with `|`. Each stage retains type information fo
 
 | Function | Purpose | Example |
 |----------|---------|---------|
-| `map(items, fn)` | One output per input | `pods \| map(p => p.metadata.name)` |
-| `filter(items, pred)` | Keep the elements the predicate accepts | `ingresses \| filter(i => len(i.spec.tls) > 0)` |
-| `reject(items, pred)` | Drop them instead, so the call site reads as a positive statement | `eps \| reject(e => e.targetRef.name == "")` |
-| `flat_map(items, fn)` | Map to slices and concatenate, flattening exactly one level | `slices \| flat_map(s => s.endpoints)` |
-| `unique(items)` | First occurrence of each distinct element, input order preserved | `hosts \| unique()` |
-| `unique_by(items, key)` | First element per key. `key` is a closure, or an attribute path for `any`-shaped data | `hosts \| unique_by(h => toLower(h))` |
-| `group_by(items, key)` | Bucket by string key, input order preserved within each bucket. Same two key forms. Iterate the result through `keys()` — Go map order isn't stable, and a reordered render reads as a change to the controller | `ingresses \| group_by("metadata.namespace")` |
-| `sort_by(items, criteria)` | Sort by JSONPath expressions — see [`sort_by` modifiers](#sort_by-modifiers) | `routes \| sort_by([]string{"$.priority:desc"})` |
-| `sort_by(items, cmp)` | Sort with a `func(a, b T) int` comparator (Go's `cmp` convention: negative when `a` sorts first), for orderings the criteria language can't state. Stable, like the criteria form | `routes \| sort_by(func(a, b Route) int { return a.Rank - b.Rank })` |
+| `map(items, fn)` | One output per input | <code>pods &#124; map(p => p.metadata.name)</code> |
+| `filter(items, pred)` | Keep the elements the predicate accepts | <code>ingresses &#124; filter(i => len(i.spec.tls) > 0)</code> |
+| `reject(items, pred)` | Drop them instead, so the call site reads as a positive statement | <code>eps &#124; reject(e => e.targetRef.name == "")</code> |
+| `flat_map(items, fn)` | Map to slices and concatenate, flattening exactly one level | <code>slices &#124; flat_map(s => s.endpoints)</code> |
+| `unique(items)` | First occurrence of each distinct element, input order preserved | <code>hosts &#124; unique()</code> |
+| `unique_by(items, key)` | First element per key. `key` is a closure, or an attribute path for `any`-shaped data | <code>hosts &#124; unique_by(h => toLower(h))</code> |
+| `group_by(items, key)` | Bucket by string key, input order preserved within each bucket. Same two key forms. Iterate the result through `keys()` — Go map order isn't stable, and a reordered render reads as a change to the controller | <code>ingresses &#124; group_by("metadata.namespace")</code> |
+| `sort_by(items, criteria)` | Sort by JSONPath expressions — see [`sort_by` modifiers](#sort_by-modifiers) | <code>routes &#124; sort_by([]string{"$.priority:desc"})</code> |
+| `sort_by(items, cmp)` | Sort with a `func(a, b T) int` comparator (Go's `cmp` convention: negative when `a` sorts first), for orderings the criteria language can't state. Stable, like the criteria form | <code>routes &#124; sort_by(func(a, b Route) int { return a.Rank - b.Rank })</code> |
 
 `sort_by` is the one stage that returns `(value, error)`. As a pipe stage that's invisible — the pipe keeps only the first result, so `x | sort_by(…)` assigns to one variable. A **direct** call returns both and needs two: `var rows, err = sort_by(items, criteria)`.
 
