@@ -314,6 +314,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 		scripts/tests/test_upgrade_traffic.py \
 		scripts/tests/test_shard_go_tests.py \
 		scripts/tests/test_go_test_weights.py \
+		scripts/tests/test_scale_trend.py \
 		scripts/tests/test_prepare_gateway_api_canary.py \
 		scripts/tests/test_validate_conformance_report.py \
 		scripts/tests/test_conformance_provenance.py \

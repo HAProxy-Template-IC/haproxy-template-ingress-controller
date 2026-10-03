@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -87,9 +88,9 @@ const (
 	scaleDefaultSeedWorkers  = 8
 
 	// scaleChangeSamples is how many single-change convergence measurements
-	// the tier takes at full scale. 5 keeps the phase short while giving a
-	// meaningful median; p95 over 5 samples is the max by nearest-rank.
-	scaleChangeSamples = 5
+	// the tier takes at full scale. At 20 the nearest-rank p95 is the
+	// second-slowest sample, so one stalled sample no longer is the p95.
+	scaleChangeSamples = 20
 )
 
 // Budget environment variables (all env-overridable so a one-off run on
@@ -145,7 +146,7 @@ const scaleMetricsFile = "scale-metrics.json"
 //	    to go still, so latency is sampled from idle rather than from the
 //	    tail of the seed storm; single-change convergence latency at full
 //	    scale (create 1 Ingress, time create→deployed-marker and
-//	    create→routed, x5, median/p95 — THE key number); rendered config
+//	    create→routed, x20, median/p95 — THE key number); rendered config
 //	    line count, HAProxyCfg spec size, compression state; controller
 //	    container memory (kubelet stats summary via the apiserver node
 //	    proxy — headless, no metrics-server dependency); HAProxy reload
@@ -198,6 +199,10 @@ func TestScale(t *testing.T) {
 	sink.set("controller_source_hash", identity.sourceHash)
 	sink.set("controller_rollout_id", identity.rolloutID)
 	sink.set("controller_binary_sha256", identity.binarySHA256)
+	if model := hostCPUModel(); model != "" {
+		sink.set("runner_cpu_model", model)
+	}
+	sink.set("runner_cpu_count", goruntime.NumCPU())
 	t.Cleanup(func() {
 		path, wrote, err := sink.flush()
 		switch {
@@ -861,6 +866,22 @@ func (s *scaleMetricsSink) flush() (path string, wrote bool, err error) {
 	}
 	s.written = true
 	return path, true, nil
+}
+
+// hostCPUModel returns the first "model name" in /proc/cpuinfo, or "" where
+// there is none. The nightly trend check only compares runs on the same model.
+func hostCPUModel() string {
+	data, err := os.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, found := strings.Cut(line, ":")
+		if found && strings.TrimSpace(key) == "model name" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // durationPercentile returns the nearest-rank percentile of the samples.
