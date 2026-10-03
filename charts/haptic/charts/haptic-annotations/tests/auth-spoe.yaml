@@ -16,6 +16,7 @@ validationTests:
       haproxy-haptic.org/auth-type basic + auth-secret (auth-file htpasswd)
       generates a userlist (bcrypt hash + user::plain → insecure-password), a
       routes-map row and the frontend auth challenge; the backend stays plain.
+    extraContext: {hapticPasswordHashRegex: "^.*$"}
     fixtures:
       secrets:
         # data.auth = base64("admin:$2y$05$...\nguest::plainpw\n")
@@ -63,7 +64,7 @@ validationTests:
           metadata: { namespace: default, name: shared-auth }
           type: Opaque
           data:
-            auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCmd1ZXN0OjpwbGFpbnB3Cg==
+            auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -130,7 +131,7 @@ validationTests:
           metadata: { namespace: default, name: haptic-auth }
           type: Opaque
           data:
-            auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCmd1ZXN0OjpwbGFpbnB3Cg==
+            auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -181,6 +182,162 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "userlist haptic_auth_default_haptic-authmap"}
       - {type: contains, target: haproxy.cfg, pattern: "user admin password [$]2y[$]05[$]"}
+
+  test-haptic-basic-auth-default-hash-schemes-accepted:
+    description: >-
+      The default hapticPasswordHashRegex admits bcrypt ($2a$/$2b$/$2y$),
+      SHA-256/SHA-512 crypt and yescrypt, each verified against the shipped
+      HAProxy images' crypt(3).
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: hash-policy }
+          type: Opaque
+          data:
+            a2a: JDJhJDA1JDcwVHlacHN4TWkxQWprRGY3R1FHZmVRQzFQYkllMnpGV1pHMEJVa2NQcGdVUFliU2Jucy91
+            a2b: JDJiJDA1JEVWdC9nZjMxSUNxUkhoa0ZjVnYvdmVMV1R4VHFlLnNrdVJDS2NDQldVVURwQnJZTmRxQlg2
+            a2y: JDJ5JDA1JEVWdC9nZjMxSUNxUkhoa0ZjVnYvdmVMV1R4VHFlLnNrdVJDS2NDQldVVURwQnJZTmRxQlg2
+            a5: JDUkSFFHUEdJdTNHL0JNeFNXLiRGcEtwRnN5TnJsMmZ1T2xBb2k3WnBrdVUuZXpkWUVpOTFaSXpDY0ZsQ0Ev
+            a6: JDYkWkkxUFVVOXlwM2c1eDBRSCQvZXJ1dFhVc2tQb0dBb2NwMzN2UzJlMWs1dU5jZWVoVDFQRXNGdVI5VmVrRzZNRUpweEk5SEJaU09sQklGU09hblplREtQVTlBLnhpb243bnl3VEhvLw==
+            ay: JHkkajlUJFc2c0MvMXhZM0FGMEU0NEtHek1DMi8kcnd6TEFrY3g4bi53dS4vczRRWGxFckZqYkx4TzRTOWxpUlgvSUw1cE1ORA==
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hash-accepted
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "hash-policy"
+              haproxy-haptic.org/auth-secret-type: "auth-map"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hash-policy.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "user a2a password [$]2a[$]05[$]"}
+      - {type: contains, target: haproxy.cfg, pattern: "user a2b password [$]2b[$]05[$]"}
+      - {type: contains, target: haproxy.cfg, pattern: "user a2y password [$]2y[$]05[$]"}
+      - {type: contains, target: haproxy.cfg, pattern: "user a5 password [$]5[$]"}
+      - {type: contains, target: haproxy.cfg, pattern: "user a6 password [$]6[$]"}
+      - {type: contains, target: haproxy.cfg, pattern: "user ay password [$]y[$]"}
+
+  test-haptic-basic-auth-default-rejects-apr1:
+    description: >-
+      Apache $apr1$ hashes never authenticate: the HAProxy images' crypt(3) can't verify them.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: hash-policy }
+          type: Opaque
+          data: {auth: YWRtaW46JGFwcjEka3ZUa0t1VjgkS0RQSjB6ZW5EZ3pKWlZwT3lTYUR3MAo=}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hash-apr1
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "hash-policy"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hash-policy.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress 'default/hash-apr1' references Secret 'default/hash-policy', whose password hash for user 'admin' doesn't match"}
+      - {type: contains, target: rendering_error, pattern: "bcrypt, SHA-256/SHA-512 crypt or yescrypt"}
+
+  test-haptic-basic-auth-default-rejects-md5crypt:
+    description: >-
+      $1$ MD5-crypt verifies but is too weak to accept by default.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: hash-policy }
+          type: Opaque
+          data: {admin: JDEkYkk0VUJTWVkkZXhwbndmSC9IRjFBelNpcXM3Z0NVMA==}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hash-md5crypt
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "hash-policy"
+              haproxy-haptic.org/auth-secret-type: "auth-map"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hash-policy.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress 'default/hash-md5crypt' references Secret 'default/hash-policy', whose password hash for user 'admin' doesn't match"}
+      - {type: contains, target: rendering_error, pattern: "bcrypt, SHA-256/SHA-512 crypt or yescrypt"}
+
+  test-haptic-basic-auth-default-rejects-descrypt:
+    description: >-
+      DES crypt verifies but only uses the first 8 password bytes.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: hash-policy }
+          type: Opaque
+          data: {admin: eGpjTjduQUQvbThjdw==}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hash-descrypt
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "hash-policy"
+              haproxy-haptic.org/auth-secret-type: "auth-map"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hash-policy.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress 'default/hash-descrypt' references Secret 'default/hash-policy', whose password hash for user 'admin' doesn't match"}
+      - {type: contains, target: rendering_error, pattern: "bcrypt, SHA-256/SHA-512 crypt or yescrypt"}
+
+  test-haptic-basic-auth-default-rejects-plaintext:
+    description: >-
+      A user::plain line is a plaintext credential, not a hash, so the default refuses it.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: hash-policy }
+          type: Opaque
+          data: {auth: YWRtaW46OnNlY3JldAo=}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hash-plaintext
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "hash-policy"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hash-policy.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress 'default/hash-plaintext' references Secret 'default/hash-policy', whose password hash for user 'admin' doesn't match"}
+      - {type: contains, target: rendering_error, pattern: "bcrypt, SHA-256/SHA-512 crypt or yescrypt"}
 
   # ============================================================================
   # satisfy=any — OR-combine allowlist + basic auth

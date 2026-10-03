@@ -4,6 +4,7 @@
 validationTests:
   test-nginx-ingress-satisfy-any:
     description: satisfy=any combines whitelist + auth with OR — auth is only challenged when the source IP is not in the allow-list, and the standalone whitelist deny is suppressed
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -90,6 +91,7 @@ validationTests:
 
   test-nginx-ingress-satisfy-all-default:
     description: satisfy=all (the default) keeps the independent whitelist deny and unconditional auth challenge (AND semantics)
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1

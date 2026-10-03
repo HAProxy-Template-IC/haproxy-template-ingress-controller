@@ -448,4 +448,5 @@ WebSocket
 WebSockets
 YAML
 YAMLs
+yescrypt
 zstd

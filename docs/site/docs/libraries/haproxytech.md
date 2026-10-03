@@ -849,7 +849,7 @@ annotations:
 - Secret format: Opaque secret where key=username, value=base64-encoded password hash
 - Supports cross-namespace secrets: `namespace/secretname`
 - Automatic deduplication: multiple ingresses sharing the same secret generate a single userlist
-- HAProxy parses `$1$` (MD5 crypt), `$5$` (SHA-256), `$6$` (SHA-512), and `$2y$` (bcrypt). It **doesn't** parse `$apr1$` (Apache MD5 — the htpasswd *default* without an explicit algorithm); use `htpasswd -n -B` (bcrypt), `-n -2` (SHA-256), or `-n -5` (SHA-512). See [Performance — Password hash validation](../operations/performance.md#password-hash-performance) for the cost/perf trade-off.
+- Accepted hashes by default: bcrypt (`$2a$`, `$2b$`, `$2y$`), SHA-256 crypt (`$5$`), SHA-512 crypt (`$6$`), and yescrypt (`$y$`). HAPTIC refuses `$apr1$`, `$1$`, Data Encryption Standard (DES) crypt, and plaintext; see [accepted formats](../operations/security.md#basic-auth-password-hashes). See [password hash performance](../operations/performance.md#password-hash-performance) for the cost trade-off.
 
 ### `haproxy.org/auth-secret`
 

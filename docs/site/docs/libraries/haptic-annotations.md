@@ -292,7 +292,7 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 | `haproxy-haptic.org/auth-headers-succeed` | Adds request headers to the upstream on successful external authentication. |
 | `haproxy-haptic.org/auth-method` | Overrides the HTTP method used for the external authentication subrequest. |
 | `haproxy-haptic.org/auth-realm` | Sets the basic-auth realm (default `Restricted`). |
-| `haproxy-haptic.org/auth-secret` | Names the Secret holding basic-auth credentials, as `name` or `namespace/name`; while the Secret is absent the route answers 503. |
+| `haproxy-haptic.org/auth-secret` | Names the Secret holding basic-auth credentials, as `name` or `namespace/name`; while the Secret is absent the route answers 503. Each credential must be a bcrypt, SHA-256/SHA-512 crypt, or yescrypt hash; see [accepted formats](../operations/security.md#basic-auth-password-hashes). |
 | `haproxy-haptic.org/auth-secret-type` | Selects the credentials Secret format: `auth-file` (htpasswd in the `auth` key) or `auth-map` (one key per user); default `auth-file`. |
 | `haproxy-haptic.org/auth-signin` | Sets the sign-in redirect URL for failed external authentication. |
 | `haproxy-haptic.org/auth-tls-cert-header` | Forwards the client certificate details (`X-SSL-Client-CN`, `X-SSL-Client-DN`, `X-SSL-Client-Cert`) to the upstream when a client certificate was presented. Applied from a per-route map. |

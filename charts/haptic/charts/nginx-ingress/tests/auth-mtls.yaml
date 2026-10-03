@@ -722,6 +722,7 @@ validationTests:
 
   test-nginx-ingress-auth-realm-escapes-quote:
     description: A double quote in auth-realm is escaped (not a breakout), so the emitted realm stays one valid HAProxy quoted string.
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -777,6 +778,7 @@ validationTests:
 
   test-nginx-ingress-basic-auth-map-lane:
     description: Basic auth rides the frontend map lane — routes on one Secret share its userlist, one auth rule per (userlist, realm) pair selected on the whole map value, one denied_by rule per userlist, and no backend challenge
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1

@@ -600,6 +600,9 @@ kubectl -n default create secret generic basic-auth --from-file=admin=admin.hash
 rm admin.hash
 ```
 
+HAPTIC refuses `$apr1$`, `$1$`, Data Encryption Standard (DES) crypt, and plaintext credentials by default;
+see [accepted formats](../operations/security.md#basic-auth-password-hashes).
+
 Use HTTPS for the protected route; HTTP Basic authentication doesn't encrypt credentials.
 
 ## External authentication

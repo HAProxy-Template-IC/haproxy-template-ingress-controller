@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** Rename extraContext `ssl_redirect_default` to `sslRedirectDefault`, now a boolean; the old key and a quoted value fail the install.
 - **BREAKING:** Remove extraContext `hapticHstsMaxAge`; `haproxy-haptic.org/hsts` without `hsts-max-age` uses `tls.hsts.maxAge`, so its default `max-age` drops from two years to one.
 - The controller dashboard's events-dropped panel splits drops by subscriber.
+- **BREAKING:** Basic-auth Secrets accept only bcrypt, SHA-256/SHA-512 crypt and yescrypt hashes by default, for every `auth-secret` annotation including nginx-ingress; `$apr1$`, `$1$`, DES crypt and plaintext are refused with an error naming the Ingress. Before upgrading, regenerate such hashes with `htpasswd -nB <user>` or `openssl passwd -6`.
 - Set `testExtraContext` to the extraContext computed from the chart defaults, keeping the deployment's library set, HAProxy version and feature switches.
 
 #### Fixed

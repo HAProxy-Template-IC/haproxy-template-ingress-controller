@@ -12,8 +12,8 @@ templateSnippets:
     incremental:
       bindingsTemplate: |-
         {{- toJSON(map[string]any{"ingresses": map[string]any{
-          "hashRegex": extraContext | dig_string("^.*$", "annotationCompatibility", "basicAuth", "passwordHashValidation", "regex"),
-          "hashError": extraContext | dig_string("Invalid password hash", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage"),
+          "hashRegex": extraContext | dig_string("^\\$(2[aby]|5|6|y)\\$[./0-9A-Za-z$=]+$", "annotationCompatibility", "basicAuth", "passwordHashValidation", "regex"),
+          "hashError": extraContext | dig_string("Replace it with a bcrypt, SHA-256/SHA-512 crypt or yescrypt hash, for example from htpasswd -nB <user>", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage"),
         }}) -}}
       whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-secret']"]
       group: haproxy-ingress-auth-userlists
@@ -108,7 +108,7 @@ templateSnippets:
                   {%- if user == "" || rest == "" %}{%- continue %}{%- end %}
                   {%- var pwInj = ConfigInjectionKind(rest, "token") %}
                   {%- if !regex_search(rest, hashRegex) %}
-                    {{- fail(hashErrMsg + " for user '" + user + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+                    {{- fail("Ingress '" + key + "' references Secret '" + secretNs + "/" + secretName + "', whose password hash for user '" + user + "' doesn't match the allowed pattern \"" + hashRegex + "\"; HAPTIC refuses the configuration until it is replaced. " + hashErrMsg) -}}
                   {%- else if pwInj != "" %}
                     {{- fail("Basic-auth credential for user '" + user + "' in Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' contains " + pwInj + ", which would break out of the userlist line. Remove whitespace, quotes and control characters from the hash.") -}}
                   {%- end %}
@@ -119,7 +119,7 @@ templateSnippets:
                   {%- var passwordHash = secretData[username] | b64decode() | tostring() %}
                   {%- var pwInj = ConfigInjectionKind(passwordHash, "token") %}
                   {%- if !regex_search(passwordHash, hashRegex) %}
-                    {{- fail(hashErrMsg + " for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+                    {{- fail("Ingress '" + key + "' references Secret '" + secretNs + "/" + secretName + "', whose password hash for user '" + username + "' doesn't match the allowed pattern \"" + hashRegex + "\"; HAPTIC refuses the configuration until it is replaced. " + hashErrMsg) -}}
                   {%- else if pwInj != "" %}
                     {{- fail("Basic-auth hash for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' contains " + pwInj + ", which would break out of the userlist line. Remove whitespace, quotes and control characters from the hash.") -}}
                   {%- end %}

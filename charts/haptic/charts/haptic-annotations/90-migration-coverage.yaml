@@ -73,7 +73,7 @@ _migrationCoverage:
         note: "References the credentials Secret (ns/name or name); an absent Secret skips the userlist+challenge cleanly."
       haproxy-haptic.org/auth-secret-type:
         status: supported
-        note: "auth-file (htpasswd in the `auth` key, incl. user::plain) or auth-map (one key per user); default auth-file."
+        note: "auth-file (htpasswd in the `auth` key) or auth-map (one key per user); default auth-file."
       haproxy-haptic.org/auth-signin:
         status: supported
         note: "External-auth sign-in redirect URL → auth-signin.map."

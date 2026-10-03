@@ -65,6 +65,17 @@ controller:
             maxAge: "63072000"
 ```
 
+### Regenerate basic-auth hashes HAPTIC now refuses
+
+Every `auth-secret` annotation, including the nginx-ingress ones, accepts only
+bcrypt, SHA-256/SHA-512 crypt, and yescrypt hashes by default. A Secret that
+holds a `$apr1$`, `{SHA}`, `$1$`, Data Encryption Standard (DES) crypt, or
+plaintext credential stops HAPTIC from applying configuration changes, and the
+error names the Ingress, Secret, and user. Before you upgrade, replace each such
+hash with one from `htpasswd -nB <user>` or `openssl passwd -6`. See
+[accepted formats](operations/security.md#basic-auth-password-hashes), which
+also shows how to widen the patterns while you migrate.
+
 ### Update templates
 
 - Rename the `http.Fetch` option `delay` to `interval`. A call that still sets

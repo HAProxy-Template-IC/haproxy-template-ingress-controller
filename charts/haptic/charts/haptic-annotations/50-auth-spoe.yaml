@@ -48,9 +48,9 @@ templateSnippets:
           auth-map: each data key is a username and its base64-decoded value is
             that user's password hash.
 
-        Password hashes are validated against
-        extraContext.hapticPasswordHashRegex (default accepts bcrypt / apr1 /
-        crypt SHA / MD5). A per-line config-injection guard additionally rejects
+        Every credential, `username::plain` lines included, must match
+        extraContext.hapticPasswordHashRegex (default: bcrypt, SHA-256/SHA-512
+        crypt, yescrypt). A per-line config-injection guard additionally rejects
         whitespace / control characters so a hostile Secret value cannot break
         out of the userlist line.
 
@@ -58,7 +58,7 @@ templateSnippets:
           userlist haptic_auth_<secretNs>_<secretName>
             user <username> password <hash>
       #}
-      {%- var hashRegex = extraContext | dig_string("^\\$(2[aby]|apr1|1|5|6)\\$", "hapticPasswordHashRegex") %}
+      {%- var hashRegex = extraContext | dig_string("^\\$(2[aby]|5|6|y)\\$[./0-9A-Za-z$=]+$", "hapticPasswordHashRegex") %}
       {%- for _, entry := range incremental_values("haptic-auth-userlists", "userlists") %}
         {%- var record = entry.(map[string]any) %}
         {%- var key = tostring(record["ingress"]) %}
@@ -89,11 +89,8 @@ templateSnippets:
                     {%- if !regex_search(user, "^[!-~]+$") || !regex_search(rest, "^[!-~]+$") %}
                       {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' has an invalid username or credential for user '" + user + "' (whitespace / control characters are not permitted).") -}}
                     {%- end %}
-                    {#- Hashed credentials must match the configured hash regex;
-                        insecure-password (plaintext) lines are intentionally
-                        exempt — plaintext is not a hash. -#}
-                    {%- if pwKeyword == "password" && !regex_search(rest, hashRegex) %}
-                      {{- fail("Invalid password hash for user '" + user + "' in Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' (must match hapticPasswordHashRegex \"" + hashRegex + "\").") -}}
+                    {%- if !regex_search(rest, hashRegex) %}
+                      {{- fail("Ingress '" + key + "' references Secret '" + secretNs + "/" + secretName + "', whose password hash for user '" + user + "' doesn't match the allowed pattern hapticPasswordHashRegex \"" + hashRegex + "\"; HAPTIC refuses the configuration until it is replaced. Replace it with a bcrypt, SHA-256/SHA-512 crypt or yescrypt hash, for example from htpasswd -nB <user>") -}}
                     {%- end %}
         user {{ user }} {{ pwKeyword }} {{ rest }}
                   {%- end %}
@@ -110,7 +107,7 @@ templateSnippets:
                       {{- fail("Secret '" + secretNs + "/" + secretName + "' (auth-map) referenced on Ingress '" + key + "' has an invalid username or hash for user '" + username + "' (whitespace / control characters are not permitted).") -}}
                     {%- end %}
                     {%- if !regex_search(passwordHash, hashRegex) %}
-                      {{- fail("Invalid password hash for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (auth-map) referenced on Ingress '" + key + "' (must match hapticPasswordHashRegex \"" + hashRegex + "\").") -}}
+                      {{- fail("Ingress '" + key + "' references Secret '" + secretNs + "/" + secretName + "', whose password hash for user '" + username + "' doesn't match the allowed pattern hapticPasswordHashRegex \"" + hashRegex + "\"; HAPTIC refuses the configuration until it is replaced. Replace it with a bcrypt, SHA-256/SHA-512 crypt or yescrypt hash, for example from htpasswd -nB <user>") -}}
                     {%- end %}
         user {{ username }} password {{ passwordHash }}
                   {%- end %}
