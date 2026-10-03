@@ -50,6 +50,8 @@ Controls how path matching is performed for paths with `pathType: Implementation
 
 **Valid values**: `regex`, `exact`, `prefix`, `begin`
 
+A `regex` path matches from the start of the path, on the rule's host only. HAPTIC rejects a regex path whose groups or `[ ]` classes don't close within it, or that uses `\Q`, `\E`, `\c` or `(*`.
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress

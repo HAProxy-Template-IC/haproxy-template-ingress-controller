@@ -396,13 +396,42 @@ annotations:
 
 ### `nginx.ingress.kubernetes.io/rewrite-target`
 
-Rewrite the URL path before forwarding to the backend.
+Replaces the whole request path before HAProxy forwards the request to the backend. The query string is kept.
 
-Capture groups such as `$1` and `$2` are translated to HAProxy's `\1` and `\2`.
+`$1`, `$2`, … refer to the capture groups of the Ingress path's regex. As in ingress-nginx, setting `rewrite-target` makes the Ingress's paths regex paths, so you don't need `use-regex` as well. A path equal to the target isn't rewritten.
+
+```yaml
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  rules:
+    - host: example.com
+      http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service: {name: api, port: {number: 80}}
+```
+
+With this Ingress, `/api/users?page=2` reaches the backend as `/users?page=2`, and `/api` reaches it as `/`.
+
+### `nginx.ingress.kubernetes.io/use-regex`
+
+**Status**: Caveat
+
+Set to `"true"` to match the Ingress's paths as regular expressions. A path containing regex syntax matches like ingress-nginx's `location ~* "^<path>"`: case-insensitive and anchored at the start of the path only. HAPTIC rejects a regex path whose groups or `[ ]` classes don't close within it, or that uses `\Q`, `\E`, `\c` or `(*`, because such a path could match on other hosts.
+
+Differences from ingress-nginx:
+
+- A path without regex syntax keeps its Kubernetes `Prefix` or `Exact` match, which is case-sensitive and matches whole path segments.
+- Other Ingresses on the same host keep their own matching. ingress-nginx turns every path of the host into a regex.
+- Regex paths are tried before prefix paths, as set by [`regexMatchOrder`](../template-libraries.md#path-matching-order), not longest path first.
 
 ```yaml
 annotations:
-  nginx.ingress.kubernetes.io/rewrite-target: "/$1"
+  nginx.ingress.kubernetes.io/use-regex: "true"
 ```
 
 ### `nginx.ingress.kubernetes.io/app-root`

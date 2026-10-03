@@ -193,7 +193,11 @@ _migrationCoverage:
       # --- URL rewriting / redirects ---
       nginx.ingress.kubernetes.io/rewrite-target:
         status: supported
-        note: $N capture groups are translated to HAProxy backreferences; literal rewrites are applied reload-free via a map.
+        note: $N refers to the groups of the Ingress path's regex, which the annotation switches on as in ingress-nginx; literal rewrites are applied reload-free via a map.
+      nginx.ingress.kubernetes.io/use-regex:
+        status: different
+        note: A path with regex syntax matches as a case-insensitive regex anchored at the path start; a literal path keeps its Kubernetes Prefix/Exact match, other Ingresses on the host are unaffected, and regex paths are tried before prefix paths instead of longest first.
+        doc: annotation-support
       nginx.ingress.kubernetes.io/app-root:
         status: supported
         note: Redirects "/" to the given path for each rule host.

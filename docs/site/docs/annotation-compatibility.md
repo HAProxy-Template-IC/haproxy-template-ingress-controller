@@ -71,7 +71,7 @@ See the nginx-ingress compatibility verdict render live:
 ## Differences from ingress-nginx {#ingress-nginx}
 
 <!-- BEGIN generated: migration-coverage ingress-nginx -->
-The library classifies 140 `nginx.ingress.kubernetes.io/*` annotations: 56 supported, 35 with behaviour differences, 49 not carried over, 0 failing.
+The library classifies 141 `nginx.ingress.kubernetes.io/*` annotations: 56 supported, 36 with behaviour differences, 49 not carried over, 0 failing.
 
 | Annotation | Status | What to check |
 |------------|--------|---------------|
@@ -158,6 +158,7 @@ The library classifies 140 `nginx.ingress.kubernetes.io/*` annotations: 56 suppo
 | `nginx.ingress.kubernetes.io/stream-snippet` | Not carried over | nginx stream directives have no HAProxy equivalent. |
 | `nginx.ingress.kubernetes.io/upstream-hash-by-subset` | Not carried over | HAProxy's consistent hashing maps a key to one server; subset hashing isn't available. |
 | `nginx.ingress.kubernetes.io/upstream-hash-by-subset-size` | Not carried over | HAProxy's consistent hashing maps a key to one server; subset hashing isn't available. |
+| `nginx.ingress.kubernetes.io/use-regex` | Behaviour differs | A path with regex syntax matches as a case-insensitive regex anchored at the path start; a literal path keeps its Kubernetes Prefix/Exact match, other Ingresses on the host are unaffected, and regex paths are tried before prefix paths instead of longest first. |
 | `nginx.ingress.kubernetes.io/whitelist-source-range` | Behaviour differs | Host-scoped — the allowlist only gates rules with an explicit host, so an Ingress without rule hosts gets no filtering; invalid CIDRs fail the render. |
 <!-- END generated: migration-coverage ingress-nginx -->
 
