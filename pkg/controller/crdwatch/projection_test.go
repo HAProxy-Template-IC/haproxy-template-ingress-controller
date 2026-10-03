@@ -75,15 +75,16 @@ func TestInformerRetainsOnlyDefinitionReloadMetadata(t *testing.T) {
 		map[schema.GroupVersionResource]string{crdGVR: "CustomResourceDefinitionList"}, definition)
 	k8sClient := client.NewFromClientset(kubefake.NewClientset(), dynamicClient, "default")
 	c := New(k8sClient, map[string]bool{"example.io": true}, nil, nil, slog.Default())
-	factory, informer, err := c.newInformer()
+	factory, handlers, err := c.newInformer()
 	require.NoError(t, err)
+	informer := factory.ForResource(crdGVR).Informer()
 	ctx, cancel := context.WithCancel(t.Context())
 	factory.Start(ctx.Done())
 	t.Cleanup(func() {
 		cancel()
 		factory.Shutdown()
 	})
-	require.True(t, cache.WaitForCacheSync(ctx.Done(), informer.HasSynced))
+	require.True(t, cache.WaitForCacheSync(ctx.Done(), handlers.HasSynced))
 
 	for revision := range int64(3) {
 		definition.SetGeneration(revision + 1)

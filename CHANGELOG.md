@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Watched resources finish their initial sync only after every listed resource reached the store, so the first render after startup can't miss resources.
+
 ## [0.2.2] - 2026-10-03
 
 ### Fixed
