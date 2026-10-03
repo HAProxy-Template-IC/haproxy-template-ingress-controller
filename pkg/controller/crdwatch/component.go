@@ -163,7 +163,7 @@ func (c *Component) Start(ctx context.Context) error {
 		return nil
 	}
 
-	factory, informer, err := c.newInformer()
+	factory, handlers, err := c.newInformer()
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func (c *Component) Start(ctx context.Context) error {
 		factory.Shutdown()
 	}()
 
-	if !c.waitForCacheSync(informerCtx.Done(), informer.HasSynced) {
+	if !c.waitForCacheSync(informerCtx.Done(), handlers.HasSynced) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -193,7 +193,9 @@ func (c *Component) Start(ctx context.Context) error {
 	return nil
 }
 
-func (c *Component) newInformer() (dynamicinformer.DynamicSharedInformerFactory, cache.SharedIndexInformer, error) {
+// newInformer returns the handler registration, not the informer: only the
+// registration's HasSynced waits until the handlers saw the initial list.
+func (c *Component) newInformer() (dynamicinformer.DynamicSharedInformerFactory, cache.ResourceEventHandlerRegistration, error) {
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		c.k8sClient.DynamicClient(), 0, metav1.NamespaceAll, nil)
 	informer := factory.ForResource(crdGVR).Informer()
@@ -207,7 +209,7 @@ func (c *Component) newInformer() (dynamicinformer.DynamicSharedInformerFactory,
 		return nil, nil, fmt.Errorf("setting CRD watch error handler: %w", err)
 	}
 
-	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	handlers, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			if group, ok := c.relevantGroup(obj); ok {
 				c.noteChange("added", group, obj)
@@ -236,10 +238,11 @@ func (c *Component) newInformer() (dynamicinformer.DynamicSharedInformerFactory,
 				c.noteChange("deleted", group, obj)
 			}
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, nil, fmt.Errorf("adding CRD event handler: %w", err)
 	}
-	return factory, informer, nil
+	return factory, handlers, nil
 }
 
 // noteChange queues a debounced reload decision for a relevant post-sync change.

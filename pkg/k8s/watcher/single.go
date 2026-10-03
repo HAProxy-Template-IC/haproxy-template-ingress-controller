@@ -42,10 +42,12 @@ import (
 //
 // This is ideal for watching configuration or credentials in a specific ConfigMap or Secret.
 type SingleWatcher struct {
-	config    types.SingleWatcherConfig
-	client    *client.Client
-	factory   dynamicinformer.DynamicSharedInformerFactory
-	informer  cache.SharedIndexInformer
+	config   types.SingleWatcherConfig
+	client   *client.Client
+	factory  dynamicinformer.DynamicSharedInformerFactory
+	informer cache.SharedIndexInformer
+	// Synced only after the handlers applied the initial list; informer.HasSynced is not.
+	handlers  cache.ResourceEventHandlerRegistration
 	stopCh    chan struct{}
 	synced    atomic.Bool   // True after initial sync completes
 	syncCh    chan struct{} // Closed when sync completes
@@ -143,7 +145,7 @@ func (w *SingleWatcher) createInformer() error {
 		return fmt.Errorf("setting watch error handler: %w", err)
 	}
 
-	_, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	handlers, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    w.handleAdd,
 		UpdateFunc: w.handleUpdate,
 		DeleteFunc: w.handleDelete,
@@ -151,6 +153,7 @@ func (w *SingleWatcher) createInformer() error {
 	if err != nil {
 		return fmt.Errorf("adding event handler: %w", err)
 	}
+	w.handlers = handlers
 
 	return nil
 }
@@ -381,7 +384,7 @@ func (w *SingleWatcher) initialize(ctx context.Context) error {
 	defer stopOnCancel()
 
 	w.factory.Start(w.stopCh)
-	if !cache.WaitForCacheSync(w.stopCh, w.informer.HasSynced) {
+	if !cache.WaitForCacheSync(w.stopCh, w.handlers.HasSynced) {
 		return watcherSyncError(ctx)
 	}
 	select {

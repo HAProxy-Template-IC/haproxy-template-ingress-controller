@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Watched resources finish their initial sync only after every listed resource reached the store, so the first render after startup can't miss resources.
 - Stop reporting normal controller shutdown cancellations and leadership handover as failures.
 - Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
 - A configuration reload that keeps failing no longer denies every admission request cluster-wide: the leading replica keeps serving and validating the previous configuration until a replica starts the new one. New `/readyz` and `/livez` endpoints report it; `/healthz` still reports the failure.
