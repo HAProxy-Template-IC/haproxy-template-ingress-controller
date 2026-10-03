@@ -5,25 +5,48 @@ you plan to deploy. Each section lists configuration changes and the steps neede
 to keep your existing routes working. For routine chart upgrades, see
 [Upgrading with Helm](deploying-with-helm.md#upgrading).
 
-## Unreleased: Varnish cache permissions
-
-The next chart version uses a bundled non-root Varnish image and grants its
-container `IPC_LOCK` to keep shared logs in memory. If you enable
-`cache.varnish.enabled`, your cluster policy must allow this capability before
-upgrading. Kubernetes Baseline and Restricted Pod Security Standards reject it;
-arrange a policy exception with your cluster administrator first.
-
-If you override `cache.varnish.image`, remove the override to use the bundled
-image, or supply an image with `cap_ipc_lock=ep` on `varnishd`. See
-[shared-log memory](operations/response-cache.md#shared-log-memory).
-
 ## Upgrading to 0.3
 
-0.3 renames or removes several values and template features. The chart refuses
-to install while your values still use a removed key, and names the
-replacement in the error.
+Use this checklist to upgrade a 0.2 release. Work through it from top to bottom;
+each step says what to change, and what fails if you don't. If you run 0.1.0 or
+a 0.2.0 alpha, complete [Upgrading to 0.2](#upgrading-to-02) first.
 
-### Rename the timeout, SSL redirect, and HSTS keys
+Confirm that the target version is available on the
+[releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases) before
+running the upgrade commands. Development documentation can describe a release
+before its artifacts are published.
+
+### 1. Save your values
+
+Set the installed Helm release and namespace:
+
+```bash
+HAPTIC_RELEASE=haptic
+HAPTIC_NAMESPACE=haptic
+```
+
+Export the values you supplied to Helm, and copy them into a working file for
+the upgrade:
+
+```bash
+umask 077
+helm get values "$HAPTIC_RELEASE" --namespace "$HAPTIC_NAMESPACE" \
+  --output yaml > haptic-values-before.yaml
+cp haptic-values-before.yaml haptic-values-0.3.yaml
+```
+
+If the export contains only `null`, replace it with an empty map:
+
+```bash
+if [ "$(cat haptic-values-0.3.yaml)" = null ]; then
+  printf '{}\n' > haptic-values-0.3.yaml
+fi
+```
+
+Apply the following steps to `haptic-values-0.3.yaml`. If you manage values in
+Git, apply them to that source too.
+
+### 2. Rename the timeout and SSL redirect keys
 
 Under `controller.config.templatingSettings.extraContext`, rename these keys:
 
@@ -35,7 +58,6 @@ Under `controller.config.templatingSettings.extraContext`, rename these keys:
 | `timeout_http_request` | `timeoutHttpRequest` |
 | `timeout_http_keep_alive` | `timeoutHttpKeepAlive` |
 | `ssl_redirect_default` | `sslRedirectDefault` |
-| `hapticHstsMaxAge` | `tls.hsts.maxAge` |
 
 `sslRedirectDefault` is a boolean. Write `true`, not `"true"`:
 
@@ -48,12 +70,23 @@ controller:
         sslRedirectDefault: true
 ```
 
-### Review the HSTS max-age default
+**If you don't:** Helm refuses to install or upgrade the chart, for example:
 
-`haproxy-haptic.org/hsts` without `haproxy-haptic.org/hsts-max-age` now sends
-the `max-age` from `tls.hsts.maxAge`, which defaults to one year (`31536000`)
-instead of two. The same value sets the global HSTS header. To keep two years,
-set it explicitly:
+```text
+controller.config.templatingSettings.extraContext.timeout_connect was renamed in 0.3.0 and no longer has any effect. Rename it to timeoutConnect.
+```
+
+A quoted `sslRedirectDefault: "true"` fails the same way, because a string
+would never turn the redirect on.
+
+### 3. Move the HSTS max-age
+
+`extraContext.hapticHstsMaxAge` is removed. `haproxy-haptic.org/hsts` without
+`haproxy-haptic.org/hsts-max-age` now sends `max-age` from `tls.hsts.maxAge`,
+which defaults to one year (`31536000`) instead of two.
+
+If you set `hapticHstsMaxAge`, or you want to keep the two-year default, set
+`tls.hsts.maxAge`:
 
 ```yaml
 controller:
@@ -65,52 +98,274 @@ controller:
             maxAge: "63072000"
 ```
 
-### Regenerate basic-auth hashes HAPTIC now refuses
+`tls.hsts.maxAge` also sets the `max-age` of the global HSTS header when
+`tls.hsts.enabled` is `true`.
 
-Every `auth-secret` annotation, including the nginx-ingress ones, accepts only
-bcrypt, SHA-256/SHA-512 crypt, and yescrypt hashes by default. A Secret that
-holds a `$apr1$`, `{SHA}`, `$1$`, Data Encryption Standard (DES) crypt, or
-plaintext credential stops HAPTIC from applying configuration changes, and the
-error names the Ingress, Secret, and user. Before you upgrade, replace each such
-hash with one from `htpasswd -nB <user>` or `openssl passwd -6`. See
-[accepted formats](operations/security.md#basic-auth-password-hashes), which
-also shows how to widen the patterns while you migrate.
+**If you don't:** a leftover `hapticHstsMaxAge` fails the install with the same
+"was renamed in 0.3.0" error as step 2. Without it, Ingresses using
+`haproxy-haptic.org/hsts` send `max-age=31536000`.
 
-### Update templates
+### 4. Replace basic-auth hashes HAPTIC now refuses
 
-- Rename the `http.Fetch` option `delay` to `interval`. A call that still sets
-  `delay` fails the render.
-- Replace `strings_replace(s, old, new)` with `replace(s, old, new)`.
-- `trim` is the `trim(s, cutset)` builtin everywhere. Replace a one-argument
-  `trim(s)` with `strip(s)`.
+Every `auth-secret` annotation (`haproxy-haptic.org`, `haproxy.org`,
+`haproxy-ingress.github.io`, and `nginx.ingress.kubernetes.io`) accepts only
+bcrypt, SHA-256 crypt, SHA-512 crypt, and yescrypt hashes by default. It
+refuses `$apr1$` (Apache MD5), `{SHA}`, `$1$` (MD5-crypt),
+Data Encryption Standard (DES) crypt, and plaintext credentials.
 
-### Update monitoring
+Preflight validation doesn't read your cluster's Secrets, so check them before
+upgrading. This lists every user whose hash the 0.3 default refuses; it needs
+`kubectl` and `jq`:
 
-The `haptic_events_dropped_total` metric is removed. Query
-`haptic_events_dropped_critical_total` instead, which counted the same drops.
+```bash
+pattern='^\$(2[aby]|5|6|y)\$[./0-9A-Za-z$=]+$'
+kubectl get ingress --all-namespaces --output json |
+  jq -r '.items[] | .metadata as $m | ($m.annotations // {}) | to_entries[]
+    | select(.key | endswith("/auth-secret"))
+    | (if (.value | contains("/")) then .value else "\($m.namespace)/\(.value)" end)
+      + " " + $m.namespace + "/" + $m.name' |
+  sort -u |
+  while read -r secret ingress; do
+    kubectl get secret --namespace "${secret%%/*}" "${secret#*/}" --output json |
+      jq -r --arg secret "$secret" --arg ingress "$ingress" --arg pattern "$pattern" '
+        .data
+        | if has("auth") then
+            .auth | @base64d | split("\n")[] | rtrimstr("\r")
+            | select(contains(":")) | capture("^(?<user>[^:]*):(?<hash>.*)$")
+          else
+            to_entries[] | {user: .key, hash: (.value | @base64d)}
+          end
+        | select(.hash | test($pattern) | not)
+        | "Ingress \($ingress): Secret \($secret), user \(.user)"'
+  done
+```
 
-### Update custom agent clients
+For each user listed, generate a new hash and write it into the Secret in the
+format the Secret already uses. Each command prompts for the password:
 
-If you call the agent's `/v1/apply` from your own code, set
-`identity_version: 1` in the manifest. The agent rejects a manifest without it
-with `400`.
+| Format | Command |
+|--------|---------|
+| bcrypt | `htpasswd -nB <user>` |
+| SHA-512 crypt | `openssl passwd -6` |
+| SHA-256 crypt | `openssl passwd -5` |
+| yescrypt | `mkpasswd -m yescrypt` |
 
-### Allow UDP for HTTP/3
+**If you don't:** rendering fails with an error that names the Ingress, the
+Secret, and the user. The admission webhook denies new or changed Ingresses
+that reference such a Secret, and while one is in the cluster, HAPTIC applies
+no configuration changes. To keep accepting a format while you migrate, widen
+the patterns as shown in
+[Basic-auth password hashes](operations/security.md#basic-auth-password-hashes).
 
-0.3 enables [HTTP/3](haproxy-deployment.md#http3-quic) by default. The HAProxy
-Service and each Gateway's Service gain a UDP port with the same number as
-their HTTPS port (`https-quic` on the HAProxy Service), and HTTPS responses
-advertise it with `alt-svc`.
+### 5. Update custom templates
 
-Before upgrading, allow UDP 443 (or your HTTPS port or nodePort) through
-firewalls, security groups, and load balancers in front of HAProxy, and check
-that your load-balancer implementation accepts Services that mix TCP and UDP
-ports. Clients that can't reach UDP fall back to TCP. To upgrade without
-HTTP/3, set
-`controller.config.templatingSettings.extraContext.http3.enabled: false`.
+If your values add templates, snippets, or libraries, make these changes:
 
-If you define `haproxy.service.extraPorts` with an entry named `https-quic`,
-rename it; the chart rejects the duplicate name.
+| 0.2 | 0.3 |
+|-----|-----|
+| `http.Fetch` option `delay` | `interval` |
+| `strings_replace(s, old, new)` | `replace(s, old, new)` |
+| `trim(s)` to strip whitespace | `strip(s)` |
+
+`trim` is now the `trim(s, cutset)` builtin in every render path. To find
+candidates in your values file:
+
+```bash
+grep -nE 'strings_replace|trim\(|delay' haptic-values-0.3.yaml
+```
+
+**If you don't:** the configuration fails to load, and [preflight](#9-validate-the-candidate)
+reports the error. An `http.Fetch` call that sets `delay` fails with
+`option "delay" was removed, so this call fails. Rename it to "interval"`.
+
+### 6. Update custom validation tests
+
+Assertions in `validationTests` no longer see your `templatingSettings.extraContext`.
+They render with the libraries' defaults, `testExtraContext` (which the chart
+sets from its default values), `_global`'s `extraContext`, and the test's own
+`extraContext`. A test that asserts output of a value you set must set that
+value itself:
+
+```yaml
+controller:
+  config:
+    validationTests:
+      test-my-timeouts:
+        extraContext:
+          timeoutConnect: "5000"
+        # fixtures and assertions unchanged
+```
+
+Each test also renders its fixtures a second time with your `extraContext`.
+That render must succeed and, where the test asserts `haproxy_valid`, pass
+`haproxy -c`. See [Extra context](validation-reference.md#extra-context).
+
+**If you don't:** a test asserting one of your values fails, and so does a
+test whose fixtures your values break. Either failure stops the configuration
+from loading, and preflight reports it, for example
+`This test's fixtures fail to render with the deployment's extraContext`.
+
+### 7. Prepare for HTTP/3
+
+0.3 enables [HTTP/3](haproxy-deployment.md#http3-quic) by default. Every
+TLS-terminating HTTPS listener also listens on UDP, and HTTPS responses
+advertise it with an `alt-svc` header. The HAProxy Service gains a UDP port
+named `https-quic` with the `https` port's number and nodePort, and each
+Gateway's Service gains a UDP port for each TLS-terminating HTTPS listener. The chart's
+NetworkPolicy allows it.
+
+Before upgrading, choose one:
+
+- Allow UDP on the HTTPS port (443 by default), or on its nodePort, through
+  firewalls, security groups, and load balancers in front of HAProxy. A
+  `LoadBalancer` Service now mixes TCP and UDP ports, so check that your
+  load-balancer implementation supports that.
+- Keep HAProxy TCP-only:
+
+    ```yaml
+    controller:
+      config:
+        templatingSettings:
+          extraContext:
+            http3:
+              enabled: false
+    ```
+
+If your load balancer publishes UDP on a different port than TCP, set
+`http3.altSvc.port`; see [HTTP/3 (QUIC)](haproxy-deployment.md#http3-quic).
+
+**If you don't:** where UDP is blocked, clients fall back to HTTP/2 or
+HTTP/1.1 over TCP after trying QUIC. An entry named `https-quic` in
+`haproxy.service.extraPorts` fails the install; rename it or turn HTTP/3 off.
+
+### 8. Check deployment-specific settings
+
+Skip each item that doesn't apply to you.
+
+**Varnish cache (`cache.varnish.enabled: true`).** Varnish runs as a bundled
+non-root image that needs the `IPC_LOCK` capability. Kubernetes Baseline and
+Restricted Pod Security Standards reject it, so arrange a policy exception with
+your cluster administrator before upgrading. If you set `cache.varnish.image`,
+remove the override to use the bundled image, or supply an image with
+`cap_ipc_lock=ep` on `varnishd`. **If you don't:** your cluster's policy rejects
+the Varnish pods. See [shared-log memory](operations/response-cache.md#shared-log-memory).
+
+**Controller probe overrides.** The chart probes controller readiness on
+`/readyz` and liveness on `/livez`. If your values set
+`controller.readinessProbe.httpGet.path` or `controller.livenessProbe.httpGet.path`,
+change them:
+
+```yaml
+controller:
+  readinessProbe:
+    httpGet:
+      path: /readyz
+  livenessProbe:
+    httpGet:
+      path: /livez
+```
+
+**If you don't:** probes on `/healthz` mark the leading replica unready and
+restart it while a new configuration fails to load, so admission requests are
+denied.
+
+**Your own controller NetworkPolicy.** If you replace the chart's
+NetworkPolicy, allow controller pods to reach each other on the health port
+(`controller.ports.healthz`, default 8080).
+
+**Monitoring.** `haptic_events_dropped_total` is removed. Query
+`haptic_events_dropped_critical_total`, which counted the same drops.
+
+**Custom agent clients.** If your own code calls the agent's `/v1/apply`, set
+`identity_version: 1` in the manifest. **If you don't:** the agent rejects the
+manifest with `400`. HAPTIC's own controller already sets it.
+
+### 9. Validate the candidate
+
+Use the `haptic` binary matching the chart version to run
+[preflight validation](operations/validate-before-deploy.md):
+
+```bash
+helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.3.0 --untar --untardir ./haptic-0.3-chart
+haptic preflight --values ./haptic-values-0.3.yaml \
+  --chart ./haptic-0.3-chart/haptic --expect-chart-version 0.3.0 \
+  --namespace "$HAPTIC_NAMESPACE" --release "$HAPTIC_RELEASE"
+```
+
+Fix every reported error and run it again until it passes.
+
+0.3 adds the `testExtraContext` field to the `HAProxyTemplateConfig` and
+`HAProxyTemplateLibrary` CRDs. Keep the chart's CRD upgrade hook enabled. If you
+manage CRDs separately, apply the target chart's schemas before upgrading:
+
+```bash
+helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.3.0 | kubectl apply --server-side --force-conflicts -f -
+```
+
+### 10. Upgrade the release
+
+Pass the complete migrated values file. `--reset-values` starts from the new
+chart's defaults, so removed keys aren't carried forward from the installed
+release:
+
+```bash
+helm upgrade "$HAPTIC_RELEASE" \
+  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --namespace "$HAPTIC_NAMESPACE" --version 0.3.0 \
+  --reset-values \
+  --values haptic-values-0.3.yaml
+```
+
+If validation rejects the candidate, fix the reported value or template and
+repeat the upgrade. For rollout failures, see
+[Recover a failed upgrade](deploying-with-helm.md#recover-a-failed-upgrade).
+
+### 11. Verify the deployment
+
+Wait for the controller and HAProxy deployments:
+
+```bash
+kubectl --namespace "$HAPTIC_NAMESPACE" get deployments \
+  --selector "app.kubernetes.io/instance=$HAPTIC_RELEASE" --output name | \
+while read -r deployment; do
+  kubectl --namespace "$HAPTIC_NAMESPACE" rollout status "$deployment" --timeout=7m
+done
+```
+
+The `HAProxyTemplateConfig` should report `Validated=True`; check any `False`
+condition on `HAProxyCfg`:
+
+```bash
+kubectl --namespace "$HAPTIC_NAMESPACE" get haproxytemplateconfig,haproxycfg -o yaml
+```
+
+Test existing HTTP and HTTPS routes, including authentication and custom
+annotations.
+
+### Behavior changes to review
+
+These need no action unless you depend on the old behavior:
+
+- **Response headers on generated responses.** The chart sets `Server`, HSTS,
+  Ingress custom response headers, and routing diagnostic headers with
+  `http-after-response`, so error pages, denials, and redirects that HAProxy
+  generates or replaces carry them too. A snippet that changes one of these
+  headers with `http-response` runs before the chart's rule; use
+  `http-after-response` instead.
+- **HSTS default.** `haproxy-haptic.org/hsts` without `hsts-max-age` sends one
+  year instead of two; see [step 3](#3-move-the-hsts-max-age).
+- **nginx-ingress regex paths.** With `use-regex` or `rewrite-target`, a path
+  containing regex syntax matches as a case-insensitive regex anchored at the
+  path's start, and `$N` in `rewrite-target` refers to its capture groups. In
+  0.2 the path matched as a literal prefix. See
+  [`use-regex`](libraries/nginx-ingress.md#nginxingresskubernetesiouse-regex).
+- **A failing configuration change.** While a new configuration fails to load,
+  the leading controller replica keeps serving and validating the previous one,
+  so admission keeps working. Other replicas report unready and restart.
+  `/healthz` still reports the failure. See
+  [health checks](development/debug-endpoints.md#health-checks-during-configuration-changes).
 
 ## Upgrading to 0.2
 
@@ -141,11 +396,12 @@ you intend to change it; the default is 3.4. See
 
 ### Save your values
 
-Set the installed Helm release and namespace:
+Set the installed Helm release and namespace, and the 0.2 release to upgrade to:
 
 ```bash
 HAPTIC_RELEASE=haptic
 HAPTIC_NAMESPACE=haptic
+HAPTIC_VERSION=0.2.2
 ```
 
 Export the values you supplied to Helm:
@@ -297,9 +553,9 @@ Use the `haptic` binary matching the chart version below to run
 
 ```bash
 helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.2 --untar --untardir ./haptic-0.2-chart
+  --version "$HAPTIC_VERSION" --untar --untardir ./haptic-0.2-chart
 haptic preflight --values ./haptic-values-0.2.yaml \
-  --chart ./haptic-0.2-chart/haptic --expect-chart-version 0.2.2 \
+  --chart ./haptic-0.2-chart/haptic --expect-chart-version "$HAPTIC_VERSION" \
   --namespace "$HAPTIC_NAMESPACE" --release "$HAPTIC_RELEASE"
 ```
 
@@ -308,7 +564,7 @@ deployment manages CRDs separately, apply the target chart's schemas before upgr
 
 ```bash
 helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.2 | kubectl apply --server-side --force-conflicts -f -
+  --version "$HAPTIC_VERSION" | kubectl apply --server-side --force-conflicts -f -
 ```
 
 GitOps diff tools can need these CRDs before they can map the new library
@@ -323,7 +579,7 @@ carried forward from the installed release:
 ```bash
 helm upgrade "$HAPTIC_RELEASE" \
   oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --namespace "$HAPTIC_NAMESPACE" --version 0.2.2 \
+  --namespace "$HAPTIC_NAMESPACE" --version "$HAPTIC_VERSION" \
   --reset-values \
   --values haptic-values-0.2.yaml
 ```

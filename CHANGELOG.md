@@ -10,18 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+HAPTIC 0.3 serves HTTP/3 by default, keeps admission validation available while
+a new configuration fails to load, and runs validationTests independently of
+your deployment values.
+
+**Before upgrading:** rename the changed `extraContext` keys, replace basic-auth
+hashes HAPTIC now refuses, allow UDP on the HTTPS port, and update custom
+templates and monitoring. The
+[upgrade notes](./docs/site/docs/upgrade-notes.md#upgrading-to-03) give one
+step for every **BREAKING** change below.
+
 ### Added
 
 - `templatingSettings.testExtraContext`: the extraContext validationTests render with in place of `extraContext`.
 - `http.Fetch` option `acceptStatus`: statuses besides 200 whose response body is the content.
+- `/readyz` and `/livez` health endpoints that judge the configuration a replica serves; `/healthz` keeps judging the newest one.
 
 ### Changed
 
 - **BREAKING:** validationTest assertions no longer see `templatingSettings.extraContext`; they render with library defaults, `testExtraContext`, `_global` and their own `extraContext`. A test asserting output of your own values must set them in its `extraContext`, `_global` or `testExtraContext`.
-- Each validationTest also renders its fixtures with the deployment's extraContext, which must render and, where the test asserts `haproxy_valid`, pass `haproxy -c`.
-- The live validationTests budget grows from 100 ms to 175 ms per test to cover the second render.
-- **BREAKING:** The agent rejects an apply manifest without `identity_version: 1` with `400` instead of downgrading it to a reload. Clients built against `pkg/dataplane/agent/api` must set it.
+- Each validationTest also renders its fixtures with your extraContext, which must render and, where the test asserts `haproxy_valid`, pass `haproxy -c`; the live validationTests budget grows from 100 ms to 175 ms per test to cover it.
 - **BREAKING:** `trim` is the `trim(s, cutset)` builtin in every render path; use `strip(s)` to trim whitespace.
+- **BREAKING:** The agent rejects an apply manifest without `identity_version: 1` with `400` instead of downgrading it to a reload. Clients built against `pkg/dataplane/agent/api` must set it.
 
 ### Removed
 
@@ -31,34 +41,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Watched resources finish their initial sync only after every listed resource reached the store, so the first render after startup can't miss resources.
-- Stop reporting normal controller shutdown cancellations and leadership handover as failures.
-- Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
-- A configuration reload that keeps failing no longer denies every admission request cluster-wide: the leading replica keeps serving and validating the previous configuration until a replica starts the new one. New `/readyz` and `/livez` endpoints report it; `/healthz` still reports the failure.
+- A configuration reload that keeps failing no longer denies every admission request cluster-wide: the leading replica keeps serving and validating the previous configuration until a replica starts the new one.
 - Overriding a value a bundled validationTest asserts the default of (`haproxy.ports.http`/`https`, `hardStopAfter`, `tune.bufsize`, `sslRedirectDefault`, basic-auth hash validation) no longer fails the configuration at load.
+- Watched resources finish their initial sync only after every listed resource reached the store, so the first render after startup can't miss resources.
+- Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
+- Stop reporting normal controller shutdown cancellations and leadership handover as failures.
 
 ### Helm chart
 
 #### Added
 
-- nginx-ingress library: `proxy-request-buffering`, `limit-burst-multiplier`, `affinity-mode` and `auth-tls-match-cn` annotations.
-- nginx-ingress library: `proxy-buffer-size` records a `ProxyBufferSizeExceeded` Warning Event when the response headers can't fit HAProxy's buffer.
-- An Ingress annotation under an enabled vendor library's prefix that the library doesn't know records an `UnknownAnnotation` Warning Event.
-- nginx-ingress migration coverage classifies every annotation in the ingress-nginx reference.
 - HTTP/3 (QUIC), on by default: every TLS-terminating HTTPS listener, Gateway HTTPS listeners included, also listens on UDP and is advertised with `alt-svc`. The HAProxy and Gateway Services gain a UDP port with the HTTPS port's number; firewalls and load balancers must allow UDP 443. Disable with `extraContext.http3.enabled: false`.
-- nginx-ingress: `custom-http-errors` replaces listed upstream error responses with pages fetched from the default backend, or from `extraContext.nginxDefaultBackendService`.
+- nginx-ingress library: `proxy-request-buffering`, `limit-burst-multiplier`, `affinity-mode` and `auth-tls-match-cn` annotations.
+- nginx-ingress library: `custom-http-errors` replaces listed upstream error responses with pages fetched from the default backend, or from `extraContext.nginxDefaultBackendService`.
+- nginx-ingress library: `proxy-buffer-size` records a `ProxyBufferSizeExceeded` Warning Event when the response headers can't fit HAProxy's buffer.
+- An Ingress annotation under an enabled vendor library's prefix that the library doesn't know records an `UnknownAnnotation` Warning Event; nginx-ingress migration coverage classifies every annotation in the ingress-nginx reference.
 
 #### Changed
 
-- Response headers the chart adds (`Server`, HSTS, Ingress custom response headers, routing diagnostics) are set with `http-after-response`, so error pages HAProxy generates or replaces carry them too.
-- Probe controller readiness on `/readyz` and liveness on `/livez`; the controller NetworkPolicy lets controller replicas reach each other's health port.
-- **BREAKING for Varnish users:** Lock shared memory with a bundled non-root image; cluster policy must allow `IPC_LOCK`.
 - **BREAKING:** Rename extraContext `timeout_connect`, `timeout_client`, `timeout_server`, `timeout_http_request` and `timeout_http_keep_alive` to `timeoutConnect`, `timeoutClient`, `timeoutServer`, `timeoutHttpRequest` and `timeoutHttpKeepAlive`; the old keys fail the install.
 - **BREAKING:** Rename extraContext `ssl_redirect_default` to `sslRedirectDefault`, now a boolean; the old key and a quoted value fail the install.
 - **BREAKING:** Remove extraContext `hapticHstsMaxAge`; `haproxy-haptic.org/hsts` without `hsts-max-age` uses `tls.hsts.maxAge`, so its default `max-age` drops from two years to one.
-- The controller dashboard's events-dropped panel splits drops by subscriber.
 - **BREAKING:** Basic-auth Secrets accept only bcrypt, SHA-256/SHA-512 crypt and yescrypt hashes by default, for every `auth-secret` annotation including nginx-ingress; `$apr1$`, `$1$`, DES crypt and plaintext are refused with an error naming the Ingress. Before upgrading, regenerate such hashes with `htpasswd -nB <user>` or `openssl passwd -6`.
+- **BREAKING for Varnish users:** Varnish runs as a bundled non-root image that locks shared memory; cluster policy must allow `IPC_LOCK`.
+- Response headers the chart adds (`Server`, HSTS, Ingress custom response headers, routing diagnostics) are set with `http-after-response`, so error pages HAProxy generates or replaces carry them too.
+- Probe controller readiness on `/readyz` and liveness on `/livez`; the controller NetworkPolicy lets controller replicas reach each other's health port.
 - Set `testExtraContext` to the extraContext computed from the chart defaults, keeping the deployment's library set, HAProxy version and feature switches.
+- The controller dashboard's events-dropped panel splits drops by subscriber.
+- Update the default HAProxy images to 3.0.29, 3.2.25, 3.3.16 and 3.4.6.
 
 #### Fixed
 

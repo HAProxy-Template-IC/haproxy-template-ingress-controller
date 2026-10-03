@@ -115,7 +115,7 @@ Ingress and Gateway authors then select this release with `ingressClassName: hap
 
 ## Upgrading
 
-For an upgrade from 0.1.0 or a 0.2.0 alpha, read the [0.2 upgrade notes](upgrade-notes.md#upgrading-to-02) before applying your values.
+For an upgrade from 0.2, follow the [0.3 upgrade notes](upgrade-notes.md#upgrading-to-03). For an upgrade from 0.1.0 or a 0.2.0 alpha, read the [0.2 upgrade notes](upgrade-notes.md#upgrading-to-02) first.
 
 Pass your complete values file when upgrading. If you configured the release with
 `--set` and have no saved file, [export its values first](#change-settings):
