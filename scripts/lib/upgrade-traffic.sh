@@ -8,10 +8,7 @@ if len(items) != 1:
     sys.exit("expected one HAProxy deployment")
 print(items[0])')" || return 1
   k rollout status "deployment/$deployment" --timeout=7m || return 1
-  pods="$(k get pods -l app.kubernetes.io/component=loadbalancer -o json | python3 -c '
-import json, sys
-print("\n".join(item["metadata"]["name"] for item in json.load(sys.stdin)["items"]
-                if not item["metadata"].get("deletionTimestamp")))')" || return 1
+  pods="$(live_pods loadbalancer)" || return 1
   [ "$(wc -w <<<"$pods")" -eq 2 ] || fail "$phase: expected both HAProxy replicas"
   k get secret upgrade-default-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > "$WORK/upgrade.crt" || return 1
   for pod in $pods; do
@@ -20,11 +17,24 @@ print("\n".join(item["metadata"]["name"] for item in json.load(sys.stdin)["items
     info "$phase: $pod serves the existing HTTP and HTTPS routes"
   done
   k get pods -o json > "$ARTIFACTS/$phase-pods.json" || return 1
-  k logs -l app.kubernetes.io/component=controller --all-containers --prefix \
-    --tail=-1 > "$ARTIFACTS/$phase-controller.log" || return 1
+  # A selector would also match the previous release's terminating controllers,
+  # which can vanish mid-read.
+  pods="$(live_pods controller)" || return 1
+  [ -n "$pods" ] || fail "$phase: no running controller pods"
+  : > "$ARTIFACTS/$phase-controller.log"
+  for pod in $pods; do
+    k logs "pod/$pod" --all-containers --prefix --tail=-1 >> "$ARTIFACTS/$phase-controller.log" || return 1
+  done
   if grep -E 'Rendered output rejected|content differs from its plan file|ArtifactContentMismatch' "$ARTIFACTS/$phase-controller.log"; then
     fail "$phase: controller rejected inconsistent rendered output"
   fi
+}
+
+live_pods() {
+  k get pods -l "app.kubernetes.io/component=$1" -o json | python3 -c '
+import json, sys
+print("\n".join(item["metadata"]["name"] for item in json.load(sys.stdin)["items"]
+                if not item["metadata"].get("deletionTimestamp")))'
 }
 
 probe_upgrade_pod() (

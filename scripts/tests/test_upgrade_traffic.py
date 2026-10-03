@@ -69,7 +69,17 @@ source scripts/lib/upgrade-traffic.sh
 k() {
   case "$1 $2" in
     "get deployments") echo '{"items":[{"metadata":{"name":"haptic-haproxy"}}]}' ;;
-    "get pods") echo '{"items":[{"metadata":{"name":"first"}},{"metadata":{"name":"second"}}]}' ;;
+    "get pods")
+      case "$*" in
+        *component=controller*) [ -z "${CONTROLLER_LIST_FAILURE:-}" ] || return 1; echo '{"items":[{"metadata":{"name":"controller-old","deletionTimestamp":"2026-10-01T00:00:00Z"}},{"metadata":{"name":"controller-new"}}]}' ;;
+        *) echo '{"items":[{"metadata":{"name":"first"}},{"metadata":{"name":"second"}}]}' ;;
+      esac ;;
+    "logs "*)
+      # kubectl reads every pod the selector matched; a terminating one can be gone by then.
+      case "$*" in
+        *controller-new*) echo "[pod/controller-new/controller] ${CONTROLLER_LOG:-reconciled}" ;;
+        *) echo 'Error from server (NotFound): pods "controller-old" not found' >&2; return 1 ;;
+      esac ;;
     "get pod") printf '{"spec":{"containers":[{"ports":[{"name":"http","containerPort":%s},{"name":"https","containerPort":%s}]}]}}' "${POD_HTTP_PORT:-80}" "${POD_HTTPS_PORT:-443}" ;;
     "get secret") printf 'Y2VydA==' ;;
     "port-forward "*) kubectl --context "$CTX" -n haptic "$@" ;;
@@ -98,6 +108,22 @@ wait_upgrade_traffic upgrade
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("forwarding failed", result.stdout)
         self.assertFalse((self.work / "response.json").exists())
+
+    def test_controller_pod_gone_while_terminating_does_not_fail_the_phase(self):
+        result = self.run_traffic()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("controller-new", (self.work / "upgrade-controller.log").read_text())
+
+    def test_rejected_output_in_a_running_controller_still_fails(self):
+        self.env["CONTROLLER_LOG"] = "Rendered output rejected"
+        result = self.run_traffic()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rejected inconsistent rendered output", result.stderr)
+
+    def test_failed_controller_listing_fails_the_phase(self):
+        self.env["CONTROLLER_LIST_FAILURE"] = "1"
+        result = self.run_traffic()
+        self.assertNotEqual(result.returncode, 0)
 
     def test_released_chart_container_ports(self):
         self.env.update(POD_HTTP_PORT="8080", POD_HTTPS_PORT="8443")
