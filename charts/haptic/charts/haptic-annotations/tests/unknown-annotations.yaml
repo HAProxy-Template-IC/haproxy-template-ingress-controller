@@ -1,0 +1,29 @@
+validationTests:
+  test-haptic-unknown-annotation-warns:
+    description: An unknown haproxy-haptic.org annotation records an UnknownAnnotation Event, the same check every enabled vendor prefix gets.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: typo
+            annotations:
+              haproxy-haptic.org/timeout-sever: "30s"
+              haproxy-haptic.org/timeout-server: "30s"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: typo.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: echo, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: events
+        pattern: "Warning UnknownAnnotation networking.k8s.io/v1 Ingress default/typo: Ingress default/typo sets haproxy-haptic\\.org/timeout-sever, which"
+      - {type: not_contains, target: events, pattern: "timeout-server"}

@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Helm chart
 
+#### Added
+
+- nginx-ingress library: `proxy-request-buffering`, `limit-burst-multiplier`, `affinity-mode` and `auth-tls-match-cn` annotations.
+- nginx-ingress library: `proxy-buffer-size` records a `ProxyBufferSizeExceeded` Warning Event when the response headers can't fit HAProxy's buffer.
+- An Ingress annotation under an enabled vendor library's prefix that the library doesn't know records an `UnknownAnnotation` Warning Event.
+- nginx-ingress migration coverage classifies every annotation in the ingress-nginx reference.
+
 #### Changed
 
 - **BREAKING for Varnish users:** Lock shared memory with a bundled non-root image; cluster policy must allow `IPC_LOCK`.

@@ -11,7 +11,8 @@
 # 16-server-alias, 17-default-backend, 18-satisfy, 20-frontend-filters,
 # 30-features, 40-auth-spoe — and validationTests live under tests/
 # (annotations, redirects-canary, auth-mtls, proxy-ssl-cookie, server-alias,
-# default-backend, satisfy). All fragments merge into one library at
+# default-backend, satisfy, buffers-limits-affinity, unknown-annotations). All
+# fragments merge into one library at
 # chart-render time; the merge order is lexicographic, but since each
 # snippet/test name is unique the source file it lives in is purely
 # organisational.
@@ -28,6 +29,7 @@
 #   - upstream-hash-by
 #   - configuration-snippet
 #   - default-backend (annotation; per-host catch-all Service)
+#   - proxy-request-buffering, proxy-buffer-size (Event when headers can't fit)
 #
 # Backend TLS to upstream (only when backend-protocol HTTPS/GRPCS):
 #   - proxy-ssl-secret (client cert + CA from a kubernetes.io/tls Secret)
@@ -40,7 +42,7 @@
 #   - proxy-cookie-domain, proxy-cookie-path
 #
 # Session Affinity:
-#   - affinity: cookie
+#   - affinity: cookie, affinity-mode
 #   - session-cookie-name, session-cookie-path, session-cookie-domain
 #   - session-cookie-secure, session-cookie-samesite
 #   - session-cookie-max-age / session-cookie-expires (-> cookie `attr Max-Age=<s>`,
@@ -52,7 +54,7 @@
 #   - auth-type, auth-secret, auth-realm
 #
 # Rate Limiting:
-#   - limit-rps, limit-rpm, limit-connections, limit-whitelist
+#   - limit-rps, limit-rpm, limit-connections, limit-whitelist, limit-burst-multiplier
 #
 # Frontend Filters:
 #   - whitelist-source-range, denylist-source-range
@@ -76,7 +78,7 @@
 #   - ssl-passthrough
 #
 # mTLS:
-#   - auth-tls-pass-certificate-to-upstream, auth-tls-error-page
+#   - auth-tls-pass-certificate-to-upstream, auth-tls-error-page, auth-tls-match-cn
 #
 # WAF (Coraza, requires spoaHub.plugins.coraza):
 #   - modsecurity-snippet, enable-modsecurity

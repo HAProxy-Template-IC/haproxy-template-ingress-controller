@@ -279,7 +279,7 @@ controller:
           waitTimeout: 10s
 ```
 
-Override it for a single route with the [`haproxy-haptic.org/request-buffering`](haptic-annotations.md#request-buffering) annotation (`on` or `off`). The override lives in `request-buffering.map`, so changing one route's setting reloads nothing, and it's authoritative: a route set to `off` isn't buffered even when a sibling route on the same frontend enables [request mirroring](haptic-annotations.md#canary-and-traffic-mirroring), which buffers bodies of its own accord. The consequence for a mirrored route that opts out is that its mirror receives an empty body.
+Override it for a single route with the [`haproxy-haptic.org/request-buffering`](haptic-annotations.md#request-buffering) annotation (`on` or `off`), or [`nginx.ingress.kubernetes.io/proxy-request-buffering`](nginx-ingress.md#buffering) with the nginx-ingress library. The override lives in `request-buffering.map`, so changing one route's setting reloads nothing, and it's authoritative: a route set to `off` isn't buffered even when a sibling route on the same frontend enables [request mirroring](haptic-annotations.md#canary-and-traffic-mirroring), which buffers bodies of its own accord. The consequence for a mirrored route that opts out is that its mirror receives an empty body.
 
 HAProxy releases the request as soon as *either* the body is complete or `tune.bufsize` is full, so this is slow-client protection rather than an upload buffer — a 1 GB upload proceeds once the first 16 KiB arrive. When the wait expires with neither condition met, the client gets a `408` and the backend is never contacted.
 

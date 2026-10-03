@@ -175,6 +175,31 @@ Returns: empty (mutates obj by side effect)
 {{- end }}
 
 {{/*
+Project `_migrationCoverage` into extraContext.knownAnnotations.<source> =
+{prefixes, names without prefix} for features-955-annotation-unknown-key.
+Args: library dict (mutated)
+*/}}
+{{- define "haptic.projectKnownAnnotations" -}}
+{{- $library := . -}}
+{{- $known := dict -}}
+{{- range $coverage := $library._migrationCoverage | default list -}}
+  {{- $prefixes := $coverage.detect.annotationPrefixes | default list -}}
+  {{- $names := list -}}
+  {{- range $key := keys ($coverage.annotations | default dict) | sortAlpha -}}
+    {{- range $prefix := $prefixes -}}
+      {{- if hasPrefix $prefix $key -}}
+        {{- $names = append $names (trimPrefix $prefix $key) -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $_ := set $known $coverage.source (dict "prefixes" $prefixes "names" $names) -}}
+{{- end -}}
+{{- if $known -}}
+  {{- include "haptic.setNested" (list $library "templatingSettings.extraContext.knownAnnotations" $known) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Load every enabled template library and return it prepared but NOT merged, as
 `libraries: [{name, config}, ...]` in merge order. Each `config` is a spec
 fragment ready to be rendered as its own HAProxyTemplateConfig.
@@ -341,6 +366,7 @@ the cost of its source being stored in the release Secret.
       {{- end }}
     {{- end }}
     {{- $_ := unset $library "_helm_load" }}
+    {{- include "haptic.projectKnownAnnotations" $library }}
     {{- $library = include "haptic.filterTests" (list $library $context) | fromYaml }}
     {{- /* Underscore-prefixed top-level keys are chart-time-only scratch
            (ssl.yaml's _test_tls_* YAML anchors); they are not CRD fields and

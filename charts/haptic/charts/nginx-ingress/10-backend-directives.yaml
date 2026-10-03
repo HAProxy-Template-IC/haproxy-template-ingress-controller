@@ -29,6 +29,11 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
         {%- var affinity = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/affinity"] %}
         {%- if affinity == "cookie" %}
+          {#- HAProxy cookie persistence is always "persistent"; "balanced" can't rebalance on scale-up. The mode emits nothing, so a bad value still gets affinity. -#}
+          {%- var affinityMode = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/affinity-mode"] %}
+          {%- if affinityMode != "" && affinityMode != "balanced" && affinityMode != "persistent" %}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Annotation 'nginx.ingress.kubernetes.io/affinity-mode' on Ingress '" + key + "' is '" + affinityMode + "', which isn't a session affinity mode, so the value is ignored. Set it to balanced or persistent.") -}}
+          {%- end %}
           {%- var cookieName = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-name"] %}
           {%- if cookieName == "" %}{%- cookieName = "INGRESSCOOKIE" %}{%- end %}
           {%- var cookiePath = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-path"] %}
@@ -266,6 +271,68 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
+  # proxy-request-buffering on|off overrides extraContext.requestBuffering.enabled
+  # per route through request-buffering.map (base frontend-filters-090).
+  map-request-buffering-835-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/proxy-request-buffering']"]
+      group: map-request-buffering
+      effects: [recordEvent]
+    template: |
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var buffering = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-request-buffering"] -%}
+        {%- if buffering != "on" && buffering != "off" -%}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Annotation 'nginx.ingress.kubernetes.io/proxy-request-buffering' on Ingress '" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + "' is '" + buffering + "', so the fleet-wide request buffering applies. Set it to on or off.") -}}
+        {%- else -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- for _, path := range rule.Http.Paths -%}
+              {%- var be = BackendNameIngress(ingress, path) -%}
+              {{- shared.Unique("map-request-buffering", be, "\n" + be + " " + buffering) -}}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # Response headers must fit the process-wide tune.bufsize minus tune.maxrewrite;
+  # a tenant mustn't raise fleet-wide memory, so an oversized value is reported, not applied.
+  features-957-nginx-ingress-proxy-buffer-size:
+    requires: [ingresses]
+    incremental:
+      effects: [recordEvent]
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/proxy-buffer-size']"]
+      bindingsTemplate: |-
+        {{- toJSON(map[string]any{"ingresses": map[string]any{"bufsize": toint(render "util-tune-bufsize")}}) -}}
+    template: |-
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var size = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-buffer-size"] -%}
+        {%- if !regex_search(size, "^[0-9]{1,9}[kKmM]?$") -%}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Annotation 'nginx.ingress.kubernetes.io/proxy-buffer-size' on Ingress '" + key + "' is '" + size + "', which isn't a byte size, so the value is ignored. Use a size like '16k'.") -}}
+        {%- else -%}
+          {%- var factor = 1 -%}
+          {%- if hasSuffix(size, "k") || hasSuffix(size, "K") -%}{%- factor = 1024 -%}{%- end -%}
+          {%- if hasSuffix(size, "m") || hasSuffix(size, "M") -%}{%- factor = 1048576 -%}{%- end -%}
+          {%- var digits = size -%}
+          {%- if factor > 1 -%}{%- digits = size[0:len(size)-1] -%}{%- end -%}
+          {%- var bufsize = toint(props | dig("bufsize")) -%}
+          {%- var maxrewrite = 1024 -%}
+          {%- if bufsize / 2 < maxrewrite -%}{%- maxrewrite = bufsize / 2 -%}{%- end -%}
+          {%- var capacity = bufsize - maxrewrite -%}
+          {%- if toint(digits) * factor > capacity -%}
+            {{- recordEvent(ingress, "ProxyBufferSizeExceeded", "Ingress " + key + " sets nginx.ingress.kubernetes.io/proxy-buffer-size: " + size + ", but HAProxy fits at most " + tostring(capacity) + " bytes of response headers, so larger headers fail with 502. Raise extraContext.tune.bufsize to at least " + tostring(toint(digits) * factor + maxrewrite) + ".") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
   # limit-rate is a per-stream cap, so it maps onto `set-bandwidth-limit … limit
   # <expr>` with the rate from the lane's map. limit-rate-after becomes the
   # filter's min-size, which is HAProxy's forward-chunk size and NOT nginx's
@@ -447,7 +514,17 @@ templateSnippets:
           {%- if len(ignored) > 0 -%}
             {{- recordEvent(ingress, "RateLimitCapIgnored", "Ingress " + key + ": " + join(ignored, ", ") + " ignored, a route has one rate-limit counter and limit-rps > limit-rpm > limit-connections wins.") -}}
           {%- end -%}
-          {{- PublishRateLimit(key, counter, window, "102400", tostring(toint(value)), "429", allow) -}}
+          {%- var threshold = toint(value) -%}
+          {%- var burst = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-burst-multiplier"] -%}
+          {%- if burst != "" && counter == "req" -%}
+            {%- if !regex_search(burst, "^[0-9]{1,3}$") || toint(burst) < 1 || toint(burst) > 100 -%}
+              {{- fail("Invalid value '" + burst + "' for annotation 'nginx.ingress.kubernetes.io/limit-burst-multiplier' on Ingress '" + key + "'. Must be an integer from 1 to 100.") -}}
+            {%- end -%}
+            {#- nginx's burst of rate x multiplier becomes a window multiplier times longer with the same average rate. -#}
+            {%- window = tostring(toint(window[0:len(window)-1]) * toint(burst)) + "s" -%}
+            {%- threshold = threshold * toint(burst) -%}
+          {%- end -%}
+          {{- PublishRateLimit(key, counter, window, "102400", tostring(threshold), "429", allow) -}}
         {%- end -%}
       {%- end -%}
 

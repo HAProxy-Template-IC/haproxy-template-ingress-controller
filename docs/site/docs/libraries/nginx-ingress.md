@@ -213,6 +213,25 @@ annotations:
   nginx.ingress.kubernetes.io/x-forwarded-prefix: "/app"
 ```
 
+### Buffering
+
+**Annotations**:
+
+| Annotation | Description |
+|------------|-------------|
+| `proxy-request-buffering` | `on` or `off`: overrides the [fleet-wide request buffering](base.md#request-buffering) for the Ingress's routes |
+| `proxy-buffer-size` | Response-header size the backend needs, for example `16k` |
+
+HAProxy buffers a request only when it carries a `Content-Length`, and holds at most `tune.bufsize` bytes, so `on` protects backends from slow clients rather than spooling a whole upload as nginx does.
+
+HAProxy has no per-route response buffer: every route's response headers must fit in `tune.bufsize` minus 1 KiB, which is 15 KiB with the default `tune.bufsize` of 16384. When `proxy-buffer-size` asks for more, HAPTIC records a `ProxyBufferSizeExceeded` Warning Event on the Ingress naming the `controller.config.templatingSettings.extraContext.tune.bufsize` value that fits. Raising it increases memory use for every connection.
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+  nginx.ingress.kubernetes.io/proxy-buffer-size: "8k"
+```
+
 ### Rate limiting
 
 **Annotations**:
@@ -223,8 +242,9 @@ annotations:
 | `limit-rpm` | Maximum requests per minute per source IP |
 | `limit-connections` | Maximum concurrent connections per source IP |
 | `limit-whitelist` | Comma-separated CIDRs exempt from the limits |
+| `limit-burst-multiplier` | Burst allowance for `limit-rps` and `limit-rpm`, from 1 to 100 |
 
-Exceeding a limit returns HTTP 429 — ingress-nginx allows a 5x burst and rejects with 503, so expect stricter enforcement at the same value after migrating. A stick-table stores each data type once, so the three limits are mutually exclusive with precedence `limit-rps` > `limit-rpm` > `limit-connections`; HAPTIC records a `RateLimitCapIgnored` Event on the Ingress naming the ones it ignored. Invalid CIDRs in `limit-whitelist` fail the render.
+Exceeding a limit returns HTTP 429 — ingress-nginx rejects with 503. ingress-nginx allows a 5x burst by default; HAPTIC enforces a hard cap unless you set `limit-burst-multiplier`, so expect stricter enforcement at the same value after migrating. With a multiplier, HAPTIC counts requests over a window that many times longer at the same average rate: `limit-rps: "10"` with `limit-burst-multiplier: "5"` allows 50 requests in any 5 seconds. A stick-table stores each data type once, so the three limits are mutually exclusive with precedence `limit-rps` > `limit-rpm` > `limit-connections`; HAPTIC records a `RateLimitCapIgnored` Event on the Ingress naming the ones it ignored. Invalid CIDRs in `limit-whitelist` fail the render.
 
 ```yaml
 annotations:
@@ -360,6 +380,7 @@ Enable cookie-based session affinity.
 | `session-cookie-max-age` | `Max-Age` attribute (seconds) — the browser cookie lifetime | - |
 | `session-cookie-expires` | Also emitted as `Max-Age` — HAProxy can't compute an absolute `Expires` date, and browsers treat both equivalently; `session-cookie-max-age` wins when both are set | - |
 | `session-cookie-hash` | Accepted but not configurable — HAProxy's dynamic cookies always hash via `dynamic-cookie-key`, so the value is ignored with a rendered warning | - |
+| `affinity-mode` | `balanced` or `persistent`. HAProxy's stickiness is always `persistent`: sessions stay on their pod when the Service scales up | `balanced` |
 
 ```yaml
 annotations:
@@ -844,6 +865,16 @@ annotations:
 `auth-tls-verify-depth` is unsupported. Restrict the trusted certificate authorities to those you
 intend to accept; this doesn't enforce a maximum chain depth.
 
+### `nginx.ingress.kubernetes.io/auth-tls-match-cn`
+
+Regular expression the client certificate's subject distinguished name (DN) must match. HAPTIC matches the DN in RFC 2253 form, the same string nginx's `$ssl_client_s_dn` holds, and answers `403` when it doesn't match or no certificate was sent. Like ingress-nginx, the annotation only takes effect together with `auth-tls-secret`.
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/auth-tls-secret: "client-ca"
+  nginx.ingress.kubernetes.io/auth-tls-match-cn: "CN=(alice|bob)\\.example\\.com"
+```
+
 ### `nginx.ingress.kubernetes.io/auth-tls-error-page`
 
 URL to redirect to (302) when client certificate verification fails.
@@ -903,6 +934,20 @@ The following nginx-ingress annotations aren't supported:
 | `auth-tls-verify-depth`, `proxy-ssl-verify-depth` | No per-host or per-server depth limit; configuring trusted certificate authorities doesn't enforce a maximum chain depth |
 | `proxy-ssl-server-name` | Not read; control SNI toward the upstream via `proxy-ssl-name` |
 | `canary-weight-total` | The canary weight base is fixed at 100 |
+| `custom-http-errors` | HAProxy can't send a request to another backend once the upstream has answered, so upstream error responses reach the client unchanged |
+| `custom-headers` | Not read; set response headers with `custom-response-headers` |
+| `ssl-ciphers` | Ciphers apply to every TLS host; set them with `extraContext.tls.ciphers` |
+| `enable-access-log` | Access logging can't be switched off per Ingress; `extraContext.accessLog.suppress.successful` drops successful requests fleet-wide |
+| `proxy-buffering`, `proxy-buffers-number`, `proxy-busy-buffers-size`, `client-body-buffer-size` | HAProxy streams through fixed-size memory buffers; see [Buffering](#buffering) |
+| `auth-cache-key`, `auth-cache-duration`, `auth-keepalive*`, `auth-proxy-set-headers`, `auth-request-redirect`, `auth-signin-redirect-param`, `auth-always-set-cookie` | Not configurable for the external-auth plugin; every request is checked against `auth-url` |
+
+[Annotation compatibility](../annotation-compatibility.md#ingress-nginx) lists every ingress-nginx annotation with its status.
+
+An `nginx.ingress.kubernetes.io/*` annotation that isn't in that list — usually a typo — has no effect. HAPTIC records an `UnknownAnnotation` Warning Event on the Ingress naming it:
+
+```bash
+kubectl get events --field-selector reason=UnknownAnnotation
+```
 
 ## Watched Resources
 
