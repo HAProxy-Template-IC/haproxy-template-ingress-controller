@@ -44,16 +44,18 @@ type Watcher struct {
 	debouncer            *Debouncer
 	informerFactory      dynamicinformer.DynamicSharedInformerFactory
 	informer             cache.SharedIndexInformer
-	stopCh               chan struct{}
-	stopOnce             sync.Once // guards stopCh close so Stop() is idempotent
-	startOnce            sync.Once
-	startErr             error
-	synced               bool // True after initial sync completes
-	syncMu               sync.RWMutex
-	initialCount         int          // Number of resources loaded during initial sync
-	lastWatchErrNanos    atomic.Int64 // observability: most recent watch-connection error
-	labelSelector        string       // serialized form of config.LabelSelector; "" when unset
-	logger               *slog.Logger
+	// Synced only after the handlers applied the initial list; informer.HasSynced is not.
+	handlers          cache.ResourceEventHandlerRegistration
+	stopCh            chan struct{}
+	stopOnce          sync.Once // guards stopCh close so Stop() is idempotent
+	startOnce         sync.Once
+	startErr          error
+	synced            bool // True after initial sync completes
+	syncMu            sync.RWMutex
+	initialCount      int          // Number of resources loaded during initial sync
+	lastWatchErrNanos atomic.Int64 // observability: most recent watch-connection error
+	labelSelector     string       // serialized form of config.LabelSelector; "" when unset
+	logger            *slog.Logger
 }
 
 // New creates a new resource watcher with the provided configuration.
@@ -240,7 +242,7 @@ func (w *Watcher) createInformer() error {
 		return fmt.Errorf("setting watch error handler: %w", err)
 	}
 
-	_, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	handlers, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    w.handleAdd,
 		UpdateFunc: w.handleUpdate,
 		DeleteFunc: w.handleDelete,
@@ -248,6 +250,7 @@ func (w *Watcher) createInformer() error {
 	if err != nil {
 		return fmt.Errorf("adding event handler: %w", err)
 	}
+	w.handlers = handlers
 
 	return nil
 }
@@ -297,7 +300,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 		defer stopOnCancel()
 
 		w.informerFactory.Start(w.stopCh)
-		if !cache.WaitForCacheSync(w.stopCh, w.informer.HasSynced) {
+		if !cache.WaitForCacheSync(w.stopCh, w.handlers.HasSynced) {
 			w.startErr = ctx.Err()
 			if w.startErr == nil {
 				w.startErr = errors.New("syncing cache")
@@ -372,7 +375,7 @@ func (w *Watcher) Store() types.Store {
 //	}
 //	slog.Info("Watcher synced", "resource_count", count)
 func (w *Watcher) WaitForSync(ctx context.Context) (int, error) {
-	if !cache.WaitForCacheSync(ctx.Done(), w.informer.HasSynced) {
+	if !cache.WaitForCacheSync(ctx.Done(), w.handlers.HasSynced) {
 		return 0, errors.New("syncing cache")
 	}
 
