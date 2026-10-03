@@ -1,0 +1,83 @@
+# nginx-ingress library — use-regex paths and the regex side of rewrite-target.
+# https://kubernetes.github.io/ingress-nginx/user-guide/ingress-path-matching/
+templateSnippets:
+  util-nginx-ingress-regex-paths:
+    template: |-
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-regex-map-key" for RegexMapKey -%}
+      {#- One record per path, longest first: host, path and backend. -#}
+      {%- var NginxPathRecords = func(ingress *resources.ingresses.T) []any {
+        var records = []any{}
+        for _, rule := range ingress.Spec.Rules {
+          for _, path := range rule.Http.Paths {
+            if path.Path == "" { continue }
+            records = append(records, map[string]any{
+              "host": rule.Host, "path": path.Path,
+              "backend": BackendNameIngress(ingress, path),
+              "length": len(path.Path), "order": len(records),
+            })
+          }
+        }
+        return sort_by(records, []string{"$.length:desc", "$.order"})
+      } -%}
+      {#- ingress-nginx's enforceRegexModifier, per Ingress. -#}
+      {%- var NginxRegexMode = func(ingress *resources.ingresses.T) bool {
+        var target = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/rewrite-target"]
+        if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/use-regex"] == "true" { return true }
+        if target == "" { return false }
+        for _, rule := range ingress.Spec.Rules {
+          for _, path := range rule.Http.Paths {
+            if path.Path != target { return true }
+          }
+        }
+        return false
+      } -%}
+      {#- nginx's `location ~* "^<path>"` regex, behind the routed host key unless
+          hostKey is "", as a single-quoted config argument. -#}
+      {%- var NginxLocationArg = func(hostKey string, path string) string {
+        return "'" + replace(RegexMapKey(hostKey, path, "(?i)"), "'", "'\\''") + "'"
+      } -%}
+
+  map-path-regex-750-nginx-ingress:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - "metadata.annotations['nginx.ingress.kubernetes.io/use-regex']"
+        - "metadata.annotations['nginx.ingress.kubernetes.io/rewrite-target']"
+      effects: [recordEvent]
+    template: |-
+      {#- A literal path keeps its Kubernetes entry so it can't shadow a longer
+          path on the host. A whitespace path drops the Ingress, as
+          features-900-ingress-path-candidates reports. -#}
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-regex-map-key" for RegexGroupProblem, RegexMapKey -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- import "util-nginx-ingress-regex-paths" for NginxPathRecords, NginxRegexMode -%}
+      {%%
+        var ingress = resources.ingresses.GetSingle(
+          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
+        if ingress != nil && NginxRegexMode(ingress) {
+          var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name
+          var block = ""
+          var rejected = false
+          for _, record := range NginxPathRecords(ingress) {
+            var path = tostring(record | dig("path"))
+            if ConfigInjectionKind(path, "mapkey") != "" {
+              rejected = true
+              break
+            }
+            if !regex_search(path, `[.*+?()\[\]{}|^$\\]`) { continue }
+            var problem = RegexGroupProblem(path)
+            if problem != "" {
+              _ = WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + key + " has regex path '" + path + "', which " + problem + "; the path is not routed. Rewrite it so its groups and [ ] classes close within it, without \\Q, \\E, \\c or (*.")
+              continue
+            }
+            block += "\n" + RegexMapKey(MapKeyForHost(record | dig("host")), path, "(?i)") + " BACKEND:" + tostring(record | dig("backend"))
+          }
+          if block != "" && !rejected {
+            show "\n# nginx-ingress/use-regex (" + key + ")" + block + "\n"
+          }
+        }
+      %%}

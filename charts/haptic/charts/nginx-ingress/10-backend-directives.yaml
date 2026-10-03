@@ -407,22 +407,48 @@ templateSnippets:
 
   backend-directives-750-nginx-ingress-rewrite-target:
     template: |
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-nginx-ingress-regex-paths" for NginxPathRecords, NginxLocationArg -%}
+      {%- import "util-regex-map-key" for RegexGroupProblem -%}
       {%- import "util-nginx-ingress-rewrite-target" for RewriteTargetCaptures -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var rewrite = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/rewrite-target"] %}
-        {%- if rewrite != "" %}
-          {%- rewrite = RewriteTargetCaptures(rewrite) -%}
-          {#- Only a \N backreference forces backend scope (the regex side can't be map-driven); literal rewrites go to path-rewrite.map via map-path-rewrite-750-nginx-ingress. -#}
-          {%- if regex_search(rewrite, "\\\\[1-9]") %}
-            {%- var injRw = ConfigInjectionKind(rewrite, "line") %}
-            {%- if injRw != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidRewriteTarget", "Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/rewrite-target' contains " + injRw + "; the rewrite is not applied. Remove control characters from the value.") -}}{%- else %}
+        {%- var target = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/rewrite-target"] %}
+        {%- var rewrite = RewriteTargetCaptures(target) -%}
+        {#- Only a \N backreference forces backend scope (the regex side can't be map-driven); literal rewrites go to path-rewrite.map via map-path-rewrite-750-nginx-ingress. -#}
+        {%- if regex_search(rewrite, "\\\\[1-9]") %}
+          {%- var injRw = ConfigInjectionKind(rewrite, "line") %}
+          {%- if injRw != "" %}{{- WebhookRejectOrWarn(ingress, "InvalidRewriteTarget", "Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/rewrite-target' contains " + injRw + "; the rewrite is not applied. Remove control characters from the value.") -}}{%- else %}
+            {#- \N binds to the groups of the path regex nginx routed by; with several
+                paths on this backend, the longest one matching on the request's
+                own host is that location. -#}
+            {%- var backend = BackendNameIngress(ingress, path) %}
+            {%- var patterns = []string{} %}
+            {%- var locations = []string{} %}
+            {%- for _, record := range NginxPathRecords(ingress) %}
+              {%- var p = tostring(record | dig("path")) %}
+              {%- if tostring(record | dig("backend")) == backend && p != target && ConfigInjectionKind(p, "mapkey") == "" && RegexGroupProblem(p) == "" %}
+                {%- patterns = append(patterns, NginxLocationArg("", p)) %}
+                {%- locations = append(locations, NginxLocationArg(MapKeyForHost(record | dig("host")), p)) %}
+              {%- end %}
+            {%- end %}
+            {%- if len(patterns) > 0 %}
       # nginx-ingress/backend-directives-rewrite-target ({{ key }})
-      http-request replace-path (.*) {{ rewrite }}
+            {%- end %}
+            {%- if len(patterns) == 1 %}
+      http-request replace-path {{ patterns[0] }} {{ rewrite }}
+            {%- else if len(patterns) > 1 %}
+              {%- for i, location := range locations %}
+      http-request set-var(txn.nginx_rewrite_location) int({{ i }}) if !{ var(txn.nginx_rewrite_location) -m found } { var(txn.host_match),concat(,txn.path,) -m reg {{ location }} }
+              {%- end %}
+              {%- for i, pattern := range patterns %}
+      http-request replace-path {{ pattern }} {{ rewrite }} if { var(txn.nginx_rewrite_location) -m int {{ i }} }
+              {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -449,6 +475,7 @@ templateSnippets:
           {%- if !regex_search(rewrite, "\\\\[1-9]") -%}
             {%- for _, rule := range ingress.Spec.Rules -%}
               {%- for _, path := range rule.Http.Paths -%}
+                {%- if path.Path == rewrite -%}{%- continue -%}{%- end -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}
                 {{- shared.Unique("map-path-rewrite", be,
                   "\n" + be + " " + queryEscape(ValidateConfigValue(rewrite,

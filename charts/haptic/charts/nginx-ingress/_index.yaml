@@ -7,12 +7,12 @@
 #
 # Split library (ADR-0008): this _index.yaml is the load-rule authority
 # (_helm_load + watchedResources). Production templateSnippets live in the
-# sibling fragments by concern — 10-backend-directives, 15-proxy-ssl-cookie,
-# 16-server-alias, 17-default-backend, 18-satisfy, 20-frontend-filters,
+# sibling fragments by concern — 10-backend-directives, 12-regex-paths,
+# 15-proxy-ssl-cookie, 16-server-alias, 17-default-backend, 18-satisfy, 20-frontend-filters,
 # 30-features, 40-auth-spoe — and validationTests live under tests/
-# (annotations, redirects-canary, auth-mtls, proxy-ssl-cookie, server-alias,
-# default-backend, satisfy, buffers-limits-affinity, unknown-annotations). All
-# fragments merge into one library at
+# (annotations, regex-rewrite, redirects-canary, auth-mtls, proxy-ssl-cookie,
+# server-alias, default-backend, satisfy, buffers-limits-affinity,
+# unknown-annotations). All fragments merge into one library at
 # chart-render time; the merge order is lexicographic, but since each
 # snippet/test name is unique the source file it lives in is purely
 # organisational.
@@ -25,7 +25,7 @@
 #   - proxy-body-size
 #   - backend-protocol
 #   - use-proxy-protocol
-#   - rewrite-target
+#   - rewrite-target, use-regex
 #   - upstream-hash-by
 #   - configuration-snippet
 #   - default-backend (annotation; per-host catch-all Service)

@@ -180,7 +180,7 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "http-request replace-path \\(\\.\\*\\) /api/\\\\1"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request replace-path '\\^\\(\\?i\\)\\(\\?:/\\)' /api/\\\\1"}
       - {type: contains, target: haproxy.cfg, pattern: "timeout connect 9s"}
       - {type: contains, target: haproxy.cfg, pattern: "balance hash req\\.hdr\\(x-forwarded-for\\)"}
       - {type: contains, target: 'map:redirect-loc-308.map', pattern: "moved\\.example\\.com"}

@@ -1185,26 +1185,6 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "option httpchk GET /healthz"}
 
-  test-nginx-ingress-rewrite-target:
-    description: Nginx Ingress rewrite-target translates capture groups
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: rewrite-ingress
-            annotations:
-              nginx.ingress.kubernetes.io/rewrite-target: "/api\\$1"
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: rewrite.example.com
-                http: *httpRoot
-    assertions:
-      - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: "replace-path"}
-
   test-nginx-ingress-rewrite-target-literal:
     description: Nginx rewrite-target with no capture group relocates to path-rewrite.map (reload-free)
     fixtures:

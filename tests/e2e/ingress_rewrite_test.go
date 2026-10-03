@@ -62,6 +62,46 @@ func TestIngressPathRewrite(t *testing.T) {
 	})
 }
 
+// TestIngressNginxRegexRewrite covers ingress-nginx's regex-rewrite pattern:
+// the path routes as a case-insensitive regex and rewrite-target's $2 binds
+// to that path's second group.
+func TestIngressNginxRegexRewrite(t *testing.T) {
+	t.Parallel()
+	RunSimpleIngressTest(t, &SimpleIngressTest{
+		Description: "Ingress: nginx use-regex + capture-group rewrite-target",
+		Host:        "ingress-nginx-regex-rewrite.localdev.me",
+		Path:        "/api(/|$)(.*)",
+		PathType:    "ImplementationSpecific",
+		Annotations: map[string]string{
+			"nginx.ingress.kubernetes.io/use-regex":      "true",
+			"nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+		},
+		Assess: []SimpleIngressAssertion{
+			{
+				Name: "/api/foo reaches the backend as /foo",
+				Check: func(t *testing.T, host string) {
+					t.Helper()
+					httpclient.New(t).GET(host, "/api/foo").ExpectEchoPath(t, "/foo")
+				},
+			},
+			{
+				Name: "/api reaches the backend as /",
+				Check: func(t *testing.T, host string) {
+					t.Helper()
+					httpclient.New(t).GET(host, "/api").ExpectEchoPath(t, "/")
+				},
+			},
+			{
+				Name: "/API/Foo matches case-insensitively and reaches the backend as /Foo",
+				Check: func(t *testing.T, host string) {
+					t.Helper()
+					httpclient.New(t).GET(host, "/API/Foo").ExpectEchoPath(t, "/Foo")
+				},
+			},
+		},
+	})
+}
+
 // TestIngressPathRewriteRouteAddRemoveIsReloadFree proves a haproxytech
 // prefix-strip route is dynamic: the rewrite is a frontend map lookup, so the
 // backend stays plain and a second route is added and removed at runtime.

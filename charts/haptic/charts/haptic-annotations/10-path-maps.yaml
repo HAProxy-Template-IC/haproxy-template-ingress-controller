@@ -23,6 +23,7 @@ templateSnippets:
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/path-type']"]
+      effects: [recordEvent]
     template: |
       {#
         haproxy-haptic.org/path-type: "regex" → path-regex.map entries.
@@ -31,23 +32,32 @@ templateSnippets:
           - haproxy-haptic.org/path-type: "regex" (optional)
 
         Matches Ingress paths with pathType ImplementationSpecific. The path
-        value is a HAProxy-compatible PCRE, emitted verbatim keyed on the
-        normalised host. Output shape mirrors ingress.yaml's standard path
-        renderers (`<host-key><path> BACKEND:<backend>`), so base.yaml's
-        routing cascade decodes the qualifier + backend name identically.
+        value is a HAProxy-compatible PCRE matched from the start of the
+        path, keyed on the normalised host (RegexMapKey). The value shape
+        (`BACKEND:<backend>`) matches ingress.yaml's standard path renderers.
 
         Extension Point: map-path-regex-* (priority 800 — HAPTIC-native)
       #}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-regex-map-key" for RegexGroupProblem, RegexMapKey -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {#- A whitespace path is skipped; features-900-ingress-path-candidates reports it. -#}
       {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
       {%- if ingress.Metadata.Annotations["haproxy-haptic.org/path-type"] == "regex" %}
-      # haptic/path-type ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+      {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+      # haptic/path-type ({{ key }})
         {%- for _, rule := range ingress.Spec.Rules %}
           {%- for _, path := range rule.Http.Paths %}
-          {%- if path.PathType == "ImplementationSpecific" %}
-      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- if path.PathType == "ImplementationSpecific" && ConfigInjectionKind(path.Path, "mapkey") == "" %}
+            {%- var problem = RegexGroupProblem(path.Path) %}
+            {%- if problem != "" %}
+              {{- WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + key + " has regex path '" + path.Path + "', which " + problem + "; the path is not routed. Rewrite it so its groups and [ ] classes close within it, without \\Q, \\E, \\c or (*.") -}}
+              {%- continue %}
+            {%- end %}
+      {{ RegexMapKey(MapKeyForHost(rule.Host), path.Path, "") }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
         {%- end %}

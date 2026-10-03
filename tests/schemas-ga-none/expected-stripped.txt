@@ -318,3 +318,5 @@ test-gateway-policy-waf-trusted-missing-no-tenant-fallback
 test-gateway-policy-waf-trusted-missing-default
 test-gateway-policy-waf-unknown-default-admission
 test-gateway-policy-waf-unknown-default-configuration
+test-httproute-regex-path-early-close-rejected
+test-httproute-regex-path-stays-on-host

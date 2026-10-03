@@ -59,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+- Security: regex paths (`haproxy-haptic.org/path-type: regex`, `haproxy-ingress.github.io/path-type: regex`, Gateway `RegularExpression`) match only on their own host; a top-level `|` or an early `)` in the path could capture other hosts' requests. A regex path whose groups don't close within it is now rejected, and a leading `^` now matches.
+- nginx-ingress: `use-regex` and `rewrite-target` route regex paths as case-insensitive regexes, and `$N` in `rewrite-target` now refers to the path's capture groups; before, the path matched as a literal prefix and `$2` was always empty.
 - Increase the bundled validator memory limit to 256 MiB to accommodate large configuration inputs.
 - Apply idle-connection draining only to HTTP frontends, avoiding warnings from TCP listeners.
 - Derive the cache dispatcher timeout from application timeouts and retries without forcing reloads for route timeout changes.

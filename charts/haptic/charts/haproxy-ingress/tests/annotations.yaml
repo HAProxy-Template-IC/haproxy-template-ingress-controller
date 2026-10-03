@@ -532,6 +532,69 @@ validationTests:
         target: "map:path-prefix-exact.map"
         pattern: '(?m)^begin\.example\.com/static BACKEND:default_begin-ingress_svc_begin-service_80$'
 
+  test-haproxy-ingress-path-type-regex-stays-on-host:
+    description: A top-level | stays inside the path group and a path that closes the group early is not routed (with an Event), so neither can match another host.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: esc-service}
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: esc
+            annotations:
+              haproxy-ingress.github.io/path-type: "regex"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: esc.example.com
+                http:
+                  paths:
+                    - path: /x|/
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: esc-service, port: {number: 80}}}
+                    - path: /y)|(.*
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: esc-service, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:path-regex.map"
+        pattern: '(?m)^\^esc\\\.example\\\.com\(\?:/x\|/\) BACKEND:default_esc_svc_esc-service_80$'
+      - {type: match_count, target: "map:path-regex.map", pattern: 'BACKEND:', expected: "1"}
+      - {type: contains, target: events, pattern: "has regex path '/y\\)\\|\\(\\.\\*', which closes a group it doesn't open"}
+
+  test-haproxy-ingress-path-type-regex-early-close-rejected:
+    description: A regex path that closes the path group early is refused at admission.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: esc
+            annotations:
+              haproxy-ingress.github.io/path-type: "regex"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: esc.example.com
+                http:
+                  paths:
+                    - path: /y)|(.*
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: esc-service, port: {number: 80}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress default/esc has regex path '/y\\)\\|\\(\\.\\*', which closes a group it doesn't open; the path is not routed"}
+
   test-haproxy-ingress-path-type-regex:
     description: "HAProxy-Ingress path-type=regex annotation produces a path-regex.map row keyed by the literal regex pattern with a `BACKEND:<backend_name>` qualifier value. base."
     fixtures:
@@ -563,7 +626,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: "map:path-regex.map"
-        pattern: '(?m)^regex\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_regex-ingress_svc_regex-service_80$'
+        pattern: '(?m)^\^regex\\\.example\\\.com\(\?:/api/v\[0-9\]\+/\.\*\) BACKEND:default_regex-ingress_svc_regex-service_80$'
   test-haproxy-ingress-path-type-regex-wildcard-host:
     description: HAProxy-Ingress path-type=regex annotation on a wildcard-host Ingress produces a valid regex (no leading literal `*`). The historical renderer used the raw rule.
     fixtures:
@@ -595,7 +658,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: "map:path-regex.map"
-        pattern: '(?m)^\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_wild-regex-ingress_svc_wild-regex-service_80$'
+        pattern: '(?m)^\^\\\.example\\\.com\(\?:/api/v\[0-9\]\+/\.\*\) BACKEND:default_wild-regex-ingress_svc_wild-regex-service_80$'
       - {type: not_contains, target: "map:path-regex.map", pattern: '\*\.example\.com'}
   test-haproxy-ingress-path-type-regex-rule-without-http:
     description: "HAProxy-Ingress path-type=regex with a rule that has no `http` block must not panic or emit any map row for that rule. Regression test for the typed-traversal migration (!1017) — `rule.Http.Paths` is accessed directly, and an absent `http:` in the source YAML must surface as an empty slice (loop emits nothing), not a nil-deref panic."
@@ -631,7 +694,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: "map:path-regex.map"
-        pattern: '(?m)^hashttp\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_mixed-ingress_svc_mixed-service_80$'
+        pattern: '(?m)^\^hashttp\\\.example\\\.com\(\?:/api/v\[0-9\]\+/\.\*\) BACKEND:default_mixed-ingress_svc_mixed-service_80$'
       - {type: not_contains, target: "map:path-regex.map", pattern: 'nohttp\.example\.com'}
   # ============================================================================
   # Phase 4: Session Affinity Tests

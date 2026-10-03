@@ -1,0 +1,410 @@
+# nginx-ingress library — use-regex routing and capture-group rewrite-target.
+_fx:
+  svc: &svc
+    apiVersion: v1
+    kind: Service
+    spec:
+      ports: [{port: 80}]
+
+validationTests:
+  test-nginx-ingress-rewrite-target:
+    description: The ingress-nginx regex-rewrite pattern routes /api(/|$)(.*) case-insensitively to its backend and rewrites with the path's own groups, while the host's plain / route stays a prefix route.
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: api-svc}}
+        - {<<: *svc, metadata: {namespace: default, name: web-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rw-api
+            annotations:
+              nginx.ingress.kubernetes.io/use-regex: "true"
+              nginx.ingress.kubernetes.io/rewrite-target: /$2
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: rewrite.example.com
+                http:
+                  paths:
+                    - path: /api(/|$)(.*)
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: api-svc, port: {number: 80}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: rw-web}
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: rewrite.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: web-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-regex.map
+        pattern: '(?m)^\^rewrite\\\.example\\\.com\(\?i\)\(\?:/api\(/\|\$\)\(\.\*\)\) BACKEND:default_rw-api_svc_api-svc_80$'
+      - type: contains
+        target: map:path-prefix.map
+        pattern: '(?m)^rewrite\.example\.com/ BACKEND:default_rw-web_svc_web-svc_80$'
+      - {type: not_contains, target: map:path-regex.map, pattern: 'rw-web'}
+      # /api/foo → /foo and /api → / (an unmatched \2 is empty); the query string is untouched.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^backend default_rw-api_svc_api-svc_80 from \S+$(\n[^\n]+)*\n\s+http-request replace-path ''\^\(\?i\)\(\?:/api\(/\|\$\)\(\.\*\)\)'' /\\2$'
+      - {type: match_count, target: haproxy.cfg, pattern: 'replace-path', expected: "1"}
+
+  test-nginx-ingress-use-regex:
+    description: use-regex sends a path with regex syntax to the regex map as nginx's anchored, case-insensitive location (longest first, leading ^ folded, host-less rule unscoped); a literal path keeps its Kubernetes match and nothing is rewritten.
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: re-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: re
+            annotations:
+              nginx.ingress.kubernetes.io/use-regex: "true"
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: re.example.com
+                http:
+                  paths:
+                    - path: /foo/(.*)
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: re-svc, port: {number: 80}}}
+                    - path: /foo/bar/[A-Z0-9]{3}
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: re-svc, port: {number: 80}}}
+                    - path: /literal
+                      pathType: Prefix
+                      backend: {service: {name: re-svc, port: {number: 80}}}
+              - http:
+                  paths:
+                    - path: ^/v[0-9]+/
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: re-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: match_order
+        target: map:path-regex.map
+        patterns:
+          - '(?m)^\^re\\\.example\\\.com\(\?i\)\(\?:/foo/bar/\[A-Z0-9\]\{3\}\) BACKEND:default_re_svc_re-svc_80$'
+          - '(?m)^\^\(\?i\)\(\?:/v\[0-9\]\+/\) BACKEND:default_re_svc_re-svc_80$'
+          - '(?m)^\^re\\\.example\\\.com\(\?i\)\(\?:/foo/\(\.\*\)\) BACKEND:default_re_svc_re-svc_80$'
+      - {type: not_contains, target: map:path-regex.map, pattern: 'literal'}
+      - {type: contains, target: map:path-prefix.map, pattern: '(?m)^re\.example\.com/literal/ BACKEND:default_re_svc_re-svc_80$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'replace-path'}
+
+  test-nginx-ingress-rewrite-target-implies-regex:
+    description: A rewrite-target alone switches the Ingress to regex paths, as in ingress-nginx; without use-regex or a rewrite-target the same path stays literal.
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: imp-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: implied
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: /
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: implied.example.com
+                http:
+                  paths:
+                    - path: /v1(/.*)?
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: imp-svc, port: {number: 80}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: plain}
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - path: /v1(/.*)?
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: imp-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-regex.map
+        pattern: '(?m)^\^implied\\\.example\\\.com\(\?i\)\(\?:/v1\(/\.\*\)\?\) BACKEND:default_implied_svc_imp-svc_80$'
+      - {type: not_contains, target: map:path-regex.map, pattern: 'plain'}
+      - {type: contains, target: map:path-rewrite.map, pattern: '(?m)^default_implied_svc_imp-svc_80 %2f$'}
+
+  test-nginx-ingress-rewrite-target-multi-path:
+    description: With several rewritten paths on one backend, the longest matching path regex (nginx's location) alone supplies the groups, so a rewritten path is never rewritten again; a path equal to the target is not rewritten.
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: mp-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mp
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: /$1
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: mp.example.com
+                http:
+                  paths:
+                    - path: /a/(.*)
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: mp-svc, port: {number: 80}}}
+                    - path: /a/b/(.*)
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: mp-svc, port: {number: 80}}}
+                    - path: /$1
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: mp-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'http-request set-var\(txn\.nginx_rewrite_location\) int\(0\) if !\{ var\(txn\.nginx_rewrite_location\) -m found \} \{ var\(txn\.host_match\),concat\(,txn\.path,\) -m reg ''\^mp\\\.example\\\.com\(\?i\)\(\?:/a/b/\(\.\*\)\)'' \}'
+          - 'http-request set-var\(txn\.nginx_rewrite_location\) int\(1\) if !\{ var\(txn\.nginx_rewrite_location\) -m found \} \{ var\(txn\.host_match\),concat\(,txn\.path,\) -m reg ''\^mp\\\.example\\\.com\(\?i\)\(\?:/a/\(\.\*\)\)'' \}'
+          - 'http-request replace-path ''\^\(\?i\)\(\?:/a/b/\(\.\*\)\)'' /\\1 if \{ var\(txn\.nginx_rewrite_location\) -m int 0 \}'
+          - 'http-request replace-path ''\^\(\?i\)\(\?:/a/\(\.\*\)\)'' /\\1 if \{ var\(txn\.nginx_rewrite_location\) -m int 1 \}'
+      - {type: match_count, target: haproxy.cfg, pattern: 'replace-path', expected: "2"}
+
+  test-nginx-ingress-rewrite-target-multi-host:
+    description: When rules on different hosts share a backend, each rewrite selector entry carries its own host, so a longer path on another host never supplies the groups (a.example.com/a/b/x keeps /b/x).
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: mh-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mh
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: /$1
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: a.example.com
+                http:
+                  paths:
+                    - path: /a/(.*)
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: mh-svc, port: {number: 80}}}
+              - host: b.example.com
+                http:
+                  paths:
+                    - path: /a/b/(.*)
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: mh-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'int\(0\) if !\{ var\(txn\.nginx_rewrite_location\) -m found \} \{ var\(txn\.host_match\),concat\(,txn\.path,\) -m reg ''\^b\\\.example\\\.com\(\?i\)\(\?:/a/b/\(\.\*\)\)'' \}'
+          - 'int\(1\) if !\{ var\(txn\.nginx_rewrite_location\) -m found \} \{ var\(txn\.host_match\),concat\(,txn\.path,\) -m reg ''\^a\\\.example\\\.com\(\?i\)\(\?:/a/\(\.\*\)\)'' \}'
+          - 'http-request replace-path ''\^\(\?i\)\(\?:/a/b/\(\.\*\)\)'' /\\1 if \{ var\(txn\.nginx_rewrite_location\) -m int 0 \}'
+          - 'http-request replace-path ''\^\(\?i\)\(\?:/a/\(\.\*\)\)'' /\\1 if \{ var\(txn\.nginx_rewrite_location\) -m int 1 \}'
+
+  test-nginx-ingress-rewrite-target-quoted-regex:
+    description: A single quote in a rewritten path regex is spliced out of the quoted replace-path argument, so it can neither end the argument nor fail the config.
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: q-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: q
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: /q/$1
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: q.example.com
+                http:
+                  paths:
+                    - path: /it's/(.*)
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: q-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: "http-request replace-path '\\^\\(\\?i\\)\\(\\?:/it'\\\\''s/\\(\\.\\*\\)\\)' /q/\\\\1"}
+
+  test-nginx-ingress-use-regex-alternation-stays-on-host:
+    description: A top-level | in a regex path stays inside the path group, so every alternative is anchored to the Ingress's own host and the path start.
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: alt-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: alt
+            annotations:
+              nginx.ingress.kubernetes.io/use-regex: "true"
+              nginx.ingress.kubernetes.io/rewrite-target: /$1
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: alt.example.com
+                http:
+                  paths:
+                    - path: /x|/
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: alt-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-regex.map
+        pattern: '(?m)^\^alt\\\.example\\\.com\(\?i\)\(\?:/x\|/\) BACKEND:default_alt_svc_alt-svc_80$'
+      - {type: match_count, target: map:path-regex.map, pattern: 'BACKEND:', expected: "1"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request replace-path '\\^\\(\\?i\\)\\(\\?:/x\\|/\\)' /\\\\1"}
+
+  test-nginx-ingress-use-regex-early-close-rejected:
+    description: A regex path that closes the path group early (/x)|(.*) is refused at admission, since it would match on every host.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: esc
+            annotations:
+              nginx.ingress.kubernetes.io/use-regex: "true"
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: esc.example.com
+                http:
+                  paths:
+                    - path: /x)|(.*
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: esc-svc, port: {number: 80}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress default/esc has regex path '/x\\)\\|\\(\\.\\*', which closes a group it doesn't open; the path is not routed"}
+
+  test-nginx-ingress-use-regex-unsafe-paths-not-routed:
+    description: Outside admission, a regex path that could escape its group is left out of the regex map and of the rewrite with an Event, while the Ingress's valid regex path still routes.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: un-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: un
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: /$1
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: un.example.com
+                http:
+                  paths:
+                    - path: /x)|(.*
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: un-svc, port: {number: 80}}}
+                    - path: /q\Q)\E|(.*
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: un-svc, port: {number: 80}}}
+                    - path: /ok/(.*)
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: un-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-regex.map
+        pattern: '(?m)^\^un\\\.example\\\.com\(\?i\)\(\?:/ok/\(\.\*\)\) BACKEND:default_un_svc_un-svc_80$'
+      - {type: match_count, target: map:path-regex.map, pattern: 'BACKEND:', expected: "1"}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request replace-path '\\^\\(\\?i\\)\\(\\?:/ok/\\(\\.\\*\\)\\)' /\\\\1"}
+      - {type: match_count, target: haproxy.cfg, pattern: 'replace-path', expected: "1"}
+      - {type: contains, target: events, pattern: "closes a group it doesn't open"}
+      - {type: contains, target: events, pattern: 'uses \\Q'}
+
+  test-nginx-ingress-use-regex-group-check:
+    description: The group check accepts self-contained regexes (named groups, lookarounds, POSIX classes, parens inside classes) and refuses constructs that could hide or add a group boundary.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: gc-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: gc
+            annotations:
+              nginx.ingress.kubernetes.io/use-regex: "true"
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: gc.example.com
+                http:
+                  paths:
+                    - {path: '/a/(?<id>[[:alnum:]]+)(?=/|$)', pathType: ImplementationSpecific, backend: {service: {name: gc-svc, port: {number: 80}}}}
+                    - {path: '/b/[)(]\)', pathType: ImplementationSpecific, backend: {service: {name: gc-svc, port: {number: 80}}}}
+                    - {path: '/c(?x)#', pathType: ImplementationSpecific, backend: {service: {name: gc-svc, port: {number: 80}}}}
+                    - {path: '/d(?#)', pathType: ImplementationSpecific, backend: {service: {name: gc-svc, port: {number: 80}}}}
+                    - {path: '/e(*ACCEPT)', pathType: ImplementationSpecific, backend: {service: {name: gc-svc, port: {number: 80}}}}
+                    - {path: '/f[[:a]):]', pathType: ImplementationSpecific, backend: {service: {name: gc-svc, port: {number: 80}}}}
+                    - {path: '/g\c)', pathType: ImplementationSpecific, backend: {service: {name: gc-svc, port: {number: 80}}}}
+                    - {path: '/h[x', pathType: ImplementationSpecific, backend: {service: {name: gc-svc, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:path-regex.map, pattern: '(?m)^\^gc\\\.example\\\.com\(\?i\)\(\?:/a/\(\?<id>\[\[:alnum:\]\]\+\)\(\?=/\|\$\)\) BACKEND:'}
+      - {type: contains, target: map:path-regex.map, pattern: '(?m)^\^gc\\\.example\\\.com\(\?i\)\(\?:/b/\[\)\(\]\\\)\) BACKEND:'}
+      - {type: match_count, target: map:path-regex.map, pattern: 'BACKEND:', expected: "2"}
+      - {type: match_count, target: events, pattern: 'InvalidPath', expected: "6"}
+
+  test-nginx-ingress-use-regex-is-known:
+    description: use-regex and rewrite-target are declared annotations, so neither records an UnknownAnnotation Event while an undeclared sibling does.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - {<<: *svc, metadata: {namespace: default, name: kn-svc}}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: kn
+            annotations:
+              nginx.ingress.kubernetes.io/use-regex: "true"
+              nginx.ingress.kubernetes.io/rewrite-target: /$1
+              nginx.ingress.kubernetes.io/use-regexp: "true"
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: kn.example.com
+                http:
+                  paths:
+                    - path: /kn/(.*)
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: kn-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: events, pattern: 'UnknownAnnotation .*nginx\.ingress\.kubernetes\.io/use-regexp, which'}
+      - {type: not_contains, target: events, pattern: 'use-regex,'}
+      - {type: not_contains, target: events, pattern: 'rewrite-target'}
