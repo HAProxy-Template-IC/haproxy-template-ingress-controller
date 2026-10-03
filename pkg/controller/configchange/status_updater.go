@@ -127,6 +127,17 @@ type StatusUpdater struct {
 	// condition is otherwise only rewritten on a configuration load, and a
 	// single failed check would leave it False for the rest of the term.
 	haproxyRefused bool
+
+	// asserted is the status this leader last wrote (or found already
+	// written) per source, keyed by namespace/name. The status guard
+	// re-asserts it over stale writers (#270).
+	asserted map[string]v1alpha1.HAProxyTemplateConfigStatus
+	// writeMu serializes status writes with the guard, so the guard never
+	// restores a verdict the event loop is replacing.
+	writeMu                sync.Mutex
+	statusGuardWake        chan struct{}
+	statusGuardMinInterval time.Duration
+	statusGuardMaxInterval time.Duration
 }
 
 // NewStatusUpdater creates a new StatusUpdater.
@@ -146,8 +157,12 @@ func NewStatusUpdater(
 	logger *slog.Logger,
 ) *StatusUpdater {
 	u := &StatusUpdater{
-		crdClient:  crdClient,
-		kubeClient: kubeClient,
+		crdClient:              crdClient,
+		kubeClient:             kubeClient,
+		asserted:               make(map[string]v1alpha1.HAProxyTemplateConfigStatus),
+		statusGuardWake:        make(chan struct{}, 1),
+		statusGuardMinInterval: statusGuardMinInterval,
+		statusGuardMaxInterval: statusGuardMaxInterval,
 	}
 
 	// Subscribe to only the event types we handle during construction (before
@@ -184,6 +199,13 @@ func (u *StatusUpdater) Start(ctx context.Context) error {
 	u.recorder = u.broadcaster.NewRecorder(clientsetscheme.Scheme, corev1.EventSource{Component: eventSourceComponent})
 	u.broadcaster.StartRecordingToSink(&corev1client.EventSinkImpl{Interface: u.kubeClient.CoreV1().Events("")})
 	defer u.broadcaster.Shutdown()
+	// A new leadership term defends only verdicts written in that term.
+	u.mu.Lock()
+	clear(u.asserted)
+	u.mu.Unlock()
+	guardCtx, stopGuard := context.WithCancel(ctx)
+	defer stopGuard()
+	go u.runStatusGuard(guardCtx)
 	return u.Base.Start(ctx)
 }
 
@@ -523,6 +545,13 @@ func ReportConfigLoadFailure(
 		return
 	}
 
+	if current.Status.ObservedGeneration > ref.Generation {
+		logger.Info("Not reporting the load-gate failure: the status already covers a newer generation",
+			"namespace", ref.Namespace, "name", ref.Name,
+			"generation", ref.Generation, "observed_generation", current.Status.ObservedGeneration)
+		return
+	}
+
 	now := metav1.NewTime(time.Now())
 	current.Status.ObservedGeneration = ref.Generation
 	current.Status.LastValidated = &now
@@ -555,6 +584,9 @@ func (u *StatusUpdater) applyStatus(
 	successMsg string,
 	logFields ...any,
 ) {
+	u.writeMu.Lock()
+	defer u.writeMu.Unlock()
+
 	current, err := u.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyTemplateConfigs(namespace).
 		Get(ctx, name, metav1.GetOptions{})
@@ -574,6 +606,7 @@ func (u *StatusUpdater) applyStatus(
 	// (and, without the watcher's generation filter, echo into revalidation)
 	// for a timestamp refresh nobody reads.
 	if statusEqualIgnoringTimestamps(before, &current.Status) {
+		u.recordAsserted(namespace, name, &current.Status)
 		u.Logger().Debug("Status unchanged; skipping write",
 			"namespace", namespace, "name", name)
 		return
@@ -589,6 +622,7 @@ func (u *StatusUpdater) applyStatus(
 		return
 	}
 
+	u.recordAsserted(namespace, name, &current.Status)
 	u.emitStatusEvent(current)
 
 	u.Logger().Debug(successMsg,
