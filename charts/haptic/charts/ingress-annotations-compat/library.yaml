@@ -1697,6 +1697,51 @@ templateSnippets:
         }
       %%}
 
+  # knownAnnotations comes from each enabled library's _migrationCoverage (haptic.projectKnownAnnotations).
+  # An Event, not an admission reject: an annotation newer than the coverage map must not block updates.
+  features-955-annotation-unknown-key:
+    requires: [ingresses]
+    incremental:
+      effects: [recordEvent]
+      whenAnyPathExists: ["metadata.annotations"]
+      bindingsTemplate: |-
+        {%- var known = extraContext | dig("knownAnnotations") -%}
+        {%- if known != nil -%}
+          {{- toJSON(map[string]any{"ingresses": map[string]any{"known": known}}) -}}
+        {%- else -%}
+          {{- "{}" -}}
+        {%- end -%}
+    template: |-
+      {%%
+        var namesByPrefix = map[string]map[string]bool{}
+        var known = props | dig("known") | fallback(map[string]any{})
+        for _, source := range known.(map[string]any) {
+          for _, prefix := range toSlice(source | dig("prefixes")) {
+            var names = namesByPrefix[tostring(prefix)]
+            if names == nil {
+              names = map[string]bool{}
+              namesByPrefix[tostring(prefix)] = names
+            }
+            for _, name := range toSlice(source | dig("names")) {
+              names[tostring(name)] = true
+            }
+          }
+        }
+        var unknown = []any{}
+        for key := range to_str_map(dig(item, "metadata", "annotations")) {
+          for prefix, names := range namesByPrefix {
+            if hasPrefix(key, prefix) && !names[key[len(prefix):]] {
+              unknown = append(unknown, key)
+              break
+            }
+          }
+        }
+        if len(unknown) > 0 {
+          var ingressKey = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name")
+          recordEvent(item, "UnknownAnnotation", "Ingress " + ingressKey + " sets " + join(sort_strings(unknown), ", ") + ", which no enabled annotation library recognises, so it has no effect. Fix the annotation name or remove it.")
+        }
+      %%}
+
 # The conflict tests drive the guard via extraContext.annotationLibraries, so its
 # gating logic is exercised regardless of which vendor libraries are merged; they
 # use plugin-free features so none depends on a SPOA plugin.

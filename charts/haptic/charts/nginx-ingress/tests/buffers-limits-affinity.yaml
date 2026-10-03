@@ -1,0 +1,241 @@
+_fx:
+  httpRoot: &httpRoot
+    paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: echo, port: {number: 80}}}
+
+validationTests:
+  test-nginx-ingress-limit-burst-multiplier:
+    description: limit-burst-multiplier stretches the limit-rps window by the multiplier at the same average rate, so a client can burst rate x multiplier requests.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: burst-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rps: "10"
+              nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: burst.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/burst-ingress req 5s 50 429$'}
+      - {type: contains, target: haproxy.cfg, pattern: "expire 5s store http_req_rate\\(5s\\)"}
+
+  test-nginx-ingress-limit-burst-multiplier-rpm:
+    description: limit-burst-multiplier applies to limit-rpm the same way, a minute of window per multiplier step.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: burst-rpm
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rpm: "120"
+              nginx.ingress.kubernetes.io/limit-burst-multiplier: "2"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: burst-rpm.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "map:ing-rl-routes.map", pattern: '(?m)^default/burst-rpm req 120s 240 429$'}
+
+  test-nginx-ingress-limit-burst-multiplier-invalid:
+    description: A limit-burst-multiplier outside 1-100 fails the render rather than shipping a rate limit nobody asked for.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: burst-bad
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rps: "10"
+              nginx.ingress.kubernetes.io/limit-burst-multiplier: "0"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: burst-bad.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "limit-burst-multiplier' on Ingress 'default/burst-bad'. Must be an integer from 1 to 100"}
+
+  test-nginx-ingress-affinity-mode:
+    description: affinity-mode persistent keeps cookie affinity, HAProxy's only mode, without a warning; an unknown mode warns and still applies affinity.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: affinity-persistent
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/affinity-mode: "persistent"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: persistent.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: affinity-sticky
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/affinity-mode: "sticky"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: sticky.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: haproxy.cfg, pattern: "cookie INGRESSCOOKIE insert indirect nocache dynamic", expected: "2"}
+      - {type: contains, target: events, pattern: "Warning InvalidAnnotationValue networking.k8s.io/v1 Ingress default/affinity-sticky: .*affinity-mode"}
+      - {type: not_contains, target: events, pattern: "default/affinity-persistent"}
+
+  test-nginx-ingress-affinity-mode-admission:
+    description: An unknown affinity-mode is denied at admission.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: affinity-bad
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/affinity-mode: "sticky"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: affinity-bad.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "isn't a session affinity mode"}
+
+  test-nginx-ingress-proxy-request-buffering:
+    description: proxy-request-buffering off/on overrides the fleet-wide request buffering for the route through request-buffering.map.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: upload
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: upload.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: buffered
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-request-buffering: "on"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: buffered.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: "map:request-buffering.map", pattern: '(?m)^default_upload_svc_echo_80 off$'}
+      - {type: contains, target: "map:request-buffering.map", pattern: '(?m)^default_buffered_svc_echo_80 on$'}
+      - {type: contains, target: haproxy.cfg, pattern: "http-request wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\} \\{ var\\(txn\\.backend_name\\),map\\(.*request-buffering\\.map,on\\) -m str on \\}"}
+
+  test-nginx-ingress-proxy-request-buffering-invalid:
+    description: An invalid proxy-request-buffering value warns and leaves the route on the fleet default.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: buffering-bad
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-request-buffering: "maybe"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: buffering-bad.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: events, pattern: "Warning InvalidAnnotationValue networking.k8s.io/v1 Ingress default/buffering-bad: .*proxy-request-buffering"}
+      - {type: not_contains, target: "map:request-buffering.map", pattern: "default_buffering-bad"}
+
+  test-nginx-ingress-proxy-buffer-size:
+    description: A proxy-buffer-size larger than the response headers HAProxy can hold (tune.bufsize minus tune.maxrewrite) records an Event; one that fits doesn't.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: big-headers
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-buffer-size: "64k"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: big-headers.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: small-headers
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-buffer-size: "8k"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: small-headers.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: events, pattern: "Warning ProxyBufferSizeExceeded networking.k8s.io/v1 Ingress default/big-headers: .*at most 15360 bytes.*at least 66560"}
+      - {type: not_contains, target: events, pattern: "default/small-headers"}
+
+  test-nginx-ingress-proxy-buffer-size-raised-bufsize:
+    description: Raising tune.bufsize makes room for the proxy-buffer-size, so no Event is recorded.
+    extraContext:
+      renderMode: reconcile
+      tune: {bufsize: 131072}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: big-headers
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-buffer-size: "64k"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: big-headers.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: events, pattern: "ProxyBufferSizeExceeded"}

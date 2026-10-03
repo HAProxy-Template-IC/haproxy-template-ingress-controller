@@ -193,6 +193,14 @@ Use this for a library-global tunable that mirrors an upstream controller's glob
 
 See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
+The loader also projects every `_migrationCoverage` block into
+`extraContext.knownAnnotations.<source>` (`prefixes` plus the declared names
+without prefix). `features-955-annotation-unknown-key` in
+ingress-annotations-compat reads it to record an `UnknownAnnotation` Event for an
+Ingress annotation under an enabled library's prefix that the coverage map
+doesn't declare — so a new annotation handler needs its coverage entry for this
+reason too, not only for `check-migration-coverage.sh`.
+
 ### Operator-facing values default to `extraContext` (RULE)
 
 **A new operator-facing `values.yaml` knob lives under `controller.config.templatingSettings.extraContext.*` by default. Placing one at the values root (or any other top-level key) requires an explicit justification, stated in the value's `values.yaml` comment.**

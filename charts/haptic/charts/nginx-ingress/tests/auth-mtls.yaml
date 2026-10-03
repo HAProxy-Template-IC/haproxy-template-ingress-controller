@@ -27,6 +27,49 @@ _fx:
         backend: {service: {name: echo, port: {number: 80}}}
 
 validationTests:
+  test-nginx-ingress-auth-tls-match-cn:
+    description: auth-tls-match-cn denies the Ingress's routes with 403 unless the client certificate's RFC 2253 subject DN matches the pattern.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cn-protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-tls-secret: "client-ca"
+              nginx.ingress.kubernetes.io/auth-tls-match-cn: "CN=(alice|bob)\\.example\\.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cn.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request deny deny_status 403 if \{ var\(txn\.resource_id\) -m str default/cn-protected \} !\{ ssl_c_s_dn\(,0,rfc2253\) -m reg "CN=\(alice\|bob\)\\\\\.example\\\\\.com" \}'
+
+  test-nginx-ingress-auth-tls-match-cn-needs-secret:
+    description: Like ingress-nginx, auth-tls-match-cn has no effect without auth-tls-secret.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cn-no-secret
+            annotations:
+              nginx.ingress.kubernetes.io/auth-tls-match-cn: "CN=alice"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cn-no-secret.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: "auth-tls-match-cn"}
+
   test-nginx-ingress-mtls-pass-cert:
     description: Nginx Ingress auth-tls-pass-certificate-to-upstream adds cert headers
     fixtures:

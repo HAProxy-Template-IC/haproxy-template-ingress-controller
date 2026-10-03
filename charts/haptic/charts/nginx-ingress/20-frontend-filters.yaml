@@ -242,6 +242,39 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
+  # One rule per Ingress: HAProxy can't take a regex from a map. RFC 2253 matches nginx's $ssl_client_s_dn.
+  frontend-filters-076-nginx-ingress-mtls-match-cn:
+    requires: [ingresses]
+    template: |
+      {{- render "nginx-ingress-match-cn-publications" -}}
+      {%- for _, rule := range incremental_values("nginx-ingress-match-cn", "rule") %}
+      {{ tostring(rule) }}
+      {%- end %}
+
+  nginx-ingress-match-cn-publications:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-tls-match-cn']"]
+      group: nginx-ingress-match-cn
+      effects: [publishValue]
+    template: |-
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-escape-dquote-value" for EscapeDquoteValue -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil && ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] != "" -%}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+        {%- var pattern = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-match-cn"] -%}
+        {%- var injection = ConfigInjectionKind(pattern, "line") -%}
+        {%- if injection != "" -%}
+          {{- fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/auth-tls-match-cn' on Ingress '" + key + "': contains " + injection + ", which would break the client-certificate check. Remove it from the pattern.") -}}
+        {%- end -%}
+        {%- if pattern != "" -%}
+          {{- shared.Publish("rule", key, "# nginx-ingress/auth-tls-match-cn (" + key + ")\nhttp-request deny deny_status 403 if { var(txn.resource_id) -m str " + key + " } !{ ssl_c_s_dn(,0,rfc2253) -m reg \"" + EscapeDquoteValue(pattern) + "\" }") -}}
+        {%- end -%}
+      {%- end -%}
+
   frontend-filters-789-nginx-ingress-mtls-strip:
     requires: [ingresses]
     incremental:

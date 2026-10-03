@@ -1528,17 +1528,21 @@ templateSnippets:
   # larger of the two knobs wins. Below 3.4 tune.cli.max-payload-size does not
   # exist (verified: 3.0-3.3 reject the keyword) and a CLI payload is capped by
   # tune.bufsize instead.
+  util-tune-bufsize:
+    template: |-
+      {%- var bufsize = toint(extraContext | dig("tune", "bufsize") | fallback(16384)) -%}
+      {%- var bodyBuffer = extraContext | dig("requestBodyInspection", "haproxyBuffer", "sizeBytes") -%}
+      {%- if bodyBuffer != nil -%}
+        {%- if toint(bodyBuffer) < 16384 || toint(bodyBuffer) > 2097152 -%}
+          {%- fail("extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be between 16384 and 2097152 bytes.") -%}
+        {%- end -%}
+        {%- if toint(bodyBuffer) > bufsize %}{% bufsize = toint(bodyBuffer) %}{% end -%}
+      {%- end -%}
+      {{- bufsize -}}
+
   global-settings-270-cli-limits:
     template: |
-      {%- var bufsize = toint(extraContext | dig("tune", "bufsize") | fallback(16384)) %}
-      {%- var bodyBuffer = extraContext | dig("requestBodyInspection", "haproxyBuffer", "sizeBytes") %}
-      {%- if bodyBuffer != nil %}
-        {%- if toint(bodyBuffer) < 16384 || toint(bodyBuffer) > 2097152 %}
-          {%- fail("extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be between 16384 and 2097152 bytes.") %}
-        {%- end %}
-        {%- if toint(bodyBuffer) > bufsize %}{% bufsize = toint(bodyBuffer) %}{% end %}
-      {%- end %}
-      tune.bufsize {{ bufsize }}
+      tune.bufsize {{ render "util-tune-bufsize" }}
       {%- if semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.4") %}
       tune.cli.max-payload-size {{ toint(extraContext | dig("tune", "cliMaxPayloadSize") | fallback(131072)) }}
       {%- end %}
