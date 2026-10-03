@@ -356,6 +356,7 @@ func newGatewayRoutePathDependencyFixture(t *testing.T) *gatewayRouteAnalysisFix
 	loaded := loadGatewayRouteAnalysisSnippets(t)
 	snippets := map[string]config.TemplateSnippet{
 		"util-host-key":                    loaded["util-host-key"],
+		"util-regex-map-key":               loaded["util-regex-map-key"],
 		"util-webhook-reject-or-warn":      loaded["util-webhook-reject-or-warn"],
 		"util-publish-gateway-route-paths": loaded["util-publish-gateway-route-paths"],
 		gatewayRoutePathHTTPComponent:      loaded[gatewayRoutePathHTTPComponent],
@@ -428,7 +429,7 @@ func loadGatewayRouteAnalysisSnippets(t *testing.T) map[string]config.TemplateSn
 	t.Helper()
 	return loadGatewayHostMapSnippets(t, gatewayHostMapChartRoot(t), map[string][]string{
 		"base/library.yaml": {
-			"util-host-key", "util-webhook-reject-or-warn",
+			"util-host-key", "util-regex-map-key", "util-webhook-reject-or-warn",
 		},
 		"gateway/10-features.yaml": {
 			gatewayFrontendCAPermissionsComponent,

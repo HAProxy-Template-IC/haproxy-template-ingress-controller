@@ -106,6 +106,70 @@ templateSnippets:
         {%- show tostring(host | fallback("")) | replace("*", "") -%}
       {%- end macro -%}
 
+  # A regex-map key is the routed host plus a user path regex. The regex sits in
+  # a non-capturing group, and RegexGroupProblem rejects anything that could
+  # close that group early, so no alternative escapes the host anchor.
+  util-regex-map-key:
+    template: |-
+      {%- var RegexGroupProblem = func(pattern string) string {
+        var depth = 0
+        var i = 0
+        var n = len(pattern)
+        for i < n {
+          var c = pattern[i:i+1]
+          if c == `\` {
+            if i+1 >= n { return "ends with a backslash" }
+            if strings_contains("QEc", pattern[i+1:i+2]) { return "uses \\" + pattern[i+1:i+2] }
+            i += 2
+          } else if c == "[" {
+            i++
+            if i < n && pattern[i:i+1] == "^" { i++ }
+            if i < n && pattern[i:i+1] == "]" { i++ }
+            var closed = false
+            for i < n && !closed {
+              var d = pattern[i:i+1]
+              if d == `\` {
+                if i+1 >= n { return "ends with a backslash" }
+                if strings_contains("QEc", pattern[i+1:i+2]) { return "uses \\" + pattern[i+1:i+2] }
+                i += 2
+              } else if d == "[" && i+1 < n && strings_contains(":.=", pattern[i+1:i+2]) {
+                if !regex_search(pattern[i:], `^\[:[a-z]+:\]`) { return "has an unsupported [" + pattern[i+1:i+2] + " class" }
+                i += 2
+                for pattern[i:i+1] != ":" { i++ }
+                i += 2
+              } else {
+                closed = d == "]"
+                i++
+              }
+            }
+            if !closed { return "leaves a [ open" }
+          } else if c == "(" {
+            if hasPrefix(pattern[i:], "(?") {
+              if !regex_search(pattern[i:], `^\(\?(:|=|!|<=|<!|>|[imsU-]+[:)]|P?<[A-Za-z_][A-Za-z0-9_]*>|'[A-Za-z_][A-Za-z0-9_]*')`) {
+                return "uses an unsupported (? construct"
+              }
+            } else if hasPrefix(pattern[i:], "(*") {
+              return "uses a (* verb"
+            }
+            depth++
+            i++
+          } else if c == ")" {
+            depth--
+            if depth < 0 { return "closes a group it doesn't open" }
+            i++
+          } else {
+            i++
+          }
+        }
+        if depth != 0 { return "leaves a group open" }
+        return ""
+      } -%}
+      {#- flags (e.g. "(?i)") apply to the path only; one leading ^ is folded into the anchor. -#}
+      {%- var RegexMapKey = func(hostKey string, pattern string, flags string) string {
+        if hasPrefix(pattern, "^") { pattern = pattern[1:] }
+        return "^" + sanitize_regex(hostKey) + flags + "(?:" + pattern + ")"
+      } -%}
+
   util-webhook-reject-or-warn:
     template: |-
       {#

@@ -385,7 +385,7 @@ validationTests:
 
       - type: contains
         target: map:path-regex.map
-        pattern: "api\\.example\\.com\\^/api/v\\[0-9\\]\\+/users\\$ GW_ROUTE_ID:http:h_default_regex-route_0"
+        pattern: '(?m)^\^api\\\.example\\\.com\(\?:/api/v\[0-9\]\+/users\$\) GW_ROUTE_ID:http:h_default_regex-route_0$'
 
       - {type: not_contains, target: map:path-prefix.map, pattern: "api.example.com/.*users"}
 
@@ -393,6 +393,67 @@ validationTests:
   # newline or space in an HTTPRoute path value smuggles a second entry that hijacks
   # another tenant's host+path. The path is guarded before it is written to the map:
   # denied at admission, warned-and-skipped on reconcile.
+  test-httproute-regex-path-stays-on-host:
+    requires: [httproutes]
+    description: A top-level | in an HTTPRoute RegularExpression path stays inside the path group and a path that closes the group early is not applied (with an Event), so neither can match another host.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: web, namespace: default}
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: regex-alt, namespace: default}
+          spec:
+            hostnames:
+              - alt.example.com
+            rules:
+              - matches:
+                  - path: {type: RegularExpression, value: "/x|/"}
+                backendRefs:
+                  - {name: web, port: 80}
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: regex-esc, namespace: default}
+          spec:
+            hostnames:
+              - esc.example.com
+            rules:
+              - matches:
+                  - path: {type: RegularExpression, value: "/y)|(.*"}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:path-regex.map, pattern: '(?m)^\^alt\\\.example\\\.com\(\?:/x\|/\) GW_ROUTE_ID:http:h_default_regex-alt_0$'}
+      - {type: match_count, target: map:path-regex.map, pattern: 'GW_ROUTE_ID:', expected: "1"}
+      - {type: contains, target: events, pattern: "Route regex path '/y\\)\\|\\(\\.\\*' \\(host 'esc\\.example\\.com'\\) closes a group it doesn't open"}
+
+  test-httproute-regex-path-early-close-rejected:
+    requires: [httproutes]
+    description: An HTTPRoute RegularExpression path that closes the path group early is refused at admission.
+    extraContext: {renderMode: admission}
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: regex-esc, namespace: default}
+          spec:
+            hostnames:
+              - esc.example.com
+            rules:
+              - matches:
+                  - path: {type: RegularExpression, value: "/y)|(.*"}
+                backendRefs:
+                  - {name: web, port: 80}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Route regex path '/y\\)\\|\\(\\.\\*' \\(host 'esc\\.example\\.com'\\) closes a group it doesn't open; the route is not applied"}
+
   test-httproute-regex-path-injection-reconcile-warns-and-skips:
     requires: [httproutes]
     description: A newline in an HTTPRoute RegularExpression path is skipped; the smuggled regex-map line never appears while valid routes render.
@@ -430,7 +491,7 @@ validationTests:
                   - {name: web, port: 80}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:path-regex.map, pattern: "good\\.example\\.com\\^/ok\\$ GW_ROUTE_ID:http:h_default_regex-good_0"}
+      - {type: contains, target: map:path-regex.map, pattern: '(?m)^\^good\\\.example\\\.com\(\?:/ok\$\) GW_ROUTE_ID:http:h_default_regex-good_0$'}
       - {type: contains, target: map:route-backend.map, pattern: "h_default_regex-good_0 BACKEND:gw_h_default_regex-good_web_80"}
       - {type: not_contains, target: map:path-regex.map, pattern: "victim\\.example\\.com/secret"}
 

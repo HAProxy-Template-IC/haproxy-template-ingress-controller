@@ -5,6 +5,9 @@
 .gitlab/ci/images/ci/package-lock.json
 .gitlab/ci/images/ci/requirements.in
 .gitlab/ci/images/ci/requirements.lock
+.gitlab/ci/images/ci/shims/braces/index.js
+.gitlab/ci/images/ci/shims/braces/index.test.js
+.gitlab/ci/images/ci/shims/braces/package.json
 .gitlab/ci/images/ci/tools/go.mod
 .gitlab/ci/images/ci/tools/go.sum
 .gitlab/ci/images/python-docs/Dockerfile

@@ -50,6 +50,44 @@ class ReleaseTests(unittest.TestCase):
                     self.assertEqual(result.returncode, code, result.stderr)
                     self.assertEqual(result.stdout, output, result.stderr)
 
+    def test_latest_moves_only_to_the_highest_stable_release(self):
+        tags = "v0.1.0-alpha.9\nv0.2.0\nv0.2.1\nv0.3.0-alpha.1\nv0.10.0-rc.1\n"
+        ls_remote = "".join(f"{i:040x}\trefs/tags/{t}\n" for i, t in enumerate(tags.split()))
+        cases = [
+            ("highest stable", "v0.2.1", tags, 0),
+            ("older stable", "v0.2.0", tags, 1),
+            ("prerelease", "v0.3.0-alpha.1", tags, 1),
+            ("prerelease above every stable", "v0.10.0-rc.1", tags, 1),
+            ("maintenance release below a newer line", "v0.2.2", tags + "v0.2.2\nv0.3.0\n", 1),
+            ("maintenance release of the newest line", "v0.2.2", tags + "v0.2.2\n", 0),
+            ("numeric not lexical order", "v0.10.0", tags + "v0.9.0\nv0.10.0\n", 0),
+            ("ls-remote input", "v0.2.1", ls_remote, 0),
+            ("tag missing from input", "v0.2.2", tags, 2),
+            ("empty input", "v0.2.1", "", 2),
+        ]
+        for name, tag, stdin, code in cases:
+            with self.subTest(name=name):
+                result = subprocess.run(["bash", str(ROOT / "scripts/release-is-latest.sh"), tag],
+                                        input=stdin, capture_output=True, text=True)
+                self.assertEqual(result.returncode, code, result.stderr)
+
+    def test_maint_branches_tag_releases_and_latest_tags_check_the_order(self):
+        config = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text().replace("!reference", ""))
+        maint_rule = "$CI_COMMIT_BRANCH =~ /^maint\\//"
+        self.assertIn({"if": maint_rule}, config["workflow"]["rules"])
+        tag_rules = [rule.get("if", "") for rule in config["create-release-tag"]["rules"]]
+        self.assertTrue(any(maint_rule in rule for rule in tag_rules), tag_rules)
+        self.assertNotIn("needs", config["create-release-tag"])
+        for job in ("trigger-pages", ".rules-main-snapshot-publish", "build-playground-wasm"):
+            with self.subTest(job=job):
+                self.assertNotIn("maint", yaml.safe_dump(config[job]["rules"]))
+        for job in ("release-controller", "build-spoa-image-release"):
+            with self.subTest(job=job):
+                script = "\n".join(config[job]["script"])
+                self.assertIn("scripts/release-is-latest.sh", script)
+                self.assertNotIn("alpha|beta|rc", script)
+                self.assertNotIn("latest", "\n".join(config[job].get("after_script", [])))
+
     def test_chart_publication_waits_for_complete_signed_runtime(self):
         config = yaml.compose((ROOT / ".gitlab-ci.yml").read_text())
         jobs = {key.value: value for key, value in config.value}

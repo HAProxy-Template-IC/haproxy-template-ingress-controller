@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Helm chart
+
+#### Security
+
+- Regex paths (`haproxy-haptic.org/path-type: regex`, `haproxy-ingress.github.io/path-type: regex`, Gateway `RegularExpression`) match only on their own host; a top-level `|` or an early `)` in the path could capture other hosts' requests. A regex path whose groups don't close within it is now rejected, and a leading `^` now matches.
+
 ## [0.2.1] - 2026-10-01
 
 ### Changed

@@ -72,6 +72,69 @@ validationTests:
         target: "map:path-prefix.map"
         pattern: '(?m)^prefix\.example\.com/api/ BACKEND:default_prefix-ingress_svc_prefix-service_80$'
 
+  test-haptic-path-type-regex-stays-on-host:
+    description: A top-level | stays inside the path group and a path that closes the group early is not routed (with an Event), so neither can match another host.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: esc-service}
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: esc
+            annotations:
+              haproxy-haptic.org/path-type: "regex"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: esc.example.com
+                http:
+                  paths:
+                    - path: /x|/
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: esc-service, port: {number: 80}}}
+                    - path: /y)|(.*
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: esc-service, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:path-regex.map"
+        pattern: '(?m)^\^esc\\\.example\\\.com\(\?:/x\|/\) BACKEND:default_esc_svc_esc-service_80$'
+      - {type: match_count, target: "map:path-regex.map", pattern: 'BACKEND:', expected: "1"}
+      - {type: contains, target: events, pattern: "has regex path '/y\\)\\|\\(\\.\\*', which closes a group it doesn't open"}
+
+  test-haptic-path-type-regex-early-close-rejected:
+    description: A regex path that closes the path group early is refused at admission.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: esc
+            annotations:
+              haproxy-haptic.org/path-type: "regex"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: esc.example.com
+                http:
+                  paths:
+                    - path: /y)|(.*
+                      pathType: ImplementationSpecific
+                      backend: {service: {name: esc-service, port: {number: 80}}}
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress default/esc has regex path '/y\\)\\|\\(\\.\\*', which closes a group it doesn't open; the path is not routed"}
+
   test-haptic-path-type-regex:
     description: haproxy-haptic.org/path-type=regex keys path-regex.map on the literal PCRE with a BACKEND qualifier
     fixtures:
@@ -103,7 +166,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: "map:path-regex.map"
-        pattern: '(?m)^regex\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_regex-ingress_svc_regex-service_80$'
+        pattern: '(?m)^\^regex\\\.example\\\.com\(\?:/api/v\[0-9\]\+/\.\*\) BACKEND:default_regex-ingress_svc_regex-service_80$'
 
   # ==========================================================================
   # host-alias / host-alias-regex: extra hostnames → primary host's routes

@@ -43,6 +43,8 @@ workflow:
     # when its MR opens, not before. To run CI on a branch with no MR yet, open
     # a draft MR, or trigger it manually (the web/api rule above).
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Maintenance branches get the same post-merge pipeline as main.
+    - if: $CI_COMMIT_BRANCH =~ /^maint\//
     - if: $CI_COMMIT_TAG
 
 variables:
@@ -154,7 +156,7 @@ variables:
 # Use when tests already passed in MR and don't need to re-run on merge
 .rules-mr-only:
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
       when: never
@@ -413,7 +415,7 @@ lint:
   stage: lint
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
       when: never
@@ -438,13 +440,17 @@ audit:
   stage: lint
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
       when: never
-    # govulncheck only depends on Go sources + dependency graph — a
-    # docs/config change can't introduce a vulnerability.
+    # Audited inputs are the Go dependency graph and the CI image's npm tree;
+    # a docs/config change can't introduce a vulnerability.
     - !reference [.rules-go, rules]
+    - changes:
+        - .gitlab/ci/images/ci/package.json
+        - .gitlab/ci/images/ci/package-lock.json
+        - .gitlab/ci/images/ci/shims/**/*
   tags:
     - saas-linux-medium-amd64
   interruptible: true
@@ -458,7 +464,7 @@ chart-test:
   stage: lint
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
       when: never
@@ -1346,9 +1352,13 @@ build-spoa-image-release:
     SPOA_TAG: "$CI_COMMIT_TAG"
   script:
     - bash scripts/spoa-release-image.sh verify
-  after_script:
+    # In script, not after_script: after_script also runs when verify failed.
+    - git ls-remote --tags --refs origin > release-tags.txt
     - |
-      if ! echo "$CI_COMMIT_TAG" | grep -qE -- '-(alpha|beta|rc)'; then
+      IS_LATEST=0
+      bash scripts/release-is-latest.sh "$CI_COMMIT_TAG" < release-tags.txt || IS_LATEST=$?
+      [ "$IS_LATEST" -le 1 ] || exit "$IS_LATEST"
+      if [ "$IS_LATEST" -eq 0 ]; then
         docker buildx imagetools create \
           --tag "${CI_REGISTRY_IMAGE}/spoa-hub:latest" \
           "${CI_REGISTRY_IMAGE}/spoa-hub:${CI_COMMIT_TAG#v}"
@@ -1558,7 +1568,7 @@ test-integration-extra-versions:
     # then main is gated on Go inputs like .test-integration-base — a prose-only
     # merge used to run all three interior versions (10.3 min on bcd25622).
     - if: $SCHEDULE_KIND == "nightly"
-    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
     - !reference [.rules-go, rules]
 
@@ -2065,7 +2075,7 @@ test-e2e-extra-versions:
     # Nightly wins on any branch; then exclude MR/feature-branch pipelines;
     # then match the base's main-branch (merge-result) triggers.
     - if: $SCHEDULE_KIND == "nightly"
-    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
     - changes:
         - "**/*.go"
@@ -2391,7 +2401,7 @@ test-gateway-conformance:
     # Nightly wins on any branch; then exclude MR/feature pipelines; then
     # match the main-branch (merge-result) triggers.
     - if: $SCHEDULE_KIND == "nightly"
-    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
     - changes:
         - "**/*.go"
@@ -2687,7 +2697,7 @@ test-gateway-conformance-smoke:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $SCHEDULE_KIND == "nightly"
       when: never
@@ -3301,7 +3311,7 @@ test-ingress-conformance:
       when: never
     # Nightly wins on any branch; then exclude MR/feature pipelines.
     - if: $SCHEDULE_KIND == "nightly"
-    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
     - changes:
         # Keep in lockstep with build-ingress-conformance-image's
@@ -3518,7 +3528,7 @@ test-ingress-conformance-smoke:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $SCHEDULE_KIND == "nightly"
       when: never
@@ -3679,10 +3689,14 @@ release-controller:
         syft $IMAGE_REF -o spdx-json > sbom-haproxy${HAPROXY_VERSION}.spdx.json
         cosign attest --predicate sbom-haproxy${HAPROXY_VERSION}.spdx.json --type spdxjson --yes $IMAGE_REF
       done
-    # Create latest tags (stable releases only)
-    # Use buildx imagetools to create tags and query digests from registry
+    # latest-haproxy<v> moves only to the highest stable release, never back to
+    # a maintenance release of an older line.
+    - git ls-remote --tags --refs origin > release-tags.txt
     - |
-      if ! echo "$VERSION" | grep -qE -- '-(alpha|beta|rc)'; then
+      IS_LATEST=0
+      bash scripts/release-is-latest.sh "$VERSION" < release-tags.txt || IS_LATEST=$?
+      [ "$IS_LATEST" -le 1 ] || exit "$IS_LATEST"
+      if [ "$IS_LATEST" -eq 0 ]; then
         for HAPROXY_VERSION in $HAPROXY_VERSIONS; do
           SOURCE_TAG="${CI_REGISTRY_IMAGE}:${VERSION#v}-haproxy${HAPROXY_VERSION}"
           LATEST_TAG="${CI_REGISTRY_IMAGE}:latest-haproxy${HAPROXY_VERSION}"
@@ -3960,11 +3974,12 @@ trigger-pages:
 # =============================================================================
 # Automatic Release Tagging (triggered when VERSION changes)
 # =============================================================================
-# This job automatically creates the release tag when VERSION changes on main.
+# This job automatically creates the release tag when VERSION changes on main
+# or on a maint/* branch (patch releases of an older line).
 # This eliminates manual tagging after MR merge - run ./scripts/release.sh,
-# merge to main, and CI creates the tag and triggers the release pipeline.
+# merge, and CI creates the tag and triggers the release pipeline.
 
-# Create the release tag when the VERSION file changes on main. One tag
+# Create the release tag when the VERSION file changes. One tag
 # releases the controller AND the Helm chart (Chart.yaml version/appVersion
 # must match VERSION — checked below before tagging).
 create-release-tag:
@@ -3985,7 +4000,7 @@ create-release-tag:
       when: never
     - if: $CI_COMMIT_TAG
       when: never  # Don't run on tag pipelines
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
   script:
     - VERSION=$(cat VERSION)
     - TAG="v${VERSION}"

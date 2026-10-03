@@ -188,7 +188,7 @@ spec:
 | ------- | ------- |
 | `matches[].path.type: Exact` | Matches the whole path |
 | `matches[].path.type: PathPrefix` | Matches the path prefix at a segment boundary |
-| `matches[].path.type: RegularExpression` | Matches a regular expression |
+| `matches[].path.type: RegularExpression` | Matches a regular expression from the start of the path; HAPTIC rejects a pattern whose groups or `[ ]` classes don't close within the pattern |
 | `matches[].path.value` | Path value used in matching |
 | Empty matches list | Defaults to PathPrefix `/` |
 
