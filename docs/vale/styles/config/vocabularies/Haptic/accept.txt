@@ -38,6 +38,7 @@ bcrypt
 bcrypt's
 bool
 boolean
+Brotli
 builtins
 Burstable
 bursty
@@ -230,6 +231,7 @@ loopbacks
 Loopback
 lossily
 lossy
+Lua
 LTS
 maintainer
 maintainer's
@@ -403,6 +405,7 @@ TTL
 tunables
 typegen
 UDP
+UDPRoute
 UID
 UIDs
 unix
