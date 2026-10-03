@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- After a rolling upgrade, the config's `Validated` status could stay `False` (`LoadGateFailed`) when an old controller pod wrote it after the new leader; the leader now restores its own verdict.
 - Watched resources finish their initial sync only after every listed resource reached the store, so the first render after startup can't miss resources.
 - Stop reporting normal controller shutdown cancellations and leadership handover as failures.
 - Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
