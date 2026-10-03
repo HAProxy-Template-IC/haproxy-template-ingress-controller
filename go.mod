@@ -12,13 +12,13 @@ require (
 	github.com/haproxytech/client-native/v6 v6.4.2
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/klauspost/compress v1.20.0
+	github.com/klauspost/compress v1.20.1
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
-	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260920221951-54fdfcc393e3
+	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260930191526-12a7d3035f85
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
