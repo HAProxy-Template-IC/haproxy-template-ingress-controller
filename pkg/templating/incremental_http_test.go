@@ -163,3 +163,32 @@ func TestCanonicalIncrementalHTTPArgsRejectsRemovedDelayOption(t *testing.T) {
 	_, err := CanonicalIncrementalHTTPArgs("https://example.test", map[string]any{"delay": "1m"})
 	require.ErrorIs(t, err, ErrHTTPFetchDelayOption)
 }
+
+func TestCanonicalIncrementalHTTPArgsAcceptStatus(t *testing.T) {
+	canonical, err := CanonicalIncrementalHTTPArgs("https://example.test", map[string]any{
+		"acceptStatus": []any{503, int64(404), 404.0, uint16(503)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"acceptStatus": []int{404, 503}}, canonical[1])
+
+	calls := 0
+	tests := map[string]struct {
+		value any
+		want  string
+	}{
+		"not a list":    {value: 404, want: "a list of status codes"},
+		"nil":           {value: nil, want: "a list of status codes"},
+		"string code":   {value: []any{"404"}, want: "whole number"},
+		"fractional":    {value: []any{404.5}, want: "not a whole number"},
+		"below range":   {value: []any{99}, want: "status 99 is not an HTTP status"},
+		"above range":   {value: []int{600}, want: "status 600 is not an HTTP status"},
+		"Stringer code": {value: []any{incrementalHTTPStringer{calls: &calls}}, want: "fmt.Stringer"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := CanonicalIncrementalHTTPArgs("https://example.test", map[string]any{"acceptStatus": test.value})
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+	assert.Zero(t, calls)
+}

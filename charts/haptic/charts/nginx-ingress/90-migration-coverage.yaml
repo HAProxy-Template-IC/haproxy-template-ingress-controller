@@ -435,6 +435,10 @@ _migrationCoverage:
       nginx.ingress.kubernetes.io/default-backend:
         status: supported
         note: Per-host catch-all backend from the named Service (its first port); silently skipped when the Service is missing.
+      nginx.ingress.kubernetes.io/custom-http-errors:
+        status: different
+        note: Upstream responses with a listed status are replaced by a snapshot of the default backend's page — JSON when the client's first Accept entry is application/json, HTML otherwise. Per-request headers (X-Original-URI, X-Request-ID, X-Service-Name, …) can't influence the page. A changed page is served after the next refresh (extraContext.nginxCustomHTTPErrorsRefreshInterval, default 5m) plus a render and rollout, with one hitless reload. HAProxy's own error responses keep the chart's error pages.
+        doc: annotation-support
       # --- SSL passthrough ---
       nginx.ingress.kubernetes.io/ssl-passthrough:
         status: supported
@@ -503,10 +507,6 @@ _migrationCoverage:
       nginx.ingress.kubernetes.io/proxy-max-temp-file-size:
         status: dropped
         note: HAProxy buffers in memory; there is no temp-file spooling.
-        doc: annotation-support
-      nginx.ingress.kubernetes.io/custom-http-errors:
-        status: dropped
-        note: HAProxy can't send a request to another backend after the upstream has answered, so upstream error responses reach the client unchanged; HAProxy's own error responses use the chart's error pages.
         doc: annotation-support
       nginx.ingress.kubernetes.io/custom-headers:
         status: dropped

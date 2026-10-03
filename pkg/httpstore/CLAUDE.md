@@ -118,6 +118,15 @@ content, ok := store.Get("http://example.com/data.txt")
 
 Used by `pkg/controller/testrunner` to mock HTTP resources in validation tests.
 
+## Accepted Statuses
+
+`FetchOptions.AcceptStatus` is a `StatusSet` (one sorted string, so `FetchOptions`
+stays comparable and canonical). Build it with `NewStatusSet(codes...)`, which
+rejects anything outside 100–599 and 304 (the conditional-refresh answer) and
+drops 200, which is always accepted. A listed status's body is content exactly
+like a 200's; every other status keeps its error. The set is part of the source
+identity, so changing it is a new declaration.
+
 ## Authentication
 
 Three authentication methods are supported:

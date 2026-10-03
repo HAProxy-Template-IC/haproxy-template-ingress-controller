@@ -71,7 +71,7 @@ See the nginx-ingress compatibility verdict render live:
 ## Differences from ingress-nginx {#ingress-nginx}
 
 <!-- BEGIN generated: migration-coverage ingress-nginx -->
-The library classifies 141 `nginx.ingress.kubernetes.io/*` annotations: 56 supported, 36 with behaviour differences, 49 not carried over, 0 failing.
+The library classifies 141 `nginx.ingress.kubernetes.io/*` annotations: 56 supported, 37 with behaviour differences, 48 not carried over, 0 failing.
 
 | Annotation | Status | What to check |
 |------------|--------|---------------|
@@ -103,7 +103,7 @@ The library classifies 141 `nginx.ingress.kubernetes.io/*` annotations: 56 suppo
 | `nginx.ingress.kubernetes.io/configuration-snippet` | Behaviour differs | Injected verbatim into the backend section — the value must contain HAProxy directives, not nginx configuration; existing nginx snippets need rewriting. |
 | `nginx.ingress.kubernetes.io/cors-allow-credentials` | Behaviour differs | The header is only sent when explicitly "true" — ingress-nginx defaults it to true. |
 | `nginx.ingress.kubernetes.io/custom-headers` | Not carried over | Response headers from a ConfigMap aren't read; set them with custom-response-headers. |
-| `nginx.ingress.kubernetes.io/custom-http-errors` | Not carried over | HAProxy can't send a request to another backend after the upstream has answered, so upstream error responses reach the client unchanged; HAProxy's own error responses use the chart's error pages. |
+| `nginx.ingress.kubernetes.io/custom-http-errors` | Behaviour differs | Upstream responses with a listed status are replaced by a snapshot of the default backend's page — JSON when the client's first Accept entry is application/json, HTML otherwise. Per-request headers (X-Original-URI, X-Request-ID, X-Service-Name, …) can't influence the page. A changed page is served after the next refresh (extraContext.nginxCustomHTTPErrorsRefreshInterval, default 5m) plus a render and rollout, with one hitless reload. HAProxy's own error responses keep the chart's error pages. |
 | `nginx.ingress.kubernetes.io/denylist-source-range` | Behaviour differs | Host-scoped — the denylist only gates rules with an explicit host, so an Ingress without rule hosts gets no filtering; invalid CIDRs fail the render. |
 | `nginx.ingress.kubernetes.io/enable-access-log` | Not carried over | Access logging can't be switched off per Ingress; extraContext.accessLog.suppress.successful drops successful requests fleet-wide. |
 | `nginx.ingress.kubernetes.io/enable-global-auth` | Not carried over | HAPTIC has no global `auth-url`, so there is nothing to opt out of. |

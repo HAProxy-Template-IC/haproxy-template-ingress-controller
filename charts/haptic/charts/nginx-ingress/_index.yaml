@@ -30,6 +30,7 @@
 #   - configuration-snippet
 #   - default-backend (annotation; per-host catch-all Service)
 #   - proxy-request-buffering, proxy-buffer-size (Event when headers can't fit)
+#   - custom-http-errors (error pages fetched from the default backend)
 #
 # Backend TLS to upstream (only when backend-protocol HTTPS/GRPCS):
 #   - proxy-ssl-secret (client cert + CA from a kubernetes.io/tls Secret)
@@ -96,6 +97,14 @@ templatingSettings:
     # key. Default 308 (Permanent Redirect, matching ingress-nginx). Valid: 301,
     # 302, 303, 307, 308.
     nginxHttpRedirectCode: "308"
+    # The global default backend ("namespace/name") that serves
+    # custom-http-errors pages for Ingresses without a default-backend
+    # annotation — the equivalent of ingress-nginx's --default-backend-service.
+    nginxDefaultBackendService: ""
+    # How often custom-http-errors pages are re-fetched (s, m or h; at least
+    # 30s). A changed page is deployed with one reload; an unchanged one costs
+    # nothing.
+    nginxCustomHTTPErrorsRefreshInterval: "5m"
 
 watchedResources:
   secrets:

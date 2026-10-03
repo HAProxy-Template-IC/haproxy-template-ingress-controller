@@ -655,7 +655,7 @@ name leaves the emitted directive unbalanced, and HAProxy refuses the whole
 configuration. Reject the name against the same charset in your own library and report it,
 or the tenant sees a header silently not applied.
 
-`direction` is `request` or `response`. `keyExpr` is the sample expression
+`direction` is `request` or `response`. `response` emits `http-after-response` rules, so the header also reaches responses HAProxy generates or replaces, such as error pages and redirects. `keyExpr` is the sample expression
 producing the key prefix; the macro appends `,concat(|<operation>|<name>)` to it,
 so a caller needing more in the key ends its own expression with a `concat` (the
 Gateway library's backendRef-level form passes

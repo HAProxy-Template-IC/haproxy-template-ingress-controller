@@ -30,7 +30,7 @@ import (
 //
 // Keys exercised (all host-scoped, applied by charts/haptic/charts/
 // haptic-annotations/30-frontend-filters.yaml and 26-rewrite-affinity.yaml):
-//   - haproxy-haptic.org/response-set-header  → http-response set-header
+//   - haproxy-haptic.org/response-set-header  → http-after-response set-header
 //   - haproxy-haptic.org/request-set-header   → http-request set-header
 //   - haproxy-haptic.org/forwardfor           → X-Forwarded-For injection
 //   - haproxy-haptic.org/set-host             → upstream Host override (reqhdr map)

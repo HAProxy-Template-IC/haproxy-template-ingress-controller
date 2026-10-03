@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -267,7 +269,7 @@ func (w *HTTPStoreWrapper) Fetch(args ...any) (any, error) {
 
 // FetchSnapshot performs one fetch and returns the exact input version used by this call.
 func (w *HTTPStoreWrapper) FetchSnapshot(args ...any) (any, httpstore.ContentSnapshot, error) {
-	url, opts, auth, err := w.parseArgs(args)
+	url, opts, auth, err := ParseFetchArgs(args)
 	if err != nil {
 		return nil, httpstore.ContentSnapshot{}, err
 	}
@@ -460,8 +462,8 @@ func (w *HTTPStoreWrapper) getCachedSnapshot(
 	return missing, false, nil
 }
 
-// parseArgs extracts and validates URL, options, and auth from variadic arguments.
-func (w *HTTPStoreWrapper) parseArgs(args []any) (string, httpstore.FetchOptions, *httpstore.AuthConfig, error) {
+// ParseFetchArgs extracts and validates the URL, options, and auth of an http.Fetch call.
+func ParseFetchArgs(args []any) (string, httpstore.FetchOptions, *httpstore.AuthConfig, error) {
 	if len(args) < 1 {
 		return "", httpstore.FetchOptions{}, nil, errors.New("http.Fetch requires at least 1 argument (url)")
 	}
@@ -561,7 +563,58 @@ func parseFetchOptions(m map[string]any) (httpstore.FetchOptions, error) {
 		opts.Critical = b
 	}
 
+	if v, ok := m["acceptStatus"]; ok {
+		codes, err := toIntList(v)
+		if err != nil {
+			return opts, fmt.Errorf("invalid acceptStatus: %w", err)
+		}
+		set, err := httpstore.NewStatusSet(codes...)
+		if err != nil {
+			return opts, err
+		}
+		opts.AcceptStatus = set
+	}
+
 	return opts, nil
+}
+
+// toIntList converts a template list of whole numbers to []int.
+func toIntList(v any) ([]int, error) {
+	list := reflect.ValueOf(v)
+	if v == nil || list.Kind() != reflect.Slice && list.Kind() != reflect.Array {
+		return nil, fmt.Errorf("expected a list of status codes, got %T", v)
+	}
+	codes := make([]int, 0, list.Len())
+	for i := range list.Len() {
+		code, err := toWholeNumber(list.Index(i).Interface())
+		if err != nil {
+			return nil, fmt.Errorf("element %d: %w", i, err)
+		}
+		codes = append(codes, code)
+	}
+	return codes, nil
+}
+
+func toWholeNumber(v any) (int, error) {
+	value := reflect.ValueOf(v)
+	switch value.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return int(value.Int()), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		unsigned := value.Uint()
+		if unsigned > math.MaxInt32 {
+			return 0, fmt.Errorf("%d is out of range", unsigned)
+		}
+		return int(unsigned), nil
+	case reflect.Float32, reflect.Float64:
+		f := value.Float()
+		if f != math.Trunc(f) || math.Abs(f) > math.MaxInt32 {
+			return 0, fmt.Errorf("expected a whole number, got %v", f)
+		}
+		return int(f), nil
+	default:
+		return 0, fmt.Errorf("expected a whole number, got %T", v)
+	}
 }
 
 // parseAuthConfig parses a map into AuthConfig.

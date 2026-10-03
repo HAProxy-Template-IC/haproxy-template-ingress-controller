@@ -1,0 +1,295 @@
+# nginx-ingress library — custom-http-errors validation tests.
+_fx:
+  services: &cheServices
+    - apiVersion: v1
+      kind: Service
+      metadata: {namespace: default, name: app-service}
+      spec:
+        ports:
+          - port: 80
+    - apiVersion: v1
+      kind: Service
+      metadata: {namespace: default, name: errors-service}
+      spec:
+        ports:
+          - port: 8080
+    - apiVersion: v1
+      kind: Service
+      metadata: {namespace: errors, name: error-pages}
+      spec:
+        ports:
+          - port: 8080
+  endpoints: &cheEndpoints
+    - apiVersion: discovery.k8s.io/v1
+      kind: EndpointSlice
+      metadata:
+        name: app-service-abc
+        namespace: default
+        labels:
+          kubernetes.io/service-name: app-service
+      addressType: IPv4
+      endpoints:
+        - addresses: ["10.0.0.1"]
+      ports:
+        - port: 8080
+  rules: &cheRules
+    - host: shop.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: app-service, port: {number: 80}}}
+
+validationTests:
+  test-nginx-ingress-custom-http-errors:
+    description: Each listed code is fetched from the default-backend Service and returned for that status on the Ingress's backends only.
+    fixtures:
+      services: *cheServices
+      endpoints: *cheEndpoints
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shop
+            annotations:
+              nginx.ingress.kubernetes.io/default-backend: errors-service
+              nginx.ingress.kubernetes.io/custom-http-errors: "503, 404,404"
+          spec:
+            ingressClassName: haproxy
+            rules: *cheRules
+    httpResources:
+      - url: "http://errors-service.default.svc:8080/?code=404&format=html&namespace=default&ingress=shop"
+        content: "<h1>Not found here</h1>"
+      - url: "http://errors-service.default.svc:8080/?code=404&format=json&namespace=default&ingress=shop"
+        content: '{"message": "Not found here"}'
+      - url: "http://errors-service.default.svc:8080/?code=503&format=html&namespace=default&ingress=shop"
+        content: "<h1>Back soon</h1>"
+      # A backend without a JSON page answers the JSON request with its HTML.
+      - url: "http://errors-service.default.svc:8080/?code=503&format=json&namespace=default&ingress=shop"
+        content: "<h1>Back soon</h1>"
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.nginx_err_json\) bool\(true\) if \{ req\.hdr\(accept,1\) -m beg -i application/json \}'
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'http-response return status 404 content-type "application/json" file \S+/nginx-error-default_shop-404\.json if \{ status 404 \} \{ var\(txn\.nginx_err_json\) -m bool \} \{ var\(txn\.backend_name\),map\(\S+/nginx-custom-http-errors\.map\) -m str default_shop \}'
+          - 'http-response return status 404 content-type "text/html" file \S+/nginx-error-default_shop-404\.html if \{ status 404 \} \{ var\(txn\.backend_name\),map\(\S+/nginx-custom-http-errors\.map\) -m str default_shop \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-response return status 503 content-type "text/html" file \S+/nginx-error-default_shop-503\.html if \{ status 503 \}'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'status 503 content-type "application/json"'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'status 404 content-type "text/html"[^\n]*\n\s*http-response return status 404 '}
+      - {type: contains, target: file:nginx-error-default_shop-404.html, pattern: '^<h1>Not found here</h1>$'}
+      - {type: contains, target: file:nginx-error-default_shop-404.json, pattern: '^\{"message": "Not found here"\}$'}
+      - {type: contains, target: file:nginx-error-default_shop-503.html, pattern: '^<h1>Back soon</h1>$'}
+      - {type: contains, target: map:nginx-custom-http-errors.map, pattern: '(?m)^default_shop_svc_app-service_80 default_shop$'}
+      - {type: not_contains, target: events, pattern: 'CustomErrorPage'}
+
+  test-nginx-ingress-custom-http-errors-keeps-response-headers:
+    # http-response return replaces the response, dropping every header an
+    # http-response rule set; http-after-response rules still run on it.
+    description: HSTS, CORS, Server and custom response headers are set in http-after-response, so a replaced error page still carries them.
+    fixtures:
+      services: *cheServices
+      endpoints: *cheEndpoints
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shop
+            annotations:
+              nginx.ingress.kubernetes.io/default-backend: errors-service
+              nginx.ingress.kubernetes.io/custom-http-errors: "404"
+              nginx.ingress.kubernetes.io/hsts: "true"
+              nginx.ingress.kubernetes.io/enable-cors: "true"
+              nginx.ingress.kubernetes.io/custom-response-headers: "X-Frame-Options:DENY"
+          spec:
+            ingressClassName: haproxy
+            rules: *cheRules
+    httpResources:
+      - url: "http://errors-service.default.svc:8080/?code=404&format=html&namespace=default&ingress=shop"
+        content: "<h1>Not found here</h1>"
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response return status 404 content-type "text/html"'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-after-response set-header Strict-Transport-Security %\[var\(txn\.host\),map\('}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-after-response set-header Access-Control-Allow-Origin'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-after-response set-header X-Frame-Options %\[var\(txn\.backend_name\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-after-response set-header Server haptic'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-response (set|add|del)-header'}
+
+  test-nginx-ingress-custom-http-errors-global-default-backend:
+    description: Without a default-backend annotation the pages come from extraContext.nginxDefaultBackendService.
+    extraContext:
+      nginxDefaultBackendService: errors/error-pages
+    fixtures:
+      services: *cheServices
+      endpoints: *cheEndpoints
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shop
+            annotations:
+              nginx.ingress.kubernetes.io/custom-http-errors: "404"
+          spec:
+            ingressClassName: haproxy
+            rules: *cheRules
+    httpResources:
+      - url: "http://error-pages.errors.svc:8080/?code=404&format=html&namespace=default&ingress=shop"
+        content: "<h1>Global 404</h1>"
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response return status 404 content-type "text/html" file \S+/nginx-error-default_shop-404\.html'}
+      - {type: contains, target: file:nginx-error-default_shop-404.html, pattern: 'Global 404'}
+
+  test-nginx-ingress-custom-http-errors-keeps-last-page:
+    # No httpResources fixture: the fetch fails, as during an outage of the
+    # error-page Service. currentFiles holds what the fleet already serves.
+    description: A page that can't be fetched keeps the deployed snapshot; a code with no snapshot isn't intercepted. Both raise an Event.
+    fixtures:
+      services: *cheServices
+      endpoints: *cheEndpoints
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shop
+            annotations:
+              nginx.ingress.kubernetes.io/default-backend: errors-service
+              nginx.ingress.kubernetes.io/custom-http-errors: "404,503"
+          spec:
+            ingressClassName: haproxy
+            rules: *cheRules
+    currentFiles:
+      nginx-error-default_shop-404.html: "<h1>Deployed 404</h1>"
+      nginx-error-default_shop-404.json: '{"deployed": 404}'
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response return status 404 content-type "application/json" file \S+/nginx-error-default_shop-404\.json'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-response return status 404 content-type "text/html" file \S+/nginx-error-default_shop-404\.html'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-response return status 503'}
+      - {type: contains, target: file:nginx-error-default_shop-404.html, pattern: 'Deployed 404'}
+      - {type: contains, target: file:nginx-error-default_shop-404.json, pattern: '"deployed": 404'}
+      - {type: contains, target: events, pattern: 'CustomErrorPageUnavailable .*default/shop: the 404 text/html error page can.t be used \(the fetch failed or returned an empty body\), so HAProxy keeps the last fetched page'}
+      - {type: contains, target: events, pattern: 'CustomErrorPageUnavailable .*default/shop: the 503 text/html error page can.t be used'}
+
+  test-nginx-ingress-custom-http-errors-changed-page-replaces-deployed:
+    description: A page that changed on the default backend replaces the deployed snapshot.
+    fixtures:
+      services: *cheServices
+      endpoints: *cheEndpoints
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shop
+            annotations:
+              nginx.ingress.kubernetes.io/default-backend: errors-service
+              nginx.ingress.kubernetes.io/custom-http-errors: "404"
+          spec:
+            ingressClassName: haproxy
+            rules: *cheRules
+    currentFiles:
+      nginx-error-default_shop-404.html: "<h1>Old 404</h1>"
+    httpResources:
+      - url: "http://errors-service.default.svc:8080/?code=404&format=html&namespace=default&ingress=shop"
+        content: "<h1>New 404</h1>"
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: file:nginx-error-default_shop-404.html, pattern: '^<h1>New 404</h1>$'}
+      - {type: not_contains, target: events, pattern: 'the 404 text/html error page'}
+
+  test-nginx-ingress-custom-http-errors-refresh-interval-too-short:
+    description: A refresh interval below 30s, or one that isn't a whole number of s, m or h, fails the render.
+    extraContext:
+      nginxCustomHTTPErrorsRefreshInterval: 10s
+    fixtures:
+      services: *cheServices
+      endpoints: *cheEndpoints
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: shop, annotations: {nginx.ingress.kubernetes.io/custom-http-errors: "404"}}
+          spec:
+            ingressClassName: haproxy
+            rules: *cheRules
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Invalid extraContext\\.nginxCustomHTTPErrorsRefreshInterval '10s'"}
+
+  test-nginx-ingress-custom-http-errors-page-too-large:
+    description: A page larger than the response buffer isn't served, so a fetched page can never make the configuration invalid.
+    extraContext:
+      tune: {bufsize: 2100}
+    fixtures:
+      services: *cheServices
+      endpoints: *cheEndpoints
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shop
+            annotations:
+              nginx.ingress.kubernetes.io/default-backend: errors-service
+              nginx.ingress.kubernetes.io/custom-http-errors: "404"
+          spec:
+            ingressClassName: haproxy
+            rules: *cheRules
+    httpResources:
+      - url: "http://errors-service.default.svc:8080/?code=404&format=html&namespace=default&ingress=shop"
+        content: "<html><body><h1>This page is longer than fifty-two bytes</h1></body></html>"
+    assertions:
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-response return status 404'}
+      - {type: contains, target: events, pattern: 'CustomErrorPageUnavailable .*at most 52 fit in tune\.bufsize.*Shrink the page'}
+
+  test-nginx-ingress-custom-http-errors-no-default-backend:
+    description: With no default backend to fetch from, the Ingress gets an Event and upstream errors pass through.
+    fixtures:
+      services: *cheServices
+      endpoints: *cheEndpoints
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shop
+            annotations:
+              nginx.ingress.kubernetes.io/custom-http-errors: "404"
+          spec:
+            ingressClassName: haproxy
+            rules: *cheRules
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-response return status 404'}
+      - {type: contains, target: events, pattern: 'CustomHTTPErrorsNoDefaultBackend .*default/shop'}
+
+  test-nginx-ingress-custom-http-errors-invalid-code:
+    description: A code outside 400-599 is reported and no page is served for the Ingress.
+    fixtures:
+      services: *cheServices
+      endpoints: *cheEndpoints
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: shop
+            annotations:
+              nginx.ingress.kubernetes.io/default-backend: errors-service
+              nginx.ingress.kubernetes.io/custom-http-errors: "404,302"
+          spec:
+            ingressClassName: haproxy
+            rules: *cheRules
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: haproxy.cfg, pattern: 'http-response return status'}
+      - {type: contains, target: events, pattern: "InvalidAnnotationValue .*custom-http-errors code '302'"}

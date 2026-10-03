@@ -17,6 +17,7 @@ package templating
 import (
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"slices"
 )
@@ -30,10 +31,11 @@ var ErrHTTPFetchDelayOption = errors.New(
 	`option "delay" was removed, so this call fails. Rename it to "interval"`)
 
 var incrementalHTTPOptionKeys = map[string]struct{}{
-	"interval": {},
-	"timeout":  {},
-	"retries":  {},
-	"critical": {},
+	"interval":     {},
+	"timeout":      {},
+	"retries":      {},
+	"critical":     {},
+	"acceptStatus": {},
 }
 
 var incrementalHTTPAuthKeys = map[string]struct{}{
@@ -110,6 +112,12 @@ func canonicalIncrementalHTTPOptions(value any) (map[string]any, error) {
 				return nil, incrementalHTTPScalarError("option", key, "a bool", option)
 			}
 			canonical = critical
+		case "acceptStatus":
+			codes, err := canonicalIncrementalHTTPAcceptStatus(option)
+			if err != nil {
+				return nil, err
+			}
+			canonical = codes
 		default:
 			panic("templating: unknown incremental HTTP option")
 		}
@@ -136,6 +144,54 @@ func canonicalIncrementalHTTPRetries(value any) (int, error) {
 		return 0, fmt.Errorf("http.Fetch: option %q: %w", "retries", err)
 	}
 	return retries, nil
+}
+
+// canonicalIncrementalHTTPAcceptStatus returns the sorted, deduplicated codes.
+func canonicalIncrementalHTTPAcceptStatus(value any) ([]int, error) {
+	if err := rejectIncrementalHTTPNativeType(value); err != nil {
+		return nil, fmt.Errorf("http.Fetch: option %q: %w", "acceptStatus", err)
+	}
+	list := reflect.ValueOf(value)
+	if value == nil || list.Kind() != reflect.Slice && list.Kind() != reflect.Array {
+		return nil, incrementalHTTPScalarError("option", "acceptStatus", "a list of status codes", value)
+	}
+	codes := make([]int, 0, list.Len())
+	for i := range list.Len() {
+		code, err := canonicalIncrementalHTTPStatus(list.Index(i).Interface())
+		if err != nil {
+			return nil, fmt.Errorf("http.Fetch: option %q element %d: %w", "acceptStatus", i, err)
+		}
+		codes = append(codes, code)
+	}
+	slices.Sort(codes)
+	return slices.Compact(codes), nil
+}
+
+func canonicalIncrementalHTTPStatus(value any) (int, error) {
+	if err := rejectIncrementalHTTPNativeType(value); err != nil {
+		return 0, err
+	}
+	scalar, err := deterministicScalarOf(value)
+	if err != nil {
+		return 0, err
+	}
+	switch scalar.kind {
+	case deterministicSignedScalar, deterministicUnsignedScalar:
+	case deterministicFloatScalar:
+		if scalar.floating != math.Trunc(scalar.floating) {
+			return 0, fmt.Errorf("status %s is not a whole number", scalar.text)
+		}
+	default:
+		return 0, fmt.Errorf("status must be a whole number, got %T", value)
+	}
+	code, err := deterministicScalarInt(scalar)
+	if err != nil {
+		return 0, err
+	}
+	if code < 100 || code > 599 {
+		return 0, fmt.Errorf("status %d is not an HTTP status; use 100-599", code)
+	}
+	return code, nil
 }
 
 func canonicalIncrementalHTTPAuth(value any) (map[string]any, error) {

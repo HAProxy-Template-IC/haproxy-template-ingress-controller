@@ -488,62 +488,6 @@ func TestMergeHTTPFixtures(t *testing.T) {
 	}
 }
 
-func TestFixtureToString(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   any
-		want    string
-		wantErr bool
-	}{
-		{
-			name:    "string input",
-			input:   "http://example.com",
-			want:    "http://example.com",
-			wantErr: false,
-		},
-		{
-			name:    "stringer input",
-			input:   stringerType{value: "formatted value"},
-			want:    "formatted value",
-			wantErr: false,
-		},
-		{
-			name:    "integer input",
-			input:   42,
-			want:    "",
-			wantErr: true,
-		},
-		{
-			name:    "nil input",
-			input:   nil,
-			want:    "",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := fixtureToString(tt.input)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.want, result)
-			}
-		})
-	}
-}
-
-// stringerType implements fmt.Stringer for testing.
-type stringerType struct {
-	value string
-}
-
-func (s stringerType) String() string {
-	return s.value
-}
-
 func TestFixtureHTTPStoreWrapper_Fetch(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -585,11 +529,27 @@ func TestFixtureHTTPStoreWrapper_Fetch(t *testing.T) {
 		assert.Contains(t, err.Error(), "url must be a string")
 	})
 
-	t.Run("fetch with options (options are ignored)", func(t *testing.T) {
-		// Options should be ignored in fixture mode
-		result, err := wrapper.Fetch("http://example.com/data.txt", map[string]any{"interval": "5m"})
+	t.Run("valid options and auth select the fixture by URL", func(t *testing.T) {
+		result, err := wrapper.Fetch("http://example.com/data.txt",
+			map[string]any{"interval": "5m", "acceptStatus": []any{404}},
+			map[string]any{"type": "header", "headers": map[string]any{"X-Code": "404"}})
 		require.NoError(t, err)
 		assert.Equal(t, "test content", result)
+	})
+
+	t.Run("invalid acceptStatus fails like production", func(t *testing.T) {
+		_, err := wrapper.Fetch("http://example.com/data.txt", map[string]any{"acceptStatus": []any{700}})
+		require.ErrorContains(t, err, "acceptStatus 700 is not an HTTP status")
+	})
+
+	t.Run("invalid options fail like production", func(t *testing.T) {
+		_, err := wrapper.Fetch("http://example.com/data.txt", map[string]any{"timeout": "soon"})
+		require.ErrorContains(t, err, "invalid timeout")
+	})
+
+	t.Run("invalid auth fails like production", func(t *testing.T) {
+		_, err := wrapper.Fetch("http://example.com/data.txt", nil, map[string]any{"type": "kerberos"})
+		require.ErrorContains(t, err, "unknown HTTP authentication type")
 	})
 }
 
