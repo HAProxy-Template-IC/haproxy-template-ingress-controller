@@ -108,6 +108,8 @@ annotations:
   artifacthub.io/changes: |
     - kind: security
       description: Regex paths (haproxy-haptic.org/path-type, haproxy-ingress.github.io/path-type, Gateway RegularExpression) match only on their own host; a path whose groups don't close within it is rejected
+    - kind: fixed
+      description: After a rolling upgrade, the config's Validated status no longer stays False when an old controller pod wrote it after the new leader
   artifacthub.io/containsSecurityUpdates: "true"
 
   # Links
