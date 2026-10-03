@@ -2840,10 +2840,10 @@ nightly-gateway-churn:
 #   - controller container workingSet <= 1 GiB
 #   - HAProxyCfg compression engaged iff content > threshold (invariant)
 # All measurements land in scale-metrics.json (uploaded always, 30d) so
-# runs are comparable across time. The trend check in `script` compares
-# against the previous main-branch artifact: WARN on >20% regression,
-# FAIL on >50% for change-convergence p95 and controller RSS — a soft
-# corridor that surfaces gradual drift in the job log before it ever
+# runs are comparable across time. scripts/scale-trend.py compares against
+# the median of the last successful runs on main on the same runner CPU
+# model: WARN on >20% regression, FAIL on >50% for change-convergence p95
+# and controller RSS — a corridor that surfaces gradual drift before it
 # trips the hard in-test budgets.
 nightly-scale:
   extends: .test-e2e-base
@@ -2870,65 +2870,7 @@ nightly-scale:
   script:
     - make test-e2e
     - KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output
-    - |
-      # Trend check vs the previous nightly-scale run on main. A missing
-      # previous artifact (first run, expired 30d retention, or artifact
-      # from a failed run) downgrades to a skip — the hard budgets inside
-      # TestScale already gated this run's absolute numbers.
-      if ! curl -sf --header "JOB-TOKEN: ${CI_JOB_TOKEN}" -o previous-scale-metrics.json \
-          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/main/raw/scale-metrics.json?job=nightly-scale"; then
-        echo "No previous scale-metrics.json artifact on main — skipping trend check."
-        exit 0
-      fi
-      python3 - <<'PYEOF'
-      import json, sys
-
-      cur = json.load(open("scale-metrics.json"))
-      prev = json.load(open("previous-scale-metrics.json"))
-
-      # Hard corridor (job FAILS above +50%): the two metrics whose slow
-      # drift hurts operators most — how long a routine change takes to go
-      # live at scale, and the controller's memory footprint.
-      HARD = {"change_convergence_seconds_p95": 0.50, "controller_rss_bytes": 0.50}
-      # Soft corridor (WARN above +20%): context metrics where a jump is
-      # worth eyes but can also follow legitimate changes (e.g. more
-      # rendered lines after a chart feature, different reload batching).
-      SOFT = {
-          "change_convergence_seconds_median": 0.20,
-          "seed_to_converged_seconds": 0.20,
-          "controller_container_cpu_seconds_delta": 0.20,
-          "haproxy_reloads_total_delta": 0.20,
-          "config_lines": 0.20,
-      }
-
-      def ratio(key):
-          p, c = prev.get(key), cur.get(key)
-          if not isinstance(p, (int, float)) or not isinstance(c, (int, float)) or p <= 0:
-              return None
-          return c / p
-
-      failed = False
-      for key, frac in HARD.items():
-          r = ratio(key)
-          if r is None:
-              print(f"trend: {key}: no comparable previous value")
-          elif r > 1 + frac:
-              print(f"TREND FAIL: {key}: {prev[key]} -> {cur[key]} (+{(r - 1) * 100:.0f}% > {frac * 100:.0f}%)")
-              failed = True
-          elif r > 1.20:
-              print(f"TREND WARN: {key}: {prev[key]} -> {cur[key]} (+{(r - 1) * 100:.0f}%)")
-          else:
-              print(f"trend ok: {key}: {prev[key]} -> {cur[key]}")
-      for key, frac in SOFT.items():
-          r = ratio(key)
-          if r is None:
-              print(f"trend: {key}: no comparable previous value")
-          elif r > 1 + frac:
-              print(f"TREND WARN: {key}: {prev[key]} -> {cur[key]} (+{(r - 1) * 100:.0f}%)")
-          else:
-              print(f"trend ok: {key}: {prev[key]} -> {cur[key]}")
-      sys.exit(1 if failed else 0)
-      PYEOF
+    - python3 scripts/scale-trend.py
   artifacts:
     # `when: always` (unlike the base's on_failure): the metrics JSON is
     # the artifact the NEXT run's trend check fetches — it must survive
