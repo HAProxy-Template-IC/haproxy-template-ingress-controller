@@ -312,6 +312,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	python3 -m unittest \
 		scripts/tests/test_gitops_lifecycle.py \
 		scripts/tests/test_upgrade_traffic.py \
+		scripts/tests/test_chart_upgrade_baselines.py \
 		scripts/tests/test_shard_go_tests.py \
 		scripts/tests/test_go_test_weights.py \
 		scripts/tests/test_scale_trend.py \

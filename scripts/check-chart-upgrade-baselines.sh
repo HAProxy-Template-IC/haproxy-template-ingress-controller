@@ -20,7 +20,7 @@ if [ -n "$missing" ]; then
     rc=1
 fi
 if [ -n "$unknown" ]; then
-    echo "FAIL: test-chart-upgrade.parallel.matrix lists unpublished versions: $(echo "$unknown" | tr '\n' ' ')" >&2
+    echo "FAIL: test-chart-upgrade.parallel.matrix lists versions that are unpublished or above VERSION $(cat "$ROOT/VERSION"): $(echo "$unknown" | tr '\n' ' ')" >&2
     echo "      Remove them from .gitlab-ci.yml, or publish them first." >&2
     rc=1
 fi
