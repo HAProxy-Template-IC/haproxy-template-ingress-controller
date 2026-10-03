@@ -1086,10 +1086,10 @@ controller:
         annotationCompatibility:
           basicAuth:
             passwordHashValidation:
-              # Compatibility libraries historically accept any hash syntax.
-              # Tighten with a Go RE2 expression such as "^\$apr1\$".
-              regex: "^.*$"
-              errorMessage: "Invalid password hash"
+              # bcrypt, SHA-256/SHA-512 crypt, yescrypt. HAProxy's crypt(3) can't
+              # verify $apr1$; $1$ (MD5-crypt) and DES crypt are too weak.
+              regex: '^\$(2[aby]|5|6|y)\$[./0-9A-Za-z$=]+$'
+              errorMessage: "Replace it with a bcrypt, SHA-256/SHA-512 crypt or yescrypt hash, for example from htpasswd -nB <user>"
         tls:
           hsts:
             # Global HSTS is opt-in; per-Ingress hsts annotations still win.

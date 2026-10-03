@@ -630,6 +630,10 @@ kubectl -n default create secret generic basic-auth --from-file=auth=auth
 rm auth
 ```
 
+Without `-B`, `-2`, or `-5`, `htpasswd` writes `$apr1$` hashes, which HAPTIC
+refuses, as it does `{SHA}`, `$1$`, Data Encryption Standard (DES) crypt, and plaintext. See
+[accepted formats](../operations/security.md#basic-auth-password-hashes).
+
 The challenge is one rule block per HTTP frontend fed by a per-route map, so a route on an existing credentials Secret is added and removed at runtime. A realm that needs escaping (`"`, `\` or `$`) keeps a backend `http-request auth` rule, which reloads on add and remove.
 
 ### `nginx.ingress.kubernetes.io/satisfy`

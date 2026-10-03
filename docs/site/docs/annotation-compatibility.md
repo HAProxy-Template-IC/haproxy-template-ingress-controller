@@ -87,7 +87,7 @@ The library classifies 140 `nginx.ingress.kubernetes.io/*` annotations: 56 suppo
 | `nginx.ingress.kubernetes.io/auth-method` | Behaviour differs | Overrides the auth subrequest method; POST/PUT/PATCH are sent with an empty body. |
 | `nginx.ingress.kubernetes.io/auth-proxy-set-headers` | Not carried over | The auth subrequest forwards the client's request headers; extra headers from a ConfigMap can't be added. |
 | `nginx.ingress.kubernetes.io/auth-request-redirect` | Not carried over | No X-Auth-Request-Redirect header is sent to the auth service. |
-| `nginx.ingress.kubernetes.io/auth-secret` | Behaviour differs | One divergence to note. Hashes are verified by HAProxy's crypt(3), which supports $2y$/$6$/$5$/$1$ but **not** Apache apr1 ($apr1$) or {SHA} — an htpasswd Secret using those verifies under ingress-nginx but rejects every login here; regenerate with a crypt(3) algorithm. |
+| `nginx.ingress.kubernetes.io/auth-secret` | Behaviour differs | By default only bcrypt, SHA-256/SHA-512 crypt and yescrypt hashes are accepted. An htpasswd Secret with `$apr1$`, `{SHA}`, `$1$` or plaintext entries works under ingress-nginx but is refused here; regenerate those hashes, for example with `htpasswd -nB <user>`. |
 | `nginx.ingress.kubernetes.io/auth-signin` | Behaviour differs | nginx variables (`$escaped_request_uri`, …) aren't expanded — the URL is used verbatim. |
 | `nginx.ingress.kubernetes.io/auth-signin-redirect-param` | Not carried over | auth-signin is used verbatim; no parameter carrying the original URL is appended. |
 | `nginx.ingress.kubernetes.io/auth-snippet` | Not carried over | Freeform nginx configuration can't be translated to HAProxy; the haproxy-ingress library's auth-headers-request annotation covers the common use case. |
@@ -209,7 +209,7 @@ The library classifies 56 `haproxy.org/*` annotations: 37 supported, 14 with beh
 |------------|--------|---------------|
 | `haproxy.org/allow-list` | Behaviour differs | Host-scoped source-IP allowlist — only gates rules with an explicit host; invalid CIDRs fail the render. |
 | `haproxy.org/auth-realm` | Behaviour differs | Default "Protected-Content" (matching the upstream controller); spaces in the realm are replaced with dashes, as upstream does. |
-| `haproxy.org/auth-secret` | Behaviour differs | Secret format is one key per username with a base64(hash) value — different from ingress-nginx's htpasswd. A missing Secret makes the route serve 503 until it appears, and writing such an Ingress is rejected by the admission webhook. |
+| `haproxy.org/auth-secret` | Behaviour differs | Secret format is one key per username with a base64(hash) value — different from ingress-nginx's htpasswd. By default only bcrypt, SHA-256/SHA-512 crypt and yescrypt hashes are accepted; `$1$` (MD5-crypt) is refused. A missing Secret makes the route serve 503 until it appears, and writing such an Ingress is rejected by the admission webhook. |
 | `haproxy.org/auth-type` | Behaviour differs | Only "basic-auth" is supported; other values fail the render (note the value differs from ingress-nginx's "basic"). |
 | `haproxy.org/blacklist` | Behaviour differs | Deprecated alias of deny-list, honoured only when deny-list is absent; host-scoped. |
 | `haproxy.org/cookie-persistence-no-dynamic` | Behaviour differs | Static (non-dynamic) cookie stickiness; setting it together with cookie-persistence fails the render. |

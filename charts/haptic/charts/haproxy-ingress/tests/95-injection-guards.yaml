@@ -461,8 +461,8 @@ validationTests:
 
   # ---- Basic-auth hash: fail closed (fail() aborts the render) ----
   test-haproxy-ingress-basic-auth-hash-injection-fails-closed:
-    description: A space in a basic-auth password hash (accepted by the default hash regex) fails the render closed instead of appending extra tokens to the userlist line.
-    extraContext: {renderMode: admission}
+    description: A space in a basic-auth password hash (accepted by a permissive hash regex) fails the render closed instead of appending extra tokens to the userlist line.
+    extraContext: {renderMode: admission, annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1

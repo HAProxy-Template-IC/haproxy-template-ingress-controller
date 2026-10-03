@@ -572,6 +572,7 @@ validationTests:
 
   test-nginx-ingress-auth-basic:
     description: Nginx Ingress basic auth generates userlist and auth directive
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -602,6 +603,7 @@ validationTests:
 
   test-nginx-ingress-auth-secret-type-map:
     description: auth-secret-type=auth-map reads usernames from Secret data keys (values = password hashes)
+    extraContext: {annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -677,6 +679,33 @@ validationTests:
                       backend: {service: {name: badmap-service, port: {number: 80}}}
     assertions:
       - {type: contains, target: rendering_error, pattern: "invalid password hash for user 'admin'"}
+
+  test-nginx-ingress-auth-default-rejects-apr1:
+    description: The default passwordHashValidation refuses an $apr1$ htpasswd line, which HAProxy can't verify, and names the Ingress, Secret and accepted formats.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: my-auth}
+          type: Opaque
+          data: {auth: YWRtaW46JGFwcjEka3ZUa0t1VjgkS0RQSjB6ZW5EZ3pKWlZwT3lTYUR3MAo=}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "my-auth"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: auth.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress 'default/auth-ingress' references Secret 'default/my-auth', whose password hash for user 'admin' doesn't match the allowed pattern"}
+      - {type: contains, target: rendering_error, pattern: "bcrypt, SHA-256/SHA-512 crypt or yescrypt hash, for example from htpasswd -nB"}
 
   test-nginx-ingress-proxy-next-upstream-invalid-tries:
     description: a non-integer proxy-next-upstream-tries aborts the render instead of being silently dropped

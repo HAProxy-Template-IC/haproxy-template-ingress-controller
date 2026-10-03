@@ -193,6 +193,32 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
 
+  test-haproxy-ingress-auth-default-rejects-apr1:
+    description: The default passwordHashValidation refuses an $apr1$ htpasswd line, which HAProxy can't verify, and names the Ingress, Secret and accepted formats.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: hi-auth-secret}
+          type: Opaque
+          data: {auth: YWRtaW46JGFwcjEka3ZUa0t1VjgkS0RQSjB6ZW5EZ3pKWlZwT3lTYUR3MAo=}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-test
+            annotations:
+              haproxy-ingress.github.io/auth-secret: hi-auth-secret
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: test.example.com
+                http: *httpRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress 'default/auth-test' references Secret 'default/hi-auth-secret', whose password hash for user 'admin' doesn't match the allowed pattern"}
+      - {type: contains, target: rendering_error, pattern: "bcrypt, SHA-256/SHA-512 crypt or yescrypt hash, for example from htpasswd -nB"}
+
   test-haproxy-ingress-auth-tls-secret:
     description: haproxy-ingress.github.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/, whose entries are cert+key bundles) and used in the crt-list line...
     fixtures:

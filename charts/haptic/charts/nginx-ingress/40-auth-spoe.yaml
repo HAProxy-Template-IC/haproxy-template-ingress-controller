@@ -394,7 +394,11 @@ templateSnippets:
   global-top-700-nginx-ingress-auth:
     requires: [ingresses, secrets]
     incremental:
-      source: ingresses
+      bindingsTemplate: |-
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "hashRegex": extraContext | dig_string("^\\$(2[aby]|5|6|y)\\$[./0-9A-Za-z$=]+$", "annotationCompatibility", "basicAuth", "passwordHashValidation", "regex"),
+          "hashError": extraContext | dig_string("Replace it with a bcrypt, SHA-256/SHA-512 crypt or yescrypt hash, for example from htpasswd -nB <user>", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage"),
+        }}) -}}
       whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/auth-secret']"]
       group: nginx-ingress-auth-userlists
     template: |-
@@ -444,6 +448,8 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
+        {%- var hashRegex = tostring(props["hashRegex"]) %}
+        {%- var hashErrMsg = tostring(props["hashError"]) %}
         {%- var authType = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-type"] %}
         {%- if authType == "basic" %}
           {%- var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"] %}
@@ -486,6 +492,8 @@ templateSnippets:
                             break out of the line or inject a directive. -#}
                         {%- if !regex_search(passwordHash, "^[A-Za-z0-9$./{}=+_-]+$") %}
                           {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'nginx.ingress.kubernetes.io/auth-secret' on Ingress '" + key + "' has an invalid password hash for user '" + username + "' (only htpasswd-hash characters are permitted).") -}}
+                        {%- else if !regex_search(passwordHash, hashRegex) %}
+                          {{- fail("Ingress '" + key + "' references Secret '" + secretNs + "/" + secretName + "', whose password hash for user '" + username + "' doesn't match the allowed pattern \"" + hashRegex + "\"; HAPTIC refuses the configuration until it is replaced. " + hashErrMsg) -}}
                         {%- end %}
         user {{ username }} password '{{ passwordHash }}'
                       {%- end %}
@@ -508,6 +516,8 @@ templateSnippets:
                         single quotes. -#}
                     {%- if !regex_search(passwordHash, "^[A-Za-z0-9$./{}=+_-]+$") %}
                       {{- fail("Secret '" + secretNs + "/" + secretName + "' (auth-map) referenced by annotation 'nginx.ingress.kubernetes.io/auth-secret' on Ingress '" + key + "' has an invalid password hash for user '" + username + "' (only htpasswd-hash characters are permitted).") -}}
+                    {%- else if !regex_search(passwordHash, hashRegex) %}
+                      {{- fail("Ingress '" + key + "' references Secret '" + secretNs + "/" + secretName + "', whose password hash for user '" + username + "' doesn't match the allowed pattern \"" + hashRegex + "\"; HAPTIC refuses the configuration until it is replaced. " + hashErrMsg) -}}
                     {%- end %}
         user {{ username }} password '{{ passwordHash }}'
                   {%- end %}

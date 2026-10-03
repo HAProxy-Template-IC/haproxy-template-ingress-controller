@@ -413,15 +413,15 @@ templateSnippets:
         {%- var userlistName = tostring(entry["userlistName"]) %}
       # haproxytech/global-top-haproxytech-ingress-auth
       userlist {{ userlistName }}
-        {%- var hashRegex = extraContext | dig_string("^.*$", "annotationCompatibility", "basicAuth", "passwordHashValidation", "regex") %}
-        {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage") %}
+        {%- var hashRegex = extraContext | dig_string("^\\$(2[aby]|5|6|y)\\$[./0-9A-Za-z$=]+$", "annotationCompatibility", "basicAuth", "passwordHashValidation", "regex") %}
+        {%- var hashErrMsg = extraContext | dig_string("Replace it with a bcrypt, SHA-256/SHA-512 crypt or yescrypt hash, for example from htpasswd -nB <user>", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage") %}
         {%- for _, userAny := range toSlice(entry["users"]) %}
           {%- var user = userAny.(map[string]any) %}
           {%- var username = tostring(user["username"]) %}
           {%- var passwordHash = tostring(user["passwordHash"]) %}
           {%- var pwInj = ConfigInjectionKind(passwordHash, "token") %}
           {%- if !regex_search(passwordHash, hashRegex) %}
-            {{- fail(hashErrMsg + " for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+            {{- fail("Ingress '" + key + "' references Secret '" + secretNs + "/" + secretName + "', whose password hash for user '" + username + "' doesn't match the allowed pattern \"" + hashRegex + "\"; HAPTIC refuses the configuration until it is replaced. " + hashErrMsg) -}}
           {%- else if pwInj != "" %}
             {{- fail("Basic-auth hash for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' contains " + pwInj + ", which would break out of the userlist line. Remove whitespace, quotes and control characters from the hash.") -}}
           {%- end %}
@@ -1491,8 +1491,8 @@ validationTests:
       - {type: not_contains, target: haproxy.cfg, pattern: "http_auth(auth_default_absent-secret)"}
 
   test-haproxytech-basic-auth-hash-injection-fails-closed:
-    description: A space in a basic-auth password hash (accepted by the default hash regex) fails the render closed instead of appending extra tokens to the userlist line (#157).
-    extraContext: {renderMode: admission}
+    description: A space in a basic-auth password hash (accepted by a permissive hash regex) fails the render closed instead of appending extra tokens to the userlist line (#157).
+    extraContext: {renderMode: admission, annotationCompatibility: {basicAuth: {passwordHashValidation: {regex: "^.*$"}}}}
     fixtures:
       secrets:
         - apiVersion: v1
@@ -1754,6 +1754,29 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
+
+  test-haproxytech-auth-default-rejects-md5crypt:
+    description: The default passwordHashValidation refuses $1$ MD5-crypt and names the Ingress, Secret and accepted formats.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {namespace: default, name: auth-secret}
+          type: Opaque
+          data: {admin: JDEkYkk0VUJTWVkkZXhwbndmSC9IRjFBelNpcXM3Z0NVMA==}
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-test
+            annotations:
+              haproxy.org/auth-type: basic-auth
+              haproxy.org/auth-secret: auth-secret
+          spec: *specTestExampleComRoot
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "Ingress 'default/auth-test' references Secret 'default/auth-secret', whose password hash for user 'admin' doesn't match the allowed pattern"}
+      - {type: contains, target: rendering_error, pattern: "bcrypt, SHA-256/SHA-512 crypt or yescrypt hash, for example from htpasswd -nB"}
 
   test-haproxytech-ssl-redirect-default-enabled:
     description: SSL redirect applies when annotation absent and sslRedirectDefault is true
@@ -2763,7 +2786,7 @@ _migrationCoverage:
         doc: annotation-support
       haproxy.org/auth-secret:
         status: different
-        note: Secret format is one key per username with a base64(hash) value — different from ingress-nginx's htpasswd. A missing Secret makes the route serve 503 until it appears, and writing such an Ingress is rejected by the admission webhook.
+        note: Secret format is one key per username with a base64(hash) value — different from ingress-nginx's htpasswd. By default only bcrypt, SHA-256/SHA-512 crypt and yescrypt hashes are accepted; `$1$` (MD5-crypt) is refused. A missing Secret makes the route serve 503 until it appears, and writing such an Ingress is rejected by the admission webhook.
         doc: annotation-support
       haproxy.org/auth-realm:
         status: different

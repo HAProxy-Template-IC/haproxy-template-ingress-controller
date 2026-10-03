@@ -205,6 +205,50 @@ htpasswd -n -B -C 10 admin | cut -d: -f2
 
 Hash checks cost CPU on authentication and configuration parsing. Choose a work factor for your authentication policy and measure it; see [Password hash performance](./performance.md#password-hash-performance).
 
+## Basic-auth password hashes
+
+The bundled basic-auth annotations accept these hash formats by default. Each
+command prompts for the password:
+
+| Format | Prefix | Generate with |
+| --- | --- | --- |
+| bcrypt | `$2a$`, `$2b$`, `$2y$` | `htpasswd -nB <user>` |
+| SHA-512 crypt | `$6$` | `openssl passwd -6` |
+| SHA-256 crypt | `$5$` | `openssl passwd -5` |
+| yescrypt | `$y$` | `mkpasswd -m yescrypt` |
+
+HAPTIC refuses every other credential with an error that names the Ingress, the
+Secret, and the user. The admission webhook denies a new or changed Ingress that
+references such a Secret. If a Secret already in the cluster holds one, HAPTIC
+applies no configuration changes until you replace the hash. The default refuses:
+
+- `$apr1$` (Apache MD5, the `htpasswd -m` format). HAProxy can't verify it, so
+  every login would fail.
+- `$1$` (MD5-crypt) and Data Encryption Standard (DES) crypt. HAProxy verifies them, but they're fast
+  enough to crack offline, and DES crypt ignores everything after the eighth
+  password character.
+- Plaintext, including `user::password` lines in an htpasswd file.
+
+To accept another format while you migrate, widen both patterns in your values.
+This example also accepts `$1$`:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        annotationCompatibility:
+          basicAuth:
+            passwordHashValidation:
+              regex: '^\$(2[aby]|1|5|6|y)\$[./0-9A-Za-z$=]+$'
+        hapticPasswordHashRegex: '^\$(2[aby]|1|5|6|y)\$[./0-9A-Za-z$=]+$'
+```
+
+`annotationCompatibility.basicAuth.passwordHashValidation.regex` applies to the
+`haproxy.org`, `haproxy-ingress.github.io`, and `nginx.ingress.kubernetes.io`
+annotations; `hapticPasswordHashRegex` applies to `haproxy-haptic.org`
+annotations.
+
 ## Annotation input as a trust boundary
 
 Most annotation values reach the config as validated or escaped data: CIDR-list annotations are parsed as CIDRs (an invalid entry fails the render), and header, cookie, SNI, and rewrite-target values are checked against a strict character set that rejects control characters, so they can't break out of their directive and inject arbitrary HAProxy config.
