@@ -126,6 +126,12 @@ per additional port. Reuse `util-ssl-bind-options` to inherit the
 configured certificate list and Application-Layer Protocol Negotiation (ALPN)
 settings. Avoid ports already used by another bind.
 
+To serve [HTTP/3](../haproxy-deployment.md#http3-quic) on the port too, emit
+the line `HTTP3Bind(port, "certificate-list.txt", "")` returns after the TCP
+bind, using `{%- import "util-http3-bind" for HTTP3Bind %}`. It returns an
+empty string when HTTP/3 is off. The HTTPS frontend sends `alt-svc` only for
+ports that have such a bind.
+
 Use `http-bind-extra-*` for additional plain-HTTP binds. See the
 [base library extension points](base.md#extension-points) for the full list.
 

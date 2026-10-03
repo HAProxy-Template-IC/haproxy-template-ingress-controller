@@ -1,0 +1,197 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: http3 ports
+# The QUIC binds and alt-svc are pinned by chart-validation tests
+# (test-ssl-http3-* in charts/ssl/library.yaml). This suite covers the chart-side
+# wiring they depend on: the UDP container port, Service port, NetworkPolicy,
+# and value validation.
+templates:
+  - haproxy-deployment.yaml
+  - haproxy-networkpolicy.yaml
+  - haproxytemplateconfig.yaml
+tests:
+  - it: should open a UDP container port on the HTTPS port by default
+    templates:
+      - haproxy-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: https-quic
+            containerPort: 443
+            protocol: UDP
+
+  - it: should follow haproxy.ports.https
+    templates:
+      - haproxy-deployment.yaml
+    set:
+      haproxy.ports.https: 8443
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: https-quic
+            containerPort: 8443
+            protocol: UDP
+
+  - it: should not open the UDP container port when disabled
+    templates:
+      - haproxy-deployment.yaml
+    set:
+      controller.config.templatingSettings.extraContext.http3.enabled: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: https-quic
+            containerPort: 443
+            protocol: UDP
+
+  # The user-facing Service is rendered by the controller from
+  # extraContext.haproxyService.ports. Same nodePort as TCP: Kubernetes keys
+  # nodePort uniqueness by protocol.
+  - it: should add a UDP Service port beside https
+    templates:
+      - haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    asserts:
+      - contains:
+          path: spec.templatingSettings.extraContext.haproxyService.ports
+          content:
+            name: https-quic
+            port: 443
+            targetPort: https-quic
+            protocol: UDP
+            nodePort: 30443
+
+  - it: should drop the UDP Service port with the https one
+    templates:
+      - haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      haproxy.service.https.port: 0
+    asserts:
+      - notContains:
+          path: spec.templatingSettings.extraContext.haproxyService.ports
+          content:
+            name: https-quic
+            port: 443
+            targetPort: https-quic
+            protocol: UDP
+            nodePort: 30443
+
+  - it: should not add the UDP Service port when disabled
+    templates:
+      - haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      controller.config.templatingSettings.extraContext.http3.enabled: false
+    asserts:
+      - notContains:
+          path: spec.templatingSettings.extraContext.haproxyService.ports
+          content:
+            name: https-quic
+            port: 443
+            targetPort: https-quic
+            protocol: UDP
+            nodePort: 30443
+
+  # Permissive mode allows all UDP because Gateway listeners add QUIC binds on
+  # ports only known at runtime, the same reason it allows all TCP.
+  - it: should allow UDP in the permissive NetworkPolicy
+    templates:
+      - haproxy-networkpolicy.yaml
+    asserts:
+      - contains:
+          path: spec.ingress[0].ports
+          content:
+            protocol: UDP
+
+  - it: should open UDP on the HTTPS port in a restrictive NetworkPolicy
+    templates:
+      - haproxy-networkpolicy.yaml
+    set:
+      haproxy.networkPolicy.allowExternal: false
+      haproxy.networkPolicy.allowedSources:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+    asserts:
+      - contains:
+          path: spec.ingress[0].ports
+          content:
+            port: 443
+            protocol: UDP
+
+  - it: should not allow UDP in the NetworkPolicy when disabled
+    templates:
+      - haproxy-networkpolicy.yaml
+    set:
+      controller.config.templatingSettings.extraContext.http3.enabled: false
+    asserts:
+      - notContains:
+          path: spec.ingress[0].ports
+          content:
+            protocol: UDP
+
+  - it: should reject an unknown http3 field
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.http3.port: 443
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.templatingSettings.extraContext.http3 contains unknown field "port". Valid fields: enabled, altSvc.'
+
+  - it: should reject an unknown altSvc field
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.http3.altSvc.persist: true
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.templatingSettings.extraContext.http3.altSvc contains unknown field "persist". Valid fields: port, maxAge.'
+
+  - it: should reject a non-boolean enabled
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.http3.enabled: "yes"
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.http3.enabled must be a boolean."
+
+  - it: should reject an out-of-range altSvc port
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.http3.altSvc.port: 70000
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.http3.altSvc.port must be 0 (the port the client used) or a port between 1 and 65535, got 70000."
+
+  - it: should reject a zero maxAge
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.http3.altSvc.maxAge: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.http3.altSvc.maxAge must be a positive number of seconds, got 0."
+
+  - it: should reject an extraPorts entry named https-quic
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      haproxy.service.extraPorts:
+        - name: https-quic
+          port: 9443
+          targetPort: 9443
+          protocol: UDP
+    asserts:
+      - failedTemplate:
+          errorMessage: 'haproxy.service.extraPorts declares a port named "https-quic", which the HTTP/3 listener also uses. Rename your entry, or set controller.config.templatingSettings.extraContext.http3.enabled=false.'

@@ -282,6 +282,9 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 | `controller.config.templatingSettings.extraContext.proxyProtocol.enabled` | bool | `false` | Add HTTP and HTTPS binds that require a PROXY protocol header, so `client_ip`, `src`-keyed rate limiting, the WAF, and IP ACLs see the real client instead of the balancer. Adds the ports to the HAProxy Service, the container ports, and the NetworkPolicy |
 | `controller.config.templatingSettings.extraContext.proxyProtocol.httpPort` | int | `8081` | PROXY-protocol HTTP port. Additional to `haproxy.ports.http`, which stays open and header-free — a connection reaching this port without the header is dropped, so only the balancer may target it |
 | `controller.config.templatingSettings.extraContext.proxyProtocol.httpsPort` | int | `8444` | PROXY-protocol HTTPS port, using the same certificates, ciphers, and protocol negotiation as `haproxy.ports.https`. With TLS-Passthrough configured it attaches to the SNI-routing frontend instead |
+| `controller.config.templatingSettings.extraContext.http3.enabled` | bool | `true` | Serve [HTTP/3](haproxy-deployment.md#http3-quic) over UDP on every TLS-terminating HTTPS port and advertise it with `alt-svc`. Adds a UDP port to the HAProxy and Gateway Services, the container, and the NetworkPolicy |
+| `controller.config.templatingSettings.extraContext.http3.altSvc.port` | int | `0` | Port advertised in `alt-svc`. `0` advertises the port the client used for HTTPS (the `Host` port, else 443); set it when UDP is published on a different port than TCP |
+| `controller.config.templatingSettings.extraContext.http3.altSvc.maxAge` | int | `86400` | Seconds a client may cache the `alt-svc` advertisement |
 
 ## Default SSL certificate
 

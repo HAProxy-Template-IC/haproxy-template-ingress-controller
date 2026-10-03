@@ -717,6 +717,23 @@ controller:
           enabled: false
           httpPort: 8081
           httpsPort: 8444
+        # HTTP/3 over QUIC. Every TLS-terminating HTTPS listener gets a UDP twin
+        # on the same port with the same certificates, the HAProxy Service and
+        # container get a UDP port, and responses carry an `alt-svc` header that
+        # points clients at it. Firewalls and load balancers in front of HAProxy
+        # must pass UDP on the HTTPS port. Responses on the PROXY-protocol
+        # listener never advertise HTTP/3: QUIC can't carry the PROXY header. See
+        # https://haproxy-haptic.org/docs/latest/haproxy-deployment/#http3-quic
+        http3:
+          enabled: true
+          altSvc:
+            # Port advertised to clients. 0 advertises the port the client used
+            # for HTTPS (the Host header's port, else 443), which is right
+            # whenever UDP is published on the same port as TCP. Set it when your
+            # load balancer publishes UDP on a different port.
+            port: 0
+            # Seconds a client may cache the advertisement (alt-svc `ma`).
+            maxAge: 86400
         # HAProxy access log. Every frontend emits one JSON object per
         # request (or per connection, for the TCP-mode frontends), using
         # HAProxy's native JSON log encoding. The log target is `format raw`, so

@@ -18,6 +18,10 @@ nodes:
       - containerPort: 30443
         hostPort: 30443
         protocol: TCP
+      # HTTP/3 (QUIC) to HAProxy; alt-svc advertises the port the client used
+      - containerPort: 30443
+        hostPort: 30443
+        protocol: UDP
       # HAProxy stats/health
       - containerPort: 30404
         hostPort: 30404

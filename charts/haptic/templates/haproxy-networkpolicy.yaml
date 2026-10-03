@@ -3,6 +3,7 @@
 {{- if and $haproxy.enabled $np.enabled }}
 {{- $ports := $haproxy.ports }}
 {{- $proxyProtocol := include "haptic.proxyProtocol" . | fromYaml }}
+{{- $http3 := include "haptic.http3" . | fromYaml }}
 {{- $name := include "haptic.name" . }}
 {{- /*
   Validate configuration to prevent deny-all scenarios
@@ -63,6 +64,10 @@ spec:
           port: {{ $next }}
           endPort: 65535
         {{- end }}
+        {{- if $http3.enabled }}
+        # QUIC on every HTTPS listener port, Gateway-derived ones included.
+        - protocol: UDP
+        {{- end }}
     {{- else }}
     # Restrictive mode: explicit port + source allowlist.
     - ports:
@@ -70,6 +75,10 @@ spec:
           protocol: TCP
         - port: {{ $ports.https }}
           protocol: TCP
+        {{- if $http3.enabled }}
+        - port: {{ $ports.https }}
+          protocol: UDP
+        {{- end }}
         {{- if $proxyProtocol.enabled }}
         - port: {{ int $proxyProtocol.httpPort }}
           protocol: TCP

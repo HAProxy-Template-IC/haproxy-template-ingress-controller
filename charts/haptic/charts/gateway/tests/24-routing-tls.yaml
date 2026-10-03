@@ -764,6 +764,7 @@ validationTests:
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
       proxyProtocol: {enabled: true, httpPort: 8081, httpsPort: 8444}
+      http3: {enabled: true, altSvc: {port: 0, maxAge: 86400}}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -785,5 +786,11 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^frontend ssl-tcp$.*?^\s+bind \*:8444 accept-proxy$'
-      - {type: not_contains, target: haproxy.cfg, pattern: 'bind \*:8444 accept-proxy ssl'}
+        pattern: '(?ms)^frontend ssl-tcp$.*?^\s+bind \*:8444 accept-proxy name https-proxy-protocol$'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'bind \*:8444 accept-proxy\b.*\bssl\b'}
+      # ssl-tcp owns TCP 443 but UDP 443 is free, so QUIC binds on frontend https directly.
+      - {type: contains, target: haproxy.cfg, pattern: '(?ms)^frontend https$.*?^\s+bind quic4@:443 ssl crt-list '}
+      # The loopback names the accepting ssl-tcp listener, so PROXY-protocol
+      # connections still get no alt-svc after the unix-socket hop.
+      - {type: contains, target: haproxy.cfg, pattern: 'server loopback unix@/etc/haproxy/ssl-frontend\.sock send-proxy-v2 set-proxy-v2-tlv-fmt\(0xE0\) %\[so_name\]'}
+      - {type: match_count, target: haproxy.cfg, pattern: 'set-header alt-svc .* if \{ dst_port 443 \} !\{ so_name https-proxy-protocol \} !\{ fc_pp_tlv\(0xE0\) -m str https-proxy-protocol \}', expected: "2"}

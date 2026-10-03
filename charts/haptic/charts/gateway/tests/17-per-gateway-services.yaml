@@ -13,6 +13,7 @@ validationTests:
       haproxyPodSelector:
         app.kubernetes.io/name: haptic
         app.kubernetes.io/component: haproxy
+      http3: {enabled: true, altSvc: {port: 0, maxAge: 86400}}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -102,6 +103,18 @@ validationTests:
       - type: contains
         target: "k8s:gateway-static-addresses"
         pattern: 'name: gw-default-gw-pinned-192-0-2-10'
+      # HTTPS listeners also publish UDP for their QUIC bind on the same pod port;
+      # HTTP listeners don't.
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: '(?s)name: gw-default-gw-https\b.*?- name: q443\s+port: 443\s+protocol: UDP\s+targetPort: 18747'
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: '(?s)name: gw-default-gw-https\b.*?- name: q8443\s+port: 8443\s+protocol: UDP\s+targetPort: 18074'
+      - {type: not_contains, target: "k8s:gateway-static-addresses", pattern: 'name: q80\b'}
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: '(?s)name: gw-default-gw-pinned-192-0-2-10.*?- name: q443\s+port: 443\s+protocol: UDP'
   test-k8s-haproxy-service-gateway-listener-ports:
     requires: [gatewayclasses, gateways]
     description: "Gateway listeners on non-default ports must add corresponding `gw-<port>-<proto>` port entries to the haproxy-service Service. Without these, kube-proxy doesn't route LoadBalancer-IP traffic on those ports to the haproxy pod — the upstream `HTTPRouteListenerPortMatching` conformance test failed in CI precisely because port 80 worked (default Service port) but 8080/8090 timed out (no Service port → no kube-proxy DNAT). Lives in the gateway library (not base) because the assertion fixtures reference Gateway / GatewayClass watchedResources — those only exist when the gateway library is loaded. base.yaml's `k8sResources.haproxy-service` template is what produces the rendered Service; this test exercises the cross-library interaction with gateway-supplied listener metadata."
@@ -149,6 +162,92 @@ validationTests:
       - {type: contains, target: "k8s:haproxy-service", pattern: "(?ms)name: gw-8080-h.*\\n.*port: 8080"}
 
       - {type: contains, target: "k8s:haproxy-service", pattern: "(?ms)name: gw-8090-h.*\\n.*port: 8090"}
+
+  test-k8s-haproxy-service-gateway-quic-ports:
+    requires: [gatewayclasses, gateways]
+    description: "An HTTPS Gateway listener on a non-default port adds a UDP `gw-<port>-q` Service port for its QUIC bind; HTTP listeners don't. Ports dedupe by number AND protocol, so the chart's own https/https-quic pair on 443 absorbs a Gateway HTTPS listener on 443 without dropping either protocol."
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: quic-gw, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: l-443, port: 443, protocol: HTTPS}
+              - {name: l-8443, port: 8443, protocol: HTTPS}
+              - {name: l-8080, port: 8080, protocol: HTTP}
+    extraContext:
+      http3: {enabled: true, altSvc: {port: 0, maxAge: 86400}}
+      haproxyService:
+        type: LoadBalancer
+        labels:
+          app.kubernetes.io/component: loadbalancer
+        selector:
+          app.kubernetes.io/component: loadbalancer
+        annotations: {}
+        loadBalancerIP: ""
+        loadBalancerClass: ""
+        loadBalancerSourceRanges: []
+        externalTrafficPolicy: ""
+        internalTrafficPolicy: ""
+        healthCheckNodePort: 0
+        publishNotReadyAddresses: false
+        ports:
+          - {name: http, port: 80, targetPort: http, protocol: TCP}
+          - {name: https, port: 443, targetPort: https, protocol: TCP}
+          - {name: https-quic, port: 443, targetPort: https-quic, protocol: UDP}
+          - {name: stats, port: 8404, targetPort: stats, protocol: TCP}
+    assertions:
+      - {type: contains, target: "k8s:haproxy-service", pattern: '- name: gw-8443-h\s+port: 8443\s+protocol: TCP\s+targetPort: 8443'}
+      - {type: contains, target: "k8s:haproxy-service", pattern: '- name: gw-8443-q\s+port: 8443\s+protocol: UDP\s+targetPort: 8443'}
+      - {type: contains, target: "k8s:haproxy-service", pattern: '- name: https-quic\s+port: 443\s+protocol: UDP\s+targetPort: https-quic'}
+      - {type: not_contains, target: "k8s:haproxy-service", pattern: 'gw-8080-q'}
+      - {type: match_count, target: "k8s:haproxy-service", pattern: '(?m)^\s+port: 443$', expected: "2"}
+
+  test-k8s-haproxy-service-gateway-quic-ports-disabled:
+    requires: [gatewayclasses, gateways]
+    description: "With http3.enabled=false no Gateway listener adds a UDP Service port."
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: quic-gw, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: l-8443, port: 8443, protocol: HTTPS}
+    extraContext:
+      http3: {enabled: false}
+      haproxyService:
+        type: LoadBalancer
+        labels:
+          app.kubernetes.io/component: loadbalancer
+        selector:
+          app.kubernetes.io/component: loadbalancer
+        annotations: {}
+        loadBalancerIP: ""
+        loadBalancerClass: ""
+        loadBalancerSourceRanges: []
+        externalTrafficPolicy: ""
+        internalTrafficPolicy: ""
+        healthCheckNodePort: 0
+        publishNotReadyAddresses: false
+        ports:
+          - {name: https, port: 443, targetPort: https, protocol: TCP}
+    assertions:
+      - {type: contains, target: "k8s:haproxy-service", pattern: 'name: gw-8443-h'}
+      - {type: not_contains, target: "k8s:haproxy-service", pattern: 'protocol: UDP'}
 
   test-k8s-haproxy-service-listenerset-ports:
     requires: [gatewayclasses, gateways, listenersets]

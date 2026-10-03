@@ -14,6 +14,7 @@ validationTests:
       haproxyPodSelector:
         app.kubernetes.io/name: haptic
         app.kubernetes.io/component: haproxy
+      http3: {enabled: true, altSvc: {port: 0, maxAge: 86400}}
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -101,6 +102,15 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+bind \*:18126 ssl crt-list \S+/gw-default-gw-mixed-https-perport-crtlist\.txt alpn h2,http/1\.1 ca-ignore-err all crt-ignore-err all$'
+      # Each listener's QUIC twin shares its crt-list, so mTLS holds over HTTP/3.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind quic4@:18975 ssl crt-list \S+/gw-default-gw-mixed-https-default-crtlist\.txt alpn h3$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind quic4@:18126 ssl crt-list \S+/gw-default-gw-mixed-https-perport-crtlist\.txt alpn h3 ca-ignore-err all crt-ignore-err all$'
+      - {type: not_contains, target: haproxy.cfg, pattern: 'quic4@:18746'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header alt-svc .* if \{ dst_port 443 8443 18975 18126 \}'}
       # gw-blocked: mTLS-blocked → NO bind emitted at its allocated port.
       - type: not_contains
         target: haproxy.cfg

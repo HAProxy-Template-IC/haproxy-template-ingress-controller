@@ -25,6 +25,7 @@ tests:
             - protocol: TCP
               port: 8091
               endPort: 65535
+            - protocol: UDP
       - notContains:
           path: spec.ingress
           content: {}
@@ -40,6 +41,7 @@ tests:
             - protocol: TCP
               port: 5556
               endPort: 65535
+            - protocol: UDP
       - notContains:
           path: spec.ingress
           content: {}
@@ -63,6 +65,7 @@ tests:
             - protocol: TCP
               port: 5556
               endPort: 65535
+            - protocol: UDP
 
   - it: keeps the narrow rules that the carve-out exists to protect
     set:
@@ -106,6 +109,8 @@ tests:
               protocol: TCP
             - port: 443
               protocol: TCP
+            - port: 443
+              protocol: UDP
 
   # The agent's Prometheus endpoint is a scrape target, so it rides the metrics
   # rule rather than the controller-only rule, and it is NOT fenced out of the
@@ -133,3 +138,4 @@ tests:
             - protocol: TCP
               port: 5556
               endPort: 65535
+            - protocol: UDP

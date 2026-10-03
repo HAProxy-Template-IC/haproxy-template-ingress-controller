@@ -8,6 +8,7 @@ templateSnippets:
           bindings["gateways"] = map[string]any{
             "controllerNamespace": tostring(extraContext | dig("controllerNamespace") | fallback("")),
             "haproxyPodSelector": extraContext | dig("haproxyPodSelector"),
+            "http3": tostring(extraContext | dig("http3", "enabled") | fallback(true)) == "true",
           }
         }
       %%}
@@ -269,6 +270,11 @@ templateSnippets:
               ports = append(ports, map[string]any{
                 "name": "p" + tostring(port), "port": port, "targetPort": targetPort, "protocol": "TCP",
               })
+              if listener.Protocol == "HTTPS" && tostring(dig(props, "http3")) == "true" {
+                ports = append(ports, map[string]any{
+                  "name": "q" + tostring(port), "port": port, "targetPort": targetPort, "protocol": "UDP",
+                })
+              }
             }
             if len(ports) > 0 {
               for _, address := range gateway.Spec.Addresses {

@@ -82,6 +82,44 @@
     {{- end }}
   {{- end }}
 {{- end }}
+{{- /* HTTP/3 drives the Service, container and NetworkPolicy UDP ports too, so a
+       bad value fails the install rather than the load gate. */ -}}
+{{- $configuredHTTP3 := dig "http3" dict $configuredExtraContext }}
+{{- if not (kindIs "map" $configuredHTTP3) }}
+  {{- fail "controller.config.templatingSettings.extraContext.http3 must be a map." }}
+{{- end }}
+{{- range $field := keys $configuredHTTP3 }}
+  {{- if not (has $field (list "enabled" "altSvc")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.http3 contains unknown field %q. Valid fields: enabled, altSvc." $field) }}
+  {{- end }}
+{{- end }}
+{{- if not (kindIs "map" (dig "altSvc" dict $configuredHTTP3)) }}
+  {{- fail "controller.config.templatingSettings.extraContext.http3.altSvc must be a map." }}
+{{- end }}
+{{- range $field := keys (dig "altSvc" dict $configuredHTTP3) }}
+  {{- if not (has $field (list "port" "maxAge")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.http3.altSvc contains unknown field %q. Valid fields: port, maxAge." $field) }}
+  {{- end }}
+{{- end }}
+{{- $http3 := include "haptic.http3" . | fromYaml }}
+{{- if not (kindIs "bool" $http3.enabled) }}
+  {{- fail "controller.config.templatingSettings.extraContext.http3.enabled must be a boolean." }}
+{{- end }}
+{{- $altSvcPort := toString $http3.altSvc.port }}
+{{- if or (not (regexMatch "^[0-9]+$" $altSvcPort)) (gt (atoi $altSvcPort) 65535) }}
+  {{- fail (printf "controller.config.templatingSettings.extraContext.http3.altSvc.port must be 0 (the port the client used) or a port between 1 and 65535, got %s." $altSvcPort) }}
+{{- end }}
+{{- $altSvcMaxAge := toString $http3.altSvc.maxAge }}
+{{- if or (not (regexMatch "^[0-9]+$" $altSvcMaxAge)) (eq (atoi $altSvcMaxAge) 0) }}
+  {{- fail (printf "controller.config.templatingSettings.extraContext.http3.altSvc.maxAge must be a positive number of seconds, got %s." $altSvcMaxAge) }}
+{{- end }}
+{{- if $http3.enabled }}
+  {{- range $entry := (dig "service" "extraPorts" list .Values.haproxy) }}
+    {{- if eq (toString (dig "name" "" $entry)) "https-quic" }}
+      {{- fail "haproxy.service.extraPorts declares a port named \"https-quic\", which the HTTP/3 listener also uses. Rename your entry, or set controller.config.templatingSettings.extraContext.http3.enabled=false." }}
+    {{- end }}
+  {{- end }}
+{{- end }}
 {{- $apiGatewaySettings := dict }}
 {{- if hasKey $configuredExtraContext "apiGateway" }}
   {{- if not (kindIs "map" $configuredExtraContext.apiGateway) }}
@@ -973,6 +1011,14 @@
           {{- $_ := set $portDict "nodePort" (int .) }}
         {{- end }}
         {{- $defaultPorts = append $defaultPorts $portDict }}
+        {{- if and (eq $name "https") $http3.enabled }}
+          {{- /* Same nodePort as TCP: Kubernetes keys nodePort uniqueness by protocol. */ -}}
+          {{- $quicDict := dict "name" "https-quic" "port" $portNum "targetPort" "https-quic" "protocol" "UDP" }}
+          {{- with ($entry.nodePort | default 0) }}
+            {{- $_ := set $quicDict "nodePort" (int .) }}
+          {{- end }}
+          {{- $defaultPorts = append $defaultPorts $quicDict }}
+        {{- end }}
       {{- end }}
     {{- end }}
   {{- end }}

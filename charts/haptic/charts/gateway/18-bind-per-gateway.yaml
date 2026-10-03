@@ -43,6 +43,7 @@ templateSnippets:
     requires: [gateways]
     template: |
       {%- import "util-ssl-bind-options-for-crtlist" for SSLBindOptionsForCrtlist %}
+      {%- import "util-http3-bind" for HTTP3Bind %}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn %}
       {{ render "util-gateway-pod-port-allocator" -}}
       {{- render "gateway-https-listeners-100-gateway" -}}
@@ -53,6 +54,10 @@ templateSnippets:
           {%- continue %}
         {%- end %}
       bind *:{{ toint(dig(entry, "podPort")) }}{{ SSLBindOptionsForCrtlist(dig_string(entry, "", "crtlist")) }}{{ dig_string(entry, "", "ignoreErr") }}{{ dig_string(entry, "", "tlsSuffix") }}
+        {%- var quicBind = HTTP3Bind(toint(dig(entry, "podPort")), dig_string(entry, "", "crtlist"), dig_string(entry, "", "ignoreErr") + dig_string(entry, "", "tlsSuffix")) %}
+        {%- if quicBind != "" %}
+      {{ quicBind }}
+        {%- end %}
       {%- end %}
 
   # ============================================================================

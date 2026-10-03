@@ -84,6 +84,23 @@ If you call the agent's `/v1/apply` from your own code, set
 `identity_version: 1` in the manifest. The agent rejects a manifest without it
 with `400`.
 
+### Allow UDP for HTTP/3
+
+0.3 enables [HTTP/3](haproxy-deployment.md#http3-quic) by default. The HAProxy
+Service and each Gateway's Service gain a UDP port with the same number as
+their HTTPS port (`https-quic` on the HAProxy Service), and HTTPS responses
+advertise it with `alt-svc`.
+
+Before upgrading, allow UDP 443 (or your HTTPS port or nodePort) through
+firewalls, security groups, and load balancers in front of HAProxy, and check
+that your load-balancer implementation accepts Services that mix TCP and UDP
+ports. Clients that can't reach UDP fall back to TCP. To upgrade without
+HTTP/3, set
+`controller.config.templatingSettings.extraContext.http3.enabled: false`.
+
+If you define `haproxy.service.extraPorts` with an entry named `https-quic`,
+rename it; the chart rejects the duplicate name.
+
 ## Upgrading to 0.2
 
 Use this guide to upgrade from 0.1.0 or a 0.2.0 alpha to a stable 0.2 release. The controller
