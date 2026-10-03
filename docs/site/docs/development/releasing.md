@@ -157,6 +157,16 @@ The conformance job runs after publication. A failed job marks the release
 pipeline failed but doesn't retract published artifacts; inspect its report and
 fix the failure before claiming conformance for that release.
 
+### Add the release to the upgrade test
+
+Once the chart is published, add the new stable version to
+`test-chart-upgrade.parallel.matrix` in `.gitlab-ci.yml`. Each entry runs the
+upgrade test from that release in its own job. Until you add it,
+`check-chart-upgrade-baselines` fails on every pipeline that runs the upgrade
+tests, so the new release can't go untested. Pre-releases aren't required.
+The check covers published stable versions at or below `VERSION`; a matrix
+entry above `VERSION` also fails it.
+
 ## Documentation versioning
 
 Each release creates a versioned snapshot under `/docs/<version>/`. The version menu

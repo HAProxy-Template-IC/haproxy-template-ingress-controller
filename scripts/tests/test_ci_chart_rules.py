@@ -68,6 +68,14 @@ def glob_matches(pattern, path):
         len(parts) > 1 and len(names) > 1 and glob_matches("/".join(parts[1:]), "/".join(names[1:])))
 
 
+def upgrade_baselines(config, name):
+    job = config[name]
+    while "parallel" not in job and "extends" in job:
+        job = config[job["extends"] if isinstance(job["extends"], str) else job["extends"][0]]
+    matrix = job["parallel"]["matrix"]
+    return [v for entry in matrix for v in entry["BASELINE_CHART_VERSION"]]
+
+
 def selects(config, name, path):
     for rule in rules(config, name):
         changes = rule.get("changes", [])
@@ -108,6 +116,26 @@ class ChartRulesTests(unittest.TestCase):
         for job in ("test-chart-upgrade", "test-chart-upgrade-minimum-kubernetes"):
             with self.subTest(job=job):
                 self.assertTrue(selects(self.config, job, "scripts/lib/admission.sh"))
+
+    def test_chart_upgrade_runs_one_job_per_baseline(self):
+        # One pass per baseline in parallel: sequential passes outgrow the job
+        # timeout as releases accumulate.
+        for job in ("test-chart-upgrade", "test-chart-upgrade-minimum-kubernetes"):
+            with self.subTest(job=job):
+                versions = upgrade_baselines(self.config, job)
+                self.assertIn("0.2.0-alpha.3", versions, "the retained compatibility baseline must stay tested")
+                self.assertEqual(len(versions), len(set(versions)), "duplicate baseline")
+                for version in versions:
+                    self.assertRegex(version, r"^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$")
+                stable = [v for v in versions if "-" not in v]
+                self.assertEqual(stable, sorted(stable, key=lambda v: tuple(int(x) for x in v.split("."))),
+                                 "keep stable baselines in release order so a missing one is easy to spot")
+
+    def test_chart_upgrade_baseline_guard_runs_with_the_upgrade_tests(self):
+        guard = self.config["check-chart-upgrade-baselines"]
+        self.assertEqual(rules(self.config, "check-chart-upgrade-baselines"),
+                         rules(self.config, "test-chart-upgrade"))
+        self.assertIn("scripts/check-chart-upgrade-baselines.sh", " ".join(guard["script"]))
 
     def test_unknown_extensions_and_markdown_template_inputs_remain_covered(self):
         for path in ("charts/haptic/.helmignore", "charts/haptic/files/config.newtype",
