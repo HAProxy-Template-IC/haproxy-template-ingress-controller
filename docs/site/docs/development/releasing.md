@@ -165,6 +165,93 @@ upgrade test from that release in its own job. Until you add it,
 `check-chart-upgrade-baselines` fails on every pipeline that runs the upgrade
 tests, so the new release can't go untested. Pre-releases aren't required.
 
+## Patch releases for an older release line
+
+A patch release for an older minor version (for example `0.2.2` while `main` already carries `0.3.0` work) is cut from a maintenance branch, `maint/<major>.<minor>`, instead of `main`.
+
+### When to use a maintenance branch
+
+Port only security fixes and severe regressions, and only to the latest released minor version. Never port a feature: a patch release must not change behaviour beyond the fix. If `main` holds nothing unreleased beyond fixes, release from `main` instead.
+
+The fix lands on `main` first, or in parallel; the port is a separate merge request.
+
+### Step 1: Create the maintenance branch
+
+Branch from the last tag of the release line. `maint/*` is a protected branch pattern: only maintainers push to or merge into it, and nobody can force-push.
+
+```bash
+git fetch origin --tags
+git push origin "v<major>.<minor>.<patch>^{commit}:refs/heads/maint/<major>.<minor>"
+```
+
+Skip this step if the branch already exists.
+
+### Step 2: Port the fix
+
+Branch off the maintenance branch and open a merge request into it:
+
+```bash
+git fetch origin
+git checkout -b fix/<issue>-<slug>-<major>.<minor> origin/maint/<major>.<minor>
+```
+
+Adapt the fix to the older code instead of cherry-picking it blindly: helpers, file layout, and tests may differ. Port the tests that prove the fix, and add the `CHANGELOG.md` entry under `## [Unreleased]` on the maintenance branch.
+
+```bash
+glab mr create --target-branch maint/<major>.<minor> \
+  --title "fix: <summary> (<major>.<minor> backport)"
+```
+
+### Step 3: Prepare the release
+
+Once the fix is merged, prepare the release on a branch named exactly `release/v<version>`. The `prepare-spoa-release` job only runs for that name.
+
+```bash
+git fetch origin
+git checkout -b release/v<version> origin/maint/<major>.<minor>
+./scripts/release.sh <version>
+```
+
+Update the `artifacthub.io/changes` annotation in `charts/haptic/Chart.yaml` for the new version, then commit, push, and open the merge request into the maintenance branch:
+
+```bash
+git push -u origin release/v<version>
+glab mr create --target-branch maint/<major>.<minor> \
+  --title "release: haptic v<version>" \
+  --description "Release haptic v<version>"
+```
+
+Run the manual `prepare-spoa-release` job in the merge request pipeline, as in [Step 5](#step-5-prepare-the-spoa-release-image) of the regular release.
+
+### Step 4: Merge and let CI tag
+
+A push to `maint/*` runs the same post-merge pipeline as `main`, including the interior HAProxy versions and the full Gateway API and Ingress conformance suites. `create-release-tag` creates `v<version>` only after that whole pipeline passes, with the same `VERSION`/`Chart.yaml` check as on `main`.
+
+A maintenance branch never publishes `main`-only artifacts: no `main-<sha>` snapshots, no `dev` docs, no landing page, and no `/playground/dev/`.
+
+### What moves to the new version
+
+| Artifact | Behaviour for a maintenance release |
+|----------|-------------------------------------|
+| `latest-haproxy<series>` and `spoa-hub:latest` image tags | Move only when the version is the highest stable `v*` tag (`scripts/release-is-latest.sh`) |
+| `/docs/<version>/` and `/playground/<version>/` | Added; no other version directory changes |
+| `latest` docs alias | Points at the highest stable version by semver, so it stays on the newer line |
+| `dev` docs and landing page | Unchanged; only `main` rebuilds them |
+
+### Step 5: Follow up on main
+
+After the chart is published, open one merge request into `main` that:
+
+1. Adds the `## [<version>]` section to `CHANGELOG.md`, in version order below `## [Unreleased]`.
+2. Adds `<version>` to `test-chart-upgrade.parallel.matrix` in `.gitlab-ci.yml` (see [Add the release to the upgrade test](#add-the-release-to-the-upgrade-test)).
+3. Runs `./scripts/release.sh <version>` if the release line is the newest one, so `VERSION`, `Chart.yaml`, and the install examples on `main` point at the patched version. The script skips the changelog promotion because the section from item 1 already exists.
+
+Don't open it before the chart is published: `check-chart-upgrade-baselines` fails on a matrix entry that isn't published yet.
+
+### Security fixes
+
+Keep the issue confidential until the release is published, and describe the fix in merge requests without an exploit recipe. List it under `### Security` (or `#### Security` in the Helm chart subsection) in `CHANGELOG.md`, which becomes the GitLab release notes. After publication, request a CVE ID from the confidential issue (**Create CVE ID Request** in the issue sidebar; GitLab is the CVE Numbering Authority), then make the issue public.
+
 ## Documentation versioning
 
 Each release creates a versioned snapshot under `/docs/<version>/`. The version menu
@@ -200,8 +287,8 @@ Pre-releases (alpha, beta, rc) have these differences:
 
 Final releases (no suffix):
 
-- Docker images get `latest` tags
-- Documentation gets `latest` alias
+- Docker images get `latest` tags if the version is the highest stable release
+- Documentation gets `latest` alias if the version is the highest stable release
 - Pre-release documentation versions are removed
 - Recommended for production use
 
