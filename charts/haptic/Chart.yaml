@@ -6,8 +6,8 @@ type: application
 # restartPolicy: Always), GA in 1.33: they start before HAProxy and are stopped
 # only after it exited, so the drain socket, SPOE and log shipping outlive it.
 kubeVersion: ">=1.33.0-0"
-version: 0.2.1
-appVersion: "0.2.1"
+version: 0.2.2
+appVersion: "0.2.2"
 # Template libraries are packaged as conditional subcharts so a release only
 # carries the source of the libraries it enables — disabled subcharts are
 # pruned from the Helm release Secret, keeping it under the 1 MiB limit. The
@@ -85,7 +85,7 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.2.1-haproxy3.4
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.2.2-haproxy3.4
       platforms:
         - linux/amd64
         - linux/arm64
@@ -96,7 +96,7 @@ annotations:
         - linux/amd64
         - linux/arm64
     - name: spoa-hub
-      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.2.1
+      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.2.2
       platforms:
         - linux/amd64
         - linux/arm64
@@ -106,25 +106,14 @@ annotations:
 
   # Release highlights; full notes are in the root CHANGELOG.md.
   artifacthub.io/changes: |
-    - kind: fixed
-      description: Reduce excess controller memory use on Linux nodes with transparent huge pages enabled
-    - kind: fixed
-      description: Standby controllers stay available during HAProxy discovery bursts, and auxiliary pod-status cleanup recovers after interrupted updates
-    - kind: fixed
-      description: Admission validation remains available while controllers terminate
-    - kind: fixed
-      description: HAProxy drains connections during reloads and pod replacement without abruptly disconnecting clients reusing idle connections
-    - kind: fixed
-      description: Gateway routes prefer the more specific hostname and stay isolated between Gateways with overlapping hostnames
-    - kind: fixed
-      description: Playground starters render correctly, and documentation menus retain older stable releases while retiring their prereleases
-    - kind: changed
-      description: Default cache and shared rate-limit images use Varnish 9.1 and Valkey 9.2
+    - kind: security
+      description: Regex paths (haproxy-haptic.org/path-type, haproxy-ingress.github.io/path-type, Gateway RegularExpression) match only on their own host; a path whose groups don't close within it is rejected
+  artifacthub.io/containsSecurityUpdates: "true"
 
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://haproxy-haptic.org/docs/0.2.1/
+      url: https://haproxy-haptic.org/docs/0.2.2/
     - name: Issue Tracker
       url: https://gitlab.com/haproxy-haptic/haptic/-/issues
 
