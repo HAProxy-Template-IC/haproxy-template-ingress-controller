@@ -35,8 +35,7 @@ spec:
   revisionHistoryLimit: {{ $controller.revisionHistoryLimit }}
   selector:
     matchLabels:
-      {{- include "haptic.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: controller
+      {{- include "haptic.controller.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
@@ -153,6 +152,12 @@ spec:
                      is declared in that object's spec.libraryRefs — so there
                      is no second list here that could disagree with it. */}}
               value: {{ .Values.controller.configName | quote }}
+            - name: CONTROLLER_POD_SELECTOR
+              {{- $selector := list }}
+              {{- range $key, $value := include "haptic.controller.selectorLabels" . | fromYaml }}
+              {{- $selector = append $selector (printf "%s=%s" $key $value) }}
+              {{- end }}
+              value: {{ join "," $selector | quote }}
             - name: SECRET_NAME
               value: {{ include "haptic.dataplane.credentialsSecretName" . }}
             - name: WEBHOOK_SERVICE_NAME

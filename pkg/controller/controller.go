@@ -237,6 +237,15 @@ type persistentInfra struct {
 	currentIterationID   iterationID
 	iterationInitialized bool
 	reinitStartedAt      time.Time
+	// attemptStartedAt is zero once the current startIteration call returned.
+	attemptStartedAt time.Time
+
+	servingMu sync.Mutex
+	// serving is the newest iteration that completed startup and is not torn down.
+	serving *servingIteration
+	// siblings is nil when this replica cannot look for others; probes then
+	// assume a converged sibling may exist.
+	siblings *siblingConvergence
 }
 
 type persistentServerRun struct {
@@ -491,6 +500,34 @@ func (p *persistentInfra) NoteIterationStart() iterationID {
 	}
 	p.currentIterationID++
 	p.iterationInitialized = false
+	p.attemptStartedAt = p.graceTime()
+	return p.currentIterationID
+}
+
+// NoteAttemptReturned records that the startIteration call for id returned.
+func (p *persistentInfra) NoteAttemptReturned(id iterationID) {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	if id == p.currentIterationID {
+		p.attemptStartedAt = time.Time{}
+	}
+}
+
+// attemptStalled reports a startup attempt that has not returned within
+// ReinitGraceWindow. Failing attempts retry from live state; a hung one never does.
+func (p *persistentInfra) attemptStalled() (time.Duration, bool) {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	if p.attemptStartedAt.IsZero() {
+		return 0, false
+	}
+	running := p.graceTime().Sub(p.attemptStartedAt)
+	return running, running >= ReinitGraceWindow
+}
+
+func (p *persistentInfra) currentIteration() iterationID {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
 	return p.currentIterationID
 }
 
@@ -588,6 +625,13 @@ func Run(
 	}
 	if debugPort > 0 {
 		infra.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), infra.IntrospectionRegistry)
+	}
+	if podName, selector := os.Getenv("POD_NAME"), os.Getenv(controllerPodSelectorEnv); podName != "" && selector != "" {
+		siblings, err := newSiblingConvergence(procCtx, k8sClient.Clientset(), k8sClient.Namespace(), podName, selector, logger)
+		if err != nil {
+			return err
+		}
+		infra.siblings = siblings
 	}
 	if metricsPort > 0 {
 		infra.MetricsServer = pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), prometheus.NewRegistry())

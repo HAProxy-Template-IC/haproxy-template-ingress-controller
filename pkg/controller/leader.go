@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -129,14 +130,23 @@ type leaderCallbackState struct {
 	components *leaderOnlyComponents
 	stopped    bool
 	retiring   bool
+	// leading is readable without mu, which OnStartedLeading holds for as
+	// long as the leader-only components take to start.
+	leading atomic.Bool
 }
 
 // retire marks the coming loss of the Lease as the planned hand-over to the
 // successor iteration, so it is not reported as a lost election.
 func (s *leaderCallbackState) retire() {
+	s.leading.Store(false)
 	s.mu.Lock()
 	s.retiring = true
 	s.mu.Unlock()
+}
+
+// isLeading reports whether this iteration's leadership term is running.
+func (s *leaderCallbackState) isLeading() bool {
+	return s != nil && s.leading.Load()
 }
 
 func (s *leaderCallbackState) isRetiring() bool {
@@ -146,6 +156,7 @@ func (s *leaderCallbackState) isRetiring() bool {
 }
 
 func (s *leaderCallbackState) take() *leaderOnlyComponents {
+	s.leading.Store(false)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	components := s.components
@@ -195,6 +206,7 @@ func makeLeaderCallbacks(ctx context.Context, deps leaderCallbackDeps) (k8sleade
 				deps.logger.Error("Failed to start leader-only components", "error", err)
 				deps.cancelCause(err)
 			}
+			state.leading.Store(err == nil)
 		},
 		OnStoppedLeading: func() {
 			if state.isRetiring() {
@@ -404,6 +416,7 @@ func setupLeaderElection(
 	if err != nil {
 		return state, fmt.Errorf("starting leader-only components: %w", err)
 	}
+	state.leading.Store(true)
 	if err := startEventBus(setup); err != nil {
 		return state, err
 	}

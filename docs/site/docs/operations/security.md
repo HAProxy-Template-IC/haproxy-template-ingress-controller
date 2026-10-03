@@ -118,7 +118,7 @@ The controller pod exposes these ports by default:
 
 | Port | Endpoint | Notes |
 |------|----------|-------|
-| `8080` | `/healthz`, `/debug/vars`, `/debug/events`, `/debug/pprof/` | `controller.ports.healthz` configures the process, pod, Service, probes, and policy together. `/healthz` serves probes; `/debug/*` accepts loopback connections only. Restrict `pods/portforward` with RBAC |
+| `8080` | `/healthz`, `/readyz`, `/livez`, `/debug/vars`, `/debug/events`, `/debug/pprof/` | `controller.ports.healthz` configures the process, pod, Service, probes, and policy together. The health paths serve probes and controller replicas, which read each other's `/healthz`; `/debug/*` accepts loopback connections only. Restrict `pods/portforward` with RBAC |
 | `9090` | `/metrics` | `controller.ports.metrics` configures the process, pod, Service, and monitors together; set it to `0` to disable metrics |
 | `9443` | Validating webhook over HTTPS | Required when the webhook is enabled |
 

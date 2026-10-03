@@ -234,16 +234,18 @@ controller:
   initContainers: []
   sidecars: []
   lifecycle: {}
+  # /livez and /readyz judge the configuration that is serving; /healthz
+  # reports whether the newest one started (ADR-0028).
   livenessProbe:
     httpGet:
-      path: /healthz
+      path: /livez
       port: healthz
     initialDelaySeconds: 10
     periodSeconds: 10
     failureThreshold: 3
   readinessProbe:
     httpGet:
-      path: /healthz
+      path: /readyz
       port: healthz
     initialDelaySeconds: 5
     periodSeconds: 5

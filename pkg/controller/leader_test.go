@@ -170,6 +170,37 @@ func TestLeaderCallbacksSurviveLeaseLossAndRestartTheNextTerm(t *testing.T) {
 	require.NoError(t, group.Wait())
 }
 
+// The probes exempt a serving predecessor only while its term runs (ADR-0028).
+func TestLeaderCallbacksReportTheRunningTerm(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	registry := lifecycle.NewRegistry().WithLogger(logger)
+	registry.Register(newRestartableLeaderComponent(), true)
+	iterCtx, cancelCause := context.WithCancelCause(t.Context())
+	defer cancelCause(nil)
+	group, _ := errgroup.WithContext(iterCtx)
+	callbacks, state := makeLeaderCallbacks(iterCtx, leaderCallbackDeps{
+		registry:    registry,
+		logger:      logger,
+		cancelCause: cancelCause,
+		errGroup:    group,
+	})
+	require.False(t, state.isLeading())
+
+	term, endTerm := context.WithCancel(iterCtx)
+	callbacks.OnStartedLeading(term)
+	assert.True(t, state.isLeading())
+	endTerm()
+	callbacks.OnStoppedLeading()
+	assert.False(t, state.isLeading(), "a lost lease ends the term")
+
+	callbacks.OnStartedLeading(iterCtx)
+	require.True(t, state.isLeading())
+	state.retire()
+	assert.False(t, state.isLeading(), "a term handed to the successor no longer counts")
+	callbacks.OnStoppedLeading()
+	require.NoError(t, group.Wait())
+}
+
 func TestLeaderCallbacksRejectDelayedStartAfterStop(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry := lifecycle.NewRegistry().WithLogger(logger)

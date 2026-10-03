@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stop reporting normal controller shutdown cancellations and leadership handover as failures.
 - Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
+- A configuration reload that keeps failing no longer denies every admission request cluster-wide: the leading replica keeps serving and validating the previous configuration until a replica starts the new one. New `/readyz` and `/livez` endpoints report it; `/healthz` still reports the failure.
 - Overriding a value a bundled validationTest asserts the default of (`haproxy.ports.http`/`https`, `hardStopAfter`, `tune.bufsize`, `sslRedirectDefault`, basic-auth hash validation) no longer fails the configuration at load.
 
 ### Helm chart
@@ -45,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Changed
 
+- Probe controller readiness on `/readyz` and liveness on `/livez`; the controller NetworkPolicy lets controller replicas reach each other's health port.
 - **BREAKING for Varnish users:** Lock shared memory with a bundled non-root image; cluster policy must allow `IPC_LOCK`.
 - **BREAKING:** Rename extraContext `timeout_connect`, `timeout_client`, `timeout_server`, `timeout_http_request` and `timeout_http_keep_alive` to `timeoutConnect`, `timeoutClient`, `timeoutServer`, `timeoutHttpRequest` and `timeoutHttpKeepAlive`; the old keys fail the install.
 - **BREAKING:** Rename extraContext `ssl_redirect_default` to `sslRedirectDefault`, now a boolean; the old key and a quoted value fail the install.

@@ -133,18 +133,36 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	healthChecker := s.healthChecker
 	s.healthCheckerMu.RUnlock()
 
-	// Simple response if no health checker configured
 	if healthChecker == nil {
 		WriteJSON(w, map[string]string{
 			"status": "ok",
 		})
 		return
 	}
+	writeHealth(w, healthChecker())
+}
 
-	// Get component health status
-	components := healthChecker()
+// CheckHealth returns what /healthz reports; an empty map when no checker is set.
+func (s *Server) CheckHealth() map[string]ComponentHealth {
+	s.healthCheckerMu.RLock()
+	healthChecker := s.healthChecker
+	s.healthCheckerMu.RUnlock()
 
-	// Check if all components are healthy
+	if healthChecker == nil {
+		return map[string]ComponentHealth{}
+	}
+	return healthChecker()
+}
+
+// HealthHandler serves checker in the /healthz response format, for probe
+// endpoints registered with RegisterHandler.
+func HealthHandler(checker HealthCheckFunc) http.HandlerFunc {
+	return requireGET(func(w http.ResponseWriter, _ *http.Request) {
+		writeHealth(w, checker())
+	})
+}
+
+func writeHealth(w http.ResponseWriter, components map[string]ComponentHealth) {
 	allHealthy := true
 	for _, health := range components {
 		if !health.Healthy {

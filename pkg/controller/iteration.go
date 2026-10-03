@@ -29,6 +29,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
 
@@ -195,6 +196,7 @@ func startIteration(
 	// clear the persistent introspection registry of the previous
 	// iteration's entries, then a fresh per-iteration health state.
 	state := beginIteration(infra)
+	defer infra.NoteAttemptReturned(state.iterationID)
 
 	// 0. Setup components BEFORE fetching config so we can start servers early.
 	// The type bootstrapper is also reused by the step-2.5 startup validationTests
@@ -297,7 +299,7 @@ func startIteration(
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
 	// This call registers debug variables and updates the health checker
-	setupInfrastructureServers(setup.IterCtx, setup, state, infra, stateCache, eventBuffer, pluggableMgr, logger)
+	health := setupInfrastructureServers(setup.IterCtx, setup, state, infra, stateCache, eventBuffer, pluggableMgr, logger)
 
 	// 10. Enable reinitialization signaling now that startup is complete
 	// This replays any config or credential update newer than the fetched startup
@@ -308,7 +310,7 @@ func startIteration(
 	// signal — see configState.SetInitialized's docstring and the
 	// "initialized" entry in the full health checker installed by
 	// setupInfrastructureServers.
-	if err := finishIterationStartup(setup, state, infra, reloadAuthority, logger); err != nil {
+	if err := finishIterationStartup(setup, state, infra, reloadAuthority, health, logger); err != nil {
 		return nil, err
 	}
 	return &liveIteration{setup: setup, authority: reloadAuthority, logger: logger}, nil
@@ -461,6 +463,7 @@ func finishIterationStartup(
 	state *configState,
 	infra *persistentInfra,
 	authority *iterationReloadAuthority,
+	health introspection.HealthCheckFunc,
 	logger *slog.Logger,
 ) error {
 	if err := iterationContextError(setup.IterCtx); err != nil {
@@ -470,6 +473,9 @@ func finishIterationStartup(
 	// landing in between must start the successor, not cancel this iteration.
 	authority.MarkServing()
 	markIterationInitialized(setup, state, infra, logger)
+	id := state.iterationID
+	infra.markServing(&servingIteration{id: id, health: health, leading: setup.LeaderState.isLeading})
+	setup.AddCleanup(func() { infra.clearServing(id) })
 	return nil
 }
 

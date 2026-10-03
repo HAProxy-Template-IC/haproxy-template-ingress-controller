@@ -115,6 +115,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Controller pod selector labels: the controller Deployment's immutable
+spec.selector, which replicas also use to find each other (ADR-0028).
+*/}}
+{{- define "haptic.controller.selectorLabels" -}}
+{{ include "haptic.selectorLabels" . }}
+app.kubernetes.io/component: controller
+{{- end }}
+
+{{/*
 HAProxy pod selector labels — match the labelset the HAProxy Deployment
 applies to its Pods. Templates that emit Services targeting the shared
 HAProxy front-door use this so Service.spec.selector resolves to the
