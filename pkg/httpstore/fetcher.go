@@ -148,23 +148,15 @@ func (s *HTTPStore) doFetch(
 	etagResult = resp.Header.Get("ETag")
 	lastModifiedResult = resp.Header.Get("Last-Modified")
 
-	// Handle response status
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// Read body with size limit
-		limitedReader := io.LimitReader(resp.Body, MaxContentSize+1)
-		var body []byte
-		body, err = io.ReadAll(limitedReader)
+	if resp.StatusCode == http.StatusOK || opts.AcceptStatus.Contains(resp.StatusCode) {
+		content, err = readContent(resp.Body)
 		if err != nil {
-			return "", "", "", fmt.Errorf("reading response body: %w", err)
+			return "", "", "", err
 		}
+		return content, etagResult, lastModifiedResult, nil
+	}
 
-		if len(body) > MaxContentSize {
-			return "", "", "", fmt.Errorf("response body exceeds maximum size of %d bytes", MaxContentSize)
-		}
-
-		return string(body), etagResult, lastModifiedResult, nil
-
+	switch resp.StatusCode {
 	case http.StatusNotModified:
 		// Content unchanged — preserve the original etag and signal via the
 		// errNotModified sentinel (distinct from a 200 OK with an empty body).
@@ -188,6 +180,17 @@ func (s *HTTPStore) doFetch(
 		}
 		return "", "", "", fmt.Errorf("unexpected status: %s", resp.Status)
 	}
+}
+
+func readContent(body io.Reader) (string, error) {
+	content, err := io.ReadAll(io.LimitReader(body, MaxContentSize+1))
+	if err != nil {
+		return "", fmt.Errorf("reading response body: %w", err)
+	}
+	if len(content) > MaxContentSize {
+		return "", fmt.Errorf("response body exceeds maximum size of %d bytes", MaxContentSize)
+	}
+	return string(content), nil
 }
 
 // addAuthHeaders adds authentication headers to the request.

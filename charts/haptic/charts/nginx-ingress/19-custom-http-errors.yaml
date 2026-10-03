@@ -1,0 +1,233 @@
+# nginx-ingress library — custom-http-errors.
+#
+# HAProxy can't hand a request to another backend once the upstream has
+# answered, so the error pages are fetched from the default backend at render
+# time and served from general files with `http-response return`. Pages are
+# snapshots, HTML or JSON by the first Accept entry, refreshed on
+# extraContext.nginxCustomHTTPErrorsRefreshInterval.
+templateSnippets:
+  # Fetches every page of one Ingress. A page that can't be used publishes no
+  # content; the frontend snippet then keeps the deployed copy, if any.
+  nginx-ingress-custom-http-errors-publications:
+    requires: [ingresses, services]
+    incremental:
+      bindingsTemplate: |-
+        {%%
+          var refresh = tostring(extraContext | dig("nginxCustomHTTPErrorsRefreshInterval") | fallback("5m"))
+          var refreshSeconds = 0
+          if regex_search(refresh, "^[0-9]+[smh]$") {
+            refreshSeconds = toint(refresh[:len(refresh)-1])
+            if hasSuffix(refresh, "m") {
+              refreshSeconds = refreshSeconds * 60
+            } else if hasSuffix(refresh, "h") {
+              refreshSeconds = refreshSeconds * 3600
+            }
+          }
+          if refreshSeconds < 30 {
+            fail("Invalid extraContext.nginxCustomHTTPErrorsRefreshInterval '" + refresh + "' isn't a whole number of s, m or h of at least 30s, so the configuration can't render. Set a value such as 5m.")
+          }
+        %%}
+        {{- toJSON(map[string]any{"ingresses": map[string]any{
+          "refresh": refresh,
+          "globalBackend": tostring(extraContext | dig("nginxDefaultBackendService") | fallback("")),
+          "maxPageBytes": toint(extraContext | dig("tune", "bufsize") | fallback(16384)) - 2048,
+        }}) -}}
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/custom-http-errors']"]
+      group: nginx-ingress-custom-http-errors
+      effects: [publishValue, recordEvent]
+    template: |-
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- var ingress = resources.ingresses.GetSingle(
+        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
+      {%- if ingress != nil -%}
+        {%- var ns = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
+        {%- var key = ns + "/" + name -%}
+        {%%
+          var seen = map[string]bool{}
+          var codes = []string{}
+          var bad = ""
+          for _, part := range split(ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/custom-http-errors"], ",") {
+            var code = trimSpace(part)
+            if code == "" || seen[code] {
+              continue
+            }
+            if !regex_search(code, "^[45][0-9][0-9]$") {
+              bad = code
+              break
+            }
+            seen[code] = true
+            codes = append(codes, code)
+          }
+
+          var ref = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/default-backend"]
+          var svcNs = ns
+          if ref == "" {
+            ref = tostring(props["globalBackend"])
+            svcNs = ""
+          }
+          var svcName = ref
+          if strings_contains(ref, "/") {
+            var parts = split(ref, "/")
+            svcNs = parts[0]
+            svcName = parts[1]
+          }
+          var baseURL = ""
+          if svcNs != "" && svcName != "" {
+            var svc = resources.services.GetSingle(svcNs, svcName)
+            if svc != nil {
+              for _, sp := range svc.Spec.Ports {
+                if toint(sp.Port) > 0 {
+                  baseURL = "http://" + svcName + "." + svcNs + ".svc:" + tostring(toint(sp.Port)) + "/"
+                }
+                break
+              }
+            }
+          }
+        %%}
+        {%- if bad != "" -%}
+          {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress " + key + " has custom-http-errors code '" + bad + "', which isn't a status between 400 and 599, so its error pages aren't served. Use a comma-separated list such as 404,503.") -}}
+        {%- else if len(codes) > 0 && baseURL == "" -%}
+          {{- recordEvent(ingress, "CustomHTTPErrorsNoDefaultBackend", "Ingress " + key + " sets custom-http-errors but no default backend Service resolves, so upstream error responses reach clients unchanged. Set nginx.ingress.kubernetes.io/default-backend or extraContext.nginxDefaultBackendService.") -}}
+        {%- else if len(codes) > 0 -%}
+          {%%
+            var ingressID = ns + "_" + name
+            var maxPageBytes = toint(props["maxPageBytes"])
+            var backends = []any{}
+            for _, rule := range ingress.Spec.Rules {
+              for _, path := range rule.Http.Paths {
+                if path.Backend.Service.Name != "" {
+                  backends = append(backends, BackendNameIngress(ingress, path))
+                }
+              }
+            }
+            if ingress.Spec.DefaultBackend.Service.Name != "" {
+              backends = append(backends, BackendNameIngress(ingress, map[string]any{"backend": ingress.Spec.DefaultBackend}))
+            }
+            var pages = []any{}
+            for _, code := range codes {
+              for _, ext := range []string{"json", "html"} {
+                var format = "text/html"
+                if ext == "json" {
+                  format = "application/json"
+                }
+                var page, fetchErr = http.Fetch(baseURL + "?code=" + code + "&format=" + ext + "&namespace=" + ns + "&ingress=" + name,
+                  map[string]any{"interval": tostring(props["refresh"]), "timeout": "3s", "retries": 1, "critical": false, "acceptStatus": []any{toint(code)}},
+                  map[string]any{"type": "header", "headers": map[string]any{
+                    "X-Code": code, "X-Format": format, "X-Namespace": ns, "X-Ingress-Name": name,
+                  }})
+                var body = tostring(page)
+                var problem = ""
+                var fix = "Make " + baseURL + " answer GET with headers X-Code: " + code + " and X-Format: " + format + "."
+                if fetchErr != nil || body == "" {
+                  problem = "the fetch failed or returned an empty body"
+                  body = ""
+                } else if len(body) > maxPageBytes {
+                  problem = "the page is " + tostring(len(body)) + " bytes; at most " + tostring(maxPageBytes) + " fit in tune.bufsize"
+                  fix = "Shrink the page or raise extraContext.tune.bufsize."
+                  body = ""
+                }
+                if problem != "" {
+                  recordEvent(ingress, "CustomErrorPageUnavailable", "Ingress " + key + ": the " + code + " " + format + " error page can't be used (" + problem + "), so HAProxy keeps the last fetched page or, without one, passes the upstream's response through. " + fix)
+                }
+                // A backend that doesn't negotiate answers the JSON request
+                // with its HTML page; labelling that application/json is wrong.
+                var trimmed = trimSpace(body)
+                if ext == "json" && body != "" && !hasPrefix(trimmed, "{") && !hasPrefix(trimmed, "[") {
+                  continue
+                }
+                pages = append(pages, map[string]any{
+                  "code": code,
+                  "contentType": format,
+                  "file": "nginx-error-" + ingressID + "-" + code + "." + ext,
+                  "content": body,
+                })
+              }
+            }
+            shared.Publish("ingresses", key, map[string]any{
+              "id": ingressID,
+              "backends": backends,
+              "pages": pages,
+            })
+          %%}
+        {%- end -%}
+      {%- end -%}
+
+  # Registers the pages once per render (the frontend-filters glob renders
+  # per frontend). A page without fresh content keeps the deployed copy.
+  util-nginx-ingress-custom-http-errors-rules:
+    template: |
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- if gf["nginxCustomHTTPErrorRules"] == nil -%}
+        {{- render "nginx-ingress-custom-http-errors-publications" -}}
+        {%%
+          var byID = map[string]any{}
+          var ids = []any{}
+          for _, entryAny := range incremental_values("nginx-ingress-custom-http-errors", "ingresses") {
+            var entry = entryAny.(map[string]any)
+            byID[tostring(entry["id"])] = entry
+            ids = append(ids, entry["id"])
+          }
+          var mapName = "nginx-custom-http-errors.map"
+          var mapPath, _ = pathResolver.GetPath(mapName, "map")
+          var rules = []string{}
+          var wantsJSON = false
+          var mapLines = []string{}
+          for _, idAny := range sort_strings(ids) {
+            var id = tostring(idAny)
+            var entry = byID[id].(map[string]any)
+            for _, be := range sort_strings(toSlice(entry["backends"])) {
+              mapLines = append(mapLines, tostring(be) + " " + id)
+            }
+            var owned = "{ var(txn.backend_name),map(" + tostring(mapPath) + ") -m str " + id + " }"
+            for _, pageAny := range toSlice(entry["pages"]) {
+              var page = pageAny.(map[string]any)
+              var fileName = tostring(page["file"])
+              var content = tostring(page["content"])
+              if content == "" {
+                content = tostring(currentFiles[fileName])
+              }
+              if content == "" {
+                continue
+              }
+              var path, regErr = fileRegistry.Register("file", fileName, content)
+              if regErr != nil {
+                fail("custom-http-errors: registering " + fileName + " failed: " + tostring(regErr))
+              }
+              var code = tostring(page["code"])
+              var contentType = tostring(page["contentType"])
+              var condition = "if { status " + code + " } "
+              if contentType == "application/json" {
+                wantsJSON = true
+                condition = condition + "{ var(txn.nginx_err_json) -m bool } "
+              }
+              rules = append(rules, "http-response return status " + code + " content-type \"" + contentType + "\" file " + tostring(path) + " " + condition + owned)
+            }
+          }
+          var out = ""
+          if len(rules) > 0 {
+            var _, mapErr = fileRegistry.Register("map", mapName, join(mapLines, "\n") + "\n")
+            if mapErr != nil {
+              fail("custom-http-errors: registering " + mapName + " failed: " + tostring(mapErr))
+            }
+            out = "# nginx-ingress/custom-http-errors\n"
+            if wantsJSON {
+              // Like ingress-nginx's error backend, only the first Accept entry picks the format.
+              out = out + "http-request set-var(txn.nginx_err_json) bool(true) if { req.hdr(accept,1) -m beg -i application/json }\n"
+            }
+            out = out + join(rules, "\n")
+          }
+          gf["nginxCustomHTTPErrorRules"] = out
+        %%}
+      {%- end -%}
+
+  frontend-filters-798-nginx-ingress-custom-http-errors:
+    requires: [ingresses]
+    template: |-
+      {{- render "util-nginx-ingress-custom-http-errors-rules" -}}
+      {%- var rules = tostring(shared.Get("globalFeatures").(map[string]any)["nginxCustomHTTPErrorRules"]) -%}
+      {%- if rules != "" %}
+      {{ rules }}
+      {%- end -%}

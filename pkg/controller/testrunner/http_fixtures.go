@@ -15,10 +15,10 @@
 package testrunner
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 
+	ctrlhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 )
@@ -54,32 +54,18 @@ func NewFixtureHTTPStoreWrapper(store *httpstore.HTTPStore, logger *slog.Logger)
 
 // Fetch returns fixture content for a URL.
 //
-// Template usage (same as production wrapper):
-//
-//	{{ http.Fetch("http://example.com/data.txt") }}
-//	{{ http.Fetch("http://example.com/data.txt", {"interval": "5m"}) }}
-//
-// In fixture mode:
-//   - Options (delay, timeout, etc.) are ignored
-//   - Authentication is ignored
-//   - Only the URL is used to look up fixture content
-//   - Returns error if URL is not in fixtures
-//
-// Returns:
-//   - Content string if URL has fixture
-//   - Error if URL is not in fixtures
+// Options and authentication are validated exactly as the production
+// wrapper validates them, so an invalid declaration fails the test, but
+// only the URL selects the fixture; nothing is sent anywhere.
 func (w *FixtureHTTPStoreWrapper) Fetch(args ...any) (any, error) {
-	if len(args) < 1 {
-		return nil, errors.New("http.Fetch requires at least 1 argument (url)")
-	}
-
-	// Extract URL from first argument
-	url, err := fixtureToString(args[0])
+	url, opts, auth, err := ctrlhttpstore.ParseFetchArgs(args)
 	if err != nil {
-		return nil, fmt.Errorf("http.Fetch: url must be a string, got %T", args[0])
+		return nil, err
+	}
+	if _, err := httpstore.DescribeSource(opts, auth); err != nil {
+		return nil, fmt.Errorf("http.Fetch: %w", err)
 	}
 
-	// Look up fixture content
 	content, ok := w.store.Get(url)
 	if !ok {
 		return nil, fmt.Errorf("http.Fetch: no fixture defined for URL: %s (add an httpResources fixture for this URL)", httpstore.RedactURL(url))
@@ -90,18 +76,6 @@ func (w *FixtureHTTPStoreWrapper) Fetch(args ...any) (any, error) {
 		"size", len(content))
 
 	return content, nil
-}
-
-// fixtureToString converts an interface to string for fixture lookup.
-func fixtureToString(v any) (string, error) {
-	switch val := v.(type) {
-	case string:
-		return val, nil
-	case fmt.Stringer:
-		return val.String(), nil
-	default:
-		return "", fmt.Errorf("expected string, got %T", v)
-	}
 }
 
 // CreateHTTPStoreFromFixtures creates an HTTPStore pre-populated with fixture content.

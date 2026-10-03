@@ -322,6 +322,7 @@ The second argument is an options map. All keys are optional:
 | `timeout` | Go duration string | `30s` | Per-request timeout. |
 | `retries` | integer | 2 | Retry attempts on a failed request, with a growing delay between attempts. |
 | `critical` | boolean | `false` | Failure mode. With `false`, a failed fetch returns an empty string and rendering continues (a warning is logged). With `true`, a failed fetch aborts the render with an error, like [`fail()`](./template-reference.md#functions-and-filters). |
+| `acceptStatus` | list of integers | none | Statuses besides `200` whose body is the content, for a server that answers with the status it describes, such as an error-page service serving its 404 page as a `404`. Each entry must be a status from 100 to 599 other than `304`, or the call fails regardless of `critical`. Any other status fails the fetch. |
 
 Set `critical: true` only when an empty body would produce a dangerously wrong config (for example, a security blocklist that must not silently become empty); leave it `false` when a stale-or-empty body is safer than blocking every render on one unreachable URL.
 

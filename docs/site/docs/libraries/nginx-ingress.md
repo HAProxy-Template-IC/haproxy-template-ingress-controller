@@ -623,6 +623,56 @@ annotations:
   nginx.ingress.kubernetes.io/default-backend: "error-pages"
 ```
 
+### `nginx.ingress.kubernetes.io/custom-http-errors`
+
+Replaces an upstream response whose status is in the list with an error page from the default backend. The list holds statuses from 400 to 599, separated by commas.
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/custom-http-errors: "404,503"
+  nginx.ingress.kubernetes.io/default-backend: "error-pages"
+```
+
+The pages come from the Service named by `default-backend`. If the Ingress doesn't set `default-backend`, they come from the Service in `nginxDefaultBackendService`, HAPTIC's equivalent of ingress-nginx's `--default-backend-service`:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        nginxDefaultBackendService: "ingress-errors/error-pages"   # namespace/name
+```
+
+HAProxy can't send a request to another backend after the upstream has answered, so the controller fetches each page when it renders the configuration and HAProxy serves the copy. For each code the controller sends two `GET /` requests to the Service's first port, one with `X-Format: text/html` and one with `X-Format: application/json`, each with the headers `X-Code`, `X-Namespace`, and `X-Ingress-Name`. These are the headers ingress-nginx sends, so a default backend written for ingress-nginx needs no changes.
+
+The replaced page carries the response headers HAPTIC adds to the route, such as HSTS, CORS, `Server`, and `custom-response-headers`. Headers the upstream sent aren't kept, as in ingress-nginx.
+
+A client whose first `Accept` entry is `application/json` gets the JSON page with `Content-Type: application/json`; every other client gets the HTML page with `Content-Type: text/html`. The JSON page is served only if the default backend's answer to the JSON request starts with `{` or `[`, so a backend without JSON pages serves its HTML page to every client.
+
+The controller re-fetches every page on a fixed interval, 5 minutes by default:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        nginxCustomHTTPErrorsRefreshInterval: "1m"   # whole s, m or h; at least 30s
+```
+
+A page changed on the default backend reaches clients after the next refresh plus one render and rollout, and costs one hitless HAProxy reload. An unchanged page costs nothing.
+
+Differences from ingress-nginx:
+
+- The page is a snapshot. Per-request headers (`X-Original-URI`, `X-Request-ID`, `X-Service-Name`, `X-Service-Port`) can't influence it, and `Accept` only selects between the HTML and JSON pages, so a page that varies by request shows the same content to every client.
+- The client receives the listed status, whatever status the default backend answered with.
+- Only responses from the upstream are replaced. Errors HAProxy generates itself, such as a `503` when no endpoint is ready, keep the chart's error pages.
+- A page that changes on every fetch reloads HAProxy on every refresh. Serve a stable page.
+- A page must fit in HAProxy's response buffer: `tune.bufsize` minus 2048 bytes, 14336 bytes at the default `bufsize`.
+
+When a page can't be fetched, is empty, or is too large, the controller records a `CustomErrorPageUnavailable` Warning Event on the Ingress. HAProxy keeps serving the page it already has; if it has none, the upstream's response reaches the client unchanged. An Ingress whose default backend Service doesn't exist gets a `CustomHTTPErrorsNoDefaultBackend` Event.
+
+The controller fetches the pages itself, so its NetworkPolicy must allow egress to the default backend. The chart's default `controller.networkPolicy.egress.additionalRules` allows every in-cluster pod; if you restricted it, add a rule for the default backend's pods.
+
 ## Authentication
 
 ### `nginx.ingress.kubernetes.io/auth-type`
@@ -967,7 +1017,6 @@ The following nginx-ingress annotations aren't supported:
 | `auth-tls-verify-depth`, `proxy-ssl-verify-depth` | No per-host or per-server depth limit; configuring trusted certificate authorities doesn't enforce a maximum chain depth |
 | `proxy-ssl-server-name` | Not read; control SNI toward the upstream via `proxy-ssl-name` |
 | `canary-weight-total` | The canary weight base is fixed at 100 |
-| `custom-http-errors` | HAProxy can't send a request to another backend once the upstream has answered, so upstream error responses reach the client unchanged |
 | `custom-headers` | Not read; set response headers with `custom-response-headers` |
 | `ssl-ciphers` | Ciphers apply to every TLS host; set them with `extraContext.tls.ciphers` |
 | `enable-access-log` | Access logging can't be switched off per Ingress; `extraContext.accessLog.suppress.successful` drops successful requests fleet-wide |

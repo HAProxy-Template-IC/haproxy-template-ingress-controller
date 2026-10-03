@@ -140,6 +140,14 @@ The `HTTPStoreWrapper` provides a `Fetch()` method callable from templates:
 ) %}
 ```
 
+`acceptStatus` (a list of 100–599, not 304) makes those statuses' bodies
+content, for servers that answer with the status they describe. 200 is always
+accepted. `parseFetchOptions` validates it via `httpstore.NewStatusSet`; the
+incremental canonicalizer (`pkg/templating/incremental_http.go`) and the
+validationTest fixture wrapper (`pkg/controller/testrunner`, through
+`ParseFetchArgs`) reject the same invalid values, so a bad list fails a
+validationTest as it fails production.
+
 ### Source authority and overlays
 
 `NewHTTPStoreWrapper` takes an explicit `SourceMode`. `SourceModeAuthoritative`

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `templatingSettings.testExtraContext`: the extraContext validationTests render with in place of `extraContext`.
+- `http.Fetch` option `acceptStatus`: statuses besides 200 whose response body is the content.
 
 ### Changed
 
@@ -45,9 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An Ingress annotation under an enabled vendor library's prefix that the library doesn't know records an `UnknownAnnotation` Warning Event.
 - nginx-ingress migration coverage classifies every annotation in the ingress-nginx reference.
 - HTTP/3 (QUIC), on by default: every TLS-terminating HTTPS listener, Gateway HTTPS listeners included, also listens on UDP and is advertised with `alt-svc`. The HAProxy and Gateway Services gain a UDP port with the HTTPS port's number; firewalls and load balancers must allow UDP 443. Disable with `extraContext.http3.enabled: false`.
+- nginx-ingress: `custom-http-errors` replaces listed upstream error responses with pages fetched from the default backend, or from `extraContext.nginxDefaultBackendService`.
 
 #### Changed
 
+- Response headers the chart adds (`Server`, HSTS, Ingress custom response headers, routing diagnostics) are set with `http-after-response`, so error pages HAProxy generates or replaces carry them too.
 - Probe controller readiness on `/readyz` and liveness on `/livez`; the controller NetworkPolicy lets controller replicas reach each other's health port.
 - **BREAKING for Varnish users:** Lock shared memory with a bundled non-root image; cluster policy must allow `IPC_LOCK`.
 - **BREAKING:** Rename extraContext `timeout_connect`, `timeout_client`, `timeout_server`, `timeout_http_request` and `timeout_http_keep_alive` to `timeoutConnect`, `timeoutClient`, `timeoutServer`, `timeoutHttpRequest` and `timeoutHttpKeepAlive`; the old keys fail the install.

@@ -232,7 +232,7 @@ validationTests:
         pattern: "hsts.example.com max-age%3d31536000%3b%20includeSubDomains%3b%20preload"
       - type: contains
         target: haproxy.cfg
-        pattern: "http-response set-header Strict-Transport-Security %\\[var\\(txn.host\\),map\\([^)]*hsts\\.map\\),url_dec\\(1\\)\\] if \\{ ssl_fc \\}"
+        pattern: "http-after-response set-header Strict-Transport-Security %\\[var\\(txn.host\\),map\\([^)]*hsts\\.map\\),url_dec\\(1\\)\\] if \\{ ssl_fc \\}"
 
   test-nginx-ingress-backend-protocol-https:
     description: Nginx Ingress backend-protocol HTTPS adds ssl to server options

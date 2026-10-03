@@ -78,7 +78,7 @@ validationTests:
       - {type: contains, target: 'map:ing-reqhdr.map', pattern: 'default_hdr-ingress_svc_echo_80\|set\|x-env production'}
       - {type: contains, target: 'map:ing-reshdr.map', pattern: 'default_hdr-ingress_svc_echo_80\|set\|x-custom-resp resp-value'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-Custom-Req %\[var\(txn\.backend_name\),concat\(\|set\|x-custom-req\),map\([^)]*ing-reqhdr\.map\),url_dec\(1\)\]'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-response set-header X-Custom-Resp %\[var\(txn\.backend_name\),concat\(\|set\|x-custom-resp\),map\([^)]*ing-reshdr\.map\),url_dec\(1\)\]'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-after-response set-header X-Custom-Resp %\[var\(txn\.backend_name\),concat\(\|set\|x-custom-resp\),map\([^)]*ing-reshdr\.map\),url_dec\(1\)\]'}
       # The value never appears as a per-backend directive (negative control).
       - {type: not_contains, target: haproxy.cfg, pattern: 'set-header X-Custom-Req "req-value"'}
       - {type: contains, target: "map:ing-src-ip-routes.map", pattern: '(?m)^default/hdr-ingress haptic:X-Real-IP$'}

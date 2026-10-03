@@ -76,6 +76,11 @@ type FetchOptions struct {
 	// If true, a failed fetch returns an error.
 	// If false, a failed fetch returns empty string and logs a warning.
 	Critical bool
+
+	// AcceptStatus lists statuses besides 200 whose body is the content,
+	// for servers that answer with the status they describe (an error-page
+	// service serving its 404 page as a 404).
+	AcceptStatus StatusSet
 }
 
 // WithDefaults returns a copy of the options with default values applied.

@@ -472,7 +472,7 @@ _migrationCoverage:
         note: "Comma-separated required request headers → one host-scoped `http-request deny deny_status 400` per missing header."
       haproxy-haptic.org/response-set-header:
         status: supported
-        note: "newline-separated '<name> <value>' lines -> http-response set-header, host-scoped; guarded"
+        note: "newline-separated '<name> <value>' lines -> http-after-response set-header, host-scoped; guarded"
       haproxy-haptic.org/satisfy:
         status: supported
         note: "\"any\" OR-combines allowlist-source-range and basic auth into one backend gate, suppressing both the standalone allowlist deny and the standalone auth challenge so an allow-listed OR authenticated request passes."

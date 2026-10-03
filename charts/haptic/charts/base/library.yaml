@@ -1755,10 +1755,10 @@ templateSnippets:
          a backend-provided Server with our own. The leading newline below is
          load-bearing: render_glob concatenates snippet outputs verbatim, and
          the previous snippet's `option forwardfor` has no trailing newline,
-         so without one we render `option forwardforhttp-response ...` as a
+         so without one we render `option forwardforhttp-after-response ...` as a
          single fused line (see test-spoa-hub-frontend-filters-newline-after-
          forwardfor). #}
-      {{ "\n" }}http-response set-header Server haptic
+      {{ "\n" }}http-after-response set-header Server haptic
 
   frontend-filters-090-request-buffering:
     template: |
@@ -2029,7 +2029,7 @@ templateSnippets:
       #}
       {% macro HeaderModifierRules(direction string, keyExpr string, mapPath string, setNames []string, addNames []string, delNames []string) %}
       {%- var directive = "http-request" %}
-      {%- if direction == "response" %}{% directive = "http-response" %}{% end %}
+      {%- if direction == "response" %}{% directive = "http-after-response" %}{% end %}
       {%- var emittable = func(n string) bool { return regex_search(n, "^[A-Za-z0-9!$&*+.^_~-]+$") } %}
       {%- for _, name := range setNames %}
       {%- if !emittable(name) %}{% continue %}{% end %}
@@ -2282,12 +2282,12 @@ templateSnippets:
       #   platform's global redirect) so clients reach HTTPS.
       {%- end %}
       # base/hsts-global (extraContext.hstsEnabled) — HSTS on every TLS response
-      http-response set-header Strict-Transport-Security "{{ hstsGlobal }}" if { ssl_fc }
+      http-after-response set-header Strict-Transport-Security "{{ hstsGlobal }}" if { ssl_fc }
       {%- end %}
       {%- if len(hstsHosts) > 0 %}
       {%- var m, _ = pathResolver.GetPath("hsts.map", "map") %}
       # base/hsts (per-Ingress values; override the global default above)
-      http-response set-header Strict-Transport-Security %[var(txn.host),map({{ m }}),url_dec(1)] if { ssl_fc } { var(txn.host),map({{ m }}) -m found }
+      http-after-response set-header Strict-Transport-Security %[var(txn.host),map({{ m }}),url_dec(1)] if { ssl_fc } { var(txn.host),map({{ m }}) -m found }
       {%- end %}
 
   # Status frontend directives — override or extend via status-extra-* snippets.
@@ -2299,13 +2299,13 @@ templateSnippets:
       {%- var debug bool = extraContext | dig("diagnostics", "routingHeaders", "enabled") | fallback(false) -%}
       {%- if debug %}
       # HAProxy routing decision introspection
-      http-response set-header X-HAProxy-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
-      http-response set-header X-HAProxy-Host-Match %[var(txn.host_match)] if { var(txn.host_match) -m found }
-      http-response set-header X-HAProxy-Path-Match %[var(txn.path_match)] if { var(txn.path_match) -m found }
-      http-response set-header X-HAProxy-Path-Match-Qualifier %[var(txn.path_match_qualifier)] if { var(txn.path_match_qualifier) -m found }
-      http-response set-header X-HAProxy-Total-Weight %[var(txn.total_weight)] if { var(txn.total_weight) -m found }
-      http-response set-header X-HAProxy-Random-Weight %[var(txn.random_weight)] if { var(txn.random_weight) -m found }
-      http-response set-header X-HAProxy-Route-Key %[var(txn.route_key)] if { var(txn.route_key) -m found }
+      http-after-response set-header X-HAProxy-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
+      http-after-response set-header X-HAProxy-Host-Match %[var(txn.host_match)] if { var(txn.host_match) -m found }
+      http-after-response set-header X-HAProxy-Path-Match %[var(txn.path_match)] if { var(txn.path_match) -m found }
+      http-after-response set-header X-HAProxy-Path-Match-Qualifier %[var(txn.path_match_qualifier)] if { var(txn.path_match_qualifier) -m found }
+      http-after-response set-header X-HAProxy-Total-Weight %[var(txn.total_weight)] if { var(txn.total_weight) -m found }
+      http-after-response set-header X-HAProxy-Random-Weight %[var(txn.random_weight)] if { var(txn.random_weight) -m found }
+      http-after-response set-header X-HAProxy-Route-Key %[var(txn.route_key)] if { var(txn.route_key) -m found }
       {%- end %}
 
   util-default-backend:
