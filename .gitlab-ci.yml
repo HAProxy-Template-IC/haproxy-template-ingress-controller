@@ -444,9 +444,13 @@ audit:
       when: never
     - if: $CI_COMMIT_TAG
       when: never
-    # govulncheck only depends on Go sources + dependency graph — a
-    # docs/config change can't introduce a vulnerability.
+    # Audited inputs are the Go dependency graph and the CI image's npm tree;
+    # a docs/config change can't introduce a vulnerability.
     - !reference [.rules-go, rules]
+    - changes:
+        - .gitlab/ci/images/ci/package.json
+        - .gitlab/ci/images/ci/package-lock.json
+        - .gitlab/ci/images/ci/shims/**/*
   tags:
     - saas-linux-medium-amd64
   interruptible: true

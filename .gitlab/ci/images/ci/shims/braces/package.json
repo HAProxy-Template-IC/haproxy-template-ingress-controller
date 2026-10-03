@@ -1,0 +1,8 @@
+{
+  "name": "braces",
+  "version": "0.0.0-haptic-stub",
+  "private": true,
+  "description": "Stand-in for braces (GHSA-vfj7-8cjw-p6xm): passes brace-free patterns through, rejects brace expansion.",
+  "main": "index.js",
+  "license": "Apache-2.0"
+}
