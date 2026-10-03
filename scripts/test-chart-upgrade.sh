@@ -19,7 +19,8 @@ WORK="$(mktemp -d)"
 KEEP=false
 [ "${1:-}" = "--keep" ] && KEEP=true
 
-# Discover stable charts from the registry; 0.1.0 has no v0.1.0 git tag.
+# Discover stable charts from the registry, none above VERSION so a maintenance
+# branch never "upgrades" from a newer line. 0.1.0 has no v0.1.0 git tag.
 CHART_REPO_PATH="haproxy-haptic/haptic/charts/haptic"
 
 discover_baselines() {
@@ -29,18 +30,7 @@ discover_baselines() {
   [ -n "$token" ] || return 1
   curl -sf -H "Authorization: Bearer $token" \
     "https://registry.gitlab.com/v2/${CHART_REPO_PATH}/tags/list?n=10000" 2>/dev/null \
-    | python3 -c '
-import json, re, sys
-tags = json.load(sys.stdin).get("tags", [])
-stable = [t for t in tags if re.match(r"^\d+\.\d+\.\d+$", t)]
-if not stable:
-    sys.exit("No published stable chart versions found")
-stable.sort(key=lambda v: tuple(int(x) for x in v.split(".")))
-required = ["0.2.0-alpha.3"]
-missing = set(required) - set(tags)
-if missing:
-    sys.exit(f"Missing required upgrade baselines: {sorted(missing)}")
-print("\n".join(stable + required))'
+    | python3 "$REPO/scripts/chart-upgrade-baselines.py" "$(cat "$REPO/VERSION")"
 }
 
 if [ "${1:-}" = "--list-baselines" ]; then

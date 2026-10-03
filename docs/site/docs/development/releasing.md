@@ -164,6 +164,8 @@ Once the chart is published, add the new stable version to
 upgrade test from that release in its own job. Until you add it,
 `check-chart-upgrade-baselines` fails on every pipeline that runs the upgrade
 tests, so the new release can't go untested. Pre-releases aren't required.
+The check covers published stable versions at or below `VERSION`; a matrix
+entry above `VERSION` also fails it.
 
 ## Patch releases for an older release line
 
@@ -226,6 +228,8 @@ Run the manual `prepare-spoa-release` job in the merge request pipeline, as in [
 ### Step 4: Merge and let CI tag
 
 A push to `maint/*` runs the same post-merge pipeline as `main`, including the interior HAProxy versions and the full Gateway API and Ingress conformance suites. `create-release-tag` creates `v<version>` only after that whole pipeline passes, with the same `VERSION`/`Chart.yaml` check as on `main`.
+
+`test-chart-upgrade` upgrades only from published stable versions at or below the branch's `VERSION`, so a release from a newer line, such as `0.3.0` on `maint/0.2`, is never used as a baseline.
 
 A maintenance branch never publishes `main`-only artifacts: no `main-<sha>` snapshots, no `dev` docs, no landing page, and no `/playground/dev/`.
 
