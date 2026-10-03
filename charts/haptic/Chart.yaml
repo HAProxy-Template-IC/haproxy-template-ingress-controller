@@ -111,20 +111,30 @@ annotations:
 
   # Release highlights; full notes are in the root CHANGELOG.md.
   artifacthub.io/changes: |
-    - kind: fixed
-      description: Reduce excess controller memory use on Linux nodes with transparent huge pages enabled
-    - kind: fixed
-      description: Standby controllers stay available during HAProxy discovery bursts, and auxiliary pod-status cleanup recovers after interrupted updates
-    - kind: fixed
-      description: Admission validation remains available while controllers terminate
-    - kind: fixed
-      description: HAProxy drains connections during reloads and pod replacement without abruptly disconnecting clients reusing idle connections
-    - kind: fixed
-      description: Gateway routes prefer the more specific hostname and stay isolated between Gateways with overlapping hostnames
-    - kind: fixed
-      description: Playground starters render correctly, and documentation menus retain older stable releases while retiring their prereleases
+    - kind: added
+      description: HTTP/3 (QUIC) on every TLS-terminating HTTPS listener, on by default; the HAProxy and Gateway Services gain a UDP port
+    - kind: added
+      description: nginx-ingress custom-http-errors, proxy-request-buffering, limit-burst-multiplier, affinity-mode and auth-tls-match-cn annotations, plus Warning Events for unknown annotations and oversized response headers
     - kind: changed
-      description: Default cache and shared rate-limit images use Varnish 9.1 and Valkey 9.2
+      description: "BREAKING: rename extraContext timeout_* keys to camelCase and ssl_redirect_default to the boolean sslRedirectDefault; old keys fail the install"
+    - kind: changed
+      description: "BREAKING: hapticHstsMaxAge is replaced by tls.hsts.maxAge, so the haproxy-haptic.org/hsts default max-age drops to one year"
+    - kind: security
+      description: "BREAKING: basic-auth Secrets accept only bcrypt, SHA-256/SHA-512 crypt and yescrypt hashes by default"
+    - kind: changed
+      description: "BREAKING: validationTest assertions no longer see your extraContext; fixtures also render with it and must pass haproxy -c"
+    - kind: changed
+      description: "BREAKING for Varnish users: the bundled non-root Varnish image needs the IPC_LOCK capability"
+    - kind: removed
+      description: "BREAKING: http.Fetch option delay, the strings_replace function, one-argument trim, and the haptic_events_dropped_total metric"
+    - kind: changed
+      description: Response headers the chart adds are set with http-after-response, so HAProxy-generated error pages carry them too
+    - kind: fixed
+      description: A configuration that keeps failing to load no longer denies admission cluster-wide; controllers probe readiness on /readyz and liveness on /livez
+    - kind: fixed
+      description: nginx-ingress use-regex and rewrite-target match regex paths case-insensitively and substitute capture groups
+    - kind: fixed
+      description: Leader lease released on shutdown during a configuration hand-over, and the first render after startup waits for every watched resource
 
   # Links
   artifacthub.io/links: |
