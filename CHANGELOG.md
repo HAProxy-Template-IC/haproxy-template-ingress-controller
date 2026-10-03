@@ -31,7 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- After a rolling upgrade, the config's `Validated` status could stay `False` (`LoadGateFailed`) when an old controller pod wrote it after the new leader; the leader now restores its own verdict.
 - Watched resources finish their initial sync only after every listed resource reached the store, so the first render after startup can't miss resources.
 - Stop reporting normal controller shutdown cancellations and leadership handover as failures.
 - Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
@@ -63,12 +62,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
-- Security: regex paths (`haproxy-haptic.org/path-type: regex`, `haproxy-ingress.github.io/path-type: regex`, Gateway `RegularExpression`) match only on their own host; a top-level `|` or an early `)` in the path could capture other hosts' requests. A regex path whose groups don't close within it is now rejected, and a leading `^` now matches.
 - nginx-ingress: `use-regex` and `rewrite-target` route regex paths as case-insensitive regexes, and `$N` in `rewrite-target` now refers to the path's capture groups; before, the path matched as a literal prefix and `$2` was always empty.
 - Increase the bundled validator memory limit to 256 MiB to accommodate large configuration inputs.
 - Apply idle-connection draining only to HTTP frontends, avoiding warnings from TCP listeners.
 - Derive the cache dispatcher timeout from application timeouts and retries without forcing reloads for route timeout changes.
 - Use direct Valkey health probes to prevent orphaned probe processes and spurious child-process warnings.
+
+## [0.2.2] - 2026-10-03
+
+### Fixed
+
+- After a rolling upgrade, the config's `Validated` status could stay `False` (`LoadGateFailed`) when an old controller pod wrote it after the new leader; the leader now restores its own verdict.
+
+### Helm chart
+
+#### Security
+
+- Regex paths (`haproxy-haptic.org/path-type: regex`, `haproxy-ingress.github.io/path-type: regex`, Gateway `RegularExpression`) match only on their own host; a top-level `|` or an early `)` in the path could capture other hosts' requests. A regex path whose groups don't close within it is now rejected, and a leading `^` now matches.
 
 ## [0.2.1] - 2026-10-01
 

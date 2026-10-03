@@ -297,9 +297,9 @@ Use the `haptic` binary matching the chart version below to run
 
 ```bash
 helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.1 --untar --untardir ./haptic-0.2-chart
+  --version 0.2.2 --untar --untardir ./haptic-0.2-chart
 haptic preflight --values ./haptic-values-0.2.yaml \
-  --chart ./haptic-0.2-chart/haptic --expect-chart-version 0.2.1 \
+  --chart ./haptic-0.2-chart/haptic --expect-chart-version 0.2.2 \
   --namespace "$HAPTIC_NAMESPACE" --release "$HAPTIC_RELEASE"
 ```
 
@@ -308,7 +308,7 @@ deployment manages CRDs separately, apply the target chart's schemas before upgr
 
 ```bash
 helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.1 | kubectl apply --server-side --force-conflicts -f -
+  --version 0.2.2 | kubectl apply --server-side --force-conflicts -f -
 ```
 
 GitOps diff tools can need these CRDs before they can map the new library
@@ -323,7 +323,7 @@ carried forward from the installed release:
 ```bash
 helm upgrade "$HAPTIC_RELEASE" \
   oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --namespace "$HAPTIC_NAMESPACE" --version 0.2.1 \
+  --namespace "$HAPTIC_NAMESPACE" --version 0.2.2 \
   --reset-values \
   --values haptic-values-0.2.yaml
 ```
