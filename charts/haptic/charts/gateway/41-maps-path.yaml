@@ -3,6 +3,7 @@ templateSnippets:
     requires: [grpcroutes, httproutes]
     template: |
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-regex-map-key" for RegexGroupProblem, RegexMapKey -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- macro PublishGatewayRoutePaths(route any, routeKind string) -%}
       {%%
@@ -38,6 +39,13 @@ templateSnippets:
             show WebhookRejectOrWarn(groupRoute, "InvalidPath", "Route path '" + pathValue + "' (host '" + hostname + "') contains whitespace or control characters, which cannot be written to the routing map; the route is not applied. Remove spaces, tabs and newlines from the HTTPRoute path value.")
             continue
           }
+          if pathType == "RegularExpression" {
+            var problem = RegexGroupProblem(pathValue)
+            if problem != "" {
+              show WebhookRejectOrWarn(groupRoute, "InvalidPath", "Route regex path '" + pathValue + "' (host '" + hostname + "') " + problem + "; the route is not applied. Rewrite it so its groups and [ ] classes close within it, without \\Q, \\E, \\c or (*.")
+              continue
+            }
+          }
           var routeTypeShort = "http"
           if groupKind == "GRPCRoute" { routeTypeShort = "grpc" }
           var line = func(suffix string) string {
@@ -47,7 +55,9 @@ templateSnippets:
             if suffix == "" && pathType != "RegularExpression" && len(emittedPath) > 1 && hasSuffix(emittedPath, "/") {
               emittedPath = emittedPath[:len(emittedPath)-1]
             }
-            return "\n\n" + MapKeyForHost(hostname) + emittedPath + pathSuffix +
+            var key = MapKeyForHost(hostname) + emittedPath + pathSuffix
+            if pathType == "RegularExpression" { key = RegexMapKey(MapKeyForHost(hostname), emittedPath, "") }
+            return "\n\n" + key +
               " GW_ROUTE_ID:" + routeTypeShort + ":" + dig_string(entry, "", "conflictGroup")
           }
           var rank = dig_string(entry, "", "groupRank")

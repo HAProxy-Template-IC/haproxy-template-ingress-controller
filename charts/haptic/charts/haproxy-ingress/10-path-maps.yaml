@@ -21,8 +21,8 @@ templateSnippets:
           - pathType: ImplementationSpecific
           - Annotation: haproxy-ingress.github.io/path-type: "regex"
 
-        Output: <MapKeyForHost(host)><path> BACKEND:<backend_name> — same
-        shape as ingress.yaml's standard renderers, so base.yaml's
+        Output: RegexMapKey(host, path) BACKEND:<backend_name> — the value
+        has the same shape as ingress.yaml's standard renderers, so base.yaml's
         frontend-routing-logic decodes the qualifier (`field(1,:)`) and
         backend name (`field(2,:)`) from the value identically.
 
@@ -31,6 +31,7 @@ templateSnippets:
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-regex-map-key" for RegexGroupProblem, RegexMapKey -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%%
         var ingress = resources.ingresses.GetSingle(
@@ -56,7 +57,12 @@ templateSnippets:
                     _ = WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + namespace + "/" + name + " has a regex path containing " + pathInj + ", which would split the routing map; the route is not applied. Remove whitespace and control characters from spec.rules[].http.paths[].path.")
                     continue
                   }
-                  block += "\n" + MapKeyForHost(rule.Host) + path.Path + " BACKEND:" + BackendNameIngress(ingress, path)
+                  var problem = RegexGroupProblem(path.Path)
+                  if problem != "" {
+                    _ = WebhookRejectOrWarn(ingress, "InvalidPath", "Ingress " + namespace + "/" + name + " has regex path '" + path.Path + "', which " + problem + "; the path is not routed. Rewrite it so its groups and [ ] classes close within it, without \\Q, \\E, \\c or (*.")
+                    continue
+                  }
+                  block += "\n" + RegexMapKey(MapKeyForHost(rule.Host), path.Path, "") + " BACKEND:" + BackendNameIngress(ingress, path)
                 }
               }
             }
