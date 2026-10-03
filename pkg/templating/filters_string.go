@@ -40,10 +40,6 @@ func scriggoStrip(s any) string {
 	return strip(str)
 }
 
-// scriggoTrim is an alias for scriggoStrip for compatibility.
-// Both "strip" and "trim" are common filter names for whitespace removal.
-var scriggoTrim = scriggoStrip
-
 // scriggoB64Decode decodes a base64-encoded value.
 // The input is converted to string using lenient type conversion.
 // Useful for decoding Kubernetes secret values.
@@ -124,9 +120,8 @@ func scriggoStringsTrim(s any) string {
 	return strings.TrimSpace(str)
 }
 
-// scriggoTrimSpace trims whitespace from a value. Alias for scriggoStringsTrim
-// (registered under the shorter "trimSpace" filter name in filter_names.go),
-// mirroring the scriggoTrim = scriggoStrip alias above.
+// scriggoTrimSpace trims whitespace from a value. Alias for scriggoStringsTrim,
+// registered under the builtin "trimSpace" name.
 var scriggoTrimSpace = scriggoStringsTrim
 
 // scriggoStringsLower converts a value to lowercase.
@@ -140,13 +135,13 @@ func scriggoStringsLower(s any) string {
 	return strings.ToLower(str)
 }
 
-// scriggoStringsReplace replaces all occurrences of old with new in s.
+// scriggoReplace replaces all occurrences of old with new in s.
 // All three parameters are converted to string using lenient type conversion.
 //
 // Usage in Scriggo templates:
 //
-//	{% var escaped = strings_replace(path, "/", "\\/") %}
-func scriggoStringsReplace(s, old, replacement any) string {
+//	{% var escaped = replace(path, "/", "\\/") %}
+func scriggoReplace(s, old, replacement any) string {
 	str := scriggoToString(s)
 	oldStr := scriggoToString(old)
 	replacementStr := scriggoToString(replacement)

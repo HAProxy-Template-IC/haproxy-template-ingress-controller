@@ -134,7 +134,7 @@ controller:
       header-blocklist.map:
         template: |
           {%- var blocklist_url = "http://blocklist-server.echo.svc:80/blocklist.txt" -%}
-          {%- var blocklist_content, _ = http.Fetch(blocklist_url, map[string]any{"delay": "60s"}) -%}
+          {%- var blocklist_content, _ = http.Fetch(blocklist_url, map[string]any{"interval": "60s"}) -%}
           {%- for _, line := range (blocklist_content | tostring() | split("\n")) -%}
           {%- var value = trimSpace(line) -%}
           {%- if value != "" -%}

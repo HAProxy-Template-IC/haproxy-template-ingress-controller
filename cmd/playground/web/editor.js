@@ -65,7 +65,7 @@ const FUNCTIONS = ['b64decode', 'debug', 'glob_match', 'indent', 'sort_by', 'str
   'fallback', 'first_seen', 'isdigit', 'isNil', 'join', 'join_key', 'keys', 'make_guid', 'merge',
   'namespace', 'recordEvent', 'regex_search', 'replace', 'sanitize_regex', 'selectattr', 'semver_gte', 'seq',
   'shard_slice', 'sort_ints', 'sort_strings', 'statusPatch', 'strings_contains', 'strings_lower',
-  'strings_replace', 'strings_splitn', 'strings_split', 'strings_trim', 'title', 'tofloat', 'toint',
+  'strings_splitn', 'strings_split', 'strings_trim', 'title', 'tofloat', 'toint',
   'toSlice', 'toStringSlice', 'tostring', 'to_str_map', 'transitionTime'];
 const VARS = ['resources', 'pathResolver', 'controller', 'templateSnippets', 'fileRegistry',
   'dataplane', 'capabilities', 'shared', 'extraContext', 'http', 'runtimeEnvironment', 'currentConfig'];

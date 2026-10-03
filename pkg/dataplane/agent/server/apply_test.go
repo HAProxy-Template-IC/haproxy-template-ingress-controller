@@ -70,28 +70,21 @@ func TestFirstApplyWritesTheTreeAndReloads(t *testing.T) {
 	assert.Zero(t, h.metric("haptic_agent_invariant_violations_total"))
 }
 
-func TestLegacyControllerManifestFailsClosedToReload(t *testing.T) {
+func TestManifestWithoutIdentityVersionIsRejected(t *testing.T) {
 	h := newHarness(t)
 	first := firstApply(t, h)
-	files := baseFiles("global\n")
+	files := baseFiles("global\nchanged\n")
 	m := buildManifest("plan-2", files)
 	m.IdentityVersion = 0
+	m.Mode = api.ModeReload
 	m.ExpectedPrevPlanID = first.AppliedPlanID
 	m.ExpectedPrevToken = first.AppliedToken
-	m.ExpectedWorkerOpsPlanID = "foreign-worker"
-	m.WorkerOpsPlanID = "foreign-worker-after"
-	m.ValidatedPlanID = first.AppliedPlanID
-	m.Ops = []api.Op{{Kind: api.OpBackendAdd, Backend: "must-not-run", Profile: "prof", Mode: "http"}}
-	m.InPlaceOps = []api.Op{{Kind: api.OpMapAdd, Path: "maps/host.map", Key: "legacy", Value: "be-a"}}
 
 	status, raw := h.postRaw(&m, files)
-	require.Equal(t, http.StatusOK, status, string(raw))
-	result := api.ApplyResult{}
-	require.NoError(t, json.Unmarshal(raw, &result))
-	require.True(t, result.OK, "%+v", result.Error)
-	assert.Equal(t, api.ResultReload, result.Mode)
-	assert.NotEmpty(t, result.AppliedPlanProof)
-	assert.False(t, h.model.HasBackend("must-not-run"))
+	require.Equal(t, http.StatusBadRequest, status, string(raw))
+	assert.Contains(t, string(raw), "identity_version")
+	assert.Equal(t, "global\n", h.read(configPath))
+	assert.Equal(t, first.AppliedPlanID, h.state(false).AppliedPlanID)
 }
 
 func TestRuntimeApplyRunsOpsWithoutReloading(t *testing.T) {

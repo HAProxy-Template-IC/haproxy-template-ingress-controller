@@ -173,14 +173,18 @@ func apply(ctx context.Context, agent *client.Client, next, applied *renderplan.
 	}
 
 	manifest := &api.Manifest{
-		PlanID:             next.ID,
-		PlanSchemaVersion:  next.SchemaVersion,
-		Token:              api.Token{LeaderEpoch: 1, RenderSeq: state.AppliedToken.RenderSeq + 1},
-		ExpectedPrevPlanID: state.AppliedPlanID,
-		ExpectedPrevToken:  state.AppliedToken,
-		Files:              decision.Files,
-		Ops:                decision.Ops,
-		Mode:               decision.Mode,
+		IdentityVersion:            api.ExactIdentityVersion,
+		PlanID:                     next.ID,
+		PlanSchemaVersion:          next.SchemaVersion,
+		Token:                      api.Token{LeaderEpoch: 1, RenderSeq: state.AppliedToken.RenderSeq + 1},
+		ExpectedPrevPlanID:         state.AppliedPlanID,
+		ExpectedPrevPlanProof:      state.AppliedPlanProof,
+		ExpectedPrevToken:          state.AppliedToken,
+		ExpectedWorkerOpsPlanID:    state.WorkerOpsPlanID,
+		ExpectedWorkerOpsPlanProof: state.WorkerOpsPlanProof,
+		Files:                      decision.Files,
+		Ops:                        decision.Ops,
+		Mode:                       decision.Mode,
 	}
 
 	result, err := send(ctx, agent, manifest, contentOf(next))

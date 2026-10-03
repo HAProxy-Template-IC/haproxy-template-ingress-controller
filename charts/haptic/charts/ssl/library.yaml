@@ -225,7 +225,7 @@ templateSnippets:
       {%- var enabled bool = extraContext | dig("tls", "hsts", "enabled") | fallback(false) -%}
       {%- if enabled -%}
         {%- var maxAge = extraContext | dig("tls", "hsts", "maxAge") | fallback("31536000") | tostring() -%}
-        {%- if regex_search(maxAge, "[[:cntrl:]]") -%}{{ fail("Invalid extraContext.hstsMaxAge '" + maxAge + "': must not contain control characters — config-injection guard.") }}{%- end -%}
+        {%- if regex_search(maxAge, "[[:cntrl:]]") -%}{{ fail("Invalid extraContext.tls.hsts.maxAge '" + maxAge + "': must not contain control characters — config-injection guard.") }}{%- end -%}
         {%- var value = "max-age=" + maxAge -%}
         {%- if extraContext | dig("tls", "hsts", "includeSubdomains") | fallback(false) -%}{%- value = value + "; includeSubDomains" -%}{%- end -%}
         {%- if extraContext | dig("tls", "hsts", "preload") | fallback(false) -%}{%- value = value + "; preload" -%}{%- end -%}

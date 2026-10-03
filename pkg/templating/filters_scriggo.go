@@ -139,7 +139,6 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FilterSortBy] = sortByAdaptive(func() bool { return false })
 	decl[FilterGlobMatch] = scriggoGlobMatch
 	decl[FilterStrip] = scriggoStrip
-	decl[FilterTrim] = scriggoTrim
 	decl[FilterB64Decode] = scriggoB64Decode
 	decl[FilterB64Encode] = scriggoB64Encode
 	decl[FilterDebug] = scriggoDebug
@@ -165,7 +164,6 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncStringsSplit] = scriggoStringsSplit
 	decl[FuncStringsTrim] = scriggoStringsTrim
 	decl[FuncStringsLower] = scriggoStringsLower
-	decl[FuncStringsReplace] = scriggoStringsReplace
 	decl[FuncStringsSplitN] = scriggoStringsSplitN
 	decl[FilterIndent] = scriggoIndent
 
@@ -187,7 +185,7 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncToStringSlice] = scriggoToStringSlice
 	decl[FuncCidrPartition] = scriggoCidrPartition
 	decl[FuncJoin] = scriggoJoin
-	decl[FuncReplace] = scriggoStringsReplace
+	decl[FuncReplace] = scriggoReplace
 
 	// Namespace function for mutable state patterns
 	decl[FuncNamespace] = scriggoNamespace
@@ -355,7 +353,7 @@ func registerScriggoBuiltinStrings(decl native.Declarations) {
 	decl[builtinIndexAny] = builtin.IndexAny
 	decl["join"] = scriggoJoin // Override builtin to support []any from append()
 	decl[builtinLastIndex] = builtin.LastIndex
-	decl["replace"] = scriggoStringsReplace // Override builtin to support 3-arg syntax (replaces all)
+	decl["replace"] = scriggoReplace // Override builtin to support 3-arg syntax (replaces all)
 	decl[builtinReplaceAll] = builtin.ReplaceAll
 	decl[builtinRuneCount] = builtin.RuneCount
 	decl[builtinSplit] = builtin.Split
@@ -367,7 +365,7 @@ func registerScriggoBuiltinStrings(decl native.Declarations) {
 	decl[builtinToKebab] = builtin.ToKebab
 	decl[builtinToLower] = builtin.ToLower
 	decl[builtinToUpper] = builtin.ToUpper
-	decl["trim"] = builtin.Trim
+	decl[builtinTrim] = builtin.Trim
 	decl[builtinTrimLeft] = builtin.TrimLeft
 	decl[builtinTrimPrefix] = builtin.TrimPrefix
 	decl[builtinTrimRight] = builtin.TrimRight

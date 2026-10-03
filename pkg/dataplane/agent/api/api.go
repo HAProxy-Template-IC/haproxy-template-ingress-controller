@@ -22,8 +22,7 @@ package api
 // Version is the API major version an agent reports and a client compares.
 const Version = 1
 
-// ExactIdentityVersion is the additive v1 role-proof protocol. Absence means
-// legacy identity and forces a full reload without asynchronous promotion.
+// ExactIdentityVersion is the role-proof protocol every Manifest must declare.
 const ExactIdentityVersion = 1
 
 // Paths of the calls plus health.
@@ -79,7 +78,7 @@ const (
 // Manifest is the JSON part of an Apply: the complete desired file set, the
 // ops composed for this pod, and the fencing state.
 type Manifest struct {
-	IdentityVersion int    `json:"identity_version,omitempty"`
+	IdentityVersion int    `json:"identity_version"`
 	PlanID          string `json:"plan_id"`
 	// PlanProof names the refused agent role only in ModeRevertLKG.
 	PlanProof         string `json:"plan_proof,omitempty"`

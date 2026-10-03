@@ -156,13 +156,9 @@ haptic_events_dropped_by_subscriber_total{event_type="test.delivery",subscriber=
 # HELP haptic_events_dropped_critical_total Events dropped from critical subscribers (alert if > 0)
 # TYPE haptic_events_dropped_critical_total counter
 haptic_events_dropped_critical_total 1
-# HELP haptic_events_dropped_total Total number of events dropped due to full subscriber buffers
-# TYPE haptic_events_dropped_total counter
-haptic_events_dropped_total 1
 `),
 		"haptic_events_dropped_by_subscriber_total",
 		"haptic_events_dropped_critical_total",
-		"haptic_events_dropped_total",
 	))
 }
 

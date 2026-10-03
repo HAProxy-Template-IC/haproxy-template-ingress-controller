@@ -15,6 +15,7 @@
 package templating
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -24,9 +25,12 @@ var incrementalStringerType = reflect.TypeFor[fmt.Stringer]()
 
 const incrementalTypeField = "type"
 
+// ErrHTTPFetchDelayOption rejects the pre-v0.3.0 spelling of the "interval" option.
+var ErrHTTPFetchDelayOption = errors.New(
+	`option "delay" was removed, so this call fails. Rename it to "interval"`)
+
 var incrementalHTTPOptionKeys = map[string]struct{}{
 	"interval": {},
-	"delay":    {},
 	"timeout":  {},
 	"retries":  {},
 	"critical": {},
@@ -73,19 +77,22 @@ func CanonicalIncrementalHTTPArgs(args ...any) ([]any, error) {
 }
 
 func canonicalIncrementalHTTPOptions(value any) (map[string]any, error) {
-	options, err := canonicalIncrementalHTTPMap("options", value, incrementalHTTPOptionKeys)
+	options, err := canonicalIncrementalHTTPMap("options", value, nil)
 	if err != nil {
 		return nil, err
 	}
-	if _, interval := options["interval"]; interval {
-		if _, delay := options["delay"]; delay {
-			return nil, fmt.Errorf("http.Fetch: set either %q or %q, not both", "interval", "delay")
+	if _, delay := options["delay"]; delay {
+		return nil, fmt.Errorf("http.Fetch: %w", ErrHTTPFetchDelayOption)
+	}
+	for key := range options {
+		if _, ok := incrementalHTTPOptionKeys[key]; !ok {
+			return nil, fmt.Errorf("http.Fetch: unknown options key %q", key)
 		}
 	}
 	for key, option := range options {
 		var canonical any
 		switch key {
-		case "interval", "delay", "timeout":
+		case "interval", "timeout":
 			plain, ok := option.(string)
 			if !ok {
 				return nil, incrementalHTTPScalarError("option", key, "a plain duration string", option)

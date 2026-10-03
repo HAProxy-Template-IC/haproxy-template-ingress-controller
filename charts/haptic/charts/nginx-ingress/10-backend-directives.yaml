@@ -13,7 +13,7 @@ templateSnippets:
     template: |
       {% macro RewriteTargetCaptures(target string) string %}{%%
         for group := 1; group <= 9; group++ {
-          target = strings_replace(target, "$" + tostring(group), "\\" + tostring(group))
+          target = replace(target, "$" + tostring(group), "\\" + tostring(group))
         }
         show target
       %%}{% end %}

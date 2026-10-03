@@ -1075,6 +1075,7 @@ controller:
           hsts:
             # Global HSTS is opt-in; per-Ingress hsts annotations still win.
             enabled: false
+            # Also the default for haproxy-haptic.org/hsts-max-age.
             maxAge: "31536000"
             includeSubdomains: false
             preload: false

@@ -270,7 +270,7 @@ HTTP→HTTPS and host redirects (reload-free maps), HSTS, SSL passthrough, a def
 | `haproxy-haptic.org/apex-www-redirect` | Issues a `301` redirect between the apex domain and its `www` subdomain, in both directions, preserving the request path and scheme. |
 | `haproxy-haptic.org/hsts` | Enables HSTS by adding the `Strict-Transport-Security` response header for the host. |
 | `haproxy-haptic.org/hsts-include-subdomains` | Appends `includeSubDomains` to the `Strict-Transport-Security` header when set to `true`. |
-| `haproxy-haptic.org/hsts-max-age` | Sets the HSTS `max-age` in seconds (default `63072000`). |
+| `haproxy-haptic.org/hsts-max-age` | Sets the HSTS `max-age` in seconds (default: `controller.config.templatingSettings.extraContext.tls.hsts.maxAge`, `31536000`). |
 | `haproxy-haptic.org/hsts-preload` | Appends `preload` to the `Strict-Transport-Security` header when set to `true`. |
 | `haproxy-haptic.org/permanent-redirect` | Redirects the host to the given URL with a permanent status code (default `301`). |
 | `haproxy-haptic.org/permanent-redirect-code` | Sets the status code for `permanent-redirect` (default `301`). |

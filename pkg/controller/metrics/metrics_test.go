@@ -429,7 +429,6 @@ func TestMetrics_RecordEventDrop(t *testing.T) {
 	metrics.RecordEventDrop("reconciler", "ResourceIndexUpdatedEvent")
 
 	// Verify aggregate counters incremented
-	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.EventsDropped))
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.EventsDroppedCritical))
 
 	// Verify per-subscriber counter
@@ -440,7 +439,6 @@ func TestMetrics_RecordEventDrop(t *testing.T) {
 	// Record another drop from a different subscriber
 	metrics.RecordEventDrop("deployer", "ReconciliationCompletedEvent")
 
-	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.EventsDropped))
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.EventsDroppedCritical))
 
 	deployer, err := metrics.EventsDroppedBySubscriber.GetMetricWithLabelValues("deployer", "ReconciliationCompletedEvent")

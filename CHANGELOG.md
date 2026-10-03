@@ -19,18 +19,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** validationTest assertions no longer see `templatingSettings.extraContext`; they render with library defaults, `testExtraContext`, `_global` and their own `extraContext`. A test asserting output of your own values must set them in its `extraContext`, `_global` or `testExtraContext`.
 - Each validationTest also renders its fixtures with the deployment's extraContext, which must render and, where the test asserts `haproxy_valid`, pass `haproxy -c`.
 - The live validationTests budget grows from 100 ms to 175 ms per test to cover the second render.
+- **BREAKING:** The agent rejects an apply manifest without `identity_version: 1` with `400` instead of downgrading it to a reload. Clients built against `pkg/dataplane/agent/api` must set it.
+- **BREAKING:** `trim` is the `trim(s, cutset)` builtin in every render path; use `strip(s)` to trim whitespace.
+
+### Removed
+
+- **BREAKING:** The `http.Fetch` option `delay`; a call that sets it fails. Rename it to `interval`.
+- **BREAKING:** The `strings_replace` template function; use `replace`.
+- **BREAKING:** The `haptic_events_dropped_total` metric; use `haptic_events_dropped_critical_total`.
 
 ### Fixed
 
 - Stop reporting normal controller shutdown cancellations and leadership handover as failures.
 - Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
-- Overriding a value a bundled validationTest asserts the default of (`haproxy.ports.http`/`https`, `hardStopAfter`, `tune.bufsize`, `ssl_redirect_default`, basic-auth hash validation) no longer fails the configuration at load.
+- Overriding a value a bundled validationTest asserts the default of (`haproxy.ports.http`/`https`, `hardStopAfter`, `tune.bufsize`, `sslRedirectDefault`, basic-auth hash validation) no longer fails the configuration at load.
 
 ### Helm chart
 
 #### Changed
 
 - **BREAKING for Varnish users:** Lock shared memory with a bundled non-root image; cluster policy must allow `IPC_LOCK`.
+- **BREAKING:** Rename extraContext `timeout_connect`, `timeout_client`, `timeout_server`, `timeout_http_request` and `timeout_http_keep_alive` to `timeoutConnect`, `timeoutClient`, `timeoutServer`, `timeoutHttpRequest` and `timeoutHttpKeepAlive`; the old keys fail the install.
+- **BREAKING:** Rename extraContext `ssl_redirect_default` to `sslRedirectDefault`, now a boolean; the old key and a quoted value fail the install.
+- **BREAKING:** Remove extraContext `hapticHstsMaxAge`; `haproxy-haptic.org/hsts` without `hsts-max-age` uses `tls.hsts.maxAge`, so its default `max-age` drops from two years to one.
+- The controller dashboard's events-dropped panel splits drops by subscriber.
 - Set `testExtraContext` to the extraContext computed from the chart defaults, keeping the deployment's library set, HAProxy version and feature switches.
 
 #### Fixed

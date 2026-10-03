@@ -122,6 +122,9 @@ func parseApply(r *http.Request) (*applyRequest, error) {
 			if err := json.Unmarshal(body, &req.manifest); err != nil {
 				return nil, fmt.Errorf("decode manifest: %w", err)
 			}
+			if v := req.manifest.IdentityVersion; v != api.ExactIdentityVersion {
+				return nil, fmt.Errorf("identity_version %d is unsupported; this agent requires %d", v, api.ExactIdentityVersion)
+			}
 			sawManifest = true
 		case api.PartPlan:
 			req.plan = body
@@ -141,7 +144,7 @@ func parseApply(r *http.Request) (*applyRequest, error) {
 // apply runs the contract's stages in order. Callers hold a.mu.
 func (a *Agent) apply(req *applyRequest) outcome {
 	m := &req.manifest
-	normalizeLegacyManifest(m)
+	demoteProoflessAuto(m)
 	if conflict := a.fence(m); conflict != nil {
 		return outcome{status: http.StatusConflict, conflict: conflict}
 	}
@@ -166,26 +169,12 @@ func (a *Agent) apply(req *applyRequest) outcome {
 	return out
 }
 
-func normalizeLegacyManifest(m *api.Manifest) {
-	if m.IdentityVersion == api.ExactIdentityVersion {
-		if m.Mode == api.ModeAuto && m.ExpectedWorkerOpsPlanProof == "" && len(m.InPlaceOps) == 0 {
-			m.Mode = api.ModeReload
-			m.Ops = nil
-			m.OpBatches = nil
-		}
-		return
+func demoteProoflessAuto(m *api.Manifest) {
+	if m.Mode == api.ModeAuto && m.ExpectedWorkerOpsPlanProof == "" && len(m.InPlaceOps) == 0 {
+		m.Mode = api.ModeReload
+		m.Ops = nil
+		m.OpBatches = nil
 	}
-	m.Mode = api.ModeReload
-	m.Ops = nil
-	m.OpBatches = nil
-	m.InPlaceOps = nil
-	m.ExpectedPrevPlanProof = ""
-	m.ExpectedWorkerOpsPlanID = ""
-	m.ExpectedWorkerOpsPlanProof = ""
-	m.WorkerOpsPlanID = ""
-	m.WorkerOpsPlanProof = ""
-	m.ValidatedPlanID = ""
-	m.ValidatedPlanProof = ""
 }
 
 // runMode is the apply itself: a revert lands the last known good set, anything
@@ -234,10 +223,10 @@ func (a *Agent) fence(m *api.Manifest) *api.Conflict {
 		return a.conflict("prev_mismatch")
 	case m.ExpectedPrevToken != a.state.AppliedToken:
 		return a.conflict("prev_mismatch")
-	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode != api.ModeReload &&
+	case m.Mode != api.ModeReload &&
 		!samePlanRef(m.ExpectedPrevPlanID, m.ExpectedPrevPlanProof, a.state.AppliedPlanID, a.state.AppliedPlanProof):
 		return a.conflict("prev_mismatch")
-	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode == api.ModeReload &&
+	case m.Mode == api.ModeReload &&
 		a.state.AppliedPlanProof != "" && m.ExpectedPrevPlanProof != a.state.AppliedPlanProof:
 		return a.conflict("prev_mismatch")
 	case (m.Mode == api.ModeAuto || a.inPlaceWillRun(m)) && !samePlanRef(

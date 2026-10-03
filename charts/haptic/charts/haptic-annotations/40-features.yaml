@@ -462,12 +462,12 @@ templateSnippets:
   # HSTS — host registration into gf["hstsHosts"] via the shared macro. base.yaml
   # features-190-hsts-map builds hsts.map and frontend-filters-080-hsts emits the
   # single shared response-header rule (map-only, reload-free). Default max-age
-  # comes from the library extraContext default hapticHstsMaxAge (2 years).
+  # comes from extraContext.tls.hsts.maxAge, shared with the global HSTS header.
   # ==========================================================================
   features-155-haptic-hsts:
     requires: [ingresses]
     incremental:
-      bindingsTemplate: '{{- toJSON(map[string]any{"ingresses": map[string]any{"defaultMaxAge": extraContext | dig("hapticHstsMaxAge") | fallback("63072000")}}) -}}'
+      bindingsTemplate: '{{- toJSON(map[string]any{"ingresses": map[string]any{"defaultMaxAge": extraContext | dig("tls", "hsts", "maxAge") | fallback("31536000")}}) -}}'
       whenAnyPathExists:
         - "metadata.annotations['haproxy-haptic.org/hsts']"
         - "metadata.annotations['haproxy-haptic.org/hsts-include-subdomains']"
@@ -481,7 +481,7 @@ templateSnippets:
 
         Annotations:
           - haproxy-haptic.org/hsts: "true" enables HSTS for the host(s)
-          - haproxy-haptic.org/hsts-max-age: seconds (default extraContext.hapticHstsMaxAge, 63072000)
+          - haproxy-haptic.org/hsts-max-age: seconds (default extraContext.tls.hsts.maxAge, 31536000)
           - haproxy-haptic.org/hsts-include-subdomains: "true" adds includeSubDomains
           - haproxy-haptic.org/hsts-preload: "true" adds preload
       #}

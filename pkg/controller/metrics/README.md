@@ -84,7 +84,6 @@ Each agent also exports its own view on the pod's `agent-metrics` port; [monitor
 |--------|------|--------|----------------|
 | `haptic_event_subscribers` | gauge | — | Live subscribers on the `EventBus`. Drops during normal ops usually indicate a crash |
 | `haptic_events_published_total` | counter | — | Total publishes |
-| `haptic_events_dropped_total` | counter | — | Publishes where the subscriber's channel was full |
 | `haptic_events_dropped_critical_total` | counter | — | Drops where the buffered event was marked critical |
 | `haptic_events_dropped_by_subscriber_total` | counter | `subscriber`, `event_type` | Drops attributed to each subscriber/event-type pair (the second label lets dashboards split by which event type the subscriber couldn't keep up with) |
 | `haptic_events_dropped_observability_total` | gauge | — | Drops to the observability subscribers (commentator, debug buffer); expected to be low but non-zero on bursts |

@@ -225,7 +225,7 @@ if ! helm template "$CHART_DIR" \
     --set haproxy.ports.https=9443 \
     --set controller.config.templatingSettings.extraContext.hardStopAfter=61m \
     --set controller.config.templatingSettings.extraContext.tune.bufsize=262144 \
-    --set controller.config.templatingSettings.extraContext.ssl_redirect_default=true \
+    --set controller.config.templatingSettings.extraContext.sslRedirectDefault=true \
     --set controller.config.templatingSettings.extraContext.ingressDefaultSSLRedirect=true \
     --set 'controller.config.templatingSettings.extraContext.annotationCompatibility.basicAuth.passwordHashValidation.regex=^NOMATCH$' \
     | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \

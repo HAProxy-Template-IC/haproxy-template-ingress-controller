@@ -43,10 +43,6 @@ templatingSettings:
           resource: ingresses
           path: metadata.annotations['haproxy-haptic.org/compress-enable']
           default: "false"
-    # Default HSTS max-age (seconds) applied when haproxy-haptic.org/hsts is
-    # enabled without an explicit haproxy-haptic.org/hsts-max-age. 63072000 =
-    # 2 years (the modern HSTS-preload minimum).
-    hapticHstsMaxAge: "63072000"
     # Regex a haproxy-haptic.org/auth-secret password hash must match, mirroring
     # the vendor libraries' hash-validation guard. Default accepts bcrypt
     # ($2a/$2b/$2y), Apache MD5 ($apr1), and crypt SHA-256/512 ($5/$6) / MD5 ($1).

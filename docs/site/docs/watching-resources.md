@@ -318,7 +318,7 @@ The second argument is an options map. All keys are optional:
 
 | Key | Type | Default | Effect |
 |-----|------|---------|--------|
-| `interval` | Go duration string | none | Refresh interval after the first fetch. Omit it or set `"0"` to fetch once. `delay` is an alias; don't set both. |
+| `interval` | Go duration string | none | Refresh interval after the first fetch. Omit it or set `"0"` to fetch once. |
 | `timeout` | Go duration string | `30s` | Per-request timeout. |
 | `retries` | integer | 2 | Retry attempts on a failed request, with a growing delay between attempts. |
 | `critical` | boolean | `false` | Failure mode. With `false`, a failed fetch returns an empty string and rendering continues (a warning is logged). With `true`, a failed fetch aborts the render with an error, like [`fail()`](./template-reference.md#functions-and-filters). |

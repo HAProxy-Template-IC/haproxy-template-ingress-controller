@@ -90,10 +90,10 @@ func incrementalStringsLower(env native.Env, value any) string {
 	return strings.ToLower(incrementalStringOrStop(env, FuncStringsLower, value))
 }
 
-func incrementalStringsReplace(env native.Env, value, old, replacement any) string {
-	input := incrementalStringOrStop(env, FuncStringsReplace, value)
-	oldString := incrementalStringOrStop(env, FuncStringsReplace, old)
-	replacementString := incrementalStringOrStop(env, FuncStringsReplace, replacement)
+func incrementalReplace(env native.Env, value, old, replacement any) string {
+	input := incrementalStringOrStop(env, FuncReplace, value)
+	oldString := incrementalStringOrStop(env, FuncReplace, old)
+	replacementString := incrementalStringOrStop(env, FuncReplace, replacement)
 	return strings.ReplaceAll(input, oldString, replacementString)
 }
 

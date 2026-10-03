@@ -1624,13 +1624,13 @@ templateSnippets:
     template: |
       # timeout connect 100ms (vs the usual 5s): fast-fail a SYN to a just-terminated
       # pod IP so `option redispatch` retries a live server within ~200ms instead of
-      # stalling 5s into a 504. Override extraContext.timeout_connect on slow networks.
+      # stalling 5s into a 504. Override extraContext.timeoutConnect on slow networks.
       # See https://haproxy-haptic.org/docs/latest/libraries/base/#connection-reliability-and-timeouts
-      timeout connect {{ extraContext | dig("timeout_connect") | fallback("100") }}
-      timeout client {{ extraContext | dig("timeout_client") | fallback("50000") }}
-      timeout server {{ extraContext | dig("timeout_server") | fallback("50000") }}
-      {%- var tHttpReq = extraContext | dig_string("", "timeout_http_request") -%}
-      {%- var tKeepAlive = extraContext | dig_string("", "timeout_http_keep_alive") -%}
+      timeout connect {{ extraContext | dig("timeoutConnect") | fallback("100") }}
+      timeout client {{ extraContext | dig("timeoutClient") | fallback("50000") }}
+      timeout server {{ extraContext | dig("timeoutServer") | fallback("50000") }}
+      {%- var tHttpReq = extraContext | dig_string("", "timeoutHttpRequest") -%}
+      {%- var tKeepAlive = extraContext | dig_string("", "timeoutHttpKeepAlive") -%}
       {%- if tHttpReq != "" %}
       timeout http-request {{ tHttpReq }}
       {%- end -%}
@@ -3009,6 +3009,17 @@ validationTests:
       - type: haproxy_valid
       - {type: not_contains, target: haproxy.cfg, pattern: 'hard-stop-after'}
 
+
+  test-defaults-timeout-overrides:
+    fixtures: {}
+    extraContext: {timeoutConnect: "5000", timeoutClient: "60000", timeoutServer: "70000", timeoutHttpRequest: "10s", timeoutHttpKeepAlive: "2s"}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'timeout connect 5000\n'}
+      - {type: contains, target: haproxy.cfg, pattern: 'timeout client 60000\n'}
+      - {type: contains, target: haproxy.cfg, pattern: 'timeout server 70000\n'}
+      - {type: contains, target: haproxy.cfg, pattern: 'timeout http-request 10s\n'}
+      - {type: contains, target: haproxy.cfg, pattern: 'timeout http-keep-alive 2s\n'}
 
   test-retry-on-covers-pod-termination-reset:
     description: "A terminating pod accepts the connection then RSTs, which HAProxy reports as 502 SH-- with retries 0. The default retry-on conn-failure does not match it; empty-response does."

@@ -17,6 +17,73 @@ If you override `cache.varnish.image`, remove the override to use the bundled
 image, or supply an image with `cap_ipc_lock=ep` on `varnishd`. See
 [shared-log memory](operations/response-cache.md#shared-log-memory).
 
+## Upgrading to 0.3
+
+0.3 renames or removes several values and template features. The chart refuses
+to install while your values still use a removed key, and names the
+replacement in the error.
+
+### Rename the timeout, SSL redirect, and HSTS keys
+
+Under `controller.config.templatingSettings.extraContext`, rename these keys:
+
+| 0.2 key | 0.3 key |
+|---------|---------|
+| `timeout_connect` | `timeoutConnect` |
+| `timeout_client` | `timeoutClient` |
+| `timeout_server` | `timeoutServer` |
+| `timeout_http_request` | `timeoutHttpRequest` |
+| `timeout_http_keep_alive` | `timeoutHttpKeepAlive` |
+| `ssl_redirect_default` | `sslRedirectDefault` |
+| `hapticHstsMaxAge` | `tls.hsts.maxAge` |
+
+`sslRedirectDefault` is a boolean. Write `true`, not `"true"`:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        timeoutConnect: "5000"
+        sslRedirectDefault: true
+```
+
+### Review the HSTS max-age default
+
+`haproxy-haptic.org/hsts` without `haproxy-haptic.org/hsts-max-age` now sends
+the `max-age` from `tls.hsts.maxAge`, which defaults to one year (`31536000`)
+instead of two. The same value sets the global HSTS header. To keep two years,
+set it explicitly:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        tls:
+          hsts:
+            maxAge: "63072000"
+```
+
+### Update templates
+
+- Rename the `http.Fetch` option `delay` to `interval`. A call that still sets
+  `delay` fails the render.
+- Replace `strings_replace(s, old, new)` with `replace(s, old, new)`.
+- `trim` is the `trim(s, cutset)` builtin everywhere. Replace a one-argument
+  `trim(s)` with `strip(s)`.
+
+### Update monitoring
+
+The `haptic_events_dropped_total` metric is removed. Query
+`haptic_events_dropped_critical_total` instead, which counted the same drops.
+
+### Update custom agent clients
+
+If you call the agent's `/v1/apply` from your own code, set
+`identity_version: 1` in the manifest. The agent rejects a manifest without it
+with `400`.
+
 ## Upgrading to 0.2
 
 Use this guide to upgrade from 0.1.0 or a 0.2.0 alpha to a stable 0.2 release. The controller
