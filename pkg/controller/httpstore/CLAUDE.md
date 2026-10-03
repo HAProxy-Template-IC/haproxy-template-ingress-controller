@@ -121,7 +121,7 @@ The `HTTPStoreWrapper` provides a `Fetch()` method callable from templates:
 {% var content = http.Fetch("https://example.com/blocklist.txt") %}
 
 {# With refresh interval #}
-{% var content = http.Fetch("https://api.example.com/data", {"delay": "5m"}) %}
+{% var content = http.Fetch("https://api.example.com/data", {"interval": "5m"}) %}
 
 {# With authentication. There is no top-level `secrets` variable — read the
    Secret like any other watched resource via the `resources` map. The token
@@ -129,13 +129,13 @@ The `HTTPStoreWrapper` provides a `Fetch()` method callable from templates:
 {% var apiSecret = resources.secrets.GetSingle("kube-system", "my-api-secret") %}
 {% var token = apiSecret | dig("data", "token") | b64decode %}
 {% var content = http.Fetch("https://api.example.com/protected",
-    {"delay": "10m"},
+    {"interval": "10m"},
     {"type": "bearer", "token": token}
 ) %}
 
 {# With all options #}
 {% var ips = http.Fetch("https://blocklist.example.com/ips.txt",
-    {"delay": "1h", "timeout": "30s", "retries": 3, "critical": true},
+    {"interval": "1h", "timeout": "30s", "retries": 3, "critical": true},
     {"type": "basic", "username": "user", "password": "pass"}
 ) %}
 ```

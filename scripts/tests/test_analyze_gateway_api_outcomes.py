@@ -64,7 +64,7 @@ class LifecycleOutcomesTests(unittest.TestCase):
         result = ANALYZER.analyze(self.directory)
         self.assertTrue(result["pass"])
         self.assertTrue(result["evidence_valid"])
-        self.assertEqual(len(result["metrics"]), 14)
+        self.assertEqual(len(result["metrics"]), 13)
         self.assertTrue(all(len(metric["per_pod"]) == 2 for metric in result["metrics"]))
 
     def test_agent_failures_are_not_hidden_by_clean_controller_counters(self):

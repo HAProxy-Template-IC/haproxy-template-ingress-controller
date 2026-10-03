@@ -134,7 +134,6 @@ func readManifest(reader *multipart.Reader) (*api.Manifest, error) {
 	if err := json.Unmarshal(raw, manifest); err != nil {
 		return nil, err
 	}
-	normalizeLegacyManifest(manifest)
 	if err := validateManifest(manifest); err != nil {
 		return nil, err
 	}
@@ -144,23 +143,6 @@ func readManifest(reader *multipart.Reader) (*api.Manifest, error) {
 		manifest.OpBatches = nil
 	}
 	return manifest, nil
-}
-
-func normalizeLegacyManifest(manifest *api.Manifest) {
-	if manifest.IdentityVersion == api.ExactIdentityVersion {
-		return
-	}
-	manifest.Mode = api.ModeReload
-	manifest.Ops = nil
-	manifest.OpBatches = nil
-	manifest.InPlaceOps = nil
-	manifest.ExpectedWorkerOpsPlanID = ""
-	manifest.ExpectedPrevPlanProof = ""
-	manifest.ExpectedWorkerOpsPlanProof = ""
-	manifest.WorkerOpsPlanID = ""
-	manifest.WorkerOpsPlanProof = ""
-	manifest.ValidatedPlanID = ""
-	manifest.ValidatedPlanProof = ""
 }
 
 // workIdentity keys the known-bad cache: the desired set and the ops, with a
@@ -208,6 +190,8 @@ func validateManifest(m *api.Manifest) error {
 		return err
 	}
 	switch {
+	case m.IdentityVersion != api.ExactIdentityVersion:
+		return fmt.Errorf("identity_version %d is unsupported; this agent requires %d", m.IdentityVersion, api.ExactIdentityVersion)
 	case m.PlanID == "":
 		return errors.New("plan_id is empty")
 	case len(m.Files) > api.MaxFiles:
@@ -218,7 +202,7 @@ func validateManifest(m *api.Manifest) error {
 		return errors.New("in-place ops need an exact expected worker plan proof")
 	case (m.ValidatedPlanID == "") != (m.ValidatedPlanProof == ""):
 		return errors.New("validated plan id and proof must be set together")
-	case m.Mode == api.ModeRevertLKG && (m.IdentityVersion != api.ExactIdentityVersion || m.PlanProof == ""):
+	case m.Mode == api.ModeRevertLKG && m.PlanProof == "":
 		return errors.New("a revert needs the refused plan proof")
 	}
 	if err := validateEnumeratedMode(m.Mode); err != nil {
@@ -269,10 +253,10 @@ func (s *Server) fence(m *api.Manifest) *api.Conflict {
 		}
 	case m.ExpectedPrevToken != s.state.AppliedToken:
 		reason = reasonPrevMismatch
-	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode != api.ModeReload &&
+	case m.Mode != api.ModeReload &&
 		(m.ExpectedPrevPlanProof == "" || m.ExpectedPrevPlanProof != s.state.AppliedPlanProof):
 		reason = reasonPrevMismatch
-	case m.IdentityVersion == api.ExactIdentityVersion && m.Mode == api.ModeReload &&
+	case m.Mode == api.ModeReload &&
 		s.state.AppliedPlanProof != "" && m.ExpectedPrevPlanProof != s.state.AppliedPlanProof:
 		reason = reasonPrevMismatch
 	case (m.Mode == api.ModeAuto || s.inPlaceWillRunLocked(m)) && !samePlanRef(

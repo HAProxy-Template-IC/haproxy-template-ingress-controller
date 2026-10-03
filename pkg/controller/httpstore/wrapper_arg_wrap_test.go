@@ -24,13 +24,13 @@ import (
 // TestParseArgs_* and TestParseOptionsArg_*.
 //
 // What's NOT covered there is the INNER-error WRAP branch: when the map
-// itself is well-formed but a nested value is invalid (e.g. delay is a
+// itself is well-formed but a nested value is invalid (e.g. interval is a
 // string that doesn't parse as a duration, or a header value isn't a
 // string), the adapter must:
 //
 //  1. Re-wrap the inner error with the "http.Fetch:" prefix so template
 //     authors see WHICH template function rejected their input — without
-//     this prefix the error trace is just "invalid delay: ..." with no
+//     this prefix the error trace is just "invalid interval: ..." with no
 //     hint that it came from the http.Fetch call.
 //
 //  2. Use %w (NOT %v) so the inner error chain is preserved and callers
@@ -55,9 +55,9 @@ var (
 		wantSubstr string // unique substring from the underlying inner error
 	}{
 		{
-			name:       "delay string is not a duration",
-			options:    map[string]any{"delay": "not-a-duration"},
-			wantSubstr: "invalid delay",
+			name:       "interval string is not a duration",
+			options:    map[string]any{"interval": "not-a-duration"},
+			wantSubstr: "invalid interval",
 		},
 		{
 			name:       "timeout string is not a duration",
@@ -170,7 +170,7 @@ func TestParseAuthFromArg_WrapsInnerError(t *testing.T) {
 func TestParseOptionsAndAuth_PreserveErrorChain(t *testing.T) {
 	t.Run("parseOptionsArg preserves Unwrap chain", func(t *testing.T) {
 		_, err := parseOptionsArg([]any{"http://example.com", map[string]any{
-			"delay": "not-a-duration",
+			"interval": "not-a-duration",
 		}})
 		require.Error(t, err)
 
@@ -181,7 +181,7 @@ func TestParseOptionsAndAuth_PreserveErrorChain(t *testing.T) {
 			"parseOptionsArg must wrap with %%w so errors.Unwrap reaches the "+
 				"inner parse error; a switch to %%v would silently break "+
 				"errors.Is/errors.As checks against future sentinel errors")
-		assert.Contains(t, inner.Error(), "invalid delay",
+		assert.Contains(t, inner.Error(), "invalid interval",
 			"the unwrapped inner error must carry the original parse failure context")
 	})
 

@@ -117,14 +117,14 @@ type ResourceStore interface {
 // This interface enables the http.Fetch() method in Scriggo templates:
 //
 //	{% var content = http.Fetch("https://example.com/blocklist.txt") %}
-//	{% var content = http.Fetch(url, map[string]any{"delay": "60s", "critical": true}) %}
+//	{% var content = http.Fetch(url, map[string]any{"interval": "60s", "critical": true}) %}
 //
 // Implementations are provided by pkg/controller/httpstore.HTTPStoreWrapper.
 type HTTPFetcher interface {
 	// Fetch fetches content from a URL with optional options and authentication.
 	// Arguments:
 	//   - args[0]: URL (string, required)
-	//   - args[1]: options (map, optional) - {"delay": "60s", "timeout": "30s", "retries": 3, "critical": true}
+	//   - args[1]: options (map, optional) - {"interval": "60s", "timeout": "30s", "retries": 3, "critical": true}
 	//   - args[2]: auth (map, optional) - {"type": "bearer"|"basic", "token": "...", ...}
 	Fetch(args ...any) (any, error)
 }

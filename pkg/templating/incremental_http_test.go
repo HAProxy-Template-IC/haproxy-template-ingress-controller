@@ -159,10 +159,7 @@ func TestCanonicalIncrementalHTTPArgsRejectsUnsafeValuesWithoutCallingMethods(t 
 	assert.Zero(t, calls)
 }
 
-func TestCanonicalIncrementalHTTPArgsRejectsIntervalAliasConflict(t *testing.T) {
-	_, err := CanonicalIncrementalHTTPArgs("https://example.test", map[string]any{
-		"interval": "1m",
-		"delay":    "1m",
-	})
-	require.ErrorContains(t, err, "set either")
+func TestCanonicalIncrementalHTTPArgsRejectsRemovedDelayOption(t *testing.T) {
+	_, err := CanonicalIncrementalHTTPArgs("https://example.test", map[string]any{"delay": "1m"})
+	require.ErrorIs(t, err, ErrHTTPFetchDelayOption)
 }

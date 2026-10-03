@@ -587,7 +587,7 @@ func TestFixtureHTTPStoreWrapper_Fetch(t *testing.T) {
 
 	t.Run("fetch with options (options are ignored)", func(t *testing.T) {
 		// Options should be ignored in fixture mode
-		result, err := wrapper.Fetch("http://example.com/data.txt", map[string]any{"delay": "5m"})
+		result, err := wrapper.Fetch("http://example.com/data.txt", map[string]any{"interval": "5m"})
 		require.NoError(t, err)
 		assert.Equal(t, "test content", result)
 	})

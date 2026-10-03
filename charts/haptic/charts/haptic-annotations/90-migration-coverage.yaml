@@ -280,7 +280,7 @@ _migrationCoverage:
         note: "Appends includeSubDomains to the Strict-Transport-Security value when \"true\"."
       haproxy-haptic.org/hsts-max-age:
         status: supported
-        note: "HSTS max-age seconds; default from extraContext hapticHstsMaxAge (63072000). Control-char guarded in the macro."
+        note: "HSTS max-age seconds; default from extraContext tls.hsts.maxAge (31536000). Control-char guarded in the macro."
       haproxy-haptic.org/hsts-preload:
         status: supported
         note: "Appends preload to the Strict-Transport-Security value when \"true\"."

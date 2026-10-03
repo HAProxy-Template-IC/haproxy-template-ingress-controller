@@ -545,6 +545,49 @@ tests:
       - failedTemplate:
           errorMessage: controller.config.migrationCoverage was removed because migration coverage is no longer a CRD field. Remove the value.
 
+  - it: rejects the renamed snake_case timeout keys
+    set:
+      controller.config.templatingSettings.extraContext.timeout_connect: "5000"
+    asserts:
+      - failedTemplate:
+          errorMessage: controller.config.templatingSettings.extraContext.timeout_connect was renamed in 0.3.0 and no longer has any effect. Rename it to timeoutConnect.
+
+  - it: rejects the renamed SSL redirect default
+    set:
+      controller.config.templatingSettings.extraContext.ssl_redirect_default: "true"
+    asserts:
+      - failedTemplate:
+          errorMessage: controller.config.templatingSettings.extraContext.ssl_redirect_default was renamed in 0.3.0 and no longer has any effect. Rename it to sslRedirectDefault.
+
+  - it: rejects a quoted SSL redirect default
+    set:
+      controller.config.templatingSettings.extraContext.sslRedirectDefault: "true"
+    asserts:
+      - failedTemplate:
+          errorMessage: controller.config.templatingSettings.extraContext.sslRedirectDefault is "true", not a boolean, so it would never enable the redirect. Set it to true or false without quotes.
+
+  - it: rejects the removed native-annotation HSTS max-age
+    set:
+      controller.config.templatingSettings.extraContext.hapticHstsMaxAge: "63072000"
+    asserts:
+      - failedTemplate:
+          errorMessage: controller.config.templatingSettings.extraContext.hapticHstsMaxAge was renamed in 0.3.0 and no longer has any effect. Rename it to tls.hsts.maxAge.
+
+  - it: passes the renamed timeout and SSL redirect keys through
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      controller.config.templatingSettings.extraContext.timeoutConnect: "5000"
+      controller.config.templatingSettings.extraContext.sslRedirectDefault: true
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.timeoutConnect
+          value: "5000"
+      - equal:
+          path: spec.templatingSettings.extraContext.sslRedirectDefault
+          value: true
+
   - it: leaves response compression off unless explicitly enabled
     documentSelector:
       path: metadata.name

@@ -102,6 +102,7 @@ const (
 	builtinToKebab           = "toKebab"
 	builtinToLower           = "toLower"
 	builtinToUpper           = "toUpper"
+	builtinTrim              = "trim"
 	builtinTrimLeft          = "trimLeft"
 	builtinTrimPrefix        = "trimPrefix"
 	builtinTrimRight         = "trimRight"

@@ -88,6 +88,10 @@ the process listens somewhere else.
 {{- range $legacy := list "debug" "statusPatchesDisabled" "password_hash_validation_regex" "password_hash_validation_error_message" "hstsEnabled" "hstsMaxAge" "hstsIncludeSubdomains" "hstsPreload" -}}
   {{- if hasKey $extraContext $legacy -}}{{- fail (printf "controller.config.templatingSettings.extraContext.%s uses a removed flat value; use the structured diagnostics, statusPatches, annotationCompatibility, or tls tree documented in the chart values reference." $legacy) -}}{{- end -}}
 {{- end -}}
+{{- range $legacy, $current := dict "timeout_connect" "timeoutConnect" "timeout_client" "timeoutClient" "timeout_server" "timeoutServer" "timeout_http_request" "timeoutHttpRequest" "timeout_http_keep_alive" "timeoutHttpKeepAlive" "ssl_redirect_default" "sslRedirectDefault" "hapticHstsMaxAge" "tls.hsts.maxAge" -}}
+  {{- if hasKey $extraContext $legacy -}}{{- fail (printf "controller.config.templatingSettings.extraContext.%s was renamed in 0.3.0 and no longer has any effect. Rename it to %s." $legacy $current) -}}{{- end -}}
+{{- end -}}
+{{- if and (hasKey $extraContext "sslRedirectDefault") (not (kindIs "bool" $extraContext.sslRedirectDefault)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.sslRedirectDefault is %q, not a boolean, so it would never enable the redirect. Set it to true or false without quotes." (toString $extraContext.sslRedirectDefault)) -}}{{- end -}}
 {{- range $reserved := list "cache" "rateLimit" "spoaHub" "controllerName" "gatewayClassResource" "haproxyVersion" "controllerNamespace" "annotationLibraries" -}}
   {{- if hasKey $extraContext $reserved -}}{{- fail (printf "controller.config.templatingSettings.extraContext.%s is chart-managed; configure its component-owned Helm value instead of overriding the generated runtime context." $reserved) -}}{{- end -}}
 {{- end -}}

@@ -4,7 +4,7 @@ Event adapter around `pkg/httpstore.HTTPStore` plus the template-callable `HTTPS
 
 ## Overview
 
-Templates can pull external content via `{% var blocklist = http.Fetch("https://example.com/list.txt", {"delay": "5m"}) %}`. The pure store in `pkg/httpstore` handles fetching, caching, and the two-version pending/accepted lifecycle without knowing about the controller's event bus. This package is the event adapter that wraps the pure store with:
+Templates can pull external content via `{% var blocklist = http.Fetch("https://example.com/list.txt", {"interval": "5m"}) %}`. The pure store in `pkg/httpstore` handles fetching, caching, and the two-version pending/accepted lifecycle without knowing about the controller's event bus. This package is the event adapter that wraps the pure store with:
 
 - A refresh timer per registered URL (driven by `interval` in the `http.Fetch` options).
 - Source reconciliation on authoritative live-render calls, so credential changes refetch and interval changes replace or stop the timer.

@@ -178,7 +178,7 @@ templateSnippets:
   haproxytech-ssl-redirect-publications:
     requires: [ingresses]
     incremental:
-      bindingsTemplate: '{{- toJSON(map[string]any{"ingresses": map[string]any{"sslRedirectDefault": extraContext | dig_string("", "ssl_redirect_default")}}) -}}'
+      bindingsTemplate: '{{- toJSON(map[string]any{"ingresses": map[string]any{"sslRedirectDefault": extraContext | dig("sslRedirectDefault") | fallback(false)}}) -}}'
       group: haproxytech-ssl-redirect-hosts
       effects: [publishValue]
     template: |-
@@ -186,7 +186,7 @@ templateSnippets:
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
       {%- if ingress != nil -%}
         {%- var sslRedirect = ingress.Metadata.Annotations["haproxy.org/ssl-redirect"] -%}
-        {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && tostring(props["sslRedirectDefault"]) == "true") -%}
+        {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && props["sslRedirectDefault"] == true) -%}
         {%- if shouldRedirect && ingress.Metadata.Annotations["haproxy.org/ssl-redirect-port"] == "" -%}
           {%- var code = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-code"] -%}
           {%- if code == "" -%}{%- code = "302" -%}{%- end -%}
@@ -238,7 +238,7 @@ templateSnippets:
   haproxytech-ssl-redirect-port-publications:
     requires: [ingresses]
     incremental:
-      bindingsTemplate: '{{- toJSON(map[string]any{"ingresses": map[string]any{"sslRedirectDefault": extraContext | dig_string("", "ssl_redirect_default")}}) -}}'
+      bindingsTemplate: '{{- toJSON(map[string]any{"ingresses": map[string]any{"sslRedirectDefault": extraContext | dig("sslRedirectDefault") | fallback(false)}}) -}}'
       whenAnyPathExists: ["metadata.annotations['haproxy.org/ssl-redirect-port']"]
       group: haproxytech-ssl-redirect-port-hosts
       effects: [publishValue, recordEvent]
@@ -254,7 +254,7 @@ templateSnippets:
             {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + redirectPort + "' for annotation 'haproxy.org/ssl-redirect-port' on Ingress '" + key + "'. Must be a positive integer port.") -}}
           {%- else -%}
             {%- var sslRedirect = ingress.Metadata.Annotations["haproxy.org/ssl-redirect"] -%}
-            {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && tostring(props["sslRedirectDefault"]) == "true") -%}
+            {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && props["sslRedirectDefault"] == true) -%}
             {%- if shouldRedirect -%}
               {%- var code = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-code"] -%}
               {%- if code == "" -%}{%- code = "302" -%}{%- end -%}
@@ -1756,8 +1756,8 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "user admin password"}
 
   test-haproxytech-ssl-redirect-default-enabled:
-    description: SSL redirect applies when annotation absent and ssl_redirect_default is "true"
-    extraContext: {ssl_redirect_default: "true"}
+    description: SSL redirect applies when annotation absent and sslRedirectDefault is true
+    extraContext: {sslRedirectDefault: true}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1820,7 +1820,7 @@ validationTests:
 
   test-haproxytech-ssl-redirect-default-opt-out:
     description: SSL redirect does not apply when annotation is "false" even with default
-    extraContext: {ssl_redirect_default: "true"}
+    extraContext: {sslRedirectDefault: true}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1849,7 +1849,7 @@ validationTests:
 
   test-haproxytech-ssl-redirect-many-hosts:
     description: SSL redirect works with many hosts using map-based matching
-    extraContext: {ssl_redirect_default: "true"}
+    extraContext: {sslRedirectDefault: true}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -2087,7 +2087,7 @@ validationTests:
     description: >-
       Without haproxy.org/ssl-redirect-port the default scheme redirect path is used
       (regression guard for the port variant).
-    extraContext: {ssl_redirect_default: "true"}
+    extraContext: {sslRedirectDefault: true}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -2714,7 +2714,7 @@ _migrationCoverage:
         note: Comma-separated CIDRs never rate-limited; invalid CIDRs fail the render.
       haproxy.org/ssl-redirect:
         status: supported
-        note: '"true" redirects HTTP to HTTPS; the default can be flipped via extraContext.ssl_redirect_default.'
+        note: '"true" redirects HTTP to HTTPS; the default can be flipped via extraContext.sslRedirectDefault.'
       haproxy.org/ssl-redirect-code:
         status: supported
         note: Redirect status code (default 302).

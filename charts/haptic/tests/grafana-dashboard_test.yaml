@@ -150,7 +150,7 @@ tests:
     asserts:
       - matchRegex:
           path: data["haptic.json"]
-          pattern: "haptic_events_dropped_total"
+          pattern: "haptic_events_dropped_by_subscriber_total"
 
   - it: should include critical event dropping metrics in dashboard
     asserts:

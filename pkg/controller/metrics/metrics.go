@@ -111,7 +111,6 @@ type Metrics struct {
 	// Event metrics
 	EventSubscribers           prometheus.Gauge
 	EventsPublished            prometheus.Counter
-	EventsDropped              prometheus.Counter     // Total drops (backwards compatible)
 	EventsDroppedCritical      prometheus.Counter     // Drops from critical subscribers (alert-worthy)
 	EventsDroppedBySubscriber  *prometheus.CounterVec // Drops by subscriber and event type
 	EventsDroppedObservability prometheus.Gauge       // Drops from observability subscribers (polled, expected)
@@ -331,11 +330,6 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_events_published_total",
 			"Total number of events published",
-		),
-		EventsDropped: pkgmetrics.NewCounter(
-			registry,
-			"haptic_events_dropped_total",
-			"Total number of events dropped due to full subscriber buffers",
 		),
 		EventsDroppedCritical: pkgmetrics.NewCounter(
 			registry,
@@ -704,7 +698,7 @@ func (m *Metrics) AddTimeAsLeader(seconds float64) {
 }
 
 // RecordEventDrop records an event drop due to full subscriber buffer.
-// This increments both aggregate counters and per-subscriber counters.
+// This increments the critical total and the per-subscriber counter.
 // Call this from the drop callback registered with EventBus.SetDropCallback().
 //
 // Parameters:
@@ -718,7 +712,6 @@ func (m *Metrics) RecordEventDrop(subscriberName, eventType string) {
 // per-iteration registry.
 func (m *Metrics) AddEventDrops(subscriberName, eventType string, count uint64) {
 	increment := float64(count)
-	m.EventsDropped.Add(increment)
 	m.EventsDroppedCritical.Add(increment)
 	m.EventsDroppedBySubscriber.WithLabelValues(subscriberName, eventType).Add(increment)
 }

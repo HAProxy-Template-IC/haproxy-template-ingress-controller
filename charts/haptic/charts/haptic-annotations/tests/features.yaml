@@ -154,6 +154,29 @@ validationTests:
         target: map:hsts.map
         pattern: "hsts.example.com max-age%3d31536000%3b%20includeSubDomains%3b%20preload"
 
+  test-haptic-hsts-default-max-age:
+    description: haproxy-haptic.org/hsts without hsts-max-age takes extraContext.tls.hsts.maxAge
+    extraContext: {tls: {hsts: {maxAge: "600"}}}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hsts-default-ingress
+            annotations:
+              haproxy-haptic.org/hsts: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hsts-default.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:hsts.map
+        pattern: "(?m)^hsts-default\\.example\\.com max-age%3d600$"
+
   test-annotation-hsts-conflict-preserves-library-order:
     description: The first HSTS producer in features-155 name order owns a host when annotation families conflict. Ingress names sort the winner last, so name order cannot produce this result.
     _helm_skip_test: '{{ include "haptic.vendorAnnotationLibraries.incomplete" . }}'

@@ -537,7 +537,7 @@ func (c *Component) reconcilePreparedURLLocked(url string, state httpstore.Sourc
 
 	c.logger.Debug("Registering URL for periodic refresh",
 		"url", httpstore.RedactURL(url),
-		"delay", state.Delay.String())
+		"interval", state.Delay.String())
 
 	c.refreshGeneration[url]++
 	c.refreshSourceGeneration[url] = state.Generation

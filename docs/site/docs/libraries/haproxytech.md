@@ -434,7 +434,7 @@ haproxy.org/ssl-redirect-code: "301"
 
 ### `haproxy.org/ssl-redirect-port`
 
-Redirect HTTP requests to HTTPS on an explicit port instead of the default `https://` scheme. The original request URI is preserved. Requires `ssl-redirect: "true"` (or the `ssl_redirect_default` extra-context flag), and uses `ssl-redirect-code` for the status code (default `302`). Must be a positive integer port — other values fail the render.
+Redirect HTTP requests to HTTPS on an explicit port instead of the default `https://` scheme. The original request URI is preserved. Requires `ssl-redirect: "true"` (or `extraContext.sslRedirectDefault: true`), and uses `ssl-redirect-code` for the status code (default `302`). Must be a positive integer port — other values fail the render.
 
 ```yaml
 annotations:

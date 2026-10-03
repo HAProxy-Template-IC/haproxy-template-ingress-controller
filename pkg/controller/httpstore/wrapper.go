@@ -27,6 +27,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // SourceMode controls whether a render may replace the shared HTTP source.
@@ -245,15 +246,15 @@ func (w *HTTPStoreWrapper) CommittedAcceptedReplayState() (*httpstore.AcceptedRe
 //	  {{ http.Fetch("https://example.com/data.txt", {"interval": "60s"}) }}
 //
 //	With options:
-//	  {{ http.Fetch("https://example.com/data.txt", {"delay": "5m", "timeout": "30s", "retries": 3, "critical": true}) }}
+//	  {{ http.Fetch("https://example.com/data.txt", {"interval": "5m", "timeout": "30s", "retries": 3, "critical": true}) }}
 //
 //	With authentication:
-//	  {{ http.Fetch("https://api.example.com/data", {"delay": "5m"}, {"type": "bearer", "token": token}) }}
-//	  {{ http.Fetch("https://api.example.com/data", {"delay": "5m"}, {"type": "basic", "username": user, "password": pass}) }}
+//	  {{ http.Fetch("https://api.example.com/data", {"interval": "5m"}, {"type": "bearer", "token": token}) }}
+//	  {{ http.Fetch("https://api.example.com/data", {"interval": "5m"}, {"type": "basic", "username": user, "password": pass}) }}
 //
 // Parameters (variadic):
 //   - url (string, required): The HTTP(S) URL to fetch
-//   - options (map, optional): {"delay": "60s", "timeout": "30s", "retries": 3, "critical": true}
+//   - options (map, optional): {"interval": "60s", "timeout": "30s", "retries": 3, "critical": true}
 //   - auth (map, optional): {"type": "bearer"|"basic"|"header", "token": "...", "username": "...", "password": "..."}
 //
 // Returns:
@@ -522,35 +523,16 @@ func parseAuthFromArg(arg any) (*httpstore.AuthConfig, error) {
 }
 
 // parseFetchOptions parses a map into FetchOptions.
-// Option keys for the refresh cadence. optDelay is the original spelling: it
-// reads like a wait before the first fetch, which it never was — that fetch is
-// synchronous — so optInterval is the name and optDelay is kept working.
-const (
-	optInterval = "interval"
-	optDelay    = "delay"
-)
-
 func parseFetchOptions(m map[string]any) (httpstore.FetchOptions, error) {
 	opts := httpstore.FetchOptions{}
 
-	// "interval" is the name; "delay" is the original spelling, kept working.
-	// Rejecting both together rather than letting one silently win: a config
-	// setting each to a different value has no obvious right answer, and
-	// picking one would leave the other looking effective when it is not.
-	_, hasInterval := m[optInterval]
-	_, hasDelay := m[optDelay]
-	if hasInterval && hasDelay {
-		return opts, errors.New(
-			"http.Fetch: set either \"interval\" or its deprecated alias \"delay\", not both")
+	if _, ok := m["delay"]; ok {
+		return opts, templating.ErrHTTPFetchDelayOption
 	}
-	key := optInterval
-	if hasDelay {
-		key = optDelay
-	}
-	if v, ok := m[key]; ok {
+	if v, ok := m["interval"]; ok {
 		d, err := parseDuration(v)
 		if err != nil {
-			return opts, fmt.Errorf("invalid %s: %w", key, err)
+			return opts, fmt.Errorf("invalid interval: %w", err)
 		}
 		opts.Delay = d
 	}

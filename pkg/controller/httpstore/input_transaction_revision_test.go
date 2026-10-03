@@ -191,7 +191,7 @@ func TestPreparedInputCommitAbortRollsBackTentativePublication(t *testing.T) {
 	component := New(bus, logger, 0)
 	wrapper := NewHTTPStoreWrapper(t.Context(), component, logger, nil, SourceModeAuthoritative)
 	_, snapshot, err := wrapper.FetchSnapshot(server.URL, map[string]any{
-		"critical": true, "delay": "1h",
+		"critical": true, "interval": "1h",
 	})
 	require.NoError(t, err)
 	prepared, err := wrapper.InputTransaction().PrepareCommit(t.Context())
@@ -210,7 +210,7 @@ func TestPreparedInputCommitAbortRollsBackTentativePublication(t *testing.T) {
 
 	retry := NewHTTPStoreWrapper(t.Context(), component, logger, nil, SourceModeAuthoritative)
 	_, _, err = retry.FetchSnapshot(server.URL, map[string]any{
-		"critical": true, "delay": "1h",
+		"critical": true, "interval": "1h",
 	})
 	require.NoError(t, err)
 	require.NoError(t, retry.InputTransaction().Commit(t.Context()))
@@ -283,7 +283,7 @@ func TestPreparedInputCommitRejectsPostSealReleasePlanPoison(t *testing.T) {
 			component := New(bus, logger, 0)
 			wrapper := NewHTTPStoreWrapper(t.Context(), component, logger, nil, SourceModeAuthoritative)
 			_, snapshot, err := wrapper.FetchSnapshot(server.URL, map[string]any{
-				"critical": true, "delay": "1h",
+				"critical": true, "interval": "1h",
 			})
 			require.NoError(t, err)
 			prepared, err := wrapper.InputTransaction().PrepareCommit(t.Context())
@@ -585,7 +585,7 @@ func TestPreparedInputCommitReleaseRollsBackPostPublishPoison(t *testing.T) {
 			component := New(bus, logger, 0)
 			wrapper := NewHTTPStoreWrapper(t.Context(), component, logger, nil, SourceModeAuthoritative)
 			_, snapshot, err := wrapper.FetchSnapshot(server.URL, map[string]any{
-				"critical": true, "delay": "1h",
+				"critical": true, "interval": "1h",
 			})
 			require.NoError(t, err)
 			prepared, err := wrapper.InputTransaction().PrepareCommit(t.Context())
@@ -604,7 +604,7 @@ func TestPreparedInputCommitReleaseRollsBackPostPublishPoison(t *testing.T) {
 
 			retry := NewHTTPStoreWrapper(t.Context(), component, logger, nil, SourceModeAuthoritative)
 			_, _, err = retry.FetchSnapshot(server.URL, map[string]any{
-				"critical": true, "delay": "1h",
+				"critical": true, "interval": "1h",
 			})
 			require.NoError(t, err)
 			require.NoError(t, retry.InputTransaction().Commit(t.Context()))

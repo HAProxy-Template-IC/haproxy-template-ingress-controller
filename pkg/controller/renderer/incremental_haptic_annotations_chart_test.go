@@ -75,7 +75,7 @@ var contribute = func(enabledAnnotation string, maxAgeAnnotation string, subdoma
   }
 }
 contribute("haproxy-ingress.github.io/hsts", "haproxy-ingress.github.io/hsts-max-age", "haproxy-ingress.github.io/hsts-include-subdomains", "haproxy-ingress.github.io/hsts-preload", "15768000")
-contribute("haproxy-haptic.org/hsts", "haproxy-haptic.org/hsts-max-age", "haproxy-haptic.org/hsts-include-subdomains", "haproxy-haptic.org/hsts-preload", tostring(extraContext | dig("hapticHstsMaxAge") | fallback("63072000")))
+contribute("haproxy-haptic.org/hsts", "haproxy-haptic.org/hsts-max-age", "haproxy-haptic.org/hsts-include-subdomains", "haproxy-haptic.org/hsts-preload", tostring(extraContext | dig("tls", "hsts", "maxAge") | fallback("31536000")))
 contribute("nginx.ingress.kubernetes.io/hsts", "nginx.ingress.kubernetes.io/hsts-max-age", "nginx.ingress.kubernetes.io/hsts-include-subdomains", "nginx.ingress.kubernetes.io/hsts-preload", "15724800")
 %%}
 {{ "L\n" -}}
@@ -556,9 +556,9 @@ func newHapticAnnotationsHSTSFixture(t *testing.T) *hapticAnnotationsHSTSFixture
 	cfg := &config.Config{
 		Dataplane: testDataplaneConfig(),
 		TemplatingSettings: config.TemplatingSettings{ExtraContext: map[string]any{
-			"hapticHstsMaxAge": "63072000",
-			"poisonRead":       false,
-			"failAfterReplay":  false,
+			"tls":             map[string]any{"hsts": map[string]any{"maxAge": "31536000"}},
+			"poisonRead":      false,
+			"failAfterReplay": false,
 		}},
 		WatchedResources: map[string]config.WatchedResource{
 			"ingresses": {

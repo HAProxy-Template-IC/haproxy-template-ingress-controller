@@ -103,7 +103,6 @@ declare -a SCALE_ACTIVITY_METRICS=(
     haptic_runtime_map_divergence_total
     haptic_validation_total
     haptic_validation_errors_total
-    haptic_events_dropped_total
     haptic_events_dropped_critical_total
 )
 output_initialized=false
@@ -2782,7 +2781,6 @@ outcome_metrics = (
     "haptic_validation_errors_total",
     "haptic_apply_rejected_total",
     "haptic_runtime_map_divergence_total",
-    "haptic_events_dropped_total",
     "haptic_events_dropped_critical_total",
 )
 outcome_deltas = {name: by_name[name]["delta"] for name in outcome_metrics}

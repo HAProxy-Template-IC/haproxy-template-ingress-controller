@@ -306,7 +306,6 @@ These complement `haptic_events_published_total` / `haptic_event_subscribers` fr
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `haptic_events_dropped_total` | Counter | — | Critical event drops; equivalent to `haptic_events_dropped_critical_total` |
 | `haptic_events_dropped_critical_total` | Counter | — | Critical event drops that can interrupt configuration delivery |
 | `haptic_events_dropped_observability_total` | Gauge | — | Drops from observability-only subscribers (expected under load, non-alerting) |
 | `haptic_events_dropped_by_subscriber_total` | Counter | `subscriber`, `event_type` | Per-subscriber drop counts for diagnosing which component is falling behind |

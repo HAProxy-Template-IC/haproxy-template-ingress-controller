@@ -1775,7 +1775,7 @@ Scriggo supports both function call syntax and pipe syntax:
 | `len(v)` | Length of slice/map/string | `len(items)` |
 | `toLower(s)` | Lowercase string | `toLower("ABC")` → `"abc"` |
 | `toUpper(s)` | Uppercase string | `toUpper("abc")` → `"ABC"` |
-| `trim(s)` / `strip(s)` | Trim whitespace | `trim("  x  ")` → `"x"` |
+| `strip(s)` | Trim whitespace | `strip("  x  ")` → `"x"` |
 | `replace(s, old, new)` | Replace all occurrences | `replace("a-b", "-", "_")` |
 | `split(s, sep)` | Split string | `split("a,b,c", ",")` → `[]string` |
 | `join(slice, sep)` | Join slice | `join([]string{"a","b"}, ",")` → `"a,b"` |

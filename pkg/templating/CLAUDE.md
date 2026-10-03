@@ -110,7 +110,7 @@ pkg/templating/
 ├── filters_collection.go       # glob_match / shard_slice / first_seen
 ├── filters_pipeline.go         # filter / reject / flat_map / unique / unique_by / group_by / sort_by
 ├── filters_navigation.go       # dig / fallback / coalesce / merge / keys
-├── filters_string.go           # toLower / replace / split / trim / hasPrefix / hasSuffix / strip / b64decode / debug / indent
+├── filters_string.go           # toLower / replace / split / hasPrefix / hasSuffix / strip / b64decode / debug / indent
 ├── filters_type.go             # tostring / toint / tofloat / toSlice
 ├── filters_status.go           # Generic resource status-patch helpers (statusPatch, condition, transitionTime functions)
 ├── filters_jsonpath.go         # Generic resource-agnostic helpers: dynamic resource access + concrete-JSONPath get/set (resource / jsonpathGet / jsonpathSet)
@@ -1342,7 +1342,6 @@ const (
     FilterSortBy    = "sort_by"
     FilterGlobMatch = "glob_match"
     FilterStrip     = "strip"
-    FilterTrim      = "trim"
     FilterB64Decode = "b64decode"
     FilterDebug     = "debug"
     FilterIndent    = "indent"

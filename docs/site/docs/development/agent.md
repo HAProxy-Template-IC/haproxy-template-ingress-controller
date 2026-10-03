@@ -55,8 +55,8 @@ are three pure steps and one round trip.
 A pod whose agent speaks a different API major, lacks an op kind the decision
 needs, or doesn't advertise `worker_fence` gets the complete file set plus a
 reload. An automatic apply from an older controller without a worker proof
-also reloads instead of executing runtime ops. The exact-identity version and
-rollback protocol remain unchanged.
+also reloads instead of executing runtime ops. A manifest without
+`identity_version: 1` is rejected with `400` and nothing is written.
 
 Which macros declare what, and what takes a backend off the reload-free lane, is
 the template author's side of the same contract; the chart's `Backend()`,

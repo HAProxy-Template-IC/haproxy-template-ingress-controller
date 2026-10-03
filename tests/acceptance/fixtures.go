@@ -1265,7 +1265,7 @@ func NewHTTPStoreHAProxyTemplateConfig(namespace, name, secretName string, leade
 				// natural retry cycle that takes 60s+. Smaller fetch timeout
 				// is appropriate here because the blocklist-server is an
 				// in-cluster Service and is expected to respond well below 1s.
-				Template: fmt.Sprintf(`{%%- var blocklist, fetchErr = http.Fetch("%s", map[string]any{"critical": true, "delay": "5s", "timeout": "5s", "retries": 3}) -%%}
+				Template: fmt.Sprintf(`{%%- var blocklist, fetchErr = http.Fetch("%s", map[string]any{"critical": true, "interval": "5s", "timeout": "5s", "retries": 3}) -%%}
 {%%- if fetchErr != nil -%%}{{ fail("failed to fetch blocklist: " + tostring(fetchErr)) }}{%%- end -%%}
 {{ blocklist }}`, blocklistURL),
 			},

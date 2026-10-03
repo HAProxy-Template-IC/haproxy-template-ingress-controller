@@ -25,7 +25,7 @@ var incrementalDeclarationNames = [...]string{
 	FilterSortBy,
 	FilterGlobMatch,
 	FilterStrip,
-	FilterTrim,
+	builtinTrim,
 	FilterB64Decode,
 	FilterB64Encode,
 	FilterIndent,
@@ -38,7 +38,6 @@ var incrementalDeclarationNames = [...]string{
 	FuncStringsSplit,
 	FuncStringsTrim,
 	FuncStringsLower,
-	FuncStringsReplace,
 	FuncStringsSplitN,
 	FuncToString,
 	FuncToInt,
@@ -138,7 +137,7 @@ var incrementalSynchronousDeclarationNames = [...]string{
 	FilterSortBy,
 	FilterGlobMatch,
 	FilterStrip,
-	FilterTrim,
+	builtinTrim,
 	FilterB64Decode,
 	FilterB64Encode,
 	FilterIndent,
@@ -151,7 +150,6 @@ var incrementalSynchronousDeclarationNames = [...]string{
 	FuncStringsSplit,
 	FuncStringsTrim,
 	FuncStringsLower,
-	FuncStringsReplace,
 	FuncStringsSplitN,
 	FuncToString,
 	FuncToInt,
@@ -315,7 +313,6 @@ func registerIncrementalDeterministicDeclarations(decl native.Declarations) {
 func registerIncrementalStringDeclarations(decl native.Declarations) {
 	decl[FilterGlobMatch] = incrementalGlobMatch
 	decl[FilterStrip] = incrementalStrip
-	decl[FilterTrim] = incrementalStrip
 	decl[FilterB64Decode] = incrementalB64Decode
 	decl[FilterB64Encode] = incrementalB64Encode
 	decl[FilterIndent] = incrementalIndent
@@ -323,7 +320,6 @@ func registerIncrementalStringDeclarations(decl native.Declarations) {
 	decl[FuncStringsSplit] = incrementalStringsSplit
 	decl[FuncStringsTrim] = incrementalStringsTrim
 	decl[FuncStringsLower] = incrementalStringsLower
-	decl[FuncStringsReplace] = incrementalStringsReplace
 	decl[FuncStringsSplitN] = incrementalStringsSplitN
 	decl[FuncToString] = incrementalToString
 	decl[FuncToInt] = incrementalToInt
@@ -336,7 +332,7 @@ func registerIncrementalStringDeclarations(decl native.Declarations) {
 	decl[FuncDig] = incrementalDig
 	decl[FuncDigString] = incrementalDigString
 	decl[FuncJoin] = incrementalJoin
-	decl[FuncReplace] = incrementalStringsReplace
+	decl[FuncReplace] = incrementalReplace
 	decl[FuncJoinKey] = incrementalJoinKey
 	decl[FuncSemverGte] = incrementalSemverGte
 	decl[FuncMakeGUID] = incrementalMakeGUID

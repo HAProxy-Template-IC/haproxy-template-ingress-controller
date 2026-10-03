@@ -13,7 +13,6 @@ SCALARS = {
     "haptic_reconciliation_errors_total",
     "haptic_deployment_errors_total",
     "haptic_validation_errors_total",
-    "haptic_events_dropped_total",
     "haptic_events_dropped_critical_total",
 }
 # These label vectors have no samples until their first event.

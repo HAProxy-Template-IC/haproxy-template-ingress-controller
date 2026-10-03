@@ -57,7 +57,7 @@ func NewFixtureHTTPStoreWrapper(store *httpstore.HTTPStore, logger *slog.Logger)
 // Template usage (same as production wrapper):
 //
 //	{{ http.Fetch("http://example.com/data.txt") }}
-//	{{ http.Fetch("http://example.com/data.txt", {"delay": "5m"}) }}
+//	{{ http.Fetch("http://example.com/data.txt", {"interval": "5m"}) }}
 //
 // In fixture mode:
 //   - Options (delay, timeout, etc.) are ignored

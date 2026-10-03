@@ -231,7 +231,7 @@ controller:
   config:
     templatingSettings:
       extraContext:
-        timeout_connect: "5000"   # ms; also timeout_client / timeout_server / timeout_http_request / timeout_http_keep_alive
+        timeoutConnect: "5000"   # ms; also timeoutClient / timeoutServer / timeoutHttpRequest / timeoutHttpKeepAlive
 ```
 
 **`option redispatch`** allows a failed connection attempt to retry another

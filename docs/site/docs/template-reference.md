@@ -118,7 +118,7 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 
 | Function | Purpose | Example |
 |----------|---------|---------|
-| `strings_contains(s, sub)`, `strings_split(s, sep)`, `strings_splitn(s, sep, n)`, `strings_trim(s)`, `strings_lower(s)`, `strings_replace(s, old, new)` | `any`-tolerant string operations — they coerce their arguments, so they work on values read out of a `map[string]any` without a cast first. `strings_trim` trims whitespace; `strings_splitn` caps the result at `n` parts | `strings_splitn(annotation, ":", 2)` |
+| `strings_contains(s, sub)`, `strings_split(s, sep)`, `strings_splitn(s, sep, n)`, `strings_trim(s)`, `strings_lower(s)` | `any`-tolerant string operations — they coerce their arguments, so they work on values read out of a `map[string]any` without a cast first. `strings_trim` trims whitespace; `strings_splitn` caps the result at `n` parts | `strings_splitn(annotation, ":", 2)` |
 | `title(s)` | Title-case a string | `title(mode)` |
 | `isdigit(s)` | True when the string is non-empty and all digits — check before `toint()` | `{% if isdigit(port) %}` |
 | `toStringSlice(items)` | Copy scalar elements from a slice to `[]string`; a composite element fails the render | `toStringSlice(hosts)` |

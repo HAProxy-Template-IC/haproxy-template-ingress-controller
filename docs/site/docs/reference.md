@@ -378,7 +378,7 @@ These settings control how HAPTIC applies configuration to each HAProxy pod.
 | `controller.config.templatingSettings.extraContext.annotationCompatibility.basicAuth.passwordHashValidation.regex` | string | `"^.*$"` | Regex every password hash in a basic-auth Secret must match (the `auth-secret` annotation handlers in the haproxytech and haproxy-ingress libraries). A non-matching hash fails the render with `passwordHashValidation.errorMessage`; the default accepts all hashes. Go RE2 syntax — no lookaheads, so express the policy as the *allowed* format |
 | `controller.config.templatingSettings.extraContext.annotationCompatibility.basicAuth.passwordHashValidation.errorMessage` | string | `Invalid password hash` | Error message emitted when a password hash fails validation; the rendered error appends the username, Secret name, and pattern |
 | `controller.config.templatingSettings.extraContext.tls.hsts.enabled` | bool | `false` | Emit a global `Strict-Transport-Security` header on TLS responses. Opt-in; per-Ingress HSTS annotations still win |
-| `controller.config.templatingSettings.extraContext.tls.hsts.maxAge` | string | `"31536000"` | HSTS `max-age` in seconds for the global header |
+| `controller.config.templatingSettings.extraContext.tls.hsts.maxAge` | string | `"31536000"` | HSTS `max-age` in seconds for the global header and the default for `haproxy-haptic.org/hsts-max-age` |
 | `controller.config.templatingSettings.extraContext.tls.hsts.includeSubdomains` | bool | `false` | Add `includeSubDomains` to the global HSTS header |
 | `controller.config.templatingSettings.extraContext.tls.hsts.preload` | bool | `false` | Add `preload` to the global HSTS header |
 | `controller.config.watchedResourcesIgnoreFields` | list | `[metadata.managedFields, metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']]` | Fields to ignore in watched resources |
@@ -901,6 +901,7 @@ No CPU limit is set by default to avoid throttling. With no limit, HAProxy's `nb
 Use the current value paths below when upgrading. The chart rejects obsolete
 paths to keep process settings, Services, and generated configuration consistent.
 See the [0.2 upgrade notes](upgrade-notes.md#upgrading-to-02) for the full procedure.
+Rows marked (0.3) changed in 0.3; see the [0.3 upgrade notes](upgrade-notes.md#upgrading-to-03).
 
 | Previous value | Authoritative value |
 |----------------|---------------------|
@@ -925,6 +926,9 @@ See the [0.2 upgrade notes](upgrade-notes.md#upgrading-to-02) for the full proce
 | `controller.statusPatches.enabled` and `controller.config.templatingSettings.extraContext.statusPatchesDisabled` | `controller.config.templatingSettings.extraContext.statusPatches.enabled` (inverted: `statusPatchesDisabled: true` becomes `enabled: false`) |
 | `controller.config.templatingSettings.extraContext.password_hash_validation_regex` and `…password_hash_validation_error_message` | `controller.config.templatingSettings.extraContext.annotationCompatibility.basicAuth.passwordHashValidation.regex` and `.errorMessage` |
 | `controller.config.templatingSettings.extraContext.hstsEnabled`, `hstsMaxAge`, `hstsIncludeSubdomains`, `hstsPreload` | `controller.config.templatingSettings.extraContext.tls.hsts.enabled`, `.maxAge`, `.includeSubdomains`, `.preload` |
+| `controller.config.templatingSettings.extraContext.hapticHstsMaxAge` (0.3) | `controller.config.templatingSettings.extraContext.tls.hsts.maxAge`, which also sets the global HSTS header's `max-age` |
+| `controller.config.templatingSettings.extraContext.timeout_connect`, `timeout_client`, `timeout_server`, `timeout_http_request`, `timeout_http_keep_alive` (0.3) | `controller.config.templatingSettings.extraContext.timeoutConnect`, `timeoutClient`, `timeoutServer`, `timeoutHttpRequest`, `timeoutHttpKeepAlive` |
+| `controller.config.templatingSettings.extraContext.ssl_redirect_default` (0.3, string `"true"`) | `controller.config.templatingSettings.extraContext.sslRedirectDefault` (boolean `true`) |
 | `vector.excludeMaintServerMetrics` | `controller.config.templatingSettings.extraContext.prometheusExporter.excludeMaintServers` — HAProxy applies `?no-maint` itself, for every scraper |
 | `vector.excludeMetrics` | `controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics` — same entry names, `enabled`, `families` and `requires`; `pattern` is gone, HAProxy's exporter filters by exact family name |
 | `vector.podMonitor` and `spoaHub.monitoring.podMonitor` | `haproxy.monitoring.podMonitor` — one PodMonitor for every metrics endpoint on the HAProxy pod |

@@ -72,10 +72,10 @@ var exactCycleReplayPureFunctions = map[string]struct{}{
 	"semver_gte": {}, "seq": {}, builtinSHA1: {}, builtinSHA256: {}, "shard_slice": {},
 	"sort_by": {}, "sort_ints": {}, "sort_strings": {}, builtinSplit: {}, builtinSplitAfter: {},
 	builtinSplitAfterN: {}, builtinSplitN: {}, "strings_contains": {},
-	"strings_lower": {}, "strings_replace": {}, "strings_split": {}, "strings_splitn": {},
+	"strings_lower": {}, "strings_split": {}, "strings_splitn": {},
 	"strings_trim": {}, "strip": {}, "title": {}, "toJSON": {}, builtinToKebab: {},
 	builtinToLower: {}, "toSlice": {}, "toStringSlice": {}, builtinToUpper: {}, "to_str_map": {},
-	"tofloat": {}, "toint": {}, "tostring": {}, "trim": {}, builtinTrimLeft: {},
+	"tofloat": {}, "toint": {}, "tostring": {}, builtinTrim: {}, builtinTrimLeft: {},
 	builtinTrimPrefix: {}, builtinTrimRight: {}, builtinTrimSpace: {}, builtinTrimSuffix: {}, "unmarshalJSON": {},
 	"unmarshalYAML": {}, "unique": {}, "unique_by": {}, "untar_gz": {},
 }

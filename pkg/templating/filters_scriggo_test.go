@@ -244,43 +244,6 @@ func TestScriggoStrip(t *testing.T) {
 	}
 }
 
-func TestScriggoTrim(t *testing.T) {
-	// scriggoTrim should behave identically to scriggoStrip
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"  hello  ", "hello"},
-		{"hello", "hello"},
-		{"  ", ""},
-		{"", ""},
-		{"\t\nhello\t\n", "hello"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := scriggoTrim(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestScriggoTrim_IsAliasForStrip(t *testing.T) {
-	// Verify that trim and strip produce identical results
-	inputs := []string{
-		"  hello  ",
-		"no whitespace",
-		"\t\ttabs\t\t",
-		"",
-	}
-
-	for _, input := range inputs {
-		trimResult := scriggoTrim(input)
-		stripResult := scriggoStrip(input)
-		assert.Equal(t, stripResult, trimResult, "trim and strip should be identical for input: %q", input)
-	}
-}
-
 func TestScriggoB64Decode_Success(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -369,7 +332,7 @@ func TestScriggoStringsContains_TypeConversion(t *testing.T) {
 	}
 }
 
-func TestScriggoStringsReplace_TypeConversion(t *testing.T) {
+func TestScriggoReplace_TypeConversion(t *testing.T) {
 	tests := []struct {
 		name        string
 		s           any
@@ -387,7 +350,7 @@ func TestScriggoStringsReplace_TypeConversion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := scriggoStringsReplace(tt.s, tt.old, tt.replacement)
+			result := scriggoReplace(tt.s, tt.old, tt.replacement)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -555,7 +518,8 @@ func TestBuildScriggoGlobals(t *testing.T) {
 	assert.Contains(t, globals, FilterSortBy)
 	assert.Contains(t, globals, FilterGlobMatch)
 	assert.Contains(t, globals, FilterStrip)
-	assert.Contains(t, globals, FilterTrim)
+	assert.Contains(t, globals, builtinTrim)
+	assert.NotContains(t, globals, "strings_replace")
 	assert.Contains(t, globals, FilterB64Decode)
 	assert.Contains(t, globals, FilterDebug)
 
@@ -571,7 +535,8 @@ func TestBuildScriggoGlobals_NilInputs(t *testing.T) {
 	assert.Contains(t, globals, FilterSortBy)
 	assert.Contains(t, globals, FilterGlobMatch)
 	assert.Contains(t, globals, FilterStrip)
-	assert.Contains(t, globals, FilterTrim)
+	assert.Contains(t, globals, builtinTrim)
+	assert.NotContains(t, globals, "strings_replace")
 	assert.Contains(t, globals, FilterB64Decode)
 	assert.Contains(t, globals, FilterDebug)
 }

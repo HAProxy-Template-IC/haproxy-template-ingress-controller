@@ -1034,12 +1034,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(haptic_events_dropped_total{namespace=~\"$namespace\"}[$__rate_interval])) by (pod)",
-          "legendFormat": "{{pod}}",
+          "expr": "sum(rate(haptic_events_dropped_by_subscriber_total{namespace=~\"$namespace\"}[$__rate_interval])) by (pod, subscriber)",
+          "legendFormat": "{{pod}} {{subscriber}}",
           "refId": "A"
         }
       ],
-      "title": "Events Dropped Rate",
+      "title": "Events Dropped Rate by Subscriber",
       "type": "timeseries"
     },
     {

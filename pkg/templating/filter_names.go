@@ -25,9 +25,6 @@ const (
 	// FilterStrip removes leading/trailing whitespace.
 	FilterStrip = "strip"
 
-	// FilterTrim removes leading/trailing whitespace (alias for strip).
-	FilterTrim = "trim"
-
 	// FilterB64Decode decodes base64-encoded strings.
 	FilterB64Decode = "b64decode"
 
@@ -78,9 +75,6 @@ const (
 
 	// FuncStringsLower converts a string to lowercase.
 	FuncStringsLower = "strings_lower"
-
-	// FuncStringsReplace replaces all occurrences of old with new.
-	FuncStringsReplace = "strings_replace"
 
 	// FuncStringsSplitN splits a string by a separator with a maximum number of parts.
 	FuncStringsSplitN = "strings_splitn"
@@ -148,7 +142,7 @@ const (
 	// Available in: Scriggo only.
 	FuncJoin = "join"
 
-	// FuncReplace replaces strings (alias for strings_replace).
+	// FuncReplace replaces all occurrences of old with new.
 	FuncReplace = "replace"
 
 	// FuncCoalesce returns the first non-nil value, or the default if nil.
