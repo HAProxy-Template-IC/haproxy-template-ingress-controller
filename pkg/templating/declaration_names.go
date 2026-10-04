@@ -46,6 +46,7 @@ const (
 const (
 	memberList       = "List"
 	memberFetch      = "Fetch"
+	memberPending    = "Pending"
 	memberGetSingle  = "GetSingle"
 	memberAPIVersion = "APIVersion"
 	memberBackend    = "Backend"

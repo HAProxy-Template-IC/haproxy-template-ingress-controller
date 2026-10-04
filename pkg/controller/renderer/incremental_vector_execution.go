@@ -1306,6 +1306,15 @@ func (r *incrementalVectorBackendPlanRecorder) BackendWhenAny(
 	return recorder.BackendWhenAny(record, text, cell, keys)
 }
 
+func (f *incrementalVectorHTTPFetcher) Pending(url string) bool {
+	state, err := f.execution.enterDirect(f.index, "component capability")
+	if err != nil {
+		return false
+	}
+	defer f.execution.leaveDirect()
+	return state.http.Pending(url)
+}
+
 func (f *incrementalVectorHTTPFetcher) Fetch(args ...any) (any, error) {
 	state, err := f.execution.enterDirect(f.index, "component capability")
 	if err != nil {

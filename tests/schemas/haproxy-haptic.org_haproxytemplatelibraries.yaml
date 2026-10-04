@@ -754,6 +754,11 @@ spec:
                               This content is returned when http.Fetch() is called with the
                               matching URL during test execution.
                             type: string
+                          pending:
+                            description: |-
+                              Pending renders the URL as content waiting for acceptance: http.Fetch
+                              returns empty content and http.Pending reports true. Content is ignored.
+                            type: boolean
                           url:
                             description: |-
                               URL is the HTTP URL to mock.

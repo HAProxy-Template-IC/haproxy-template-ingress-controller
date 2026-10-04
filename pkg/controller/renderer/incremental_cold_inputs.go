@@ -40,6 +40,10 @@ func (f *strictIncrementalHTTPFetcher) Fetch(args ...any) (any, error) {
 	return f.base.Fetch(canonical...)
 }
 
+func (f *strictIncrementalHTTPFetcher) Pending(url string) bool {
+	return f.base.Pending(url)
+}
+
 type coldIncrementalStoreSnapshot struct {
 	items     []any
 	indexSize int

@@ -1006,6 +1006,11 @@ type HTTPResourceFixture struct {
 	// matching URL during test execution.
 	// +kubebuilder:validation:Required
 	Content string `json:"content"`
+
+	// Pending renders the URL as content waiting for acceptance: http.Fetch
+	// returns empty content and http.Pending reports true. Content is ignored.
+	// +optional
+	Pending bool `json:"pending,omitempty"`
 }
 
 // ValidationAssertion defines a single validation check.

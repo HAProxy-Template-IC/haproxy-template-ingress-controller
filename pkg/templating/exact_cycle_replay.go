@@ -682,7 +682,7 @@ func validExactCycleCallable(callable *scriggo.UsedNativeCallable) bool {
 	case declFileRegistry:
 		return callable.MemberPath == "Register" || callable.MemberPath == "Register[1].Error"
 	case declHTTP:
-		return callable.MemberPath == memberFetch
+		return slices.Contains([]string{memberFetch, memberPending}, callable.MemberPath)
 	case declPathResolver:
 		return slices.Contains([]string{"GetBaseDir", "GetPath", "GetPath[1].Error"}, callable.MemberPath)
 	case declPlanRegistry:

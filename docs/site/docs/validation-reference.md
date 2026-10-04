@@ -71,6 +71,8 @@ httpResources:
       blocked-value-2
 ```
 
+Set `pending: true` on an entry to render its URL as content waiting for acceptance: `http.Fetch()` returns an empty string and `http.Pending()` returns `true`.
+
 Templates calling `http.Fetch()` for unmocked URLs fail with an error. Define shared HTTP fixtures in the `_global` test to make them available to all tests.
 
 ### Current servers

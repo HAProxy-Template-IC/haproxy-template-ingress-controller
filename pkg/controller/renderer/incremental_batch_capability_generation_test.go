@@ -76,6 +76,8 @@ func (l *batchCapabilityCanceledNativeLease) BeforeIncrementalNativeCall(context
 	return l.incrementalBatchReaderLease.BeforeIncrementalNativeCall(l.canceled)
 }
 
+func (*batchCapabilityRetainingHTTPFetcher) Pending(string) bool { return false }
+
 func (f *batchCapabilityRetainingHTTPFetcher) Fetch(args ...any) (any, error) {
 	f.bodyCalls.Add(1)
 	if len(args) == 1 {

@@ -33,6 +33,8 @@ type incrementalVectorCarrierRetainingFetcher struct {
 	bodyCalls atomic.Int64
 }
 
+func (*incrementalVectorCarrierRetainingFetcher) Pending(string) bool { return false }
+
 func (fetcher *incrementalVectorCarrierRetainingFetcher) Fetch(arguments ...any) (any, error) {
 	fetcher.bodyCalls.Add(1)
 	if len(arguments) == 1 {
@@ -58,6 +60,8 @@ type incrementalVectorCarrierDrainingFetcher struct {
 	done    chan any
 	once    sync.Once
 }
+
+func (*incrementalVectorCarrierDrainingFetcher) Pending(string) bool { return false }
 
 func (fetcher *incrementalVectorCarrierDrainingFetcher) Fetch(arguments ...any) (any, error) {
 	if len(arguments) == 1 {

@@ -107,6 +107,8 @@ type coldInputHTTPFetcher struct {
 	args  []any
 }
 
+func (*coldInputHTTPFetcher) Pending(string) bool { return false }
+
 func (f *coldInputHTTPFetcher) Fetch(args ...any) (any, error) {
 	f.calls++
 	f.args = slices.Clone(args)

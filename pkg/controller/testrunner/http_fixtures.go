@@ -36,8 +36,9 @@ import (
 //
 // If the URL is not in fixtures, the template fails with a clear error message.
 type FixtureHTTPStoreWrapper struct {
-	store  *httpstore.HTTPStore
-	logger *slog.Logger
+	store   *httpstore.HTTPStore
+	pending map[string]bool
+	logger  *slog.Logger
 }
 
 // NewFixtureHTTPStoreWrapper creates a new fixture-only HTTP wrapper.
@@ -52,6 +53,23 @@ func NewFixtureHTTPStoreWrapper(store *httpstore.HTTPStore, logger *slog.Logger)
 	}
 }
 
+// WithPending marks the fixtures declared pending: Fetch returns empty
+// content for them and Pending reports true.
+func (w *FixtureHTTPStoreWrapper) WithPending(fixtures []config.HTTPResourceFixture) *FixtureHTTPStoreWrapper {
+	for _, fixture := range fixtures {
+		if fixture.Pending {
+			if w.pending == nil {
+				w.pending = make(map[string]bool)
+			}
+			w.pending[fixture.URL] = true
+		}
+	}
+	return w
+}
+
+// Pending reports a fixture declared pending.
+func (w *FixtureHTTPStoreWrapper) Pending(url string) bool { return w.pending[url] }
+
 // Fetch returns fixture content for a URL.
 //
 // Options and authentication are validated exactly as the production
@@ -64,6 +82,9 @@ func (w *FixtureHTTPStoreWrapper) Fetch(args ...any) (any, error) {
 	}
 	if _, err := httpstore.DescribeSource(opts, auth); err != nil {
 		return nil, fmt.Errorf("http.Fetch: %w", err)
+	}
+	if w.pending[url] {
+		return "", nil
 	}
 
 	content, ok := w.store.Get(url)
@@ -90,6 +111,9 @@ func CreateHTTPStoreFromFixtures(fixtures []config.HTTPResourceFixture, logger *
 	store := httpstore.New(logger, 0) // 0 = no eviction for test fixtures
 
 	for _, fixture := range fixtures {
+		if fixture.Pending {
+			continue
+		}
 		store.LoadFixture(fixture.URL, fixture.Content)
 		logger.Debug("Loaded HTTP fixture",
 			"url", httpstore.RedactURL(fixture.URL),

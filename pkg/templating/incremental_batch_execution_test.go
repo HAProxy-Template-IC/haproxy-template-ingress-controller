@@ -45,6 +45,8 @@ type incrementalBatchProbeFetcher struct {
 	lifecycle *atomic.Bool
 }
 
+func (*incrementalBatchProbeFetcher) Pending(string) bool { return false }
+
 func (f *incrementalBatchProbeFetcher) Fetch(...any) (any, error) {
 	if !f.lifecycle.Load() {
 		return nil, errors.New("incremental batch item executed outside its lifecycle")

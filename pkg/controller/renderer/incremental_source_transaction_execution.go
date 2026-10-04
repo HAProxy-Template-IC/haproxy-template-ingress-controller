@@ -654,6 +654,14 @@ func (s *incrementalSourceTransactionSelector) Count(group, cell string) (int, e
 	return selector.Count(group, cell)
 }
 
+func (f *incrementalSourceTransactionHTTPFetcher) Pending(url string) bool {
+	child, err := f.execution.ActiveIncrementalSourceTransactionChild()
+	if err != nil {
+		return false
+	}
+	return (&incrementalVectorHTTPFetcher{execution: f.execution, index: child}).Pending(url)
+}
+
 func (f *incrementalSourceTransactionHTTPFetcher) Fetch(args ...any) (any, error) {
 	child, err := f.execution.ActiveIncrementalSourceTransactionChild()
 	if err != nil {
