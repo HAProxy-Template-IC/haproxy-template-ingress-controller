@@ -518,6 +518,14 @@ func seedExactCycleForceColdGraphCandidate(
 	require.Equal(t, exactCycleCandidateGraph, fixture.service.exactCycleCandidate.mode)
 }
 
+// invalidateExactCycleCandidate makes the next render discard the published
+// candidate, which retries it as a full cold render.
+func invalidateExactCycleCandidate(t *testing.T, service *RenderService) {
+	t.Helper()
+	require.NotNil(t, service.exactCycleCandidate)
+	service.exactCycleCandidate.mode = 0
+}
+
 func TestRenderServiceExactCycleForceColdPublishesOutputOnlySuccessor(t *testing.T) {
 	fixture := newIncrementalHTTPTestFixture(t)
 	routes, ok := fixture.provider.GetStore("routes").(*k8sstore.MemoryStore)
@@ -528,6 +536,7 @@ func TestRenderServiceExactCycleForceColdPublishesOutputOnlySuccessor(t *testing
 		incrementalTestResource("default", "b", map[string]any{"url": fixture.urlB}),
 		[]string{"default", "b"},
 	))
+	invalidateExactCycleCandidate(t, fixture.service)
 	forced, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
 	require.Contains(t, forced.HAProxyConfig, "b=stable")
@@ -613,6 +622,7 @@ func TestRenderServiceExactCycleOutputOnlyMismatchRendersThroughGraph(t *testing
 		incrementalTestResource("default", "b", map[string]any{"url": fixture.urlB}),
 		[]string{"default", "b"},
 	))
+	invalidateExactCycleCandidate(t, fixture.service)
 	forced, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
 	require.NoError(t, forced.InputTransaction.Commit(t.Context()))

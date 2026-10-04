@@ -157,14 +157,43 @@ func TestACancelledRenderIsNotRetried(t *testing.T) {
 	assert.Equal(t, 1, attempts)
 }
 
-// fakeInputTransaction stands in for the render's input transaction so the
-// commit-conflict decision can be exercised without a graph to race.
-type fakeInputTransaction struct{ candidates, httpState bool }
+// releasingInputTransaction drops what it holds when Commit runs, as the
+// render's combined transaction does, so only a decision taken before the
+// commit still sees the candidates.
+type releasingInputTransaction struct {
+	candidates bool
+	commitErr  error
+}
 
-func (f fakeInputTransaction) HasCandidates() bool        { return f.candidates }
-func (f fakeInputTransaction) CarriesHTTPState() bool     { return f.httpState }
-func (fakeInputTransaction) Commit(context.Context) error { return nil }
-func (fakeInputTransaction) Abort()                       {}
+func (f *releasingInputTransaction) HasCandidates() bool { return f.candidates }
+func (f *releasingInputTransaction) Abort()              {}
+func (f *releasingInputTransaction) Commit(context.Context) error {
+	f.candidates = false
+	return f.commitErr
+}
+
+// A render that read new external content and lost the commit race must not
+// be deployed: its acceptance was checked against inputs that moved. The guard
+// asked the transaction after Commit had released it, so it never fired.
+func TestALostCommitRaceWithCandidatesFailsTheRender(t *testing.T) {
+	pipeline := &Pipeline{}
+	lost := &releasingInputTransaction{candidates: true, commitErr: incremental.ErrRevisionConflict}
+
+	pipelineErr := pipeline.commitInputs(t.Context(), lost, nil)
+
+	require.NotNil(t, pipelineErr, "a candidate render that lost the commit race was kept for deployment")
+	require.ErrorIs(t, pipelineErr.Cause, incremental.ErrRevisionConflict)
+	assert.True(t, inputsMovedUnderTheRender(pipelineErr.Cause, rendercontext.RenderModeReconcile),
+		"the reconcile must re-render instead of giving up")
+}
+
+// Without candidates the same lost race keeps the render.
+func TestALostCommitRaceWithoutCandidatesKeepsTheRender(t *testing.T) {
+	pipeline := &Pipeline{}
+	lost := &releasingInputTransaction{commitErr: incremental.ErrRevisionConflict}
+
+	require.Nil(t, pipeline.commitInputs(t.Context(), lost, nil))
+}
 
 // Losing the cache is not losing the render. Failing here starved the fleet:
 // under a burst, conflicts arrive faster than renders finish and every
@@ -173,17 +202,28 @@ func (fakeInputTransaction) Abort()                       {}
 func TestAConflictWithNothingExternalToAcceptKeepsTheRender(t *testing.T) {
 	err := fmt.Errorf("committing validated render inputs: %w", incremental.ErrRevisionConflict)
 
-	assert.True(t, commitConflictLeavesOutputUsable(err, fakeInputTransaction{candidates: false}))
+	assert.True(t, commitConflictLeavesOutputUsable(err, false))
 }
 
 // A cold render whose graph cache lost to a concurrent cold render is in the
 // same position: its output describes inputs that still hold, only the cache
-// went to the other session.
+// went to the other session. With candidates the content was not accepted, so
+// the render must not be deployed; the renderer accepts it without the cache
+// before it ever reports this conflict.
 func TestAColdCacheRaceWithNothingExternalToAcceptKeepsTheRender(t *testing.T) {
 	err := fmt.Errorf("committing validated render inputs: %w", incremental.ErrCommitConflict)
 
-	assert.True(t, commitConflictLeavesOutputUsable(err, fakeInputTransaction{candidates: false}))
-	assert.False(t, commitConflictLeavesOutputUsable(err, fakeInputTransaction{candidates: true}))
+	assert.True(t, commitConflictLeavesOutputUsable(err, false))
+	assert.False(t, commitConflictLeavesOutputUsable(err, true))
+}
+
+// Content fetched while another render accepted the same source was checked
+// against a store state that has since moved.
+func TestAnHTTPInputsMovedRaceWithCandidatesFails(t *testing.T) {
+	err := fmt.Errorf("preparing render inputs: %w", httpstore.ErrInputsMoved)
+
+	assert.True(t, commitConflictLeavesOutputUsable(err, false))
+	assert.False(t, commitConflictLeavesOutputUsable(err, true))
 }
 
 // A render accepting external content must still fail: the commit decides the
@@ -192,24 +232,14 @@ func TestAColdCacheRaceWithNothingExternalToAcceptKeepsTheRender(t *testing.T) {
 func TestAConflictWhileAcceptingExternalContentStillFails(t *testing.T) {
 	err := fmt.Errorf("committing validated render inputs: %w", incremental.ErrRevisionConflict)
 
-	assert.False(t, commitConflictLeavesOutputUsable(err, fakeInputTransaction{candidates: true}))
+	assert.False(t, commitConflictLeavesOutputUsable(err, true))
 }
 
 // Only the input race is forgiven. Any other commit failure is a real failure.
 func TestANonConflictCommitFailureIsNeverForgiven(t *testing.T) {
 	err := errors.New("the store rejected the write")
 
-	assert.False(t, commitConflictLeavesOutputUsable(err, fakeInputTransaction{candidates: false}))
-}
-
-// Lease accounting is a commit too. Skipping it leaves the HTTP store counting
-// references this render released, and a later render's removals then exceed
-// what the store believes exists — 60 such rejections in one e2e run.
-func TestAConflictCarryingLeaseAccountingStillFails(t *testing.T) {
-	err := fmt.Errorf("committing validated render inputs: %w", incremental.ErrRevisionConflict)
-
-	assert.False(t, commitConflictLeavesOutputUsable(err,
-		fakeInputTransaction{candidates: false, httpState: true}))
+	assert.False(t, commitConflictLeavesOutputUsable(err, false))
 }
 
 // Counting attempts is the wrong bound for admission: three of them fire inside

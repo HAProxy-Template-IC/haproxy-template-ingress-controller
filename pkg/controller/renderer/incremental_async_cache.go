@@ -628,6 +628,23 @@ func (b *incrementalCacheBuilder) supersede(generation uint64) {
 	b.mu.Unlock()
 }
 
+// coldPublicationLost reports a cold publication that publishCold would refuse,
+// so the caller can still commit its HTTP inputs on their own instead.
+func (b *incrementalCacheBuilder) coldPublicationLost(
+	state *incrementalRenderState,
+	base *incrementalStateSnapshot,
+	generation uint64,
+) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || generation == 0 || generation != b.desiredGeneration {
+		return true
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.retiring || state.retired || state.snapshot != base
+}
+
 func (b *incrementalCacheBuilder) publishCold(
 	ctx context.Context,
 	state *incrementalRenderState,

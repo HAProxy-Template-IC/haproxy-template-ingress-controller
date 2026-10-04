@@ -33,6 +33,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
 	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
@@ -202,6 +203,7 @@ type incrementalHTTPTestFixture struct {
 	bodyB         atomic.Value
 	requestsA     atomic.Int32
 	requestsB     atomic.Int32
+	triggers      <-chan busevents.Event
 }
 
 func newIncrementalHTTPTestFixture(t *testing.T) *incrementalHTTPTestFixture {
@@ -255,7 +257,9 @@ func newIncrementalHTTPTestFixture(t *testing.T) *incrementalHTTPTestFixture {
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, declarations, helpers.EngineOptions{})
 	require.NoError(t, err)
 	bus, logger := testutil.NewTestBusAndLogger()
+	fixture.triggers = bus.Subscribe("incremental-http-fixture", 100)
 	fixture.httpComponent = controllerhttpstore.New(bus, logger, -time.Hour)
+	bus.Start()
 	fixture.service = NewRenderService(&RenderServiceConfig{
 		Engine:             engine,
 		Config:             cfg,

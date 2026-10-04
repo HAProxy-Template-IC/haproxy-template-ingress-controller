@@ -221,6 +221,7 @@ type incrementalRenderSession struct {
 	cachePublicationFinished     bool
 	cachePublicationCallbacks    []deferredIncrementalCachePublication
 	cachePublishable             bool
+	cacheHoldsCandidate          bool // the render read unaccepted HTTP content; its graph must not be published
 	cachePublicationEnabled      bool
 	commitAcceptsCandidates      bool
 	statusPatchesReplayed        bool
@@ -2185,6 +2186,10 @@ func (f *incrementalHTTPFetcher) Fetch(args ...any) (any, error) {
 	revision := scratchHTTPRevision(&snapshot)
 	if cacheable {
 		revision = httpInputRevision(f.session.httpComponent.RevisionSource(), &snapshot)
+	} else if snapshot.Token.Kind() == httpstore.SnapshotInitialCandidate {
+		// A cold restart here made acceptance need a cold render with no input
+		// change for its whole duration, which constant churn never grants (#276).
+		f.session.withholdCacheForCandidate()
 	} else {
 		f.session.disableCachePublication()
 		if !f.session.completeGraphRender() {
@@ -2218,6 +2223,12 @@ func (f *incrementalHTTPFetcher) Fetch(args ...any) (any, error) {
 	}
 	f.effects[spec.id] = effect
 	return snapshot.Content, nil
+}
+
+func (r *incrementalRenderSession) withholdCacheForCandidate() {
+	r.mu.Lock()
+	r.cacheHoldsCandidate = true
+	r.mu.Unlock()
 }
 
 func (r *incrementalRenderSession) disableCachePublication() {

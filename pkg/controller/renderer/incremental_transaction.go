@@ -34,6 +34,7 @@ import (
 )
 
 var errCombinedInputTransactionAborted = errors.New("render input transaction was aborted")
+var errColdCacheLostBeforePrepare = fmt.Errorf("cold cache lost to another session: %w", incremental.ErrCommitConflict)
 var errRequiredRenderPublication = errors.New("required render publication failed")
 
 type requiredRenderPublicationPanic struct {
@@ -80,21 +81,6 @@ func newCombinedRenderInputTransaction(
 func (t *combinedRenderInputTransaction) HasCandidates() bool {
 	http, _, _ := t.references()
 	return http != nil && http.HasCandidates()
-}
-
-// CarriesHTTPState reports whether the commit would move the HTTP store, by
-// accepting content or by changing which renders hold a source's active
-// leases.
-//
-// HasCandidates answers only the first. The lease half is reference
-// accounting: the commit tells the store how many renders now hold each
-// source, and skipping it leaves the store counting references this render
-// already stopped holding. The next render's removals then exceed what the
-// store believes exists, and it rejects them as inconsistent. So a caller
-// deciding whether a failed commit can be shrugged off has to ask about both.
-func (t *combinedRenderInputTransaction) CarriesHTTPState() bool {
-	http, _, _ := t.references()
-	return http != nil
 }
 
 func (t *combinedRenderInputTransaction) ProvisionalURLs() []string {
@@ -540,7 +526,7 @@ func (r *incrementalRenderSession) commit(
 		httpPublication.finish()
 	}()
 	r.mu.Lock()
-	cachePublishable := r.cachePublishable
+	cachePublishable := r.cachePublishable && !r.cacheHoldsCandidate
 	cold := r.cold
 	cacheGeneration := r.cacheOutputGeneration
 	r.mu.Unlock()
@@ -549,7 +535,11 @@ func (r *incrementalRenderSession) commit(
 		cachePublishable = cachePublishable && cacheable
 	}
 	if !cachePublishable || !r.cachePublicationEnabled {
-		return r.commitHTTPWithoutCache(ctx, httpPublication, publications)
+		if err := r.commitHTTPWithoutCache(ctx, httpPublication, publications); err != nil {
+			return err
+		}
+		r.requestCacheAfterCandidateAcceptance()
+		return nil
 	}
 	if cold && cacheGeneration != 0 {
 		var startErr error
@@ -559,6 +549,18 @@ func (r *incrementalRenderSession) commit(
 		return startErr
 	}
 	return r.commitWithGraphCache(ctx, logger, httpPublication, publications)
+}
+
+// requestCacheAfterCandidateAcceptance asks for the render that publishes the
+// cache, leases and refresh timers an uncached candidate commit left out: on a
+// quiet cluster nothing else would trigger it. Callers commit without a cache.
+func (r *incrementalRenderSession) requestCacheAfterCandidateAcceptance() {
+	r.mu.Lock()
+	accepted := r.commitAcceptsCandidates
+	r.mu.Unlock()
+	if accepted && r.httpComponent != nil {
+		r.httpComponent.RequestRenderForAcceptedContent()
+	}
 }
 
 func (r *incrementalRenderSession) startColdGraphCache(
@@ -571,6 +573,15 @@ func (r *incrementalRenderSession) startColdGraphCache(
 	build, transferred, err := r.commitColdGraphCacheAsync(
 		ctx, cacheGeneration, logger, httpPublication, publications,
 	)
+	if errors.Is(err, errColdCacheLostBeforePrepare) {
+		// Another session's cold cache won before anything was prepared, so the
+		// HTTP inputs commit on their own, as commitWithGraphCache does when warm.
+		if err := r.commitHTTPWithoutCache(ctx, httpPublication, publications); err != nil {
+			return false, err
+		}
+		r.requestCacheAfterCandidateAcceptance()
+		return false, nil
+	}
 	if errors.Is(err, incremental.ErrCommitConflict) {
 		return transferred, err
 	}
@@ -624,6 +635,9 @@ func (r *incrementalRenderSession) commitColdGraphCacheAsync(
 	}
 	if !verified {
 		return nil, false, incremental.ErrRevisionConflict
+	}
+	if r.commitAcceptsCandidates && r.state.cache.coldPublicationLost(r.state, r.base, generation) {
+		return nil, false, errColdCacheLostBeforePrepare
 	}
 	active, _, err := r.activeLeaseCommit()
 	if err != nil {
