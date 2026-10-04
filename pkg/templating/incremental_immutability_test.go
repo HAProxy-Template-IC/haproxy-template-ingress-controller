@@ -908,7 +908,7 @@ func TestIncrementalImmutableCertificateRegistrationIsConcurrent(t *testing.T) {
 	require.NoError(t, RegisterIncrementalImmutableCertificate(ctx, baseCertificate))
 	require.NoError(t, RegisterIncrementalImmutableCertificate(ctx, baseCertificate))
 	storage := ctx.Value(immutableStorageContextKey{}).(*immutableStorage)
-	require.Equal(t, 1, storage.certifiedCount+len(storage.certified))
+	require.Equal(t, 1, storage.certifiedCount+storage.certified.len())
 	registered := make([]map[string]any, 128)
 	var wait sync.WaitGroup
 	for index := range registered {

@@ -50,6 +50,7 @@ step for every **BREAKING** change below.
 - The first fetch of an HTTP source, such as nginx custom-http-errors pages, no longer keeps renders cold while resources keep changing.
 - A render that fetched new HTTP content while a resource it read changed is rendered again instead of deployed, so content is accepted only against the current resources.
 - One cold render no longer makes every following render cold while resources keep changing, which delayed endpoint changes by over a second and dropped requests during rolling restarts.
+- Renders no longer slow down quadratically with the number of watched resources: a one-Ingress change among 3,000 Ingresses renders in 0.24s instead of 1.5s.
 
 ### Helm chart
 

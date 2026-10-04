@@ -121,7 +121,7 @@ type immutableRangeIndex struct {
 type immutableStorage struct {
 	mu             sync.RWMutex
 	parent         *immutableStorage
-	certified      []*incrementalImmutableCertificateView
+	certified      *immutableCertificateIndex
 	certifiedSmall [8]*incrementalImmutableCertificateView
 	certifiedCount int
 	identities     map[immutableIdentity]struct{}
@@ -1181,12 +1181,14 @@ func (s *immutableStorage) addCertificates(certificates ...*IncrementalImmutable
 			continue
 		}
 		if s.certified == nil {
-			s.certified = make([]*incrementalImmutableCertificateView, s.certifiedCount, s.certifiedCount*2)
-			copy(s.certified, s.certifiedSmall[:s.certifiedCount])
+			s.certified = newImmutableCertificateIndex(s.certifiedCount * 2)
+			for _, small := range s.certifiedSmall[:s.certifiedCount] {
+				s.certified.add(small)
+			}
 			s.certifiedSmall = [8]*incrementalImmutableCertificateView{}
 			s.certifiedCount = 0
 		}
-		s.certified = append(s.certified, view)
+		s.certified.add(view)
 	}
 }
 
@@ -1196,12 +1198,7 @@ func (s *immutableStorage) hasCertificate(certificate *IncrementalImmutableCerti
 			return true
 		}
 	}
-	for _, existing := range s.certified {
-		if existing.certificate == certificate {
-			return true
-		}
-	}
-	return false
+	return s.certified.has(certificate)
 }
 
 func (s *immutableStorage) add(values ...any) {
@@ -1326,10 +1323,8 @@ func (s *immutableStorage) containsInherited(target reflect.Value) bool {
 			return true
 		}
 	}
-	for _, certified := range s.certified {
-		if certified.containsRegisteredTarget(normalized) {
-			return true
-		}
+	if s.certified.contains(normalized) {
+		return true
 	}
 	return s.parent != nil && s.parent.containsTarget(normalized)
 }
@@ -1519,11 +1514,9 @@ func (s *immutableStorage) containsTarget(target immutableTarget) bool {
 			return true
 		}
 	}
-	for _, certificate := range s.certified {
-		if certificate.containsRegisteredTarget(target) {
-			s.mu.RUnlock()
-			return true
-		}
+	if s.certified.contains(target) {
+		s.mu.RUnlock()
+		return true
 	}
 	s.mu.RUnlock()
 	if s.parent != nil {
