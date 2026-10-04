@@ -2186,7 +2186,8 @@ func (f *incrementalHTTPFetcher) Fetch(args ...any) (any, error) {
 	revision := scratchHTTPRevision(&snapshot)
 	if cacheable {
 		revision = httpInputRevision(f.session.httpComponent.RevisionSource(), &snapshot)
-	} else if snapshot.Token.Kind() == httpstore.SnapshotInitialCandidate {
+	} else if snapshot.Token.Kind() == httpstore.SnapshotInitialCandidate ||
+		f.session.httpWrapper.CandidateWithheld(snapshot.URL) {
 		// A cold restart here made acceptance need a cold render with no input
 		// change for its whole duration, which constant churn never grants (#276).
 		f.session.withholdCacheForCandidate()

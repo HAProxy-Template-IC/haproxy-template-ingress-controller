@@ -22,12 +22,51 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
 	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 )
+
+// A render that withholds new content stays on the warm graph and renders the
+// pending source as unavailable; the next render fetches and accepts it.
+func TestWithheldCandidateRendersWarmWithoutTheContent(t *testing.T) {
+	pages := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("page"))
+	}))
+	t.Cleanup(pages.Close)
+	service, provider, _ := newNonCriticalIncrementalHTTPService(t, pages.URL+"/a", false)
+	renderAndCommitIncrementalCacheReady(t, service, provider)
+	renderAndCommitIncrementalCacheReady(t, service, provider)
+	routes, ok := provider.GetStore("routes").(*k8sstore.MemoryStore)
+	require.True(t, ok)
+	require.NoError(t, routes.Add(
+		incrementalTestResource("default", "b", map[string]any{"url": pages.URL + "/b"}),
+		[]string{"default", "b"},
+	))
+
+	withheld, err := service.Render(controllerhttpstore.WithCandidatesWithheld(t.Context()), provider,
+		rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.Equal(t, "warm", withheld.CacheState)
+	require.False(t, withheld.InputTransaction.HasCandidates())
+	require.Contains(t, withheld.HAProxyConfig, "a=page")
+	require.Contains(t, withheld.HAProxyConfig, "b=\n")
+	require.NoError(t, withheld.InputTransaction.Commit(t.Context()))
+	_, accepted := service.httpStoreComponent.GetStore().Get(pages.URL + "/b")
+	require.False(t, accepted)
+
+	accepting, err := service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.True(t, accepting.InputTransaction.HasCandidates())
+	require.Contains(t, accepting.HAProxyConfig, "b=page")
+	require.NoError(t, accepting.InputTransaction.Commit(t.Context()))
+	_, accepted = service.httpStoreComponent.GetStore().Get(pages.URL + "/b")
+	require.True(t, accepted)
+	require.NoError(t, service.RetireIncrementalCache())
+}
 
 // Two cold first renders, like the leader's and the render warmer's on one
 // replica: the newer one owns the cache build, so the older one commits its

@@ -92,8 +92,33 @@ func NewHTTPStoreWrapperWithRetrySeed(
 	}
 	if sourceMode == SourceModeAuthoritative {
 		wrapper.transaction = newInputTransaction(component, retrySeed)
+		wrapper.transaction.withholdCandidates = CandidatesWithheld(ctx)
 	}
 	return wrapper
+}
+
+// ErrCandidateWithheld reports a critical source that a render left out
+// because its content was not accepted yet.
+var ErrCandidateWithheld = errors.New("HTTP content is not accepted yet and this render does not accept new content")
+
+type withheldCandidatesKey struct{}
+
+// WithCandidatesWithheld marks a render that must not accept new HTTP
+// content: unaccepted sources render as unavailable and are not fetched.
+func WithCandidatesWithheld(ctx context.Context) context.Context {
+	return context.WithValue(ctx, withheldCandidatesKey{}, true)
+}
+
+// CandidatesWithheld reports whether the render must not accept new HTTP content.
+func CandidatesWithheld(ctx context.Context) bool {
+	withheld, _ := ctx.Value(withheldCandidatesKey{}).(bool)
+	return withheld
+}
+
+// CandidateWithheld reports whether this render left the source out because
+// its content was not accepted yet.
+func (w *HTTPStoreWrapper) CandidateWithheld(url string) bool {
+	return w != nil && w.transaction != nil && w.transaction.Withheld(url)
 }
 
 // InputTransaction returns the authoritative render's candidate transaction.
