@@ -546,6 +546,8 @@ func TestRenderServiceExactCycleForceColdPublishesOutputOnlySuccessor(t *testing
 	require.Equal(t, uint64(0), fixture.service.incremental.graph.Counters(fixture.queryB).Executions)
 	require.True(t, fixture.httpComponent.GetStore().HasActiveLease(fixture.urlB))
 
+	requireOutputOnlyCandidateSurvivesLateMutation(t, fixture, routes, forced, "b=stable")
+
 	fixture.bodyB.Store("changed")
 	promoteIncrementalHTTPBody(t, fixture.httpComponent, fixture.urlB)
 	changed, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
@@ -553,8 +555,8 @@ func TestRenderServiceExactCycleForceColdPublishesOutputOnlySuccessor(t *testing
 	require.Contains(t, changed.HAProxyConfig, "b=changed")
 	require.NotSame(t, forced.CycleSnapshot, changed.CycleSnapshot)
 	require.NoError(t, changed.InputTransaction.Commit(t.Context()))
-	require.Equal(t, exactCycleCandidateOutputOnly, fixture.service.exactCycleCandidate.mode)
-	require.Equal(t, uint64(0), fixture.service.incremental.graph.Counters(fixture.queryB).Executions)
+	waitForIncrementalCache(t, fixture.service)
+	require.Equal(t, exactCycleCandidateGraph, fixture.service.exactCycleCandidate.mode)
 
 	final, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
@@ -562,7 +564,6 @@ func TestRenderServiceExactCycleForceColdPublishesOutputOnlySuccessor(t *testing
 	require.Same(t, changed.CycleSnapshot, final.CycleSnapshot)
 	require.NoError(t, final.InputTransaction.Commit(t.Context()))
 
-	requireOutputOnlyCandidateSurvivesLateMutation(t, fixture, routes, changed)
 	require.NoError(t, fixture.service.RetireIncrementalCache())
 	require.False(t, fixture.httpComponent.GetStore().HasActiveLease(fixture.urlA))
 	require.False(t, fixture.httpComponent.GetStore().HasActiveLease(fixture.urlB))
@@ -576,6 +577,7 @@ func requireOutputOnlyCandidateSurvivesLateMutation(
 	fixture *incrementalHTTPTestFixture,
 	routes *k8sstore.MemoryStore,
 	changed *RenderResult,
+	wantB string,
 ) {
 	t.Helper()
 	outputOnly := fixture.service.exactCycleCandidate
@@ -592,8 +594,46 @@ func requireOutputOnlyCandidateSurvivesLateMutation(
 	rerendered, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
 	require.NotSame(t, changed.CycleSnapshot, rerendered.CycleSnapshot)
-	require.Contains(t, rerendered.HAProxyConfig, "b=changed")
+	require.Contains(t, rerendered.HAProxyConfig, wantB)
 	require.NoError(t, rerendered.InputTransaction.Commit(t.Context()))
+	waitForIncrementalCache(t, fixture.service)
+	require.Equal(t, exactCycleCandidateGraph, fixture.service.exactCycleCandidate.mode)
+}
+
+// A cold render must not make the next changed render cold too: under constant
+// churn that chain never ends, and every reconcile, endpoint changes included,
+// pays a full cold render.
+func TestRenderServiceExactCycleOutputOnlyMismatchRendersThroughGraph(t *testing.T) {
+	fixture := newIncrementalHTTPTestFixture(t)
+	routes, ok := fixture.provider.GetStore("routes").(*k8sstore.MemoryStore)
+	require.True(t, ok)
+	seedExactCycleForceColdGraphCandidate(t, fixture, routes)
+
+	require.NoError(t, routes.Add(
+		incrementalTestResource("default", "b", map[string]any{"url": fixture.urlB}),
+		[]string{"default", "b"},
+	))
+	forced, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.NoError(t, forced.InputTransaction.Commit(t.Context()))
+	require.Equal(t, exactCycleCandidateOutputOnly, fixture.service.exactCycleCandidate.mode)
+
+	for round, noise := range []string{"first", "second"} {
+		executionsBefore := fixture.service.incremental.graph.Counters(fixture.queryA).Executions
+		require.NoError(t, routes.Update(
+			incrementalTestResource("default", "a", map[string]any{"url": fixture.urlA, "noise": noise}),
+			[]string{"default", "a"},
+		))
+		changed, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
+		require.NoError(t, err)
+		require.Contains(t, changed.HAProxyConfig, "a=first")
+		require.Contains(t, changed.HAProxyConfig, "b=stable")
+		require.NoError(t, changed.InputTransaction.Commit(t.Context()))
+		waitForIncrementalCache(t, fixture.service)
+		require.Greater(t, fixture.service.incremental.graph.Counters(fixture.queryA).Executions, executionsBefore,
+			"changed render %d after a cold render skipped the incremental graph", round)
+	}
+	require.NoError(t, fixture.service.RetireIncrementalCache())
 }
 
 func TestRenderServiceExactCycleDiscardsTamperedCandidateAndPublishesSuccessor(t *testing.T) {

@@ -34,7 +34,6 @@ import (
 var errExactCycleUnavailable = errors.New("exact cycle state is unavailable")
 
 var errExactCycleRetry = errors.New("exact cycle replay requires a fresh normal render attempt")
-var errExactCycleOutputOnlyRetry = errors.New("exact output cycle replay requires a fresh cold render attempt")
 var errExactCycleInvalidCandidateRetry = errors.New("invalid exact cycle replay candidate requires a fresh cold render attempt")
 
 type exactCycleCandidateMode uint8
@@ -528,12 +527,8 @@ func (s *RenderService) tryExactCycleReuse(
 		s.discardExactCycleCandidate(candidate)
 		return nil, false, errExactCycleInvalidCandidateRetry
 	}
-	retryErr := errExactCycleRetry
-	if candidate.mode == exactCycleCandidateOutputOnly {
-		retryErr = errExactCycleOutputOnlyRetry
-	}
 	if candidate.cache != attemptInputs.renderCache {
-		return nil, false, retryErr
+		return nil, false, errExactCycleRetry
 	}
 	matched, unchangedRoots, err := candidate.matchesExternalInputs(
 		ctx, bctx, session, s.httpStoreComponent,
@@ -542,7 +537,7 @@ func (s *RenderService) tryExactCycleReuse(
 		return nil, false, err
 	}
 	if !matched {
-		return nil, false, retryErr
+		return nil, false, errExactCycleRetry
 	}
 	if candidate.mode == exactCycleCandidateOutputOnly && !unchangedRoots {
 		return nil, false, errors.New("exact output cycle matched without unchanged input roots")
