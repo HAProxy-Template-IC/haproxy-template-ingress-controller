@@ -30,6 +30,7 @@ block scalars), and template-aware autocomplete.
 - `stub.go` — no-op `main` for non-wasm builds so `go build ./...` stays green.
 - `web/` — the static shell: `index.html`, `editor.js` (CodeMirror setup:
   YAML palette, Scriggo-template overlay, autocomplete), `migration-assets.mjs`,
+  `migration-report.mjs` (migration-tab rendering helpers),
   `playground.worker.js`,
   the from-scratch starter (`starter.config.yaml`, `starter.resources.yaml`),
   the committed `vendor/codemirror.js` bundle (no CDN — see `web/vendor/README.md`

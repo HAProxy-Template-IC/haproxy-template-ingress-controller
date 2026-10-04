@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package migratecheck classifies Ingress annotations against the
-// migration-coverage data the template libraries declare for the browser
-// playground's migration report.
+// Package migratecheck classifies Ingress annotations and source-controller
+// ConfigMap keys against the migration-coverage data the template libraries
+// declare for the browser playground's migration report.
 //
 // The package is a pure component: it never touches Kubernetes, Helm, or
 // the template engine. Callers hand it the coverage data, the audited
@@ -100,15 +100,17 @@ type SourceReport struct {
 	Source string `json:"source"`
 	// Ingresses lists the attributed Ingresses, sorted by namespace/name.
 	Ingresses []IngressReport `json:"ingresses"`
-	// Counts tallies findings by status across all Ingresses of this
-	// source.
+	// ConfigMaps lists the attributed controller ConfigMaps, sorted by
+	// namespace/name.
+	ConfigMaps []ConfigMapReport `json:"configMaps,omitempty"`
+	// Counts tallies annotation and ConfigMap findings by status.
 	Counts map[Status]int `json:"counts"`
 }
 
 // Report is the complete migrate-check result.
 type Report struct {
 	// Sources lists per-source findings in coverage declaration order.
-	// Only sources with at least one attributed Ingress appear.
+	// Only sources with at least one attributed Ingress or ConfigMap appear.
 	Sources []SourceReport `json:"sources"`
 
 	// Unattributed lists Ingresses that no coverage entry's detect rules
@@ -123,7 +125,16 @@ type Report struct {
 	// across all sources.
 	CheckedAnnotations int `json:"checkedAnnotations"`
 
-	// Counts tallies findings by status across all sources.
+	// TotalConfigMaps is the number of ConfigMaps at least one source
+	// claimed as its controller ConfigMap.
+	TotalConfigMaps int `json:"totalConfigMaps"`
+
+	// CheckedConfigMapKeys is the number of ConfigMap keys classified across
+	// all sources.
+	CheckedConfigMapKeys int `json:"checkedConfigMapKeys"`
+
+	// Counts tallies annotation and ConfigMap findings by status across all
+	// sources.
 	Counts map[Status]int `json:"counts"`
 
 	// RenderFailures is the number of Ingresses whose real render failed.
@@ -149,20 +160,19 @@ type Report struct {
 // source's detect.ingressClasses OR any of its annotation keys carries one
 // of the source's detect.annotationPrefixes. One Ingress can be attributed
 // to several sources (each classifies only its own prefixes).
-func Classify(coverage []CoverageSource, ingresses []Ingress) *Report {
+//
+// A ConfigMap is attributed to every source whose configMap.detect rules
+// match it (see ConfigMapDetect), and each of its data keys is classified.
+// ConfigMaps no source claims are left out of the report.
+func Classify(coverage []CoverageSource, ingresses []Ingress, configMaps []ConfigMap) *Report {
 	report := &Report{
 		Sources: []SourceReport{},
 		Counts:  map[Status]int{},
 	}
 
-	sorted := make([]Ingress, len(ingresses))
-	copy(sorted, ingresses)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Namespace != sorted[j].Namespace {
-			return sorted[i].Namespace < sorted[j].Namespace
-		}
-		return sorted[i].Name < sorted[j].Name
-	})
+	sorted := sortedByIdentity(ingresses, func(ing *Ingress) (string, string) { return ing.Namespace, ing.Name })
+	sortedConfigMaps := sortedByIdentity(configMaps, func(cm *ConfigMap) (string, string) { return cm.Namespace, cm.Name })
+	claimedConfigMaps := make([]bool, len(sortedConfigMaps))
 
 	report.TotalIngresses = len(sorted)
 	attributed := make([]bool, len(sorted))
@@ -187,8 +197,15 @@ func Classify(coverage []CoverageSource, ingresses []Ingress) *Report {
 			}
 			srcReport.Ingresses = append(srcReport.Ingresses, ir)
 		}
-		if len(srcReport.Ingresses) > 0 {
+		classifyConfigMaps(src, sortedConfigMaps, claimedConfigMaps, &srcReport, report)
+		if len(srcReport.Ingresses) > 0 || len(srcReport.ConfigMaps) > 0 {
 			report.Sources = append(report.Sources, srcReport)
+		}
+	}
+
+	for _, claimed := range claimedConfigMaps {
+		if claimed {
+			report.TotalConfigMaps++
 		}
 	}
 
@@ -208,6 +225,43 @@ func Classify(coverage []CoverageSource, ingresses []Ingress) *Report {
 	}
 
 	return report
+}
+
+// sortedByIdentity returns a copy of items ordered by namespace, then name.
+func sortedByIdentity[T any](items []T, identity func(*T) (namespace, name string)) []T {
+	out := make([]T, len(items))
+	copy(out, items)
+	sort.Slice(out, func(i, j int) bool {
+		ni, mi := identity(&out[i])
+		nj, mj := identity(&out[j])
+		if ni != nj {
+			return ni < nj
+		}
+		return mi < mj
+	})
+	return out
+}
+
+// classifyConfigMaps adds the ConfigMaps src claims to srcReport and tallies
+// their findings into both reports; claimed records which ConfigMaps any
+// source has claimed so far.
+func classifyConfigMaps(src *CoverageSource, configMaps []ConfigMap, claimed []bool, srcReport *SourceReport, report *Report) {
+	if src.ConfigMap == nil {
+		return
+	}
+	for i := range configMaps {
+		if !src.ConfigMap.matches(&configMaps[i]) {
+			continue
+		}
+		claimed[i] = true
+		cr := src.ConfigMap.classify(&configMaps[i])
+		for _, f := range cr.Findings {
+			srcReport.Counts[f.Status]++
+			report.Counts[f.Status]++
+			report.CheckedConfigMapKeys++
+		}
+		srcReport.ConfigMaps = append(srcReport.ConfigMaps, cr)
+	}
 }
 
 // matchesSource reports whether the detect rules of a coverage entry

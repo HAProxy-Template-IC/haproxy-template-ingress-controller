@@ -25,6 +25,7 @@ The `build-playground-wasm` job (`.gitlab-ci.yml`, `build` stage) runs
     index.html            # shell; <html data-version="<version>"> is stamped in
     editor.js             # CodeMirror setup (YAML palette, template overlay, autocomplete)
     migration-assets.mjs  # preset manifest and coverage asset loader
+    migration-report.mjs  # migration-tab rendering helpers
     playground.worker.js  # wasm worker
     wasm_exec.js          # MUST match the Go toolchain that built the wasm
     playground.wasm        (+ .br + .gz siblings)   # ~58 MB raw / ~7 MB br / ~12 MB gz

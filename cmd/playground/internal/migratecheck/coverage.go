@@ -28,6 +28,7 @@ type CoverageSource struct {
 	Source      string                        `json:"source"`
 	Detect      Detect                        `json:"detect,omitempty"`
 	Annotations map[string]AnnotationCoverage `json:"annotations,omitempty"`
+	ConfigMap   *ConfigMapCoverage            `json:"configMap,omitempty"`
 }
 
 type Detect struct {
@@ -165,6 +166,9 @@ func validateCoverageSource(source *CoverageSource, index int) error {
 		if err := validateAnnotation(source.Source, annotation, entry); err != nil {
 			return err
 		}
+	}
+	if source.ConfigMap != nil {
+		return validateConfigMapCoverage(source.Source, source.ConfigMap)
 	}
 	return nil
 }

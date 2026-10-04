@@ -40,7 +40,7 @@ before(async () => {
   const js = await readFile(new URL('../../shared/playground-embed.js', import.meta.url));
   const css = await readFile(new URL('../../shared/playground-embed.css', import.meta.url));
   const shellFiles = new Map();
-  for (const name of ['index.html', 'editor.js', 'migration-assets.mjs', 'tryout.js', 'vendor/codemirror.js', 'highlight/config-highlight.bundle.js']) {
+  for (const name of ['index.html', 'editor.js', 'migration-assets.mjs', 'migration-report.mjs', 'tryout.js', 'vendor/codemirror.js', 'highlight/config-highlight.bundle.js']) {
     shellFiles.set('/playground/dev/' + name, await readFile(new URL('../../../cmd/playground/web/' + name, import.meta.url)));
   }
   server = createServer((req, res) => {

@@ -29,7 +29,9 @@ HAPTIC's template engine.
 It runs in your browser, on your own manifests. Paste the Ingresses you want to
 audit into the **Resources** panel — `kubectl get ingress -A -o yaml` output
 works as-is — and read the **migration** tab. Nothing leaves your machine and
-nothing touches your cluster.
+nothing touches your cluster. From ingress-nginx, also paste the controller
+ConfigMap: the report classifies each of its keys against the
+[controller ConfigMap table](#controller-configmap-settings).
 
 The same report runs live below on a preset ingress-nginx setup:
 
@@ -277,8 +279,19 @@ See [differences from ingress-nginx](annotation-compatibility.md#ingress-nginx) 
 
 HAPTIC doesn't read the ingress-nginx controller ConfigMap. Set the equivalent
 Helm values instead. The migration report in
-[Step 0](#step-0-check-what-will-change) checks annotations only, so compare your
-ConfigMap against this table.
+[Step 0](#step-0-check-what-will-change) classifies every key of the controller
+ConfigMap against this table when you paste the ConfigMap into the
+**Resources** panel:
+
+```bash
+kubectl -n ingress-nginx get configmap ingress-nginx-controller -o yaml
+```
+
+The report recognizes the controller ConfigMap by its name,
+`ingress-nginx-controller` or `nginx-configuration`. A ConfigMap with another
+name counts when it carries both labels `app.kubernetes.io/name: ingress-nginx`
+and `app.kubernetes.io/component: controller` and at least one key from this
+table. Keys missing from the table show as **unknown**.
 
 In the table, `extraContext.` is short for
 `controller.config.templatingSettings.extraContext.`, and defaults are in
@@ -286,46 +299,48 @@ parentheses. **Governance default** means HAPTIC sets the value per Ingress
 rather than fleet-wide: a [governance rule](operations/governance.md) with a
 `default` supplies the native annotation to every Ingress that doesn't set it.
 
-| ingress-nginx key | HAPTIC setting | Status |
-|-------------------|----------------|--------|
-| `proxy-connect-timeout` (`5`) | `extraContext.timeout_connect` (`100` ms) | **different** — the short default lets a failed connect retry another pod quickly. Raise it only if healthy backends take longer to connect. See [timeouts](libraries/base.md#connection-reliability-and-timeouts). |
-| `proxy-read-timeout`, `proxy-send-timeout` (`60`) | `extraContext.timeout_server` (`50000` ms) | **different** — one inactivity timeout covers both directions. |
-| `client-header-timeout` (`60`) | `extraContext.timeout_http_request` (unset: `timeout_client`, `50000` ms) | supported |
-| `client-body-timeout` (`60`) | `extraContext.requestBuffering.waitTimeout` (`10s`) | **different** — the total wait for the body before HAProxy forwards the request, not the gap between reads. See [request buffering](libraries/base.md#request-buffering). |
-| `keep-alive` (`75`) | `extraContext.timeout_http_keep_alive` (unset: `timeout_http_request`, then `timeout_client`) | supported |
-| `worker-shutdown-timeout` (`240s`) | `extraContext.hardStopAfter` (`60s`) | supported — see [graceful reload drain bound](operations/performance.md#graceful-reload-drain-bound). |
-| `proxy-next-upstream`, `proxy-next-upstream-tries` | `extraContext.retryOn` (`conn-failure empty-response response-timeout`); HAProxy retries 3 times | **different** — takes HAProxy `retry-on` conditions, not nginx ones. |
-| `retry-non-idempotent` (`false`) | `extraContext.retryNonIdempotent` (`false`) | supported |
-| `upstream-keepalive-*` | — | **dropped** — HAProxy reuses idle backend connections without configuration. |
-| `proxy-body-size` (`1m`) | Governance default for `haproxy-haptic.org/max-request-body-size` | **different** — HAPTIC doesn't limit the body size unless you set a limit. |
-| `client-header-buffer-size`, `large-client-header-buffers` | `extraContext.tune.bufsize` (`16384`) | **different** — the request line and all headers must fit in one HAProxy buffer. |
-| `proxy-request-buffering` (`on`) | `extraContext.requestBuffering.enabled` (`true`) | **different** — buffers at most `tune.bufsize` bytes of the body. |
-| `ssl-protocols` (`TLSv1.2 TLSv1.3`) | `extraContext.tls.minVersion` (`TLSv1.2`) | **different** — sets a minimum version, not a list. See [TLS cipher suites and protocol versions](ssl-certificates.md#tls-cipher-suites-and-protocol-versions). |
-| `ssl-ciphers` | `extraContext.tls.ciphers` (TLS 1.2), `extraContext.tls.ciphersuites` (TLS 1.3) | supported |
-| `ssl-session-tickets` (`false`) | `extraContext.tls.sessionTickets.enabled` (`false`) | supported — see [TLS session resumption](ssl-certificates.md#tls-session-resumption). |
-| `enable-ocsp` (`false`) | — | **different** — always on: every certificate loads with `ocsp-update on`. |
-| `ssl-redirect` (`true`) | `extraContext.ingressDefaultSSLRedirect` (`false`) | **different** — off by default. When on, it redirects every host HAPTIC serves over HTTPS, including hosts without `spec.tls`. See [Redirect HTTP to HTTPS](libraries/ingress.md#redirect-http-to-https). |
-| `http-redirect-code` (`308`) | `extraContext.ingressDefaultSSLRedirectCode` (`"308"`); `extraContext.nginxHttpRedirectCode` (`"308"`) for the `ssl-redirect` annotation | supported |
-| `hsts` (`true`) | `extraContext.tls.hsts.enabled` (`false`) | **different** — off by default. See [HSTS](ssl-certificates.md#http-strict-transport-security-hsts). |
-| `hsts-max-age` (`31536000`) | `extraContext.tls.hsts.maxAge` (`"31536000"`) | supported |
-| `hsts-include-subdomains` (`true`) | `extraContext.tls.hsts.includeSubdomains` (`false`) | **different** — off by default. |
-| `hsts-preload` (`false`) | `extraContext.tls.hsts.preload` (`false`) | supported |
-| `use-forwarded-headers`, `forwarded-for-header`, `compute-full-forwarded-for`, `enable-real-ip`, `proxy-real-ip-cidr` | Per Ingress: `haproxy-haptic.org/forwardfor`, `haproxy-haptic.org/src-ip-header` | **different** — HAPTIC appends the connecting address to `X-Forwarded-For` and keeps the values the client sent. It doesn't set `X-Forwarded-Proto`, `X-Forwarded-Host`, or `X-Forwarded-Port`. `src-ip-header` trusts the header from every client; there's no trusted-CIDR list. |
-| `use-proxy-protocol` (`false`) | `extraContext.proxyProtocol.enabled` (`false`) | **different** — adds separate PROXY-protocol ports (`8081`, `8444`) and leaves the HTTP and HTTPS ports unchanged. See [PROXY protocol](haproxy-deployment.md#proxy-protocol). |
-| `use-gzip` (`false`), `gzip-types` | Governance default for `haproxy-haptic.org/compress-enable`: set the `default` of the bundled `haptic-compress-enable` rule to `"true"`. Types: `haproxy-haptic.org/compress-types` | supported — see [compression](libraries/haptic-annotations.md#compression). |
-| `enable-brotli` (`false`) | — | **dropped** — the community HAProxy build has no Brotli. |
-| `load-balance` (`round_robin`) | Governance default for `haproxy-haptic.org/load-balance` (`roundrobin`) | **different** — no `ewma`; `leastconn` is the closest. |
-| `whitelist-source-range`, `denylist-source-range` | Governance default for `haproxy-haptic.org/allowlist-source-range` or `haproxy-haptic.org/denylist-source-range` | supported |
-| `custom-http-errors` | Override `400.http` … `504.http` under `controller.config.files` | **different** — replaces the error pages HAProxy generates; error responses from backends pass through unchanged unless the Ingress sets the [`custom-http-errors` annotation](libraries/nginx-ingress.md#nginxingresskubernetesiocustom-http-errors). See [general files](template-files.md#general-files). |
-| `server-tokens` (`false`), `allow-backend-server-header` (`false`) | — | **different** — every response carries `Server: haptic`, without a version, replacing any backend `Server` header. |
-| `allow-snippet-annotations` (`false`) | Governance rules that reject raw-configuration annotations, shown below | **different** — HAPTIC accepts raw HAProxy configuration annotations by default. |
-| `main-snippet`, `http-snippet`, `server-snippet` | `controller.config.templateSnippets` at a base-library [extension point](libraries/base.md#available-extension-points) | **different** — the content must be HAProxy configuration; rewrite nginx snippets. |
-| `log-format-upstream`, `log-format-escape-json` | `extraContext.accessLog.fields` | **different** — the access log is JSON with a fixed core field set. You add fields; you can't redefine the format. See [access logging](operations/access-logging.md). |
-| `access-log-path`, `enable-syslog`, `syslog-host`, `syslog-port` | `extraContext.accessLog.targets` | supported |
-| `generate-request-id` (`true`) | — | supported — every access-log record carries a `req_id`. Forward it upstream with `haproxy-haptic.org/request-id`. |
-| `enable-opentelemetry`, `otlp-collector-host`, `otlp-collector-port`, `otel-service-name`, `otel-sampler-ratio` | `extraContext.tracing.enabled`, `.otlp.endpoint`, `.otlp.serviceName`, `.sampleRate` (a percentage) | **different** — spans are built from access-log records. |
-| `enable-modsecurity`, `enable-owasp-modsecurity-crs` | `extraContext.waf.dispatch.mode: default-on` | **different** — Coraza with the Core Rule Set replaces ModSecurity. See [WAF policies](operations/waf-policies.md). |
-| `worker-processes` | `haproxy.nbthread` | **different** — HAProxy runs threads, not processes. |
+<!-- BEGIN generated: migration-configmap-coverage ingress-nginx -->
+| ingress-nginx key | HAPTIC setting | Status | What to check |
+|-------------------|----------------|--------|---------------|
+| `proxy-connect-timeout` (`5`) | `extraContext.timeoutConnect` (`100` ms) | **different** | The short default lets a failed connect retry another pod quickly. Raise it only if healthy backends take longer to connect. See [timeouts](libraries/base.md#connection-reliability-and-timeouts). |
+| `proxy-read-timeout` (`60`), `proxy-send-timeout` (`60`) | `extraContext.timeoutServer` (`50000` ms) | **different** | One inactivity timeout covers both directions. |
+| `client-header-timeout` (`60`) | `extraContext.timeoutHttpRequest` (unset: `timeoutClient`, `50000` ms) | supported |  |
+| `client-body-timeout` (`60`) | `extraContext.requestBuffering.waitTimeout` (`10s`) | **different** | The total wait for the body before HAProxy forwards the request, not the gap between reads. See [request buffering](libraries/base.md#request-buffering). |
+| `keep-alive` (`75`) | `extraContext.timeoutHttpKeepAlive` (unset: `timeoutHttpRequest`, then `timeoutClient`) | supported |  |
+| `worker-shutdown-timeout` (`240s`) | `extraContext.hardStopAfter` (`60s`) | supported | See [graceful reload drain bound](operations/performance.md#graceful-reload-drain-bound). |
+| `proxy-next-upstream`, `proxy-next-upstream-tries` | `extraContext.retryOn` (`conn-failure empty-response response-timeout`); HAProxy retries 3 times | **different** | Takes HAProxy `retry-on` conditions, not nginx ones. |
+| `retry-non-idempotent` (`false`) | `extraContext.retryNonIdempotent` (`false`) | supported |  |
+| `upstream-keepalive-*` | — | **dropped** | HAProxy reuses idle backend connections without configuration. |
+| `proxy-body-size` (`1m`) | Governance default for `haproxy-haptic.org/max-request-body-size` | **different** | HAPTIC doesn't limit the body size unless you set a limit. |
+| `client-header-buffer-size`, `large-client-header-buffers` | `extraContext.tune.bufsize` (`16384`) | **different** | The request line and all headers must fit in one HAProxy buffer. |
+| `proxy-request-buffering` (`on`) | `extraContext.requestBuffering.enabled` (`true`) | **different** | Buffers at most `tune.bufsize` bytes of the body. |
+| `ssl-protocols` (`TLSv1.2 TLSv1.3`) | `extraContext.tls.minVersion` (`TLSv1.2`) | **different** | Sets a minimum version, not a list. See [TLS cipher suites and protocol versions](ssl-certificates.md#tls-cipher-suites-and-protocol-versions). |
+| `ssl-ciphers` | `extraContext.tls.ciphers` (TLS 1.2), `extraContext.tls.ciphersuites` (TLS 1.3) | supported |  |
+| `ssl-session-tickets` (`false`) | `extraContext.tls.sessionTickets.enabled` (`false`) | supported | See [TLS session resumption](ssl-certificates.md#tls-session-resumption). |
+| `enable-ocsp` (`false`) | — | **different** | Always on: every certificate loads with `ocsp-update on`. |
+| `ssl-redirect` (`true`) | `extraContext.ingressDefaultSSLRedirect` (`false`) | **different** | Off by default. When on, it redirects every host HAPTIC serves over HTTPS, including hosts without `spec.tls`. See [Redirect HTTP to HTTPS](libraries/ingress.md#redirect-http-to-https). |
+| `http-redirect-code` (`308`) | `extraContext.ingressDefaultSSLRedirectCode` (`"308"`); `extraContext.nginxHttpRedirectCode` (`"308"`) for the `ssl-redirect` annotation | supported |  |
+| `hsts` (`true`) | `extraContext.tls.hsts.enabled` (`false`) | **different** | Off by default. See [HSTS](ssl-certificates.md#http-strict-transport-security-hsts). |
+| `hsts-max-age` (`31536000`) | `extraContext.tls.hsts.maxAge` (`"31536000"`) | supported |  |
+| `hsts-include-subdomains` (`true`) | `extraContext.tls.hsts.includeSubdomains` (`false`) | **different** | Off by default. |
+| `hsts-preload` (`false`) | `extraContext.tls.hsts.preload` (`false`) | supported |  |
+| `use-forwarded-headers`, `forwarded-for-header`, `compute-full-forwarded-for`, `enable-real-ip`, `proxy-real-ip-cidr` | Per Ingress: `haproxy-haptic.org/forwardfor`, `haproxy-haptic.org/src-ip-header` | **different** | HAPTIC appends the connecting address to `X-Forwarded-For` and keeps the values the client sent. It doesn't set `X-Forwarded-Proto`, `X-Forwarded-Host`, or `X-Forwarded-Port`. `src-ip-header` trusts the header from every client; there's no trusted-CIDR list. |
+| `use-proxy-protocol` (`false`) | `extraContext.proxyProtocol.enabled` (`false`) | **different** | Adds separate PROXY-protocol ports (`8081`, `8444`) and leaves the HTTP and HTTPS ports unchanged. See [PROXY protocol](haproxy-deployment.md#proxy-protocol). |
+| `use-gzip` (`false`), `gzip-types` | Governance default for `haproxy-haptic.org/compress-enable`: set the `default` of the bundled `haptic-compress-enable` rule to `"true"`. Types: `haproxy-haptic.org/compress-types` | supported | See [compression](libraries/haptic-annotations.md#compression). |
+| `enable-brotli` (`false`) | — | **dropped** | The community HAProxy build has no Brotli. |
+| `load-balance` (`round_robin`) | Governance default for `haproxy-haptic.org/load-balance` (`roundrobin`) | **different** | No `ewma`; `leastconn` is the closest. |
+| `whitelist-source-range`, `denylist-source-range` | Governance default for `haproxy-haptic.org/allowlist-source-range` or `haproxy-haptic.org/denylist-source-range` | supported |  |
+| `custom-http-errors` | Override `400.http` … `504.http` under `controller.config.files` | **different** | Replaces the error pages HAProxy generates; error responses from backends pass through unchanged unless the Ingress sets the [`custom-http-errors` annotation](libraries/nginx-ingress.md#nginxingresskubernetesiocustom-http-errors). See [general files](template-files.md#general-files). |
+| `server-tokens` (`false`), `allow-backend-server-header` (`false`) | — | **different** | Every response carries `Server: haptic`, without a version, replacing any backend `Server` header. |
+| `allow-snippet-annotations` (`false`) | Governance rules that reject raw-configuration annotations, shown below | **different** | HAPTIC accepts raw HAProxy configuration annotations by default. |
+| `main-snippet`, `http-snippet`, `server-snippet` | `controller.config.templateSnippets` at a base-library [extension point](libraries/base.md#available-extension-points) | **different** | The content must be HAProxy configuration; rewrite nginx snippets. |
+| `log-format-upstream`, `log-format-escape-json` | `extraContext.accessLog.fields` | **different** | The access log is JSON with a fixed core field set. You add fields; you can't redefine the format. See [access logging](operations/access-logging.md). |
+| `access-log-path`, `enable-syslog`, `syslog-host`, `syslog-port` | `extraContext.accessLog.targets` | supported |  |
+| `generate-request-id` (`true`) | — | supported | Every access-log record carries a `req_id`. Forward it upstream with `haproxy-haptic.org/request-id`. |
+| `enable-opentelemetry`, `otlp-collector-host`, `otlp-collector-port`, `otel-service-name`, `otel-sampler-ratio` | `extraContext.tracing.enabled`, `.otlp.endpoint`, `.otlp.serviceName`, `.sampleRate` (a percentage) | **different** | Spans are built from access-log records. |
+| `enable-modsecurity`, `enable-owasp-modsecurity-crs` | `extraContext.waf.dispatch.mode: default-on` | **different** | Coraza with the Core Rule Set replaces ModSecurity. See [WAF policies](operations/waf-policies.md). |
+| `worker-processes` | `haproxy.nbthread` | **different** | HAProxy runs threads, not processes. |
+<!-- END generated: migration-configmap-coverage ingress-nginx -->
 
 Keys missing from the table have no HAPTIC setting. Most tune nginx internals,
 such as hash-table sizes, worker connections, Lua, GeoIP, and Jaeger.
@@ -339,9 +354,9 @@ controller:
   config:
     templatingSettings:
       extraContext:
-        timeout_server: "60s"
-        timeout_http_request: "60s"
-        timeout_http_keep_alive: "75s"
+        timeoutServer: "60s"
+        timeoutHttpRequest: "60s"
+        timeoutHttpKeepAlive: "75s"
         ingressDefaultHTTPS: false
         ingressDefaultSSLRedirect: true
         tls:
