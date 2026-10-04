@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
@@ -183,8 +184,64 @@ func TestALostCommitRaceWithCandidatesFailsTheRender(t *testing.T) {
 
 	require.NotNil(t, pipelineErr, "a candidate render that lost the commit race was kept for deployment")
 	require.ErrorIs(t, pipelineErr.Cause, incremental.ErrRevisionConflict)
+	require.ErrorIs(t, pipelineErr.Cause, errCandidateAcceptanceLost)
 	assert.True(t, inputsMovedUnderTheRender(pipelineErr.Cause, rendercontext.RenderModeReconcile),
 		"the reconcile must re-render instead of giving up")
+}
+
+// A reconcile whose new content lost the race deploys a render without that
+// content right away. Failing the reconcile instead left the fleet without the
+// rollout's endpoint change for 1.8 s while a churning cluster kept beating
+// each acceptance attempt (#278).
+func TestALostCandidateRaceRendersAgainWithoutTheCandidates(t *testing.T) {
+	var withheld []bool
+	want := &PipelineResult{HAProxyConfig: "without the page"}
+
+	result, _, err := renderWithholdingLostCandidates(t.Context(), rendercontext.RenderModeReconcile,
+		func(ctx context.Context) (*PipelineResult, *validation.ValidationResult, error) {
+			withheld = append(withheld, controllerhttpstore.CandidatesWithheld(ctx))
+			if len(withheld) == 1 {
+				return nil, nil, fmt.Errorf("%w: %w", errCandidateAcceptanceLost, incremental.ErrRevisionConflict)
+			}
+			return want, nil, nil
+		})
+
+	require.NoError(t, err)
+	assert.Same(t, want, result)
+	assert.Equal(t, []bool{false, true}, withheld)
+}
+
+// A critical source cannot render without its content, so the lost race goes
+// back to the settle loop, which retries the acceptance.
+func TestACriticalWithheldSourceKeepsSettlingTheRace(t *testing.T) {
+	lost := fmt.Errorf("%w: %w", errCandidateAcceptanceLost, incremental.ErrRevisionConflict)
+	calls := 0
+	_, _, err := renderWithholdingLostCandidates(t.Context(), rendercontext.RenderModeReconcile,
+		func(context.Context) (*PipelineResult, *validation.ValidationResult, error) {
+			calls++
+			if calls == 1 {
+				return nil, nil, lost
+			}
+			return nil, nil, fmt.Errorf("rendering: %w", controllerhttpstore.ErrCandidateWithheld)
+		})
+
+	require.ErrorIs(t, err, errCandidateAcceptanceLost)
+	assert.True(t, inputsMovedUnderTheRender(err, rendercontext.RenderModeReconcile))
+	assert.Equal(t, 2, calls)
+}
+
+// Admission answers for the object under review and deploys nothing, so it
+// keeps settling the race instead of judging a render without the content.
+func TestAdmissionDoesNotWithholdLostCandidates(t *testing.T) {
+	calls := 0
+	_, _, err := renderWithholdingLostCandidates(t.Context(), rendercontext.RenderModeAdmission,
+		func(context.Context) (*PipelineResult, *validation.ValidationResult, error) {
+			calls++
+			return nil, nil, fmt.Errorf("%w: %w", errCandidateAcceptanceLost, incremental.ErrRevisionConflict)
+		})
+
+	require.ErrorIs(t, err, errCandidateAcceptanceLost)
+	assert.Equal(t, 1, calls)
 }
 
 // Without candidates the same lost race keeps the render.

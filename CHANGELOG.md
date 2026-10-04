@@ -48,6 +48,7 @@ step for every **BREAKING** change below.
 - Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
 - Stop reporting normal controller shutdown cancellations and leadership handover as failures.
 - The first fetch of an HTTP source, such as nginx custom-http-errors pages, no longer keeps renders cold while resources keep changing.
+- Endpoint and other resource changes deploy while new HTTP content waits for acceptance; the content is served once a render accepts it.
 - A render that fetched new HTTP content while a resource it read changed is rendered again instead of deployed, so content is accepted only against the current resources.
 - One cold render no longer makes every following render cold while resources keep changing, which delayed endpoint changes by over a second and dropped requests during rolling restarts.
 - Renders no longer slow down quadratically with the number of watched resources: a one-Ingress change among 3,000 Ingresses renders in 0.24s instead of 1.5s.

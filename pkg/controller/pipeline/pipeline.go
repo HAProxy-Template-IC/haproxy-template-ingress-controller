@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"time"
 
+	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
@@ -652,9 +653,38 @@ func (p *Pipeline) executeSettlingInputConflicts(
 	extraOpts ...rendercontext.Option,
 ) (*PipelineResult, *validation.ValidationResult, error) {
 	return settleInputConflicts(ctx, p.logger, mode, func() (*PipelineResult, *validation.ValidationResult, error) {
-		return p.execute(ctx, provider, mode, extraOpts...)
+		return renderWithholdingLostCandidates(ctx, mode,
+			func(renderCtx context.Context) (*PipelineResult, *validation.ValidationResult, error) {
+				return p.execute(renderCtx, provider, mode, extraOpts...)
+			})
 	})
 }
+
+// renderWithholdingLostCandidates re-renders a reconcile whose new HTTP content
+// lost the commit race without that content. Accepting it needs every input
+// the render read to hold still through the render and its check, which churn
+// can deny for seconds; deploying must not wait for that. The withheld render
+// asks for the reconcile that tries the acceptance again.
+func renderWithholdingLostCandidates(
+	ctx context.Context,
+	mode rendercontext.RenderMode,
+	render func(context.Context) (*PipelineResult, *validation.ValidationResult, error),
+) (*PipelineResult, *validation.ValidationResult, error) {
+	result, validationResult, err := render(ctx)
+	if mode != rendercontext.RenderModeReconcile || !errors.Is(err, errCandidateAcceptanceLost) {
+		return result, validationResult, err
+	}
+	withheldResult, withheldValidation, withheldErr := render(controllerhttpstore.WithCandidatesWithheld(ctx))
+	if errors.Is(withheldErr, controllerhttpstore.ErrCandidateWithheld) {
+		// A critical source cannot render without its content: keep settling the race.
+		return result, validationResult, err
+	}
+	return withheldResult, withheldValidation, withheldErr
+}
+
+// errCandidateAcceptanceLost marks a render that fetched new HTTP content and
+// lost the commit race, so neither the content nor the render may be used.
+var errCandidateAcceptanceLost = errors.New("new HTTP content was not accepted because a render input moved")
 
 // settleInputConflicts holds the retry policy on its own so it can be exercised
 // without a cluster racing the render.
@@ -752,6 +782,9 @@ func (p *Pipeline) commitInputs(
 					"keeping this render and leaving the cache where it was")
 			}
 			return nil
+		}
+		if acceptsContent && lostTheCommitRace(err) {
+			err = fmt.Errorf("%w: %w", errCandidateAcceptanceLost, err)
 		}
 		return &PipelineError{
 			Phase: PhaseRender,

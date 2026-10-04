@@ -509,6 +509,12 @@ func (c *Component) RequestRenderForAcceptedContent() {
 	c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_accepted", true))
 }
 
+// RequestRenderForWithheldContent triggers the reconcile that fetches and
+// accepts content a render left out.
+func (c *Component) RequestRenderForWithheldContent() {
+	c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_withheld", true))
+}
+
 // RegisterURL reconciles a URL's timer with its current source policy.
 func (c *Component) RegisterURL(url string) {
 	c.ReconcileURL(url)

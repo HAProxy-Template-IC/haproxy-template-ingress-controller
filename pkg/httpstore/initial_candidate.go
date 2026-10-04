@@ -126,6 +126,16 @@ func (s *HTTPStore) PrepareStagedSnapshot(
 	return result, candidate, nil
 }
 
+// AcceptedStagedSnapshot returns the source's accepted content without
+// fetching, and whether an unaccepted source would be critical to the render.
+func (s *HTTPStore) AcceptedStagedSnapshot(source *StagedSource) (ContentSnapshot, bool, error) {
+	_, accepted, err := s.stagedCandidateSnapshot(source)
+	if err != nil {
+		return ContentSnapshot{}, false, err
+	}
+	return accepted, source.spec.options.Critical, nil
+}
+
 func (s *HTTPStore) stagedCandidateSnapshot(
 	source *StagedSource,
 ) (stagedCandidateSnapshot, ContentSnapshot, error) {

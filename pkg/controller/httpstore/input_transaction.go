@@ -54,6 +54,10 @@ type InputTransaction struct {
 	retrySeed          *InputRetrySeed
 	replayEpoch        *purehttpstore.ReplayEpoch
 	replayState        *purehttpstore.AcceptedReplayState
+	// withholdCandidates renders unaccepted sources as unavailable instead of
+	// fetching them; withheld names the sources it did that to.
+	withholdCandidates bool
+	withheld           map[string]bool
 }
 
 type inputFetchResult struct {
@@ -67,6 +71,7 @@ func newInputTransaction(component *Component, seeds ...*InputRetrySeed) *InputT
 		sources:    make(map[string]*purehttpstore.StagedSource),
 		results:    make(map[string]*inputFetchResult),
 		candidates: make(map[string]*purehttpstore.InitialCandidate),
+		withheld:   make(map[string]bool),
 	}
 	if len(seeds) > 0 {
 		transaction.retrySeed = seeds[0]
@@ -107,18 +112,74 @@ func (t *InputTransaction) fetch(
 		}
 		return result.snapshot, result.err
 	}
-
-	value, err, _ := t.fetchGroup.Do(url, func() (any, error) {
-		return t.fetchAndRecord(ctx, source)
-	})
+	result, err := t.fetchStaged(ctx, source)
 	if err != nil {
 		return purehttpstore.ContentSnapshot{}, err
 	}
+	return result.snapshot, result.err
+}
+
+func (t *InputTransaction) fetchStaged(
+	ctx context.Context,
+	source *purehttpstore.StagedSource,
+) (*inputFetchResult, error) {
+	if t.withholdCandidates {
+		if result, withheld, err := t.withholdUnaccepted(source); withheld || err != nil {
+			return result, err
+		}
+	}
+	value, err, _ := t.fetchGroup.Do(source.URL(), func() (any, error) {
+		return t.fetchAndRecord(ctx, source)
+	})
+	if err != nil {
+		return nil, err
+	}
 	result, ok := value.(*inputFetchResult)
 	if !ok {
-		return purehttpstore.ContentSnapshot{}, errors.New("HTTP candidate fetch returned an invalid result")
+		return nil, errors.New("HTTP candidate fetch returned an invalid result")
 	}
-	return result.snapshot, result.err
+	return result, nil
+}
+
+// withholdUnaccepted records an unaccepted source as unavailable, as a failed
+// non-critical fetch is, and asks for the render that accepts it.
+func (t *InputTransaction) withholdUnaccepted(
+	source *purehttpstore.StagedSource,
+) (*inputFetchResult, bool, error) {
+	accepted, critical, err := t.component.store.AcceptedStagedSnapshot(source)
+	if err != nil || accepted.Found {
+		return nil, false, err
+	}
+	url := source.URL()
+	result := &inputFetchResult{snapshot: purehttpstore.ContentSnapshot{URL: url, Descriptor: source.Descriptor()}}
+	if critical {
+		result.err = fmt.Errorf("%w: %s", ErrCandidateWithheld, purehttpstore.RedactURL(url))
+	}
+	t.mu.Lock()
+	if t.state != transactionOpen {
+		t.mu.Unlock()
+		return nil, false, errors.New("render input transaction is no longer open")
+	}
+	if previous, exists := t.results[url]; exists {
+		t.mu.Unlock()
+		return previous, true, nil
+	}
+	t.results[url] = result
+	first := len(t.withheld) == 0
+	t.withheld[url] = true
+	t.mu.Unlock()
+	if first {
+		t.component.RequestRenderForWithheldContent()
+	}
+	return result, true, nil
+}
+
+// Withheld reports whether this render left the source out because it was not
+// accepted yet.
+func (t *InputTransaction) Withheld(url string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.withheld[url]
 }
 
 func (t *InputTransaction) fetchAndRecord(
