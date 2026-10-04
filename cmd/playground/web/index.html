@@ -282,6 +282,10 @@
     .mig-ann { color: var(--t-key, var(--term-fg)); word-break: break-all; }
     .mig-note { color: var(--term-dim); padding: 0 0 3px calc(10px + 5.5em + 8px); }
     .mig-ok { color: var(--t-str); padding-left: 10px; font-size: 11px; }
+    .mig-note code { color: var(--term-fg); }
+    .mig-note a { color: var(--accent); }
+    .mig-legend { padding: 0 0 8px 4px; }
+    .mig .mig-problem { color: var(--warn); }
     .mig .ok  { color: var(--t-str); }
     .mig .warn { color: var(--warn); }
     .mig .bad { color: var(--err); }
@@ -705,7 +709,7 @@
           <dt>Custom CRD</dt><dd>your own resource type and templates</dd>
         </dl>
         <p>The <strong>resources</strong> tab then shows what each object bucketed into (and why anything
-           was dropped); the <strong>migration</strong> tab shows how each annotation maps to HAProxy.</p>
+           was dropped); the <strong>migration</strong> tab shows how each annotation, and each key of a pasted controller ConfigMap, carries over.</p>
       </section>
 
       <h4 class="help-export-h">Export your resources into the Resources panel</h4>
@@ -761,6 +765,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
   <script type="module">
     import { makeEditors, setSchemaBundle, haproxyTokens } from './editor.js';
     import { createMigrationAssetLoader } from './migration-assets.mjs';
+    import { configMapSectionHTML, inlineMarkdownHTML } from './migration-report.mjs';
     import { buildTryoutScript } from './tryout.js';
 
     const $ = (id) => document.getElementById(id);
@@ -1001,7 +1006,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         events: (res.events || []).length,
         applied: Object.keys(res.applied || {}).length, resources: report.length,
         trace: (res.trace || []).length,
-        migration: mig ? mig.totalIngresses : 0,
+        migration: mig ? mig.totalIngresses + (mig.totalConfigMaps || 0) : 0,
         tests: res.testCount || 0,
       };
       const migWarn = (mig ? migAttentionCount(mig.counts || {}) : 0) + (migrationAssetWarning ? 1 : 0);
@@ -1239,7 +1244,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         for (const f of attention) {
           s += `<div class="mig-row jump"${anno(f)} title="jump to where this annotation is set"><span class="mig-badge ${MIG_CLS[f.status] || 'dim'}">${esc(f.status)}</span>`
             + `<code class="mig-ann">${esc(f.annotation)}</code></div>`;
-          if (f.note) s += `<div class="mig-note">${esc(f.note)}</div>`;
+          if (f.note) s += `<div class="mig-note">${inlineMarkdownHTML(f.note)}</div>`;
         }
         if (supported.length) {
           s += `<div class="mig-ok">✓ ${ingredient(supported.length, 'annotation')} fully supported</div>`;
@@ -1251,12 +1256,15 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         return s + '</div>';
       };
       const ingCount = `${m.totalIngresses} Ingress${m.totalIngresses === 1 ? '' : 'es'}`;
+      const cmCount = m.totalConfigMaps
+        ? ` · ${ingredient(m.totalConfigMaps, 'ConfigMap')}, ${ingredient(m.checkedConfigMapKeys, 'key')} checked` : '';
       let html = '<div class="mig">';
       if (migrationAssetWarning) html += `<div class="mig-note">${esc(migrationAssetWarning)}</div>`;
-      html += `<div class="mig-sum">${ingCount} · ${ingredient(m.checkedAnnotations, 'annotation')} checked ${pills}</div>`;
+      html += `<div class="mig-sum">${ingCount} · ${ingredient(m.checkedAnnotations, 'annotation')} checked${cmCount} ${pills}</div>`;
       for (const src of (m.sources || [])) {
         html += `<div class="mig-src"><div class="mig-src-h">source: <b>${esc(src.source)}</b></div>`;
         for (const ing of (src.ingresses || [])) html += renderIngress(ing);
+        html += configMapSectionHTML(src.configMaps, MIG_CLS);
         html += '</div>';
       }
       if ((m.unattributed || []).length) {

@@ -25,6 +25,7 @@ step for every **BREAKING** change below.
 - `templatingSettings.testExtraContext`: the extraContext validationTests render with in place of `extraContext`.
 - `http.Fetch` option `acceptStatus`: statuses besides 200 whose response body is the content.
 - `/readyz` and `/livez` health endpoints that judge the configuration a replica serves; `/healthz` keeps judging the newest one.
+- The playground migration report classifies each key of a pasted ingress-nginx controller ConfigMap against the migration guide's ConfigMap table.
 
 ### Changed
 

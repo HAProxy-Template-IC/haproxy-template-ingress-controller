@@ -71,7 +71,7 @@ type renderResult struct {
 	DurationMs    int64
 	Bucket        *BucketReport // where each pasted resource landed / why it was dropped
 	Trace         []any         // per-snippet render stats (JS-ready): {name, count, totalMs, avgMs, maxMs}
-	Migration     any           // migration report for pasted Ingresses (nil when no coverage/ingresses)
+	Migration     any           // migration report for pasted Ingresses and ConfigMaps (nil when no coverage or nothing to classify)
 	SchemaCheck   string        // per-field schema violation in the rendered config (empty = passed)
 	ReloadImpact  any           // reload verdict from deployplan.Diff vs the baseline (nil on the first render)
 	Provenance    any           // output tab -> per-line config-editor line that produced it (0 = none)
@@ -331,9 +331,10 @@ func migrationReportToJS(r *migratecheck.Report) map[string]any {
 			ings = append(ings, toIngress(ir))
 		}
 		sources = append(sources, map[string]any{
-			"source":    s.Source,
-			"ingresses": ings,
-			"counts":    countsToJS(s.Counts),
+			"source":     s.Source,
+			"ingresses":  ings,
+			"configMaps": configMapReportsToJS(s.ConfigMaps),
+			"counts":     countsToJS(s.Counts),
 		})
 	}
 	unattr := make([]any, 0, len(r.Unattributed))
@@ -341,12 +342,38 @@ func migrationReportToJS(r *migratecheck.Report) map[string]any {
 		unattr = append(unattr, toIngress(ir))
 	}
 	return map[string]any{
-		"sources":            sources,
-		"unattributed":       unattr,
-		"counts":             countsToJS(r.Counts),
-		"totalIngresses":     float64(r.TotalIngresses),
-		"checkedAnnotations": float64(r.CheckedAnnotations),
+		"sources":              sources,
+		"unattributed":         unattr,
+		"counts":               countsToJS(r.Counts),
+		"totalIngresses":       float64(r.TotalIngresses),
+		"checkedAnnotations":   float64(r.CheckedAnnotations),
+		"totalConfigMaps":      float64(r.TotalConfigMaps),
+		"checkedConfigMapKeys": float64(r.CheckedConfigMapKeys),
 	}
+}
+
+func configMapReportsToJS(reports []migratecheck.ConfigMapReport) []any {
+	out := make([]any, 0, len(reports))
+	for _, cr := range reports {
+		findings := make([]any, 0, len(cr.Findings))
+		for _, f := range cr.Findings {
+			findings = append(findings, map[string]any{
+				"key":     f.Key,
+				"value":   f.Value,
+				"status":  string(f.Status),
+				"setting": f.Setting,
+				"note":    f.Note,
+				"problem": f.Problem,
+			})
+		}
+		out = append(out, map[string]any{
+			"namespace": cr.Namespace,
+			"name":      cr.Name,
+			"findings":  findings,
+			"problem":   cr.Problem,
+		})
+	}
+	return out
 }
 
 func countsToJS(c map[migratecheck.Status]int) map[string]any {
@@ -648,9 +675,9 @@ func cleanSchemaError(msg string) string {
 	return strings.Join(details, "; ")
 }
 
-// migrationReport classifies every pasted Ingress's annotations against the
-// separately loaded coverage assets. It returns nil when no coverage is loaded
-// or no Ingress was pasted. RenderError stays empty because the render tabs
+// migrationReport classifies every pasted Ingress's annotations and every
+// source-controller ConfigMap's keys against the separately loaded coverage
+// assets. It returns nil when no coverage is loaded or neither was pasted. RenderError stays empty because the render tabs
 // carry that verdict.
 func migrationReport(coverage []migratecheck.CoverageSource, resourcesYAML []byte) any {
 	if len(coverage) == 0 {
@@ -661,22 +688,27 @@ func migrationReport(coverage []migratecheck.CoverageSource, resourcesYAML []byt
 		return nil
 	}
 	var ings []migratecheck.Ingress
+	var configMaps []migratecheck.ConfigMap
 	for _, doc := range docs {
 		for _, obj := range expandList(doc) {
 			m, ok := obj.(map[string]any)
 			if !ok {
 				continue
 			}
-			if kind, _ := m["kind"].(string); kind != "Ingress" {
-				continue
+			u := &unstructured.Unstructured{Object: m}
+			switch kind, _ := m["kind"].(string); kind {
+			case "Ingress":
+				ings = append(ings, migratecheck.FromUnstructured(u))
+			case "ConfigMap":
+				configMaps = append(configMaps, migratecheck.ConfigMapFromUnstructured(u))
 			}
-			ings = append(ings, migratecheck.FromUnstructured(&unstructured.Unstructured{Object: m}))
 		}
 	}
-	if len(ings) == 0 {
+	report := migratecheck.Classify(coverage, ings, configMaps)
+	if len(ings) == 0 && report.TotalConfigMaps == 0 {
 		return nil
 	}
-	return migrationReportToJS(migratecheck.Classify(coverage, ings))
+	return migrationReportToJS(report)
 }
 
 // toRenderResult flattens the render output into the JS-boundary shape.

@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
 # gen-migration-docs.sh — render the per-source annotation-support tables in
-# docs/site/docs/annotation-compatibility.md FROM the vendor libraries' _migrationCoverage
-# declarations, so the migration guide can never drift from the template code
-# (whose reads are in turn pinned to the coverage by check-migration-coverage.sh).
+# docs/site/docs/annotation-compatibility.md, and each source's controller
+# ConfigMap table in docs/site/docs/migrating.md, FROM the vendor libraries'
+# _migrationCoverage declarations, so the docs can never drift from the data
+# the playground's migration report classifies with (annotation reads are in
+# turn pinned to the coverage by check-migration-coverage.sh).
 #
-# Each source's table lives between marker comments:
-#   <!-- BEGIN generated: migration-coverage <source> -->
+# Each table lives between marker comments:
+#   <!-- BEGIN generated: migration-coverage <source> -->            (annotations)
+#   <!-- BEGIN generated: migration-configmap-coverage <source> -->  (ConfigMap)
 #   ... generated table ...
-#   <!-- END generated: migration-coverage <source> -->
+#   <!-- END generated: ... <source> -->
 # The prose around the markers is hand-written and left untouched.
 #
 # Modes:
 #   (no args)  regenerate the blocks in place.
-#   --check    fail (exit 1) if regeneration would change annotation-compatibility.md — used by
-#              `make lint` to pin the doc against the coverage data.
+#   --check    fail (exit 1) if regeneration would change either doc — used by
+#              `make lint` to pin the docs against the coverage data.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 DOC=docs/site/docs/annotation-compatibility.md
+CONFIGMAP_DOC=docs/site/docs/migrating.md
 CHARTS=charts/haptic/charts
 
 CHECK=0
@@ -29,7 +33,7 @@ elif [ -n "${1:-}" ]; then
   exit 2
 fi
 
-python3 - "$CHECK" "$DOC" \
+python3 - "$CHECK" "$DOC" "$CONFIGMAP_DOC" \
   "$CHARTS/nginx-ingress/90-migration-coverage.yaml" \
   "$CHARTS/haproxy-ingress/90-migration-coverage.yaml" \
   "$CHARTS/haproxytech/library.yaml" <<'PY'
@@ -40,7 +44,8 @@ import yaml
 
 check = sys.argv[1] == "1"
 doc_path = sys.argv[2]
-coverage_files = sys.argv[3:]
+configmap_doc_path = sys.argv[3]
+coverage_files = sys.argv[4:]
 
 STATUS_LABEL = {
     "different": "Behaviour differs",
@@ -121,40 +126,72 @@ def render_table(entry):
     return "\n".join(lines)
 
 
-with open(doc_path, encoding="utf-8") as fh:
-    doc = fh.read()
-
-new_doc = doc
-for source in SOURCE_ORDER:
-    if source not in sources:
-        continue
-    begin = f"<!-- BEGIN generated: migration-coverage {source} -->"
-    end = f"<!-- END generated: migration-coverage {source} -->"
-    block = render_table(sources[source])
-    replacement = f"{begin}\n{block}\n{end}"
-    pattern = re.compile(
-        re.escape(begin) + r".*?" + re.escape(end), re.DOTALL
-    )
-    if not pattern.search(new_doc):
-        raise SystemExit(
-            f"{doc_path}: missing marker block for source '{source}' "
-            f"(expected '{begin}' ... '{end}')"
+def render_configmap_table(entry):
+    lines = [
+        f"| {entry['source']} key | HAPTIC setting | Status | What to check |",
+        "|-------------------|----------------|--------|---------------|",
+    ]
+    for setting in entry["configMap"]["settings"]:
+        keys = ", ".join(
+            f"`{key['name']}`" + (f" (`{key['default']}`)" if "default" in key else "")
+            for key in setting["keys"]
         )
-    new_doc = pattern.sub(lambda _m, r=replacement: r, new_doc, count=1)
+        status = setting["status"]
+        label = status if status == "supported" else f"**{status}**"
+        cells = [keys, setting.get("setting") or "—", label, setting.get("note") or ""]
+        lines.append("| " + " | ".join(c.replace("|", "\\|").strip() for c in cells) + " |")
+    return "\n".join(lines)
 
-if check:
-    if new_doc != doc:
+
+def regenerate(path, blocks):
+    """Replace each (marker, source, block) region in path; return (old, new)."""
+    with open(path, encoding="utf-8") as fh:
+        doc = fh.read()
+    new_doc = doc
+    for marker, source, block in blocks:
+        begin = f"<!-- BEGIN generated: {marker} {source} -->"
+        end = f"<!-- END generated: {marker} {source} -->"
+        replacement = f"{begin}\n{block}\n{end}"
+        pattern = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.DOTALL)
+        if not pattern.search(new_doc):
+            raise SystemExit(
+                f"{path}: missing marker block for source '{source}' "
+                f"(expected '{begin}' ... '{end}')"
+            )
+        new_doc = pattern.sub(lambda _m, r=replacement: r, new_doc, count=1)
+    return doc, new_doc
+
+
+ordered = [sources[s] for s in SOURCE_ORDER if s in sources]
+docs = {
+    doc_path: [("migration-coverage", e["source"], render_table(e)) for e in ordered],
+    configmap_doc_path: [
+        ("migration-configmap-coverage", e["source"], render_configmap_table(e))
+        for e in ordered
+        if e.get("configMap")
+    ],
+}
+
+stale = False
+for path, blocks in docs.items():
+    doc, new_doc = regenerate(path, blocks)
+    if new_doc == doc:
+        if not check:
+            print(f"{path} already up-to-date.")
+        continue
+    if check:
         sys.stderr.write(
-            "annotation-compatibility.md is out of date with _migrationCoverage.\n"
+            f"{path} is out of date with _migrationCoverage.\n"
             "Run scripts/gen-migration-docs.sh and commit the result.\n"
         )
-        sys.exit(1)
-    print("annotation-compatibility.md generated tables are up-to-date.")
-else:
-    if new_doc != doc:
-        with open(doc_path, "w", encoding="utf-8") as fh:
-            fh.write(new_doc)
-        print(f"Regenerated migration-coverage tables in {doc_path}.")
+        stale = True
     else:
-        print(f"{doc_path} already up-to-date.")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(new_doc)
+        print(f"Regenerated migration-coverage tables in {path}.")
+
+if stale:
+    sys.exit(1)
+if check:
+    print("Generated migration-coverage tables are up-to-date.")
 PY

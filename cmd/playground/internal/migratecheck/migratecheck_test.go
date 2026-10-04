@@ -54,7 +54,7 @@ func TestClassify_GroupsBySourceAndClassifiesStatuses(t *testing.T) {
 		},
 	}
 
-	report := Classify(coverage(), ingresses)
+	report := Classify(coverage(), ingresses, nil)
 
 	require.Len(t, report.Sources, 1)
 	src := report.Sources[0]
@@ -85,7 +85,7 @@ func TestClassify_UnknownPrefixAnnotationIsHonestlyUnknown(t *testing.T) {
 		},
 	}
 
-	report := Classify(coverage(), ingresses)
+	report := Classify(coverage(), ingresses, nil)
 
 	require.Len(t, report.Sources, 1)
 	require.Len(t, report.Sources[0].Ingresses, 1)
@@ -105,7 +105,7 @@ func TestClassify_DetectsByAnnotationPrefixWithoutClass(t *testing.T) {
 		},
 	}
 
-	report := Classify(coverage(), ingresses)
+	report := Classify(coverage(), ingresses, nil)
 
 	require.Len(t, report.Sources, 1)
 	assert.Empty(t, report.Unattributed)
@@ -117,7 +117,7 @@ func TestClassify_UnattributedIngressIsReportedButNotClassified(t *testing.T) {
 		{Namespace: "n", Name: "plain", Class: "nginx", Annotations: map[string]string{"foo": "bar"}},
 	}
 
-	report := Classify(coverage(), ingresses)
+	report := Classify(coverage(), ingresses, nil)
 
 	assert.Empty(t, report.Sources)
 	require.Len(t, report.Unattributed, 1)
@@ -149,7 +149,7 @@ func TestClassify_OneIngressAttributedToMultipleSources(t *testing.T) {
 		},
 	}
 
-	report := Classify(cov, ingresses)
+	report := Classify(cov, ingresses, nil)
 
 	require.Len(t, report.Sources, 2)
 	// Each source classifies only its own prefix.
@@ -169,7 +169,7 @@ func TestClassify_RenderFailureCounted(t *testing.T) {
 		},
 	}
 
-	report := Classify(coverage(), ingresses)
+	report := Classify(coverage(), ingresses, nil)
 
 	assert.Equal(t, 1, report.RenderFailures)
 	require.Len(t, report.Sources, 1)
@@ -183,7 +183,7 @@ func TestClassify_DeterministicIngressOrder(t *testing.T) {
 		{Namespace: "a", Name: "x", Class: "acme", Annotations: map[string]string{"acme.io/canary": "1"}},
 	}
 
-	report := Classify(coverage(), ingresses)
+	report := Classify(coverage(), ingresses, nil)
 
 	require.Len(t, report.Sources, 1)
 	got := report.Sources[0].Ingresses
