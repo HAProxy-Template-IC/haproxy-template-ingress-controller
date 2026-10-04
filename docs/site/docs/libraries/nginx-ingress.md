@@ -605,7 +605,7 @@ annotations:
 
 ### `nginx.ingress.kubernetes.io/server-alias`
 
-Comma-separated extra hostnames that route exactly like the Ingress's first rule host. Each alias becomes a `host.map` entry pointing at the rule host's routing key, so every path already registered for that host applies to the alias — no backend or path duplication. Wildcard aliases (`*.example.com`) are normalized the same way rule hosts are.
+Comma-separated extra hostnames that route exactly like the Ingress's first rule host. Each alias becomes a `host.map` entry pointing at the rule host's routing key, so every path already registered for that host applies to the alias — no backend or path duplication. Wildcard aliases (`*.example.com`) are normalized the same way rule hosts are. Each alias must be a valid hostname; case doesn't matter. A hostname an older Ingress already claims stays with that Ingress; see [Host aliases claim hostnames](../operations/security.md#host-aliases-claim-hostnames).
 
 ```yaml
 annotations:

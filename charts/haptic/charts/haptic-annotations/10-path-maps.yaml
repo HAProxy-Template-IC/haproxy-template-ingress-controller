@@ -13,7 +13,7 @@
 #   haproxy-haptic.org/host-alias:       comma/space list of extra EXACT hosts.
 #       → host.map entry  `<alias-key> <primary-host-key>`
 #   haproxy-haptic.org/host-alias-regex: a regex matching extra hostnames.
-#       → host-regex.map entry  `<regex> <primary-host-key>`
+#       → host-alias-regex.map entry  `^(?:<regex>)$ <primary-host-key>`
 #
 # Map targets use BackendNameIngress + MapKeyForHost so names/keys match
 # ingress.yaml (and the standard path-map renderers) byte-for-byte.
@@ -170,11 +170,52 @@ templateSnippets:
       {%- end %}
       {%- end %}
 
+
+  features-911-haptic-host-alias-claims:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - metadata.annotations['haproxy-haptic.org/host-alias']
+        - metadata.annotations['haproxy-haptic.org/host-alias-regex']
+      group: ingress-host-claims
+      effects: [publishValue]
+    template: |-
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-ingress-host-claims" for HostClaimRank, HostAliases, HostAliasProblem, HostAliasRegexKey -%}
+      {%- import "util-regex-map-key" for RegexGroupProblem -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%%
+        var exactAnnotation = "haproxy-haptic.org/host-alias"
+        var regexAnnotation = "haproxy-haptic.org/host-alias-regex"
+        var id = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name")
+        var rules = toSlice(dig(item, "spec", "rules"))
+        var primaryKey = ""
+        if len(rules) > 0 { primaryKey = tostring(MapKeyForHost(dig(rules[0], "host"))) }
+        if primaryKey != "" {
+          var seen = map[string]bool{}
+          for _, alias := range HostAliases(dig_string(item, "", "metadata", "annotations", exactAnnotation), " ") {
+            var aliasKey = tostring(MapKeyForHost(toLower(alias)))
+            if HostAliasProblem(alias) != "" || aliasKey == primaryKey || seen[aliasKey] { continue }
+            seen[aliasKey] = true
+            show shared.PublishRanked("hosts", aliasKey, HostClaimRank(item, exactAnnotation),
+              map[string]any{"owner": id, "target": primaryKey, "annotation": exactAnnotation})
+          }
+          var regex = strip(dig_string(item, "", "metadata", "annotations", regexAnnotation))
+          if regex != "" && ConfigInjectionKind(regex, "mapkey") == "" && RegexGroupProblem(regex) == "" {
+            show shared.PublishRanked("regexes", HostAliasRegexKey(regex), HostClaimRank(item, regexAnnotation),
+              map[string]any{"owner": id, "target": primaryKey, "annotation": regexAnnotation})
+          }
+        }
+      %%}
+
   map-host-800-haptic-host-alias:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/host-alias']"]
+      consumes: [ingress-host-claims]
+      effects: [recordEvent]
     template: |
       {#
         haproxy-haptic.org/host-alias → host.map entries.
@@ -183,76 +224,102 @@ templateSnippets:
           - haproxy-haptic.org/host-alias: "a.example.com, b.example.com" (optional)
 
         For each listed hostname, emit one host.map entry pointing at the
-        primary host's normalised key. The primary host is the FIRST rule's
-        host, normalised with MapKeyForHost — the SAME normalisation the
-        standard host-map renderer uses — so the alias resolves to identical
-        downstream path-map lookups. No backend or path-map duplication.
-
-        Each alias is passed through ValidateConfigValue (config-injection
-        guard: rejects control characters / spaces) before interpolation.
+        primary host's normalised key (the FIRST rule's host, MapKeyForHost),
+        so the alias resolves to identical downstream path-map lookups. An
+        alias another Ingress claimed first (as a rule host or alias) isn't
+        emitted; this Ingress gets a RouteConflict Event.
 
         Extension Point: map-host-* (priority 800 — HAPTIC-native)
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-      {%- var aliasAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/host-alias"] %}
-      {%- if aliasAnnotation != "" %}
-      {%- var rules = ingress.Spec.Rules %}
-      {%- if len(rules) > 0 %}
-      {%- var primaryKey = MapKeyForHost(rules[0].Host) %}
-      {%- if primaryKey != "" %}
-      {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-      # haptic/host-alias ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
-      {%- for _, rawAlias := range split(replace(aliasAnnotation, ",", " "), " ") %}
-      {%- var alias = strip(rawAlias) %}
-      {%- if alias != "" %}
-      {%- var safeAlias = ValidateConfigValue(alias, "haproxy-haptic.org/host-alias", key, false) %}
-      {{ MapKeyForHost(safeAlias) }} {{ primaryKey }}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
+      {%- import "util-ingress-host-claims" for HostAliases, HostAliasProblem, HostClaimEmits, HostClaimConflict, HostAliasConflictMessage -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%%
+        var annotation = "haproxy-haptic.org/host-alias"
+        var id = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name")
+        var rules = toSlice(dig(item, "spec", "rules"))
+        var primaryKey = ""
+        if len(rules) > 0 { primaryKey = tostring(MapKeyForHost(dig(rules[0], "host"))) }
+        if primaryKey != "" {
+          var lines = ""
+          var seen = map[string]bool{}
+          for _, alias := range HostAliases(dig_string(item, "", "metadata", "annotations", annotation), " ") {
+            var injection = ConfigInjectionKind(alias, "mapkey")
+            if injection != "" {
+              _ = WebhookRejectOrWarn(item, "InvalidHostAlias", "Ingress " + id + " annotation '" + annotation + "' value contains " + injection + ", which would split the host map; the alias is not applied. Remove whitespace and control characters from the value.")
+              continue
+            }
+            var problem = HostAliasProblem(alias)
+            if problem != "" {
+              _ = WebhookRejectOrWarn(item, "InvalidHostAlias", "Ingress " + id + " annotation '" + annotation + "' alias '" + alias + "' " + problem + ", so it isn't routed. Use a hostname such as www.example.com or *.example.com.")
+              continue
+            }
+            var aliasKey = tostring(MapKeyForHost(toLower(alias)))
+            if aliasKey == primaryKey || seen[aliasKey] { continue }
+            seen[aliasKey] = true
+            var winner, found = shared.Select("ingress-host-claims", "hosts", aliasKey)
+            if HostClaimEmits(winner, found, id, annotation) {
+              lines += "\n" + aliasKey + " " + primaryKey
+            } else if HostClaimConflict(winner, found, id, primaryKey) {
+              recordEvent(item, "RouteConflict", HostAliasConflictMessage(annotation, alias, dig_string(winner, "", "owner")))
+            }
+          }
+          if lines != "" {
+            show "\n# haptic/host-alias (" + id + ")" + lines + "\n"
+          }
+        }
+      %%}
 
-  map-hostregex-800-haptic-host-alias-regex:
+  map-hostaliasregex-800-haptic-host-alias-regex:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-haptic.org/host-alias-regex']"]
+      consumes: [ingress-host-claims]
+      effects: [recordEvent]
     template: |
       {#
-        haproxy-haptic.org/host-alias-regex → host-regex.map entries.
+        haproxy-haptic.org/host-alias-regex → host-alias-regex.map entries.
 
         Annotations:
-          - haproxy-haptic.org/host-alias-regex: "^app[0-9]+\.example\.com$" (optional)
+          - haproxy-haptic.org/host-alias-regex: "app[0-9]+\.example\.com" (optional)
 
-        The value is a HAProxy-compatible PCRE matching extra hostnames.
-        host-regex.map is consulted by base.yaml's routing cascade via
-        map_reg() after the exact host.map miss, so a single regex entry routes
-        every matching hostname to the primary host's normalised key.
+        The value is a HAProxy-compatible PCRE matched against the whole
+        hostname: it is written as ^(?:<regex>)$, and RegexGroupProblem rejects
+        anything that could close that group early. base.yaml's routing cascade
+        consults host-alias-regex.map last, after every exact, wildcard and
+        host-regex.map lookup missed.
 
-        The regex is passed through ValidateConfigValue (config-injection guard:
-        rejects control characters / spaces) before interpolation.
-
-        Extension Point: map-hostregex-* (priority 800 — HAPTIC-native)
+        Extension Point: map-hostaliasregex-* (priority 800 — HAPTIC-native)
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} %}
-      {%- var regexAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/host-alias-regex"] %}
-      {%- if regexAnnotation != "" %}
-      {%- var rules = ingress.Spec.Rules %}
-      {%- if len(rules) > 0 %}
-      {%- var primaryKey = MapKeyForHost(rules[0].Host) %}
-      {%- if primaryKey != "" %}
-      {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-      # haptic/host-alias-regex ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
-      {{ ValidateConfigValue(strip(regexAnnotation), "haproxy-haptic.org/host-alias-regex", key, false) }} {{ primaryKey }}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
+      {%- import "util-ingress-host-claims" for HostAliasRegexKey, HostClaimEmits, HostClaimConflict, HostAliasConflictMessage -%}
+      {%- import "util-regex-map-key" for RegexGroupProblem -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%%
+        var annotation = "haproxy-haptic.org/host-alias-regex"
+        var id = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name")
+        var rules = toSlice(dig(item, "spec", "rules"))
+        var primaryKey = ""
+        if len(rules) > 0 { primaryKey = tostring(MapKeyForHost(dig(rules[0], "host"))) }
+        var regex = strip(dig_string(item, "", "metadata", "annotations", annotation))
+        if primaryKey != "" && regex != "" {
+          var injection = ConfigInjectionKind(regex, "mapkey")
+          var problem = RegexGroupProblem(regex)
+          if injection != "" {
+            _ = WebhookRejectOrWarn(item, "InvalidHostAliasRegex", "Ingress " + id + " annotation '" + annotation + "' value contains " + injection + ", which would split the host-alias-regex map; the alias regex is not applied. Remove whitespace and control characters from the value.")
+          } else if problem != "" {
+            _ = WebhookRejectOrWarn(item, "InvalidHostAliasRegex", "Ingress " + id + " annotation '" + annotation + "' regex '" + regex + "' " + problem + ", so it isn't routed. Rewrite it so its groups and [ ] classes close within it, without \\Q, \\E, \\c or (*.")
+          } else {
+            var key = HostAliasRegexKey(regex)
+            var winner, found = shared.Select("ingress-host-claims", "regexes", key)
+            if HostClaimEmits(winner, found, id, annotation) {
+              show "\n# haptic/host-alias-regex (" + id + ")\n" + key + " " + primaryKey + "\n"
+            } else if HostClaimConflict(winner, found, id, primaryKey) {
+              recordEvent(item, "RouteConflict", HostAliasConflictMessage(annotation, regex, dig_string(winner, "", "owner")))
+            }
+          }
+        }
+      %%}

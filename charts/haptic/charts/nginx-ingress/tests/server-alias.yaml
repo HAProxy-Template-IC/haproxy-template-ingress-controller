@@ -50,5 +50,77 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: map:host.map, pattern: "\\.wild\\.example\\.com primary\\.example\\.com"}
 
+  test-nginx-ingress-server-alias-conflicts-oldest-wins:
+    description: >-
+      A server-alias that names an older Ingress's wildcard rule host isn't written; the
+      newer Ingress gets a RouteConflict Event. An alias claimed first keeps the host against
+      a newer haptic host-alias for it.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: zeta, name: owner, creationTimestamp: "2020-01-01T00:00:00Z"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: "*.wild.example.com"
+                http: &nginxAliasPaths
+                  paths: [{path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}]
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: mid
+            name: aliaser
+            creationTimestamp: "2022-01-01T00:00:00Z"
+            annotations: {nginx.ingress.kubernetes.io/server-alias: "*.wild.example.com, www.example.com"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: aliaser.example.com
+                http: *nginxAliasPaths
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: alpha
+            name: late
+            creationTimestamp: "2026-01-01T00:00:00Z"
+            annotations: {haproxy-haptic.org/host-alias: "www.example.com"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: late.example.com
+                http: *nginxAliasPaths
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: map:host.map, pattern: '(?m)^\.wild\.example\.com ', expected: "1"}
+      - {type: contains, target: map:host.map, pattern: '(?m)^\.wild\.example\.com \.wild\.example\.com$'}
+      - {type: match_count, target: map:host.map, pattern: '(?m)^www\.example\.com ', expected: "1"}
+      - {type: contains, target: map:host.map, pattern: '(?m)^www\.example\.com aliaser\.example\.com$'}
+      - {type: contains, target: events, pattern: 'Warning RouteConflict networking\.k8s\.io/v1 Ingress mid/aliaser: .*"\*\.wild\.example\.com" is already claimed by Ingress zeta/owner'}
+      - {type: contains, target: events, pattern: 'Warning RouteConflict networking\.k8s\.io/v1 Ingress alpha/late: .*"www\.example\.com" is already claimed by Ingress mid/aliaser'}
+
+  test-nginx-ingress-server-alias-invalid-hostname-skipped-on-reconcile:
+    description: On reconcile a server-alias that can't be a hostname (an underscore, a path) is skipped with an InvalidAnnotationValue Event; a mixed-case alias is accepted and lowercased.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad
+            annotations: {nginx.ingress.kubernetes.io/server-alias: "bad_host.example.com, Fine.Example.com, path.example.com/x"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bad.example.com
+                http: *nginxAliasPaths
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:host.map, pattern: '(?m)^fine\.example\.com bad\.example\.com$'}
+      - {type: not_contains, target: map:host.map, pattern: 'bad_host|path\.example'}
+      - {type: contains, target: events, pattern: "Warning InvalidAnnotationValue networking\\.k8s\\.io/v1 Ingress default/bad: .*alias 'bad_host\\.example\\.com' isn't a valid hostname"}
+      - {type: contains, target: events, pattern: "Warning InvalidAnnotationValue networking\\.k8s\\.io/v1 Ingress default/bad: .*alias 'path\\.example\\.com/x' isn't a valid hostname"}
+
   # server-alias config-injection guard: exercised in the shared hostile-Ingress
   # test (test-nginx-ingress-warn-guards-skip-injection, annotations.yaml).

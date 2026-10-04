@@ -205,7 +205,7 @@ validationTests:
         pattern: "(?m)^alias2\\.example\\.com primary\\.example\\.com$"
 
   test-haptic-server-alias-regex:
-    description: haproxy-haptic.org/host-alias-regex maps a hostname regex to the primary host key
+    description: haproxy-haptic.org/host-alias-regex maps a hostname regex, anchored to the whole hostname, to the primary host key in host-alias-regex.map
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -214,7 +214,7 @@ validationTests:
             namespace: default
             name: alias-regex-ingress
             annotations:
-              haproxy-haptic.org/host-alias-regex: "^app[0-9]+\\.example\\.com$"
+              haproxy-haptic.org/host-alias-regex: "app[0-9]+\\.example\\.com"
           spec:
             ingressClassName: haptic
             rules:
@@ -227,5 +227,268 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: contains
-        target: "map:host-regex.map"
-        pattern: "\\^app\\[0-9\\]\\+\\\\\\.example\\\\\\.com\\$ app\\.example\\.com"
+        target: map:host-alias-regex.map
+        pattern: '(?m)^\^\(\?:app\[0-9\]\+\\\.example\\\.com\)\$ app\.example\.com$'
+      - {type: not_contains, target: map:host-regex.map, pattern: 'app\['}
+
+  test-haptic-host-alias-regex-group-breakout-rejected:
+    description: A host-alias-regex whose ")" closes the whole-hostname group early would escape the anchor, so admission refuses it.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: breakout
+            annotations: {haproxy-haptic.org/host-alias-regex: "a)|(.*"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: breakout.example.com
+                http: &hapticAliasPaths
+                  paths: [{path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}]
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "annotation 'haproxy-haptic\\.org/host-alias-regex' regex 'a\\)\\|\\(\\.\\*' closes a group it doesn't open, so it isn't routed"}
+
+  test-haptic-host-alias-regex-group-breakout-skipped-on-reconcile:
+    description: On reconcile a host-alias-regex that would escape the anchor isn't written and records an InvalidHostAliasRegex Event; the rest of the config keeps serving.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: breakout
+            annotations: {haproxy-haptic.org/host-alias-regex: "a)|(.*"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: breakout.example.com
+                http: *hapticAliasPaths
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: map:host-alias-regex.map, pattern: 'breakout'}
+      - {type: contains, target: events, pattern: 'Warning InvalidHostAliasRegex networking\.k8s\.io/v1 Ingress default/breakout: '}
+      - {type: contains, target: map:host.map, pattern: '(?m)^breakout\.example\.com breakout\.example\.com$'}
+
+  test-haptic-host-alias-rejects-port:
+    description: An exact host-alias must be a DNS hostname; one carrying a ':port' could equal a listener-scoped or catch-all host.map key, so admission refuses it.
+    extraContext: {renderMode: admission}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ported
+            annotations: {haproxy-haptic.org/host-alias: "ok.example.com, :80"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ported.example.com
+                http: *hapticAliasPaths
+    assertions:
+      - {type: contains, target: rendering_error, pattern: "annotation 'haproxy-haptic\\.org/host-alias' alias ':80' isn't a valid hostname"}
+
+  test-haptic-host-alias-mixed-case-lowercased:
+    description: Hostnames are case-insensitive, so a mixed-case host-alias is accepted and written lowercased, matching the lowercased request host.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mixed
+            annotations: {haproxy-haptic.org/host-alias: "WWW.Example.COM *.Wild.Example.com"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mixed.example.com
+                http: *hapticAliasPaths
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:host.map, pattern: '(?m)^www\.example\.com mixed\.example\.com$'}
+      - {type: contains, target: map:host.map, pattern: '(?m)^\.wild\.example\.com mixed\.example\.com$'}
+      - {type: not_contains, target: map:host.map, pattern: 'Example'}
+      - {type: not_contains, target: events, pattern: 'default/mixed:'}
+
+  test-haptic-host-alias-regex-never-matches-gateway-listener:
+    description: >-
+      Gateway listener lookups run map_reg on host-regex.map with "<host>:<scope>" input. An
+      Ingress alias regex is written only to host-alias-regex.map, which only the unscoped
+      cascade reads, and that cascade never runs for a Gateway listener because the Gateway
+      host match always sets host_match (its ":<scope>" catch-all). So even a ".*" alias can't
+      capture a Gateway listener's requests.
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.gateway.enabled }}true{{ end }}'
+    requires: [gatewayclasses, gateways, httproutes]
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy.org/haptic}
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gw, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, protocol: HTTP, port: 80, hostname: '*.example.com'}
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: app, namespace: default}
+          spec:
+            ports:
+              - {port: 80}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: route, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: ['*.example.com']
+            rules:
+              - backendRefs: [{name: app, port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: tenant
+            name: greedy
+            annotations: {haproxy-haptic.org/host-alias-regex: ".*\\.example\\.com"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: greedy.tenant.test
+                http: *hapticAliasPaths
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:host-alias-regex.map, pattern: '(?m)^\^\(\?:\.\*\\\.example\\\.com\)\$ greedy\.tenant\.test$'}
+      - {type: not_contains, target: map:host-regex.map, pattern: 'greedy'}
+      - {type: contains, target: map:host-regex.map, pattern: '(?m)example\\\.com:[0-9]+\$ \.example\.com:[0-9]+$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'gw_host_scope[^\n]*host-alias-regex\.map'}
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'set-var\(txn\.host_match\) str\(:\),concat\(,txn\.gw_host_scope,\) if \{ var\(txn\.gw_host_scope\) -m found \} \{ var\(txn\.host_match\) -m len 0 \}'
+          - 'set-var\(txn\.host_match\) var\(txn\.host\),map_reg\([^)]*host-alias-regex\.map,''''\) if \{ var\(txn\.host_match\) -m len 0 \}'
+
+  test-haptic-host-alias-older-rule-host-wins:
+    description: >-
+      An exact alias and another Ingress's rule host claim the same host.map key. The older
+      Ingress keeps it, the key appears once, and the newer one gets a RouteConflict Event.
+      The older Ingress sits in the alphabetically last namespace, so only creationTimestamp
+      can make it win.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: zeta, name: owner, creationTimestamp: "2020-01-01T00:00:00Z"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: shared.example.com
+                http: *hapticAliasPaths
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: alpha
+            name: claimer
+            creationTimestamp: "2026-01-01T00:00:00Z"
+            annotations: {haproxy-haptic.org/host-alias: "shared.example.com, extra.example.com"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: claimer.example.com
+                http: *hapticAliasPaths
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: map:host.map, pattern: '(?m)^shared\.example\.com ', expected: "1"}
+      - {type: contains, target: map:host.map, pattern: '(?m)^shared\.example\.com shared\.example\.com$'}
+      - {type: contains, target: map:host.map, pattern: '(?m)^extra\.example\.com claimer\.example\.com$'}
+      - {type: contains, target: events, pattern: 'Warning RouteConflict networking\.k8s\.io/v1 Ingress alpha/claimer: .*"shared\.example\.com" is already claimed by Ingress zeta/owner'}
+      - {type: not_contains, target: events, pattern: 'zeta/owner:'}
+
+  test-haptic-host-alias-older-alias-wins:
+    description: >-
+      An exact alias claimed first keeps the host against a newer Ingress's rule host. The
+      key appears once, pointing at the alias's primary host, and the newer Ingress gets a
+      RouteConflict Event.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: zeta
+            name: claimer
+            creationTimestamp: "2020-01-01T00:00:00Z"
+            annotations: {haproxy-haptic.org/host-alias: "shared.example.com"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: claimer.example.com
+                http: *hapticAliasPaths
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: alpha, name: late, creationTimestamp: "2026-01-01T00:00:00Z"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: shared.example.com
+                http: *hapticAliasPaths
+              - host: late.example.com
+                http: *hapticAliasPaths
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: map:host.map, pattern: '(?m)^shared\.example\.com ', expected: "1"}
+      - {type: contains, target: map:host.map, pattern: '(?m)^shared\.example\.com claimer\.example\.com$'}
+      - {type: contains, target: map:host.map, pattern: '(?m)^# Ingress: alpha/late \(1 hosts\)\n\nlate\.example\.com late\.example\.com$'}
+      - {type: contains, target: events, pattern: 'Warning RouteConflict networking\.k8s\.io/v1 Ingress alpha/late: host "shared\.example\.com" is claimed by an alias on Ingress zeta/claimer'}
+      - {type: not_contains, target: events, pattern: 'zeta/claimer:'}
+
+  test-haptic-host-alias-identical-claims-oldest-wins:
+    description: >-
+      Two Ingresses with different primary hosts list the same exact alias and the same alias
+      regex. Each key is written once, for the older Ingress; the newer one gets a
+      RouteConflict Event per claim.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: zeta
+            name: first
+            creationTimestamp: "2020-01-01T00:00:00Z"
+            annotations:
+              haproxy-haptic.org/host-alias: "www.example.com"
+              haproxy-haptic.org/host-alias-regex: "app[0-9]+\\.example\\.com"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: first.example.com
+                http: *hapticAliasPaths
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: alpha
+            name: second
+            creationTimestamp: "2026-01-01T00:00:00Z"
+            annotations:
+              haproxy-haptic.org/host-alias: "www.example.com"
+              haproxy-haptic.org/host-alias-regex: "app[0-9]+\\.example\\.com"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: second.example.com
+                http: *hapticAliasPaths
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: map:host.map, pattern: '(?m)^www\.example\.com ', expected: "1"}
+      - {type: contains, target: map:host.map, pattern: '(?m)^www\.example\.com first\.example\.com$'}
+      - {type: match_count, target: map:host-alias-regex.map, pattern: '(?m)^\^\(\?:app', expected: "1"}
+      - {type: contains, target: map:host-alias-regex.map, pattern: '(?m)^\^\(\?:app\[0-9\]\+\\\.example\\\.com\)\$ first\.example\.com$'}
+      - {type: match_count, target: events, pattern: 'Warning RouteConflict networking\.k8s\.io/v1 Ingress alpha/second: .*already claimed by Ingress zeta/first', expected: "2"}

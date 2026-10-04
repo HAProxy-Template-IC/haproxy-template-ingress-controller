@@ -481,10 +481,10 @@ _migrationCoverage:
         note: "Inert: servers are named after their pods (ADR-0011), so there is no slot pool to size. Setting it emits an UnsupportedAnnotation Warning Event."
       haproxy-haptic.org/host-alias:
         status: supported
-        note: "Adds extra exact hostnames (comma- or space-separated) that route to the same backends as the Ingress's primary host. Each hostname becomes a host-map entry pointing at the primary host's normalized routing key, so no backends or path-map entries are duplicated. Each hostname is injection-guarded (control characters and spaces rejected)."
+        note: "Adds extra exact hostnames (comma- or space-separated) that route to the same backends as the Ingress's primary host. Each hostname becomes a host-map entry pointing at the primary host's normalized routing key, so no backends or path-map entries are duplicated. Each hostname must be a valid DNS name, optionally starting with `*.`, and is matched case-insensitively; a hostname another Ingress claimed first stays with that Ingress."
       haproxy-haptic.org/host-alias-regex:
         status: supported
-        note: "Adds a regular-expression hostname pattern (HAProxy-compatible PCRE) that routes every matching hostname to the same backends as the Ingress's primary host. The pattern becomes a regex host-map entry pointing at the primary host's normalized routing key, consulted after an exact host-map miss. The pattern is injection-guarded (control characters and spaces rejected)."
+        note: "Adds a regular-expression hostname pattern (HAProxy-compatible PCRE) that routes every matching hostname to the same backends as the Ingress's primary host. The pattern is matched against the whole hostname and consulted after every exact and wildcard host lookup missed. A pattern whose groups or `[ ]` classes do not close within it is rejected."
       haproxy-haptic.org/session-cookie-domain:
         status: supported
         note: "native 'domain <d>' cookie keyword; injection-guarded"

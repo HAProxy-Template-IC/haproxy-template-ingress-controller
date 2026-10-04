@@ -519,7 +519,7 @@ annotations:
 
 ### `haproxy-ingress.github.io/server-alias`
 
-Comma-separated extra exact hostnames that route like the Ingress's first rule host. Each alias becomes a `host.map` entry pointing at the primary host's routing key, so every path already registered for that host applies to the alias — no backend or path duplication.
+Comma-separated extra exact hostnames that route like the Ingress's first rule host. Each alias becomes a `host.map` entry pointing at the primary host's routing key, so every path already registered for that host applies to the alias — no backend or path duplication. Each alias must be a valid hostname, optionally starting with `*.`; case doesn't matter. A hostname an older Ingress already claims stays with that Ingress; see [Host aliases claim hostnames](../operations/security.md#host-aliases-claim-hostnames).
 
 ```yaml
 annotations:
@@ -528,7 +528,7 @@ annotations:
 
 ### `haproxy-ingress.github.io/server-alias-regex`
 
-A regular expression matching extra hostnames, routed to the Ingress's first rule host via `host-regex.map`. The routing cascade consults `host-regex.map` after an exact `host.map` miss, so one entry routes every matching hostname. The value is emitted verbatim and must be a HAProxy-compatible Perl Compatible Regular Expression (PCRE).
+A regular expression matching extra hostnames, routed to the Ingress's first rule host. The expression must match the whole hostname, and applies only when no rule host, wildcard host, or exact alias matches. It must be a HAProxy-compatible Perl Compatible Regular Expression (PCRE) whose groups and `[ ]` classes close within it.
 
 ```yaml
 annotations:

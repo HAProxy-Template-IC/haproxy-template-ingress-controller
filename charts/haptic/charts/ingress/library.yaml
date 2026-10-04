@@ -645,25 +645,107 @@ templateSnippets:
       {%- if ingress != nil -%}
       {{- GenerateIngressBackends(ingress, "500") -}}
       {%- end -%}
+
+  # Rule hosts and host aliases claim keys in ingress-host-claims ("hosts" for
+  # host.map keys, "regexes" for alias regexes); the oldest Ingress owns a key.
+  # Alias libraries publish with HostClaimRank(item, annotation) and emit an
+  # alias only while HostClaimEmits.
+  util-ingress-host-claims:
+    template: |-
+      {%- var HostClaimRank = func(ingress any, annotation string) string {
+        return dig_string(ingress, "", "metadata", "creationTimestamp") + "/" +
+          dig_string(ingress, "", "metadata", "namespace") + "/" +
+          dig_string(ingress, "", "metadata", "name") + "/" + annotation
+      } -%}
+      {%- var HostClaimEmits = func(winner any, found bool, id string, annotation string) bool {
+        return found && dig_string(winner, "", "owner") == id && dig_string(winner, "", "annotation") == annotation
+      } -%}
+      {#- A conflict is a winner that routes the key elsewhere; an equal target is already served. -#}
+      {%- var HostClaimConflict = func(winner any, found bool, id string, target string) bool {
+        return found && dig_string(winner, "", "owner") != id && dig_string(winner, "", "target") != target
+      } -%}
+      {%- var HostAliases = func(value string, separators string) []string {
+        var aliases = []string{}
+        var rest = value
+        for _, separator := range split(separators, "") {
+          if separator != "" { rest = replace(rest, separator, ",") }
+        }
+        for _, part := range split(rest, ",") {
+          var alias = strip(part)
+          if alias != "" { aliases = append(aliases, alias) }
+        }
+        return aliases
+      } -%}
+      {#- Rule hosts can't carry a port, so a ':' would let an alias claim a listener-scoped or catch-all key.
+          Callers key an alias on MapKeyForHost(toLower(alias)): hostnames are case-insensitive. -#}
+      {%- var HostAliasProblem = func(alias string) string {
+        if !regex_search(toLower(alias), `^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`) {
+          return "isn't a valid hostname"
+        }
+        return ""
+      } -%}
+      {%- var HostAliasRegexKey = func(pattern string) string { return "^(?:" + pattern + ")$" } -%}
+      {%- var HostAliasConflictMessage = func(annotation string, value string, owner string) string {
+        return "annotation '" + annotation + "' value \"" + value + "\" is already claimed by Ingress " + owner +
+          ", which takes precedence, so it isn't routed to this Ingress. Remove it from one of the two Ingresses."
+      } -%}
+
+  features-910-ingress-host-claims:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      group: ingress-host-claims
+      effects: [publishValue]
+    template: |-
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-ingress-host-claims" for HostClaimRank -%}
+      {%%
+        var id = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name")
+        var rank = HostClaimRank(item, "")
+        var seen = map[string]bool{}
+        for _, rule := range selectattr(toSlice(dig(item, "spec", "rules")), "http") {
+          var hostKey = tostring(MapKeyForHost(dig(rule, "host")))
+          if hostKey == "" || seen[hostKey] { continue }
+          seen[hostKey] = true
+          show shared.PublishRanked("hosts", hostKey, rank, map[string]any{"owner": id, "target": hostKey, "annotation": ""})
+        }
+      %%}
+
   map-host-500-ingress:
     requires: [ingresses]
     incremental:
       source: ingresses
+      consumes: [ingress-host-claims]
+      effects: [recordEvent]
     template: |-
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-ingress-host-claims" for HostClaimConflict -%}
       {%%
         var ingress = item
         var namespace = dig_string(ingress, "", "metadata", "namespace")
         var name = dig_string(ingress, "", "metadata", "name")
+        var id = namespace + "/" + name
         var rulesWithHTTP = selectattr(toSlice(dig(ingress, "spec", "rules")), "http")
         show shared.Unique("map-host-ingress", "header", "\n# ingress/map-host-ingress\n")
-        if len(rulesWithHTTP) > 0 {
-          var block = "\n# Ingress: " + namespace + "/" + name + " (" + tostring(len(rulesWithHTTP)) + " hosts)\n"
-          for _, rule := range rulesWithHTTP {
-            var hostKey = tostring(MapKeyForHost(dig(rule, "host")))
-            block += "\n" + hostKey + " " + hostKey + "\n"
+        var lines = ""
+        var hostCount = 0
+        for _, rule := range rulesWithHTTP {
+          var hostKey = tostring(MapKeyForHost(dig(rule, "host")))
+          if hostKey != "" {
+            var winner, found = shared.Select("ingress-host-claims", "hosts", hostKey)
+            if HostClaimConflict(winner, found, id, hostKey) {
+              recordEvent(ingress, "RouteConflict", "host \"" + dig_string(rule, "", "host") +
+                "\" is claimed by an alias on Ingress " + dig_string(winner, "", "owner") +
+                ", which takes precedence, so its requests go to that Ingress. Remove the alias or use another host.")
+              continue
+            }
           }
-          show shared.Unique("map-host-ingress", "resource/" + namespace + "/" + name, block)
+          lines += "\n" + hostKey + " " + hostKey + "\n"
+          hostCount++
+        }
+        if hostCount > 0 {
+          show shared.Unique("map-host-ingress", "resource/" + namespace + "/" + name,
+            "\n# Ingress: " + namespace + "/" + name + " (" + tostring(hostCount) + " hosts)\n" + lines)
         }
       %%}
 

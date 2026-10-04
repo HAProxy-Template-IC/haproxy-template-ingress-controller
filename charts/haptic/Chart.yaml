@@ -121,6 +121,8 @@ annotations:
       description: "BREAKING: hapticHstsMaxAge is replaced by tls.hsts.maxAge, so the haproxy-haptic.org/hsts default max-age drops to one year"
     - kind: security
       description: "BREAKING: basic-auth Secrets accept only bcrypt, SHA-256/SHA-512 crypt and yescrypt hashes by default"
+    - kind: security
+      description: "BREAKING: host alias regexes match the whole hostname and never Gateway listeners, exact aliases must be hostnames, and an older Ingress keeps a contested alias host"
     - kind: changed
       description: "BREAKING: validationTest assertions no longer see your extraContext; fixtures also render with it and must pass haproxy -c"
     - kind: changed

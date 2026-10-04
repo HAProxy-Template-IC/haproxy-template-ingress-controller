@@ -255,6 +255,25 @@ Most annotation values reach the config as validated or escaped data: CIDR-list 
 
 The `*-config-snippet` annotations (`haproxy.org/backend-config-snippet`, `nginx.ingress.kubernetes.io/configuration-snippet`, and the like) are the deliberate exception: their value is inserted into the rendered config verbatim. Anyone who can create or edit an Ingress in a watched namespace can therefore inject arbitrary HAProxy directives. Treat Ingress edit permission in watched namespaces as equivalent to HAProxy config access, and restrict it with RBAC accordingly.
 
+### Host aliases claim hostnames
+
+Host alias annotations let an Ingress serve hostnames that aren't in its rules:
+`haproxy-haptic.org/host-alias`, `haproxy-haptic.org/host-alias-regex`,
+`haproxy-ingress.github.io/server-alias`, `haproxy-ingress.github.io/server-alias-regex`,
+and `nginx.ingress.kubernetes.io/server-alias`. HAPTIC routes them as follows:
+
+- An exact alias claims its hostname unless an older Ingress already claims it, as a
+  rule host or as an alias. The newer Ingress gets a `RouteConflict` Warning Event.
+  The older claim keeps winning, so an alias also keeps another Ingress from taking
+  that hostname later.
+- An alias regex matches the whole hostname. It applies only to a hostname that no
+  rule host, wildcard rule host, or exact alias matches, and never to a Gateway
+  listener.
+
+An Ingress in any watched namespace can therefore claim every hostname that no other
+Ingress has claimed yet. If your tenants mustn't do that, keep them from setting these
+annotations, for example with a Kubernetes admission policy.
+
 ## Admission validation coverage
 
 The admission webhook renders the proposed state and runs `haproxy -c` before

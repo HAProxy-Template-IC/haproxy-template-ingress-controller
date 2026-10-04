@@ -451,7 +451,8 @@ In addition to the snippet-based extension points below, libraries may declare f
 | `log-fields-*` | Named JSON fields for the structured access log; emits log-format items only, no directives. Gate on the feature being configured; only log-time-available fetches are legal (no `path`/`req.hdr()`/`res.hdr()` — materialise into a `txn` var first); never branch on which frontend is rendering | base, ssl, gateway, haptic-annotations, haproxytech, haproxy-ingress, nginx-ingress, spoa-hub |
 | `backend-directives-*` | Backend configuration directives | haproxytech |
 | `map-host-*` | Host map entries | gateway, ingress |
-| `map-hostregex-*` | Regex host map entries (wildcard/regex hostnames) — distinct prefix from `map-host-*` so the exact-host glob doesn't subsume it | gateway, haproxy-ingress |
+| `map-hostregex-*` | Regex host map entries (wildcard hostnames) — distinct prefix from `map-host-*` so the exact-host glob doesn't subsume it. Listener-scoped `frontend-routing-host-match-*` lookups read this map too | gateway |
+| `map-hostaliasregex-*` | Whole-hostname alias regexes (`^(?:<regex>)$`), read only by the unscoped cascade so an alias can't match a listener-scoped lookup | haptic-annotations, haproxy-ingress |
 | `map-path-exact-*` | Exact path map entries | gateway, ingress |
 | `map-path-prefix-*` | Prefix path map entries | gateway, ingress |
 | `map-pfxexact-*` | Prefix-exact map entries | gateway, haproxy-ingress, ingress |

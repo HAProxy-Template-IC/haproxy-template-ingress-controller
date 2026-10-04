@@ -1018,6 +1018,7 @@ templateSnippets:
       http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-alias-regex.map") }},'') if { var(txn.host_match) -m len 0 }
       # listener-port catch-all (:port keys) when no host matched
       http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
@@ -2500,6 +2501,12 @@ maps:
       # after the exact host.map + single-label regsub miss (multi-label hosts under
       # a wildcard listener). See https://haproxy-haptic.org/docs/latest/libraries/base/#frontend-routing-logic
       {{ render_glob "map-hostregex-*" -}}
+
+  host-alias-regex.map:
+    template: |
+      # Whole-hostname alias regexes: ^(?:<regex>)$ <normalized host key>, tried last.
+      # Kept out of host-regex.map, which listener-scoped host-match-* lookups also read.
+      {{ render_glob "map-hostaliasregex-*" -}}
 
   path-exact.map:
     ordered: false
