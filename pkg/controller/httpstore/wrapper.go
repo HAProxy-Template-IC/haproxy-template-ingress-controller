@@ -115,6 +115,12 @@ func CandidatesWithheld(ctx context.Context) bool {
 	return withheld
 }
 
+// Pending reports whether this render left the URL out because its content
+// waits for a render that can accept it.
+func (w *HTTPStoreWrapper) Pending(url string) bool {
+	return w.CandidateWithheld(url)
+}
+
 // CandidateWithheld reports whether this render left the source out because
 // its content was not accepted yet.
 func (w *HTTPStoreWrapper) CandidateWithheld(url string) bool {

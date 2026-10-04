@@ -116,6 +116,8 @@ type unsupportedHTTPFetcher struct {
 	calls atomic.Int32
 }
 
+func (*unsupportedHTTPFetcher) Pending(string) bool { return false }
+
 func (f *unsupportedHTTPFetcher) Fetch(...any) (any, error) {
 	f.calls.Add(1)
 	return "unverified", nil

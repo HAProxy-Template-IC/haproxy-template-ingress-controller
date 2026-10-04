@@ -24,6 +24,7 @@ step for every **BREAKING** change below.
 
 - `templatingSettings.testExtraContext`: the extraContext validationTests render with in place of `extraContext`.
 - `http.Fetch` option `acceptStatus`: statuses besides 200 whose response body is the content.
+- `http.Pending(url)`: whether `http.Fetch` left the URL's new content out of this render pending acceptance, rather than failing; validationTest `httpResources` entries take `pending: true` to render that state.
 - `/readyz` and `/livez` health endpoints that judge the configuration a replica serves; `/healthz` keeps judging the newest one.
 - The playground migration report classifies each key of a pasted ingress-nginx controller ConfigMap against the migration guide's ConfigMap table.
 

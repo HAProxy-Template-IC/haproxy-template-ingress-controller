@@ -189,6 +189,10 @@ type HTTPResourceFixture struct {
 
 	// Content is the response body to return when this URL is fetched.
 	Content string `yaml:"content" json:"content"`
+
+	// Pending makes the URL's content wait for acceptance: http.Fetch returns
+	// empty content and http.Pending reports true.
+	Pending bool `yaml:"pending,omitempty" json:"pending,omitempty"`
 }
 
 // ValidationAssertion defines a single validation check.

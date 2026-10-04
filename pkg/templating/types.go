@@ -127,6 +127,11 @@ type HTTPFetcher interface {
 	//   - args[1]: options (map, optional) - {"interval": "60s", "timeout": "30s", "retries": 3, "critical": true}
 	//   - args[2]: auth (map, optional) - {"type": "bearer"|"basic", "token": "...", ...}
 	Fetch(args ...any) (any, error)
+
+	// Pending reports whether this render left the URL out because its new
+	// content waits for a render that can accept it: Fetch returned empty
+	// content without fetching, and a later render serves the content.
+	Pending(url string) bool
 }
 
 // RuntimeEnvironment holds runtime information available to templates.

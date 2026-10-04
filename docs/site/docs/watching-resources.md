@@ -326,6 +326,15 @@ The second argument is an options map. All keys are optional:
 
 Set `critical: true` only when an empty body would produce a dangerously wrong config (for example, a security blocklist that must not silently become empty); leave it `false` when a stale-or-empty body is safer than blocking every render on one unreachable URL.
 
+A render can also return an empty string for content that hasn't failed: new content waiting for a render that can accept it. `http.Pending(url)` returns `true` in that case, and a later render returns the content. Check it before reporting a failed fetch:
+
+```
+{%- var page = http.Fetch(url) %}
+{%- if page == "" && !http.Pending(url) %}
+{# the fetch failed: report it #}
+{%- end %}
+```
+
 A third optional argument supplies authentication: `{"type": "bearer", "token": "..."}`, `{"type": "basic", "username": "...", "password": "..."}`, or `{"type": "header", "headers": {"X-API-Key": "..."}}`. Unknown authentication types fail the render before any request is sent, regardless of `critical`.
 
 Use the same options and authentication for every call to a URL within one

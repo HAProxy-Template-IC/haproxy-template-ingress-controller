@@ -2160,6 +2160,10 @@ type incrementalHTTPFetcher struct {
 	effects map[uint64]incrementalHTTPEffect
 }
 
+func (f *incrementalHTTPFetcher) Pending(url string) bool {
+	return f.session.httpWrapper.CandidateWithheld(url)
+}
+
 func (f *incrementalHTTPFetcher) Fetch(args ...any) (any, error) {
 	release, err := beginIncrementalCapability(f.lease, "http.Fetch")
 	if err != nil {

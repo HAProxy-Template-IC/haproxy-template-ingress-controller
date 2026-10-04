@@ -129,6 +129,9 @@ func incrementalNativeMethodFrameTrampolines() []*native.FunctionTrampoline {
 			frame.SetResultValue(0, incrementalFrameValue(value))
 			incrementalFrameSetError(frame, err)
 		}),
+		makeIncrementalInterfaceMethodFrameTrampoline[HTTPFetcher](memberPending, func(frame native.FunctionCallFrame) {
+			frame.SetResultBool(0, incrementalFrameReceiver[HTTPFetcher](frame).Pending(frame.ArgString(0)))
+		}),
 		makeIncrementalInterfaceMethodFrameTrampoline[IncrementalBackendPlanRegistrar]("Profile", func(frame native.FunctionCallFrame) {
 			value, err := incrementalFrameReceiver[IncrementalBackendPlanRegistrar](frame).Profile(
 				native.FunctionCallFrameArg[map[string]any](frame, 0),

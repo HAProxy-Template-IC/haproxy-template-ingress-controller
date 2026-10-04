@@ -268,7 +268,7 @@ func buildScriggoIncrementalGlobals(
 		(*SharedContributionContext)(nil),
 		"Unique", "Publish", "PublishRanked", "Select", "SelectValues", "Count",
 	)
-	decl[declHTTP] = native.Synchronous((*HTTPFetcher)(nil), memberFetch)
+	decl[declHTTP] = native.Synchronous((*HTTPFetcher)(nil), memberFetch, memberPending)
 	decl[declController] = native.Synchronous(
 		(*map[string]ResourceStore)(nil),
 		"*.List", "*.Fetch", "*.GetSingle",

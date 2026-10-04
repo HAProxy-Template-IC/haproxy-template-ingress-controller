@@ -423,6 +423,7 @@ func convertHTTPFixtures(crdHTTPFixtures []v1alpha1.HTTPResourceFixture) []confi
 		httpFixtures[i] = config.HTTPResourceFixture{
 			URL:     f.URL,
 			Content: f.Content,
+			Pending: f.Pending,
 		}
 	}
 	return httpFixtures

@@ -112,7 +112,8 @@ templateSnippets:
                 if ext == "json" {
                   format = "application/json"
                 }
-                var page, fetchErr = http.Fetch(baseURL + "?code=" + code + "&format=" + ext + "&namespace=" + ns + "&ingress=" + name,
+                var pageURL = baseURL + "?code=" + code + "&format=" + ext + "&namespace=" + ns + "&ingress=" + name
+                var page, fetchErr = http.Fetch(pageURL,
                   map[string]any{"interval": tostring(props["refresh"]), "timeout": "3s", "retries": 1, "critical": false, "acceptStatus": []any{toint(code)}},
                   map[string]any{"type": "header", "headers": map[string]any{
                     "X-Code": code, "X-Format": format, "X-Namespace": ns, "X-Ingress-Name": name,
@@ -120,7 +121,10 @@ templateSnippets:
                 var body = tostring(page)
                 var problem = ""
                 var fix = "Make " + baseURL + " answer GET with headers X-Code: " + code + " and X-Format: " + format + "."
-                if fetchErr != nil || body == "" {
+                if http.Pending(pageURL) {
+                  // Fetched by a later render that can accept it; nothing to report.
+                  body = ""
+                } else if fetchErr != nil || body == "" {
                   problem = "the fetch failed or returned an empty body"
                   body = ""
                 } else if len(body) > maxPageBytes {

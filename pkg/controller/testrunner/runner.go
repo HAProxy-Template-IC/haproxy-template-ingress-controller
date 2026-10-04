@@ -493,7 +493,8 @@ func (r *Runner) renderInputs(testName string, test *config.ValidationTest) (inp
 
 	// The wrapper is always created so http.Fetch() fails gracefully when a
 	// fixture is missing.
-	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(httpFixtures, r.logger), r.logger)
+	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(httpFixtures, r.logger), r.logger).
+		WithPending(httpFixtures)
 
 	r.logger.Log(context.Background(), logging.LevelTrace, "Assembled render inputs",
 		"test", testName,
