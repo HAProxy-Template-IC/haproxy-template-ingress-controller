@@ -503,6 +503,12 @@ func (c *Component) CommitInitialCandidatesAndVerifyObservations(
 	return commits, watermark, nil
 }
 
+// RequestRenderForAcceptedContent triggers a reconcile for content a render
+// accepted without publishing its cache.
+func (c *Component) RequestRenderForAcceptedContent() {
+	c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_accepted", true))
+}
+
 // RegisterURL reconciles a URL's timer with its current source policy.
 func (c *Component) RegisterURL(url string) {
 	c.ReconcileURL(url)

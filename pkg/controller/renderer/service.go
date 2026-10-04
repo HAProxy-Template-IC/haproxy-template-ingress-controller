@@ -530,7 +530,7 @@ func (s *RenderService) incrementalCacheFigures(
 	}
 	state := "warm"
 	if combined, ok := transaction.(*combinedRenderInputTransaction); ok {
-		if _, session, _ := combined.references(); session != nil && session.cold {
+		if _, session, _ := combined.references(); session != nil && (session.cold || session.exactCycleFullCold()) {
 			state = "cold"
 		}
 	}

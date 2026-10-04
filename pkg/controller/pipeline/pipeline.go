@@ -743,8 +743,10 @@ func (p *Pipeline) commitInputs(
 	if err := p.checkBeforeCommit(ctx, transaction, result); err != nil {
 		return err
 	}
+	// Asked before Commit: a commit releases what the transaction holds.
+	acceptsContent := transaction.HasCandidates()
 	if err := transaction.Commit(ctx); err != nil {
-		if commitConflictLeavesOutputUsable(err, transaction) {
+		if commitConflictLeavesOutputUsable(err, acceptsContent) {
 			if p.logger != nil {
 				p.logger.Debug("render inputs moved before the cache could be published; " +
 					"keeping this render and leaving the cache where it was")
@@ -781,21 +783,8 @@ func (p *Pipeline) commitInputs(
 // fetched over the network, the render gate cannot undo that acceptance later,
 // and a conflict means the check that authorised it was against inputs that
 // have since moved.
-func commitConflictLeavesOutputUsable(err error, transaction renderer.RenderInputTransaction) bool {
-	if !lostTheCommitRace(err) {
-		return false
-	}
-	if transaction.HasCandidates() {
-		return false
-	}
-	// Lease accounting counts too, though it accepts nothing. The commit tells
-	// the HTTP store how many renders hold each source; drop it and the store
-	// keeps counting references this render has already released, until a later
-	// render's removals exceed the count and it rejects them as inconsistent.
-	// Measured: 60 such rejections in one e2e run when this condition asked
-	// only about candidates.
-	carrier, ok := transaction.(interface{ CarriesHTTPState() bool })
-	return !ok || !carrier.CarriesHTTPState()
+func commitConflictLeavesOutputUsable(err error, acceptsContent bool) bool {
+	return lostTheCommitRace(err) && !acceptsContent
 }
 
 // checkBeforeCommit runs the full synchronous check on a render that is about
