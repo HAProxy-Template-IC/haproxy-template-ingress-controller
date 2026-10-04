@@ -569,11 +569,6 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		result, restart, err := s.renderAttemptOnCurrentBase(
 			ctx, provider, mode, startTime, forceCold, tryExactReuse, attemptInputs, retryInputs, extraOpts...,
 		)
-		if errors.Is(err, errExactCycleOutputOnlyRetry) && tryExactReuse {
-			tryExactReuse = false
-			forceCold = true
-			continue
-		}
 		if errors.Is(err, errExactCycleInvalidCandidateRetry) && tryExactReuse {
 			tryExactReuse = false
 			forceCold = true

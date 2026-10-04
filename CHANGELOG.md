@@ -47,6 +47,7 @@ step for every **BREAKING** change below.
 - Watched resources finish their initial sync only after every listed resource reached the store, so the first render after startup can't miss resources.
 - Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
 - Stop reporting normal controller shutdown cancellations and leadership handover as failures.
+- One cold render no longer makes every following render cold while resources keep changing, which delayed endpoint changes by over a second and dropped requests during rolling restarts.
 
 ### Helm chart
 
