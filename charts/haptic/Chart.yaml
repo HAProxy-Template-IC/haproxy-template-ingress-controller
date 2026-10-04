@@ -135,6 +135,8 @@ annotations:
       description: nginx-ingress use-regex and rewrite-target match regex paths case-insensitively and substitute capture groups
     - kind: fixed
       description: Leader lease released on shutdown during a configuration hand-over, and the first render after startup waits for every watched resource
+    - kind: fixed
+      description: Endpoint changes reach HAProxy without 503s during rolling restarts, and renders scale linearly with the number of watched resources
 
   # Links
   artifacthub.io/links: |
