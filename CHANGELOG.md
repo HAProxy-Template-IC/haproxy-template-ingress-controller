@@ -24,7 +24,7 @@ step for every **BREAKING** change below.
 
 - `templatingSettings.testExtraContext`: the extraContext validationTests render with in place of `extraContext`.
 - `http.Fetch` option `acceptStatus`: statuses besides 200 whose response body is the content.
-- `http.Pending(url)`: whether `http.Fetch` left the URL's new content out of this render pending acceptance, rather than failing; validationTest `httpResources` entries take `pending: true` to render that state.
+- `http.Pending(url)`: whether an empty `http.Fetch` result is new content waiting to be accepted rather than a failed fetch; validationTest `httpResources` entries take `pending: true` to test it.
 - `/readyz` and `/livez` health endpoints that judge the configuration a replica serves; `/healthz` keeps judging the newest one.
 - The playground migration report classifies each key of a pasted ingress-nginx controller ConfigMap against the migration guide's ConfigMap table.
 
@@ -48,11 +48,8 @@ step for every **BREAKING** change below.
 - Watched resources finish their initial sync only after every listed resource reached the store, so the first render after startup can't miss resources.
 - Release the leader lease when a controller shuts down during a configuration hand-over, so a standby replica takes over within seconds instead of after the lease expires.
 - Stop reporting normal controller shutdown cancellations and leadership handover as failures.
-- The first fetch of an HTTP source, such as nginx custom-http-errors pages, no longer keeps renders cold while resources keep changing.
-- Endpoint and other resource changes deploy while new HTTP content waits for acceptance; the content is served once a render accepts it.
-- A render that fetched new HTTP content while a resource it read changed is rendered again instead of deployed, so content is accepted only against the current resources.
-- One cold render no longer makes every following render cold while resources keep changing, which delayed endpoint changes by over a second and dropped requests during rolling restarts.
-- Renders no longer slow down quadratically with the number of watched resources: a one-Ingress change among 3,000 Ingresses renders in 0.24s instead of 1.5s.
+- Endpoint and other resource changes reach HAProxy within its retry window during rolling restarts and while resources keep changing, also while new `http.Fetch` content waits to be accepted, so requests no longer fail with 503 on a stopped pod.
+- Renders scale linearly with the number of watched resources: a one-Ingress change among 3,000 Ingresses renders in 0.24 s instead of 1.5 s.
 
 ### Helm chart
 
