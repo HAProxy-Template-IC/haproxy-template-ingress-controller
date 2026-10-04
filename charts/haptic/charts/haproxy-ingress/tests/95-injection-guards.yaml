@@ -109,7 +109,7 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: not_contains, target: map:host.map, pattern: "PWNALIAS"}
-      - {type: not_contains, target: map:host-regex.map, pattern: "PWNREGEX"}
+      - {type: not_contains, target: map:host-alias-regex.map, pattern: "PWNREGEX"}
       - {type: not_contains, target: map:path-regex.map, pattern: "PWNPATH"}
       - {type: not_contains, target: map:path-exact.map, pattern: "PWNPATHEXACT"}
       - {type: not_contains, target: map:path-prefix.map, pattern: "PWNPATHPREFIX"}
@@ -284,7 +284,7 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:host-regex.map, pattern: "app\\\\w"}
+      - {type: contains, target: map:host-alias-regex.map, pattern: "\\^\\(\\?:\\^app\\\\w\\+\\$\\)\\$ legit\\.example\\.com"}
       - {type: contains, target: haproxy.cfg, pattern: "cookie SESS insert indirect nocache dynamic httponly secure"}
 
   test-haproxy-ingress-headers-value-escaped:

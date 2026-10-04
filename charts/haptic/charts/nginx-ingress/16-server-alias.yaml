@@ -4,13 +4,44 @@
 # logic consults to turn an incoming Host header into the normalized host_match
 # key used for path lookups. server-alias adds extra hostnames that resolve to
 # the same host_match key as the Ingress's rule host(s), so they route to the
-# same backends without duplicating any path entries.
+# same backends without duplicating any path entries. A host another Ingress
+# claimed first wins (ingress-host-claims).
 templateSnippets:
+  features-913-nginx-ingress-host-alias-claims:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/server-alias']"]
+      group: ingress-host-claims
+      effects: [publishValue]
+    template: |-
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-ingress-host-claims" for HostClaimRank, HostAliases, HostAliasProblem -%}
+      {%%
+        var annotation = "nginx.ingress.kubernetes.io/server-alias"
+        var id = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name")
+        var ruleHostKey = ""
+        for _, rule := range toSlice(dig(item, "spec", "rules")) {
+          if ruleHostKey == "" { ruleHostKey = tostring(MapKeyForHost(dig(rule, "host"))) }
+        }
+        if ruleHostKey != "" {
+          var seen = map[string]bool{}
+          for _, alias := range HostAliases(dig_string(item, "", "metadata", "annotations", annotation), "") {
+            var aliasKey = tostring(MapKeyForHost(toLower(alias)))
+            if HostAliasProblem(alias) != "" || aliasKey == ruleHostKey || seen[aliasKey] { continue }
+            seen[aliasKey] = true
+            show shared.PublishRanked("hosts", aliasKey, HostClaimRank(item, annotation),
+              map[string]any{"owner": id, "target": ruleHostKey, "annotation": annotation})
+          }
+        }
+      %%}
+
   map-host-720-nginx-ingress-server-alias:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['nginx.ingress.kubernetes.io/server-alias']"]
+      consumes: [ingress-host-claims]
       effects: [recordEvent]
     template: |
       {#
@@ -21,9 +52,10 @@ templateSnippets:
         Annotation: nginx.ingress.kubernetes.io/server-alias: "host1,host2,..."
 
         Each listed alias is added to host.map pointing at the SAME normalized
-        key as the Ingress's rule host. The frontend then resolves a request to
-        an alias host into that key and reuses every path/backend entry the rule
-        host already registered.
+        key as the Ingress's first non-empty rule host — nginx attaches the
+        alias to the server block, which in HAPTIC's model is that rule host's
+        routing key. The frontend then resolves a request to an alias host into
+        that key and reuses every path/backend entry the rule host registered.
 
         Wildcard aliases ("*.foo.com") are normalized the same way rule hosts
         are (the leading "*" is stripped to suffix form ".foo.com"), matching
@@ -33,43 +65,42 @@ templateSnippets:
           <alias-key> <rule-host-key>
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-ingress-host-claims" for HostAliases, HostAliasProblem, HostClaimEmits, HostClaimConflict, HostAliasConflictMessage -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- var ingress = resources.ingresses.GetSingle(
-        dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name")) -%}
-      {%- if ingress != nil -%}
-        {%- var aliasAnn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/server-alias"] -%}
-        {%- if aliasAnn != "" -%}
-          {%- var ns = ingress.Metadata.Namespace -%}
-          {%- var name = ingress.Metadata.Name -%}
-          {#- Collect the rule hosts this Ingress already serves. Each alias
-              maps to the FIRST such host's key — nginx attaches the alias to
-              the server block, which in HAPTIC's model is the rule host's
-              routing key. -#}
-          {%- var ruleHostKey = "" -%}
-          {%- for _, rule := range ingress.Spec.Rules -%}
-            {%- if ruleHostKey == "" && rule.Host != "" -%}
-              {%- ruleHostKey = MapKeyForHost(rule.Host) -%}
-            {%- end -%}
-          {%- end -%}
-          {%- if ruleHostKey != "" -%}
-      {{ "\n" }}# nginx-ingress/server-alias ({{ ns }}/{{ name }}){{ "\n" }}
-            {%- for _, rawAlias := range split(aliasAnn, ",") -%}
-                {%- var alias = trimSpace(rawAlias) -%}
-                {%- if alias != "" -%}
-                  {%- var aliasInj = ConfigInjectionKind(alias, "mapkey") -%}
-                  {%- if aliasInj != "" -%}
-                    {%- var message = "Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/server-alias' value contains " + aliasInj + ", which would inject an entry into the host routing map; the alias is not applied. Remove whitespace and control characters from the value." -%}
-                    {%- if tostring(renderSubject | dig("mode") | fallback("reconcile")) == "admission" -%}
-                      {{- fail(message) -}}
-                    {%- else -%}
-                      {{- recordEvent(ingress, "InvalidAnnotationValue", message) -}}
-                    {%- end -%}
-                  {%- else -%}
-                    {%- var aliasKey = MapKeyForHost(alias) -%}
-      {{ aliasKey }} {{ ruleHostKey }}{{ "\n" }}
-                  {%- end -%}
-              {%- end -%}
-            {%- end -%}
-          {%- end -%}
-        {%- end -%}
-      {%- end -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%%
+        var annotation = "nginx.ingress.kubernetes.io/server-alias"
+        var id = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name")
+        var ruleHostKey = ""
+        for _, rule := range toSlice(dig(item, "spec", "rules")) {
+          if ruleHostKey == "" { ruleHostKey = tostring(MapKeyForHost(dig(rule, "host"))) }
+        }
+        if ruleHostKey != "" {
+          var lines = ""
+          var seen = map[string]bool{}
+          for _, alias := range HostAliases(dig_string(item, "", "metadata", "annotations", annotation), "") {
+            var aliasInj = ConfigInjectionKind(alias, "mapkey")
+            if aliasInj != "" {
+              _ = WebhookRejectOrWarn(item, "InvalidAnnotationValue", "Ingress " + id + " annotation '" + annotation + "' value contains " + aliasInj + ", which would inject an entry into the host routing map; the alias is not applied. Remove whitespace and control characters from the value.")
+              continue
+            }
+            var problem = HostAliasProblem(alias)
+            if problem != "" {
+              _ = WebhookRejectOrWarn(item, "InvalidAnnotationValue", "Ingress " + id + " annotation '" + annotation + "' alias '" + alias + "' " + problem + ", so it isn't routed. Use a hostname such as www.example.com or *.example.com.")
+              continue
+            }
+            var aliasKey = tostring(MapKeyForHost(toLower(alias)))
+            if aliasKey == ruleHostKey || seen[aliasKey] { continue }
+            seen[aliasKey] = true
+            var winner, found = shared.Select("ingress-host-claims", "hosts", aliasKey)
+            if HostClaimEmits(winner, found, id, annotation) {
+              lines += aliasKey + " " + ruleHostKey + "\n"
+            } else if HostClaimConflict(winner, found, id, ruleHostKey) {
+              recordEvent(item, "RouteConflict", HostAliasConflictMessage(annotation, alias, dig_string(winner, "", "owner")))
+            }
+          }
+          if lines != "" {
+            show "\n# nginx-ingress/server-alias (" + id + ")\n" + lines
+          }
+        }
+      %%}

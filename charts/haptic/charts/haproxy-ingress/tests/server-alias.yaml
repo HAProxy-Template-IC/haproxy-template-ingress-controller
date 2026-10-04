@@ -65,7 +65,7 @@ validationTests:
   # ==========================================================================
 
   test-haproxy-ingress-server-alias-regex:
-    description: server-alias-regex maps a regex of hostnames to the primary host key
+    description: server-alias-regex maps a regex of hostnames to the primary host key; a regex that already carries ^ and $ keeps working inside the whole-hostname anchor
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -83,5 +83,72 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: contains
-        target: "map:host-regex.map"
-        pattern: "\\^app\\[0-9\\]\\+\\\\\\.example\\\\\\.com\\$ app\\.example\\.com"
+        target: map:host-alias-regex.map
+        pattern: '(?m)^\^\(\?:\^app\[0-9\]\+\\\.example\\\.com\$\)\$ app\.example\.com$'
+
+  test-haproxy-ingress-server-alias-conflicts-oldest-wins:
+    description: >-
+      server-alias and server-alias-regex claims resolve oldest-wins: an alias that names an
+      older Ingress's rule host, or a regex an older Ingress already lists, isn't written, and
+      the newer Ingress gets a RouteConflict Event per claim.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: zeta
+            name: owner
+            creationTimestamp: "2020-01-01T00:00:00Z"
+            annotations: {haproxy-ingress.github.io/server-alias-regex: "app[0-9]+\\.example\\.com"}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shared.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: alpha
+            name: claimer
+            creationTimestamp: "2026-01-01T00:00:00Z"
+            annotations:
+              haproxy-ingress.github.io/server-alias: "shared.example.com"
+              haproxy-ingress.github.io/server-alias-regex: "app[0-9]+\\.example\\.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: claimer.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: map:host.map, pattern: '(?m)^shared\.example\.com ', expected: "1"}
+      - {type: contains, target: map:host.map, pattern: '(?m)^shared\.example\.com shared\.example\.com$'}
+      - {type: match_count, target: map:host-alias-regex.map, pattern: '(?m)^\^\(\?:app', expected: "1"}
+      - {type: contains, target: map:host-alias-regex.map, pattern: '(?m)^\^\(\?:app\[0-9\]\+\\\.example\\\.com\)\$ shared\.example\.com$'}
+      - {type: match_count, target: events, pattern: 'Warning RouteConflict networking\.k8s\.io/v1 Ingress alpha/claimer: .*already claimed by Ingress zeta/owner', expected: "2"}
+
+  test-haproxy-ingress-server-alias-invalid-skipped-on-reconcile:
+    description: On reconcile, a server-alias that isn't a DNS hostname and a server-alias-regex that would escape the whole-hostname anchor are skipped with InvalidServerAlias / InvalidServerAliasRegex Events; the valid alias is still written.
+    extraContext: {renderMode: reconcile}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad
+            annotations:
+              haproxy-ingress.github.io/server-alias: "ok.example.com,ok.example.com:8080"
+              haproxy-ingress.github.io/server-alias-regex: "x)|(.*"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bad.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:host.map, pattern: '(?m)^ok\.example\.com bad\.example\.com$'}
+      - {type: not_contains, target: map:host.map, pattern: '8080'}
+      - {type: not_contains, target: map:host-alias-regex.map, pattern: 'bad\.example\.com'}
+      - {type: contains, target: events, pattern: "Warning InvalidServerAlias networking\\.k8s\\.io/v1 Ingress default/bad: .*alias 'ok\\.example\\.com:8080' isn't a valid hostname"}
+      - {type: contains, target: events, pattern: "Warning InvalidServerAliasRegex networking\\.k8s\\.io/v1 Ingress default/bad: .*closes a group it doesn't open"}

@@ -15,8 +15,8 @@ a new configuration fails to load, and runs validationTests independently of
 your deployment values.
 
 **Before upgrading:** rename the changed `extraContext` keys, replace basic-auth
-hashes HAPTIC now refuses, allow UDP on the HTTPS port, and update custom
-templates and monitoring. The
+hashes HAPTIC now refuses, check host alias annotations, allow UDP on the
+HTTPS port, and update custom templates and monitoring. The
 [upgrade notes](./docs/site/docs/upgrade-notes.md#upgrading-to-03) give one
 step for every **BREAKING** change below.
 
@@ -81,6 +81,12 @@ step for every **BREAKING** change below.
 - Apply idle-connection draining only to HTTP frontends, avoiding warnings from TCP listeners.
 - Derive the cache dispatcher timeout from application timeouts and retries without forcing reloads for route timeout changes.
 - Use direct Valkey health probes to prevent orphaned probe processes and spurious child-process warnings.
+
+#### Security
+
+- **BREAKING:** `haproxy-haptic.org/host-alias-regex` and `haproxy-ingress.github.io/server-alias-regex` match the whole hostname and never apply to Gateway listeners; before, a regex matched any part of a hostname and could capture a Gateway listener's requests. A regex relying on a partial match stops matching; widen it, for example `example\.com` to `.*example\.com`. A regex whose groups don't close within it is rejected.
+- **BREAKING:** `haproxy-haptic.org/host-alias`, `haproxy-ingress.github.io/server-alias` and `nginx.ingress.kubernetes.io/server-alias` reject a value that isn't a hostname, such as one with a port, path or underscore; aliases are matched case-insensitively.
+- A host alias for a hostname an older Ingress already claims, as a rule host or an alias, is no longer routed and records a `RouteConflict` Warning Event; before, both entries reached the host map and either could win.
 
 ## [0.2.2] - 2026-10-03
 

@@ -121,6 +121,7 @@ This table is the authoritative registry of every `render_glob` extension point 
 | Custom Backends | `backends-*` | Before `default_backend` | Backend definitions from resource libraries |
 | Host Map | `map-host-*` | host.map file | Host-to-group mapping entries |
 | Host Regex Map | `map-hostregex-*` | host-regex.map file | Regex hostname fallback entries, tried after the exact and wildcard host lookups miss |
+| Host Alias Regex Map | `map-hostaliasregex-*` | host-alias-regex.map file | Host alias regular expressions, each matching the whole hostname, tried after host-regex.map misses. Listener-scoped host lookups don't read it |
 | Path Exact Map | `map-path-exact-*` | path-exact.map file | Exact path match entries |
 | Path Prefix Exact Map | `map-pfxexact-*` | path-prefix-exact.map file | Prefix-exact path match entries |
 | Path Prefix Map | `map-path-prefix-*` | path-prefix.map file | Prefix path match entries |
@@ -200,7 +201,8 @@ The base library implements the routing system using HAProxy maps and transactio
 | 2 | `host` (port stripped) | Normal hostname match. |
 | 3 | `host` with leading label removed (`regsub(^[^.]*,,)`) | Wildcard hosts (`*.example.com` stored as `.example.com`). |
 | 4 | `host-regex.map` | Regex hostnames. |
-| 5 | `host:listener_port` / `:listener_port` | Per-listener-port fallback when no hostname matched (Gateway listeners on dedicated ports). |
+| 5 | `host-alias-regex.map` | Host alias regular expressions, such as `haproxy-haptic.org/host-alias-regex`. |
+| 6 | `host:listener_port` / `:listener_port` | Per-listener-port fallback when no hostname matched (Gateway listeners on dedicated ports). |
 
 **Listener-port translation.** `txn.listener_port` is the user-facing port the request arrived on. For chart-static binds it equals `dst_port`. Resource libraries that map a pod-port to a different listener port (for example Gateway API per-Gateway HTTPS binds listening on an allocated pod port like `18002` while the map keys use the original `8443`) plug a translation into the `frontend-routing-listener-port-*` extension point. With no such library, `dst_port` passes through unchanged.
 
@@ -569,6 +571,7 @@ The base library generates these map files for routing:
 |----------|---------|---------|
 | host.map | Host header to group mapping | Exact match |
 | host-regex.map | Regex hostname fallback (multi-label hosts under a wildcard listener) | `map_reg()` |
+| host-alias-regex.map | Host alias regular expressions, each anchored to the whole hostname | `map_reg()` |
 | path-exact.map | Exact path matching | `map()` |
 | path-prefix-exact.map | Prefix paths that should match exactly | `map()` |
 | path-prefix.map | Prefix path matching | `map_beg()` |

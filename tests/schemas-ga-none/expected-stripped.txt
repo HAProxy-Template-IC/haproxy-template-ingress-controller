@@ -138,6 +138,7 @@ test-grpcroute-multi-hostname-map-newlines
 test-grpcroute-multiple-headers
 test-grpcroute-status-parent-ports
 test-grpcroute-status-patches
+test-haptic-host-alias-regex-never-matches-gateway-listener
 test-http-demultiplexer-extension-listener
 test-http-demultiplexer-grpc-without-listener
 test-http-demultiplexer-https-only-route

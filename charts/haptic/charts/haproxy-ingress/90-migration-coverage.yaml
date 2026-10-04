@@ -184,7 +184,7 @@ _migrationCoverage:
         note: Extra exact hostnames routed to the Ingress's primary host key.
       haproxy-ingress.github.io/server-alias-regex:
         status: supported
-        note: A regex matching extra hostnames, routed to the primary host key via host-regex.map.
+        note: A regex matched against the whole hostname, routing extra hostnames to the primary host key when no exact or wildcard host matches.
       # --- SSL passthrough ---
       haproxy-ingress.github.io/ssl-passthrough:
         status: supported

@@ -58,4 +58,6 @@ tests:
       - notExists:
           path: spec.maps["host-regex.map"].ordered
       - notExists:
+          path: spec.maps["host-alias-regex.map"].ordered
+      - notExists:
           path: spec.maps["path-regex.map"].ordered

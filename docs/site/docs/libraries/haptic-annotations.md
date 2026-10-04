@@ -30,8 +30,8 @@ Match request paths and add hostnames to an existing route.
 | Annotation | Behavior |
 |------------|----------|
 | `haproxy-haptic.org/path-type` | Overrides how the path matches when the Ingress `pathType` is `ImplementationSpecific`: `regex`, `exact`, `prefix` (trailing slash normalized), or `begin`. A `regex` path matches from the start of the path; HAPTIC rejects one whose groups or `[ ]` classes don't close within the path. |
-| `haproxy-haptic.org/host-alias` | Adds comma- or space-separated hostnames that use the primary host's routes. A hostname must not contain spaces or control characters. |
-| `haproxy-haptic.org/host-alias-regex` | Adds a regular-expression hostname pattern that uses the primary host's routes when no exact host matches. The pattern must not contain spaces or control characters. |
+| `haproxy-haptic.org/host-alias` | Adds comma- or space-separated hostnames that use the primary host's routes. Each must be a valid hostname, optionally starting with `*.`; case doesn't matter. A hostname an older Ingress already claims stays with that Ingress; see [Host aliases claim hostnames](../operations/security.md#host-aliases-claim-hostnames). |
+| `haproxy-haptic.org/host-alias-regex` | Adds a regular expression that must match the whole hostname, for example `app[0-9]+\.example\.com`. Matching hostnames use the primary host's routes when no rule host, wildcard host, or exact alias matches. HAPTIC rejects a pattern whose groups or `[ ]` classes don't close within it. |
 
 ### Backend tuning
 

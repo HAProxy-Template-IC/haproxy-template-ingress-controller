@@ -157,7 +157,55 @@ no configuration changes. To keep accepting a format while you migrate, widen
 the patterns as shown in
 [Basic-auth password hashes](operations/security.md#basic-auth-password-hashes).
 
-### 5. Update custom templates
+### 5. Check host alias annotations
+
+`haproxy-haptic.org/host-alias-regex` and `haproxy-ingress.github.io/server-alias-regex`
+must now match the whole hostname; in 0.2 they matched any part of it. List every
+regex alias; this needs `kubectl` and `jq`:
+
+```bash
+kubectl get ingress --all-namespaces --output json |
+  jq -r '.items[] | .metadata as $m | ($m.annotations // {}) | to_entries[]
+    | select(.key == "haproxy-haptic.org/host-alias-regex"
+        or .key == "haproxy-ingress.github.io/server-alias-regex")
+    | "\($m.namespace)/\($m.name) \(.key): \(.value)"'
+```
+
+For each regex that should match only part of a hostname, widen it to cover the
+rest. For example, `example\.com` becomes `.*example\.com`, and `example` becomes
+`.*example.*`. A regex that already starts with `^` and ends with `$` needs no
+change. HAPTIC also rejects a regex whose groups or `[ ]` classes don't close
+within it.
+
+Exact aliases (`haproxy-haptic.org/host-alias`, `haproxy-ingress.github.io/server-alias`,
+and `nginx.ingress.kubernetes.io/server-alias`) must now be valid hostnames,
+optionally starting with `*.`; case doesn't matter. List the aliases HAPTIC now
+refuses:
+
+```bash
+kubectl get ingress --all-namespaces --output json |
+  jq -r '.items[] | .metadata as $m | ($m.annotations // {}) | to_entries[]
+    | select(.key == "haproxy-haptic.org/host-alias"
+        or .key == "haproxy-ingress.github.io/server-alias"
+        or .key == "nginx.ingress.kubernetes.io/server-alias")
+    | .key as $key
+    | .value | split(if $key == "haproxy-haptic.org/host-alias" then "[, ]" else "," end; null)[]
+    | gsub("^\\s+|\\s+$"; "") | select(. != "")
+    | select(test("^(\\*\\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"; "i") | not)
+    | "\($m.namespace)/\($m.name) \($key): \(.)"'
+```
+
+Remove or correct each listed alias. A port, a path, or an underscore can't be
+part of an alias.
+
+**If you don't:** a regex that relied on matching part of a hostname stops
+matching, and requests for those hostnames no longer reach the Ingress. An
+invalid alias or regex is skipped with an `InvalidHostAlias`,
+`InvalidServerAlias`, `InvalidServerAliasRegex`, `InvalidHostAliasRegex` or
+`InvalidAnnotationValue` Warning Event, and the admission webhook denies new or
+changed Ingresses that carry one.
+
+### 6. Update custom templates
 
 If your values add templates, snippets, or libraries, make these changes:
 
@@ -174,11 +222,11 @@ candidates in your values file:
 grep -nE 'strings_replace|trim\(|delay' haptic-values-0.3.yaml
 ```
 
-**If you don't:** the configuration fails to load, and [preflight](#9-validate-the-candidate)
+**If you don't:** the configuration fails to load, and [preflight](#10-validate-the-candidate)
 reports the error. An `http.Fetch` call that sets `delay` fails with
 `option "delay" was removed, so this call fails. Rename it to "interval"`.
 
-### 6. Update custom validation tests
+### 7. Update custom validation tests
 
 Assertions in `validationTests` no longer see your `templatingSettings.extraContext`.
 They render with the libraries' defaults, `testExtraContext` (which the chart
@@ -205,7 +253,7 @@ test whose fixtures your values break. Either failure stops the configuration
 from loading, and preflight reports it, for example
 `This test's fixtures fail to render with the deployment's extraContext`.
 
-### 7. Prepare for HTTP/3
+### 8. Prepare for HTTP/3
 
 0.3 enables [HTTP/3](haproxy-deployment.md#http3-quic) by default. Every
 TLS-terminating HTTPS listener also listens on UDP, and HTTPS responses
@@ -238,7 +286,7 @@ If your load balancer publishes UDP on a different port than TCP, set
 HTTP/1.1 over TCP after trying QUIC. An entry named `https-quic` in
 `haproxy.service.extraPorts` fails the install; rename it or turn HTTP/3 off.
 
-### 8. Check deployment-specific settings
+### 9. Check deployment-specific settings
 
 Skip each item that doesn't apply to you.
 
@@ -280,7 +328,7 @@ NetworkPolicy, allow controller pods to reach each other on the health port
 `identity_version: 1` in the manifest. **If you don't:** the agent rejects the
 manifest with `400`. HAPTIC's own controller already sets it.
 
-### 9. Validate the candidate
+### 10. Validate the candidate
 
 Use the `haptic` binary matching the chart version to run
 [preflight validation](operations/validate-before-deploy.md):
@@ -304,7 +352,7 @@ helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.3.0 | kubectl apply --server-side --force-conflicts -f -
 ```
 
-### 10. Upgrade the release
+### 11. Upgrade the release
 
 Pass the complete migrated values file. `--reset-values` starts from the new
 chart's defaults, so removed keys aren't carried forward from the installed
@@ -322,7 +370,7 @@ If validation rejects the candidate, fix the reported value or template and
 repeat the upgrade. For rollout failures, see
 [Recover a failed upgrade](deploying-with-helm.md#recover-a-failed-upgrade).
 
-### 11. Verify the deployment
+### 12. Verify the deployment
 
 Wait for the controller and HAProxy deployments:
 
@@ -361,6 +409,9 @@ These need no action unless you depend on the old behavior:
   path's start, and `$N` in `rewrite-target` refers to its capture groups. In
   0.2 the path matched as a literal prefix. See
   [`use-regex`](libraries/nginx-ingress.md#nginxingresskubernetesiouse-regex).
+- **Host alias conflicts.** An exact alias for a hostname that an older Ingress
+  already claims, as a rule host or alias, is no longer routed, and the newer Ingress
+  gets a `RouteConflict` Warning Event. See [Host aliases claim hostnames](operations/security.md#host-aliases-claim-hostnames).
 - **A failing configuration change.** While a new configuration fails to load,
   the leading controller replica keeps serving and validating the previous one,
   so admission keeps working. Other replicas report unready and restart.

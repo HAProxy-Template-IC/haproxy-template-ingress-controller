@@ -2,23 +2,63 @@
 #
 # These annotations make extra hostnames route to the SAME backends as the
 # Ingress's primary host. The chart's routing keys every path-map entry on the
-# normalised host key (`txn.host_match`, produced by host.map / host-regex.map
-# lookups), so an alias only needs to resolve to the SAME host key as the
-# primary host — then every existing path-map entry for that host applies to the
-# alias unchanged. No backend duplication, no path-map duplication.
+# normalised host key (`txn.host_match`, produced by host.map /
+# host-alias-regex.map lookups), so an alias only needs to resolve to the SAME
+# host key as the primary host — then every existing path-map entry for that
+# host applies to the alias unchanged. No backend duplication, no path-map
+# duplication. A host another Ingress claimed first wins (ingress-host-claims).
 #
 #   server-alias:       comma-separated list of extra EXACT hostnames.
 #                       → host.map entry  `<alias> <primary-host-key>`
 #   server-alias-regex: a regular expression matching extra hostnames.
-#                       → host-regex.map entry  `<regex> <primary-host-key>`
+#                       → host-alias-regex.map entry  `^(?:<regex>)$ <primary-host-key>`
 #
 # Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#server-alias
 templateSnippets:
+  features-912-haproxy-ingress-host-alias-claims:
+    requires: [ingresses]
+    incremental:
+      source: ingresses
+      whenAnyPathExists:
+        - metadata.annotations['haproxy-ingress.github.io/server-alias']
+        - metadata.annotations['haproxy-ingress.github.io/server-alias-regex']
+      group: ingress-host-claims
+      effects: [publishValue]
+    template: |-
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-ingress-host-claims" for HostClaimRank, HostAliases, HostAliasProblem, HostAliasRegexKey -%}
+      {%- import "util-regex-map-key" for RegexGroupProblem -%}
+      {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
+      {%%
+        var exactAnnotation = "haproxy-ingress.github.io/server-alias"
+        var regexAnnotation = "haproxy-ingress.github.io/server-alias-regex"
+        var id = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name")
+        var rules = toSlice(dig(item, "spec", "rules"))
+        var primaryKey = ""
+        if len(rules) > 0 { primaryKey = tostring(MapKeyForHost(dig(rules[0], "host"))) }
+        if primaryKey != "" {
+          var seen = map[string]bool{}
+          for _, alias := range HostAliases(dig_string(item, "", "metadata", "annotations", exactAnnotation), "") {
+            var aliasKey = tostring(MapKeyForHost(toLower(alias)))
+            if HostAliasProblem(alias) != "" || aliasKey == primaryKey || seen[aliasKey] { continue }
+            seen[aliasKey] = true
+            show shared.PublishRanked("hosts", aliasKey, HostClaimRank(item, exactAnnotation),
+              map[string]any{"owner": id, "target": primaryKey, "annotation": exactAnnotation})
+          }
+          var regex = strip(dig_string(item, "", "metadata", "annotations", regexAnnotation))
+          if regex != "" && ConfigInjectionKind(regex, "mapkey") == "" && RegexGroupProblem(regex) == "" {
+            show shared.PublishRanked("regexes", HostAliasRegexKey(regex), HostClaimRank(item, regexAnnotation),
+              map[string]any{"owner": id, "target": primaryKey, "annotation": regexAnnotation})
+          }
+        }
+      %%}
+
   map-host-650-haproxy-ingress-alias:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/server-alias']"]
+      consumes: [ingress-host-claims]
       effects: [recordEvent]
     template: |-
       {#
@@ -36,81 +76,96 @@ templateSnippets:
         Extension Point: map-host-* (priority 650 - compatibility layer)
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-ingress-host-claims" for HostAliases, HostAliasProblem, HostClaimEmits, HostClaimConflict, HostAliasConflictMessage -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%%
-        var ingress = resources.ingresses.GetSingle(
-          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
-        var aliasAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/server-alias"]
-        if aliasAnnotation != "" {
-          var rules = ingress.Spec.Rules
-          if len(rules) > 0 {
-            var primaryKey = MapKeyForHost(rules[0] | dig("host"))
-            if primaryKey != "" {
-              var namespace = ingress.Metadata.Namespace
-              var name = ingress.Metadata.Name
-              show shared.Unique("haproxy-ingress-map-host-alias", "header", "\n# haproxy-ingress/map-host-alias\n")
-              var block = "# Ingress: " + namespace + "/" + name + " server-alias"
-              for _, rawAlias := range split(aliasAnnotation, ",") {
-                var alias = strip(rawAlias)
-                if alias != "" {
-                  var aliasInj = ConfigInjectionKind(alias, "mapkey")
-                  if aliasInj != "" {
-                    _ = WebhookRejectOrWarn(ingress, "InvalidServerAlias", "Ingress " + namespace + "/" + name + " annotation 'haproxy-ingress.github.io/server-alias' value contains " + aliasInj + ", which would split the host map; the alias is not applied. Remove whitespace and control characters from the value.")
-                    continue
-                  }
-                  block += "\n" + MapKeyForHost(alias) + " " + primaryKey
-                }
-              }
-              show shared.Unique("haproxy-ingress-map-host-alias", "resource/" + namespace + "/" + name, block + "\n")
+        var annotation = "haproxy-ingress.github.io/server-alias"
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        var name = dig_string(item, "", "metadata", "name")
+        var id = namespace + "/" + name
+        var rules = toSlice(dig(item, "spec", "rules"))
+        var primaryKey = ""
+        if len(rules) > 0 { primaryKey = tostring(MapKeyForHost(dig(rules[0], "host"))) }
+        if primaryKey != "" {
+          var block = ""
+          var seen = map[string]bool{}
+          for _, alias := range HostAliases(dig_string(item, "", "metadata", "annotations", annotation), "") {
+            var aliasInj = ConfigInjectionKind(alias, "mapkey")
+            if aliasInj != "" {
+              _ = WebhookRejectOrWarn(item, "InvalidServerAlias", "Ingress " + id + " annotation '" + annotation + "' value contains " + aliasInj + ", which would split the host map; the alias is not applied. Remove whitespace and control characters from the value.")
+              continue
             }
+            var problem = HostAliasProblem(alias)
+            if problem != "" {
+              _ = WebhookRejectOrWarn(item, "InvalidServerAlias", "Ingress " + id + " annotation '" + annotation + "' alias '" + alias + "' " + problem + ", so it isn't routed. Use a hostname such as www.example.com or *.example.com.")
+              continue
+            }
+            var aliasKey = tostring(MapKeyForHost(toLower(alias)))
+            if aliasKey == primaryKey || seen[aliasKey] { continue }
+            seen[aliasKey] = true
+            var winner, found = shared.Select("ingress-host-claims", "hosts", aliasKey)
+            if HostClaimEmits(winner, found, id, annotation) {
+              block += "\n" + aliasKey + " " + primaryKey
+            } else if HostClaimConflict(winner, found, id, primaryKey) {
+              recordEvent(item, "RouteConflict", HostAliasConflictMessage(annotation, alias, dig_string(winner, "", "owner")))
+            }
+          }
+          if block != "" {
+            show shared.Unique("haproxy-ingress-map-host-alias", "header", "\n# haproxy-ingress/map-host-alias\n")
+            show shared.Unique("haproxy-ingress-map-host-alias", "resource/" + id,
+              "# Ingress: " + id + " server-alias" + block + "\n")
           }
         }
       %%}
 
-  map-hostregex-650-haproxy-ingress-alias:
+  map-hostaliasregex-650-haproxy-ingress-alias:
     requires: [ingresses]
     incremental:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/server-alias-regex']"]
+      consumes: [ingress-host-claims]
       effects: [recordEvent]
     template: |-
       {#
-        server-alias-regex → host-regex.map entries.
+        server-alias-regex → host-alias-regex.map entries.
 
-        The annotation value is a regular expression matching extra hostnames.
-        host-regex.map is consulted by base.yaml's routing cascade via
-        `map_reg(host-regex.map)` after the exact host.map miss, so a single
-        regex entry routes every matching hostname to the primary host key.
+        The annotation value is a regular expression matched against the whole
+        hostname: it is written as ^(?:<regex>)$, and RegexGroupProblem rejects
+        anything that could close that group early. base.yaml's routing cascade
+        consults host-alias-regex.map last, so one entry routes every matching
+        hostname that no exact, wildcard or host-regex.map entry claimed.
 
-        The value is emitted verbatim (it is already a HAProxy-compatible PCRE),
-        mapped to the primary host's normalised key.
-
-        Extension Point: map-hostregex-* (priority 650 - compatibility layer)
+        Extension Point: map-hostaliasregex-* (priority 650 - compatibility layer)
       #}
       {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-ingress-host-claims" for HostAliasRegexKey, HostClaimEmits, HostClaimConflict, HostAliasConflictMessage -%}
+      {%- import "util-regex-map-key" for RegexGroupProblem -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%%
-        var ingress = resources.ingresses.GetSingle(
-          dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))
-        var regexAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/server-alias-regex"]
-        if regexAnnotation != "" {
-          var rules = ingress.Spec.Rules
-          if len(rules) > 0 {
-            var primaryKey = MapKeyForHost(rules[0] | dig("host"))
-            if primaryKey != "" {
-              var namespace = ingress.Metadata.Namespace
-              var name = ingress.Metadata.Name
-              var regexTrimmed = strip(regexAnnotation)
-              var regexInj = ConfigInjectionKind(regexTrimmed, "mapkey")
-              if regexInj != "" {
-                _ = WebhookRejectOrWarn(ingress, "InvalidServerAliasRegex", "Ingress " + namespace + "/" + name + " annotation 'haproxy-ingress.github.io/server-alias-regex' value contains " + regexInj + ", which would split the host-regex map; the alias regex is not applied. Remove whitespace and control characters from the value.")
-              } else {
-                show shared.Unique("haproxy-ingress-map-hostregex-alias", "header", "\n# haproxy-ingress/map-hostregex-alias\n")
-                show shared.Unique("haproxy-ingress-map-hostregex-alias", "resource/" + namespace + "/" + name,
-                  "# Ingress: " + namespace + "/" + name + " server-alias-regex\n" + regexTrimmed + " " + primaryKey + "\n")
-              }
+        var annotation = "haproxy-ingress.github.io/server-alias-regex"
+        var id = dig_string(item, "", "metadata", "namespace") + "/" + dig_string(item, "", "metadata", "name")
+        var rules = toSlice(dig(item, "spec", "rules"))
+        var primaryKey = ""
+        if len(rules) > 0 { primaryKey = tostring(MapKeyForHost(dig(rules[0], "host"))) }
+        var regexTrimmed = strip(dig_string(item, "", "metadata", "annotations", annotation))
+        if primaryKey != "" && regexTrimmed != "" {
+          var regexInj = ConfigInjectionKind(regexTrimmed, "mapkey")
+          var problem = RegexGroupProblem(regexTrimmed)
+          if regexInj != "" {
+            _ = WebhookRejectOrWarn(item, "InvalidServerAliasRegex", "Ingress " + id + " annotation '" + annotation + "' value contains " + regexInj + ", which would split the host-alias-regex map; the alias regex is not applied. Remove whitespace and control characters from the value.")
+          } else if problem != "" {
+            _ = WebhookRejectOrWarn(item, "InvalidServerAliasRegex", "Ingress " + id + " annotation '" + annotation + "' regex '" + regexTrimmed + "' " + problem + ", so it isn't routed. Rewrite it so its groups and [ ] classes close within it, without \\Q, \\E, \\c or (*.")
+          } else {
+            var key = HostAliasRegexKey(regexTrimmed)
+            var winner, found = shared.Select("ingress-host-claims", "regexes", key)
+            if HostClaimEmits(winner, found, id, annotation) {
+              show shared.Unique("haproxy-ingress-map-hostregex-alias", "header", "\n# haproxy-ingress/map-hostregex-alias\n")
+              show shared.Unique("haproxy-ingress-map-hostregex-alias", "resource/" + id,
+                "# Ingress: " + id + " server-alias-regex\n" + key + " " + primaryKey + "\n")
+            } else if HostClaimConflict(winner, found, id, primaryKey) {
+              recordEvent(item, "RouteConflict", HostAliasConflictMessage(annotation, regexTrimmed, dig_string(winner, "", "owner")))
             }
           }
         }
