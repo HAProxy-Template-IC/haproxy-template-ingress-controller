@@ -206,7 +206,7 @@ controller:
 
 ## Exempt namespaces
 
-`exemptNamespaces` skips a namespace entirely — no rule is checked, injected, or enforced there. Use it for infrastructure or system namespaces that shouldn't answer to tenant policy.
+`exemptNamespaces` skips a namespace entirely — no rule is checked, injected, or enforced there. Use it for infrastructure or system namespaces that shouldn't answer to tenant policy. To exempt a namespace from one rule only, see [Scope a rule to namespaces](#scope-a-rule-to-namespaces).
 
 ```yaml
 controller:
@@ -224,6 +224,46 @@ controller:
               required: true
               enforcement: reject
 ```
+
+## Scope a rule to namespaces
+
+To apply one rule to some namespaces only, set namespace lists on that rule.
+The other rules aren't affected.
+
+- `exemptNamespaces` skips the rule in the listed namespaces and applies it everywhere else, including namespaces created later.
+- `namespaces` applies the rule only in the listed namespaces. A namespace that isn't listed, including one created later, isn't checked.
+
+Use `exemptNamespaces` for a rule that protects the cluster, so a new namespace is covered by default.
+An omitted or empty list doesn't narrow the rule. A namespace can't be in both lists of the same rule.
+The global `exemptNamespaces` still applies on top of both lists.
+
+This example lets only the `platform` namespace set a host alias and requires
+a `tier` label only in the tenant namespaces:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        governance:
+          enabled: true
+          rules:
+            host-alias-platform-only:
+              enabled: true
+              resource: ingresses
+              path: metadata.annotations['haproxy-haptic.org/host-alias']
+              pattern: '^$'
+              exemptNamespaces: [platform]
+              message: host aliases are allowed only in platform namespaces
+            tenant-tier:
+              enabled: true
+              resource: ingresses
+              path: metadata.labels['tier']
+              required: true
+              namespaces: [tenant-a, tenant-b]
+```
+
+`pattern: '^$'` forbids a value: any non-empty annotation fails the rule.
 
 ## Govern any watched resource
 

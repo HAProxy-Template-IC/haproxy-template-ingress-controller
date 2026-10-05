@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Helm chart
+
+#### Added
+
+- Governance rules take `namespaces` and `exemptNamespaces` to apply a single rule only in, or everywhere except, the listed namespaces.
+
 ## [0.3.0] - 2026-10-05
 
 HAPTIC 0.3 serves HTTP/3 by default, keeps admission validation available while

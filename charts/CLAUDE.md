@@ -246,7 +246,7 @@ governance:
 
 **Two exceptions stay lists:**
 
-- **Scalar-value lists**, where the list *is* the value: `governance.exemptNamespaces`, `waf.policies.inline.<n>.allowedMethods`, `crsSettings.allowedRequestContentTypes`, `spoaHub.haproxy.messages`, `haproxyService.loadBalancerSourceRanges`.
+- **Scalar-value lists**, where the list *is* the value: `governance.exemptNamespaces`, `governance.rules.<n>.namespaces`/`exemptNamespaces`, `waf.policies.inline.<n>.allowedMethods`, `crsSettings.allowedRequestContentTypes`, `spoaHub.haproxy.messages`, `haproxyService.loadBalancerSourceRanges`.
 - **Lists inside a document that must round-trip through a non-Helm source.** `waf.policies.inline.<n>.ruleExclusions` is authored identically in `values.yaml`, a trusted ConfigMap catalog and a self-service catalog; only the first is Helm-merged, so a keyed map buys nothing and costs parity.
 
 Chart-generated projections already fronted by a values.yaml keyed map (`spoaHub.plugins`, `haproxyService.ports`) are already correct — the operator never edits the list.

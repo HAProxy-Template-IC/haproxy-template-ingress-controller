@@ -271,8 +271,118 @@ and `nginx.ingress.kubernetes.io/server-alias`. HAPTIC routes them as follows:
   listener.
 
 An Ingress in any watched namespace can therefore claim every hostname that no other
-Ingress has claimed yet. If your tenants mustn't do that, keep them from setting these
-annotations, for example with a Kubernetes admission policy.
+Ingress has claimed yet. If your tenants mustn't do that, allow these annotations only
+in the namespaces you trust.
+
+#### Restrict host aliases with governance
+
+These [governance rules](governance.md#scope-a-rule-to-namespaces) reject a new or
+edited Ingress that sets a host alias annotation outside the `platform` namespace.
+Replace `platform` with your trusted namespaces:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        governance:
+          enabled: true
+          rules:
+            host-alias-platform-only:
+              enabled: true
+              resource: ingresses
+              path: metadata.annotations['haproxy-haptic.org/host-alias']
+              pattern: '^$'
+              exemptNamespaces: [platform]
+              message: host aliases are allowed only in platform namespaces
+            host-alias-regex-platform-only:
+              enabled: true
+              resource: ingresses
+              path: metadata.annotations['haproxy-haptic.org/host-alias-regex']
+              pattern: '^$'
+              exemptNamespaces: [platform]
+              message: host aliases are allowed only in platform namespaces
+            server-alias-platform-only:
+              enabled: true
+              resource: ingresses
+              path: metadata.annotations['haproxy-ingress.github.io/server-alias']
+              pattern: '^$'
+              exemptNamespaces: [platform]
+              message: host aliases are allowed only in platform namespaces
+            server-alias-regex-platform-only:
+              enabled: true
+              resource: ingresses
+              path: metadata.annotations['haproxy-ingress.github.io/server-alias-regex']
+              pattern: '^$'
+              exemptNamespaces: [platform]
+              message: host aliases are allowed only in platform namespaces
+            nginx-server-alias-platform-only:
+              enabled: true
+              resource: ingresses
+              path: metadata.annotations['nginx.ingress.kubernetes.io/server-alias']
+              pattern: '^$'
+              exemptNamespaces: [platform]
+              message: host aliases are allowed only in platform namespaces
+```
+
+A rule doesn't remove an alias from an Ingress that already has one: that Ingress
+keeps serving the alias and gets a `GovernanceViolation` Warning Event. List those
+Events and remove the annotations:
+
+```bash
+kubectl get events --all-namespaces --field-selector reason=GovernanceViolation
+```
+
+#### Restrict host aliases with a ValidatingAdmissionPolicy
+
+To enforce the restriction in the Kubernetes API server, independently of HAPTIC, use a
+`ValidatingAdmissionPolicy` (Kubernetes 1.30 or later). It denies the annotations
+in every namespace that doesn't have the label `example.com/host-aliases=allowed`.
+Make sure that tenants can't label their own namespaces.
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: restrict-host-alias-annotations
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+    namespaceSelector:
+      matchExpressions:
+        - {key: example.com/host-aliases, operator: NotIn, values: ["allowed"]}
+  validations:
+    - expression: >-
+        !has(object.metadata.annotations) ||
+        !object.metadata.annotations.exists(k, k in [
+          'haproxy-haptic.org/host-alias', 'haproxy-haptic.org/host-alias-regex',
+          'haproxy-ingress.github.io/server-alias', 'haproxy-ingress.github.io/server-alias-regex',
+          'nginx.ingress.kubernetes.io/server-alias'])
+      message: Host alias annotations are allowed only in namespaces labelled example.com/host-aliases=allowed.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: restrict-host-alias-annotations
+spec:
+  policyName: restrict-host-alias-annotations
+  validationActions: [Deny]
+```
+
+Label each namespace that may use host aliases:
+
+```bash
+read -r -p "Namespace allowed to use host aliases: " alias_namespace
+kubectl label namespace "$alias_namespace" example.com/host-aliases=allowed
+```
+
+Like the governance rules, the policy checks only creates and updates; it doesn't
+remove an alias from an existing Ingress.
 
 ## Admission validation coverage
 
