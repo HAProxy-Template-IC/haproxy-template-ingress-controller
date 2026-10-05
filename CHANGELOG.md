@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-05
+
 HAPTIC 0.3 serves HTTP/3 by default, keeps admission validation available while
 a new configuration fails to load, and runs validationTests independently of
 your deployment values.
