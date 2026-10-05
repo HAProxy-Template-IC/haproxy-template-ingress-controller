@@ -184,6 +184,116 @@ validationTests:
                   - {name: noretry-svc, port: 80}
     assertions:
       - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gw_h_default_noretry-route_noretry-svc_80 from haptic-be-\w+$'}
+      # Scoped to Gateway profiles, which end with the gw_rule_id timeout line; cache profiles carry their own retries.
       - type: not_contains
         target: haproxy.cfg
-        pattern: '(?m)^backend gtw_default_noretry-route from haptic-be-\w+$\n(?:[ \t].*\n)*[ \t]+retry-on'
+        pattern: '(?m)^\s+retries \d+\n\s+retry-on [^\n]*\n(?:[ \t]+[^\n]*\n)*?[ \t]+http-request set-timeout server var\(txn\.gw_rule_id\)'
+
+  test-httproute-retry-unsupported-code-dropped:
+    requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.retry]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "A retry code HAProxy's retry-on can't match is dropped with a warning instead of breaking the configuration."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      <<: *retryFixtures
+      gatewayclasses: &retryGatewayClasses
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata: {name: haptic}
+          spec: {controllerName: haproxy-haptic.org/controller}
+      gateways: &retryGateways
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default, generation: 1}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, protocol: HTTP, port: 80, allowedRoutes: {namespaces: {from: Same}}}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: retry-route, namespace: default, generation: 1}
+          spec:
+            <<: *retryRouteSpec
+            rules:
+              - matches: *matchesPathprefixRoot
+                retry: {attempts: 2, codes: [507, 503]}
+                backendRefs: [{name: retry-svc, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retry-on conn-failure empty-response response-timeout 503$'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^\s+retry-on .*507'}
+      - {type: contains, target: events, pattern: 'Warning RetryCodeUnsupported .*HTTPRoute default/retry-route retries on status 507, which HAProxy'}
+
+  test-httproute-retry-backoff-warns:
+    requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.retry.backoff]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "HAProxy can't enforce retry.backoff, so the route gets a warning while its retries still apply."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      <<: *retryFixtures
+      gatewayclasses: *retryGatewayClasses
+      gateways: *retryGateways
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retries 4$'}
+      - {type: contains, target: events, pattern: 'Warning RetryBackoffUnsupported .*HTTPRoute default/retry-route sets retry.backoff 100ms'}
+
+  test-httproute-retry-h2c-backend:
+    requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.retry]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "Retries apply to an h2c backend: the profile carrying proto h2 also carries the retry policy."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      <<: *retryFixtures
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: retry-svc, namespace: default}
+          spec:
+            ports:
+              - {name: http, port: 80, targetPort: 8080, appProtocol: kubernetes.io/h2c}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^defaults haptic-be-\w+.*\n(?:[ \t]+.*\n)*?[ \t]+default-server [^\n]*proto h2[^\n]*\n(?:[ \t]+.*\n)*?[ \t]+retries 4$'
+
+  test-httproute-retry-per-rule-on-shared-service:
+    requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.retry]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "Two rules of one route with different retry policies for the same Service each get their own backend, so each rule keeps its own policy (upstream HTTPRouteRetry shape)."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      <<: *retryFixtures
+      gatewayclasses: *retryGatewayClasses
+      gateways: *retryGateways
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: retry-route, namespace: default, generation: 1}
+          spec:
+            <<: *retryRouteSpec
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /code-500}}]
+                retry: {attempts: 3, codes: [500]}
+                backendRefs: [{name: retry-svc, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /code-all}}]
+                retry: {attempts: 2, codes: [500, 502, 503, 504]}
+                backendRefs: [{name: retry-svc, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /plain}}]
+                backendRefs: [{name: retry-svc, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gw_h_default_retry-route_retry-svc_80_r0 from haptic-be-\w+$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gw_h_default_retry-route_retry-svc_80_r1 from haptic-be-\w+$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^backend gw_h_default_retry-route_retry-svc_80 from haptic-be-\w+$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retries 3\n\s+retry-on conn-failure empty-response response-timeout 500$'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+retries 2\n\s+retry-on conn-failure empty-response response-timeout 500 502 503 504$'}
+      - {type: contains, target: map:route-backend.map, pattern: '(?m)^h_default_retry-route_0 BACKEND:gw_h_default_retry-route_retry-svc_80_r0$'}
+      - {type: contains, target: map:route-backend.map, pattern: '(?m)^h_default_retry-route_1 BACKEND:gw_h_default_retry-route_retry-svc_80_r1$'}

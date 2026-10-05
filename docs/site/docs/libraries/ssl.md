@@ -116,7 +116,7 @@ The SSL library provides infrastructure for other libraries to register TLS feat
 | Data Structure | Purpose | How to Use |
 |----------------|---------|------------|
 | `gf["tlsCertificates"]` | Array of TLS certificates to include in CRT-list | Append `{secret_namespace, secret_name, sni_patterns[]}` |
-| `gf["sslPassthroughBackends"]` | Array of SSL passthrough backends | Append `{name, sni}` |
+| `gf["sslPassthroughBackends"]` | Array of SSL passthrough backends | Append `{name, sni}`; add `targets: [{name, weight}]` to split the SNI across backends by weight |
 | `https-bind-extra-*` | Additional binds in the HTTPS frontend | Provide a snippet matching the glob; use `{{ render "util-ssl-bind-options" }}` to reuse the configured certificate list and protocol settings. |
 
 #### Adding HTTPS binds via `https-bind-extra-*`

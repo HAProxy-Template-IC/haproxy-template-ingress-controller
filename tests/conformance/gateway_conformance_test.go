@@ -56,6 +56,7 @@ package conformance
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -98,6 +99,23 @@ var metalLBPoolGVR = schema.GroupVersionResource{
 	Group:    "metallb.io",
 	Version:  "v1beta1",
 	Resource: "ipaddresspools",
+}
+
+// experimentalFeatures are the experimental-channel features the chart
+// implements. Their fields exist only in the experimental CRDs, so they are
+// declared only on a cluster serving that channel.
+// HTTPRouteRetryConnectionError stays out: HAProxy answers a backend reset
+// with 502, the test accepts only 500 or 503.
+var experimentalFeatures = []features.FeatureName{
+	features.SupportHTTPRouteRetry,
+}
+
+func servesExperimentalChannel(ctx context.Context, c client.Client) (bool, error) {
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	if err := c.Get(ctx, client.ObjectKey{Name: "httproutes.gateway.networking.k8s.io"}, crd); err != nil {
+		return false, fmt.Errorf("read the HTTPRoute CRD's channel: %w", err)
+	}
+	return crd.Annotations["gateway.networking.k8s.io/channel"] == "experimental", nil
 }
 
 // gatewayClassName is the GatewayClass the chart provisions. The chart's
@@ -190,6 +208,11 @@ func TestGatewayAPIConformance(t *testing.T) {
 			continue
 		}
 		supported.Insert(f.Name)
+	}
+	experimental, err := servesExperimentalChannel(t.Context(), c)
+	require.NoError(t, err)
+	if experimental {
+		supported.Insert(experimentalFeatures...)
 	}
 
 	// Upstream defaults are sized for "any compliant implementation,

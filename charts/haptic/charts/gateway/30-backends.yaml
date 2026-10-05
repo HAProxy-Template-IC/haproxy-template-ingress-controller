@@ -88,10 +88,12 @@ templateSnippets:
       {%- import "util-backend" for FlagsToKeywordArgs, PrepareBackend -%}
       {%- import "util-backend-timeouts" for BackendTimeouts -%}
       {%- import "util-backend-servers-result" for BackendServersResult -%}
-      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- import "util-bounded-name" for BoundedName -%}
       {%- import "util-resolve-backend-tls" for ResolveBackendTLS -%}
+      {%- import "util-gateway-retry-policy" for GatewayRetryPolicy -%}
+      {%- import "util-gateway-session-persistence" for GatewaySessionPersistence -%}
+      {%- import "util-backend-name-gateway-rule" for BackendNameGatewayRule -%}
       {%- macro GenerateHTTPRouteBackends(routes []any, dedupCategory string) -%}
       {%- for _, route := range routes -%}
       {%- var routeNs = dig_string(route, "", "metadata", "namespace") -%}
@@ -110,7 +112,7 @@ templateSnippets:
         })
         return FilePath(fileType, filename), nil
       } -%}
-      {%- for _, rule := range toSlice(dig(route, "spec", "rules")) -%}
+      {%- for ruleIndex, rule := range toSlice(dig(route, "spec", "rules")) -%}
       {%- var backendRefs = toSlice(dig(rule, "backendRefs")) -%}
       {%- if len(backendRefs) > 0 %}
       {%- for _, backendRef := range backendRefs -%}
@@ -129,12 +131,11 @@ templateSnippets:
       {%- var backendNs = dig_string(backendRef, "", "namespace") -%}
       {%- if backendNs == "" %}{%- backendNs = routeNs %}{%- end -%}
       {%- var backend = map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort} -%}
-      {%- var backendKey = backendNs + "_" + routeNs + "_" + routeName + "_" + backendName + "_" + tostring(backendPort) -%}
-      {%- if !seenBackends[backendKey] -%}
-      {%- seenBackends[backendKey] = true -%}
+      {%- var beKey = BackendNameGatewayRule(route, rule, ruleIndex, backend) -%}
+      {%- if !seenBackends[beKey] -%}
+      {%- seenBackends[beKey] = true -%}
       {%- var protoFlag = "" -%}
       {%- var routeTypeLabel = "HTTPRoute" -%}
-      {%- var beKey = BackendNameGateway(route, backend) -%}
       {#- A Service port with appProtocol kubernetes.io/h2c needs `proto h2`;
           ws/wss need no directive (native HTTP handling covers them). -#}
       {%- var resolvedProtoFlag = protoFlag -%}
@@ -271,83 +272,19 @@ templateSnippets:
           defaultServer = append(defaultServer, kw)
         }
 
-        // A shared backend uses the first referencing rule's retry policy.
-        if protoFlag == "" {
-          var retryFound = false
-          for _, rl := range toSlice(dig(route, "spec", "rules")) {
-            if retryFound {
-              continue
-            }
-            var rlReferencesBackend = false
-            for _, bRef := range toSlice(dig(rl, "backendRefs")) {
-              if dig_string(bRef, "", "name") == backendName &&
-                toint(dig(bRef, "port") | fallback(0)) == toint(backendPort) {
-                rlReferencesBackend = true
-              }
-            }
-            if !rlReferencesBackend {
-              continue
-            }
-            var rt = dig(rl, "retry")
-            if rt == nil {
-              continue
-            }
-            var attempts = 3
-            if configured := dig(rt, "attempts"); configured != nil {
-              attempts = toint(configured)
-            }
-            retryFound = true
-            var codeParts = []any{}
-            for _, c := range toSlice(dig(rt, "codes")) {
-              codeParts = append(codeParts, tostring(toint(c)))
-            }
-            var retryCodes = "500 502 503 504"
-            if len(codeParts) > 0 {
-              retryCodes = join(codeParts, " ")
-            }
-            profile = append(profile, "retries " + tostring(attempts),
-              "retry-on conn-failure empty-response response-timeout " + retryCodes)
-          }
+        // A rule with either stanza owns this backend (BackendNameGatewayRule).
+        if rt := dig(rule, "retry"); rt != nil {
+          profile = append(profile, GatewayRetryPolicy(rt, tostring(props["haproxyVersion"]))["directives"].([]any)...)
         }
-
-        // GEP-1619 session persistence. Backends are deduplicated per
-        // (route, service, port), so the first rule declaring Cookie persistence
-        // for this backend wins. type: Header is not implemented (no stick-table
-        // key for a dynamically-named header).
-        var spCookieEmitted = false
-        for _, rl := range toSlice(dig(route, "spec", "rules")) {
-          if spCookieEmitted {
-            continue
-          }
-          var sp = dig(rl, "sessionPersistence")
-          if sp == nil || tostring(dig(sp, "type") | fallback("Cookie")) != "Cookie" {
-            continue
-          }
-          var refsThis = false
-          for _, bRef := range toSlice(dig(rl, "backendRefs")) {
-            if dig_string(bRef, "", "name") == backendName &&
-              toint(dig(bRef, "port") | fallback(0)) == toint(backendPort) {
-              refsThis = true
-            }
-          }
-          if !refsThis {
-            continue
-          }
-          var cookieName = tostring(dig(sp, "cookie", "name") | fallback(dig(sp, "sessionName")) | fallback(""))
-          if cookieName == "" { cookieName = "SESSION" }
-          var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback(""))
-          var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback(""))
-          var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic"
-          if absTimeout != "" { cookieDir = cookieDir + " maxlife " + absTimeout }
-          if idleTimeout != "" { cookieDir = cookieDir + " maxidle " + idleTimeout }
+        if sp := dig(rule, "sessionPersistence"); sp != nil {
           // dynamic-cookie-key is shared per installation (not sha256(beKey) per
           // backend) so two backends with the same cookie config share one
           // profile. It salts the address→cookie hash; override for a secret salt.
-          profile = append(profile,
-            "# GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity",
-            cookieDir,
-            "dynamic-cookie-key " + tostring(props | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
-          spCookieEmitted = true
+          var persistence = GatewaySessionPersistence(sp,
+            tostring(props | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
+          if persistence["error"] == "" {
+            profile = append(profile, persistence["directives"].([]any)...)
+          }
         }
 
         // GEP-1742 timeouts, keyed on the txn.gw_rule_id the frontend matcher
@@ -402,10 +339,11 @@ templateSnippets:
       {%- import "util-backend" for FlagsToKeywordArgs, PrepareBackend -%}
       {%- import "util-backend-timeouts" for BackendTimeouts -%}
       {%- import "util-backend-servers-result" for BackendServersResult -%}
-      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- import "util-bounded-name" for BoundedName -%}
       {%- import "util-resolve-backend-tls" for ResolveBackendTLS -%}
+      {%- import "util-gateway-session-persistence" for GatewaySessionPersistence -%}
+      {%- import "util-backend-name-gateway-rule" for BackendNameGatewayRule -%}
       {%- macro GenerateGRPCRouteBackends(routes []*resources.grpcroutes.T, dedupCategory string) -%}
       {%- for _, route := range routes -%}
       {%- var routeNs = route.Metadata.Namespace -%}
@@ -424,7 +362,7 @@ templateSnippets:
         })
         return FilePath(fileType, filename), nil
       } -%}
-      {%- for _, rule := range route.Spec.Rules -%}
+      {%- for ruleIndex, rule := range route.Spec.Rules -%}
       {%- var backendRefs = rule.BackendRefs -%}
       {%- if len(backendRefs) > 0 %}
       {%- for _, backendRef := range backendRefs -%}
@@ -443,13 +381,12 @@ templateSnippets:
       {%- var backendNs = backendRef.Namespace -%}
       {%- if backendNs == "" %}{%- backendNs = routeNs %}{%- end -%}
       {%- var backend = map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort} -%}
-      {%- var backendKey = backendNs + "_" + routeNs + "_" + routeName + "_" + backendName + "_" + tostring(backendPort) -%}
-      {%- if !seenBackends[backendKey] -%}
-      {%- seenBackends[backendKey] = true -%}
+      {%- var beKey = BackendNameGatewayRule(route, rule, ruleIndex, backend) -%}
+      {%- if !seenBackends[beKey] -%}
+      {%- seenBackends[beKey] = true -%}
       {%%
         var protoFlag = "h2"
         var routeTypeLabel = "GRPCRoute"
-        var beKey = BackendNameGateway(route, backend)
         var resolvedProtoFlag = protoFlag
         var btlsCaPath = ""
         var btlsHostname = ""
@@ -573,41 +510,13 @@ templateSnippets:
           defaultServer = append(defaultServer, kw)
         }
 
-        // GEP-1619 session persistence — rationale in the HTTPRoute backend
-        // above; the first Cookie rule referencing this backend wins.
-        var spCookieEmitted = false
-        for _, rl := range route.Spec.Rules {
-          if spCookieEmitted {
-            continue
+        // GEP-1619 session persistence, as for the HTTPRoute backend above.
+        if sp := dig(rule, "sessionPersistence"); sp != nil {
+          var persistence = GatewaySessionPersistence(sp,
+            tostring(props | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
+          if persistence["error"] == "" {
+            profile = append(profile, persistence["directives"].([]any)...)
           }
-          var sp = dig(rl, "sessionPersistence")
-          if sp == nil || tostring(dig(sp, "type") | fallback("Cookie")) != "Cookie" {
-            continue
-          }
-          var refsThis = false
-          for _, bRef := range rl.BackendRefs {
-            if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) {
-              refsThis = true
-            }
-          }
-          if !refsThis {
-            continue
-          }
-          var cookieName = tostring(dig(sp, "cookie", "name") | fallback(dig(sp, "sessionName")) | fallback(""))
-          if cookieName == "" { cookieName = "SESSION" }
-          var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback(""))
-          var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback(""))
-          var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic"
-          if absTimeout != "" { cookieDir = cookieDir + " maxlife " + absTimeout }
-          if idleTimeout != "" { cookieDir = cookieDir + " maxidle " + idleTimeout }
-          // dynamic-cookie-key is shared per installation (not sha256(beKey) per
-          // backend) so two backends with the same cookie config share one
-          // profile. It salts the address→cookie hash; override for a secret salt.
-          profile = append(profile,
-            "# GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity",
-            cookieDir,
-            "dynamic-cookie-key " + tostring(props | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie")))
-          spCookieEmitted = true
         }
 
         // GEP-1742 timeouts, same map and gate as the HTTPRoute backend above.
@@ -723,6 +632,7 @@ templateSnippets:
           "mapDir": mapDir,
           "fileDir": fileDir,
           "dynamicCookieKey": extraContext | dig("dynamicCookieKey") | fallback("haptic-dynamic-cookie"),
+          "haproxyVersion": extraContext | dig("haproxyVersion") | fallback(""),
         }
       } -%}
 
@@ -799,12 +709,12 @@ templateSnippets:
       root: gateway-http-route-pre-analysis
       group: map-backend-service-gateway
     template: |-
-      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-name-gateway-rule" for BackendNameGatewayRule -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%%
         var route = item
         var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
-        for _, rule := range toSlice(dig(route, "spec", "rules")) {
+        for ruleIndex, rule := range toSlice(dig(route, "spec", "rules")) {
           for _, backendRef := range toSlice(dig(rule, "backendRefs")) {
             if BackendRefValid("HTTPRoute", routeNs, backendRef) != "true" {
               continue
@@ -814,7 +724,7 @@ templateSnippets:
             if backendPort == 0 { backendPort = 80 }
             var backendNs = tostring(dig(backendRef, "namespace") | fallback(routeNs))
             if backendNs == "" { backendNs = routeNs }
-            var beKey = BackendNameGateway(route, map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort})
+            var beKey = BackendNameGatewayRule(route, rule, ruleIndex, map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort})
             show shared.Unique("map-backend-service-gw", beKey, "\n" + beKey + " " + backendNs + "/" + backendName)
           }
         }
@@ -826,12 +736,12 @@ templateSnippets:
       source: grpcroutes
       group: map-backend-service-gateway
     template: |-
-      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-name-gateway-rule" for BackendNameGatewayRule -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%%
         var route = item
         var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
-        for _, rule := range toSlice(dig(route, "spec", "rules")) {
+        for ruleIndex, rule := range toSlice(dig(route, "spec", "rules")) {
           for _, backendRef := range toSlice(dig(rule, "backendRefs")) {
             if BackendRefValid("GRPCRoute", routeNs, backendRef) != "true" {
               continue
@@ -841,7 +751,7 @@ templateSnippets:
             if backendPort == 0 { backendPort = 80 }
             var backendNs = tostring(dig(backendRef, "namespace") | fallback(routeNs))
             if backendNs == "" { backendNs = routeNs }
-            var beKey = BackendNameGateway(route, map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort})
+            var beKey = BackendNameGatewayRule(route, rule, ruleIndex, map[string]any{"namespace": backendNs, "name": backendName, "port": backendPort})
             show shared.Unique("map-backend-service-gw", beKey, "\n" + beKey + " " + backendNs + "/" + backendName)
           }
         }
@@ -959,69 +869,90 @@ templateSnippets:
             "gateway-ssl-passthrough", "definitions", definitionKey)
           if !found || dig(definition, "invalid") == true { continue }
           var refs = toSlice(dig(rule, "backendRefs"))
-          if len(refs) == 0 { continue }
-          var backendRef = refs[0]
-          var refName = dig_string(backendRef, "", "name")
-          var refPort = toint(dig(backendRef, "port") | fallback(0))
-          if refPort == 0 { refPort = 443 }
-          var refNamespace = dig_string(backendRef, namespace, "namespace")
-          if refNamespace == "" { refNamespace = namespace }
+          var refTargets = toSlice(dig(definition, "refs"))
           var rank = dig_string(definition, definitionKey, "rank")
+          var rejectsShare = false
+          for _, refTarget := range refTargets {
+            if dig(refTarget, "valid") != true && toint(dig(refTarget, "weight")) > 0 { rejectsShare = true }
+          }
+          if rejectsShare {
+            show shared.Publish("specs", rank + "/gw-tls-reject", map[string]any{
+              "backend": map[string]any{
+                "name": "gw-tls-reject",
+                "guid": make_guid("be", "gw-tls-reject"),
+                "mode": "tcp",
+                "comments": []any{"# gateway/backends-gateway-ssl-passthrough: share of invalid TLSRoute backendRefs"},
+                "body": []any{"tcp-request content reject"},
+              },
+              "degraded": map[string]any{"active": false},
+            })
+          }
           for _, backendAny := range toSlice(dig(definition, "backends")) {
-            var backendName = dig_string(backendAny, "", "name")
-            var servers = BackendServersResult(
-              refName, 0, refPort, nil, nil, backendName, refNamespace)
-            var defaultServer = []any{map[string]any{"name": "check"}}
-            var body = []any{}
-            // A Terminate listener hands the backend plaintext, so a BackendTLSPolicy
-            // re-encrypts here; a Passthrough listener forwards the client's TLS untouched.
-            if dig(backendAny, "terminate") == true {
-              var btls = ResolveBackendTLS(refNamespace, refName, refPort)
-              if btls["found"] == true {
-                var caPath = ""
-                if tostring(btls["caBundle"]) != "" {
-                  var caFilename = tostring(btls["caFilename"])
-                  files = append(files, map[string]any{
-                    "type": "ca-file", "filename": caFilename, "content": tostring(btls["caBundle"]),
-                  })
-                  caPath = caFilename
-                  if tostring(props["fileDir"]) != "" { caPath = tostring(props["fileDir"]) + "/" + caFilename }
-                } else if btls["systemCA"] == true {
-                  caPath = "@system-ca"
-                }
-                if caPath == "" {
-                  body = append(body, "tcp-request content reject")
-                } else {
-                  var flags = []any{"ssl"}
-                  if caPath != "@system-ca" { flags = append(flags, "ca-file " + caPath) }
-                  flags = append(flags, "verify required")
-                  if tostring(btls["hostname"]) != "" {
-                    flags = append(flags, "sni str(" + tostring(btls["hostname"]) + ")")
+            for _, refTarget := range refTargets {
+              if dig(refTarget, "valid") != true || toint(dig(refTarget, "weight")) <= 0 { continue }
+              var refIndex = toint(dig(refTarget, "index"))
+              var backendRef = refs[refIndex]
+              var refName = dig_string(backendRef, "", "name")
+              var refPort = toint(dig(backendRef, "port") | fallback(0))
+              if refPort == 0 { refPort = 443 }
+              var refNamespace = dig_string(backendRef, namespace, "namespace")
+              if refNamespace == "" { refNamespace = namespace }
+              var backendName = dig_string(backendAny, "", "name")
+              if len(refTargets) > 1 { backendName = backendName + "_" + tostring(refIndex) }
+              var servers = BackendServersResult(
+                refName, 0, refPort, nil, nil, backendName, refNamespace)
+              var defaultServer = []any{map[string]any{"name": "check"}}
+              var body = []any{}
+              // A Terminate listener hands the backend plaintext, so a BackendTLSPolicy
+              // re-encrypts here; a Passthrough listener forwards the client's TLS untouched.
+              if dig(backendAny, "terminate") == true {
+                var btls = ResolveBackendTLS(refNamespace, refName, refPort)
+                if btls["found"] == true {
+                  var caPath = ""
+                  if tostring(btls["caBundle"]) != "" {
+                    var caFilename = tostring(btls["caFilename"])
+                    files = append(files, map[string]any{
+                      "type": "ca-file", "filename": caFilename, "content": tostring(btls["caBundle"]),
+                    })
+                    caPath = caFilename
+                    if tostring(props["fileDir"]) != "" { caPath = tostring(props["fileDir"]) + "/" + caFilename }
+                  } else if btls["systemCA"] == true {
+                    caPath = "@system-ca"
                   }
-                  if tostring(btls["verifyHost"]) != "" {
-                    flags = append(flags, "verifyhost " + tostring(btls["verifyHost"]))
+                  if caPath == "" {
+                    body = append(body, "tcp-request content reject")
+                  } else {
+                    var flags = []any{"ssl"}
+                    if caPath != "@system-ca" { flags = append(flags, "ca-file " + caPath) }
+                    flags = append(flags, "verify required")
+                    if tostring(btls["hostname"]) != "" {
+                      flags = append(flags, "sni str(" + tostring(btls["hostname"]) + ")")
+                    }
+                    if tostring(btls["verifyHost"]) != "" {
+                      flags = append(flags, "verifyhost " + tostring(btls["verifyHost"]))
+                    }
+                    for _, kw := range FlagsToKeywordArgs(flags) { defaultServer = append(defaultServer, kw) }
                   }
-                  for _, kw := range FlagsToKeywordArgs(flags) { defaultServer = append(defaultServer, kw) }
                 }
               }
-          }
-          show shared.Publish("specs", rank + "/" + backendName, map[string]any{
-            "backend": map[string]any{
-              "name": backendName,
-              "guid": make_guid("be", backendName),
-              "mode": "tcp",
-              "comments": []any{"# gateway/backends-gateway-ssl-passthrough (tlsroute)"},
-              "defaultServer": defaultServer,
-              "body": body,
-              "servers": servers["servers"],
-            },
-            "degraded": map[string]any{
-              "active": servers["degradedByName"],
-              "namespace": refNamespace,
-              "service": refName,
-              "portName": servers["portName"],
-            },
-          })
+              show shared.Publish("specs", rank + "/" + backendName, map[string]any{
+                "backend": map[string]any{
+                  "name": backendName,
+                  "guid": make_guid("be", backendName),
+                  "mode": "tcp",
+                  "comments": []any{"# gateway/backends-gateway-ssl-passthrough (tlsroute)"},
+                  "defaultServer": defaultServer,
+                  "body": body,
+                  "servers": servers["servers"],
+                },
+                "degraded": map[string]any{
+                  "active": servers["degradedByName"],
+                  "namespace": refNamespace,
+                  "service": refName,
+                  "portName": servers["portName"],
+                },
+              })
+            }
           }
         }
         if len(files) > 0 {
@@ -1038,8 +969,12 @@ templateSnippets:
       {{ render_glob "gateway-ssl-passthrough-*" }}
       {{- render_glob "backenditems-501-gateway-ssl-passthrough-*" -}}
       {{- ReplayGatewayBackendEffects("gateway-ssl-passthrough-backend-specs") -}}
+      {%- var emitted = map[string]bool{} -%}
       {%- for _, publicationAny := range incremental_values("gateway-ssl-passthrough-backend-specs", "specs") %}
       {%- var publication = publicationAny.(map[string]any) -%}
+      {%- var backendName = tostring(publication["backend"].(map[string]any)["name"]) -%}
+      {%- if emitted[backendName] -%}{%- continue -%}{%- end -%}
+      {%- emitted[backendName] = true -%}
       {%- var degraded = publication["degraded"].(map[string]any) -%}
       {%- if degraded["active"] == true -%}
         {%- var _, _ = shared.ComputeIfAbsent(

@@ -90,4 +90,7 @@ test-tlsroute-section-name-no-match
 test-tlsroute-status-parent-ports
 test-tlsroute-terminate-nondefault-port-frontend
 test-tlsroute-terminate-on-chart-static-httpsport
+test-tlsroute-weighted-backends
+test-tlsroute-weighted-invalid-ref-share-rejected
+test-tlsroute-weighted-terminate-listener
 test-tlsroute-wildcard-listener-exact-route
