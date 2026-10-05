@@ -80,6 +80,37 @@ templateSnippets:
         return cached.([]any)
       } -%}
 
+  # An entry's optional `targets` ({name, weight}) split its SNI across
+  # backends. Each line after the first wins with weight/remaining, so its
+  # independent rand() still yields weight/total overall.
+  util-ssl-sni-use-backend-lines:
+    template: |-
+      {%- var SNIUseBackendLines = func(entry any, fetch string) []any {
+        var sni = dig_string(entry, "", "sni")
+        var condition = "{ " + fetch + " -m str " + sni + " }"
+        if hasPrefix(sni, "*.") { condition = "{ " + fetch + " -m end " + sni[1:] + " }" }
+        var targets = []any{}
+        for _, target := range toSlice(dig(entry, "targets")) {
+          if toint(dig(target, "weight") | fallback(0)) > 0 { targets = append(targets, target) }
+        }
+        if len(toSlice(dig(entry, "targets"))) == 0 {
+          targets = []any{map[string]any{"name": dig_string(entry, "", "name"), "weight": 1}}
+        }
+        var remaining = 0
+        for _, target := range targets { remaining = remaining + toint(dig(target, "weight")) }
+        var lines = []any{}
+        for i, target := range targets {
+          var weight = toint(dig(target, "weight"))
+          var line = "use_backend " + dig_string(target, "", "name") + " if " + condition
+          if i < len(targets) - 1 {
+            line = line + " { rand(" + tostring(remaining) + ") -m int lt " + tostring(weight) + " }"
+          }
+          lines = append(lines, line)
+          remaining = remaining - weight
+        }
+        return lines
+      } -%}
+
   util-ssl-bind-options:
     template: >-
       {{- " " -}}ssl crt-list {{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} alpn h2,http/1.1{% if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %} tls-ticket-keys {{ pathResolver.GetPath("tls-ticket-keys", "file") }}{% end %}
@@ -605,6 +636,7 @@ templateSnippets:
   frontends-500-ssl-tcp:
     template: |
       {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
+      {%- import "util-ssl-sni-use-backend-lines" for SNIUseBackendLines -%}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var gfMap = gf.(map[string]any) -%}
       {%- var passthroughBackends = SSLPassthroughBackends() -%}
@@ -768,11 +800,8 @@ templateSnippets:
           {%- var bMode = tostring(b | dig("mode") | fallback("Passthrough")) %}
           {%- var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true" %}
           {%- if bMode == "Passthrough" && !bInvalid %}
-          {%- var sni = tostring(b | dig("sni")) %}
-          {%- if hasPrefix(sni, "*.") %}
-          use_backend {{ b | dig("name") }} if { req_ssl_sni -m end {{ sni[1:] }} }
-          {%- else %}
-          use_backend {{ b | dig("name") }} if { req_ssl_sni -m str {{ sni }} }
+          {%- for _, line := range SNIUseBackendLines(b, "req_ssl_sni") %}
+          {{ line }}
           {%- end %}
           {%- end %}
           {%- end %}

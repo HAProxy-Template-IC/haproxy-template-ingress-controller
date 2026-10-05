@@ -702,21 +702,59 @@ also enables their experimental-channel validation fixtures.
 | Field | Behavior |
 | --- | --- |
 | HTTPRoute/GRPCRoute `rules[].timeouts.request` | Sets HAProxy's server timeout for the selected rule; falls back to `backendRequest` when absent or `0s`. This is one server timeout, not two independent deadlines. |
-| HTTPRoute `rules[].retry.attempts` | Sets the retry count for HTTP/1 backends; `0` disables retries. |
-| HTTPRoute `rules[].retry.codes` | Selects HTTP status codes for retries while retaining connection-failure, empty-response, and response-timeout retries. `backoff` isn't implemented. |
-| HTTPRoute/GRPCRoute `rules[].sessionPersistence` | `type: Cookie` enables cookie affinity. `absoluteTimeout` and `idleTimeout` set cookie lifetimes; header-based persistence isn't implemented. |
+| HTTPRoute `rules[].retry.attempts` | Sets the retry count for the rule's backends, including h2c backends; `0` disables retries. The default is `3`. |
+| HTTPRoute `rules[].retry.codes` | Retries on the listed statuses as well as on connection failures, empty responses, and response timeouts. Without `codes`, the statuses are 500, 502, 503, and 504. |
+| HTTPRoute `rules[].retry.backoff` | Not applied: HAProxy retries without waiting. See [Retry limits](#retry-limits). |
+| HTTPRoute/GRPCRoute `rules[].sessionPersistence` | `type: Cookie` keeps a client on one pod through a cookie, `type: Header` through a response header the client sends back. `absoluteTimeout`, and `idleTimeout` on schemas that serve it, end the session. |
 
-Cookie names come from `sessionPersistence.cookie.name` when the installed schema
-serves that field, or `sessionPersistence.sessionName` on earlier schemas. The
-default name is `SESSION`. These settings belong to the backend: when several
-rules in one route reference it, the first rule declaring the relevant retry or
-cookie policy wins. Changing that policy changes the backend profile and can
+#### Retry limits
+
+- HAProxy retries on these statuses only: 401, 403, 404, 408, 421 (HAProxy 3.1
+  and later), 425, 429, 500, 501, 502, 503, and 504. HAPTIC drops any other
+  code from `retry.codes` and records a `RetryCodeUnsupported` Warning event on
+  the route.
+- HAProxy has no delay between retries. It waits `min(timeout connect, 1s)`
+  (100 ms with the chart's default `timeout connect`) only before reconnecting
+  to the same server after a failed connection, and retries everything else
+  immediately. A route that sets a nonzero `backoff` gets a
+  `RetryBackoffUnsupported` Warning event.
+- `timeouts.request` bounds each attempt, not all attempts together.
+- HAProxy retries a request on a status code, an empty response, or a response
+  timeout only when the request fits in one buffer (`tune.bufsize`) and its
+  method is idempotent. Set
+  `controller.config.templatingSettings.extraContext.retryNonIdempotent` to
+  `true` to also retry other methods.
+
+#### Session persistence
+
+Name the cookie with `sessionPersistence.cookie.name` and the header with
+`sessionPersistence.header.name` when the installed schema serves those fields,
+or with `sessionPersistence.sessionName` on earlier schemas. The default names
+are `SESSION` for a cookie and `X-Session` for a header. A name may contain
+letters, digits, and `!$&*+.^_~-`. The admission webhook rejects a route using
+any other character; a route stored anyway gets no session persistence
+and an `InvalidSessionPersistence` Warning event.
+
+With `type: Header`, the first response carries the session in the header, and
+a request that sends the header back reaches the same pod for as long as that
+pod serves the backend. The token is the cookie that `type: Cookie` would use,
+so the response also carries a `Set-Cookie` for it with `Max-Age=0`, which
+makes the client discard it. `lifetimeType: Permanent` gives a cookie a
+`Max-Age` of `absoluteTimeout`.
+
+A rule with several `backendRefs` picks the Service by weight before session
+persistence applies, so a session can move to another Service of the same rule.
+
+A rule with a `retry` or `sessionPersistence` policy gets its own backend,
+named after the shared one with a `_r<rule index>` suffix, so its policy
+applies to that rule only. Changing a policy changes the backend profile and can
 require a reload.
 
 <a id="advanced-features"></a>
 
-Rules within one route reuse a backend for the same Service and port. Separate
-routes have separate backends, so their backend policies can differ.
+Rules within one route reuse a backend for the same Service and port unless a
+rule has its own `retry` or `sessionPersistence` policy. Separate routes have
+separate backends.
 
 ### Misdirected requests on HTTPS listeners
 
@@ -890,8 +928,8 @@ EOF
 
 The `secure-app` Service must exist in `default` and accept TLS on port `8443`.
 Clients connect to listener port `6443` with SNI `secure.example.com`; the backend
-terminates their TLS sessions. Each TLSRoute needs a hostname and uses the first
-backend in each rule. See [TLSRoute limitations](#tlsroute-limitations).
+terminates their TLS sessions. Each TLSRoute needs a hostname. See
+[TLSRoute limitations](#tlsroute-limitations).
 
 ### Attachment semantics
 
@@ -913,8 +951,10 @@ A TLSRoute attaches to a Gateway listener when every check in this table passes:
 - Passthrough routes can share the chart's HTTPS port with Ingress passthrough routes.
 - Use a separate port for a terminating TLS listener when the chart already uses its HTTPS port.
 - Wildcard server names such as `*.example.com` match by suffix.
-- Connections with an unclaimed server name or unresolved backend are rejected.
-- Each rule sends traffic to its **first** `backendRef`, using port 443 if omitted. BackendTLSPolicy can re-encrypt traffic after termination; it doesn't affect passthrough traffic.
+- Connections with an unclaimed server name are rejected.
+- A rule splits its connections across its `backendRefs` by `weight` (default `1`; a `weight: 0` ref receives none). A ref's port defaults to 443.
+- The share of an invalid `backendRef` — a missing Service, another kind, or a cross-namespace ref without a ReferenceGrant — is rejected; a rule whose valid refs all have weight 0 rejects every connection.
+- BackendTLSPolicy can re-encrypt traffic after termination; it doesn't affect passthrough traffic.
 
 ### TLSRoute status
 
@@ -927,7 +967,6 @@ TLSRoutes count toward `attachedRoutes` on TLS listeners only; listeners on a mi
 
 ### TLSRoute limitations
 
-- **Single backend per rule**: traffic goes to the first `backendRef`; `weight` isn't honored for TLSRoute (TCPRoute rules do support weighted refs).
 - `backendRefs` must be core/v1 Services.
 - At least one `spec.hostnames` entry is required.
 

@@ -21,6 +21,7 @@ templateSnippets:
           "resPath": resPath,
           "mirrorTimeoutMs": extraContext | dig("spoaHub", "mirror", "targetTimeoutMs") | fallback(2000),
           "mirrorRetries": extraContext | dig("spoaHub", "mirror", "targetRetries") | fallback(0),
+          "haproxyVersion": extraContext | dig("haproxyVersion") | fallback(""),
         }
       } -%}
 
@@ -39,7 +40,9 @@ templateSnippets:
     template: |
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
-      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-name-gateway-rule" for BackendNameGatewayRule -%}
+      {%- import "util-gateway-retry-policy" for GatewayRetryPolicy -%}
+      {%- import "util-gateway-session-persistence" for GatewaySessionPersistence -%}
       {%- macro PublishGatewayRouteFilterMaps(route any, routeKind string, routeProps map[string]any) -%}
       {%%
         var namespace = dig_string(route, "", "metadata", "namespace")
@@ -378,9 +381,30 @@ templateSnippets:
               publishLine("timeout", routeID + " " + tostring(toint(duration.Milliseconds())))
             }
           }
+          var routeLabel = routeKind + " " + namespace + "/" + name
+          if retry := dig(rule, "retry"); retry != nil {
+            var unsupported = GatewayRetryPolicy(retry, tostring(routeProps["haproxyVersion"]))["unsupported"].([]any)
+            if len(unsupported) > 0 {
+              recordEvent(route, "RetryCodeUnsupported", routeLabel + " retries on status " + join(unsupported, ", ") +
+                ", which HAProxy can't retry on; those responses reach the client without a retry. Remove them from retry.codes.")
+            }
+            var backoff = dig_string(retry, "", "backoff")
+            var backoffDuration, backoffErr = parseDuration(backoff)
+            if backoff != "" && (backoffErr != nil || toint(backoffDuration.Milliseconds()) > 0) {
+              recordEvent(route, "RetryBackoffUnsupported", routeLabel + " sets retry.backoff " + backoff +
+                ", which HAProxy can't enforce; failed requests are retried without waiting. Remove retry.backoff to accept immediate retries.")
+            }
+          }
+          if sp := dig(rule, "sessionPersistence"); sp != nil {
+            var persistenceErr = tostring(GatewaySessionPersistence(sp, "")["error"])
+            if persistenceErr != "" {
+              _ = WebhookRejectOrWarn(route, "InvalidSessionPersistence", routeLabel + " rule " + ruleKey + ": " +
+                persistenceErr + ", so the rule gets no session persistence. Fix sessionPersistence.")
+            }
+          }
           for _, backendRef := range backendRefs {
             if len(toSlice(dig(backendRef, "filters"))) == 0 { continue }
-            var backendKey = routeID + "|" + BackendNameGateway(route, backendRef)
+            var backendKey = routeID + "|" + BackendNameGatewayRule(route, rule, ruleIndex, backendRef)
             for _, filter := range toSlice(dig(backendRef, "filters")) {
               var filterType = dig_string(filter, "", "type")
               if filterType == "RequestHeaderModifier" {

@@ -432,6 +432,7 @@ func loadSSLPassthroughChartSnippets(t *testing.T) map[string]config.TemplateSni
 		"util-backend-servers-helpers":              true,
 		"util-backend-servers-result":               true,
 		"util-ssl-passthrough-backends":             true,
+		"util-ssl-sni-use-backend-lines":            true,
 		"features-140-ssl-passthrough-binds":        true,
 		"frontends-500-ssl-tcp":                     true,
 		"backends-500-ssl-loopback":                 true,

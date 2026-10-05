@@ -2799,6 +2799,18 @@ nightly-gwapi-matrix:
     HAPTIC_E2E_GWAPI_VERSION: $GWAPI_RELEASE
     TEST_RUN_PATTERN: TestGatewayAPIReleaseMatrix
 
+# Tests of experimental-channel Gateway API fields skip on the standard
+# channel every other e2e job installs; this job runs them on the pinned
+# release's experimental channel.
+nightly-gwapi-experimental:
+  extends: .test-e2e-base
+  rules:
+    - if: $SCHEDULE_KIND == "nightly"
+  variables:
+    HAPROXY_VERSION: "3.4"
+    HAPTIC_E2E_GWAPI_CHANNEL: experimental
+    TEST_RUN_PATTERN: TestGatewaySessionPersistence
+
 # Churn/soak tier (issue #64, spun out of #58 item 8): sustained parallel
 # Gateway create/delete against a live kind cluster. The worst bugs of the
 # gateway-api v1.6.0 campaign — the pod-port allocator's read-back collision

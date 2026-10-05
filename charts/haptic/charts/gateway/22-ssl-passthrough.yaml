@@ -54,12 +54,11 @@ templateSnippets:
             For each TLSRoute / rule that survives the listener-attachment
             filters (TLS protocol, Passthrough mode, no ProtocolConflict,
             allowedRoutes.kinds, allowedRoutes.namespaces, sectionName,
-            port) AND whose backendRefs all resolve, emit one entry per
-            (intersected route hostname × listener hostname). Backend
-            naming: gtw_tls_<ns>_<name>_<ruleIdx>. The ssl-tcp frontend
-            then renders one `use_backend ... if { req_ssl_sni -m str
-            <host> }` line per entry, all pointing at the same backend
-            for a given rule. -#}
+            port), emit one entry per (intersected route hostname ×
+            listener hostname). Backend naming: gtw_tls_<ns>_<name>_<ruleIdx>,
+            plus _<refIdx> when the rule has several backendRefs. Each entry's
+            `targets` carry the weighted backends the frontends split its SNI
+            across. -#}
         {%- if tlsRoute != nil %}
           {%- var route = tlsRoute %}
           {%%
@@ -70,44 +69,44 @@ templateSnippets:
           %%}
           {%- for ruleIdx, rule := range rules %}
             {%%
-              // ResolvedRefs gate: every backendRef must point at an
-              // existing core/Service. Cross-namespace refs need a
-              // matching ReferenceGrant (parity with status side).
-              //
-              // We do NOT skip unresolved rules — instead we mark
-              // their emitted entries with `invalid: true`. The
-              // chart-static ssl-tcp and per-port mode-tcp frontends
-              // both use this flag to:
-              //   * skip use_backend emission (no real backend exists)
-              //   * still register the route's claimed SNI as
-              //     "claimed by the chart" so connections to it get
-              //     rejected (not silently passed through to a
-              //     non-existent backend or chart-static fallback).
-              // Closes the upstream
-              // TLSRouteInvalidBackendRefNonexistent /
-              // TLSRouteInvalidBackendRefUnknownKind conformance tests
-              // (the spec mandates the connection be refused, not
-              // routed elsewhere).
-              var ruleResolved = true
-              for _, br := range rule.BackendRefs {
+              // A backendRef is valid when it is a core/Service that exists and,
+              // across namespaces, a ReferenceGrant covers it (parity with status).
+              // An invalid ref keeps its weight: that share of connections goes to
+              // gw-tls-reject, as the spec requires. A rule with no valid weight is
+              // marked `invalid`: its SNI stays claimed and every connection to it
+              // is refused (TLSRouteInvalidBackendRef* conformance tests).
+              var refTargets = []any{}
+              var validWeight = 0
+              for refIdx, br := range rule.BackendRefs {
                 var brName = br.Name
                 var brNs = br.Namespace
                 if brNs == "" { brNs = nsStr }
                 var brGroup = br.Group
                 var brKind = br.Kind
                 if brKind == "" { brKind = "Service" }
-                if !((brGroup == "" || brGroup == "core") && brKind == "Service") {
-                  ruleResolved = false
-                  break
+                var refValid = (brGroup == "" || brGroup == "core") && brKind == "Service" &&
+                  resources.services.GetSingle(brNs, brName) != nil
+                if refValid && brNs != nsStr {
+                  refValid = ReferenceGrantPermitted("gateway.networking.k8s.io", "TLSRoute", nsStr, "", "Service", brNs, brName) == "true"
                 }
-                if resources.services.GetSingle(brNs, brName) == nil {
-                  ruleResolved = false
-                  break
+                var brWeight = 1
+                if br.Weight != nil { brWeight = toint(br.Weight) }
+                if refValid { validWeight = validWeight + brWeight }
+                refTargets = append(refTargets, map[string]any{"index": refIdx, "weight": brWeight, "valid": refValid})
+              }
+              var ruleResolved = validWeight > 0
+              var targetsFor = func(backendName string) []any {
+                var targets = []any{}
+                for _, refTarget := range refTargets {
+                  var info = refTarget.(map[string]any)
+                  var name = "gw-tls-reject"
+                  if info["valid"] == true {
+                    name = backendName
+                    if len(refTargets) > 1 { name = backendName + "_" + tostring(info["index"]) }
+                  }
+                  targets = append(targets, map[string]any{"name": name, "weight": info["weight"]})
                 }
-                if brNs != nsStr && ReferenceGrantPermitted("gateway.networking.k8s.io", "TLSRoute", nsStr, "", "Service", brNs, brName) != "true" {
-                  ruleResolved = false
-                  break
-                }
+                return targets
               }
             %%}
 
@@ -309,6 +308,7 @@ templateSnippets:
                   "invalid": !ruleResolved,
                   "rank": definitionKey + "/" + sortedSNIs[0],
                   "backends": backends,
+                  "refs": refTargets,
                 })
               }
             %%}
@@ -331,6 +331,7 @@ templateSnippets:
                 entry["gw_name"] = leg["gw_name"]
                 entry["listener_hostname"] = leg["listener_hostname"]
                 entry["invalid"] = !ruleResolved
+                entry["targets"] = targetsFor(tostring(entry["name"]))
                 show shared.Publish("backends", "1/tls/" + nsStr + "/" + route.Metadata.Name + "/" +
                   fixed(ruleIdx) + "/" + tostring(leg["sni"]) + "/" + fixed(toint(leg["port"])), entry)
               %%}

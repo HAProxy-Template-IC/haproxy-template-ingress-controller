@@ -169,6 +169,7 @@ templateSnippets:
     requires: [gateways, namespaces, referencegrants, services, tlsroutes]
     template: |
       {%- import "util-ssl-passthrough-backends" for SSLPassthroughBackends -%}
+      {%- import "util-ssl-sni-use-backend-lines" for SNIUseBackendLines -%}
       {%- var byPortRaw = shared.Get("gatewayTLSListenersByPort") %}
       {%- if byPortRaw == nil %}
         {#- No TLS Gateway listeners declared — emit nothing. -#}
@@ -287,12 +288,8 @@ templateSnippets:
                 {%- end %}
           tcp-request content reject if !allowed_sni
                 {%- for _, beAny := range portRoutes %}
-                  {%- var be = beAny.(map[string]any) %}
-                  {%- var sni = tostring(be["sni"]) %}
-                  {%- if hasPrefix(sni, "*.") %}
-          use_backend {{ be["name"] }} if { ssl_fc_sni -m end {{ sni[1:] }} }
-                  {%- else %}
-          use_backend {{ be["name"] }} if { ssl_fc_sni -m str {{ sni }} }
+                  {%- for _, line := range SNIUseBackendLines(beAny, "ssl_fc_sni") %}
+          {{ line }}
                   {%- end %}
                 {%- end %}
               {%- else %}
@@ -312,12 +309,8 @@ templateSnippets:
           tcp-request content reject if !allowed_sni
           tcp-request content accept if { req_ssl_hello_type 1 }
                 {%- for _, beAny := range portRoutes %}
-                  {%- var be = beAny.(map[string]any) %}
-                  {%- var sni = tostring(be["sni"]) %}
-                  {%- if hasPrefix(sni, "*.") %}
-          use_backend {{ be["name"] }} if { req_ssl_sni -m end {{ sni[1:] }} }
-                  {%- else %}
-          use_backend {{ be["name"] }} if { req_ssl_sni -m str {{ sni }} }
+                  {%- for _, line := range SNIUseBackendLines(beAny, "req_ssl_sni") %}
+          {{ line }}
                   {%- end %}
                 {%- end %}
               {%- end %}

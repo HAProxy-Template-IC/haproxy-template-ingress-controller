@@ -158,7 +158,7 @@ templateSnippets:
     requires: [grpcroutes, httproutes, referencegrants, services]
     template: |
       {%- import "util-gateway-route-identity" for GatewayRoutePrefix -%}
-      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-backend-name-gateway-rule" for BackendNameGatewayRule -%}
       {%- import "util-backend-ref-valid" for BackendRefValid -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- import "util-config-value-injection" for ConfigValueInjection -%}
@@ -338,7 +338,7 @@ templateSnippets:
             qualifier = "BACKEND:gw-invalid-backend"
           } else if len(backendRefs) == 1 {
             var backendRef = validRefs[0]
-            qualifier = "BACKEND:" + BackendNameGateway(route, backendRef)
+            qualifier = "BACKEND:" + BackendNameGatewayRule(route, rule, ruleIndex, backendRef)
           } else {
             var totalWeight = 0
             for _, backendRef := range backendRefs {

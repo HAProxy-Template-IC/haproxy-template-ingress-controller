@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Added
 
 - Governance rules take `namespaces` and `exemptNamespaces` to apply a single rule only in, or everywhere except, the listed namespaces.
+- Gateway API: header-based session persistence (`sessionPersistence.type: Header`) on HTTPRoute and GRPCRoute.
+- Gateway API: TLSRoute rules split connections across several `backendRefs` by `weight`; an invalid ref's share is rejected.
+- Gateway API: `sessionPersistence.cookie.lifetimeType: Permanent` sets the cookie's `Max-Age`.
+- Gateway API: `RetryBackoffUnsupported` Warning event on a route that sets `retry.backoff`, which HAProxy can't enforce.
+
+#### Fixed
+
+- Gateway API: `retry` and `sessionPersistence` apply to their own route rule; rules of one route sharing a Service no longer all take the first rule's policy. Such a rule's backend is named with a `_r<rule index>` suffix.
+- Gateway API: an HTTPRoute `retry.codes` entry HAProxy can't retry on, such as `507`, no longer breaks the configuration; HAPTIC drops it and records a `RetryCodeUnsupported` Warning event.
+- Gateway API: a session name with spaces or other characters HAProxy can't take is rejected instead of being written into the configuration.
+- Gateway API: `sessionPersistence` timeouts with several units, such as `1h30m`, apply in full instead of only their first unit.
 
 #### Changed
 

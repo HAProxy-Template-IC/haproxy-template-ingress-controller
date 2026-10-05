@@ -244,7 +244,7 @@ func loadGatewayWeightedMapSnippets(t *testing.T) map[string]config.TemplateSnip
 	require.True(t, ok)
 	chartRoot := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "charts", "haptic", "charts", "gateway")
 	wanted := map[string]bool{
-		"util-gateway-route-identity": true, "util-backend-name-gateway": true, "util-reference-grant-permitted": true,
+		"util-gateway-route-identity": true, "util-backend-name-gateway": true, "util-backend-name-gateway-rule": true, "util-reference-grant-permitted": true,
 		"util-backend-ref-valid":                               true,
 		"util-generate-httproute-weighted-backend-map-gateway": true,
 		"util-generate-grpcroute-weighted-backend-map-gateway": true,

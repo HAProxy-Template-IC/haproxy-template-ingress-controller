@@ -75,8 +75,12 @@ var fixed = func(value int) string {
   if len(encoded) >= len(zeroes) { return encoded }
   return zeroes[:len(zeroes)-len(encoded)] + encoded
 }
-for ruleIndex := range toSlice(dig(item, "spec", "rules")) {
+for ruleIndex, rule := range toSlice(dig(item, "spec", "rules")) {
   if name == "" || len(hostnames) == 0 { continue }
+  var refs = []any{}
+  for refIndex := range toSlice(dig(rule, "backendRefs")) {
+    refs = append(refs, map[string]any{"index": refIndex, "weight": 1, "valid": true})
+  }
   var definitionKey = "1/tls/" + namespace + "/" + name + "/" + fixed(ruleIndex)
   show shared.Publish("definitions", definitionKey, map[string]any{
     "invalid": false,
@@ -85,6 +89,7 @@ for ruleIndex := range toSlice(dig(item, "spec", "rules")) {
       "name": "gtw_tls_" + namespace + "_" + name + "_" + tostring(ruleIndex),
       "terminate": false,
     }},
+    "refs": refs,
   })
 }
 %%}`

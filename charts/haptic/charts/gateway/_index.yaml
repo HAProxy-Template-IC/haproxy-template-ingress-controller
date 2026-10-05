@@ -14,9 +14,10 @@
 #   - Filters: RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect,
 #     URLRewrite (ReplaceFullPath/ReplacePrefixMatch), RequestMirror (via the
 #     SPOA-hub mirror plugin), CORS (GEP-1767), ExtensionRef
-#   - Traffic splitting: weighted backends
+#   - Traffic splitting: weighted backends (HTTPRoute, GRPCRoute, TLSRoute, TCPRoute)
 #   - Timeouts (GEP-1742: request + backendRequest), retries (GEP-1731:
-#     attempts + retry-on codes), session persistence (GEP-1619, type Cookie)
+#     attempts + retry-on codes; backoff isn't expressible in HAProxy),
+#     session persistence (GEP-1619, type Cookie and Header)
 #   - TLS: listener Terminate + Passthrough (TLSRoute SNI), per-listener TLS
 #     options (GEP-2907: min/max version, ciphers), BackendTLSPolicy (CA refs
 #     via Secret/ConfigMap, hostname + SAN verification, well-known/system CAs)

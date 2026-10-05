@@ -77,7 +77,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "cookie MYSESSION insert indirect nocache dynamic maxlife 1h maxidle 10m"
+        pattern: "(?m)^  cookie MYSESSION insert indirect nocache dynamic maxlife 3600s maxidle 600s$"
 
       - {type: contains, target: haproxy.cfg, pattern: "dynamic-cookie-key "}
 
@@ -165,7 +165,7 @@ validationTests:
 
       # The cookie rides in the backend's profile (a named defaults), so the
       # backend is dynamic (from a profile) and the profile carries the cookie.
-      - {type: contains, target: haproxy.cfg, pattern: "(?m)^backend gw_h_default_sp-route3_sticky-a_80 from haptic-be-\\w+$"}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^backend gw_h_default_sp-route3_sticky-a_80_r0 from haptic-be-\\w+$"}
       - {type: contains, target: haproxy.cfg, pattern: "(?m)^  cookie STICKY insert"}
 
       - {type: match_count, target: haproxy.cfg, pattern: "(?m)^  cookie .* insert ", expected: "1"}
@@ -216,7 +216,7 @@ validationTests:
       - type: haproxy_valid
 
       # Cookie in the backend's profile; the backend is dynamic (from a profile).
-      - {type: contains, target: haproxy.cfg, pattern: "(?m)^backend gw_g_default_spg-route_grpc-sticky_9090 from haptic-be-\\w+$"}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^backend gw_g_default_spg-route_grpc-sticky_9090_r0 from haptic-be-\\w+$"}
       - {type: contains, target: haproxy.cfg, pattern: "(?m)^  cookie GRPCSESSION insert indirect nocache dynamic"}
 
   test-httproute-session-persistence-cookie-name:
@@ -268,3 +268,136 @@ validationTests:
       - {type: haproxy_valid}
       - {type: contains, target: haproxy.cfg, pattern: "(?m)^  cookie GRPCSESSION insert indirect nocache dynamic"}
       - {type: not_contains, target: haproxy.cfg, pattern: "(?m)^  cookie SESSION "}
+
+  test-httproute-session-persistence-header:
+    requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.sessionPersistence.sessionName]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "GEP-1619 type Header: the session header is replayed as the dynamic cookie, and the inserted cookie is returned as the header and expired on the client."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *sessionGateways
+      services: *sessionServices
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: session-header, namespace: default}
+          spec:
+            parentRefs: [{name: gw-sp}]
+            hostnames: [sticky.example.com]
+            rules:
+              - sessionPersistence: {type: Header, sessionName: X-Sticky, absoluteTimeout: 30m}
+                backendRefs: [{name: sticky-svc, port: 80}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  cookie X-Sticky insert indirect nocache dynamic maxlife 1800s attr Max-Age=0$"}
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^  http-request add-header Cookie "X-Sticky=%\[req\.fhdr\(X-Sticky\)\]" if \{ req\.fhdr\(X-Sticky\) -m found \}$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^  http-after-response set-header X-Sticky %\[res\.cook\(X-Sticky\)\] if \{ res\.cook\(X-Sticky\) -m found \}$'
+
+  test-httproute-session-persistence-header-name:
+    requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.sessionPersistence.header.name]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "GEP-1619 type Header names the header with header.name where the schema serves it."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *sessionGateways
+      services: *sessionServices
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: session-header, namespace: default}
+          spec:
+            parentRefs: [{name: gw-sp}]
+            hostnames: [sticky.example.com]
+            rules:
+              - sessionPersistence: {type: Header, header: {name: X-Route-Session}}
+                backendRefs: [{name: sticky-svc, port: 80}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  cookie X-Route-Session insert indirect nocache dynamic attr Max-Age=0$"}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  http-after-response set-header X-Route-Session "}
+
+  test-grpcroute-session-persistence-header:
+    requires: [gatewayclasses, gateways, grpcroutes]
+    requiresFields: [grpcroutes.spec.rules.sessionPersistence.sessionName]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "GEP-1619 type Header on a GRPCRoute uses the same header-to-cookie profile as an HTTPRoute."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *sessionGateways
+      services: *sessionServices
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata: {name: session-header, namespace: default}
+          spec:
+            parentRefs: [{name: gw-sp}]
+            hostnames: [sticky.example.com]
+            rules:
+              - sessionPersistence: {type: Header, sessionName: grpc-session}
+                backendRefs: [{name: sticky-svc, port: 80}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^backend gw_g_default_session-header_sticky-svc_80_r0 from haptic-be-\\w+$"}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  cookie grpc-session insert indirect nocache dynamic attr Max-Age=0$"}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  http-request add-header Cookie \"grpc-session="}
+
+  test-httproute-session-persistence-permanent-cookie:
+    requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.sessionPersistence.cookieConfig.lifetimeType]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "GEP-1619 lifetimeType Permanent gives the cookie a Max-Age of absoluteTimeout; HAProxy still enforces the same lifetime through maxlife."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *sessionGateways
+      services: *sessionServices
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: session-permanent, namespace: default}
+          spec:
+            parentRefs: [{name: gw-sp}]
+            hostnames: [sticky.example.com]
+            rules:
+              - sessionPersistence:
+                  sessionName: LONGLIVED
+                  absoluteTimeout: 1h30m
+                  cookieConfig: {lifetimeType: Permanent}
+                backendRefs: [{name: sticky-svc, port: 80}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: contains, target: haproxy.cfg, pattern: "(?m)^  cookie LONGLIVED insert indirect nocache dynamic maxlife 5400s attr Max-Age=5400$"}
+
+  test-httproute-session-persistence-invalid-name-rejected:
+    requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.sessionPersistence.sessionName]
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    description: "A session name HAProxy can't take as a cookie or header name is refused instead of being spliced into the configuration."
+    extraContext: {controllerName: "haproxy-haptic.org/controller"}
+    fixtures:
+      gatewayclasses: *gatewayclassesGatewayclass
+      gateways: *sessionGateways
+      services: *sessionServices
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: session-bad, namespace: default}
+          spec:
+            parentRefs: [{name: gw-sp}]
+            hostnames: [sticky.example.com]
+            rules:
+              - sessionPersistence: {sessionName: "BAD insert preserve"}
+                backendRefs: [{name: sticky-svc, port: 80}]
+    assertions:
+      - {type: haproxy_valid}
+      - {type: not_contains, target: haproxy.cfg, pattern: "(?m)^  cookie "}
+      - {type: contains, target: events, pattern: "Warning InvalidSessionPersistence .*HTTPRoute default/session-bad rule 0: session name 'BAD insert preserve' contains a character"}

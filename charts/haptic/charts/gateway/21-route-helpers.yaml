@@ -35,6 +35,16 @@ templateSnippets:
             dig_string(backend, "", "port") -}}
       {%- end macro -%}
 
+  util-backend-name-gateway-rule:
+    template: |
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {#- HAProxy keeps retry and cookie settings per backend, so a rule with its
+          own retry or sessionPersistence policy gets its own backend. -#}
+      {%- macro BackendNameGatewayRule(route any, rule any, ruleIndex int, backend any) string -%}
+        {{- BackendNameGateway(route, backend) -}}
+        {%- if dig(rule, "retry") != nil || dig(rule, "sessionPersistence") != nil -%}_r{{ ruleIndex }}{%- end -%}
+      {%- end macro -%}
+
   util-resource-helpers:
     template: |
       {# Scriggo macros are text-typed: every helper returns a string, so callers wrap
@@ -324,6 +334,85 @@ templateSnippets:
           {%- end -%}
         {%- end -%}
       {%- end macro -%}
+
+  util-gateway-retry-policy:
+    template: |-
+      {#- `unsupported` lists the retry.codes HAProxy's retry-on can't match. -#}
+      {%- var GatewayRetryPolicy = func(retry any, haproxyVersion string) map[string]any {
+        var retryable = map[int]bool{401: true, 403: true, 404: true, 408: true, 425: true, 429: true,
+          500: true, 501: true, 502: true, 503: true, 504: true}
+        if semver_gte(haproxyVersion, "3.1") { retryable[421] = true }
+        var attempts = 3
+        if configured := dig(retry, "attempts"); configured != nil { attempts = toint(configured) }
+        var codes = []any{}
+        var unsupported = []any{}
+        for _, code := range toSlice(dig(retry, "codes")) {
+          if retryable[toint(code)] {
+            codes = append(codes, tostring(toint(code)))
+          } else {
+            unsupported = append(unsupported, tostring(toint(code)))
+          }
+        }
+        if len(codes) == 0 && len(unsupported) == 0 { codes = []any{"500", "502", "503", "504"} }
+        var retryOn = "conn-failure empty-response response-timeout"
+        if len(codes) > 0 { retryOn = retryOn + " " + join(codes, " ") }
+        return map[string]any{
+          "directives": []any{"retries " + tostring(attempts), "retry-on " + retryOn},
+          "unsupported": unsupported,
+        }
+      } -%}
+
+  util-gateway-session-persistence:
+    template: |-
+      {#- A rule's sessionPersistence as backend profile lines, or a non-empty
+          `error`. Header persistence reuses the dynamic cookie: the request
+          header is replayed as the cookie, and the cookie HAProxy inserts is
+          copied into the response header and expired on the client. -#}
+      {%- var GatewaySessionPersistence = func(sp any, cookieKey string) map[string]any {
+        var spType = dig_string(sp, "Cookie", "type")
+        var name = dig_string(sp, "", "sessionName")
+        var defaultName = "SESSION"
+        if spType == "Header" {
+          defaultName = "X-Session"
+          if headerName := dig_string(sp, "", "header", "name"); headerName != "" { name = headerName }
+        } else if cookieName := dig_string(sp, "", "cookie", "name"); cookieName != "" {
+          name = cookieName
+        }
+        if name == "" { name = defaultName }
+        if !regex_search(name, "^[A-Za-z0-9!$&*+.^_~-]+$") {
+          return map[string]any{"error": "session name '" + name + "' contains a character HAProxy can't take in a cookie or header name"}
+        }
+        var seconds = func(field string) (int, string) {
+          var value = dig_string(sp, "", field)
+          if value == "" { return 0, "" }
+          var duration, err = parseDuration(value)
+          if err != nil || toint(duration.Milliseconds()) <= 0 {
+            return 0, field + " '" + value + "' isn't a positive duration"
+          }
+          return (toint(duration.Milliseconds()) + 999) / 1000, ""
+        }
+        var absolute, absErr = seconds("absoluteTimeout")
+        if absErr != "" { return map[string]any{"error": absErr} }
+        var idle, idleErr = seconds("idleTimeout")
+        if idleErr != "" { return map[string]any{"error": idleErr} }
+        var lifetime = dig_string(sp, "", "cookie", "lifetimeType")
+        if lifetime == "" { lifetime = dig_string(sp, "", "cookieConfig", "lifetimeType") }
+        var cookie = "cookie " + name + " insert indirect nocache dynamic"
+        if absolute > 0 { cookie = cookie + " maxlife " + tostring(absolute) + "s" }
+        if idle > 0 { cookie = cookie + " maxidle " + tostring(idle) + "s" }
+        if spType == "Header" {
+          cookie = cookie + " attr Max-Age=0"
+        } else if lifetime == "Permanent" && absolute > 0 {
+          cookie = cookie + " attr Max-Age=" + tostring(absolute)
+        }
+        var directives = []any{"# GEP-1619 session persistence (" + spType + ")", cookie, "dynamic-cookie-key " + cookieKey}
+        if spType == "Header" {
+          directives = append(directives,
+            "http-request add-header Cookie \"" + name + "=%[req.fhdr(" + name + ")]\" if { req.fhdr(" + name + ") -m found }",
+            "http-after-response set-header " + name + " %[res.cook(" + name + ")] if { res.cook(" + name + ") -m found }")
+        }
+        return map[string]any{"directives": directives, "error": ""}
+      } -%}
 
   util-gw-mtls-blocked-value:
     requires: [gateways, configmaps, secrets]
