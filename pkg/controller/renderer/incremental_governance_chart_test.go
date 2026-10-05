@@ -133,6 +133,81 @@ func TestGovernanceChartDefaultHTTPSInvalidatesOnlyTLSBinding(t *testing.T) {
 	assert.Equal(t, uint64(1), service.incremental.graph.Counters(labelQuery).Executions)
 }
 
+func TestGovernanceChartRuleNamespaceScopeReevaluatesWarmItems(t *testing.T) {
+	snippet := loadGovernanceChartSnippet(t)
+	cfg := &config.Config{
+		Dataplane: testDataplaneConfig(),
+		TemplatingSettings: config.TemplatingSettings{
+			ExtraContext: governanceChartScopedContext(nil),
+		},
+		WatchedResources: map[string]config.WatchedResource{
+			"labelTargets": {
+				APIVersion: "example.test/v1",
+				Resources:  "labeltargets",
+				IndexBy:    []string{"metadata.namespace", "metadata.name"},
+			},
+		},
+		TemplateSnippets: map[string]config.TemplateSnippet{
+			governanceChartSnippetName: snippet,
+		},
+		HAProxyConfig: config.HAProxyConfig{Template: `{{ render "features-960-governance" }}`},
+	}
+	declarations := helpers.BuildAdditionalDeclarations(cfg, &typebootstrap.Result{
+		Types:  map[string]reflect.Type{},
+		Kinds:  map[string]string{},
+		Errors: map[string]error{},
+	})
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, declarations, helpers.EngineOptions{})
+	require.NoError(t, err)
+	service := NewRenderService(&RenderServiceConfig{Engine: engine, Config: cfg, Logger: slog.Default()})
+
+	labelTargets := k8sstore.NewMemoryStore(2)
+	require.NoError(t, labelTargets.Add(
+		governanceChartResource("unowned", nil),
+		[]string{"default", "unowned"},
+	))
+	provider := stores.NewRealStoreProvider(map[string]stores.Store{"labelTargets": labelTargets})
+
+	violators := func() []string {
+		events := requireRenderEvents(t, renderAndCommitGovernanceChart(t, service, provider))
+		names := make([]string, 0, len(events))
+		for _, event := range events {
+			names = append(names, event.Name)
+		}
+		return names
+	}
+
+	assert.Equal(t, []string{"unowned"}, violators(), "unscoped rule applies everywhere")
+
+	cfg.TemplatingSettings.ExtraContext = governanceChartScopedContext(map[string]any{"exemptNamespaces": []any{"default"}})
+	assert.Empty(t, violators(), "rule exempts the item's namespace")
+
+	cfg.TemplatingSettings.ExtraContext = governanceChartScopedContext(map[string]any{"namespaces": []any{"other"}})
+	assert.Empty(t, violators(), "rule limited to another namespace")
+
+	cfg.TemplatingSettings.ExtraContext = governanceChartScopedContext(map[string]any{"namespaces": []any{"default"}})
+	assert.Equal(t, []string{"unowned"}, violators(), "rule limited to the item's namespace")
+}
+
+func governanceChartScopedContext(scope map[string]any) map[string]any {
+	rule := map[string]any{
+		"enabled":     true,
+		"resource":    "labelTargets",
+		"path":        "metadata.labels.owner",
+		"required":    true,
+		"enforcement": "audit",
+	}
+	for field, value := range scope {
+		rule[field] = value
+	}
+	return map[string]any{
+		"governance": map[string]any{
+			"enabled": true,
+			"rules":   map[string]any{"owner": rule},
+		},
+	}
+}
+
 func TestGovernanceChartDerivesAnnotationsWithoutMutatingWatchedResources(t *testing.T) {
 	fixture := newGovernanceChartDerivationFixture(t, "alpha")
 	original := fixture.rawStore(t)

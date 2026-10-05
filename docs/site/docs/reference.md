@@ -209,7 +209,7 @@ ever warns (a roll-out mode).
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `…extraContext.governance.enabled` | bool | `true` with the default library set | Master switch for the guardrails. The governance library itself declares `false`; the haptic-annotations library (on by default) merges after it and raises it to `true` so its shipped `haptic-compress-enable` rule applies. Set it to `false` explicitly to switch the engine off |
-| `…extraContext.governance.exemptNamespaces` | list | `[]` | Namespaces skipped entirely (infra/system) |
+| `…extraContext.governance.exemptNamespaces` | list | `[]` | Namespaces skipped by every rule (infra/system). To skip one rule only, use that rule's `exemptNamespaces` |
 | `…extraContext.governance.rules` | map | `{}` | Admin-declared rules keyed by rule name (see the fields below). A map, not a list, so your rules merge with — rather than replace — the ones the chart ships |
 
 Each value of `rules` is an object:
@@ -227,6 +227,8 @@ Each value of `rules` is an object:
 | `pattern` | string | Regex the value at `path` must match |
 | `anyOf` | list | At least one of the listed JSONPath expressions must be present |
 | `satisfiedBy` | string | `tls` — satisfied by `spec.tls` on the resource **or** the chart-wide default HTTPS |
+| `namespaces` | list | Apply the rule only to resources in these namespaces. Omitted or empty: every namespace |
+| `exemptNamespaces` | list | Skip the rule for resources in these namespaces. Other rules still apply there |
 | `enforcement` | string | `reject` (default) or `audit` |
 | `message` | string | Custom violation message (optional) |
 

@@ -15,6 +15,44 @@ _fx:
             - host: any.example.com
               http:
                 paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+  hostAliasesPlatformOnly: &hostAliasesPlatformOnly
+    enabled: true
+    rules:
+      host-alias-platform-only:
+        enabled: true
+        resource: ingresses
+        path: metadata.annotations['haproxy-haptic.org/host-alias']
+        pattern: '^$'
+        exemptNamespaces: [platform]
+        message: host aliases are allowed only in platform namespaces
+      host-alias-regex-platform-only:
+        enabled: true
+        resource: ingresses
+        path: metadata.annotations['haproxy-haptic.org/host-alias-regex']
+        pattern: '^$'
+        exemptNamespaces: [platform]
+        message: host aliases are allowed only in platform namespaces
+      server-alias-platform-only:
+        enabled: true
+        resource: ingresses
+        path: metadata.annotations['haproxy-ingress.github.io/server-alias']
+        pattern: '^$'
+        exemptNamespaces: [platform]
+        message: host aliases are allowed only in platform namespaces
+      server-alias-regex-platform-only:
+        enabled: true
+        resource: ingresses
+        path: metadata.annotations['haproxy-ingress.github.io/server-alias-regex']
+        pattern: '^$'
+        exemptNamespaces: [platform]
+        message: host aliases are allowed only in platform namespaces
+      nginx-server-alias-platform-only:
+        enabled: true
+        resource: ingresses
+        path: metadata.annotations['nginx.ingress.kubernetes.io/server-alias']
+        pattern: '^$'
+        exemptNamespaces: [platform]
+        message: host aliases are allowed only in platform namespaces
   governanceEnabledRules: &governanceEnabledRules
     enabled: true
     rules: {main: {enabled: true, resource: ingresses, satisfiedBy: tls}}
@@ -43,9 +81,19 @@ templateSnippets:
           var bindings = map[string]any{}
           var gov = extraContext | dig("governance") | fallback(map[string]any{})
           if tostring(gov | dig("enabled") | fallback("false")) == "true" {
+            var namespaceSet = func(field string, value any) map[string]bool {
+              var names = toSlice(value)
+              if names == nil { fail(field + " must be a list of namespace names.") }
+              var set = map[string]bool{}
+              for _, n := range names {
+                if strip(tostring(n)) == "" { fail(field + " must not contain an empty namespace name.") }
+                set[tostring(n)] = true
+              }
+              return set
+            }
             var exempt = map[string]any{}
-            for _, n := range toSlice(gov | dig("exemptNamespaces") | fallback([]any{})) {
-              exempt[tostring(n)] = true
+            for n := range namespaceSet("governance.exemptNamespaces", gov | dig("exemptNamespaces")) {
+              exempt[n] = true
             }
             var defaultHTTPS = tostring(extraContext | dig("ingressDefaultHTTPS") | fallback("false")) == "true"
 
@@ -78,6 +126,13 @@ templateSnippets:
                 var path = tostring(fallback(rule["path"], ""))
                 if !isConcretePath(path) {
                   fail("governance.rules." + rname + ".default requires a concrete path (filtered/wildcard paths are validate-only).")
+                }
+              }
+              var ruleNamespaces = namespaceSet("governance.rules." + rname + ".namespaces", rule["namespaces"])
+              namespaceSet("governance.rules." + rname + ".exemptNamespaces", rule["exemptNamespaces"])
+              for _, n := range toSlice(rule["exemptNamespaces"]) {
+                if ruleNamespaces[tostring(n)] {
+                  fail("governance.rules." + rname + " lists namespace " + tostring(n) + " in both namespaces and exemptNamespaces.")
                 }
               }
               var en = tostring(fallback(rule["enabled"], ""))
@@ -127,8 +182,17 @@ templateSnippets:
             }
           }
 
+          var listsNamespace = func(names any) bool {
+            for _, n := range toSlice(names) {
+              if tostring(n) == ns { return true }
+            }
+            return false
+          }
+
           for _, ruleAny := range toSlice(props | dig("rules") | fallback([]any{})) {
             var rule = ruleAny.(map[string]any)
+            if len(toSlice(rule["namespaces"])) > 0 && !listsNamespace(rule["namespaces"]) { continue }
+            if listsNamespace(rule["exemptNamespaces"]) { continue }
             var enf = tostring(fallback(rule["enforcement"], "reject"))
             var custom = tostring(fallback(rule["message"], ""))
             var path = tostring(fallback(rule["path"], ""))
@@ -506,6 +570,281 @@ validationTests:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
       - { type: haproxy_valid }
+
+  test-governance-rule-exempt-namespace-rejects-elsewhere:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
+    description: A rule exempting a namespace still rejects a violator outside it at admission.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: tenant-a, name: alias }
+      governance: *hostAliasesPlatformOnly
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: tenant-a, name: alias, annotations: { haproxy-haptic.org/host-alias-regex: "app[0-9]+\\.example\\.com" } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: alias.tenant-a.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'ingresses tenant-a/alias violates org policy: host aliases are allowed only in platform namespaces' }
+
+  test-governance-rule-exempt-namespace-admits-inside:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.governance.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: A rule's exempt namespace admits the value the rule rejects elsewhere.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: platform, name: alias }
+      governance: *hostAliasesPlatformOnly
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: platform, name: alias, annotations: { haproxy-haptic.org/host-alias-regex: "app[0-9]+\\.example\\.com" } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: alias.platform.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: haproxy_valid }
+      - { type: contains, target: "map:host-alias-regex.map", pattern: 'app\[0-9\]\+' }
+
+  test-governance-rule-exempt-namespace-keeps-other-rules:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
+    description: A rule's exempt namespace exempts only that rule; the other rules still reject there.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: platform, name: alias-no-tier }
+      governance:
+        enabled: true
+        rules:
+          host-alias-regex-platform-only:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/host-alias-regex']
+            pattern: '^$'
+            exemptNamespaces: [platform]
+          tier:
+            enabled: true
+            resource: ingresses
+            path: metadata.labels['tier']
+            required: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: platform, name: alias-no-tier, annotations: { haproxy-haptic.org/host-alias-regex: "app[0-9]+\\.example\\.com" }, labels: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: alias-no-tier.platform.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'ingresses platform/alias-no-tier violates org policy: must set metadata.labels' }
+
+  test-governance-rule-namespaces-rejects-inside:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
+    description: A rule limited to listed namespaces rejects a violator in one of them at admission.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: tenant-a, name: no-tier }
+      governance:
+        enabled: true
+        rules:
+          tenant-tier:
+            enabled: true
+            resource: ingresses
+            path: metadata.labels['tier']
+            required: true
+            namespaces: [tenant-a]
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: tenant-a, name: no-tier, labels: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: no-tier.tenant-a.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'ingresses tenant-a/no-tier violates org policy: must set metadata.labels' }
+
+  test-governance-rule-namespaces-admits-outside:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
+    description: A rule limited to listed namespaces doesn't check a resource outside them.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: platform, name: no-tier }
+      governance:
+        enabled: true
+        rules:
+          tenant-tier:
+            enabled: true
+            resource: ingresses
+            path: metadata.labels['tier']
+            required: true
+            namespaces: [tenant-a]
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: platform, name: no-tier, labels: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: no-tier.platform.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: haproxy_valid }
+
+  test-governance-rule-namespace-scope-reconcile:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
+    description: Reconcile applies each rule's namespace scope exactly as admission does.
+    extraContext:
+      renderMode: reconcile
+      governance:
+        enabled: true
+        rules:
+          host-alias-regex-platform-only:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/host-alias-regex']
+            pattern: '^$'
+            exemptNamespaces: [platform]
+            message: host aliases are allowed only in platform namespaces
+          tenant-tier:
+            enabled: true
+            resource: ingresses
+            path: metadata.labels['tier']
+            required: true
+            namespaces: [tenant-a]
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: platform, name: alias-no-tier, annotations: { haproxy-haptic.org/host-alias-regex: "app[0-9]+\\.example\\.com" }, labels: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: alias-no-tier.platform.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: tenant-a, name: alias, annotations: { haproxy-haptic.org/host-alias-regex: "web[0-9]+\\.example\\.com" }, labels: { tier: gold } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: alias.tenant-a.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: tenant-a, name: no-tier, labels: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: no-tier.tenant-a.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: tenant-b, name: no-tier, labels: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: no-tier.tenant-b.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: haproxy_valid }
+      - { type: contains, target: events, pattern: 'GovernanceViolation networking.k8s.io/v1 Ingress tenant-a/alias: .*host aliases are allowed only in platform namespaces' }
+      - { type: contains, target: events, pattern: 'GovernanceViolation networking.k8s.io/v1 Ingress tenant-a/no-tier: .*must set metadata.labels' }
+      - { type: not_contains, target: events, pattern: 'platform/alias-no-tier' }
+      - { type: not_contains, target: events, pattern: 'tenant-b/no-tier' }
+
+  test-governance-rule-namespaces-scope-default:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.governance.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: A namespace-scoped default is injected only in the rule's namespaces.
+    extraContext:
+      renderMode: reconcile
+      governance:
+        enabled: true
+        rules:
+          tenant-rate-limit:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+            default: "100"
+            namespaces: [tenant-a]
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: tenant-a, name: limited, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: limited.tenant-a.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: platform, name: unlimited, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: unlimited.platform.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:haptic-rate-limit-routes.map", pattern: '(?m)^tenant-a/limited req 1s 100 429$' }
+      - { type: not_contains, target: "map:haptic-rate-limit-routes.map", pattern: 'platform/unlimited' }
+
+  test-governance-rule-namespaces-not-a-list-rejected:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
+    description: A rule namespace scope that isn't a list is a loud global config error.
+    extraContext:
+      governance:
+        enabled: true
+        rules:
+          main:
+            enabled: true
+            resource: ingresses
+            path: metadata.labels['tier']
+            required: true
+            exemptNamespaces: platform
+    fixtures: *fixturesAnyExampleCom
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'governance\.rules\.main\.exemptNamespaces must be a list of namespace names' }
+
+  test-governance-rule-namespaces-overlap-rejected:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
+    description: A namespace listed in both a rule's namespaces and exemptNamespaces is a loud config error.
+    extraContext:
+      governance:
+        enabled: true
+        rules:
+          main:
+            enabled: true
+            resource: ingresses
+            path: metadata.labels['tier']
+            required: true
+            namespaces: [tenant-a, platform]
+            exemptNamespaces: [platform]
+    fixtures: *fixturesAnyExampleCom
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'governance\.rules\.main lists namespace platform in both namespaces and exemptNamespaces' }
 
   test-governance-non-subject-violator-not-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.governance.enabled }}true{{ end }}'
