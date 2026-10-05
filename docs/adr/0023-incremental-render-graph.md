@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed 2026-08-24. Implementation in progress for issue #187.
+Accepted 2026-09-05; implemented for issue #187 and shipped in v0.2.0-alpha.2.
 
 ## Context
 
@@ -451,7 +451,8 @@ contiguous-string work as constant.
   declared incremental owner for its source.
 - Component and graph work scales with changed dependencies. Legacy root loops
   and flat output, planning, and validation still scale with the work they
-  perform; a chunk-native downstream pipeline remains future work.
+  perform. Issue #260 measured that work at 3,000 routes: plan and diff
+  about 1 ms, the complete-config `haproxy -c` about 100 ms.
 - Every replica holds a graph. A follower renders each trigger through the
   same authoritative transaction and discards the output, so a leadership
   change starts warm; the price is one render's CPU and one graph's memory per
