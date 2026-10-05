@@ -36,6 +36,14 @@ After a documentation merge, the main pipeline builds the matching playground
 bundle and publishes both sites. A commit marked `[skip ci]` also skips this
 publication; merging it doesn't update the live documentation.
 
+## CI minutes
+
+CI runs on a finite compute-minute budget, and an MR pipeline for Go or chart
+changes costs about 3,000 compute minutes. Run `make lint`, `make test`, and,
+for chart changes, `./scripts/test-templates.sh` before you push, and push
+review fixes together. Update an open MR from `main` only when GitLab reports a
+conflict: merged-results pipelines already test against the current `main`.
+
 ## `golangci-lint`
 
 The config is in v2 format (`version: "2"`), so formatters and linters are separated:
