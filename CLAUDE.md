@@ -288,6 +288,17 @@ make check-all
 
 **If extensive refactoring is needed**: Create separate commits/MRs for linting fixes rather than bypassing checks.
 
+### CI minutes
+
+The GitLab compute-minute budget is finite; quota bills job time × runner factor (2xlarge = 12×). Measured 2026-10: a Go/chart MR pipeline ≈ 3,000–3,800 compute-min, main post-merge ≈ 5,000, a nightly or `PUBLISH_MAIN_SNAPSHOT` run ≈ 4,500, a docs-only MR ≈ 20.
+
+- Push each MR once, after `make lint`, `make test`, and (for `charts/`) `./scripts/test-templates.sh` pass locally; fold fixups, changelog, and review fixes into that push.
+- When you do push again, cancel the superseded pipeline.
+- Never start pipelines, schedule plays, or job retries by hand, except to retry a GitLab-infrastructure failure (e.g. `git clone` 503); state the cost before any deliberate run.
+- Rebase an open MR only on a real conflict; merged-results pipelines already test against current `main`.
+- Docs-only changes are cheap: push them, don't hoard them.
+- Feature branches get no branch pipeline (`workflow:rules`), so `-o ci.skip` is unnecessary.
+
 ### GitLab CLI (glab) Commands
 
 Common `glab` commands for development workflow:

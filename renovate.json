@@ -7,7 +7,14 @@
     "customManagers:makefileVersions",
     "customManagers:helmChartYamlAppVersions"
   ],
-  "prHourlyLimit": 0,
+  "prHourlyLimit": 4,
+  "updateNotScheduled": false,
+  "vulnerabilityAlerts": {
+    "schedule": [
+      "at any time"
+    ],
+    "minimumReleaseAge": null
+  },
   "postUpdateOptions": [
     "gomodTidy"
   ],
@@ -111,6 +118,15 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "Major updates keep their own MR (:separateMajorReleases in the shared preset) but share its weekly window, so they don't start a full pipeline mid-week. Vulnerability fixes ignore every schedule.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "schedule": [
+        "* 0-6 * * 1"
+      ]
+    },
     {
       "description": "The scriggo runtime is a HAPTIC fork (gitlab.com/haproxy-haptic/scriggo), tracked by the built-in gomod manager as a pseudo-version digest. A digest bump is a fork sync that may carry an upstream security fix, but nothing here links it to open2b/scriggo advisories (govulncheck keys on module path). Force human review \u2014 never auto-merge \u2014 so a reviewer checks each bump against the upstream advisory watch. See docs/site/docs/development/scriggo-fork-maintenance.md.",
       "matchManagers": [
