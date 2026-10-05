@@ -5,12 +5,12 @@
 
 # Common labels added to all resources
 # These are merged with chart-defined labels
-commonLabels: {}
+commonLabels: {}  # @schema additionalProperties: true
 # environment: production
 # team: platform
 
 # Common annotations added to all resources
-commonAnnotations: {}
+commonAnnotations: {}  # @schema additionalProperties: true
 # config.kubernetes.io/managed-by: helm
 
 # HAProxy version - selects the major.minor series for both controller and HAProxy pod images
@@ -18,14 +18,14 @@ commonAnnotations: {}
 # Must match a version built by CI (see versions.env for supported versions).
 # Not Renovate-managed: cutting over to a new series is an operational decision
 # (must also update Chart.yaml artifacthub annotation and dev-env manifests to match).
-haproxyVersion: "3.4"
+haproxyVersion: "3.4"  # @schema pattern: ^[0-9]+\.[0-9]+$
 
 # Latest tested patch versions for each supported HAProxy major.minor.
 # Used as the default HAProxy pod image tag unless haproxy.image.tag is set.
 # Renovate updates each entry to the latest patch within its own series (the
 # series clamp is derived from the map key by the custom manager in
 # renovate.json, so adding or removing a series needs no config change).
-haproxyPatchVersions:
+haproxyPatchVersions:  # @schema skipProperties; additionalProperties: {type: string}
   # renovate: datasource=docker depName=haproxytech/haproxy-debian
   "3.0": "3.0.29"
   # renovate: datasource=docker depName=haproxytech/haproxy-debian
@@ -41,7 +41,7 @@ haproxyPatchVersions:
 # Enterprise uses HAProxy's revision scheme (e.g. 3.2r1, 3.2r2).
 # See https://www.haproxy.com/documentation/haproxy-enterprise/release-notes/ for new revisions.
 # Updated manually during chart releases.
-haproxyEnterprisePatchVersions:
+haproxyEnterprisePatchVersions:  # @schema skipProperties; additionalProperties: {type: string}
   "3.0": "3.0r1"
   "3.1": "3.1r1"
   "3.2": "3.2r1"
@@ -73,15 +73,15 @@ crds:
     # next run. A failed Job is kept for inspection.
     backoffLimit: 2
     activeDeadlineSeconds: 300
-    resources:
+    resources:  # @schema skipProperties; additionalProperties: true
       requests:
         cpu: 50m
         memory: 64Mi
       limits:
         memory: 128Mi
     # Extra annotations/labels for the Job (merged with chart defaults).
-    annotations: {}
-    labels: {}
+    annotations: {}  # @schema skipProperties; additionalProperties: true
+    labels: {}  # @schema skipProperties; additionalProperties: true
 
 # Pre-rollout validation: a pre-install/pre-upgrade hook Job that renders the
 # chart embedded in the controller image with THIS release's values and runs
@@ -101,7 +101,7 @@ preRolloutValidation:
   # Schema fetch + engine compile + ~700 haproxy -c checks; generous for cold
   # CI nodes (the in-cluster load gate budget is 120s under a 300s probe).
   activeDeadlineSeconds: 600
-  resources:
+  resources:  # @schema skipProperties; additionalProperties: true
     requests:
       cpu: 200m
       memory: 512Mi
@@ -111,8 +111,8 @@ preRolloutValidation:
       # sized against a 215 MiB measurement and OOMKilled the hook once
       # incremental rendering raised the render's working set.
       memory: 1Gi
-  annotations: {}
-  labels: {}
+  annotations: {}  # @schema skipProperties; additionalProperties: true
+  labels: {}  # @schema skipProperties; additionalProperties: true
 
 # Controller configuration
 controller:
@@ -124,17 +124,17 @@ controller:
   replicaCount: 2
   image:
     repository: registry.gitlab.com/haproxy-haptic/haptic
-    pullPolicy: IfNotPresent
+    pullPolicy: IfNotPresent  # @schema enum: [Always, IfNotPresent, Never]
     # Overrides the image tag whose default is the chart appVersion.
     tag: ""
   # Deployment-level annotations (different from pod annotations).
-  deploymentAnnotations: {}
+  deploymentAnnotations: {}  # @schema skipProperties; additionalProperties: true
   # reloader.stakater.com/auto: "true"
   updateStrategy:
-    type: RollingUpdate
+    type: RollingUpdate  # @schema enum: [RollingUpdate, Recreate]
     rollingUpdate:
-      maxSurge: 25%
-      maxUnavailable: 25%
+      maxSurge: 25%  # @schema type: [integer, string]
+      maxUnavailable: 25%  # @schema type: [integer, string]
   minReadySeconds: 0
   revisionHistoryLimit: 10
   # Name of the HAProxyTemplateConfig object this controller watches.
@@ -195,7 +195,7 @@ controller:
     create: true
     # Automatically mount the ServiceAccount's API credentials.
     automount: true
-    annotations: {}
+    annotations: {}  # @schema skipProperties; additionalProperties: true
     # If empty and create=true, the chart generates a name.
     name: ""
   rbac:
@@ -203,8 +203,8 @@ controller:
     create: true
   # Service exposing the controller's health and metrics listeners.
   service:
-    type: ClusterIP
-    annotations: {}
+    type: ClusterIP  # @schema enum: [ClusterIP, NodePort, LoadBalancer]
+    annotations: {}  # @schema skipProperties; additionalProperties: true
     clusterIP: ""
     loadBalancerIP: ""
     loadBalancerSourceRanges: []
@@ -212,16 +212,16 @@ controller:
     externalTrafficPolicy: ""
     internalTrafficPolicy: ""
     sessionAffinity: ""
-    sessionAffinityConfig: {}
+    sessionAffinityConfig: {}  # @schema skipProperties; additionalProperties: true
   # Controller container security context (PSS Restricted compatible).
-  securityContext:
+  securityContext:  # @schema skipProperties; additionalProperties: true
     allowPrivilegeEscalation: false
     capabilities:
       drop: [ALL]
     readOnlyRootFilesystem: true
     runAsNonRoot: true
     runAsUser: 65532
-  resources:
+  resources:  # @schema skipProperties; additionalProperties: true
     requests:
       cpu: 100m
       memory: 1Gi
@@ -233,17 +233,17 @@ controller:
   extraVolumeMounts: []
   initContainers: []
   sidecars: []
-  lifecycle: {}
+  lifecycle: {}  # @schema skipProperties; additionalProperties: true
   # /livez and /readyz judge the configuration that is serving; /healthz
   # reports whether the newest one started (ADR-0028).
-  livenessProbe:
+  livenessProbe:  # @schema skipProperties; additionalProperties: true
     httpGet:
       path: /livez
       port: healthz
     initialDelaySeconds: 10
     periodSeconds: 10
     failureThreshold: 3
-  readinessProbe:
+  readinessProbe:  # @schema skipProperties; additionalProperties: true
     httpGet:
       path: /readyz
       port: healthz
@@ -252,7 +252,7 @@ controller:
     failureThreshold: 3
   # Enabled by default because validationTests can make first startup exceed
   # the normal liveness budget on slow or contended nodes.
-  startupProbe:
+  startupProbe:  # @schema skipProperties; additionalProperties: true
     enabled: true
     httpGet:
       path: /healthz
@@ -270,7 +270,7 @@ controller:
     # targetMemoryUtilizationPercentage: 80
   podDisruptionBudget:
     enabled: true
-    minAvailable: 1
+    minAvailable: 1  # @schema type: [integer, string]
     # maxUnavailable: 1
   # Prometheus resources and Grafana dashboard for controller metrics.
   monitoring:
@@ -278,19 +278,19 @@ controller:
       enabled: false
       interval: 30s
       scrapeTimeout: 10s
-      labels: {}
+      labels: {}  # @schema skipProperties; additionalProperties: true
       relabelings: []
       metricRelabelings: []
     podMonitor:
       enabled: false
       interval: 30s
       scrapeTimeout: 10s
-      labels: {}
+      labels: {}  # @schema skipProperties; additionalProperties: true
       relabelings: []
       metricRelabelings: []
     prometheusRule:
       enabled: false
-      labels: {}
+      labels: {}  # @schema skipProperties; additionalProperties: true
       rules: []
       defaultRules:
         enabled: true
@@ -314,13 +314,13 @@ controller:
         accessLogDropped: true
     grafanaDashboard:
       enabled: false
-      labels:
+      labels:  # @schema skipProperties; additionalProperties: true
         grafana_dashboard: "1"
-      annotations:
+      annotations:  # @schema skipProperties; additionalProperties: true
         grafana_folder: "HAProxy"
       namespace: ""
       useBuiltIn: true
-      customDashboard: {}
+      customDashboard: {}  # @schema skipProperties; additionalProperties: true
   # NetworkPolicy selecting only controller pods. HAProxy, Varnish, and the
   # managed rate-limit store each own their policy in their component tree.
   networkPolicy:
@@ -344,32 +344,32 @@ controller:
               protocol: TCP
       haproxyPods:
         enabled: true
-        podSelector:
+        podSelector:  # @schema skipProperties; additionalProperties: true
           matchLabels:
             app.kubernetes.io/component: loadbalancer
         # Empty omits namespaceSelector and therefore limits this peer to the
         # policy namespace. Set matchLabels for a cross-namespace HAProxy fleet.
-        namespaceSelector: {}
+        namespaceSelector: {}  # @schema skipProperties; additionalProperties: true
       # Keeps template http.Fetch() usable against cluster Services by default.
       # Set [] to restrict egress to DNS, Kubernetes API, and HAProxy pods.
-      additionalRules:
+      additionalRules:  # @schema itemProperties: {to: {}, ports: {}}
         - to:
             - namespaceSelector: {}
               podSelector: {}
     ingress:
       monitoring:
         enabled: false
-        podSelector: {}
-        namespaceSelector: {}
+        podSelector: {}  # @schema skipProperties; additionalProperties: true
+        namespaceSelector: {}  # @schema skipProperties; additionalProperties: true
       healthChecks:
         enabled: true
-        from:
+        from:  # @schema itemProperties: {ipBlock: {}, namespaceSelector: {}, podSelector: {}}
           - podSelector: {}
       # kube-apiserver commonly runs in the host network, so selectors do not
       # reliably match it. Tighten these catch-alls to node/apiserver CIDRs.
       webhook:
         enabled: true
-        from:
+        from:  # @schema itemProperties: {ipBlock: {}, namespaceSelector: {}, podSelector: {}}
           - ipBlock:
               cidr: 0.0.0.0/0
           - ipBlock:
@@ -466,7 +466,7 @@ controller:
     # Set to true to render it even when spoaHub is off (useful for
     # bench/test setups validating template fragments without a
     # data-plane sidecar).
-    enabled: null
+    enabled: null  # @schema type: [boolean, null]
     # Directory for the validator Unix socket (a shared emptyDir mounted
     # into both the controller container and the validator sidecar).
     socketDir: /var/run/haptic-validators
@@ -476,7 +476,7 @@ controller:
     socketName: spoa-hub.sock
     # Resource requests/limits for the validator sidecar. Validation is
     # content-cached and typically bursty, so this is sized small.
-    resources:
+    resources:  # @schema skipProperties; additionalProperties: true
       requests:
         cpu: 25m
         memory: 64Mi
@@ -486,7 +486,7 @@ controller:
     # runAsUser=65532 matches the controller's nonroot UID so the Unix
     # socket the sidecar creates under socketDir is readable / writable
     # by the controller without extra fsGroup plumbing.
-    securityContext:
+    securityContext:  # @schema skipProperties; additionalProperties: true
       runAsNonRoot: true
       runAsUser: 65532
       runAsGroup: 65532
@@ -515,9 +515,9 @@ controller:
     # Image pull secrets (private registry access)
     imagePullSecrets: []
     # Pod annotations
-    podAnnotations: {}
+    podAnnotations: {}  # @schema skipProperties; additionalProperties: true
     # Pod labels
-    podLabels: {}
+    podLabels: {}  # @schema skipProperties; additionalProperties: true
     # Priority class for pod scheduling
     # Used to mark critical workloads for preferential scheduling and preemption
     # Common values:
@@ -540,7 +540,7 @@ controller:
     topologySpreadConstraints: []
     # Pod security context
     # Complies with Pod Security Standards (PSS) Restricted profile
-    podSecurityContext:
+    podSecurityContext:  # @schema skipProperties; additionalProperties: true
       runAsNonRoot: true
       runAsUser: 65532  # nonroot user
       runAsGroup: 65532
@@ -548,17 +548,17 @@ controller:
       seccompProfile:
         type: RuntimeDefault
     # Node selector
-    nodeSelector: {}
+    nodeSelector: {}  # @schema skipProperties; additionalProperties: true
     # Tolerations
     tolerations: []
     # Affinity rules
-    affinity: {}
+    affinity: {}  # @schema skipProperties; additionalProperties: true
     # Termination grace period in seconds
     terminationGracePeriodSeconds: 90
     # DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
     dnsPolicy: ClusterFirst
     # DNS config for custom DNS settings
-    dnsConfig: {}
+    dnsConfig: {}  # @schema skipProperties; additionalProperties: true
     # nameservers:
     #   - 8.8.8.8
     # searches:
@@ -586,7 +586,7 @@ controller:
       name: ""  # Will be filled in by Helm template
       # Namespace defaults to Release.Namespace if not specified
     podSelector:
-      matchLabels:
+      matchLabels:  # @schema skipProperties; additionalProperties: true
         app.kubernetes.io/component: loadbalancer
         # app.kubernetes.io/name and app.kubernetes.io/instance are set dynamically by template
     controller:
@@ -692,8 +692,9 @@ controller:
     # Template rendering settings
     # extraContext provides custom variables available to all templates
     templatingSettings:
+      # @schema enum: [scriggo]
       engine: scriggo  # Template engine: "scriggo" (Go templates)
-      extraContext:
+      extraContext:  # @schema additionalProperties: true
         diagnostics:
           routingHeaders:
             # Response headers exposing HAProxy's routing decision. Disabled by
@@ -811,7 +812,7 @@ controller:
           #     tenant: req.hdr(X-Tenant)
           #     query: query              # opt in: query strings often carry tokens
           #     region: str(prod-eu)      # constant label
-          fields: {}
+          fields: {}  # @schema additionalProperties: {type: string}
           # `log ... len <bytes>`. HAProxy truncates a longer line mid-byte,
           # which makes the record invalid JSON, so raise this if custom fields
           # or captured request headers push records past it. Accepted range:
@@ -845,8 +846,9 @@ controller:
           # under GDPR), which many organisations must keep out of a general
           # log store that every employee can read.
           #
-          # Each entry renders one HAProxy `log` line. Several entries fan out to
-          # several destinations, which is what a migration needs.
+          # A map of target name to target. Each target renders one HAProxy `log`
+          # line. Several targets fan out to several destinations, which is what
+          # a migration needs.
           #
           #   address   stdout | stderr | fd@<n> | <host>:<port> | [<ipv6>]:<port>
           #             | /path/to.sock | ring@<name>. Plain <host>:<port> is UDP.
@@ -870,7 +872,8 @@ controller:
           # Ship to a Vector (or Fluent Bit) sidecar over a buffered TCP ring:
           #
           #   targets:
-          #     - ring:
+          #     shipper:
+          #       ring:
           #         name: accesslog
           #         address: 127.0.0.1:6514   # <host>:<port>; no UNIX sockets
           #         size: 65536               # in-memory buffer, bytes; must be
@@ -889,16 +892,17 @@ controller:
           # loopback sidecar address or a literal IP unless you pass resolvers
           # through serverOptions.
           #
-          # LEFT UNSET on purpose. Omitting it means `[{address: stdout}]` — the
+          # LEFT UNSET on purpose. Omitting it means `{stdout: {address: stdout}}` — the
           # snippet applies that default itself. Unset is what lets the chart tell
           # "operator chose stdout" apart from "operator chose nothing": with
           # vector.enabled=true the chart points this at the vector socket, and it
           # only does so when this key is absent, so setting it here (to anything,
           # including stdout) keeps your choice and leaves the sidecar with no log
-          # source. An explicitly EMPTY list is rejected rather than defaulted.
+          # source. An explicitly EMPTY map is rejected rather than defaulted.
           #
           #   targets:
-          #     - address: stdout
+          #     stdout:
+          #       address: stdout
         # HAProxy's Prometheus exporter (status frontend, port haproxy.ports.stats,
         # path /metrics). Prometheus scrapes it directly on every pod; the sidecar
         # does not re-export it. The exclusions below are applied by HAProxy itself,
@@ -965,7 +969,7 @@ controller:
           # fleet, after no-maint, where the exposition is 84,973 series and
           # per-BACKEND families are ~75% of it — backend count is the driver at
           # scale, not server count.
-          excludeMetrics:
+          excludeMetrics:  # @schema mergeProperties
             # Since-boot maxima and "max over the last 1024 connections". Not
             # aggregatable across pods, never reset, and derivable from the raw
             # series with max_over_time() / count by ().
@@ -1073,7 +1077,7 @@ controller:
         routing:
           # default: Exact > Regex > Prefix-exact > Prefix
           # last:    Exact > Prefix-exact > Prefix > Regex
-          regexMatchOrder: default
+          regexMatchOrder: default  # @schema enum: [default, last]
         # Template-owned status writes. Disable during side-by-side migration
         # so an incumbent controller remains the sole owner of status/DNS data.
         statusPatches:
@@ -1095,7 +1099,7 @@ controller:
             # Global HSTS is opt-in; per-Ingress hsts annotations still win.
             enabled: false
             # Also the default for haproxy-haptic.org/hsts-max-age.
-            maxAge: "31536000"
+            maxAge: "31536000"  # @schema pattern: ^[0-9]+$
             includeSubdomains: false
             preload: false
           # Fleet-wide TLS session resumption. Off by default. When on, the SSL
@@ -1140,7 +1144,7 @@ controller:
           # How long HAProxy waits for the declared body. On expiry the client
           # gets 408 and the backend is never contacted, so keep this above the
           # time your slowest legitimate client needs to send tune.bufsize bytes.
-          waitTimeout: 10s
+          waitTimeout: 10s  # @schema type: [string, integer]
 
         # Template-library behavior for API-gateway features. Plugin execution
         # limits remain under spoaHub.plugins.api-gateway.
@@ -1152,7 +1156,7 @@ controller:
             requestBody:
               # Maximum time HAProxy waits for a matching POST/PUT/PATCH body.
               # Routes without request-schema annotations never wait here.
-              waitTimeout: 100ms
+              waitTimeout: 100ms  # @schema type: [string, integer]
               # Default per-route cap when the Ingress does not set
               # request-schema-max-body-size. Oversized requests are rejected
               # before JSON parsing or schema-validation CPU is spent.
@@ -1187,10 +1191,10 @@ controller:
             # WAF annotation. default-on: inspect every route unless an
             # authorized nginx-compatible enable-modsecurity=false annotation
             # opts it out.
-            mode: opt-in
+            mode: opt-in  # @schema enum: [opt-in, default-on]
             # Enforcement for default-on routes without a policy or route
             # override. Ignored in opt-in mode. Valid values: deny, detect.
-            defaultEnforcement: deny
+            defaultEnforcement: deny  # @schema enum: [deny, detect]
           # Replaces the OWASP CRS compiled into the coraza plugin with one
           # fetched over HTTP, so a CRS release can be adopted without
           # rebuilding and redeploying the plugin image.
@@ -1254,7 +1258,7 @@ controller:
             defaultPolicy: ""
             requestBody:
               # Wait applies only to policies whose requestBody.mode is not none.
-              waitTimeout: 100ms
+              waitTimeout: 100ms  # @schema type: [string, integer]
               # Default body cap for policies that omit requestBody.maxBytes.
               defaultMaxBytes: 8192
               # Maximum body cap a policy may request. Keep this separate from
@@ -1300,7 +1304,7 @@ controller:
             #       - rules: [913100]
             #     secLang: |
             #       SecRuleRemoveById 941320
-            inline: {}
+            inline: {}  # @schema additionalProperties: true
             # Trusted cross-namespace policy catalogs, keyed by catalog name
             # like `inline` above — Helm merges maps key by key, so adding one
             # catalog keeps the rest. Sources never override each other;
@@ -1312,7 +1316,7 @@ controller:
             #     namespace: security
             #     name: haptic-waf-policies
             #     key: policies.yaml
-            configMapRefs: {}
+            configMapRefs: {}  # @schema additionalProperties: {type: object, additionalProperties: false, properties: {namespace: {type: string}, name: {type: string}, key: {type: string}}}
             # Namespaced self-service policy authoring. When enabled, every
             # namespace may define WAF policies for ITS OWN Ingresses in a
             # ConfigMap named `configMapName` (data key `key`) in that
@@ -1347,7 +1351,7 @@ controller:
     watchedResourcesIgnoreFields:
       - metadata.managedFields
       - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
-    watchedResources:
+    watchedResources:  # @schema skipProperties; additionalProperties: true
       # Resource-specific watched resources are defined in template libraries:
       # - ingresses: Defined in ingress library (when enabled)
       # - httproutes, grpcroutes: Defined in gateway library (when enabled)
@@ -1460,7 +1464,7 @@ haproxy:
   podDisruptionBudget:
     enabled: true
     # Null derives 0 for a one-pod minimum fleet and 1 otherwise.
-    maxUnavailable: null
+    maxUnavailable: null  # @schema type: [integer, null]
   # Prometheus scraping of the HAProxy pod. The bundled controller
   # ServiceMonitor/PodMonitor cover the controller only, never this pod.
   monitoring:
@@ -1476,7 +1480,7 @@ haproxy:
       enabled: false
       interval: 30s
       scrapeTimeout: 10s
-      labels: {}
+      labels: {}  # @schema skipProperties; additionalProperties: true
       relabelings: []
       metricRelabelings: []
   # HAProxy image configuration
@@ -1487,7 +1491,7 @@ haproxy:
     # community -> haproxytech/haproxy-debian
     # enterprise -> hapee-registry.haproxy.com/haproxy-enterprise
     repository: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: IfNotPresent  # @schema enum: [Always, IfNotPresent, Never]
     # Override the HAProxy pod image tag. Leave empty to use the patch version
     # from haproxyPatchVersions or haproxyEnterprisePatchVersions (recommended).
     # Example: "3.2.10" (community) or "3.2r2" (enterprise)
@@ -1506,8 +1510,8 @@ haproxy:
   # Service exposes HAProxy container ports externally
   # targetPort references are defined in template using named ports
   service:
-    type: NodePort
-    annotations: {}
+    type: NodePort  # @schema enum: [ClusterIP, NodePort, LoadBalancer]
+    annotations: {}  # @schema skipProperties; additionalProperties: true
     # LoadBalancer configuration (when type: LoadBalancer)
     loadBalancerIP: ""
     loadBalancerSourceRanges: []
@@ -1518,7 +1522,7 @@ haproxy:
     # Internal traffic policy
     internalTrafficPolicy: ""
     # Health check node port (for LoadBalancer with Local traffic policy)
-    healthCheckNodePort: ""
+    healthCheckNodePort: ""  # @schema type: [string, integer]
     # Publish not-ready addresses
     publishNotReadyAddresses: false
     # Port configurations
@@ -1555,7 +1559,7 @@ haproxy:
       clientName: ""
       certValidityDays: 365
       renewal:
-        resources:
+        resources:  # @schema skipProperties; additionalProperties: true
           requests:
             cpu: 10m
             memory: 32Mi
@@ -1578,14 +1582,14 @@ haproxy:
     # controller, so the logged addresses are its pod IP.
     #
     #   trace | debug | info | warning | error
-    logLevel: info
+    logLevel: info  # @schema enum: [trace, debug, info, warning, error]
     service:
-      type: ClusterIP
+      type: ClusterIP  # @schema enum: [ClusterIP, NodePort, LoadBalancer]
       # port references haproxy.ports.dataplane (set in template)
     # Credentials are configured via top-level 'credentials.dataplane' section
     # Resource limits and requests for the agent sidecar.
     # No CPU limit is set to avoid throttling.
-    resources:
+    resources:  # @schema skipProperties; additionalProperties: true
       requests:
         cpu: 50m
         memory: 256Mi
@@ -1629,7 +1633,7 @@ haproxy:
   # Guaranteed-QoS memory (requests=limits) for eviction protection. No
   # CPU limit — HAProxy then uses all node cores (nbthread auto-detects);
   # set limits.cpu to cap both the quota and nbthread. ~32KB per connection.
-  resources:
+  resources:  # @schema skipProperties; additionalProperties: true
     requests:
       cpu: 250m
       memory: 1Gi
@@ -1665,15 +1669,15 @@ haproxy:
     #         app.kubernetes.io/component: loadbalancer
     topologySpreadConstraints: []
     # Node selector for HAProxy pods
-    nodeSelector: {}
+    nodeSelector: {}  # @schema skipProperties; additionalProperties: true
     # Tolerations for HAProxy pods
     tolerations: []
     # Affinity rules for HAProxy pods
-    affinity: {}
+    affinity: {}  # @schema skipProperties; additionalProperties: true
     # DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
     dnsPolicy: ClusterFirst
     # DNS config for custom nameservers, searches, and options
-    dnsConfig: {}
+    dnsConfig: {}  # @schema skipProperties; additionalProperties: true
     # nameservers:
     #   - 8.8.8.8
     # searches:
@@ -1689,7 +1693,7 @@ haproxy:
     # Runtime class name (for specialized runtimes like gVisor, Kata)
     runtimeClassName: ""
     # Extra pod annotations for HAProxy pods (supports template expressions)
-    podAnnotations: {}
+    podAnnotations: {}  # @schema skipProperties; additionalProperties: true
     # Share process namespace between containers (required for signal-based sidecar reload)
     shareProcessNamespace: false
     # Termination grace period in seconds
@@ -1708,7 +1712,7 @@ haproxy:
     # UIDs are auto-derived based on enterprise.enabled:
     #   Community: runAsUser=99, runAsGroup=99, fsGroup=99 (haproxy user)
     #   Enterprise: runAsUser=1000, runAsGroup=1000, fsGroup=1000 (hapee-lb user)
-    podSecurityContext:
+    podSecurityContext:  # @schema skipProperties; additionalProperties: true
       seccompProfile:
         type: RuntimeDefault
       # Pod-level sysctls (requires kubelet allowedUnsafeSysctls for unsafe sysctls)
@@ -1753,13 +1757,13 @@ haproxy:
     maxWaitSeconds: 10
   # Container lifecycle hooks for the HAProxy container; when set they replace
   # the drain hook.
-  lifecycle: {}
+  lifecycle: {}  # @schema skipProperties; additionalProperties: true
   # Deployment update strategy
   updateStrategy:
-    type: RollingUpdate
+    type: RollingUpdate  # @schema enum: [RollingUpdate, Recreate]
     rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+      maxSurge: 1  # @schema type: [integer, string]
+      maxUnavailable: 0  # @schema type: [integer, string]
   # Minimum seconds for pod to be considered ready
   minReadySeconds: 0
   # Number of old ReplicaSets to retain
@@ -1780,7 +1784,7 @@ haproxy:
       failureThreshold: 3
       replicas: 2
     # Advanced HPA behavior configuration
-    advanced: {}
+    advanced: {}  # @schema skipProperties; additionalProperties: true
     # horizontalPodAutoscalerConfig:
     #   behavior:
     #     scaleDown:
@@ -1900,18 +1904,18 @@ cache:
     originServiceName: haptic-cache-origin
     # statefulset (default; an ordered rollout keeps 1/N of the cache warm on
     # restart) or deployment (ephemeral accelerator).
-    workload: statefulset
+    workload: statefulset  # @schema enum: [statefulset, deployment]
     replicas: 2
     # Empty selects the bundled non-root image for this chart version.
     image: ""
-    imagePullPolicy: IfNotPresent
+    imagePullPolicy: IfNotPresent  # @schema enum: [Always, IfNotPresent, Never]
     # Object storage only; budget shared logs, VCL, and process overhead separately.
     malloc: 256m
     # Pod resources. A CPU request is REQUIRED for the autoscaling HPA to
     # compute utilization (a `Utilization` target is a percentage of the
     # request). Include the tmpfs workdir in this limit: shared logs default to
     # 80 MiB, in addition to malloc storage, VCL, and process/object overhead.
-    resources:
+    resources:  # @schema skipProperties; additionalProperties: true
       requests:
         cpu: 100m
         memory: 384Mi
@@ -1974,7 +1978,7 @@ rateLimit:
       enabled: true
       # renovate: datasource=docker depName=valkey/valkey
       image: valkey/valkey:9.2-alpine
-      imagePullPolicy: IfNotPresent
+      imagePullPolicy: IfNotPresent  # @schema enum: [Always, IfNotPresent, Never]
       port: 6379
       # One writable primary with Sentinel failover. Three replicas gives
       # Sentinel quorum and one promoted survivor during a single pod/node loss.
@@ -1997,7 +2001,7 @@ rateLimit:
         downAfterMilliseconds: 5000
         failoverTimeoutMilliseconds: 10000
         parallelSyncs: 1
-        resources:
+        resources:  # @schema skipProperties; additionalProperties: true
           requests:
             cpu: 25m
             memory: 64Mi
@@ -2011,7 +2015,7 @@ rateLimit:
         # pods plus same-store Sentinel/replication traffic. Effective only when
         # the cluster CNI enforces NetworkPolicy.
         enabled: true
-      resources:
+      resources:  # @schema skipProperties; additionalProperties: true
         requests:
           cpu: 50m
           memory: 128Mi
@@ -2023,7 +2027,7 @@ rateLimit:
     externalStore:
       # One Redis/Valkey/Sentinel/Cluster URL, e.g.
       #   - redis://my-valkey.my-namespace.svc:6379
-      urls: []
+      urls: []  # @schema item: string
 
 # Default HAProxy TLS certificate. This chart-level resource and HAProxy
 # configuration input is intentionally not nested under `controller`.
@@ -2123,15 +2127,15 @@ spoaHub:
   # least one plugin under plugins.*, because a hub with no enabled plugin
   # has no SPOE message to serve. Rendering fails with an explanatory error
   # if you set this true and leave every plugin disabled.
-  enabled: null
+  enabled: null  # @schema type: [boolean, null]
 
   image:
     repository: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub
-    pullPolicy: IfNotPresent
+    pullPolicy: IfNotPresent  # @schema enum: [Always, IfNotPresent, Never]
     # Override the tag. Leave empty to use .Chart.AppVersion (recommended).
     tag: ""
 
-  resources:
+  resources:  # @schema skipProperties; additionalProperties: true
     requests:
       cpu: 50m
       memory: 128Mi
@@ -2141,22 +2145,22 @@ spoaHub:
   # Hub-side runtime knobs (rendered into /etc/haproxy-spoa-hub/config.toml).
   hub:
     # info | debug | warn | error
-    logLevel: "info"
+    logLevel: "info"  # @schema enum: [trace, debug, info, warn, error]
     # Tokio worker thread count. Leave null for the default (CPU count).
-    workerThreads: null
+    workerThreads: null  # @schema type: [integer, null]
     maxConnections: 1000
     blockingThreadKeepAliveSecs: 30
     # Optional process-wide blocking-pool cap. Null derives the safe sum of
     # resolved per-plugin concurrency limits. An explicit value must not be
     # lower than that sum. This is a process-start setting; the chart's config
     # checksum rolls the HAProxy pod when it changes.
-    maxBlockingThreads: null
+    maxBlockingThreads: null  # @schema type: [integer, null]
     # Maximum time a hot reload waits for users of the retiring plugin
     # generation to quiesce and drain. Null derives 1.5x the largest plugin
     # timeout, clamped to 1-30 seconds. Zero deliberately disables draining and
     # is unsafe for plugins with in-flight/background work; use only to restore
     # legacy behavior while diagnosing a broken plugin shutdown.
-    reloadDrainTimeoutMs: null
+    reloadDrainTimeoutMs: null  # @schema type: [integer, null]
     # Prometheus /metrics endpoint. Loopback by default; the haproxy
     # container scrapes via the shared pod netns. Set to "" to disable
     # (loses per-plugin counters); set to "0.0.0.0:9095" to expose
@@ -2193,18 +2197,18 @@ spoaHub:
     # mode spop is just the more efficient transport. Set this to false
     # to force tcp on 3.1+ as well (rare; mostly for compat testing).
     modeSpop: true
-    timeoutHello: 2s
-    timeoutIdle: 5m
+    timeoutHello: 2s  # @schema type: [string, integer]
+    timeoutIdle: 5m  # @schema type: [string, integer]
     # HAProxy's outer SPOE processing deadline. Null derives each message
     # engine's deadline from that message's plugin budget plus
     # timeoutProcessingMarginMs. An explicit duration applies to every engine
     # and must cover every enabled message's budget plus the margin.
-    timeoutProcessing: null
+    timeoutProcessing: null  # @schema type: [string, integer, null]
     # Scheduling/serialization margin between the hub's plugin deadline and
     # HAProxy's outer SPOE deadline.
     timeoutProcessingMarginMs: 100
     poolMaxConn: 100
-    poolPurgeDelay: 30s
+    poolPurgeDelay: 30s  # @schema type: [string, integer]
 
   # Plugins. Each entry has chart-managed lifecycle keys (enabled, timeoutMs,
   # messages, dependsOn), optional admission controls (maxConcurrency,
@@ -2214,27 +2218,27 @@ spoaHub:
   # libraries that need a plugin can auto-enable it; explicit `--set ...
   # .enabled=<bool>` always wins. Inside `params:` use dotted keys or the
   # full `[plugins.params.<x>]` header — a bare `[x]` closes the scope.
-  plugins:
+  plugins:  # @schema additionalProperties: {type: object, additionalProperties: false, properties: {enabled: {type: [boolean, string]}, timeoutMs: {type: [integer, string]}, messages: {type: array, items: {type: string}}, dependsOn: {type: array, items: {type: string}}, maxConcurrency: {type: [integer, string]}, maxQueue: {type: [integer, string]}, queueTimeoutMs: {type: [integer, string]}, adaptiveConcurrency: {type: boolean}, params: {type: string}}}
     api-gateway:
       # JSON request-body validation via the api-gateway plugin. Opt-in (off by
       # default). Drive it per route with the
       # haproxy-haptic.org/request-schema-* annotations.
-      enabled: '{{ .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}'
+      enabled: '{{ .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}'  # @schema type: [boolean, string]
       # The plugin does no I/O on the request path: schemas are compiled at
       # init, then each request is bounded by max_body_bytes, content-type
       # checked, parsed as JSON, and validated in memory. Keep the SPOE timeout
       # tight so overload fails closed quickly.
-      timeoutMs: 25
+      timeoutMs: 25  # @schema type: [integer, string]
       messages: ["validate-request"]
-      dependsOn: []
+      dependsOn: []  # @schema item: string
       # Admission concurrency (ADR-0002). Bound work exactly as for Coraza:
       # adaptive by default so the right concurrency is found from live latency
       # with no manual tuning, and maxConcurrency is the ceiling — derived from
       # the sidecar's memory so it self-scales across small and large
       # deployments. Set adaptiveConcurrency: false for a fixed cap.
       adaptiveConcurrency: true
-      maxConcurrency: '{{ include "haptic.spoaHub.adaptiveCeiling" . }}'
-      maxQueue: 0
+      maxConcurrency: '{{ include "haptic.spoaHub.adaptiveCeiling" . }}'  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
       # The chart injects default_fail_open and max_body_bytes from the
       # requestSchemaValidation feature tree so replacing this free-form blob
       # cannot silently sever the template and plugin defaults.
@@ -2247,10 +2251,10 @@ spoaHub:
       # A non-empty inline/ConfigMap policy catalog activates policy support;
       # there is no second `enabled` switch that can leave a configured catalog
       # inert by accident.
-      enabled: '{{ or (eq .Values.controller.config.templatingSettings.extraContext.waf.dispatch.mode "default-on") (gt (len .Values.controller.config.templatingSettings.extraContext.waf.policies.inline) 0) (gt (len .Values.controller.config.templatingSettings.extraContext.waf.policies.configMapRefs) 0) (ne .Values.controller.config.templatingSettings.extraContext.waf.policies.defaultPolicy "") (eq (toString .Values.controller.config.templatingSettings.extraContext.waf.policies.selfService.enabled) "true") .Values.controller.templateLibraries.nginxIngress.enabled .Values.controller.templateLibraries.haproxyIngress.enabled }}'
-      timeoutMs: 15
+      enabled: '{{ or (eq .Values.controller.config.templatingSettings.extraContext.waf.dispatch.mode "default-on") (gt (len .Values.controller.config.templatingSettings.extraContext.waf.policies.inline) 0) (gt (len .Values.controller.config.templatingSettings.extraContext.waf.policies.configMapRefs) 0) (ne .Values.controller.config.templatingSettings.extraContext.waf.policies.defaultPolicy "") (eq (toString .Values.controller.config.templatingSettings.extraContext.waf.policies.selfService.enabled) "true") .Values.controller.templateLibraries.nginxIngress.enabled .Values.controller.templateLibraries.haproxyIngress.enabled }}'  # @schema type: [boolean, string]
+      timeoutMs: 15  # @schema type: [integer, string]
       messages: ["check-request"]
-      dependsOn: []
+      dependsOn: []  # @schema item: string
       # Concurrent WAF checks per HAProxy pod. A coraza check holds its slot
       # ~0.9ms but uses only ~0.1ms of CPU, so the right concurrency is many
       # times the core count and varies by request mix — no single number is
@@ -2264,8 +2268,8 @@ spoaHub:
       # the ceiling rises. Set adaptiveConcurrency: false for a fixed cap, or set
       # maxConcurrency to a literal to override the derived ceiling.
       adaptiveConcurrency: true
-      maxConcurrency: '{{ include "haptic.spoaHub.adaptiveCeiling" . }}'
-      maxQueue: 0
+      maxConcurrency: '{{ include "haptic.spoaHub.adaptiveCeiling" . }}'  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
       # Coraza WAF rule directives. The chart appends these to the
       # rendered TOML's `directives = """..."""` field, then appends
       # any per-Ingress `nginx.ingress.kubernetes.io/modsecurity-snippet`
@@ -2313,10 +2317,10 @@ spoaHub:
       # haproxy-ingress.github.io/auth-url should set this to 'true'
       # explicitly. The haproxytech library has no external-auth
       # annotation in its public schema.
-      enabled: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'
-      timeoutMs: 6000
+      enabled: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'  # @schema type: [boolean, string]
+      timeoutMs: 6000  # @schema type: [integer, string]
       messages: ["check-auth"]
-      dependsOn: []
+      dependsOn: []  # @schema item: string
       params: |
         timeout_ms = 5000
         fail_open = false
@@ -2329,19 +2333,19 @@ spoaHub:
         ]
         extract_headers = ["x-auth-user", "x-auth-roles"]
     fingerprinting:
-      enabled: '{{ false }}'
-      timeoutMs: 5
+      enabled: '{{ false }}'  # @schema type: [boolean, string]
+      timeoutMs: 5  # @schema type: [integer, string]
       messages: ["get-fingerprint"]
-      dependsOn: []
+      dependsOn: []  # @schema item: string
       params: |
         sort_extensions = true
         exclude_extensions = [41]
         ja4 = true
     maxmind:
-      enabled: '{{ false }}'
-      timeoutMs: 10
+      enabled: '{{ false }}'  # @schema type: [boolean, string]
+      timeoutMs: 10  # @schema type: [integer, string]
       messages: ["geoip-enrich"]
-      dependsOn: []
+      dependsOn: []  # @schema item: string
       # Site-specific: supply MMDB paths and lookup definitions.
       # See https://gitlab.com/haproxy-haptic/haproxy-spoa-hub-plugin-maxmind
       params: |
@@ -2364,18 +2368,18 @@ spoaHub:
       # with a RequestMirror filter would get silently-ignored mirroring
       # unless they also flipped this flag — and the controller would
       # then emit a chart-render error pointing at the missing plugin.
-      enabled: '{{ .Values.controller.templateLibraries.gateway.enabled }}'
+      enabled: '{{ .Values.controller.templateLibraries.gateway.enabled }}'  # @schema type: [boolean, string]
       # SPOE-side processing timeout. The plugin's `process()` only does
       # synchronous SPOE-arg parsing and a tokio spawn — microseconds —
       # so the ack is back to HAProxy long before this hits. The actual
       # HTTP roundtrip to the mirror backend is governed by the plugin's
       # per-target budget below and never blocks HAProxy.
-      timeoutMs: 50
+      timeoutMs: 50  # @schema type: [integer, string]
       # Bound fire-and-forget work independently of application backend
       # timeouts. A dead mirror target must release shared hub capacity quickly
       # and must not amplify load through retries.
-      targetTimeoutMs: 2000
-      targetRetries: 0
+      targetTimeoutMs: 2000  # @schema type: [integer, string]
+      targetRetries: 0  # @schema type: [integer, string]
       # A single static `mirror` message that fans out to every target.
       # The chart never grows this list: each mirror source (Gateway
       # RequestMirror filters, mirror-target Ingress annotations) appends
@@ -2386,7 +2390,7 @@ spoaHub:
       # HAProxy frontend — never spoe.conf or this plugin's TOML — and
       # never triggers a hub config reload.
       messages: ["mirror"]
-      dependsOn: []
+      dependsOn: []  # @schema item: string
       # Mirror plugin runtime knobs (1:1 with PluginConfig in
       # haproxy-spoa-hub-plugin-mirror/src/config.rs).
       params: |
@@ -2409,7 +2413,7 @@ spoaHub:
       # rateLimit.shared.externalStore.urls. HAPTIC fails the render when
       # shared rate limiting is enabled without a store, because per-pod
       # fallback is not a shared fleet budget.
-      enabled: '{{ .Values.rateLimit.shared.enabled }}'
+      enabled: '{{ .Values.rateLimit.shared.enabled }}'  # @schema type: [boolean, string]
       # The plugin's default lease mode is a local in-memory token-bucket
       # check. The shared store handles bounded/coalesced background refreshes
       # and a coalesced synchronous borrow when a cold or depleted pool needs
@@ -2426,16 +2430,16 @@ spoaHub:
       # low so it can switch to the configured dependency policy before the hub
       # drops the plugin result. Keep public-edge DoS limits on the default lease
       # mode; exact mode is for low-volume contractual budgets.
-      timeoutMs: 50
+      timeoutMs: 50  # @schema type: [integer, string]
       messages: ["check-ratelimit"]
-      dependsOn: []
+      dependsOn: []  # @schema item: string
       # Per-operation shared-store timeout. Exact `gcra` mode waits on this
       # path for every request, so keep it short on public edges and tune it to
       # measured Redis/Valkey round-trip and failover behavior. The chart owns
       # the generated `store_timeout_ms` and `ttl_ms` TOML keys and rejects
       # duplicates in params below. ttl_ms uses the plugin's one-hour maximum;
       # the annotation library rejects rules with a longer refill horizon.
-      storeOperationTimeoutMs: 10
+      storeOperationTimeoutMs: 10  # @schema type: [integer, string]
       # Runtime knobs (1:1 with PluginConfig in
       # haproxy-spoa-hub-plugin-rate-limit/src/config.rs). The chart owns the
       # generated fail_open, store_failure_mode, invalid_rule_fail_open, and
@@ -2454,10 +2458,10 @@ spoaHub:
         idle_ttl_ms = 120000
         max_prefetch_queue = 8192
     sso-auth:
-      enabled: '{{ false }}'
-      timeoutMs: 6000
+      enabled: '{{ false }}'  # @schema type: [boolean, string]
+      timeoutMs: 6000  # @schema type: [integer, string]
       messages: ["auth-request"]
-      dependsOn: []
+      dependsOn: []  # @schema item: string
       params: |
         max_providers = 10
         max_session_age_seconds = 3600
@@ -2466,7 +2470,7 @@ spoaHub:
   # matches the pod's existing fsGroup (99) so the unix socket the hub
   # creates under /run/spoa is accessible to the haproxy container without
   # extra plumbing.
-  securityContext:
+  securityContext:  # @schema skipProperties; additionalProperties: true
     runAsNonRoot: true
     runAsUser: 99
     runAsGroup: 99
@@ -2501,7 +2505,7 @@ vector:
 
   image:
     repository: timberio/vector
-    pullPolicy: IfNotPresent
+    pullPolicy: IfNotPresent  # @schema enum: [Always, IfNotPresent, Never]
     # Pinned, not floating: a silent vector upgrade would change the log
     # pipeline under a running fleet. Renovate bumps this via the
     # `vector image tag` customManager in renovate.json — keep the comment
@@ -2560,10 +2564,12 @@ vector:
     # --time-buckets, so a rule hardcoding le="0.5" still resolves, extended to
     # 1ms (backends answer in 1-3ms) and 60s (it stops at 10s, below the server
     # timeouts this chart ships).
+    # @schema item: number
     durationBuckets: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
                       1, 2.5, 5, 10, 30, 60]
     # A 1-3-10 ladder. ingress-nginx measures sizes against 10..100 BYTES, so
     # every real payload lands in +Inf and its _bucket series say nothing.
+    # @schema item: number
     sizeBuckets: [100, 300, 1000, 3000, 10000, 30000, 100000, 300000,
                   1000000, 3000000, 10000000, 100000000]
 
@@ -2633,12 +2639,12 @@ vector:
   # cannot invent an unbounded label), `numeric` a counter incremented BY the
   # value. `requires` is a dotted values path that must be truthy, so an entry
   # whose emitter is off costs nothing per record.
-  logMetrics:
+  logMetrics:  # @schema mergeProperties
     cacheStatus:
       enabled: true
       requires: cache.varnish.enabled
       field: cache
-      kind: enum
+      kind: enum  # @schema enum: [enum, numeric]
       values: ["HIT", "MISS", "STALE"]
       metric: cache_status_total
       tag: status
@@ -2649,7 +2655,7 @@ vector:
       enabled: true
       requires: cache.varnish.enabled
       field: cache_age
-      kind: numeric
+      kind: numeric  # @schema enum: [enum, numeric]
       metric: cache_age_seconds_total
     # Why responses were NOT stored, otherwise invisible: a route that silently
     # never caches looks identical to one that is always missing.
@@ -2657,7 +2663,7 @@ vector:
       enabled: true
       requires: cache.varnish.enabled
       field: cache_uncacheable_reason
-      kind: enum
+      kind: enum  # @schema enum: [enum, numeric]
       values: ["content_type_excluded", "too_large", "set_cookie", "status_not_cacheable", "origin_refused_sharing"]
       metric: cache_uncacheable_total
       tag: reason
@@ -2665,7 +2671,7 @@ vector:
       enabled: true
       requires: cache.varnish.enabled
       field: cache_degraded
-      kind: numeric
+      kind: numeric  # @schema enum: [enum, numeric]
       metric: degraded_cache_total
     # Requests for which a non-identity control could not be consulted. An open
     # policy allows them; a strict policy also sets denied_by. Without separate
@@ -2674,17 +2680,17 @@ vector:
     rateLimitDegraded:
       enabled: true
       field: rate_limit_degraded
-      kind: numeric
+      kind: numeric  # @schema enum: [enum, numeric]
       metric: degraded_rate_limit_total
     wafDegraded:
       enabled: true
       field: waf_degraded
-      kind: numeric
+      kind: numeric  # @schema enum: [enum, numeric]
       metric: degraded_waf_total
     schemaDegraded:
       enabled: true
       field: schema_degraded
-      kind: numeric
+      kind: numeric  # @schema enum: [enum, numeric]
       metric: degraded_schema_total
     # Which control rejected a request. The `*_unavailable` reasons are the ones
     # to alert on: they mean a control could not reach its dependency and shed
@@ -2693,7 +2699,7 @@ vector:
     deniedBy:
       enabled: true
       field: denied_by
-      kind: enum
+      kind: enum  # @schema enum: [enum, numeric]
       values: ["api_key", "api_key_unavailable", "backend_tls_unavailable", "basic_auth", "basic_auth_unavailable", "body_too_large", "cache_origin_internal_backend", "consumer_groups", "consumer_groups_unavailable", "content_type", "external_auth", "gw_sni_host_mismatch", "hmac", "hmac_body_incomplete", "hmac_no_content_length", "hmac_unavailable", "jwt_algorithm", "jwt_audience", "jwt_expired", "jwt_issuer", "jwt_key_unavailable", "jwt_not_yet_valid", "jwt_required_claim", "jwt_signature", "jwt_unavailable", "method_not_allowed", "mtls_unavailable", "policy_consumer_missing", "rate_limit_connections", "rate_limit_local", "rate_limit_shared", "rate_limit_shared_invalid", "rate_limit_shared_unavailable", "required_header", "route_policy_unavailable", "schema_body_incomplete", "schema_body_too_large", "schema_duplicate_content_length", "schema_invalid", "schema_no_content_length", "schema_unavailable", "schema_unsupported_media_type", "waf", "waf_body_chunked", "waf_body_content_type", "waf_body_duplicate_content_length", "waf_body_incomplete", "waf_body_too_large", "waf_policy_unavailable", "waf_status_400", "waf_status_413", "waf_unavailable"]
       metric: denied_total
       tag: reason
@@ -2716,14 +2722,14 @@ vector:
   # Under-sizing can still affect availability. The supervisor recovers an exited
   # or unresponsive Vector child without changing HAProxy readiness, but a
   # whole-container OOM restarts the container and can briefly make the pod NotReady.
-  resources:
+  resources:  # @schema skipProperties; additionalProperties: true
     requests:
       cpu: 50m
       memory: 256Mi
     limits:
       memory: 1Gi
 
-  securityContext:
+  securityContext:  # @schema skipProperties; additionalProperties: true
     allowPrivilegeEscalation: false
     capabilities:
       drop: [ALL]
@@ -2737,4 +2743,4 @@ vector:
 # Extra Kubernetes resources to deploy alongside the chart. List or
 # dict; supports Helm templating. The list and dict forms merge differently
 # (a dict merges by key; a list appends).
-extraDeploy: {}
+extraDeploy: {}  # @schema type: [object, array]; additionalProperties: true

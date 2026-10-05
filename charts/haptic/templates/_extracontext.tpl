@@ -25,21 +25,7 @@
        the port numbers drive chart-side wiring too (Service ports, container
        ports, NetworkPolicy) — a bad value has to fail the install, not the load
        gate. */ -}}
-{{- $configuredProxyProtocol := dig "proxyProtocol" dict $configuredExtraContext }}
-{{- if $configuredProxyProtocol }}
-  {{- if not (kindIs "map" $configuredProxyProtocol) }}
-    {{- fail "controller.config.templatingSettings.extraContext.proxyProtocol must be a map." }}
-  {{- end }}
-  {{- range $field := keys $configuredProxyProtocol }}
-    {{- if not (has $field (list "enabled" "httpPort" "httpsPort")) }}
-      {{- fail (printf "controller.config.templatingSettings.extraContext.proxyProtocol contains unknown field %q. Valid fields: enabled, httpPort, httpsPort." $field) }}
-    {{- end }}
-  {{- end }}
-{{- end }}
 {{- $proxyProtocol := include "haptic.proxyProtocol" . | fromYaml }}
-{{- if not (kindIs "bool" $proxyProtocol.enabled) }}
-  {{- fail "controller.config.templatingSettings.extraContext.proxyProtocol.enabled must be a boolean." }}
-{{- end }}
 {{- if $proxyProtocol.enabled }}
   {{- range $field := list "httpPort" "httpsPort" }}
     {{- $port := int (index $proxyProtocol $field) }}
@@ -84,27 +70,7 @@
 {{- end }}
 {{- /* HTTP/3 drives the Service, container and NetworkPolicy UDP ports too, so a
        bad value fails the install rather than the load gate. */ -}}
-{{- $configuredHTTP3 := dig "http3" dict $configuredExtraContext }}
-{{- if not (kindIs "map" $configuredHTTP3) }}
-  {{- fail "controller.config.templatingSettings.extraContext.http3 must be a map." }}
-{{- end }}
-{{- range $field := keys $configuredHTTP3 }}
-  {{- if not (has $field (list "enabled" "altSvc")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.http3 contains unknown field %q. Valid fields: enabled, altSvc." $field) }}
-  {{- end }}
-{{- end }}
-{{- if not (kindIs "map" (dig "altSvc" dict $configuredHTTP3)) }}
-  {{- fail "controller.config.templatingSettings.extraContext.http3.altSvc must be a map." }}
-{{- end }}
-{{- range $field := keys (dig "altSvc" dict $configuredHTTP3) }}
-  {{- if not (has $field (list "port" "maxAge")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.http3.altSvc contains unknown field %q. Valid fields: port, maxAge." $field) }}
-  {{- end }}
-{{- end }}
 {{- $http3 := include "haptic.http3" . | fromYaml }}
-{{- if not (kindIs "bool" $http3.enabled) }}
-  {{- fail "controller.config.templatingSettings.extraContext.http3.enabled must be a boolean." }}
-{{- end }}
 {{- $altSvcPort := toString $http3.altSvc.port }}
 {{- if or (not (regexMatch "^[0-9]+$" $altSvcPort)) (gt (atoi $altSvcPort) 65535) }}
   {{- fail (printf "controller.config.templatingSettings.extraContext.http3.altSvc.port must be 0 (the port the client used) or a port between 1 and 65535, got %s." $altSvcPort) }}
@@ -122,72 +88,23 @@
 {{- end }}
 {{- $apiGatewaySettings := dict }}
 {{- if hasKey $configuredExtraContext "apiGateway" }}
-  {{- if not (kindIs "map" $configuredExtraContext.apiGateway) }}
-    {{- fail "controller.config.templatingSettings.extraContext.apiGateway must be a map." }}
-  {{- end }}
   {{- $apiGatewaySettings = $configuredExtraContext.apiGateway }}
-{{- end }}
-{{- range $field := keys $apiGatewaySettings }}
-  {{- if ne $field "requestSchemaValidation" }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.apiGateway contains unknown field %q. Valid field: requestSchemaValidation." $field) }}
-  {{- end }}
 {{- end }}
 {{- $requestSchemaValidation := dict }}
 {{- if hasKey $apiGatewaySettings "requestSchemaValidation" }}
-  {{- if not (kindIs "map" $apiGatewaySettings.requestSchemaValidation) }}
-    {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation must be a map." }}
-  {{- end }}
   {{- $requestSchemaValidation = $apiGatewaySettings.requestSchemaValidation }}
-{{- end }}
-{{- range $field := keys $requestSchemaValidation }}
-  {{- if not (has $field (list "enabled" "requestBody" "defaultFailOpen")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation contains unknown field %q. Valid fields: enabled, requestBody, defaultFailOpen." $field) }}
-  {{- end }}
-{{- end }}
-{{- if and (hasKey $requestSchemaValidation "enabled") (not (kindIs "bool" $requestSchemaValidation.enabled)) }}
-  {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled must be a boolean." }}
-{{- end }}
-{{- if and (hasKey $requestSchemaValidation "defaultFailOpen") (not (kindIs "bool" $requestSchemaValidation.defaultFailOpen)) }}
-  {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.defaultFailOpen must be a boolean." }}
 {{- end }}
 {{- $requestSchemaBody := dict }}
 {{- if hasKey $requestSchemaValidation "requestBody" }}
-  {{- if not (kindIs "map" $requestSchemaValidation.requestBody) }}
-    {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody must be a map." }}
-  {{- end }}
   {{- $requestSchemaBody = $requestSchemaValidation.requestBody }}
-{{- end }}
-{{- range $field := keys $requestSchemaBody }}
-  {{- if not (has $field (list "waitTimeout" "defaultMaxBytes")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody contains unknown field %q. Valid fields: waitTimeout, defaultMaxBytes." $field) }}
-  {{- end }}
 {{- end }}
 {{- $requestSchemaValidationEnabled := eq (dig "enabled" false $requestSchemaValidation | toString) "true" }}
 {{- $wafSettings := dict }}
 {{- if hasKey $configuredExtraContext "waf" }}
-  {{- if not (kindIs "map" $configuredExtraContext.waf) }}
-    {{- fail "controller.config.templatingSettings.extraContext.waf must be a map." }}
-  {{- end }}
   {{- $wafSettings = $configuredExtraContext.waf }}
 {{- end }}
-{{- range $field := keys $wafSettings }}
-  {{- if not (has $field (list "dispatch" "ingressPermissions" "customRules" "policies" "crs" "failClosed")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf contains unknown field %q. Valid fields: dispatch, ingressPermissions, customRules, policies, crs, failClosed." $field) }}
-  {{- end }}
-{{- end }}
-{{- /* CRS source. A typo in a field name here would silently leave the
-       default in place — an hourly refresh that never happens, or a fetch
-       against no URL — so unknown fields are rejected rather than ignored. */ -}}
 {{- if hasKey $wafSettings "crs" }}
   {{- $crs := $wafSettings.crs }}
-  {{- if not (kindIs "map" $crs) }}
-    {{- fail "controller.config.templatingSettings.extraContext.waf.crs must be a map." }}
-  {{- end }}
-  {{- range $field := keys $crs }}
-    {{- if not (has $field (list "url" "refreshInterval" "timeout" "retries")) }}
-      {{- fail (printf "controller.config.templatingSettings.extraContext.waf.crs contains unknown field %q. Valid fields: url, refreshInterval, timeout, retries." $field) }}
-    {{- end }}
-  {{- end }}
   {{- $crsURL := $crs.url | default "" }}
   {{- if and (ne $crsURL "") (not (or (hasPrefix "https://" $crsURL) (hasPrefix "http://" $crsURL))) }}
     {{- fail (printf "controller.config.templatingSettings.extraContext.waf.crs.url must be an http:// or https:// URL, got %q." $crsURL) }}
@@ -201,75 +118,26 @@
 {{- end }}
 {{- $wafDispatch := dict }}
 {{- if hasKey $wafSettings "dispatch" }}
-  {{- if not (kindIs "map" $wafSettings.dispatch) }}
-    {{- fail "controller.config.templatingSettings.extraContext.waf.dispatch must be a map." }}
-  {{- end }}
   {{- $wafDispatch = $wafSettings.dispatch }}
 {{- end }}
-{{- range $field := keys $wafDispatch }}
-  {{- if not (has $field (list "mode" "defaultEnforcement")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.dispatch contains unknown field %q. Valid fields: mode, defaultEnforcement." $field) }}
-  {{- end }}
-{{- end }}
 {{- $wafDispatchMode := dig "mode" "opt-in" $wafDispatch | toString }}
-{{- if not (has $wafDispatchMode (list "opt-in" "default-on")) }}
-  {{- fail "controller.config.templatingSettings.extraContext.waf.dispatch.mode must be one of: opt-in, default-on." }}
-{{- end }}
-{{- $wafDefaultEnforcement := dig "defaultEnforcement" "deny" $wafDispatch | toString }}
-{{- if not (has $wafDefaultEnforcement (list "deny" "detect")) }}
-  {{- fail "controller.config.templatingSettings.extraContext.waf.dispatch.defaultEnforcement must be one of: deny, detect." }}
-{{- end }}
 {{- $wafPolicies := dict }}
 {{- if hasKey $wafSettings "policies" }}
-  {{- if not (kindIs "map" $wafSettings.policies) }}
-    {{- fail "controller.config.templatingSettings.extraContext.waf.policies must be a map." }}
-  {{- end }}
   {{- $wafPolicies = $wafSettings.policies }}
-{{- end }}
-{{- range $field := keys $wafPolicies }}
-  {{- if not (has $field (list "defaultPolicy" "requestBody" "limits" "inline" "configMapRefs" "selfService")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies contains unknown field %q. Valid fields: defaultPolicy, requestBody, limits, inline, configMapRefs, selfService." $field) }}
-  {{- end }}
 {{- end }}
 {{- $wafSelfService := dict }}
 {{- if hasKey $wafPolicies "selfService" }}
-  {{- if not (kindIs "map" $wafPolicies.selfService) }}
-    {{- fail "controller.config.templatingSettings.extraContext.waf.policies.selfService must be a map." }}
-  {{- end }}
   {{- $wafSelfService = $wafPolicies.selfService }}
-{{- end }}
-{{- range $field := keys $wafSelfService }}
-  {{- if not (has $field (list "enabled" "configMapName" "key" "allowSecLang" "limits")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.selfService contains unknown field %q. Valid fields: enabled, configMapName, key, allowSecLang, limits." $field) }}
-  {{- end }}
-{{- end }}
-{{- range $field := list "enabled" "allowSecLang" }}
-  {{- if and (hasKey $wafSelfService $field) (not (kindIs "bool" (index $wafSelfService $field))) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.selfService.%s must be a boolean." $field) }}
-  {{- end }}
 {{- end }}
 {{- $wafSelfServiceEnabled := and (hasKey $wafSelfService "enabled") (eq (toString $wafSelfService.enabled) "true") }}
 {{- $wafPoliciesConfigured := false }}
 {{- if and (hasKey $wafPolicies "inline") (kindIs "map" $wafPolicies.inline) (gt (len $wafPolicies.inline) 0) }}{{- $wafPoliciesConfigured = true }}{{- end }}
-{{- if and (hasKey $wafPolicies "configMapRefs") (kindIs "slice" $wafPolicies.configMapRefs) (gt (len $wafPolicies.configMapRefs) 0) }}{{- $wafPoliciesConfigured = true }}{{- end }}
+{{- if and (hasKey $wafPolicies "configMapRefs") (kindIs "map" $wafPolicies.configMapRefs) (gt (len $wafPolicies.configMapRefs) 0) }}{{- $wafPoliciesConfigured = true }}{{- end }}
 {{- if and (hasKey $wafPolicies "defaultPolicy") (kindIs "string" $wafPolicies.defaultPolicy) (ne $wafPolicies.defaultPolicy "") }}{{- $wafPoliciesConfigured = true }}{{- end }}
 {{- if $wafSelfServiceEnabled }}{{- $wafPoliciesConfigured = true }}{{- end }}
 {{- $wafIngressPermissions := dict }}
 {{- if hasKey $wafSettings "ingressPermissions" }}
-  {{- if not (kindIs "map" $wafSettings.ingressPermissions) }}
-    {{- fail "controller.config.templatingSettings.extraContext.waf.ingressPermissions must be a map." }}
-  {{- end }}
   {{- $wafIngressPermissions = $wafSettings.ingressPermissions }}
-{{- end }}
-{{- range $field := keys $wafIngressPermissions }}
-  {{- if not (has $field (list "allowPolicySelection" "allowEnforcementOverride" "allowWafDisable" "allowCustomRules" "allowRawHAProxyConfig")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.ingressPermissions contains unknown field %q. Valid fields: allowPolicySelection, allowEnforcementOverride, allowWafDisable, allowCustomRules, allowRawHAProxyConfig." $field) }}
-  {{- end }}
-{{- end }}
-{{- range $field := list "allowPolicySelection" "allowEnforcementOverride" "allowWafDisable" "allowCustomRules" "allowRawHAProxyConfig" }}
-  {{- if and (hasKey $wafIngressPermissions $field) (not (kindIs "bool" (index $wafIngressPermissions $field))) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.ingressPermissions.%s must be a boolean." $field) }}
-  {{- end }}
 {{- end }}
 {{- $wafRequired := or $wafPoliciesConfigured (eq $wafDispatchMode "default-on") }}
 {{- if and .Values.rateLimit.shared.enabled (eq (toString .Values.spoaHub.enabled) "false") }}
@@ -341,7 +209,6 @@
   {{- $defaultSSL := .Values.defaultSSLCertificate }}
   {{- if $defaultSSL.enabled }}
     {{- $tls := $extraContext.tls | default dict }}
-    {{- if not (kindIs "map" $tls) }}{{- fail "controller.config.templatingSettings.extraContext.tls must be a map." }}{{- end }}
     {{- $_ := set $extraContext "tls" $tls }}
     {{- $_ := set $tls "defaultCertificate" (dict
           "name" $defaultSSL.secretName
@@ -452,9 +319,6 @@
            chosen targets themselves. Overwriting an explicit `targets` would
            silently redirect a stream they deliberately routed elsewhere. */ -}}
     {{- $accessLog := $extraContext.accessLog | default dict }}
-    {{- if not (kindIs "map" $accessLog) }}
-      {{- fail "controller.config.templatingSettings.extraContext.accessLog must be a map." }}
-    {{- end }}
     {{- if not (hasKey $accessLog "targets") }}
       {{- $_ := set $accessLog "targets" (dict "vector" (dict
             "address" .Values.vector.socketPath
@@ -518,27 +382,11 @@
          tune.bufsize, so all body inspectors use one capacity contract. */ -}}
   {{- $requestBodyInspection := dict }}
   {{- if hasKey $extraContext "requestBodyInspection" }}
-    {{- if not (kindIs "map" $extraContext.requestBodyInspection) }}
-      {{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection must be a map." }}
-    {{- end }}
     {{- $requestBodyInspection = $extraContext.requestBodyInspection }}
-  {{- end }}
-  {{- range $field := keys $requestBodyInspection }}
-    {{- if ne $field "haproxyBuffer" }}
-      {{- fail (printf "controller.config.templatingSettings.extraContext.requestBodyInspection contains unknown field %q. Valid field: haproxyBuffer." $field) }}
-    {{- end }}
   {{- end }}
   {{- $haproxyRequestBuffer := dict }}
   {{- if hasKey $requestBodyInspection "haproxyBuffer" }}
-    {{- if not (kindIs "map" $requestBodyInspection.haproxyBuffer) }}
-      {{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer must be a map." }}
-    {{- end }}
     {{- $haproxyRequestBuffer = $requestBodyInspection.haproxyBuffer }}
-  {{- end }}
-  {{- range $field := keys $haproxyRequestBuffer }}
-    {{- if not (has $field (list "sizeBytes" "reservedBytes")) }}
-      {{- fail (printf "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer contains unknown field %q. Valid fields: sizeBytes, reservedBytes." $field) }}
-    {{- end }}
   {{- end }}
   {{- $requestBodyBufferSizeRaw := dig "sizeBytes" 16384 $haproxyRequestBuffer | toString }}
   {{- $requestBodyBufferReservedBytesRaw := dig "reservedBytes" 8192 $haproxyRequestBuffer | toString }}
@@ -585,9 +433,6 @@
     {{- if le (int (regexFind "^[0-9]+" $requestBodyWaitTimeout)) 0 }}
       {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.waitTimeout must be a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
     {{- end }}
-    {{- if and (hasKey $validation "defaultFailOpen") (not (kindIs "bool" $validation.defaultFailOpen)) }}
-      {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.defaultFailOpen must be a boolean." }}
-    {{- end }}
   {{- end }}
 
   {{- /* WAF custom-rule limits apply independently of reusable policies.
@@ -595,27 +440,11 @@
          application-count and rule-byte admission bounds. */ -}}
   {{- $customRules := dict }}
   {{- if hasKey $wafSettings "customRules" }}
-    {{- if not (kindIs "map" $wafSettings.customRules) }}
-      {{- fail "controller.config.templatingSettings.extraContext.waf.customRules must be a map." }}
-    {{- end }}
     {{- $customRules = $wafSettings.customRules }}
-  {{- end }}
-  {{- range $field := keys $customRules }}
-    {{- if ne $field "limits" }}
-      {{- fail (printf "controller.config.templatingSettings.extraContext.waf.customRules contains unknown field %q. Valid field: limits." $field) }}
-    {{- end }}
   {{- end }}
   {{- $customRuleLimits := dict }}
   {{- if hasKey $customRules "limits" }}
-    {{- if not (kindIs "map" $customRules.limits) }}
-      {{- fail "controller.config.templatingSettings.extraContext.waf.customRules.limits must be a map." }}
-    {{- end }}
     {{- $customRuleLimits = $customRules.limits }}
-  {{- end }}
-  {{- range $field := keys $customRuleLimits }}
-    {{- if not (has $field (list "maxIngresses" "maxBytesPerIngress")) }}
-      {{- fail (printf "controller.config.templatingSettings.extraContext.waf.customRules.limits contains unknown field %q. Valid fields: maxIngresses, maxBytesPerIngress." $field) }}
-    {{- end }}
   {{- end }}
   {{- $maxCustomRuleIngressesRaw := dig "maxIngresses" 32 $customRuleLimits | toString }}
   {{- $maxCustomRuleBytesPerIngressRaw := dig "maxBytesPerIngress" 16384 $customRuleLimits | toString }}
@@ -644,15 +473,7 @@
     {{- $waf := $wafPolicies }}
     {{- $policyRequestBody := dict }}
     {{- if hasKey $waf "requestBody" }}
-      {{- if not (kindIs "map" $waf.requestBody) }}
-        {{- fail "controller.config.templatingSettings.extraContext.waf.policies.requestBody must be a map." }}
-      {{- end }}
       {{- $policyRequestBody = $waf.requestBody }}
-    {{- end }}
-    {{- range $field := keys $policyRequestBody }}
-      {{- if not (has $field (list "waitTimeout" "defaultMaxBytes" "maxBytes")) }}
-        {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.requestBody contains unknown field %q. Valid fields: waitTimeout, defaultMaxBytes, maxBytes." $field) }}
-      {{- end }}
     {{- end }}
     {{- $defaultMaxBodyBytesRaw := dig "defaultMaxBytes" 8192 $policyRequestBody | toString }}
     {{- $maxBodyBytesRaw := dig "maxBytes" 8192 $policyRequestBody | toString }}
@@ -680,9 +501,6 @@
     {{- if or (not (regexMatch "^[0-9]+(us|ms|s|m|h|d)?$" $requestBodyWaitTimeout)) (le (int (regexFind "^[0-9]+" $requestBodyWaitTimeout)) 0) }}
       {{- fail "controller.config.templatingSettings.extraContext.waf.policies.requestBody.waitTimeout must be a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
     {{- end }}
-    {{- if and (hasKey $waf "defaultPolicy") (not (kindIs "string" $waf.defaultPolicy)) }}
-      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.defaultPolicy must be a string." }}
-    {{- end }}
     {{- $defaultPolicy := (dig "defaultPolicy" "" $waf | toString) }}
     {{- if and (ne $defaultPolicy "") (not (regexMatch "^[a-z0-9][a-z0-9._-]{0,62}$" $defaultPolicy)) }}
       {{- fail "controller.config.templatingSettings.extraContext.waf.policies.defaultPolicy must be empty or a valid exact policy name." }}
@@ -694,15 +512,7 @@
     {{- end }}
     {{- $limits := dict }}
     {{- if hasKey $waf "limits" }}
-      {{- if not (kindIs "map" $waf.limits) }}
-        {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits must be a map." }}
-      {{- end }}
       {{- $limits = $waf.limits }}
-    {{- end }}
-    {{- range $field := keys $limits }}
-      {{- if not (has $field (list "maxCount" "maxSecLangBytes" "maxRuleExclusions")) }}
-        {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.limits contains unknown field %q. Valid fields: maxCount, maxSecLangBytes, maxRuleExclusions." $field) }}
-      {{- end }}
     {{- end }}
     {{- $maxPoliciesRaw := dig "maxCount" 16 $limits | toString }}
     {{- $maxPolicySecLangBytesRaw := dig "maxSecLangBytes" 65536 $limits | toString }}
@@ -739,9 +549,6 @@
     {{- $allowedPolicyFields := list "description" "requestBody" "enforcement" "secLang" "allowedMethods" "paranoiaLevel" "anomalyThreshold" "ruleExclusions" }}
     {{- $inlinePolicies := dict }}
     {{- if hasKey $waf "inline" }}{{- $inlinePolicies = $waf.inline }}{{- end }}
-    {{- if not (kindIs "map" $inlinePolicies) }}
-      {{- fail "waf.policies.inline must be a map of policy names to policy documents." }}
-    {{- end }}
     {{- range $name, $policy := $inlinePolicies }}
       {{- if not (regexMatch "^[a-z0-9][a-z0-9._-]{0,62}$" $name) }}
         {{- fail (printf "waf.policies.inline name %q must contain 1-63 lowercase letters, digits, dots, underscores, or hyphens and start with a letter or digit." $name) }}
@@ -892,26 +699,10 @@
            second flag could leave a configured catalog inert. */ -}}
     {{- $configuredPolicyConfigMapRefs := dict }}
     {{- if hasKey $waf "configMapRefs" }}{{- $configuredPolicyConfigMapRefs = $waf.configMapRefs }}{{- end }}
-    {{- if not (kindIs "map" $configuredPolicyConfigMapRefs) }}
-      {{- fail "waf.policies.configMapRefs must be a map of catalog name to a source with namespace, name, and key fields." }}
-    {{- end }}
     {{- $policyConfigMapRefs := dict }}
     {{- $seenPolicyConfigMapRefs := dict }}
     {{- range $refName := (keys $configuredPolicyConfigMapRefs | sortAlpha) }}
       {{- $source := get $configuredPolicyConfigMapRefs $refName }}
-      {{- if not (kindIs "map" $source) }}
-        {{- fail (printf "waf.policies.configMapRefs.%s must be a map." $refName) }}
-      {{- end }}
-      {{- range $field := keys $source }}
-        {{- if not (has $field (list "namespace" "name" "key")) }}
-          {{- fail (printf "waf.policies.configMapRefs.%s contains unknown field %q. Valid fields: namespace, name, key." $refName $field) }}
-        {{- end }}
-      {{- end }}
-      {{- range $field := list "namespace" "name" "key" }}
-        {{- if and (hasKey $source $field) (not (kindIs "string" (index $source $field))) }}
-          {{- fail (printf "waf.policies.configMapRefs.%s.%s must be a string." $refName $field) }}
-        {{- end }}
-      {{- end }}
       {{- $namespace := ($source.namespace | default $.Release.Namespace | toString) }}
       {{- $name := ($source.name | default "" | toString) }}
       {{- $key := ($source.key | default "policies.yaml" | toString) }}
@@ -1114,7 +905,6 @@
                for the common case and never emits a field an older hub (before
                adaptive support) would have to tolerate. */}}
         {{- if hasKey $plugin "adaptiveConcurrency" }}
-          {{- if not (kindIs "bool" $plugin.adaptiveConcurrency) -}}{{- fail (printf "spoaHub.plugins.%s.adaptiveConcurrency must be a boolean." $name) -}}{{- end -}}
           {{- if $plugin.adaptiveConcurrency }}
             {{- $_ := set $entry "adaptiveConcurrency" true }}
           {{- end }}

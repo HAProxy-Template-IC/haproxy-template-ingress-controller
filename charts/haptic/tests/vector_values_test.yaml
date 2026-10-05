@@ -133,7 +133,7 @@ tests:
       vector.omitEmptyLogFields: "false"
     asserts:
       - failedTemplate:
-          errorMessage: 'vector.omitEmptyLogFields must be a boolean, got false.'
+          errorPattern: "at '/vector/omitEmptyLogFields': got string, want boolean"
 
   - it: should strip empty access-log fields by default
     template: haproxytemplateconfig.yaml
@@ -176,7 +176,7 @@ tests:
       vector.requestMetrics.terminationStateLabels: false
     asserts:
       - failedTemplate:
-          errorMessage: 'vector.requestMetrics contains unknown field "terminationStateLabels". Valid fields: enabled, prefix, controllerClass, terminationStateLabel, pathLabel, hostLabel, durationBuckets, sizeBuckets, cardinalityLimit, metrics.'
+          errorPattern: "at '/vector/requestMetrics': additional properties 'terminationStateLabels' not allowed"
 
   - it: should reject an unknown metric name rather than leaving it inert
     template: haproxytemplateconfig.yaml
@@ -186,7 +186,7 @@ tests:
       vector.requestMetrics.metrics.request_durations_seconds: true
     asserts:
       - failedTemplate:
-          errorMessage: 'vector.requestMetrics.metrics contains unknown metric "request_durations_seconds". Valid names: requests, request_duration_seconds, response_duration_seconds, connect_duration_seconds, header_duration_seconds, request_size, response_size.'
+          errorPattern: "at '/vector/requestMetrics/metrics': additional properties 'request_durations_seconds' not allowed"
 
   - it: should reject a label flag given as a string
     template: haproxytemplateconfig.yaml
@@ -196,7 +196,7 @@ tests:
       vector.requestMetrics.terminationStateLabel: "false"
     asserts:
       - failedTemplate:
-          errorMessage: 'vector.requestMetrics.terminationStateLabel must be a boolean, got false. A quoted "false" is truthy in the render and would leave the label on.'
+          errorPattern: "at '/vector/requestMetrics/terminationStateLabel': got string, want boolean"
 
   - it: should reject bucket boundaries that are not ascending
     template: haproxytemplateconfig.yaml

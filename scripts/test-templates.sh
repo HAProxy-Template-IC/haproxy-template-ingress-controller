@@ -659,7 +659,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set-json 'controller.config.templatingSettings.extraContext.accessLog={"maxLineBytes":32768,"fields":{"tenant":"req.hdr(X-Tenant)","region":"str(prod-eu)"}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject unknown accessLog fields" \
-        'extraContext.accessLog contains unknown field "fieldz". Valid fields: fields, maxLineBytes, suppress, targets.' \
+        "/extraContext/accessLog': additional properties 'fieldz' not allowed" \
         --set-string 'controller.config.templatingSettings.extraContext.accessLog.fieldz=x'
     run_helm_failure_guard \
         "Access-log Helm guard: reject an invalid JSON field name" \
@@ -689,15 +689,15 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set controller.config.templatingSettings.extraContext.accessLog.suppress.successful=true
     run_helm_failure_guard \
         "Access-log Helm guard: reject an unknown accessLog.suppress field" \
-        "suppress contains unknown field" \
+        "/accessLog/suppress': additional properties 'successfull' not allowed" \
         --set-json 'controller.config.templatingSettings.extraContext.accessLog.suppress={"successfull":true}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject a non-boolean accessLog.suppress.successful" \
-        "must be a boolean" \
+        "/accessLog/suppress/successful': got string, want boolean" \
         --set-string controller.config.templatingSettings.extraContext.accessLog.suppress.successful=maybe
     run_helm_failure_guard \
         "HAProxy Helm guard: reject an invalid agent log level" \
-        "haproxy.agent.logLevel" \
+        "/haproxy/agent/logLevel': value must be one of" \
         --set haproxy.agent.logLevel=verbose
     run_helm_failure_guard \
         "HAProxy Helm guard: reject the removed dataplane log level" \
@@ -788,7 +788,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set vector.podMonitor.enabled=true
     run_helm_failure_guard \
         "Prometheus exporter guard: reject an unknown field on an entry" \
-        "unknown field" \
+        "/excludeMetrics/serverBackendMax': additional properties 'enable' not allowed" \
         --set-json 'controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics={"serverBackendMax":{"enable":true}}'
     run_helm_failure_guard \
         "Prometheus exporter guard: reject an enabled entry with no families" \
@@ -796,7 +796,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set-json 'controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics={"mine":{"enabled":true}}'
     run_helm_failure_guard \
         "Prometheus exporter guard: reject a non-boolean enabled" \
-        "must be a boolean" \
+        "/excludeMetrics/mine/enabled': got string, want boolean" \
         --set-json 'controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics={"mine":{"enabled":"yes","families":["haproxy_x"]}}'
     run_helm_failure_guard \
         "Prometheus exporter guard: reject a family that is not a bare metric name" \
@@ -822,7 +822,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set-json 'controller.config.templatingSettings.extraContext.waf.policies.inline={"bad":{"allowedMethodz":["GET"]}}'
     run_helm_failure_guard \
         "WAF policy Helm guard: reject unknown ConfigMap reference fields" \
-        'waf.policies.configMapRefs.security contains unknown field "namespce". Valid fields: namespace, name, key.' \
+        "/configMapRefs/security': additional properties 'namespce' not allowed" \
         --set-string 'controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.name=policies' \
         --set-string 'controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.namespce=security'
     run_helm_failure_guard \
@@ -832,7 +832,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set controller.config.templatingSettings.extraContext.waf.policies.inline.baseline.enforcement=deny
     run_helm_failure_guard \
         "Shared rate-limit Helm guard: reject ambiguous legacy store ownership" \
-        'rateLimit.shared contains unknown field "store". Valid fields: enabled, failClosed, managedStore, externalStore.' \
+        "/rateLimit/shared': additional properties 'store' not allowed" \
         --set rateLimit.shared.store.enabled=false
     run_helm_failure_guard \
         "Shared rate-limit Helm guard: reject Redis CLI spelling in public values" \
@@ -840,7 +840,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set-string rateLimit.shared.managedStore.maxmemory=64mb
     run_helm_failure_guard \
         "Managed Valkey Helm guard: reject invalid image pull policy" \
-        "rateLimit.shared.managedStore.imagePullPolicy must be one of: Always, IfNotPresent, Never." \
+        "/rateLimit/shared/managedStore/imagePullPolicy': value must be one of 'Always', 'IfNotPresent', 'Never'" \
         --set-string rateLimit.shared.managedStore.imagePullPolicy=Sometimes
     # A values block left over from before the otel plugin was removed must fail
     # the render, not reach config.toml and fail when the hub tries to load a
@@ -853,7 +853,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     run_helm_failure_guard \
         "SPOA Hub Helm guard: reject zero HAProxy processing margin" \
         "spoaHub.haproxy.timeoutProcessingMarginMs must be between 1 and 60000 milliseconds." \
-        --set-string spoaHub.haproxy.timeoutProcessingMarginMs=0
+        --set spoaHub.haproxy.timeoutProcessingMarginMs=0
     # spoaHub.enabled=true with every plugin disabled used to render a sidecar
     # plus a bootstrap config the controller then orphan-deleted, and an
     # auto-wired validator entry pointing at a file no render produced.

@@ -122,7 +122,7 @@ tests:
   - it: names exactly one config, whatever libraries are enabled
     set:
       controller.templateLibraries.gateway.enabled: false
-      controller.templateLibraries.vector.enabled: false
+      vector.enabled: false
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name == "CRD_NAME")].value
@@ -236,7 +236,6 @@ tests:
   - it: should derive controller admission deadlines from custom API-server timeouts
     set:
       controller.webhook.timeoutSeconds: 7
-      controller.webhook.haproxyTemplateConfig.timeoutSeconds: 23
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_RESOURCE_ADMISSION_TIMEOUT")].value

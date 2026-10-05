@@ -145,7 +145,7 @@ tests:
       controller.config.templatingSettings.extraContext.http3.port: 443
     asserts:
       - failedTemplate:
-          errorMessage: 'controller.config.templatingSettings.extraContext.http3 contains unknown field "port". Valid fields: enabled, altSvc.'
+          errorPattern: "at '/controller/config/templatingSettings/extraContext/http3': additional properties 'port' not allowed"
 
   - it: should reject an unknown altSvc field
     templates:
@@ -154,7 +154,7 @@ tests:
       controller.config.templatingSettings.extraContext.http3.altSvc.persist: true
     asserts:
       - failedTemplate:
-          errorMessage: 'controller.config.templatingSettings.extraContext.http3.altSvc contains unknown field "persist". Valid fields: port, maxAge.'
+          errorPattern: "at '/controller/config/templatingSettings/extraContext/http3/altSvc': additional properties 'persist' not allowed"
 
   - it: should reject a non-boolean enabled
     templates:
@@ -163,7 +163,7 @@ tests:
       controller.config.templatingSettings.extraContext.http3.enabled: "yes"
     asserts:
       - failedTemplate:
-          errorMessage: "controller.config.templatingSettings.extraContext.http3.enabled must be a boolean."
+          errorPattern: "at '/controller/config/templatingSettings/extraContext/http3/enabled': got string, want boolean"
 
   - it: should reject an out-of-range altSvc port
     templates:

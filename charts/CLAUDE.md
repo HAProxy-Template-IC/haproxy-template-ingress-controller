@@ -169,7 +169,7 @@ Real examples in the source:
 - `charts/haptic/charts/base/library.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
 - `charts/haptic/charts/spoa-hub/` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
 
-Adding a new library: add a subchart under `charts/haptic/charts/<name>/` with a `library.yaml` (or an `_index.yaml` plus fragments), declare it in `Chart.yaml` `dependencies` with its `condition:`, give the library a `_helm_load:` block, and append `"subchart:<name>"` to the `$libraryFiles` list inside `haptic.prepareLibraries` in `_libraries.tpl`. The loader does not need a new branch, and the new library gets its own `HAProxyTemplateLibrary` object and its own `spec.libraryRefs` entry automatically. Update the expected object count in `tests/library_loader_test.yaml`.
+Adding a new library: add a subchart under `charts/haptic/charts/<name>/` with a `library.yaml` (or an `_index.yaml` plus fragments), declare it in `Chart.yaml` `dependencies` with its `condition:`, give the library a `_helm_load:` block, and append `"subchart:<name>"` to the `$libraryFiles` list inside `haptic.prepareLibraries` in `_libraries.tpl`. The loader does not need a new branch, and the new library gets its own `HAProxyTemplateLibrary` object and its own `spec.libraryRefs` entry automatically. Update the expected object count in `tests/library_loader_test.yaml`, and add the subchart name to `values.schema.extras.yaml` (see "Values schema" below).
 
 See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
@@ -250,6 +250,30 @@ governance:
 - **Lists inside a document that must round-trip through a non-Helm source.** `waf.policies.inline.<n>.ruleExclusions` is authored identically in `values.yaml`, a trusted ConfigMap catalog and a self-service catalog; only the first is Helm-merged, so a keyed map buys nothing and costs parity.
 
 Chart-generated projections already fronted by a values.yaml keyed map (`spoaHub.plugins`, `haproxyService.ports`) are already correct — the operator never edits the list.
+
+### Values schema (`values.schema.json`)
+
+`make chart-schema` generates `charts/haptic/values.schema.json` with
+[helm-values-schema-json](https://github.com/losisin/helm-values-schema-json)
+from `values.yaml` and `values.schema.extras.yaml`. Never edit the JSON;
+`make chart-schema-check` (part of `lint-chart`) fails when it drifts.
+
+- **Every object is closed** (`additionalProperties: false`). Mark a free-form map
+  or a Kubernetes passthrough (labels, `resources`, `affinity`, …) in values.yaml
+  with `# @schema skipProperties; additionalProperties: true`.
+- **Types come from the default.** Annotate where the default can't show the
+  accepted types: `type: [integer, null]`, a tpl string (`type: [boolean, string]`),
+  an empty list's `item:`.
+- **A key with no default** (optional, commented out in values.yaml) goes in
+  `values.schema.extras.yaml` with a sample value of its type.
+- **A removed or renamed key** goes in the extras as `anyOf: [{}]`, and its
+  `fail()` guard names the replacement. Helm validates the schema before any
+  template runs, so a key the schema rejects never reaches its guard.
+- **Helm guards don't repeat the schema.** No guard for an unknown field, a plain
+  type, or a bare enum; guards carry ranges, cross-field rules, and messages that
+  explain more than the allowed values.
+- **A new `Chart.yaml` dependency** needs its name in the extras: Helm adds
+  `<dependency>: {global: …}` to the parent's values before validating them.
 
 ### Split-library directories
 

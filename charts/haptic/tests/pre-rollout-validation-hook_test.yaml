@@ -1,0 +1,22 @@
+suite: pre-rollout validation hook
+templates:
+  - templates/pre-rollout-validation-hook.yaml
+  # Render the memo writers too; with the hook alone .Values holds no memos.
+  - templates/deployment.yaml
+  - templates/secret.yaml
+  - templates/webhook-cert-secret.yaml
+tests:
+  # The hook re-renders the chart with these values, so they must pass the
+  # values schema; render-time memos in .Values are not values.
+  - it: leaves render-time memos out of the values it validates
+    template: templates/pre-rollout-validation-hook.yaml
+    documentSelector:
+      path: kind
+      value: Secret
+    asserts:
+      - notMatchRegex:
+          path: stringData["values.yaml"]
+          pattern: "(?m)^_"
+      - matchRegex:
+          path: stringData["values.yaml"]
+          pattern: "(?m)^controller:"

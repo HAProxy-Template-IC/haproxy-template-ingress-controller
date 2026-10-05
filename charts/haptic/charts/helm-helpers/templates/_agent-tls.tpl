@@ -24,17 +24,6 @@
 
 {{- define "haptic.agentTLS.validate" -}}
 {{- $tls := .Values.haproxy.agent.tls -}}
-{{- if not (kindIs "map" $tls) -}}{{- fail "haproxy.agent.tls must be an object" -}}{{- end -}}
-{{- $fields := list "enabled" "managed" "issuerSecretName" "serverSecretName" "clientSecretName" "serverName" "clientName" "certValidityDays" "renewal" "certManager" -}}
-{{- range $field := keys $tls -}}
-  {{- if not (has $field $fields) -}}{{- fail (printf "haproxy.agent.tls contains unknown field %q" $field) -}}{{- end -}}
-{{- end -}}
-{{- range $field := list "enabled" "managed" -}}
-  {{- if not (kindIs "bool" (get $tls $field)) -}}{{- fail (printf "haproxy.agent.tls.%s must be a boolean" $field) -}}{{- end -}}
-{{- end -}}
-{{- range $field := list "issuerSecretName" "serverSecretName" "clientSecretName" "serverName" "clientName" -}}
-  {{- if not (kindIs "string" (get $tls $field)) -}}{{- fail (printf "haproxy.agent.tls.%s must be a string" $field) -}}{{- end -}}
-{{- end -}}
 {{- include "haptic.agentTLS.validateManager" . -}}
 {{- if $tls.enabled -}}
   {{- range $field := list "issuerSecretName" "serverSecretName" "clientSecretName" "serverName" "clientName" -}}
@@ -72,20 +61,6 @@
 
 {{- define "haptic.agentTLS.validateManager" -}}
 {{- $tls := .Values.haproxy.agent.tls -}}
-{{- if not (kindIs "map" $tls.certManager) -}}{{- fail "haproxy.agent.tls.certManager must be an object" -}}{{- end -}}
-{{- range $field := keys $tls.certManager -}}
-  {{- if not (has $field (list "enabled" "createIssuer" "issuerRef")) -}}{{- fail (printf "haproxy.agent.tls.certManager contains unknown field %q" $field) -}}{{- end -}}
-{{- end -}}
-{{- range $field := list "enabled" "createIssuer" -}}
-  {{- if not (kindIs "bool" (get $tls.certManager $field)) -}}{{- fail (printf "haproxy.agent.tls.certManager.%s must be a boolean" $field) -}}{{- end -}}
-{{- end -}}
-{{- if not (kindIs "map" $tls.certManager.issuerRef) -}}{{- fail "haproxy.agent.tls.certManager.issuerRef must be an object" -}}{{- end -}}
-{{- range $field := keys $tls.certManager.issuerRef -}}
-  {{- if not (has $field (list "name" "kind" "group")) -}}{{- fail (printf "haproxy.agent.tls.certManager.issuerRef contains unknown field %q" $field) -}}{{- end -}}
-{{- end -}}
-{{- range $field := list "name" "kind" "group" -}}
-  {{- if not (kindIs "string" (get $tls.certManager.issuerRef $field)) -}}{{- fail (printf "haproxy.agent.tls.certManager.issuerRef.%s must be a string" $field) -}}{{- end -}}
-{{- end -}}
 {{- if and $tls.enabled $tls.certManager.enabled -}}
   {{- if not $tls.managed -}}{{- fail "Agent cert-manager provisioning requires haproxy.agent.tls.managed=true" -}}{{- end -}}
   {{- if and $tls.certManager.createIssuer $tls.certManager.issuerRef.name -}}{{- fail "Set agent TLS certManager.createIssuer=false when selecting an existing issuer" -}}{{- end -}}
@@ -93,9 +68,4 @@
     {{- fail "External agent TLS issuerRef needs name, kind, and group" -}}
   {{- end -}}
 {{- end -}}
-{{- if not (kindIs "map" $tls.renewal) -}}{{- fail "haproxy.agent.tls.renewal must be an object" -}}{{- end -}}
-{{- range $field := keys $tls.renewal -}}
-  {{- if ne $field "resources" -}}{{- fail (printf "haproxy.agent.tls.renewal contains unknown field %q" $field) -}}{{- end -}}
-{{- end -}}
-{{- if not (kindIs "map" $tls.renewal.resources) -}}{{- fail "haproxy.agent.tls.renewal.resources must be an object" -}}{{- end -}}
 {{- end -}}

@@ -139,7 +139,7 @@ tests:
       controller.config.templatingSettings.extraContext.proxyProtocol.port: 8081
     asserts:
       - failedTemplate:
-          errorMessage: 'controller.config.templatingSettings.extraContext.proxyProtocol contains unknown field "port". Valid fields: enabled, httpPort, httpsPort.'
+          errorPattern: "at '/controller/config/templatingSettings/extraContext/proxyProtocol': additional properties 'port' not allowed"
 
   - it: should reject an out-of-range proxy-protocol port
     templates:

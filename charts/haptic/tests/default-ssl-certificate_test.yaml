@@ -77,7 +77,7 @@ tests:
       defaultSSLCertificate.secretNamespace: security
     asserts:
       - failedTemplate:
-          errorMessage: 'defaultSSLCertificate contains unknown field "secretNamespace".'
+          errorPattern: "at '/defaultSSLCertificate': additional properties 'secretNamespace' not allowed"
 
   - it: should reject two actors owning the same TLS Secret
     template: haproxytemplateconfig.yaml

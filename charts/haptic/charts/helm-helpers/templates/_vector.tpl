@@ -49,11 +49,6 @@ guard that lives only here would not protect a hand-written CR.
 */}}
 {{- define "haptic.vector.validateValues" -}}
 {{- $v := .Values.vector -}}
-{{- if not (kindIs "map" $v) -}}
-  {{- fail "vector must be a map." -}}
-{{- end -}}
-{{- /* `global` is Helm's, not the operator's: naming the subchart `vector` makes
-       Helm inject .Values.vector.global into its values namespace. */ -}}
 {{- /* Moved keys fail with the destination, not as "unknown field": HAProxy's
        exporter is scraped directly since the re-export was removed, and one
        PodMonitor now covers every endpoint on the HAProxy pod. */ -}}
@@ -65,15 +60,6 @@ guard that lives only here would not protect a hand-written CR.
 {{- end -}}
 {{- if hasKey $v "podMonitor" -}}
   {{- fail "vector.podMonitor moved to haproxy.monitoring.podMonitor: one PodMonitor now scrapes every metrics endpoint on the HAProxy pod — HAProxy's exporter (stats port), vector's endpoints and, without vector, the hub's. Same fields (enabled, interval, scrapeTimeout, labels, relabelings, metricRelabelings)." -}}
-{{- end -}}
-{{- range $field := keys $v -}}
-  {{- if eq $field "global" -}}{{- continue -}}{{- end -}}
-  {{- if not (has $field (list "enabled" "image" "metricsPort" "sizeMetricsPort" "socketPath" "scrapeIntervalSecs" "omitEmptyLogFields" "logMetrics" "requestMetrics" "resources" "securityContext" "extraVolumeMounts")) -}}
-    {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, sizeMetricsPort, socketPath, scrapeIntervalSecs, omitEmptyLogFields, logMetrics, requestMetrics, resources, securityContext, extraVolumeMounts." $field) -}}
-  {{- end -}}
-{{- end -}}
-{{- if not (kindIs "bool" $v.enabled) -}}
-  {{- fail "vector.enabled must be a boolean." -}}
 {{- end -}}
 {{- if $v.enabled -}}
   {{- /* Validate the dormant port too, before request_size activates its child listener. */ -}}
@@ -125,10 +111,6 @@ guard that lives only here would not protect a hand-written CR.
   {{- if eq (dir ($v.socketPath | toString)) "/" -}}
     {{- fail (printf "vector.socketPath must be inside a subdirectory, not directly at the filesystem root, got %q. The chart mounts the socket's parent directory as a shared emptyDir in both the haproxy and vector containers, so a parent of \"/\" would shadow their root filesystems. Use something like /run/vector/haproxy.sock." $v.socketPath) -}}
   {{- end -}}
-  {{- /* A truthy-looking string like "false" would silently enable the transform. */ -}}
-  {{- if not (kindIs "bool" $v.omitEmptyLogFields) -}}
-    {{- fail (printf "vector.omitEmptyLogFields must be a boolean, got %v." $v.omitEmptyLogFields) -}}
-  {{- end -}}
   {{- if lt ($v.scrapeIntervalSecs | int) 1 -}}
     {{- fail (printf "vector.scrapeIntervalSecs must be a positive integer, got %v." $v.scrapeIntervalSecs) -}}
   {{- end -}}
@@ -137,11 +119,6 @@ guard that lives only here would not protect a hand-written CR.
     {{- fail "vector.image.tag must be pinned to an explicit tag so a silent upstream bump can't change the log pipeline under a running fleet." -}}
   {{- end -}}
 {{- end -}}
-{{- end -}}
-
-{{/* The emitted name suffixes. Keep in step with values.yaml and vector.yaml. */}}
-{{- define "haptic.vector.requestMetricNames" -}}
-requests request_duration_seconds response_duration_seconds connect_duration_seconds header_duration_seconds request_size response_size
 {{- end -}}
 
 {{/* Shared by the container port, the PodMonitor endpoint and the projection, so
@@ -180,17 +157,6 @@ true
 {{/* Mirrored in the Scriggo library because a hand-written CR bypasses Helm. */}}
 {{- define "haptic.vector.validateRequestMetrics" -}}
 {{- $rm := .Values.vector.requestMetrics | default dict -}}
-{{- if not (kindIs "map" $rm) -}}
-  {{- fail "vector.requestMetrics must be a map." -}}
-{{- end -}}
-{{- range $field, $_ := $rm -}}
-  {{- if not (has $field (list "enabled" "prefix" "controllerClass" "terminationStateLabel" "pathLabel" "hostLabel" "durationBuckets" "sizeBuckets" "cardinalityLimit" "metrics")) -}}
-    {{- fail (printf "vector.requestMetrics contains unknown field %q. Valid fields: enabled, prefix, controllerClass, terminationStateLabel, pathLabel, hostLabel, durationBuckets, sizeBuckets, cardinalityLimit, metrics." $field) -}}
-  {{- end -}}
-{{- end -}}
-{{- if not (kindIs "bool" $rm.enabled) -}}
-  {{- fail (printf "vector.requestMetrics.enabled must be a boolean, got %v." $rm.enabled) -}}
-{{- end -}}
 {{- if $rm.enabled -}}
   {{- /* A trailing underscore is accepted (operators think of this as
          `nginx_ingress_controller_`) and stripped, so the name never doubles up. */ -}}
@@ -198,28 +164,15 @@ true
   {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $prefix) -}}
     {{- fail (printf "vector.requestMetrics.prefix must be a Prometheus metric-name prefix (letters, digits, underscore; not starting with a digit), got %q." $rm.prefix) -}}
   {{- end -}}
-  {{- /* Same reason as omitEmptyLogFields: a quoted "false" is truthy in
-         Scriggo, so a string here would silently keep the label on. */ -}}
-  {{- range $flag := list "terminationStateLabel" "pathLabel" "hostLabel" -}}
-    {{- if not (kindIs "bool" (index $rm $flag)) -}}
-      {{- fail (printf "vector.requestMetrics.%s must be a boolean, got %v. A quoted \"false\" is truthy in the render and would leave the label on." $flag (index $rm $flag)) -}}
-    {{- end -}}
-  {{- end -}}
   {{- /* `le` boundaries are cumulative: out of order the counts are nonsense and
          nothing reports it. */ -}}
   {{- range $which := list "durationBuckets" "sizeBuckets" -}}
     {{- $bs := index $rm $which -}}
-    {{- if not (kindIs "slice" $bs) -}}
-      {{- fail (printf "vector.requestMetrics.%s must be a list of numbers." $which) -}}
-    {{- end -}}
     {{- if eq (len $bs) 0 -}}
       {{- fail (printf "vector.requestMetrics.%s is empty. A histogram with no boundaries reports only +Inf, which carries no information beyond the count." $which) -}}
     {{- end -}}
     {{- $prev := 0.0 -}}
     {{- range $i, $b := $bs -}}
-      {{- if not (or (kindIs "float64" $b) (kindIs "int" $b) (kindIs "int64" $b)) -}}
-        {{- fail (printf "vector.requestMetrics.%s[%d] must be a number, got %v (%T). Quote-wrapped numbers reach vector as strings and fail its config load." $which $i $b $b) -}}
-      {{- end -}}
       {{- $f := $b | float64 -}}
       {{- if le $f 0.0 -}}
         {{- fail (printf "vector.requestMetrics.%s[%d] must be greater than zero, got %v." $which $i $b) -}}
@@ -236,17 +189,6 @@ true
     {{- end -}}
   {{- end -}}
   {{- $cl := $rm.cardinalityLimit | default dict -}}
-  {{- if not (kindIs "map" $cl) -}}
-    {{- fail "vector.requestMetrics.cardinalityLimit must be a map with `enabled`, `valueLimit` and `action`." -}}
-  {{- end -}}
-  {{- range $field, $_ := $cl -}}
-    {{- if not (has $field (list "enabled" "valueLimit" "action")) -}}
-      {{- fail (printf "vector.requestMetrics.cardinalityLimit contains unknown field %q. Valid fields: enabled, valueLimit, action." $field) -}}
-    {{- end -}}
-  {{- end -}}
-  {{- if not (kindIs "bool" $cl.enabled) -}}
-    {{- fail (printf "vector.requestMetrics.cardinalityLimit.enabled must be a boolean, got %v." $cl.enabled) -}}
-  {{- end -}}
   {{- if $cl.enabled -}}
     {{- if lt ($cl.valueLimit | int) 1 -}}
       {{- fail (printf "vector.requestMetrics.cardinalityLimit.valueLimit must be a positive integer, got %v." $cl.valueLimit) -}}
@@ -255,19 +197,9 @@ true
       {{- fail (printf "vector.requestMetrics.cardinalityLimit.action must be \"drop_tag\" or \"drop_event\", got %q. drop_tag collapses the runaway label and keeps the totals; drop_event discards the requests, so a cardinality problem would read as an outage." $cl.action) -}}
     {{- end -}}
   {{- end -}}
-  {{- $known := splitList " " (include "haptic.vector.requestMetricNames" .) -}}
   {{- $m := $rm.metrics | default dict -}}
-  {{- if not (kindIs "map" $m) -}}
-    {{- fail "vector.requestMetrics.metrics must be a map of metric name to boolean." -}}
-  {{- end -}}
   {{- $on := 0 -}}
   {{- range $name, $val := $m -}}
-    {{- if not (has $name $known) -}}
-      {{- fail (printf "vector.requestMetrics.metrics contains unknown metric %q. Valid names: %s." $name (join ", " $known)) -}}
-    {{- end -}}
-    {{- if not (kindIs "bool" $val) -}}
-      {{- fail (printf "vector.requestMetrics.metrics.%s must be a boolean, got %v." $name $val) -}}
-    {{- end -}}
     {{- if $val -}}
       {{- $on = add1 $on -}}
     {{- end -}}

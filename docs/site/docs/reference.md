@@ -4,6 +4,11 @@ Look up a Helm value's type, default, and behavior. Put these values in the file
 you pass to `helm install` or `helm upgrade`; see [Deploying with Helm](deploying-with-helm.md)
 for complete commands.
 
+The chart's values schema rejects unknown keys and values of the wrong type, so a
+misspelled key fails the install instead of being ignored. Free-form maps, such
+as labels, annotations, `resources`, and the top level of
+`controller.config.templatingSettings.extraContext`, accept any key.
+
 ## CRD lifecycle
 
 Helm installs the CRDs in `crds/` once and never upgrades them on a subsequent
@@ -233,40 +238,48 @@ Each value of `rules` is an object:
 | `message` | string | Custom violation message (optional) |
 
 ```yaml
-governance:
-  enabled: true
-  exemptNamespaces: [kube-system]
-  rules:
-    # Inject a default per-source rate limit; clamp anything above the ceiling.
-    rate-limit-floor:
-      enabled: true
-      resource: ingresses
-      path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
-      default: "100"
-      max: 10000
-      onViolation: clamp
-    # Require a WAF policy annotation on every HTTPRoute (cross-resource).
-    httproute-waf-policy:
-      enabled: true
-      resource: httproutes
-      path: metadata.annotations['haproxy-haptic.org/waf-policy']
-      required: true
-      enforcement: audit
-    # Require TLS (spec.tls or the chart-wide default HTTPS satisfies it).
-    ingress-tls:
-      enabled: true
-      resource: ingresses
-      satisfiedBy: tls
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        governance:
+          enabled: true
+          exemptNamespaces: [kube-system]
+          rules:
+            # Inject a default per-source rate limit; clamp anything above the ceiling.
+            rate-limit-floor:
+              enabled: true
+              resource: ingresses
+              path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+              default: "100"
+              max: 10000
+              onViolation: clamp
+            # Require a WAF policy annotation on every HTTPRoute (cross-resource).
+            httproute-waf-policy:
+              enabled: true
+              resource: httproutes
+              path: metadata.annotations['haproxy-haptic.org/waf-policy']
+              required: true
+              enforcement: audit
+            # Require TLS (spec.tls or the chart-wide default HTTPS satisfies it).
+            ingress-tls:
+              enabled: true
+              resource: ingresses
+              satisfiedBy: tls
 ```
 
 To switch off a single rule — including one a template library ships — set its
 `enabled` to `false`. You don't restate the others:
 
 ```yaml
-governance:
-  rules:
-    haptic-compress-enable:
-      enabled: false
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        governance:
+          rules:
+            haptic-compress-enable:
+              enabled: false
 ```
 
 ## Routing behavior
