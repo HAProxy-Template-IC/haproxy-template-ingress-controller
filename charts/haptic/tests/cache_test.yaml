@@ -37,7 +37,7 @@ tests:
       cache.varnish.lockSharedMemory: true
     asserts:
       - failedTemplate:
-          errorMessage: 'cache.varnish contains unknown field "lockSharedMemory".'
+          errorPattern: "at '/cache/varnish': additional properties 'lockSharedMemory' not allowed"
 
   - it: should reject the former controller-owned cache path
     template: haproxytemplateconfig.yaml
@@ -95,7 +95,7 @@ tests:
       cache.varnish.autoscaling.scaleDownStabilisationSeconds: 60
     asserts:
       - failedTemplate:
-          errorMessage: 'cache.varnish.autoscaling contains unknown field "scaleDownStabilisationSeconds".'
+          errorPattern: "at '/cache/varnish/autoscaling': additional properties 'scaleDownStabilisationSeconds' not allowed"
 
   - it: should reject an invalid staged Varnish pull policy while disabled
     template: haproxytemplateconfig.yaml
@@ -103,7 +103,7 @@ tests:
       cache.varnish.imagePullPolicy: Sometimes
     asserts:
       - failedTemplate:
-          errorMessage: "cache.varnish.imagePullPolicy must be one of: Always, IfNotPresent, Never."
+          errorPattern: "at '/cache/varnish/imagePullPolicy': value must be one of 'Always', 'IfNotPresent', 'Never'"
 
   - it: should reject a disruption budget that permits every minimum replica to disappear
     template: haproxytemplateconfig.yaml

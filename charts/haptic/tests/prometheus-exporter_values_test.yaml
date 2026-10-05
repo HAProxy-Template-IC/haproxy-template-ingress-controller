@@ -108,7 +108,7 @@ tests:
       controller.config.templatingSettings.extraContext.prometheusExporter.excludeMaintServers: "false"
     asserts:
       - failedTemplate:
-          errorPattern: 'prometheusExporter\.excludeMaintServers must be a boolean'
+          errorPattern: "at '/controller/config/templatingSettings/extraContext/prometheusExporter/excludeMaintServers': got string, want boolean"
 
   - it: should reject an unknown prometheusExporter field
     template: haproxytemplateconfig.yaml
@@ -116,7 +116,7 @@ tests:
       controller.config.templatingSettings.extraContext.prometheusExporter.noMaint: true
     asserts:
       - failedTemplate:
-          errorPattern: 'prometheusExporter contains unknown field "noMaint"'
+          errorPattern: "at '/controller/config/templatingSettings/extraContext/prometheusExporter': additional properties 'noMaint' not allowed"
 
   - it: should reject a requires that is not a dotted path
     template: haproxytemplateconfig.yaml

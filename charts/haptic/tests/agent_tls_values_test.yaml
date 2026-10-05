@@ -59,14 +59,14 @@ tests:
       haproxy.agent.tls.insecureSkipVerify: true
     asserts:
       - failedTemplate:
-          errorMessage: 'haproxy.agent.tls contains unknown field "insecureSkipVerify"'
+          errorPattern: "at '/haproxy/agent/tls': additional properties 'insecureSkipVerify' not allowed"
   - it: should reject non-boolean enabled values
     template: haproxytemplateconfig.yaml
     set:
       haproxy.agent.tls.enabled: "false"
     asserts:
       - failedTemplate:
-          errorMessage: haproxy.agent.tls.enabled must be a boolean
+          errorPattern: "at '/haproxy/agent/tls/enabled': got string, want boolean"
   - it: should reject invalid certificate lifetimes
     template: haproxytemplateconfig.yaml
     set:

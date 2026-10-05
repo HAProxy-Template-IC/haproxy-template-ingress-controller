@@ -122,11 +122,7 @@ so HAProxy and the plugin cannot disagree about bytes that are available.
 {{- define "haptic.requestBodyInspection.capacity" -}}
 {{- $configuredExtraContext := dig "templatingSettings" "extraContext" dict (.Values.controller.config | default dict) -}}
 {{- $inspection := dig "requestBodyInspection" dict $configuredExtraContext -}}
-{{- if not (kindIs "map" $inspection) -}}{{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection must be a map." -}}{{- end -}}
-{{- range $field := keys $inspection -}}{{- if ne $field "haproxyBuffer" -}}{{- fail (printf "controller.config.templatingSettings.extraContext.requestBodyInspection contains unknown field %q. Valid field: haproxyBuffer." $field) -}}{{- end -}}{{- end -}}
 {{- $buffer := dig "haproxyBuffer" dict $inspection -}}
-{{- if not (kindIs "map" $buffer) -}}{{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer must be a map." -}}{{- end -}}
-{{- range $field := keys $buffer -}}{{- if not (has $field (list "sizeBytes" "reservedBytes")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer contains unknown field %q. Valid fields: sizeBytes, reservedBytes." $field) -}}{{- end -}}{{- end -}}
 {{- $sizeRaw := dig "sizeBytes" 16384 $buffer | toString -}}
 {{- $reservedRaw := dig "reservedBytes" 8192 $buffer | toString -}}
 {{- if not (regexMatch "^[0-9]+$" $sizeRaw) -}}{{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be an integer between 16384 and 2097152 bytes." -}}{{- end -}}
@@ -147,39 +143,17 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- define "haptic.spoaHub.validateValues" -}}
 {{- $root := . -}}
 {{- $spoa := $root.Values.spoaHub -}}
-{{- if not (kindIs "map" $spoa) -}}
-  {{- fail "spoaHub must be a map." -}}
-{{- end -}}
 {{- if hasKey $spoa "monitoring" -}}
   {{- fail "spoaHub.monitoring moved to haproxy.monitoring: one PodMonitor (haproxy.monitoring.podMonitor) now scrapes every metrics endpoint on the HAProxy pod — HAProxy's exporter, vector's endpoints and, without vector, the hub's. Same podMonitor fields." -}}
 {{- end -}}
-{{- range $field := keys $spoa -}}
-  {{- if not (has $field (list "enabled" "image" "resources" "hub" "haproxy" "plugins" "securityContext" "extraVolumeMounts")) -}}
-    {{- fail (printf "spoaHub contains unknown field %q." $field) -}}
-  {{- end -}}
-{{- end -}}
-{{- if and (ne $spoa.enabled nil) (not (kindIs "bool" $spoa.enabled)) -}}
-  {{- fail "spoaHub.enabled must be a boolean or null." -}}
-{{- end -}}
 
 {{- $hub := $spoa.hub | default dict -}}
-{{- if not (kindIs "map" $hub) -}}{{- fail "spoaHub.hub must be a map." -}}{{- end -}}
-{{- range $field := keys $hub -}}
-  {{- if not (has $field (list "logLevel" "workerThreads" "maxConnections" "blockingThreadKeepAliveSecs" "maxBlockingThreads" "reloadDrainTimeoutMs" "metricsAddr" "goGCPercent")) -}}
-    {{- fail (printf "spoaHub.hub contains unknown field %q. Valid fields: logLevel, workerThreads, maxConnections, blockingThreadKeepAliveSecs, maxBlockingThreads, reloadDrainTimeoutMs, metricsAddr, goGCPercent." $field) -}}
-  {{- end -}}
-{{- end -}}
-{{- if not (kindIs "string" $hub.logLevel) -}}{{- fail "spoaHub.hub.logLevel must be a string." -}}{{- end -}}
-{{- if not (has $hub.logLevel (list "trace" "debug" "info" "warn" "error")) -}}
-  {{- fail "spoaHub.hub.logLevel must be one of: trace, debug, info, warn, error." -}}
-{{- end -}}
 {{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "maxConnections" "min" 1) -}}
 {{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "blockingThreadKeepAliveSecs" "min" 1) -}}
 {{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "goGCPercent" "min" 1) -}}
 {{- if ne $hub.workerThreads nil -}}{{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "workerThreads" "min" 1) -}}{{- end -}}
 {{- if ne $hub.maxBlockingThreads nil -}}{{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "maxBlockingThreads" "min" 1) -}}{{- end -}}
 {{- if ne $hub.reloadDrainTimeoutMs nil -}}{{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "reloadDrainTimeoutMs" "min" 0) -}}{{- end -}}
-{{- if not (kindIs "string" $hub.metricsAddr) -}}{{- fail "spoaHub.hub.metricsAddr must be a string." -}}{{- end -}}
 {{- /* `auto` is the default sentinel: it resolves to a loopback bind when the
        vector sidecar fronts the metrics and a pod-routable one when it doesn't.
        Validate the RESOLVED value so an operator's explicit address still gets
@@ -194,17 +168,9 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- end -}}
 
 {{- $haproxy := $spoa.haproxy | default dict -}}
-{{- if not (kindIs "map" $haproxy) -}}{{- fail "spoaHub.haproxy must be a map." -}}{{- end -}}
-{{- range $field := keys $haproxy -}}
-  {{- if not (has $field (list "socketPath" "modeSpop" "timeoutHello" "timeoutIdle" "timeoutProcessing" "timeoutProcessingMarginMs" "poolMaxConn" "poolPurgeDelay")) -}}
-    {{- fail (printf "spoaHub.haproxy contains unknown field %q. Valid fields: socketPath, modeSpop, timeoutHello, timeoutIdle, timeoutProcessing, timeoutProcessingMarginMs, poolMaxConn, poolPurgeDelay." $field) -}}
-  {{- end -}}
-{{- end -}}
-{{- if not (kindIs "string" $haproxy.socketPath) -}}{{- fail "spoaHub.haproxy.socketPath must be a string." -}}{{- end -}}
 {{- if not (regexMatch "^/run/spoa/[A-Za-z0-9._-]+\\.sock$" $haproxy.socketPath) -}}
   {{- fail "spoaHub.haproxy.socketPath must name a .sock file directly under the chart's shared /run/spoa mount." -}}
 {{- end -}}
-{{- if not (kindIs "bool" $haproxy.modeSpop) -}}{{- fail "spoaHub.haproxy.modeSpop must be a boolean." -}}{{- end -}}
 {{- $_ := include "haptic.spoaHub.duration" (dict "value" $haproxy.timeoutHello "field" "spoaHub.haproxy.timeoutHello") -}}
 {{- $_ := include "haptic.spoaHub.duration" (dict "value" $haproxy.timeoutIdle "field" "spoaHub.haproxy.timeoutIdle") -}}
 {{- if ne $haproxy.timeoutProcessing nil -}}{{- $_ := include "haptic.spoaHub.duration" (dict "value" $haproxy.timeoutProcessing "field" "spoaHub.haproxy.timeoutProcessing") -}}{{- end -}}
@@ -220,13 +186,11 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- end -}}
 
 {{- $plugins := $spoa.plugins | default dict -}}
-{{- if not (kindIs "map" $plugins) -}}{{- fail "spoaHub.plugins must be a map." -}}{{- end -}}
 {{- $normalizedNames := dict -}}
 {{- $enabledNames := dict -}}
 {{- $enabledConcurrency := 0 -}}
 {{- range $name, $plugin := $plugins -}}
   {{- if not (regexMatch "^[a-z][a-z0-9-]*$" $name) -}}{{- fail (printf "spoaHub.plugins key %q must contain lowercase letters, digits, and hyphens and start with a letter." $name) -}}{{- end -}}
-  {{- if not (kindIs "map" $plugin) -}}{{- fail (printf "spoaHub.plugins.%s must be a map." $name) -}}{{- end -}}
   {{- /* Migration guard, not a general name allowlist — a custom hub image may
          legitimately ship plugins this chart has never heard of. Without it a
          values block left over from before the otel plugin was removed renders
@@ -240,30 +204,19 @@ objects such as resources/securityContext; the apiserver owns those schemas.
   {{- $normalizedName := regexReplaceAll "-" $name "_" -}}
   {{- if hasKey $normalizedNames $normalizedName -}}{{- fail (printf "spoaHub plugin names %q and %q both normalize to %q; choose distinct names." (index $normalizedNames $normalizedName) $name $normalizedName) -}}{{- end -}}
   {{- $_ := set $normalizedNames $normalizedName $name -}}
-  {{- $allowedFields := list "enabled" "timeoutMs" "messages" "dependsOn" "maxConcurrency" "maxQueue" "queueTimeoutMs" "adaptiveConcurrency" "params" -}}
-  {{- if eq $name "coraza" -}}{{- $allowedFields = append $allowedFields "directives" -}}{{- end -}}
-  {{- if eq $name "mirror" -}}{{- $allowedFields = concat $allowedFields (list "targetTimeoutMs" "targetRetries") -}}{{- end -}}
-  {{- if eq $name "rate-limit" -}}{{- $allowedFields = append $allowedFields "storeOperationTimeoutMs" -}}{{- end -}}
-  {{- range $field := keys $plugin -}}
-    {{- if not (has $field $allowedFields) -}}{{- fail (printf "spoaHub.plugins.%s contains unknown field %q. Plugin runtime settings belong inside params." $name $field) -}}{{- end -}}
-  {{- end -}}
   {{- $enabled := include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $root "name" $name) -}}
   {{- if $enabled -}}{{- $_ := set $enabledNames $normalizedName true -}}{{- end -}}
   {{- if not (hasKey $plugin "timeoutMs") -}}{{- fail (printf "spoaHub.plugins.%s.timeoutMs is required so every plugin has an explicit request-path deadline." $name) -}}{{- end -}}
   {{- $_ := include "haptic.spoaHub.pluginTimeoutMs" (dict "plugin" $plugin "root" $root "name" $name) -}}
-  {{- if not (kindIs "slice" $plugin.messages) -}}{{- fail (printf "spoaHub.plugins.%s.messages must be a list." $name) -}}{{- end -}}
   {{- if and $enabled (eq (len $plugin.messages) 0) -}}{{- fail (printf "spoaHub.plugins.%s.messages must contain at least one message while the plugin is enabled." $name) -}}{{- end -}}
   {{- $seenMessages := dict -}}
   {{- range $message := $plugin.messages -}}
-    {{- if not (kindIs "string" $message) -}}{{- fail (printf "spoaHub.plugins.%s.messages entries must be strings." $name) -}}{{- end -}}
     {{- if not (regexMatch "^[A-Za-z][A-Za-z0-9_-]*$" $message) -}}{{- fail (printf "spoaHub.plugins.%s message %q contains unsupported characters." $name $message) -}}{{- end -}}
     {{- if hasKey $seenMessages $message -}}{{- fail (printf "spoaHub.plugins.%s.messages contains duplicate %q." $name $message) -}}{{- end -}}
     {{- $_ := set $seenMessages $message true -}}
   {{- end -}}
   {{- $dependencies := $plugin.dependsOn | default list -}}
-  {{- if not (kindIs "slice" $dependencies) -}}{{- fail (printf "spoaHub.plugins.%s.dependsOn must be a list." $name) -}}{{- end -}}
   {{- range $dependency := $dependencies -}}
-    {{- if not (kindIs "string" $dependency) -}}{{- fail (printf "spoaHub.plugins.%s.dependsOn entries must be strings." $name) -}}{{- end -}}
     {{- if not (regexMatch "^[a-z][a-z0-9-]*$" $dependency) -}}{{- fail (printf "spoaHub.plugins.%s dependency %q is not a valid plugin name." $name $dependency) -}}{{- end -}}
   {{- end -}}
   {{- $maxConcurrency := 0 -}}
@@ -277,8 +230,6 @@ objects such as resources/securityContext; the apiserver owns those schemas.
     {{- $_ := include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $root "name" $name "field" "queueTimeoutMs" "min" 1) -}}
     {{- if eq $maxQueue 0 -}}{{- fail (printf "spoaHub.plugins.%s.queueTimeoutMs has no effect when maxQueue is zero; remove it or configure a bounded queue." $name) -}}{{- end -}}
   {{- end -}}
-  {{- if and (hasKey $plugin "params") (not (kindIs "string" $plugin.params)) -}}{{- fail (printf "spoaHub.plugins.%s.params must be a TOML string." $name) -}}{{- end -}}
-  {{- if and (eq $name "coraza") (hasKey $plugin "directives") (not (kindIs "string" $plugin.directives)) -}}{{- fail "spoaHub.plugins.coraza.directives must be a string." -}}{{- end -}}
   {{- if eq $name "mirror" -}}
     {{- if not (hasKey $plugin "targetTimeoutMs") -}}{{- fail "spoaHub.plugins.mirror.targetTimeoutMs is required." -}}{{- end -}}
     {{- if not (hasKey $plugin "targetRetries") -}}{{- fail "spoaHub.plugins.mirror.targetRetries is required." -}}{{- end -}}
@@ -461,7 +412,6 @@ max_queue = {{ include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "ro
 queue_timeout_ms = {{ include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $ "name" $name "field" "queueTimeoutMs" "min" 1) }}
 {{- end }}
 {{- if hasKey $plugin "adaptiveConcurrency" }}
-{{- if not (kindIs "bool" $plugin.adaptiveConcurrency) -}}{{- fail (printf "spoaHub.plugins.%s.adaptiveConcurrency must be a boolean." $name) -}}{{- end -}}
 {{- if $plugin.adaptiveConcurrency }}
 adaptive_concurrency = true
 {{- end }}
@@ -511,25 +461,12 @@ enabled months later.
 */}}
 {{- define "haptic.rateLimit.validateValues" -}}
 {{- $rateLimit := .Values.rateLimit -}}
-{{- if not (kindIs "map" $rateLimit) -}}{{- fail "rateLimit must be a map." -}}{{- end -}}
-{{- range $field := keys $rateLimit -}}
-  {{- if ne $field "shared" -}}{{- fail (printf "rateLimit contains unknown field %q. Valid field: shared." $field) -}}{{- end -}}
-{{- end -}}
 {{- $shared := $rateLimit.shared | default dict -}}
-{{- if not (kindIs "map" $shared) -}}{{- fail "rateLimit.shared must be a map." -}}{{- end -}}
-{{- range $field := keys $shared -}}{{- if not (has $field (list "enabled" "failClosed" "managedStore" "externalStore")) -}}{{- fail (printf "rateLimit.shared contains unknown field %q. Valid fields: enabled, failClosed, managedStore, externalStore." $field) -}}{{- end -}}{{- end -}}
-{{- if not (kindIs "bool" $shared.enabled) -}}{{- fail "rateLimit.shared.enabled must be a boolean." -}}{{- end -}}
-{{- if not (kindIs "bool" $shared.failClosed) -}}{{- fail "rateLimit.shared.failClosed must be a boolean." -}}{{- end -}}
 
 {{- $external := dict -}}
 {{- if hasKey $shared "externalStore" -}}{{- $external = $shared.externalStore -}}{{- end -}}
-{{- if not (kindIs "map" $external) -}}{{- fail "rateLimit.shared.externalStore must be a map." -}}{{- end -}}
-{{- range $field := keys $external -}}
-  {{- if ne $field "urls" -}}{{- fail (printf "rateLimit.shared.externalStore contains unknown field %q. Valid field: urls." $field) -}}{{- end -}}
-{{- end -}}
 {{- $externalURLs := list -}}
 {{- if hasKey $external "urls" -}}{{- $externalURLs = $external.urls -}}{{- end -}}
-{{- if not (kindIs "slice" $externalURLs) -}}{{- fail "rateLimit.shared.externalStore.urls must be a list of Redis/Valkey URLs." -}}{{- end -}}
 {{- if gt (len $externalURLs) 1 -}}
   {{- fail "rateLimit.shared.externalStore.urls accepts one endpoint. Multiple URLs share one plugin circuit breaker, so one failed shard disables all shards. Use one HA Redis/Valkey/Sentinel/Cluster endpoint." -}}
 {{- end -}}
@@ -538,19 +475,11 @@ enabled months later.
 {{- end -}}
 
 {{- $store := $shared.managedStore | default dict -}}
-{{- if not (kindIs "map" $store) -}}{{- fail "rateLimit.shared.managedStore must be a map." -}}{{- end -}}
-{{- range $field := keys $store -}}
-  {{- if has $field (list "maxmemory" "maxmemoryPolicy") -}}{{- fail "rateLimit.shared.managedStore.maxmemory and maxmemoryPolicy were renamed to maxMemory and maxMemoryPolicy to follow the chart's camelCase value convention." -}}{{- end -}}
-  {{- if not (has $field (list "enabled" "image" "imagePullPolicy" "port" "replicas" "maxMemory" "maxMemoryPolicy" "sentinel" "podDisruptionBudget" "networkPolicy" "resources")) -}}
-    {{- fail (printf "rateLimit.shared.managedStore contains unknown field %q." $field) -}}
-  {{- end -}}
-{{- end -}}
-{{- if not (kindIs "bool" $store.enabled) -}}{{- fail "rateLimit.shared.managedStore.enabled must be a boolean." -}}{{- end -}}
+{{- if or (hasKey $store "maxmemory") (hasKey $store "maxmemoryPolicy") -}}{{- fail "rateLimit.shared.managedStore.maxmemory and maxmemoryPolicy were renamed to maxMemory and maxMemoryPolicy to follow the chart's camelCase value convention." -}}{{- end -}}
 {{- if and $store.enabled (gt (len $externalURLs) 0) -}}
   {{- fail "rateLimit.shared.managedStore.enabled=true and rateLimit.shared.externalStore.urls are mutually exclusive; disable the managed store to bring your own Redis/Valkey." -}}
 {{- end -}}
 {{- if or (not (kindIs "string" $store.image)) (eq (trim $store.image) "") -}}{{- fail "rateLimit.shared.managedStore.image must be a non-empty image reference string." -}}{{- end -}}
-{{- if or (not (kindIs "string" $store.imagePullPolicy)) (not (has $store.imagePullPolicy (list "Always" "IfNotPresent" "Never"))) -}}{{- fail "rateLimit.shared.managedStore.imagePullPolicy must be one of: Always, IfNotPresent, Never." -}}{{- end -}}
 {{- if not (regexMatch "^[0-9]+$" (toString $store.port)) -}}{{- fail "rateLimit.shared.managedStore.port must be an integer between 1 and 65535." -}}{{- end -}}
 {{- $port := int $store.port -}}
 {{- if or (lt $port 1) (gt $port 65535) -}}{{- fail "rateLimit.shared.managedStore.port must be between 1 and 65535." -}}{{- end -}}
@@ -565,10 +494,6 @@ enabled months later.
 {{- end -}}
 
 {{- $sentinel := $store.sentinel | default dict -}}
-{{- if not (kindIs "map" $sentinel) -}}{{- fail "rateLimit.shared.managedStore.sentinel must be a map." -}}{{- end -}}
-{{- range $field := keys $sentinel -}}
-  {{- if not (has $field (list "port" "quorum" "downAfterMilliseconds" "failoverTimeoutMilliseconds" "parallelSyncs" "resources")) -}}{{- fail (printf "rateLimit.shared.managedStore.sentinel contains unknown field %q." $field) -}}{{- end -}}
-{{- end -}}
 {{- range $field := list "port" "quorum" "downAfterMilliseconds" "failoverTimeoutMilliseconds" "parallelSyncs" -}}
   {{- if not (regexMatch "^[0-9]+$" (toString (index $sentinel $field))) -}}{{- fail (printf "rateLimit.shared.managedStore.sentinel.%s must be a positive integer." $field) -}}{{- end -}}
 {{- end -}}
@@ -585,18 +510,12 @@ enabled months later.
 {{- if or (lt $parallelSyncs 1) (ge $parallelSyncs $replicas) -}}{{- fail "rateLimit.shared.managedStore.sentinel.parallelSyncs must be between 1 and replicas minus 1." -}}{{- end -}}
 
 {{- $pdb := $store.podDisruptionBudget | default dict -}}
-{{- if not (kindIs "map" $pdb) -}}{{- fail "rateLimit.shared.managedStore.podDisruptionBudget must be a map." -}}{{- end -}}
-{{- range $field := keys $pdb -}}{{- if not (has $field (list "enabled" "maxUnavailable")) -}}{{- fail (printf "rateLimit.shared.managedStore.podDisruptionBudget contains unknown field %q. Valid fields: enabled, maxUnavailable." $field) -}}{{- end -}}{{- end -}}
-{{- if not (kindIs "bool" $pdb.enabled) -}}{{- fail "rateLimit.shared.managedStore.podDisruptionBudget.enabled must be a boolean." -}}{{- end -}}
 {{- if not (regexMatch "^[0-9]+$" (toString $pdb.maxUnavailable)) -}}{{- fail "rateLimit.shared.managedStore.podDisruptionBudget.maxUnavailable must be a non-negative integer." -}}{{- end -}}
 {{- $maxUnavailable := int $pdb.maxUnavailable -}}
 {{- if gt $maxUnavailable (sub $replicas $quorum) -}}
   {{- fail "rateLimit.shared.managedStore.podDisruptionBudget.maxUnavailable must not exceed replicas minus Sentinel quorum, so voluntary disruptions preserve failover quorum." -}}
 {{- end -}}
 {{- $networkPolicy := $store.networkPolicy | default dict -}}
-{{- if not (kindIs "map" $networkPolicy) -}}{{- fail "rateLimit.shared.managedStore.networkPolicy must be a map." -}}{{- end -}}
-{{- range $field := keys $networkPolicy -}}{{- if ne $field "enabled" -}}{{- fail (printf "rateLimit.shared.managedStore.networkPolicy contains unknown field %q. Valid field: enabled." $field) -}}{{- end -}}{{- end -}}
-{{- if not (kindIs "bool" $networkPolicy.enabled) -}}{{- fail "rateLimit.shared.managedStore.networkPolicy.enabled must be a boolean." -}}{{- end -}}
 {{- end }}
 
 {{- define "haptic.rateLimit.storeSentinelServiceName" -}}
@@ -729,9 +648,6 @@ is a sentinel rather than a plain default because `""` is already taken to mean
 {{- $plugin := default dict .plugin -}}
 {{- $rawParams := "" -}}
 {{- if hasKey $plugin "params" -}}
-  {{- if not (kindIs "string" $plugin.params) -}}
-    {{- fail (printf "spoaHub.plugins.%s.params must be a TOML string." $name) -}}
-  {{- end -}}
   {{- $rawParams = $plugin.params -}}
 {{- end -}}
 {{- $params := $rawParams -}}

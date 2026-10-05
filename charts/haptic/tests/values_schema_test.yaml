@@ -1,0 +1,190 @@
+suite: values schema
+templates:
+  - templates/haproxytemplateconfig.yaml
+tests:
+  - it: rejects an unknown root key
+    set:
+      replicas: 3
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '': additional properties 'replicas' not allowed"
+
+  - it: rejects an unknown nested key
+    set:
+      haproxy.service.tpye: LoadBalancer
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/haproxy/service': additional properties 'tpye' not allowed"
+
+  - it: rejects a quoted number
+    set:
+      haproxy.ports.http: "80"
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/haproxy/ports/http': got string, want integer"
+
+  - it: rejects a value outside an enum
+    set:
+      controller.image.pullPolicy: Sometimes
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/controller/image/pullPolicy': value must be one of"
+
+  - it: accepts any key in free-form maps
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      commonLabels.team: platform
+      controller.resources.limits.cpu: 2
+      controller.podSpec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms: []
+      haproxy.podSpec.podSecurityContext.supplementalGroups: [1000]
+      controller.networkPolicy.ingress.webhook.from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      controller.config.templatingSettings.extraContext.myTemplateSetting: 42
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.myTemplateSetting
+          value: 42
+
+  - it: accepts the optional keys values.yaml leaves unset
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      haproxy.nbthread: 4
+      haproxy.shmStats.shmSizeLimit: 256Mi
+      controller.podDisruptionBudget.maxUnavailable: 1
+      controller.config.logging.level: DEBUG
+      controller.config.dataplane.syncTimeout: 2m
+      controller.config.templatingSettings.extraContext.tracing.otlp.clusterName: prod
+      controller.config.templatingSettings.extraContext.tls.minVersion: TLSv1.3
+      spoaHub.plugins.maxmind.maxQueue: 8
+      spoaHub.plugins.maxmind.queueTimeoutMs: 50
+    asserts:
+      - equal:
+          path: spec.logging.level
+          value: DEBUG
+      - equal:
+          path: spec.templatingSettings.extraContext.tls.minVersion
+          value: TLSv1.3
+
+  - it: accepts a custom SPOA plugin and rejects an unknown field on it
+    set:
+      spoaHub.plugins.custom.enabled: false
+      spoaHub.plugins.custom.timeoutMs: 10
+      spoaHub.plugins.custom.messages: [custom]
+      spoaHub.plugins.custom.retries: 2
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/spoaHub/plugins/custom': additional properties 'retries' not allowed"
+
+  # A moved or renamed key must reach its guard: the schema runs first, so a key
+  # it rejects would only get the generic "not allowed" error.
+  - it: names the new home of a moved root key
+    set:
+      replicaCount: 3
+    asserts:
+      - failedTemplate:
+          errorMessage: replicaCount moved to controller.replicaCount so every workload setting has an explicit component owner.
+
+  - it: names the new home of a moved webhook root key
+    set:
+      webhook.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: webhook moved to controller.webhook so every workload setting has an explicit component owner.
+
+  - it: names the replacement of controller.crdName
+    set:
+      controller.crdName: my-config
+    asserts:
+      - failedTemplate:
+          errorPattern: controller.crdName was renamed to controller.configName
+
+  - it: names the replacement of controller.debugPort
+    set:
+      controller.debugPort: 8080
+    asserts:
+      - failedTemplate:
+          errorPattern: controller.debugPort was removed; controller.ports.healthz
+
+  - it: names the new home of controller.statusPatches
+    set:
+      controller.statusPatches.enabled: false
+    asserts:
+      - failedTemplate:
+          errorPattern: controller.statusPatches moved to controller.config.templatingSettings.extraContext.statusPatches
+
+  - it: names the new home of controller.apiGateway
+    set:
+      controller.apiGateway.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: controller.apiGateway moved to controller.config.templatingSettings.extraContext.apiGateway
+
+  - it: names the new home of controller.config.routing
+    set:
+      controller.config.routing.regexMatchOrder: last
+    asserts:
+      - failedTemplate:
+          errorPattern: controller.config.routing moved to controller.config.templatingSettings.extraContext.routing
+
+  - it: names the replacement of the runtime healthz port
+    set:
+      controller.config.controller.healthzPort: 8080
+    asserts:
+      - failedTemplate:
+          errorPattern: controller.config.controller.healthzPort was a no-op and has been removed; use controller.ports.healthz
+
+  - it: names the replacement of the runtime metrics port
+    set:
+      controller.config.controller.metricsPort: 9090
+    asserts:
+      - failedTemplate:
+          errorPattern: controller.config.controller.metricsPort was a no-op and has been removed; use controller.ports.metrics
+
+  - it: names the replacement of the dataplane port
+    set:
+      controller.config.dataplane.port: 5555
+    asserts:
+      - failedTemplate:
+          errorPattern: controller.config.dataplane.port was removed; haproxy.ports.dataplane
+
+  - it: names the owner of the chart-managed default certificate
+    set:
+      controller.config.templatingSettings.extraContext.tls.defaultCertificate.name: x
+    asserts:
+      - failedTemplate:
+          errorPattern: extraContext.tls.defaultCertificate is chart-managed; use the top-level defaultSSLCertificate values
+
+  - it: names the replacement of haproxy.enterprise.version
+    set:
+      haproxy.enterprise.version: "3.2"
+    asserts:
+      - failedTemplate:
+          errorPattern: haproxy.enterprise.version was removed; haproxyVersion
+
+  - it: names the replacement of the managed store maxmemory
+    set:
+      rateLimit.shared.managedStore.maxmemory: 64mb
+    asserts:
+      - failedTemplate:
+          errorPattern: maxmemory and maxmemoryPolicy were renamed to maxMemory and maxMemoryPolicy
+
+  - it: explains the removed excludeMetrics pattern
+    set:
+      controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.mine.enabled: true
+      controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.mine.pattern: "haproxy_.*"
+    asserts:
+      - failedTemplate:
+          errorPattern: excludeMetrics.mine has a `pattern`. HAProxy's exporter filters by exact name only
+
+  - it: explains the removed otel plugin
+    set:
+      spoaHub.plugins.otel.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: spoaHub.plugins.otel was removed

@@ -29,7 +29,7 @@ tests:
       controller.webhook.timeoutSeconds: 2.5
     asserts:
       - failedTemplate:
-          errorMessage: "controller.webhook.timeoutSeconds must be an integer between 2 and 30."
+          errorPattern: "at '/controller/webhook/timeoutSeconds': got number, want integer"
 
   - it: should admit the user-authored Gateway API spec kinds
     asserts:

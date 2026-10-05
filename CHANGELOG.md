@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Governance rules take `namespaces` and `exemptNamespaces` to apply a single rule only in, or everywhere except, the listed namespaces.
 
+#### Changed
+
+- **BREAKING:** The chart ships a strict `values.schema.json`: Helm rejects unknown keys and wrongly typed values on install, upgrade, and template instead of ignoring them. [Check your values](./docs/site/docs/upgrade-notes.md#upgrading-to-04) before upgrading.
+
+#### Fixed
+
+- `extraContext.tls.ciphers`, `ciphersuites`, and `minVersion` install; a chart guard rejected the documented TLS policy keys.
+- A WAF policy catalog set only through `waf.policies.configMapRefs` fails the install when the SPOA hub or the `hapticAnnotations` library is disabled, instead of rendering without the WAF.
+
+#### Security
+
+- The pre-rollout validation hook's values Secret no longer contains the generated agent password and webhook private key.
+
 ## [0.3.0] - 2026-10-05
 
 HAPTIC 0.3 serves HTTP/3 by default, keeps admission validation available while

@@ -6,7 +6,7 @@
         tidy vendor verify verify-generate generate generate-chart-defaults clean fmt vet install-tools dev \
         release test-release check-controller-output goreleaser-snapshot \
         pgo-profile pgo-merge \
-        extract-schemas
+        extract-schemas chart-schema chart-schema-check
 
 .DEFAULT_GOAL := help
 
@@ -18,6 +18,11 @@ GO := env -u GOROOT go
 GOLANGCI_LINT_VERSION := v2.14.0
 GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck
+# renovate: datasource=github-releases depName=losisin/helm-values-schema-json
+HELM_VALUES_SCHEMA_JSON_VERSION := v2.6.0
+HELM_VALUES_SCHEMA_JSON := $(GO) run github.com/losisin/helm-values-schema-json/v2@$(HELM_VALUES_SCHEMA_JSON_VERSION)
+CHART_SCHEMA_FLAGS := --values charts/haptic/values.yaml --values charts/haptic/values.schema.extras.yaml \
+	--draft 7 --indent 2 --no-additional-properties
 ARCH_GO := $(shell which arch-go 2>/dev/null || echo "$(GO) run github.com/arch-go/arch-go/v2")
 CONTROLLER_GEN := $(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen
 
@@ -149,6 +154,7 @@ KUBECONFORM_VERSION := v0.8.0-alpine
 KUBE_VERSION := 1.37.0
 
 lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docker
+	@$(MAKE) --no-print-directory chart-schema-check
 	@echo "Running chart-testing lint..."
 	docker run --rm -v $(PWD):/data -w /data quay.io/helmpack/chart-testing:$(CT_VERSION) \
 		ct lint --config charts/haptic/.ct/ct.yaml --all
@@ -183,6 +189,7 @@ lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docke
 
 # CI target (runs all chart linting - tools must be installed)
 lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kubeconform)
+	@$(MAKE) --no-print-directory chart-schema-check
 	@echo "Running chart-testing lint..."
 	ct lint --config charts/haptic/.ct/ct.yaml --all
 	@echo ""
@@ -231,6 +238,16 @@ WORST_CASE_LIBS := \
 	--set controller.templateLibraries.haproxyIngress.enabled=true \
 	--set controller.templateLibraries.customCrdExample.enabled=true \
 	--set controller.templateLibraries.spoaHub.enabled=true
+
+chart-schema: ## Regenerate charts/haptic/values.schema.json from values.yaml and values.schema.extras.yaml
+	@$(HELM_VALUES_SCHEMA_JSON) $(CHART_SCHEMA_FLAGS) --output charts/haptic/values.schema.json
+
+chart-schema-check: ## Fail when charts/haptic/values.schema.json is out of date with its inputs
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	$(HELM_VALUES_SCHEMA_JSON) $(CHART_SCHEMA_FLAGS) --output "$$tmp/values.schema.json" >/dev/null || exit 1; \
+	if ! diff -u charts/haptic/values.schema.json "$$tmp/values.schema.json"; then \
+		echo "charts/haptic/values.schema.json is stale. Run: make chart-schema"; exit 1; \
+	fi
 
 chart-size-check: ## Estimate the Helm release-Secret size against realistic install profiles; fail if one nears the 1 MiB Secret limit
 	@# Estimates the base64(gzip(json(release))) payload Helm stores in its

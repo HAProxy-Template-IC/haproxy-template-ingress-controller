@@ -80,7 +80,7 @@ tests:
       haproxy.agent.logLevel: verbose
     asserts:
       - failedTemplate:
-          errorMessage: 'haproxy.agent.logLevel "verbose" is invalid. Valid: trace, debug, info, warning, error.'
+          errorPattern: "at '/haproxy/agent/logLevel': value must be one of 'trace', 'debug', 'info', 'warning', 'error'"
 
   # haproxy.agent is the landing zone the migration guard above sends every
   # operator to, so a typo lands here on exactly the values file that was just
@@ -90,7 +90,7 @@ tests:
       haproxy.agent.loglevel: debug
     asserts:
       - failedTemplate:
-          errorMessage: 'haproxy.agent contains unknown field "loglevel". Valid fields: logLevel, service, resources, extraEnv, tls.'
+          errorPattern: "at '/haproxy/agent': additional properties 'loglevel' not allowed"
 
   # Both durations become agent flags; above 60s the agent exits at startup and
   # every HAProxy pod crash-loops.
@@ -143,4 +143,4 @@ tests:
       haproxy.ports.agentMetric: 5557
     asserts:
       - failedTemplate:
-          errorMessage: 'haproxy.ports contains unknown field "agentMetric". Valid fields: http, https, stats, dataplane, agentMetrics.'
+          errorPattern: "at '/haproxy/ports': additional properties 'agentMetric' not allowed"

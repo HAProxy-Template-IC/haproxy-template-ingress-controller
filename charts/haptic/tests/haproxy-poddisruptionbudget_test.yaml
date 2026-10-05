@@ -42,7 +42,7 @@ tests:
   - it: should still validate staged budget values for an external fleet
     set:
       haproxy.enabled: false
-      haproxy.podDisruptionBudget.maxUnavailable: "1"
+      haproxy.podDisruptionBudget.maxUnavailable: -1
     asserts:
       - failedTemplate:
           errorMessage: "haproxy.podDisruptionBudget.maxUnavailable must be a non-negative integer."
@@ -77,28 +77,28 @@ tests:
       haproxy.podDisruptionBudget.minAvailable: 1
     asserts:
       - failedTemplate:
-          errorMessage: 'haproxy.podDisruptionBudget contains unknown field "minAvailable". Valid fields: enabled, maxUnavailable.'
+          errorPattern: "at '/haproxy/podDisruptionBudget': additional properties 'minAvailable' not allowed"
 
   - it: should reject a non-map budget
     set:
       haproxy.podDisruptionBudget: disabled
     asserts:
       - failedTemplate:
-          errorMessage: "haproxy.podDisruptionBudget must be a map."
+          errorPattern: "at '/haproxy/podDisruptionBudget': got string, want object"
 
   - it: should reject a non-boolean enabled value
     set:
       haproxy.podDisruptionBudget.enabled: "yes"
     asserts:
       - failedTemplate:
-          errorMessage: "haproxy.podDisruptionBudget.enabled must be a boolean."
+          errorPattern: "at '/haproxy/podDisruptionBudget/enabled': got string, want boolean"
 
   - it: should reject a string maxUnavailable
     set:
       haproxy.podDisruptionBudget.maxUnavailable: "1"
     asserts:
       - failedTemplate:
-          errorMessage: "haproxy.podDisruptionBudget.maxUnavailable must be a non-negative integer."
+          errorPattern: "at '/haproxy/podDisruptionBudget/maxUnavailable': got string, want null or integer"
 
   - it: should reject a negative maxUnavailable
     set:
@@ -151,11 +151,11 @@ tests:
       haproxy.replicaCount: "2"
     asserts:
       - failedTemplate:
-          errorMessage: "haproxy.replicaCount must be a non-negative integer."
+          errorPattern: "at '/haproxy/replicaCount': got string, want integer"
 
   - it: should reject a non-integer KEDA minimum
     set:
       haproxy.keda.minReplicaCount: "2"
     asserts:
       - failedTemplate:
-          errorMessage: "haproxy.keda.minReplicaCount must be a non-negative integer."
+          errorPattern: "at '/haproxy/keda/minReplicaCount': got string, want integer"

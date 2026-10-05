@@ -25,7 +25,8 @@ in the chart-test CI job):
     (subchart source, not stored) and Chart.yaml / values.yaml (Helm stores
     those parsed, under `metadata` / `values` — see below);
   * `metadata` and `values` as the comment-stripped JSON Helm stores, via `yq`
-    (the heavy comments in values.yaml are why counting it raw over-reports);
+    (the heavy comments in values.yaml are why counting it raw over-reports),
+    and `schema` as the base64 of values.schema.json, the []byte Helm stores;
   * `release.manifest` from `helm template --api-versions=...` so the Gateway
     library (gated on a Capabilities check) renders for the profile under test.
 
@@ -107,6 +108,15 @@ PARSED_OUT_OF_FILES = {"Chart.yaml", "Chart.lock", "values.yaml", "values.schema
 GZIP_LEVEL = 9
 
 
+def read_schema(chart):
+    """chart.Schema as Helm serialises it: a Go []byte, so base64 in the JSON."""
+    path = os.path.join(chart, "values.schema.json")
+    if not os.path.exists(path):
+        return ""
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+
 def run(cmd):
     try:
         return subprocess.run(cmd, capture_output=True, check=True).stdout
@@ -175,14 +185,6 @@ FIXED_DATAPLANE_PASSWORD_B64 = base64.b64encode(FIXED_DATAPLANE_PASSWORD.encode(
 SOURCE_RE = re.compile(r"^# Source: (\S+)\n", re.M)
 
 
-def _wrapped_pem_body(b64, indent="        ", width=64):
-    """Re-wrap `b64` at `width` columns under `indent` — the shape
-    `.Values | toYaml` gives the webhook cert inside the pre-rollout
-    validation hook's dumped values.yaml (raw PEM, not the Secret's b64enc)."""
-    lines = [indent + b64[i:i + width] for i in range(0, len(b64), width)]
-    return "\n".join(lines) + "\n"
-
-
 def _patch_webhook_secret(body):
     body, n1 = re.subn(r"(?m)^(\s*tls\.crt:\s*)\S+", r"\1" + WEBHOOK_CERT_B64, body)
     body, n2 = re.subn(r"(?m)^(\s*tls\.key:\s*)\S+", r"\1" + WEBHOOK_KEY_B64, body)
@@ -201,32 +203,15 @@ def _patch_validating_webhook_configuration(body):
     return body, {"caBundle": n}
 
 
-def _patch_pre_rollout_values_dump(body):
-    """Normalize the webhook cert's second appearance: `pre-rollout-validation-
-    hook.yaml` dumps the whole `.Values` tree (including the memoised
-    _webhookSelfSignedCert), so the same random cert renders again here as raw
-    PEM instead of the Secret's base64."""
-    counts = {}
-    for key, filler in (("ca", WEBHOOK_CERT_B64), ("crt", WEBHOOK_CERT_B64), ("key", WEBHOOK_KEY_B64)):
-        body, counts[key] = re.subn(
-            r"(?m)^(      " + key + r": \|\n)(?:        .*\n)+",
-            lambda m, f=filler: m.group(1) + _wrapped_pem_body(f),
-            body,
-        )
-    return body, counts
-
-
 # Each patcher returns (patched_body, {field_name: match_count}). A source
-# file can render more than one object (pre-rollout-validation-hook.yaml
-# renders 5: only its Secret carries the values.yaml dump), so a single
-# occurrence legitimately seeing zero matches is fine — normalize_random_content
-# below aggregates counts across every occurrence of a source before judging
-# whether a field actually matched nowhere.
+# file can render more than one object, so a single occurrence legitimately
+# seeing zero matches is fine — normalize_random_content below aggregates
+# counts across every occurrence of a source before judging whether a field
+# actually matched nowhere.
 PATCHERS = {
     "haptic/templates/webhook-cert-secret.yaml": _patch_webhook_secret,
     "haptic/templates/default-ssl-cert.yaml": _patch_default_ssl_cert,
     "haptic/templates/validatingwebhookconfiguration.yaml": _patch_validating_webhook_configuration,
-    "haptic/templates/pre-rollout-validation-hook.yaml": _patch_pre_rollout_values_dump,
 }
 
 
@@ -308,7 +293,7 @@ def main():
             "templates": templates,
             "files": files,
             "values": yaml_to_obj(os.path.join(chart, "values.yaml")),
-            "schema": "",
+            "schema": read_schema(chart),
         },
         "config": {}, "manifest": manifest,
     }

@@ -5,6 +5,87 @@ you plan to deploy. Each section lists configuration changes and the steps neede
 to keep your existing routes working. For routine chart upgrades, see
 [Upgrading with Helm](deploying-with-helm.md#upgrading).
 
+## Upgrading to 0.4
+
+0.4 ships a values schema. Helm checks your values against it on every
+`helm install`, `helm upgrade`, `helm template`, and `helm lint`, and refuses the
+release if a key is unknown or a value has the wrong type. Earlier versions
+ignored such keys, so a values file that installs 0.3 can fail on 0.4. If you run
+0.2, complete [Upgrading to 0.3](#upgrading-to-03) first.
+
+Confirm that the target version is available on the
+[releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases) before
+running the upgrade commands.
+
+### 1. Save your values
+
+Set the installed Helm release and namespace:
+
+```bash
+HAPTIC_RELEASE=haptic
+HAPTIC_NAMESPACE=haptic
+```
+
+Export the values you supplied to Helm:
+
+```bash
+umask 077
+helm get values "$HAPTIC_RELEASE" --namespace "$HAPTIC_NAMESPACE" \
+  --output yaml > haptic-values-0.4.yaml
+if [ "$(cat haptic-values-0.4.yaml)" = null ]; then
+  printf '{}\n' > haptic-values-0.4.yaml
+fi
+```
+
+If you manage values in Git, check that file instead, and apply the fixes from
+the next step to it.
+
+### 2. Check your values against the schema
+
+Render the 0.4 chart with your values. This contacts no cluster and changes
+nothing:
+
+```bash
+helm template "$HAPTIC_RELEASE" \
+  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.4.0 --namespace "$HAPTIC_NAMESPACE" \
+  --values haptic-values-0.4.yaml > /dev/null
+```
+
+The command prints nothing when your values pass. Otherwise Helm names each
+rejected value by its path:
+
+```text
+Error: values don't meet the specifications of the schema(s) in the following chart(s):
+haptic:
+- at '/controller/service': additional properties 'tpye' not allowed
+- at '/haproxy/ports/http': got string, want integer
+```
+
+Fix each reported value, then run the command again until it passes:
+
+- **Unknown key:** correct the spelling, or delete the key. A key the chart
+  moved or renamed fails with a message that names its replacement.
+- **Wrong type:** remove the quotes from a number or a boolean, for example
+  `"8080"` → `8080` and `"true"` → `true`.
+
+Free-form maps keep accepting any key: labels, annotations, selectors,
+`resources`, security contexts, affinity, and the top level of
+`controller.config.templatingSettings.extraContext`.
+
+### 3. Upgrade the release
+
+Pass the checked values file. `--reset-values` starts from the new chart's
+defaults, so the release doesn't carry rejected keys forward:
+
+```bash
+helm upgrade "$HAPTIC_RELEASE" \
+  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --namespace "$HAPTIC_NAMESPACE" --version 0.4.0 \
+  --reset-values \
+  --values haptic-values-0.4.yaml
+```
+
 ## Upgrading to 0.3
 
 Use this checklist to upgrade a 0.2 release. Work through it from top to bottom;

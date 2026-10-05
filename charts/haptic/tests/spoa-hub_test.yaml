@@ -231,13 +231,24 @@ tests:
       - failedTemplate:
           errorMessage: "The configured WAF dispatch/policy behavior requires spoaHub.plugins.coraza. Remove spoaHub.plugins.coraza.enabled=false, set waf.dispatch.mode=opt-in, or remove the WAF policy catalog."
 
+  - it: should reject forcing Coraza off with only a ConfigMap policy catalog
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.namespace: security
+      controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.name: haptic-waf-policies
+      controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.key: policies.yaml
+      spoaHub.plugins.coraza.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "The configured WAF dispatch/policy behavior requires spoaHub.plugins.coraza. Remove spoaHub.plugins.coraza.enabled=false, set waf.dispatch.mode=opt-in, or remove the WAF policy catalog."
+
   - it: should reject unknown Coraza dispatch fields
     template: haproxytemplateconfig.yaml
     set:
       controller.config.templatingSettings.extraContext.waf.dispatch.mod: default-on
     asserts:
       - failedTemplate:
-          errorMessage: 'controller.config.templatingSettings.extraContext.waf.dispatch contains unknown field "mod". Valid fields: mode, defaultEnforcement.'
+          errorPattern: "at '/controller/config/templatingSettings/extraContext/waf/dispatch': additional properties 'mod' not allowed"
 
   - it: should map the sso-auth plugin to its quirk lib filename
     template: spoa-hub-configmap.yaml
@@ -343,7 +354,7 @@ tests:
       rateLimit.shared.externalStore.urls: ""
     asserts:
       - failedTemplate:
-          errorMessage: "rateLimit.shared.externalStore.urls must be a list of Redis/Valkey URLs."
+          errorPattern: "at '/rateLimit/shared/externalStore/urls': got string, want array"
 
   - it: should fail when the managed store and an external store are both configured
     template: spoa-hub-configmap.yaml
@@ -889,7 +900,7 @@ tests:
       spoaHub.plugins.mirror.minMessageSlots: 8
     asserts:
       - failedTemplate:
-          errorMessage: 'spoaHub.plugins.mirror contains unknown field "minMessageSlots". Plugin runtime settings belong inside params.'
+          errorPattern: "at '/spoaHub/plugins/mirror': additional properties 'minMessageSlots' not allowed"
 
   - it: should reject the removed spoaHub.haproxy.mirror field
     template: spoa-hub-configmap.yaml
@@ -897,7 +908,7 @@ tests:
       spoaHub.haproxy.mirror.minMessageSlots: 4
     asserts:
       - failedTemplate:
-          errorMessage: 'spoaHub.haproxy contains unknown field "mirror". Valid fields: socketPath, modeSpop, timeoutHello, timeoutIdle, timeoutProcessing, timeoutProcessingMarginMs, poolMaxConn, poolPurgeDelay.'
+          errorPattern: "at '/spoaHub/haproxy': additional properties 'mirror' not allowed"
 
   - it: should surface shared rate-limit extraContext and store params
     template: haproxytemplateconfig.yaml

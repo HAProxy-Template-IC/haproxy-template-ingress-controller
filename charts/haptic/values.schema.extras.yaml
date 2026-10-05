@@ -1,0 +1,223 @@
+# Schema-only input to values.schema.json (`make chart-schema`); Helm never reads
+# this file. It declares the keys values.yaml cannot carry as defaults:
+#   - optional keys that stay unset unless an operator sets them,
+#   - value namespaces Helm itself adds to the parent's values,
+#   - removed keys, typed `anyOf: [{}]` so the schema lets them through to the
+#     chart's migration guard, which names the replacement.
+
+# One namespace per Chart.yaml dependency: Helm coalesces each enabled
+# subchart's values, plus `global`, into the parent's values before validation.
+helm-helpers:
+  global: {}  # @schema additionalProperties: true
+base:
+  global: {}  # @schema additionalProperties: true
+kubernetes-backends:
+  global: {}  # @schema additionalProperties: true
+ssl:
+  global: {}  # @schema additionalProperties: true
+ingress:
+  global: {}  # @schema additionalProperties: true
+ingress-annotations-compat:
+  global: {}  # @schema additionalProperties: true
+governance:
+  global: {}  # @schema additionalProperties: true
+spoa-hub:
+  global: {}  # @schema additionalProperties: true
+http-policies:
+  global: {}  # @schema additionalProperties: true
+gateway:
+  global: {}  # @schema additionalProperties: true
+gateway-policies:
+  global: {}  # @schema additionalProperties: true
+haptic-annotations:
+  global: {}  # @schema additionalProperties: true
+haproxytech:
+  global: {}  # @schema additionalProperties: true
+haproxy-ingress:
+  global: {}  # @schema additionalProperties: true
+nginx-ingress:
+  global: {}  # @schema additionalProperties: true
+custom-crd-example:
+  global: {}  # @schema additionalProperties: true
+
+# Removed in 0.2: workload settings moved under controller.
+replicaCount: null  # @schema anyOf: [{}]; description: Moved to controller.replicaCount.
+image: null  # @schema anyOf: [{}]; description: Moved to controller.image.
+deploymentAnnotations: null  # @schema anyOf: [{}]; description: Moved to controller.deploymentAnnotations.
+updateStrategy: null  # @schema anyOf: [{}]; description: Moved to controller.updateStrategy.
+minReadySeconds: null  # @schema anyOf: [{}]; description: Moved to controller.minReadySeconds.
+revisionHistoryLimit: null  # @schema anyOf: [{}]; description: Moved to controller.revisionHistoryLimit.
+serviceAccount: null  # @schema anyOf: [{}]; description: Moved to controller.serviceAccount.
+rbac: null  # @schema anyOf: [{}]; description: Moved to controller.rbac.
+service: null  # @schema anyOf: [{}]; description: Moved to controller.service.
+securityContext: null  # @schema anyOf: [{}]; description: Moved to controller.securityContext.
+resources: null  # @schema anyOf: [{}]; description: Moved to controller.resources.
+extraEnv: null  # @schema anyOf: [{}]; description: Moved to controller.extraEnv.
+extraVolumes: null  # @schema anyOf: [{}]; description: Moved to controller.extraVolumes.
+extraVolumeMounts: null  # @schema anyOf: [{}]; description: Moved to controller.extraVolumeMounts.
+initContainers: null  # @schema anyOf: [{}]; description: Moved to controller.initContainers.
+sidecars: null  # @schema anyOf: [{}]; description: Moved to controller.sidecars.
+lifecycle: null  # @schema anyOf: [{}]; description: Moved to controller.lifecycle.
+livenessProbe: null  # @schema anyOf: [{}]; description: Moved to controller.livenessProbe.
+readinessProbe: null  # @schema anyOf: [{}]; description: Moved to controller.readinessProbe.
+startupProbe: null  # @schema anyOf: [{}]; description: Moved to controller.startupProbe.
+autoscaling: null  # @schema anyOf: [{}]; description: Moved to controller.autoscaling.
+podDisruptionBudget: null  # @schema anyOf: [{}]; description: Moved to controller.podDisruptionBudget.
+monitoring: null  # @schema anyOf: [{}]; description: Moved to controller.monitoring.
+networkPolicy: null  # @schema anyOf: [{}]; description: Moved to controller.networkPolicy.
+webhook: null  # @schema anyOf: [{}]; description: Moved to controller.webhook.
+
+controller:
+  crdName: null  # @schema anyOf: [{}]; description: Renamed to controller.configName.
+  debugPort: null  # @schema anyOf: [{}]; description: Removed, use controller.ports.healthz.
+  statusPatches: null  # @schema anyOf: [{}]; description: Moved to controller.config.templatingSettings.extraContext.statusPatches.
+  apiGateway: null  # @schema anyOf: [{}]; description: Moved to controller.config.templatingSettings.extraContext.apiGateway.
+  cache: null  # @schema anyOf: [{}]; description: Moved to the top-level cache tree.
+  rateLimit: null  # @schema anyOf: [{}]; description: Moved to the top-level rateLimit tree.
+  defaultSSLCertificate: null  # @schema anyOf: [{}]; description: Moved to the top-level defaultSSLCertificate tree.
+  autoscaling:
+    targetMemoryUtilizationPercentage: 80
+  podDisruptionBudget:
+    maxUnavailable: 1  # @schema type: [integer, string]
+  webhook:
+    certManager:
+      issuerRef:
+        group: cert-manager.io
+  config:
+    includeMigrationCoverage: null  # @schema anyOf: [{}]; description: Removed, migration coverage is no longer a CRD field.
+    migrationCoverage: null  # @schema anyOf: [{}]; description: Removed, migration coverage is no longer a CRD field.
+    routing: null  # @schema anyOf: [{}]; description: Moved to controller.config.templatingSettings.extraContext.routing.
+    # The remaining HAProxyTemplateConfig spec fields an operator may seed.
+    logging:
+      level: DEBUG
+    templateSnippets: {}  # @schema additionalProperties: true
+    maps: {}  # @schema additionalProperties: true
+    files: {}  # @schema additionalProperties: true
+    sslCertificates: {}  # @schema additionalProperties: true
+    k8sResources: {}  # @schema additionalProperties: true
+    haproxyConfig: {}  # @schema additionalProperties: true
+    validationTests: {}  # @schema additionalProperties: true
+    validators: []  # @schema item: object
+    credentialsSecretRef:
+      namespace: ""
+    controller:
+      healthzPort: null  # @schema anyOf: [{}]; description: Removed, use controller.ports.healthz.
+      metricsPort: null  # @schema anyOf: [{}]; description: Removed, use controller.ports.metrics.
+      configPublishing:
+        compressionThreshold: 0
+    dataplane:
+      port: null  # @schema anyOf: [{}]; description: Removed, haproxy.ports.dataplane is the single source.
+      configPublishInterval: 10s
+      deploymentTimeout: 30s
+      reloadVerificationTimeout: 10s
+      syncTimeout: 2m
+    templatingSettings:
+      testExtraContext: {}  # @schema additionalProperties: true
+      extraContext:
+        tls:
+          # Defaults live in the ssl library's extraContext.
+          ciphers: ""
+          ciphersuites: ""
+          minVersion: ""
+          defaultCertificate: null  # @schema anyOf: [{}]; description: Chart-managed, set the top-level defaultSSLCertificate values.
+        tracing:
+          otlp:
+            clusterName: ""
+        accessLog:
+          # Keyed by target name.
+          targets:  # @schema mergeProperties
+            example:
+              address: stdout
+              format: raw  # @schema enum: [raw, rfc3164, rfc5424, local, priority, short, timed, iso]
+              facility: local0  # @schema enum: [kern, user, mail, daemon, auth, syslog, lpr, news, uucp, cron, auth2, ftp, ntp, audit, alert, cron2, local0, local1, local2, local3, local4, local5, local6, local7]
+              level: info
+              ring:
+                name: accesslog
+                address: 127.0.0.1:6514
+                size: 65536
+                logProto: legacy  # @schema enum: [legacy, octet-count]
+                connectTimeout: 5s  # @schema type: [string, integer]
+                serverTimeout: 10s  # @schema type: [string, integer]
+                serverOptions: ""
+        prometheusExporter:
+          excludeMetrics:  # @schema mergeProperties
+            example:
+              pattern: null  # @schema anyOf: [{}]; description: Removed, HAProxy filters by exact name, list the families instead.
+
+haproxy:
+  dataplane: null  # @schema anyOf: [{}]; description: The Dataplane API sidecar is now the HAPTIC agent, configured under haproxy.agent.
+  dataplaneBin: null  # @schema anyOf: [{}]; description: Removed, the agent runs from controller.image.
+  enterprise:
+    version: null  # @schema anyOf: [{}]; description: Removed, haproxyVersion selects the image series.
+  # Unset derives nbthread from the CPU limit; supports tpl.
+  nbthread: 4  # @schema type: [integer, string]
+  shmStats:
+    shmSizeLimit: 256Mi
+
+cache:
+  varnish:
+    hashBalanceFactor: null  # @schema anyOf: [{}]; description: Moved to cache.haproxy.hashBalanceFactor.
+
+rateLimit:
+  shared:
+    managedStore:
+      maxmemory: null  # @schema anyOf: [{}]; description: Renamed to maxMemory.
+      maxmemoryPolicy: null  # @schema anyOf: [{}]; description: Renamed to maxMemoryPolicy.
+
+defaultSSLCertificate:
+  cert: ""
+  key: ""
+  certManager:
+    issuerRef:
+      group: cert-manager.io
+
+spoaHub:
+  monitoring: null  # @schema anyOf: [{}]; description: Moved to haproxy.monitoring.
+  plugins:
+    otel: null  # @schema anyOf: [{}]; description: Removed, the bundled hub image no longer ships the otel plugin.
+    api-gateway:
+      maxConcurrency: 0  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
+      queueTimeoutMs: 0  # @schema type: [integer, string]
+      adaptiveConcurrency: true
+    coraza:
+      maxConcurrency: 0  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
+      queueTimeoutMs: 0  # @schema type: [integer, string]
+      adaptiveConcurrency: true
+    external-auth:
+      maxConcurrency: 0  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
+      queueTimeoutMs: 0  # @schema type: [integer, string]
+      adaptiveConcurrency: true
+    fingerprinting:
+      maxConcurrency: 0  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
+      queueTimeoutMs: 0  # @schema type: [integer, string]
+      adaptiveConcurrency: true
+    maxmind:
+      maxConcurrency: 0  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
+      queueTimeoutMs: 0  # @schema type: [integer, string]
+      adaptiveConcurrency: true
+    mirror:
+      maxConcurrency: 0  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
+      queueTimeoutMs: 0  # @schema type: [integer, string]
+      adaptiveConcurrency: true
+    rate-limit:
+      maxConcurrency: 0  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
+      queueTimeoutMs: 0  # @schema type: [integer, string]
+      adaptiveConcurrency: true
+    sso-auth:
+      maxConcurrency: 0  # @schema type: [integer, string]
+      maxQueue: 0  # @schema type: [integer, string]
+      queueTimeoutMs: 0  # @schema type: [integer, string]
+      adaptiveConcurrency: true
+
+vector:
+  global: {}  # @schema additionalProperties: true
+  excludeMetrics: null  # @schema anyOf: [{}]; description: Moved to controller.config.templatingSettings.extraContext.prometheusExporter.excludeMetrics.
+  excludeMaintServerMetrics: null  # @schema anyOf: [{}]; description: Moved to controller.config.templatingSettings.extraContext.prometheusExporter.excludeMaintServers.
+  podMonitor: null  # @schema anyOf: [{}]; description: Moved to haproxy.monitoring.podMonitor.

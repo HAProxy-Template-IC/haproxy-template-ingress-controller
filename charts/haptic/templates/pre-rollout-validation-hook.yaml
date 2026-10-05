@@ -48,8 +48,14 @@ stringData:
          resurrects in the hook's render. A Secret because operator values may
          carry credentials — the same exposure class as Helm's own release
          Secret in the same namespace. */}}
+  {{- /* Underscore keys are render-time memos the helpers write into .Values,
+         not values; values.schema.json rejects them. */}}
+  {{- $hookValues := dict }}
+  {{- range $key, $value := .Values }}
+  {{- if not (hasPrefix "_" $key) }}{{- $_ := set $hookValues $key $value }}{{- end }}
+  {{- end }}
   values.yaml: |
-    {{- .Values | toYaml | nindent 4 }}
+    {{- $hookValues | toYaml | nindent 4 }}
 ---
 apiVersion: v1
 kind: ServiceAccount

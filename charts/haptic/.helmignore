@@ -40,3 +40,5 @@ values-dev.yaml
 # which carries Gateway API validation-test source for chart libraries.
 /tests/
 /.ct/
+# Schema-generator input (make chart-schema); Helm reads values.schema.json.
+values.schema.extras.yaml
